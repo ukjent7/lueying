@@ -3,6 +3,7 @@
 //! 空闲时把窗口挪出屏幕而不是隐藏,避免和 gpui 自己的可见性状态打架。
 
 use std::cell::Cell;
+use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -106,7 +107,7 @@ impl CandidatePanel {
         let RawWindowHandle::Win32(handle) = raw else {
             return None;
         };
-        Some(HWND(handle.hwnd.get()))
+        Some(HWND(handle.hwnd.get() as *mut c_void))
     }
 
     /// 按光标矩形摆窗;无内容则挪出屏幕。必须在主线程(gpui update 闭包内)调用。
@@ -145,7 +146,7 @@ impl CandidatePanel {
             if w == 0 {
                 let _ = SetWindowPos(
                     hwnd,
-                    HWND_TOPMOST,
+                    Some(HWND_TOPMOST),
                     PARK,
                     PARK,
                     0,
@@ -153,7 +154,7 @@ impl CandidatePanel {
                     SWP_NOACTIVATE | SWP_NOSIZE,
                 );
             } else {
-                let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
             }
         }
     }
