@@ -67,7 +67,9 @@ mod imp {
         println!("regsvr32: {status}");
 
         // 拉起 server(主词典缺失会退回内置迷你词库,E2E 断言用它)
-        let mut server = std::process::Command::new(dir.join("pinyin-server.exe")).spawn().ok();
+        let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
+            .spawn()
+            .ok();
         // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。
         std::thread::sleep(Duration::from_millis(600));
 

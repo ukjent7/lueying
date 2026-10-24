@@ -3,8 +3,8 @@
 //! 空闲时把窗口挪出屏幕而不是隐藏,避免和 gpui 自己的可见性状态打架。
 
 use std::cell::Cell;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gpui::{
@@ -16,11 +16,11 @@ use pinyin_protocol::SessionView;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-    SWP_NOACTIVATE, SWP_NOSIZE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW,
+    SetWindowPos, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 use crate::imp::State;
@@ -85,7 +85,11 @@ pub(super) fn run(state: Arc<State>) {
 fn snapshot(state: &State) -> Option<SessionView> {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    session.engine.composition().is_some().then(|| session.view.clone())
+    session
+        .engine
+        .composition()
+        .is_some()
+        .then(|| session.view.clone())
 }
 
 struct CandidatePanel {
@@ -96,7 +100,9 @@ struct CandidatePanel {
 
 impl CandidatePanel {
     fn hwnd(window: &Window) -> Option<HWND> {
-        let raw = <Window as HasWindowHandle>::window_handle(window).ok()?.as_raw();
+        let raw = <Window as HasWindowHandle>::window_handle(window)
+            .ok()?
+            .as_raw();
         let RawWindowHandle::Win32(handle) = raw else {
             return None;
         };
@@ -137,7 +143,15 @@ impl CandidatePanel {
                 None => (PARK, PARK, 0, 0),
             };
             if w == 0 {
-                let _ = SetWindowPos(hwnd, HWND_TOPMOST, PARK, PARK, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    PARK,
+                    PARK,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOSIZE,
+                );
             } else {
                 let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
             }
@@ -221,10 +235,12 @@ impl Render for CandidatePanel {
                             .py_1()
                             .rounded_md()
                             .text_size(px(17.0))
-                            .map(|el| if hl {
-                                el.bg(rgb(0x2f6fed)).text_color(rgb(0xffffff))
-                            } else {
-                                el.text_color(rgb(0x20202a))
+                            .map(|el| {
+                                if hl {
+                                    el.bg(rgb(0x2f6fed)).text_color(rgb(0xffffff))
+                                } else {
+                                    el.text_color(rgb(0x20202a))
+                                }
                             })
                             .child(
                                 div()
