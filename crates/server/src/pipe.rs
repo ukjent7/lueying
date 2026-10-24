@@ -12,7 +12,7 @@ use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
     PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::core::{HSTRING, HRESULT};
+use windows::core::{HRESULT, HSTRING};
 
 use pinyin_protocol::Request;
 
