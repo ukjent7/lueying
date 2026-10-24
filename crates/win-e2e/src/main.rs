@@ -1,5 +1,5 @@
-//! Windows 全链路 E2E:regsvr32 注册 DLL → 激活本输入法 → 自建 EDIT 宿主窗口 →
-//! SendInput 注入「nihao+空格」 → 读回文本断言「你好」 → 清理注册。
+//! Windows 全链路 E2E:进程内直调 DllRegisterServer 注册 DLL → 激活本输入法 →
+//! 自建 EDIT 宿主窗口 → SendInput 注入「nihao+空格」 → 读回文本断言「你好」 → 清理注册。
 //! 产物 target/win-e2e-report.md。CI 首期 continue-on-error 观察,稳定后转门禁。
 
 fn main() {
@@ -18,12 +18,14 @@ mod imp {
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
     };
+    use windows::Win32::System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryW};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
-        CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr,
+        CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, TF_INPUTPROCESSORPROFILE,
+        TF_IPPMF_ENABLEPROFILE, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetWindowTextW, MSG, PM_REMOVE,
@@ -31,7 +33,7 @@ mod imp {
         TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE,
         WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
     };
-    use windows::core::{GUID, Interface, PCWSTR};
+    use windows::core::{GUID, HSTRING, Interface, PCSTR};
 
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
@@ -58,13 +60,18 @@ mod imp {
             return Err(format!("找不到 {}", dll.display()));
         }
 
-        // 1. 注册(可能已注册,失败不致命)
-        let status = std::process::Command::new("regsvr32")
-            .arg("/s")
-            .arg(&dll)
-            .status()
-            .map_err(|e| e.to_string())?;
-        println!("regsvr32: {status}");
+        // 1. 进程内注册:直调 DllRegisterServer,拿精确 HRESULT(regsvr32 /s 吞掉细节)
+        let dll_h = unsafe { LoadLibraryW(&HSTRING::from(dll.as_os_str())) }
+            .map_err(|e| format!("LoadLibraryW: {e}"))?;
+        type DllServer = unsafe extern "system" fn() -> windows::core::HRESULT;
+        let reg_fn = unsafe { GetProcAddress(dll_h, PCSTR::from_raw(c"DllRegisterServer".as_ptr())) }
+            .map(|f| unsafe { std::mem::transmute::<_, DllServer>(f) })
+            .ok_or("DLL 未导出 DllRegisterServer")?;
+        let hr = unsafe { reg_fn() };
+        println!("DllRegisterServer: 0x{:08X}", hr.0 as u32);
+        if hr.is_err() {
+            return Err(format!("DllRegisterServer: 0x{:08X}", hr.0 as u32));
+        }
 
         // 拉起 server(主词典缺失会退回内置迷你词库,E2E 断言用它)
         let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
@@ -90,17 +97,64 @@ mod imp {
             let mgr: ITfInputProcessorProfileMgr = profiles
                 .cast()
                 .map_err(|e| format!("cast ITfInputProcessorProfileMgr: {e}"))?;
-            unsafe {
+
+            // 剖面可见性与全貌(诊断 ActivateProfile 0x80070057 用)
+            let mut prof = TF_INPUTPROCESSORPROFILE::default();
+            match unsafe {
+                mgr.GetProfile(
+                    TF_PROFILETYPE_INPUTPROCESSOR,
+                    LANGID_ZH_CN,
+                    &CLSID_IME,
+                    &GUID_PROFILE,
+                    HKL::default(),
+                    &mut prof,
+                )
+            } {
+                Ok(()) => println!(
+                    "GetProfile: 可见 enabled={} byDefault={}",
+                    prof.fEnabled.as_bool(),
+                    prof.fByDefault.as_bool()
+                ),
+                Err(e) => println!("GetProfile: {e}"),
+            }
+            if let Ok(enum_) = unsafe { mgr.EnumProfiles(LANGID_ZH_CN) } {
+                let mut item = TF_INPUTPROCESSORPROFILE::default();
+                let mut got = 0u32;
+                let mut n = 0usize;
+                while unsafe { enum_.Next(1, &mut item, &mut got) }.is_ok() && got > 0 && n < 64 {
+                    n += 1;
+                }
+                println!("EnumProfiles(0x{LANGID_ZH_CN:04x}): {n} 个");
+            }
+
+            // 2. 激活本输入法(本进程);先默认 flags,失败换 ENABLEPROFILE
+            let act = unsafe {
                 mgr.ActivateProfile(
-                    1, // TF_PROFILETYPE_INPUTPROCESSOR
+                    TF_PROFILETYPE_INPUTPROCESSOR,
                     LANGID_ZH_CN,
                     &CLSID_IME,
                     &GUID_PROFILE,
                     HKL::default(),
                     0,
                 )
-            }
-            .map_err(|e| format!("ActivateProfile: {e}"))?;
+            };
+            let act = match act {
+                Ok(()) => Ok(()),
+                Err(e0) => {
+                    println!("ActivateProfile(flags=0): {e0},重试 ENABLEPROFILE");
+                    unsafe {
+                        mgr.ActivateProfile(
+                            TF_PROFILETYPE_INPUTPROCESSOR,
+                            LANGID_ZH_CN,
+                            &CLSID_IME,
+                            &GUID_PROFILE,
+                            HKL::default(),
+                            TF_IPPMF_ENABLEPROFILE,
+                        )
+                    }
+                }
+            };
+            act.map_err(|e| format!("ActivateProfile: {e}"))?;
 
             // 3. 宿主窗口 + EDIT 控件
             let (hwnd, edit) = create_host_window()?;
@@ -139,6 +193,7 @@ mod imp {
             .arg("/u")
             .arg(&dll)
             .status();
+        unsafe { FreeLibrary(dll_h) };
         unsafe { CoUninitialize() };
         result
     }
