@@ -1,5 +1,5 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
-//! 用法:`pinyin-e2e [--dict 主词典.tsv]`
+//! 用法:`pinyin-e2e [--dict 主词典.tsv] [--gram 语法模型.gram]`
 
 mod scenarios;
 
@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use pinyin_dict::Dictionary;
+use pinyin_dict::gram::Gram;
 use pinyin_engine::{Config, Engine, Event, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
@@ -88,6 +89,11 @@ fn main() {
         .position(|a| a == "--dict")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
+    let gram_path = args
+        .iter()
+        .position(|a| a == "--gram")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
     let mut failures = 0usize;
@@ -130,7 +136,17 @@ fn main() {
             dict.len(),
             bad
         ));
+        let gram = gram_path.as_deref().and_then(|p| match Gram::open(p) {
+            Ok(g) => Some(std::sync::Arc::new(g)),
+            Err(e) => {
+                eprintln!("语法模型不可用 {:?}: {e}", p);
+                None
+            }
+        });
         let mut engine = Engine::new(std::sync::Arc::new(dict), Config::default());
+        if let Some(g) = &gram {
+            engine = engine.with_gram(std::sync::Arc::clone(g));
+        }
         // 词典解析/排序的 CPU 突发会触发 runner 的 CFS 配额节流,首个键被罚站
         // 100-200ms,是测量伪影。歇一拍,再用 niha 预热三条查询路径
         // (n=签名、ni=精确、nih=前缀)后才开始计时,阈值反映稳态打字延迟。
@@ -199,6 +215,26 @@ fn main() {
             failures += 1;
             report.push_str("\n**性能超阈值**\n");
         }
+
+        // 整句评测:真实输入语料上量 top-1/top-5,防止解码器改动只对个别例子有效。
+        let (total, top1, top5, missed) = sentence_eval(&mut engine);
+        let rate = |n: usize| n as f64 * 100.0 / total.max(1) as f64;
+        report.push_str(&format!(
+            "\n## 整句评测(主词典,{} 条)\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| top-1 | {top1}/{total} = {:.1}% | ≥ 92% |\n| top-5 | {top5}/{total} = {:.1}% | ≥ 95% |\n",
+            if gram.is_some() { "含语法模型" } else { "无语法模型" },
+            rate(top1),
+            rate(top5),
+        ));
+        if !missed.is_empty() {
+            report.push_str("\n未命中前 8 条:\n\n| 输入 | 期望 | 首选 |\n|---|---|---|\n");
+            for (raw, want, got) in missed.iter().take(8) {
+                report.push_str(&format!("| {raw} | {want} | {got} |\n"));
+            }
+        }
+        if rate(top1) < 92.0 || rate(top5) < 95.0 {
+            failures += 1;
+            report.push_str("\n**整句准确率低于门限**\n");
+        }
     }
 
     let out = std::path::Path::new("target/e2e-report.md");
@@ -213,6 +249,40 @@ fn main() {
         std::process::exit(1);
     }
     println!("全部通过");
+}
+
+/// 整句评测:逐条打进引擎,取候选首位与 top-5。
+fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, String, String)>) {
+    let (mut total, mut top1, mut top5) = (0usize, 0usize, 0usize);
+    let mut missed = Vec::new();
+    for line in include_str!("../../../dicts/eval.txt").lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let (Some(raw), Some(want)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        engine.process(Key::Esc);
+        for c in raw.chars() {
+            engine.process(Key::Letter(c));
+        }
+        let cands = engine.candidates();
+        total += 1;
+        if cands.first().is_some_and(|s| s.as_str() == want) {
+            top1 += 1;
+        } else {
+            missed.push((
+                raw.to_string(),
+                want.to_string(),
+                cands.first().cloned().unwrap_or_default(),
+            ));
+        }
+        if cands.iter().take(5).any(|s| s.as_str() == want) {
+            top5 += 1;
+        }
+    }
+    (total, top1, top5, missed)
 }
 
 fn run_scenario(sc: &Scenario) -> Result<(), String> {

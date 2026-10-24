@@ -15,6 +15,7 @@ mod imp {
     use std::sync::{Arc, Mutex};
 
     use pinyin_dict::Dictionary;
+    use pinyin_dict::gram::Gram;
     use pinyin_engine::{Config, Engine, Event, Key, Mode};
     use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
 
@@ -27,6 +28,7 @@ mod imp {
 
     pub(super) struct State {
         pub(super) dict: Arc<Dictionary>,
+        pub(super) gram: Option<Arc<Gram>>,
         pub(super) sessions: Mutex<HashMap<u64, Session>>,
         /// 每次会话变化自增,候选窗轮询它决定刷新。
         pub(super) version: AtomicU64,
@@ -44,8 +46,22 @@ mod imp {
                 println!("主词典缺失或损坏,退回内置迷你词库");
                 Dictionary::builtin()
             });
+        // 语言模型是可选数据:缺失或格式不符就退化为纯词频,不影响输入。
+        let gram = dict_path("main.gram").and_then(|p| match Gram::open(&p) {
+            Ok(g) => {
+                println!("语法模型 ← {}", p.display());
+                Some(Arc::new(g))
+            }
+            Err(e) => {
+                println!("语法模型 {} 不可用: {e}", p.display());
+                None
+            }
+        });
+        // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
+        let _ = dict.total_weight();
         let state = Arc::new(State {
             dict: Arc::new(dict),
+            gram,
             sessions: Mutex::new(HashMap::new()),
             version: AtomicU64::new(0),
             active: AtomicU64::new(0),
@@ -60,7 +76,7 @@ mod imp {
         crate::ui::run(state);
     }
 
-    /// exe 同目录的 main.pyd / main.tsv。
+    /// exe 同目录的 main.pyd / main.tsv / main.gram。
     fn dict_path(name: &str) -> Option<std::path::PathBuf> {
         let mut path = std::env::current_exe().ok()?;
         path.set_file_name(name);
@@ -93,7 +109,13 @@ mod imp {
             Request::Hello { session, host } => {
                 println!("会话 {session} 上线({host})");
                 sessions.entry(session).or_insert_with(|| Session {
-                    engine: Engine::new(Arc::clone(&state.dict), Config::default()),
+                    engine: {
+                        let engine = Engine::new(Arc::clone(&state.dict), Config::default());
+                        match &state.gram {
+                            Some(g) => engine.with_gram(Arc::clone(g)),
+                            None => engine,
+                        }
+                    },
                     view: SessionView {
                         host,
                         ..SessionView::default()

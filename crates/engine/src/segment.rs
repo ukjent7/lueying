@@ -1,12 +1,12 @@
-//! 拼音切分:把原始输入串(小写字母与隔音符)枚举成所有合法音节序列。
+//! 音节图:把原始输入串展开成「位置 → 单元」的边。
 //!
-//! 整串被完全切分才算一条路径;隔音符只作硬边界,不产音节。
-//! 全拼与简拼(单字母或 zh/ch/sh)混合出现,同一串可能有多条路径(xian / xi'an / xia+n),
-//! 由候选层跨切分合并排序。
+//! 单元是全拼音节,或简拼(单字母、zh/ch/sh)。同一串输入的所有切分都是这张图
+//! 上的路径,不再枚举成一条条完整切分,避免组合爆炸与路径上限漏解。
+//! 隔音符只作硬边界,不产音节。
 
 use pinyin_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, is_syllable};
 
-/// 切分出的一个音节。`abbrev` 为真表示简拼。
+/// 音节图上的一个单元。`abbrev` 为真表示简拼。
 #[derive(Clone, Debug)]
 pub struct Syll {
     pub text: String,
@@ -15,70 +15,72 @@ pub struct Syll {
     pub span: (usize, usize),
 }
 
-const MAX_PATHS: usize = 64;
 const MAX_SYLL_LEN: usize = 6; // zhuang / chuang
 
-/// 枚举所有合法切分(最长音节优先的 DFS 顺序)。完全不可切分时为空。
-pub fn segmentations(raw: &str) -> Vec<Vec<Syll>> {
-    let mut out = Vec::new();
-    dfs(raw.as_bytes(), 0, &mut Vec::new(), &mut out);
+/// 建音节图:`edges[i]` 是从字节位置 `i` 出发的全部单元。
+pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
+    let b = raw.as_bytes();
+    let mut out = vec![Vec::new(); b.len() + 1];
+    for pos in 0..b.len() {
+        if b[pos] == b'\'' {
+            continue;
+        }
+        // 最长音节优先,让建图枚举先走更长的词。
+        for len in (1..=MAX_SYLL_LEN.min(b.len() - pos)).rev() {
+            if b[pos..pos + len].contains(&b'\'') {
+                continue;
+            }
+            if let Ok(s) = std::str::from_utf8(&b[pos..pos + len])
+                && is_syllable(s)
+            {
+                out[pos].push(Syll {
+                    text: s.to_string(),
+                    abbrev: false,
+                    span: (pos, pos + len),
+                });
+            }
+        }
+        if let Ok(s) = std::str::from_utf8(&b[pos..pos + 1])
+            && let Some(c) = s.chars().next()
+            && c.is_ascii_lowercase()
+            && ABBREV_LETTERS.contains(c)
+        {
+            out[pos].push(Syll {
+                text: s.to_string(),
+                abbrev: true,
+                span: (pos, pos + 1),
+            });
+        }
+        for d in ABBREV_DIGRAPHS {
+            if b[pos..].starts_with(d.as_bytes()) {
+                out[pos].push(Syll {
+                    text: (*d).to_string(),
+                    abbrev: true,
+                    span: (pos, pos + 2),
+                });
+            }
+        }
+    }
     out
 }
 
-fn dfs(b: &[u8], pos: usize, cur: &mut Vec<Syll>, out: &mut Vec<Vec<Syll>>) {
-    if out.len() >= MAX_PATHS || pos > b.len() {
-        return;
-    }
-    if pos == b.len() {
-        out.push(cur.clone());
-        return;
-    }
-    if b[pos] == b'\'' {
-        if cur.is_empty() {
-            return;
-        }
-        dfs(b, pos + 1, cur, out);
-        return;
-    }
-    for l in (1..=MAX_SYLL_LEN.min(b.len() - pos)).rev() {
-        if b[pos..pos + l].contains(&b'\'') {
-            // 更长的切片必含该隔音符,但更短的未必,只能跳过这一档。
+/// 无候选时的回删粒度:按最长音节贪心走一遍图。
+pub fn first_path(raw: &str) -> Vec<(usize, usize)> {
+    let edges = edges(raw);
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos < raw.len() {
+        if raw.as_bytes()[pos] == b'\'' {
+            pos += 1;
             continue;
         }
-        if let Ok(s) = std::str::from_utf8(&b[pos..pos + l])
-            && is_syllable(s)
-        {
-            cur.push(Syll {
-                text: s.to_string(),
-                abbrev: false,
-                span: (pos, pos + l),
-            });
-            dfs(b, pos + l, cur, out);
-            cur.pop();
+        match edges[pos].first() {
+            Some(e) => {
+                out.push(e.span);
+                pos = e.span.1;
+            }
+            None => pos += 1,
         }
     }
-    if let Ok(s) = std::str::from_utf8(&b[pos..pos + 1])
-        && let Some(c) = s.chars().next()
-        && c.is_ascii_lowercase()
-        && ABBREV_LETTERS.contains(c)
-    {
-        cur.push(Syll {
-            text: s.to_string(),
-            abbrev: true,
-            span: (pos, pos + 1),
-        });
-        dfs(b, pos + 1, cur, out);
-        cur.pop();
-    }
-    for d in ABBREV_DIGRAPHS {
-        if b[pos..].starts_with(d.as_bytes()) {
-            cur.push(Syll {
-                text: (*d).to_string(),
-                abbrev: true,
-                span: (pos, pos + 2),
-            });
-            dfs(b, pos + 2, cur, out);
-            cur.pop();
-        }
-    }
+    out
 }

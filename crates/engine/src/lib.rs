@@ -8,9 +8,9 @@ mod query;
 mod segment;
 mod user;
 
+use pinyin_dict::gram::Gram;
 use pinyin_dict::{Dictionary, Fuzzy};
 
-use segment::segmentations;
 pub use user::UserDict;
 
 /// 组合缓冲上限(字母与隔音符总数)。
@@ -86,6 +86,8 @@ pub struct Composition {
 pub struct Engine {
     /// 词典跨会话共享(Server 进程里多个宿主会话共用一份)。
     dict: std::sync::Arc<Dictionary>,
+    /// 可选的 rime `.gram` 语言模型;缺失或损坏时整句退化为纯词频。
+    gram: Option<std::sync::Arc<Gram>>,
     user: UserDict,
     cfg: Config,
     mode: Mode,
@@ -101,6 +103,7 @@ impl Engine {
     pub fn new(dict: std::sync::Arc<Dictionary>, cfg: Config) -> Self {
         Self {
             dict,
+            gram: None,
             user: UserDict::new(),
             cfg,
             mode: Mode::Chinese,
@@ -111,6 +114,12 @@ impl Engine {
             dq_open: false,
             sq_open: false,
         }
+    }
+
+    /// 挂上语言模型(链式构造;Server 启动时按文件是否存在决定)。
+    pub fn with_gram(mut self, gram: std::sync::Arc<Gram>) -> Self {
+        self.gram = Some(gram);
+        self
     }
 
     pub fn mode(&self) -> Mode {
@@ -454,18 +463,19 @@ impl Engine {
             self.cands.clear();
             return;
         };
-        let segs = segmentations(&comp.raw);
-        let built = query::build(&self.dict, &self.user, &self.cfg.fuzzy, &comp.raw, &segs);
+        let built = query::build(
+            &self.dict,
+            &self.user,
+            &self.cfg.fuzzy,
+            self.gram.as_deref(),
+            &comp.raw,
+        );
         comp.display = built.display;
         comp.seg_spans = built
             .cands
             .first()
             .map(|c| c.spans.clone())
-            .unwrap_or_else(|| {
-                segs.first()
-                    .map(|s| s.iter().map(|x| x.span).collect())
-                    .unwrap_or_default()
-            });
+            .unwrap_or_else(|| segment::first_path(&comp.raw));
         self.cands = built.cands;
     }
 }

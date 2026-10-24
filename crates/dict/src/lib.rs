@@ -8,11 +8,13 @@
 //! 该字节区间的视图;文本加载先在内存里物化成同样的布局再走同一条查询路径。
 //! 因此启动只需映射,不解析、不分配 per-entry 的 String。
 
+pub mod gram;
 pub mod syllables;
 
 use std::collections::HashSet;
 use std::ops::{Deref, Range};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use memmap2::Mmap;
 pub use syllables::Fuzzy;
@@ -61,6 +63,8 @@ pub struct Dictionary {
     /// 签名表区间,每个 `SIG` 字节一条。
     sigs: Range<usize>,
     count: usize,
+    /// 词频总和(首次整句解码时算一次)。
+    total: OnceLock<u64>,
 }
 
 /// 词的每个字符都要是 CJK 汉字(白霜数据里偶有符号词条,直接丢弃)。
@@ -222,6 +226,7 @@ impl Dictionary {
             data,
             sigs,
             count,
+            total: OnceLock::new(),
         })
     }
 
@@ -361,5 +366,31 @@ impl Dictionary {
             out.push(e);
         }
         out
+    }
+
+    /// 是否存在以 `prefix` 开头的键(整句建图的剪枝用,不取词条)。
+    pub fn has_key_prefix(&self, prefix: &str) -> bool {
+        let i = self.partition_key(prefix);
+        i < self.count && self.key_at(i).starts_with(prefix)
+    }
+
+    /// 是否存在以 `prefix` 开头的签名(简拼混合输入建图剪枝用)。
+    pub fn has_sig_prefix(&self, prefix: &str) -> bool {
+        let n = (self.sigs.end - self.sigs.start) / SIG;
+        let (mut lo, mut hi) = (0usize, n);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if self.sig_at(mid).0 < prefix {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo < n && self.sig_at(lo).0.starts_with(prefix)
+    }
+
+    /// 词频总和(每个词条至少按 1 计),用于把词频归一成对数概率。
+    pub fn total_weight(&self) -> u64 {
+        *self.total.get_or_init(|| self.iter().map(|e| e.freq.max(1)).sum())
     }
 }
