@@ -13,12 +13,12 @@ fn main() {
 mod imp {
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
     };
-    use windows::Win32::System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryW};
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
         VIRTUAL_KEY,
@@ -33,7 +33,7 @@ mod imp {
         TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE,
         WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
     };
-    use windows::core::{GUID, HSTRING, Interface, PCSTR};
+    use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
 
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
@@ -64,10 +64,14 @@ mod imp {
         let dll_h = unsafe { LoadLibraryW(&HSTRING::from(dll.as_os_str())) }
             .map_err(|e| format!("LoadLibraryW: {e}"))?;
         type DllServer = unsafe extern "system" fn() -> windows::core::HRESULT;
-        let reg_fn =
-            unsafe { GetProcAddress(dll_h, PCSTR::from_raw(c"DllRegisterServer".as_ptr())) }
-                .map(|f| unsafe { std::mem::transmute::<_, DllServer>(f) })
-                .ok_or("DLL 未导出 DllRegisterServer")?;
+        let reg_fn = unsafe {
+            GetProcAddress(
+                dll_h,
+                PCSTR::from_raw(c"DllRegisterServer".as_ptr().cast::<u8>()),
+            )
+        }
+        .map(|f| unsafe { std::mem::transmute::<_, DllServer>(f) })
+        .ok_or("DLL 未导出 DllRegisterServer")?;
         let hr = unsafe { reg_fn() };
         println!("DllRegisterServer: 0x{:08X}", hr.0 as u32);
         if hr.is_err() {
@@ -112,18 +116,18 @@ mod imp {
                 )
             } {
                 Ok(()) => println!(
-                    "GetProfile: 可见 enabled={} byDefault={}",
-                    prof.fEnabled.as_bool(),
-                    prof.fByDefault.as_bool()
+                    "GetProfile: 可见 dwProfileType={} dwFlags=0x{:x}",
+                    prof.dwProfileType, prof.dwFlags
                 ),
                 Err(e) => println!("GetProfile: {e}"),
             }
             if let Ok(enum_) = unsafe { mgr.EnumProfiles(LANGID_ZH_CN) } {
-                let mut item = TF_INPUTPROCESSORPROFILE::default();
+                let mut items = [TF_INPUTPROCESSORPROFILE::default()];
                 let mut got = 0u32;
                 let mut n = 0usize;
-                while unsafe { enum_.Next(1, &mut item, &mut got) }.is_ok() && got > 0 && n < 64 {
+                while unsafe { enum_.Next(&mut items, &mut got) }.is_ok() && got > 0 && n < 64 {
                     n += 1;
+                    got = 0;
                 }
                 println!("EnumProfiles(0x{LANGID_ZH_CN:04x}): {n} 个");
             }
