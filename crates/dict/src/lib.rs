@@ -259,6 +259,23 @@ impl Dictionary {
         (0..self.count).map(|i| self.entry(i))
     }
 
+    /// 内部区间(诊断用):(记录表起点, 记录表终点, 池起点, 池终点, 签名起点, 签名终点)。
+    pub fn layout_debug(&self) -> (usize, usize, usize, usize, usize, usize) {
+        (
+            self.recs.start,
+            self.recs.end,
+            self.data.start,
+            self.data.end,
+            self.sigs.start,
+            self.sigs.end,
+        )
+    }
+
+    /// 第 i 条记录的原始字节(诊断用)。
+    pub fn rec_debug(&self, i: usize) -> Vec<u8> {
+        self.rec(i).to_vec()
+    }
+
     fn rec(&self, i: usize) -> &[u8] {
         let at = self.recs.start + i * REC;
         &self.backing[at..at + REC]
@@ -268,9 +285,14 @@ impl Dictionary {
         let r = self.rec(i);
         let u = |n: usize| u32::from_le_bytes(r[n * 4..n * 4 + 4].try_into().unwrap()) as usize;
         let (wo, wl, ko, kl) = (u(0), u(1), u(2), u(3));
+        // 区间必须落在字符串池内:越界说明文件损坏,返回空串而非静默读到别处。
         let text = |off: usize, len: usize| {
             let at = self.data.start + off;
-            std::str::from_utf8(&self.backing[at..at + len]).unwrap_or("")
+            let end = at + len;
+            if end > self.data.end {
+                return "";
+            }
+            std::str::from_utf8(&self.backing[at..end]).unwrap_or("")
         };
         Entry {
             word: text(wo, wl),
