@@ -193,8 +193,11 @@ impl Dictionary {
             return empty;
         }
         let n = |i: usize| {
-            u32::from_le_bytes(bytes[HEAD - 16 + i * 4..HEAD - 12 + i * 4].try_into().unwrap())
-                as usize
+            u32::from_le_bytes(
+                bytes[HEAD - 16 + i * 4..HEAD - 12 + i * 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize
         };
         let (count, data_len, sig_len) = (n(0), n(1), n(2));
         let recs_at = HEAD;
@@ -249,9 +252,7 @@ impl Dictionary {
 
     fn entry(&self, i: usize) -> Entry<'_> {
         let r = self.rec(i);
-        let u = |n: usize| {
-            u32::from_le_bytes(r[n * 4..n * 4 + 4].try_into().unwrap()) as usize
-        };
+        let u = |n: usize| u32::from_le_bytes(r[n * 4..n * 4 + 4].try_into().unwrap()) as usize;
         let (wo, wl, ko, kl) = (u(0), u(1), u(2), u(3));
         let text = |off: usize, len: usize| {
             let at = self.data.start + off;
