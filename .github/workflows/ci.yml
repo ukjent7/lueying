@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -72,3 +73,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build (release)
         run: cargo build --release --workspace
+      - name: Windows 全链路 E2E(观察期,不阻断)
+        continue-on-error: true
+        run: cargo run -p pinyin-win-e2e --release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: win-e2e-report
+          path: target/win-e2e-report.md
