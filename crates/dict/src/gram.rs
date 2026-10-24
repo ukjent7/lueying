@@ -26,7 +26,7 @@ const META: usize = 44;
 const OFFSET_PTR_AT: usize = 40;
 /// darts-clone 每个 unit 4 字节。
 const UNIT: usize = 4;
-//! 单次查询最多取几个前缀匹配,对齐 `GramDb::kMaxResults`。
+/// 单次查询最多取几个前缀匹配,对齐 `GramDb::kMaxResults`。
 const MAX_RESULTS: usize = 8;
 /// 一次编码最多几个 Unicode 字符。
 const MAX_CHARS: usize = 8;
