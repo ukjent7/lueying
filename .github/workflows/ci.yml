@@ -55,7 +55,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
@@ -81,7 +81,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: 下载白霜词库
         run: bash tools/fetch_frost.sh data/frost
       - name: 转换词典
@@ -106,7 +106,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build (release)
