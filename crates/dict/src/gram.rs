@@ -143,8 +143,7 @@ impl Gram {
                 {
                     let match_chars = encoded_chars_prefix(key, used);
                     let whole = whole_prefix && used == key.len();
-                    let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole
-                    {
+                    let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole {
                         COLLOCATION_PENALTY
                     } else {
                         WEAK_COLLOCATION_PENALTY
@@ -205,8 +204,7 @@ impl Gram {
         let mut at = 0;
         while at < ctx.len() {
             if let Some(node) = self.traverse(&ctx[at..])
-                && let Some(score) =
-                    self.best_collocation(&word_key, node, context_chars, at == 0)
+                && let Some(score) = self.best_collocation(&word_key, node, context_chars, at == 0)
             {
                 result = result.max(score);
             }
