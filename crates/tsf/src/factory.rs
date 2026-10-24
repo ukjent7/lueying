@@ -11,6 +11,19 @@ use crate::service::TextService;
 #[implement(IClassFactory)]
 pub(crate) struct ClassFactory;
 
+impl ClassFactory {
+    pub(crate) fn new() -> Self {
+        crate::lock_module();
+        Self
+    }
+}
+
+impl Drop for ClassFactory {
+    fn drop(&mut self) {
+        crate::unlock_module();
+    }
+}
+
 impl IClassFactory_Impl for ClassFactory_Impl {
     fn CreateInstance(
         &self,

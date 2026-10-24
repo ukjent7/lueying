@@ -8,7 +8,18 @@ pub const PIPE_NAME: &str = r"\\.\pipe\pinyin-ime-v1";
 
 /// 带每用户后缀的管道名:用户名哈希入名,防止跨用户会话抢注同名管道
 /// (mozc 的 IPCKey 防劫持方案的轻量版;两端同会话同环境变量,得到同一名字)。
+/// `PINYIN_PIPE_SUFFIX` 只给自动化测试隔离用,避免连到本机已安装的服务。
 pub fn pipe_name() -> String {
+    if let Ok(suffix) = std::env::var("PINYIN_PIPE_SUFFIX") {
+        let clean: String = suffix
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .take(16)
+            .collect();
+        if !clean.is_empty() {
+            return format!("{PIPE_NAME}.t{clean}");
+        }
+    }
     match std::env::var("USERNAME") {
         Ok(user) if !user.is_empty() => {
             let hash = user
@@ -81,8 +92,16 @@ pub enum Request {
     Sync { session: u64 },
     /// TSF 读到的光标前文本;组合开始时上报,让重排从第一个候选就有上下文。
     Context { session: u64, text: String },
-    /// DLL 侧直接设置模式(CapsLock 大写锁定等)。
+    /// DLL 侧直接设置模式(CapsLock 大写锁定、系统转换模式等)。
     SetMode { session: u64, chinese: bool },
+    /// 语言栏/右键菜单切中英;不受「Shift 单击切换」开关限制。
+    ToggleMode { session: u64 },
+    /// 设置窗保存后通知 Server 重新读配置文件。
+    ReloadConfig,
+    /// 设置窗清空共享用户词库(所有会话立即生效)。
+    ClearUser,
+    /// 安装器卸载前让常驻服务干净退出。
+    Shutdown,
     /// 焦点变化(切窗口时 Server 收候选窗)。
     Focus { session: u64, focused: bool },
     /// 应用强行终止了组句。
@@ -95,6 +114,10 @@ pub enum Request {
         right: i32,
         bottom: i32,
     },
+    /// 候选窗鼠标点选:当前页内 0 基序号。
+    Pick { session: u64, slot: usize },
+    /// 候选窗滚轮翻页:`delta` 为 ±1。
+    Page { session: u64, delta: i32 },
     /// 会话下线。
     Goodbye { session: u64 },
 }
@@ -115,6 +138,8 @@ pub struct Reply {
 /// 会话快照(Server 内部与候选窗渲染共用)。
 #[derive(Debug, Default, Clone)]
 pub struct SessionView {
+    /// 组合的原始拼音(含用户输入的隔音符),候选窗首行显示它。
+    pub raw: String,
     pub preedit: String,
     /// 分段显示的拼音。
     pub segments: Vec<String>,

@@ -2,7 +2,7 @@
 
 use core::cell::Cell;
 
-use windows::Win32::Foundation::S_FALSE;
+use windows::Win32::Foundation::{E_INVALIDARG, S_FALSE};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::TextServices::{
@@ -80,6 +80,9 @@ impl ITfDisplayAttributeInfo_Impl for AttributeInfo_Impl {
     }
 
     fn GetAttributeInfo(&self, pda: *mut TF_DISPLAYATTRIBUTE) -> Result<()> {
+        if pda.is_null() {
+            return Err(E_INVALIDARG.into());
+        }
         unsafe { *pda = input_attribute() };
         Ok(())
     }
@@ -119,6 +122,9 @@ impl IEnumTfDisplayAttributeInfo_Impl for AttributeEnum_Impl {
         rginfo: *mut Option<ITfDisplayAttributeInfo>,
         pcfetched: *mut u32,
     ) -> Result<()> {
+        if ulcount >= 1 && rginfo.is_null() {
+            return Err(E_INVALIDARG.into());
+        }
         let mut fetched = 0u32;
         if ulcount >= 1 && !self.done.get() {
             unsafe { *rginfo = Some(info()) };

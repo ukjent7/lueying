@@ -9,19 +9,21 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, Context, Point, SharedString, Window, WindowBounds, WindowKind, WindowOptions,
-    div, prelude::*, px, rgb, size,
+    App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString, Window, WindowAppearance,
+    WindowBounds, WindowKind, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
-use pinyin_protocol::SessionView;
+use pinyin_protocol::{Request, SessionView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
 };
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW,
-    SetWindowPos, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindowVisible,
+    IsZoomed, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 use crate::imp::State;
@@ -59,6 +61,11 @@ pub(super) fn run(state: Arc<State>) {
                 },
             )
             .expect("候选窗打开失败");
+        // 建窗后先摆一次:补上无焦点/工具窗样式并挪出屏幕。只等首个按键
+        // 才摆位的话,候选窗在 Alt+Tab/任务栏里会以普通窗口出现一次。
+        let _ = handle.update(cx, |panel: &mut CandidatePanel, window, _| {
+            panel.place(window);
+        });
         // 轮询版本号,变了才摆位刷新;15ms 对打字反馈无感。
         let poll = Arc::clone(&state);
         cx.spawn(async move |cx| {
@@ -126,20 +133,27 @@ impl CandidatePanel {
                 self.styled.set(true);
             }
             let view = snapshot(&self.state);
-            let scale = window.scale_factor();
             let (x, y, w, h) = match view.as_ref().and_then(|v| v.caret) {
                 Some((l, t, r, b)) => {
+                    let left = l.min(r);
+                    // 候选窗通常停在外屏,`window.scale_factor()` 是停靠屏的 DPI;
+                    // 必须按光标所在显示器算,否则副屏 150%/200% 下窗口尺寸不匹配。
+                    let scale = scale_at(left, b);
                     let w = (WIDTH * scale) as i32;
-                    let rows = view.as_ref().map_or(1, page_rows);
+                    let rows = view.as_ref().map_or(1, panel_rows);
                     let h = ((PREEDIT_H + ROW_H * rows as f32 + 8.0) * scale) as i32;
-                    let work = work_area(hwnd);
-                    let mut x = l.min(r);
+                    // 按光标所在屏的工作区夹取。
+                    let work = work_area_at(left, b);
+                    let mut x = left;
                     let mut y = b;
                     if y + h > work.bottom {
                         y = (t.max(0) - h).max(work.top);
                     }
                     x = x.clamp(work.left, (work.right - w).max(work.left));
-                    (x, y, w, h)
+                    // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
+                    // 最大化窗口保留候选窗(它的矩形通常只到工作区)。
+                    let hidden = foreground_fullscreen_at(left, b);
+                    (x, y, if hidden { 0 } else { w }, h)
                 }
                 None => (PARK, PARK, 0, 0),
             };
@@ -160,65 +174,250 @@ impl CandidatePanel {
     }
 }
 
-/// 当前页候选行数(候选窗高度估算)。
-fn page_rows(view: &SessionView) -> usize {
+/// 当前页候选估算占几行(按字数估宽,避免窗口比内容高出几行)。
+fn panel_rows(view: &SessionView) -> usize {
     let ps = view.page_size.max(1);
-    view.candidates.len().saturating_sub(view.page * ps).min(ps)
+    let items = view.candidates.iter().skip(view.page * ps).take(ps);
+    let mut rows = 0usize;
+    let mut used = 0.0f32;
+    for text in items {
+        let width = 22.0 + 18.0 * text.chars().count() as f32;
+        if rows == 0 {
+            rows = 1;
+            used = width;
+        } else if used + width + 4.0 > WIDTH - 16.0 {
+            rows += 1;
+            used = width;
+        } else {
+            used += width + 4.0;
+        }
+    }
+    rows
 }
 
-fn work_area(hwnd: HWND) -> RECT {
+/// 候选窗里的翻页箭头;滚轮之外再给鼠标一个明确入口。
+fn page_arrow(
+    label: &'static str,
+    delta: i32,
+    state: Arc<State>,
+    colors: Palette,
+) -> impl IntoElement {
+    div()
+        .px_1()
+        .rounded_md()
+        .text_size(px(13.0))
+        .text_color(rgb(colors.index))
+        .hover(|style| style.bg(rgb(colors.hover)))
+        .on_mouse_down(MouseButton::Left, move |_, _, _| {
+            let session = state.active.load(Ordering::Relaxed);
+            if session != 0 {
+                let _ = crate::imp::handle(&state, Request::Page { session, delta });
+            }
+        })
+        .child(label)
+}
+
+fn monitor_at(x: i32, y: i32) -> HMONITOR {
+    unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) }
+}
+
+fn monitor_info_at(x: i32, y: i32) -> Option<MONITORINFO> {
+    let monitor = monitor_at(x, y);
+    if monitor.is_invalid() {
+        return None;
+    }
     let mut info = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
-    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
-        info.rcWork
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some(info)
+}
+
+/// 光标所在显示器的缩放比例;取不到时按 100%。
+fn scale_at(x: i32, y: i32) -> f32 {
+    let monitor = monitor_at(x, y);
+    if monitor.is_invalid() {
+        return 1.0;
+    }
+    let mut dpi_x = 0u32;
+    let mut dpi_y = 0u32;
+    if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.is_ok()
+        && dpi_x > 0
+    {
+        dpi_x as f32 / 96.0
     } else {
+        1.0
+    }
+}
+
+/// 光标所在显示器的工作区(物理像素);取不到时给常见主屏兜底。
+fn work_area_at(x: i32, y: i32) -> RECT {
+    monitor_info_at(x, y).map_or(
         RECT {
             left: 0,
             top: 0,
             right: 1920,
             bottom: 1080,
+        },
+        |info| info.rcWork,
+    )
+}
+
+/// 前台窗口是否铺满光标所在显示器。最大化窗口不算(任务栏仍在),
+/// 这样 F11/独占全屏游戏不弹候选窗,普通最大化应用照常输入。
+fn foreground_fullscreen_at(x: i32, y: i32) -> bool {
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_invalid()
+        || !unsafe { IsWindowVisible(foreground) }.as_bool()
+        || unsafe { IsZoomed(foreground) }.as_bool()
+    {
+        return false;
+    }
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(foreground, &mut rect) }.is_err() {
+        return false;
+    }
+    let Some(info) = monitor_info_at(x, y) else {
+        return false;
+    };
+    let screen = info.rcMonitor;
+    rect.left <= screen.left
+        && rect.top <= screen.top
+        && rect.right >= screen.right
+        && rect.bottom >= screen.bottom
+}
+
+#[derive(Clone, Copy)]
+struct Palette {
+    bg: u32,
+    border: u32,
+    preedit: u32,
+    text: u32,
+    index: u32,
+    hover: u32,
+    selected_bg: u32,
+    selected_text: u32,
+    selected_index: u32,
+}
+
+fn palette(dark: bool) -> Palette {
+    if dark {
+        Palette {
+            bg: 0x2b2b31,
+            border: 0x44444d,
+            preedit: 0xb0b0ba,
+            text: 0xe8e8ee,
+            index: 0x8a8a96,
+            hover: 0x3a3a42,
+            selected_bg: 0x3b78ff,
+            selected_text: 0xffffff,
+            selected_index: 0xd0e0ff,
+        }
+    } else {
+        Palette {
+            bg: 0xf7f7f9,
+            border: 0xd9d9e0,
+            preedit: 0x50505a,
+            text: 0x20202a,
+            index: 0x90909a,
+            hover: 0xe9e9f0,
+            selected_bg: 0x2f6fed,
+            selected_text: 0xffffff,
+            selected_index: 0xc8d8ff,
         }
     }
 }
 
 impl Render for CandidatePanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let Some(view) = snapshot(&self.state) else {
             return div().into_any_element();
         };
+        let colors = palette(matches!(
+            window.appearance(),
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        ));
         let ps = view.page_size.max(1);
         let start = view.page * ps;
+        let pages = view.candidates.len().div_ceil(ps).max(1);
+        let page_no = view.page + 1;
         let items: Vec<(usize, String, bool)> = view
             .candidates
             .iter()
             .enumerate()
             .skip(start)
             .take(ps)
-            .map(|(i, text)| (i - start + 1, text.clone(), i == view.highlight))
+            .map(|(i, text)| (i - start, text.clone(), i == view.highlight))
             .collect();
+        let state = Arc::clone(&self.state);
+        let scroll_state = Arc::clone(&self.state);
+        let previous = Arc::clone(&self.state);
+        let next = Arc::clone(&self.state);
+        let preedit = SharedString::from(view.raw.clone());
         div()
             .font_family("Microsoft YaHei")
             .flex()
             .flex_col()
             .w(px(WIDTH))
-            .bg(rgb(0xf7f7f9))
+            .bg(rgb(colors.bg))
             .border_1()
-            .border_color(rgb(0xd9d9e0))
+            .border_color(rgb(colors.border))
             .rounded_lg()
             .shadow_lg()
             .overflow_hidden()
+            .on_scroll(move |event, _, _| {
+                let dir = match event.delta {
+                    ScrollDelta::Lines(p) => p.y.signum(),
+                    ScrollDelta::Pixels(p) => (p.y / px(1.0)).signum(),
+                };
+                if dir == 0.0 {
+                    return;
+                }
+                let session = scroll_state.active.load(Ordering::Relaxed);
+                if session != 0 {
+                    let _ = crate::imp::handle(
+                        &scroll_state,
+                        Request::Page {
+                            session,
+                            delta: if dir > 0.0 { -1 } else { 1 },
+                        },
+                    );
+                }
+            })
             .child(
                 div()
                     .flex()
                     .h(px(PREEDIT_H))
                     .px_3()
                     .items_center()
-                    .text_size(px(14.0))
-                    .text_color(rgb(0x50505a))
-                    .child(SharedString::from(view.preedit)),
+                    .justify_between()
+                    .child(
+                        div()
+                            .max_w(px(220.0))
+                            .truncate()
+                            .text_size(px(14.0))
+                            .text_color(rgb(colors.preedit))
+                            .child(preedit),
+                    )
+                    .child(if pages > 1 {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(page_arrow("‹", -1, previous, colors))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(colors.index))
+                                    .child(format!("{page_no}/{pages}")),
+                            )
+                            .child(page_arrow("›", 1, next, colors))
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
             )
             .children((!items.is_empty()).then(|| {
                 div()
@@ -227,7 +426,8 @@ impl Render for CandidatePanel {
                     .px_2()
                     .pb_2()
                     .gap_1()
-                    .children(items.into_iter().map(|(n, text, hl)| {
+                    .children(items.into_iter().map(|(slot, text, hl)| {
+                        let state = Arc::clone(&state);
                         div()
                             .flex()
                             .items_baseline()
@@ -236,18 +436,32 @@ impl Render for CandidatePanel {
                             .py_1()
                             .rounded_md()
                             .text_size(px(17.0))
-                            .map(|el| {
-                                if hl {
-                                    el.bg(rgb(0x2f6fed)).text_color(rgb(0xffffff))
-                                } else {
-                                    el.text_color(rgb(0x20202a))
+                            .when(hl, |el| {
+                                el.bg(rgb(colors.selected_bg))
+                                    .text_color(rgb(colors.selected_text))
+                            })
+                            .when(!hl, |el| {
+                                el.text_color(rgb(colors.text))
+                                    .hover(|s| s.bg(rgb(colors.hover)))
+                            })
+                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                let session = state.active.load(Ordering::Relaxed);
+                                if session != 0 {
+                                    let _ = crate::imp::handle(
+                                        &state,
+                                        Request::Pick { session, slot },
+                                    );
                                 }
                             })
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(if hl { rgb(0xc8d8ff) } else { rgb(0x90909a) })
-                                    .child(format!("{n}.")),
+                                    .text_color(if hl {
+                                        rgb(colors.selected_index)
+                                    } else {
+                                        rgb(colors.index)
+                                    })
+                                    .child(format!("{}.", slot + 1)),
                             )
                             .child(SharedString::from(text))
                     }))

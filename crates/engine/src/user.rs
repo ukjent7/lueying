@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 超过该间隔再选同一词,频次先减半再加一(近似近期使用优先)。
 const DECAY_SECS: u64 = 7 * 24 * 3600;
+/// 用户词条上限。超过后按频次/时间保留九成,防止长期使用后文件与查询无限膨胀。
+const MAX_ENTRIES: usize = 20_000;
 
 #[derive(Clone)]
 struct UserEntry {
@@ -16,6 +18,8 @@ struct UserEntry {
 #[derive(Default)]
 pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
+    /// 词条总数,避免每次学习都扫全表。
+    count: usize,
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
     rev: u64,
 }
@@ -37,6 +41,13 @@ impl UserDict {
         self.rev
     }
 
+    /// 清空全部学习结果(设置窗的「清空用户词库」)。
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.count = 0;
+        self.rev = self.rev.wrapping_add(1);
+    }
+
     /// 记录一次「在 key 下选了 word」。
     pub fn learn(&mut self, key: &str, word: &str) {
         let ts = now();
@@ -46,17 +57,45 @@ impl UserDict {
                 e.freq = if ts.saturating_sub(e.ts) > DECAY_SECS {
                     e.freq / 2 + 1
                 } else {
-                    e.freq + 1
+                    e.freq.saturating_add(1)
                 };
                 e.ts = ts;
             }
-            None => entries.push(UserEntry {
-                word: word.to_string(),
-                freq: 1,
-                ts,
-            }),
+            None => {
+                entries.push(UserEntry {
+                    word: word.to_string(),
+                    freq: 1,
+                    ts,
+                });
+                self.count += 1;
+            }
+        }
+        if self.count > MAX_ENTRIES {
+            self.prune();
         }
         self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 保留高频、近期的九成词条;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune(&mut self) {
+        let keep = MAX_ENTRIES * 9 / 10;
+        let mut all: Vec<(String, UserEntry)> = self
+            .map
+            .drain()
+            .flat_map(|(key, entries)| entries.into_iter().map(move |e| (key.clone(), e)))
+            .collect();
+        all.sort_by(|a, b| {
+            b.1.freq
+                .cmp(&a.1.freq)
+                .then(b.1.ts.cmp(&a.1.ts))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.word.cmp(&b.1.word))
+        });
+        all.truncate(keep);
+        for (key, entry) in all {
+            self.map.entry(key).or_default().push(entry);
+        }
+        self.count = self.map.values().map(Vec::len).sum();
     }
 
     /// 该键下某词的用户频次(未学过为 0)。
@@ -114,14 +153,20 @@ impl UserDict {
                         e.freq = e.freq.max(freq);
                         e.ts = e.ts.max(ts);
                     }
-                    None => entries.push(UserEntry {
-                        word: w.to_string(),
-                        freq,
-                        ts,
-                    }),
+                    None => {
+                        entries.push(UserEntry {
+                            word: w.to_string(),
+                            freq,
+                            ts,
+                        });
+                        self.count += 1;
+                    }
                 }
                 changed = true;
             }
+        }
+        if self.count > MAX_ENTRIES {
+            self.prune();
         }
         if changed {
             self.rev = self.rev.wrapping_add(1);

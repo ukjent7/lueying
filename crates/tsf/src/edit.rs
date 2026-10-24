@@ -30,6 +30,8 @@ pub(crate) struct Write {
     pub(crate) preedit: String,
     /// 轮询写回发出时的状态;按键路径为 `None`。
     pub(crate) guard: Option<Guard>,
+    /// 失焦落定:允许写回已经切走的旧输入框,只上屏、不再碰新输入框的组句。
+    pub(crate) allow_stale: bool,
 }
 
 /// 停顿轮询写回的过期条件:发出后输入没变,文档里仍是那份内联文本。
@@ -50,15 +52,39 @@ struct UpdateSession {
 
 impl ITfEditSession_Impl for UpdateSession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
+        // 同一线程里换输入框后,两个上下文的编辑会话执行顺序没有保证;
+        // 旧输入框的写回不能落到新输入框的组句/光标状态上。
+        let current = is_write_context(&self.shared, &self.context);
+        if !current && !self.write.allow_stale {
+            return Ok(());
+        }
+        if !current {
+            // 失焦落定:只把已经取到的上屏文本写回旧输入框。新输入框可能
+            // 已经起了组句,不能碰共享组句状态,也不写内联拼音。
+            if let Some(text) = &self.write.commit
+                && let Err(error) = commit_text(&self.shared, &self.context, ec, text, true)
+            {
+                log(&format!("失焦落定失败: {error}"));
+            }
+            return Ok(());
+        }
         if let Some(guard) = &self.write.guard
             && (self.shared.revision.get() != guard.revision
                 || self.shared.preedit.borrow().as_str() != guard.base_preedit.as_str())
         {
+            // 过期的是内联文本,不是已经取走的上屏文本。丢弃 commit 会把
+            // 快速点选/别的窗口切模式产生的字吞掉;编辑会话按请求顺序执行,
+            // 先落的旧 commit 不会覆盖随后按键自己的写回。
+            if let Some(text) = &self.write.commit
+                && let Err(error) = commit_text(&self.shared, &self.context, ec, text, false)
+            {
+                log(&format!("过期轮询上屏失败: {error}"));
+            }
             return Ok(());
         }
         match catch_unwind(AssertUnwindSafe(|| {
             if let Some(text) = &self.write.commit {
-                commit_text(&self.shared, &self.context, ec, text)?;
+                commit_text(&self.shared, &self.context, ec, text, false)?;
             }
             if self.write.preedit.is_empty() {
                 end_composition(&self.shared, ec)
@@ -105,15 +131,33 @@ pub(crate) fn request_update(
 }
 
 /// 有组句就把组句范围替换成文本再收组句,否则在选区插入。
-fn commit_text(shared: &Shared, context: &ITfContext, ec: u32, text: &str) -> Result<()> {
+/// `stale` 为失焦落定:只认属于这个上下文的组句,绝不清理新输入框的状态。
+fn commit_text(
+    shared: &Shared,
+    context: &ITfContext,
+    ec: u32,
+    text: &str,
+    stale: bool,
+) -> Result<()> {
     let utf16: Vec<u16> = text.encode_utf16().collect();
-    match shared.composition.borrow().clone() {
+    let composition = if stale {
+        composition_for(shared, context)
+    } else {
+        live_composition(shared, context)
+    };
+    match composition {
         Some(composition) => {
             let range = unsafe { composition.GetRange()? };
             unsafe { range.SetText(ec, 0, &utf16)? };
-            move_selection_to_end(context, ec, &range)?;
-            unsafe { composition.EndComposition(ec)? };
-            shared.preedit.borrow_mut().clear();
+            // 移动选区失败也要结束组句,否则旧输入框里会留下无法再管的拼音。
+            if let Err(error) = move_selection_to_end(context, ec, &range) {
+                log(&format!("上屏后移动光标失败: {error}"));
+            }
+            let ended = unsafe { composition.EndComposition(ec) };
+            // 组句已经结束;部分上屏时随后的 update_preedit 要新起一个组句,
+            // 不能复用这个已结束的对象。
+            clear_composition(shared);
+            ended?;
         }
         None => {
             let insert: ITfInsertAtSelection = context.cast()?;
@@ -128,6 +172,51 @@ fn commit_text(shared: &Shared, context: &ITfContext, ec: u32, text: &str) -> Re
     Ok(())
 }
 
+/// 只有最近一次按键所在的输入框能接收异步写回。
+fn is_write_context(shared: &Shared, context: &ITfContext) -> bool {
+    shared
+        .last_context
+        .borrow()
+        .as_ref()
+        .is_some_and(|current| current.as_raw() == context.as_raw())
+}
+
+/// 只取属于这个上下文的组句;上下文不一致时返回 `None` 且不改共享状态。
+fn composition_for(shared: &Shared, context: &ITfContext) -> Option<ITfComposition> {
+    let owned = shared
+        .composition_context
+        .borrow()
+        .as_ref()
+        .is_some_and(|owner| owner.as_raw() == context.as_raw());
+    if !owned {
+        return None;
+    }
+    shared.composition.borrow().clone()
+}
+
+/// 当前上下文自己的组句。上下文不一致时丢弃旧对象,避免异步会话在新输入框里
+/// 复用旧输入框的组句(两个上下文的编辑会话队列互不影响,执行顺序无法保证)。
+fn live_composition(shared: &Shared, context: &ITfContext) -> Option<ITfComposition> {
+    let same = shared
+        .composition_context
+        .borrow()
+        .as_ref()
+        .is_some_and(|owner| owner.as_raw() == context.as_raw());
+    if same {
+        return shared.composition.borrow().clone();
+    }
+    if shared.composition.borrow().is_some() {
+        clear_composition(shared);
+    }
+    None
+}
+
+fn clear_composition(shared: &Shared) {
+    shared.composition.borrow_mut().take();
+    shared.composition_context.borrow_mut().take();
+    shared.preedit.borrow_mut().clear();
+}
+
 fn update_preedit(
     shared: &Rc<Shared>,
     client: &SharedClient,
@@ -136,7 +225,7 @@ fn update_preedit(
     ec: u32,
     preedit: &str,
 ) -> Result<()> {
-    let composition = match shared.composition.borrow().clone() {
+    let composition = match live_composition(shared, context) {
         Some(composition) => composition,
         None => start_composition(shared, client, session, context, ec)?,
     };
@@ -163,21 +252,27 @@ fn start_composition(
         shared: shared.clone(),
         client: Rc::clone(client),
         session,
+        context: context.clone(),
     }
     .into();
     let composition = unsafe { context_composition.StartComposition(ec, &range, &sink)? };
     *shared.composition.borrow_mut() = Some(composition.clone());
+    *shared.composition_context.borrow_mut() = Some(context.clone());
     Ok(composition)
 }
 
 /// 清空组句文本再结束,避免残留拼音。
 fn end_composition(shared: &Shared, ec: u32) -> Result<()> {
-    if let Some(composition) = shared.composition.borrow_mut().take() {
-        let range = unsafe { composition.GetRange()? };
-        unsafe { range.SetText(ec, 0, &[])? };
-        unsafe { composition.EndComposition(ec)? };
+    // 先取出所有权再借 mut,否则 `if let` 会把 `Ref` 拖到整个分支末尾。
+    let composition = shared.composition.borrow().clone();
+    if let Some(composition) = composition {
+        // 清文本失败也要结束组句,否则文档里会留下无法再管的拼音。
+        if let Ok(range) = unsafe { composition.GetRange() } {
+            let _ = unsafe { range.SetText(ec, 0, &[]) };
+        }
+        let _ = unsafe { composition.EndComposition(ec) };
     }
-    shared.preedit.borrow_mut().clear();
+    clear_composition(shared);
     Ok(())
 }
 
@@ -205,8 +300,10 @@ fn report_caret(
 }
 
 fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i32, i32, i32)> {
-    let composition = shared.composition.borrow().clone()?;
+    let composition = live_composition(shared, context)?;
     let range = unsafe { composition.GetRange().ok()? };
+    // 量光标所在的串尾,而不是整段组句的左端:长拼音时候选窗要跟着光标走。
+    unsafe { range.Collapse(ec, TF_ANCHOR_END).ok()? };
     let view: ITfContextView = unsafe { context.GetActiveView().ok()? };
     let mut rect = RECT::default();
     let mut clipped = windows::core::BOOL::default();
@@ -236,6 +333,7 @@ struct CompositionSink {
     shared: Rc<Shared>,
     client: SharedClient,
     session: u64,
+    context: ITfContext,
 }
 
 impl ITfCompositionSink_Impl for CompositionSink_Impl {
@@ -244,9 +342,18 @@ impl ITfCompositionSink_Impl for CompositionSink_Impl {
         _ecwrite: u32,
         _composition: Ref<ITfComposition>,
     ) -> Result<()> {
+        // 旧输入框的组句被终止时,当前输入框可能已经起了新组句;不能清掉新状态。
+        let ours = self
+            .shared
+            .composition_context
+            .borrow()
+            .as_ref()
+            .is_some_and(|owner| owner.as_raw() == self.context.as_raw());
+        if !ours || !is_write_context(&self.shared, &self.context) {
+            return Ok(());
+        }
         log("组句被应用终止,清状态");
-        self.shared.composition.borrow_mut().take();
-        self.shared.preedit.borrow_mut().clear();
+        clear_composition(&self.shared);
         self.shared.touch();
         let mut guard = self.client.borrow_mut();
         if let Some(c) = guard.as_mut() {

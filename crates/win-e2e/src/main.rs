@@ -1,6 +1,6 @@
 //! Windows 全链路 E2E:进程内直调 DllRegisterServer 注册 DLL → 激活本输入法 →
-//! 自建 EDIT 宿主窗口 → SendInput 注入「nihao+空格」 → 读回文本断言「你好」 → 清理注册。
-//! 产物 target/win-e2e-report.md。CI 首期 continue-on-error 观察,稳定后转门禁。
+//! 自建 RichEdit 宿主(TSF 文本存区)→ SendInput 注入「nihao+空格」→ 读回「你好」,
+//! 再切英文打 ASCII、切回中文验证全局模式。产物 target/win-e2e-report.md。
 
 fn main() {
     #[cfg(windows)]
@@ -29,10 +29,10 @@ mod imp {
         TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetWindowTextW, MSG, PM_REMOVE,
-        PeekMessageW, RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow, ShowWindow,
-        TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE,
-        WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
+        GetWindowTextW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWNORMAL,
+        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD,
+        WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
     };
     use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
 
@@ -54,6 +54,12 @@ mod imp {
     }
 
     fn real_run() -> Result<String, String> {
+        // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
+        let suffix = format!("e2e{}", std::process::id());
+        unsafe {
+            // 尚未启动任何线程,设置环境变量不会与并发读取竞争。
+            std::env::set_var("PINYIN_PIPE_SUFFIX", &suffix);
+        }
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = exe.parent().ok_or("无父目录")?.to_path_buf();
         let dll = dir.join("pinyin_tsf.dll");
@@ -79,8 +85,15 @@ mod imp {
             return Err(format!("DllRegisterServer: 0x{:08X}", hr.0 as u32));
         }
 
-        // 拉起 server(主词典缺失会退回内置迷你词库,E2E 断言用它)
+        // 拉起 server(主词典缺失会退回内置迷你词库,E2E 断言用它)。
+        // 用户词库与配置指向本目录,重复运行不受上一轮学习结果影响。
+        let data = dir.join("e2e-data");
+        std::fs::create_dir_all(&data).map_err(|e| format!("创建 E2E 数据目录: {e}"))?;
         let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
+            .env("LOCALAPPDATA", &data)
+            .env("APPDATA", &data)
+            // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
+            .env("PINYIN_SERVER_NO_UI", "1")
             .spawn()
             .ok();
         // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。
@@ -89,6 +102,16 @@ mod imp {
         unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
             .ok()
             .map_err(|e| format!("CoInitializeEx: {e}"))?;
+
+        // 应用必须激活 TSF 线程管理器,按键才会送到文本服务;只选 profile 不够。
+        let thread_mgr: ITfThreadMgr = unsafe {
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
+        }
+        .map_err(|e| format!("CoCreateInstance(ThreadMgr): {e}"))?;
+        match unsafe { thread_mgr.Activate() } {
+            Ok(_) => println!("ITfThreadMgr::Activate: ok"),
+            Err(e) => println!("ITfThreadMgr::Activate: {e}"),
+        }
 
         let result = (|| -> Result<String, String> {
             // 2. 激活本输入法(本进程)
@@ -184,7 +207,7 @@ mod imp {
                 Err(e) => println!("ActivateProfile(FORPROCESS|ENABLEPROFILE): {e}"),
             }
 
-            // 3. 宿主窗口 + EDIT 控件
+            // 3. 宿主窗口 + RichEdit(自带 TSF 文本存区)
             let (hwnd, edit) = create_host_window()?;
             unsafe {
                 let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -194,22 +217,30 @@ mod imp {
             pump_for(Duration::from_millis(150));
             report_tsf_focus();
 
-            // 4. 注入按键
-            for c in "nihao".chars() {
-                tap(vk_of(c))?;
-                pump_for(Duration::from_millis(60));
-            }
+            // 4. 中文:注入「nihao+空格」
+            type_text("nihao")?;
             tap(0x20)?; // 空格
-            pump_for(Duration::from_millis(800));
+            pump_for(Duration::from_millis(600));
 
-            // 5. 读回
+            // 5. 单击 Shift 切英文,字母应原样进入 RichEdit;再切回中文验证全局模式。
+            tap(0x10)?; // VK_SHIFT
+            pump_for(Duration::from_millis(200));
+            type_text("abc")?;
+            pump_for(Duration::from_millis(200));
+            tap(0x10)?;
+            pump_for(Duration::from_millis(200));
+            type_text("nihao")?;
+            tap(0x20)?;
+            pump_for(Duration::from_millis(600));
+
+            // 6. 读回
             let mut buf = [0u16; 512];
             let n = unsafe { GetWindowTextW(edit, &mut buf) };
             let text = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-            if text.contains("你好") {
+            if text.contains("你好abc你好") {
                 Ok(text)
             } else {
-                Err(format!("EDIT 文本 `{text}` 不含 你好"))
+                Err(format!("RichEdit 文本 `{text}` 不含 你好abc你好"))
             }
         })();
 
@@ -223,6 +254,8 @@ mod imp {
             .arg("/u")
             .arg(&dll)
             .status();
+        let _ = unsafe { thread_mgr.Deactivate() };
+        drop(thread_mgr);
         let _ = unsafe { FreeLibrary(dll_h) };
         unsafe { CoUninitialize() };
         result
@@ -256,6 +289,12 @@ mod imp {
     }
 
     fn create_host_window() -> Result<(HWND, HWND), String> {
+        // RichEdit 自己实现 ITextStoreACP 并创建 TSF 文档管理器,普通 EDIT 只走 IMM32。
+        let msftedit = unsafe { LoadLibraryW(&HSTRING::from("Msftedit.dll")) }
+            .map_err(|e| format!("加载 Msftedit.dll: {e}"))?;
+        if msftedit.is_invalid() {
+            return Err("Msftedit.dll 句柄无效".into());
+        }
         let class_name: Vec<u16> = "pinyin-e2e-host\0".encode_utf16().collect();
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
@@ -285,13 +324,18 @@ mod imp {
             )
         }
         .map_err(|e| format!("CreateWindowExW: {e}"))?;
-        let edit_name: Vec<u16> = "EDIT\0".encode_utf16().collect();
+        let edit_name: Vec<u16> = "RICHEDIT50W\0".encode_utf16().collect();
         let edit = unsafe {
             CreateWindowExW(
                 WS_EX_CLIENTEDGE,
                 PCWSTR(edit_name.as_ptr()),
                 PCWSTR::null(),
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                WS_CHILD
+                    | WS_VISIBLE
+                    | WS_TABSTOP
+                    | WS_VSCROLL
+                    | ES_MULTILINE
+                    | ES_AUTOVSCROLL,
                 10,
                 10,
                 550,
@@ -302,12 +346,20 @@ mod imp {
                 None,
             )
         }
-        .map_err(|e| format!("CreateWindowExW EDIT: {e}"))?;
+        .map_err(|e| format!("CreateWindowExW RichEdit: {e}"))?;
         Ok((hwnd, edit))
     }
 
     fn vk_of(c: char) -> u16 {
         c.to_ascii_uppercase() as u16
+    }
+
+    fn type_text(text: &str) -> Result<(), String> {
+        for c in text.chars() {
+            tap(vk_of(c))?;
+            pump_for(Duration::from_millis(60));
+        }
+        Ok(())
     }
 
     fn tap(vk: u16) -> Result<(), String> {

@@ -1,5 +1,5 @@
 //! E2E 场景规格:每个场景列出「它可能怎么坏」。分阶段推进,阶段末逐条断言。
-//! 全部基于内置迷你词库;主词典质量与性能探针见 [`crate::probes`]。
+//! 全部基于内置迷你词库;主词典质量与性能探针见 [`probes`]。
 
 use pinyin_engine::{Key, Mode};
 
@@ -248,6 +248,11 @@ pub fn scenarios() -> Vec<Scenario> {
                     Key::Punct(')'),
                     Key::Punct('<'),
                     Key::Punct('>'),
+                    Key::Punct('['),
+                    Key::Punct(']'),
+                    Key::Punct('$'),
+                    Key::Punct('^'),
+                    Key::Punct('_'),
                     Key::Punct('\\'),
                     Key::Punct('"'),
                     Key::Punct('"'),
@@ -255,8 +260,8 @@ pub fn scenarios() -> Vec<Scenario> {
                     Key::Punct('\''),
                 ],
                 vec![commits(&[
-                    "，", "。", "！", "？", "；", "：", "（", "）", "〈", "〉", "、", "“", "”",
-                    "‘", "’",
+                    "，", "。", "！", "？", "；", "：", "（", "）", "《", "》", "【", "】", "￥",
+                    "……", "——", "、", "“", "”", "‘", "’",
                 ])],
             )],
         ),

@@ -9,6 +9,10 @@ description = "常驻服务进程:命名管道服务各 TSF 会话,持有词典�
 name = "pinyin-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "pinyin-settings"
+path = "src/settings_main.rs"
+
 [dependencies]
 pinyin-dict.workspace = true
 pinyin-engine.workspace = true
@@ -26,8 +30,11 @@ windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_IO",
     "Win32_System_Pipes",
+    "Win32_System_Threading",
     "Win32_Storage_FileSystem",
+    "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }

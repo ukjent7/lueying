@@ -4,11 +4,15 @@
 //! 进程中途退出也不会留下半截词库。
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use pinyin_engine::{SharedUser, UserDict};
 
 const CHECK_EVERY: Duration = Duration::from_secs(1);
+
+/// 保存线程与「清空/退出」的同步落盘不能同时写同一个临时文件。
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// 用户词库路径(`%LOCALAPPDATA%\pinyin-ime\user.tsv`),目录随之创建。
 pub(super) fn path() -> Option<PathBuf> {
@@ -44,9 +48,10 @@ pub(super) fn spawn(user: SharedUser, path: PathBuf) {
                 if rev == saved {
                     continue;
                 }
-                let text = user.read().unwrap_or_else(|p| p.into_inner()).export();
-                match write(&path, &text) {
-                    Ok(()) => saved = rev,
+                // 拿到写锁后再确认修订号:清空/退出刚写过时不能把旧内容盖回去。
+                match write_if_current(&user, &path, rev) {
+                    Ok(true) => saved = rev,
+                    Ok(false) => {}
                     Err(e) => println!("用户词库 {} 写入失败: {e}", path.display()),
                 }
             }
@@ -58,7 +63,27 @@ fn revision(user: &SharedUser) -> u64 {
     user.read().unwrap_or_else(|p| p.into_inner()).revision()
 }
 
-fn write(path: &Path, text: &str) -> std::io::Result<()> {
+/// 立即整份写出(清空词库、退出前),不等待每秒检查。
+pub(super) fn flush(user: &SharedUser, path: &Path) {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = user.read().unwrap_or_else(|p| p.into_inner()).export();
+    if let Err(e) = write_unlocked(path, &text) {
+        println!("用户词库 {} 写入失败: {e}", path.display());
+    }
+}
+
+/// 修订号仍然是 `rev` 才写,避免保存线程用旧快照覆盖刚清空的词库。
+fn write_if_current(user: &SharedUser, path: &Path, rev: u64) -> std::io::Result<bool> {
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if revision(user) != rev {
+        return Ok(false);
+    }
+    let text = user.read().unwrap_or_else(|p| p.into_inner()).export();
+    write_unlocked(path, &text)?;
+    Ok(true)
+}
+
+fn write_unlocked(path: &Path, text: &str) -> std::io::Result<()> {
     let tmp = path.with_extension("tsv.tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)

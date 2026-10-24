@@ -1,9 +1,12 @@
-//! 词典数据管线:`dict` 子命令把白霜拼音(Rime dict.yaml)转成本项目的 TSV 词典。
+//! 仓库任务:
+//! - `dict`:把白霜拼音(Rime dict.yaml)转成本项目的 TSV/二进制词典。
+//! - `pack`:把可执行文件与数据装进发布目录,生成清单与版本号。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
+//! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/pinyin-ime`
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use pinyin_dict::syllables::is_syllable;
 
@@ -14,23 +17,41 @@ struct Args {
     bin: Option<PathBuf>,
 }
 
+struct PackArgs {
+    bin: PathBuf,
+    data: PathBuf,
+    out: PathBuf,
+    version: String,
+    allow_missing_data: bool,
+}
+
+enum Task {
+    Dict(Args),
+    Pack(PackArgs),
+}
+
 fn main() {
-    let mut args = None;
+    let mut task = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "dict" => args = Some(parse_dict(&mut it)),
+            "dict" => task = Some(Task::Dict(parse_dict(&mut it))),
+            "pack" => task = Some(Task::Pack(parse_pack(&mut it))),
             other => {
                 eprintln!("未知子命令或参数: {other}");
                 std::process::exit(2);
             }
         }
     }
-    let Some(args) = args else {
-        eprintln!("用法: xtask dict --frost <dir> --out <file>");
-        std::process::exit(2);
+    let result = match task {
+        Some(Task::Dict(args)) => run(args),
+        Some(Task::Pack(args)) => pack(args),
+        None => {
+            eprintln!("用法: xtask dict ... | xtask pack ...");
+            std::process::exit(2);
+        }
     };
-    if let Err(e) = run(args) {
+    if let Err(e) = result {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
@@ -56,6 +77,145 @@ fn parse_dict(it: &mut impl Iterator<Item = String>) -> Args {
         out: out.expect("--out 需要 <输出文件>"),
         bin,
     }
+}
+
+fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
+    let mut args = PackArgs {
+        bin: PathBuf::from("target/release"),
+        data: PathBuf::from("data"),
+        out: PathBuf::from("dist/pinyin-ime"),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        allow_missing_data: false,
+    };
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--bin" => args.bin = it.next().map(PathBuf::from).unwrap_or(args.bin),
+            "--data" => args.data = it.next().map(PathBuf::from).unwrap_or(args.data),
+            "--out" => args.out = it.next().map(PathBuf::from).unwrap_or(args.out),
+            "--version" => args.version = it.next().unwrap_or(args.version),
+            "--allow-missing-data" => args.allow_missing_data = true,
+            other => {
+                eprintln!("未知参数: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+    args
+}
+
+/// 发布目录的必需文件。DLL 文件名随 Cargo 包名生成,两种拼写都接受。
+const PACK_BINS: &[&str] = &["pinyin-server.exe", "pinyin-settings.exe", "pinyin-install.exe"];
+const PACK_DLLS: &[&str] = &["pinyin_tsf.dll", "pinyin-tsf.dll"];
+const PACK_DATA: &[&str] = &[
+    "main.pyd",
+    "main.gram",
+    "rerank-4m.safetensors",
+    "rerank-25m.safetensors",
+];
+
+fn pack(args: PackArgs) -> Result<(), String> {
+    // 只清理自己生成的目录(有 manifest),避免误删用户给的其他路径。
+    if args.out.exists() {
+        let manifest = args.out.join("manifest.json");
+        if !manifest.exists() {
+            return Err(format!(
+                "{} 已存在且不是发布目录;请换 --out 或先删除它",
+                args.out.display()
+            ));
+        }
+        std::fs::remove_dir_all(&args.out)
+            .map_err(|e| format!("清理 {}: {e}", args.out.display()))?;
+    }
+    std::fs::create_dir_all(&args.out)
+        .map_err(|e| format!("创建 {}: {e}", args.out.display()))?;
+
+    let mut files = Vec::new();
+    for name in PACK_BINS {
+        copy_file(&args.bin.join(name), &args.out, name, &mut files)?;
+    }
+    let dll = PACK_DLLS
+        .iter()
+        .map(|name| args.bin.join(name))
+        .find(|path| path.exists())
+        .ok_or_else(|| format!("{} 里缺少 pinyin_tsf.dll", args.bin.display()))?;
+    // 版本号入 DLL 文件名:升级时新文件不被正在运行的旧 DLL 锁住。
+    let dll_name = format!("pinyin_tsf-{}.dll", safe_version(&args.version));
+    copy_file(&dll, &args.out, &dll_name, &mut files)?;
+
+    for name in PACK_DATA {
+        let source = args.data.join(name);
+        if source.exists() {
+            copy_file(&source, &args.out, name, &mut files)?;
+        } else if args.allow_missing_data {
+            println!("警告: 缺少数据文件 {name},跳过");
+        } else {
+            return Err(format!("缺少数据文件 {}", source.display()));
+        }
+    }
+    // TSV 是二进制不可用时的兼容回退,可选。
+    if args.data.join("main.tsv").exists() {
+        copy_file(&args.data.join("main.tsv"), &args.out, "main.tsv", &mut files)?;
+    }
+
+    let license = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|root| root.join("LICENSE"))
+        .filter(|path| path.exists());
+    if let Some(license) = license {
+        copy_file(&license, &args.out, "LICENSE", &mut files)?;
+    }
+
+    std::fs::write(args.out.join("version.txt"), format!("{}\n", args.version))
+        .map_err(|e| format!("写 version.txt: {e}"))?;
+    let manifest = serde_json::json!({
+        "name": "pinyin-ime",
+        "version": args.version,
+        "files": files.iter().map(|(name, bytes)| {
+            serde_json::json!({ "path": name, "bytes": bytes })
+        }).collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        args.out.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).map_err(|e| format!("生成清单: {e}"))?,
+    )
+    .map_err(|e| format!("写 manifest.json: {e}"))?;
+
+    let total: u64 = files.iter().map(|(_, bytes)| *bytes).sum();
+    println!(
+        "发布目录 {}: {} 个文件, {:.1} MiB",
+        args.out.display(),
+        files.len() + 2,
+        total as f64 / (1024.0 * 1024.0)
+    );
+    Ok(())
+}
+
+/// 文件名安全的版本号(与安装器 `dll_name` 同一规则)。
+fn safe_version(version: &str) -> String {
+    version
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// 复制并记录大小;源文件名与目标名可以不同(DLL 统一成版本化文件名)。
+fn copy_file(
+    source: &Path,
+    out: &Path,
+    name: &str,
+    files: &mut Vec<(String, u64)>,
+) -> Result<(), String> {
+    let target = out.join(name);
+    let bytes = std::fs::copy(source, &target)
+        .map_err(|e| format!("复制 {}: {e}", source.display()))?;
+    files.push((name.to_string(), bytes));
+    Ok(())
 }
 
 /// 白霜的词表文件,按质量从高到低。
