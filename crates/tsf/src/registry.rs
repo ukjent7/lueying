@@ -34,23 +34,24 @@ fn clsid_key() -> String {
 
 /// windows-registry(0.100 线)与 windows 0.62 分属 windows-rs 两条版本线,错误类型不同,
 /// 按 HRESULT 显式搬运,两个 crate 才能各自用最新稳定版。
-fn reg_err(error: windows_registry::Error) -> windows::core::Error {
-    windows::core::Error::from_hresult(windows::core::HRESULT::from_raw(error.code().0))
+pub(crate) fn register() -> Result<()> {
+    let Some(module) = crate::module_path_file() else {
+        return Err(windows::core::Error::from(
+            windows::Win32::Foundation::E_FAIL,
+        ));
+    };
+    write_registry(&module)
+        .map_err(|e| windows::core::Error::from_hresult(windows::core::HRESULT(e.code().0)))?;
+    register_profile()
 }
 
-pub(crate) fn register() -> Result<()> {
-    let module = crate::module_path_file()
-        .ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?;
-    let base = CLASSES_ROOT.create(clsid_key()).map_err(reg_err)?;
-    base.set_string("", NAME).map_err(reg_err)?;
-    let inproc = base.create("InprocServer32").map_err(reg_err)?;
-    inproc
-        .set_string("", &module.to_string_lossy())
-        .map_err(reg_err)?;
-    inproc
-        .set_string("ThreadingModel", "Apartment")
-        .map_err(reg_err)?;
-    register_profile()
+fn write_registry(module: &std::path::Path) -> windows_registry::Result<()> {
+    let base = CLASSES_ROOT.create(clsid_key())?;
+    base.set_string("", NAME)?;
+    let inproc = base.create("InprocServer32")?;
+    inproc.set_string("", &module.to_string_lossy())?;
+    inproc.set_string("ThreadingModel", "Apartment")?;
+    Ok(())
 }
 
 pub(crate) fn unregister() -> Result<()> {

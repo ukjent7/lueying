@@ -15,7 +15,7 @@ use windows::Win32::UI::TextServices::{
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfSource, ITfTextInputProcessor,
     ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
 };
-use windows::core::{BOOL, Error, GUID, Interface, Ref, Result, implement};
+use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
 
 use crate::attr;
 use crate::client::{Client, RETRY_INTERVAL};
