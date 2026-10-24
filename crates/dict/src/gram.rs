@@ -6,9 +6,13 @@
 //! `ln(频次) × 10000`。查询只做 `traverse` + `commonPrefixSearch`,所以文件可以
 //! 直接映射、不反序列化。
 //!
-//! 模型的键空间是**字**而不是词:调用方传入前一个词与当前词,本模块按 librime
+//! 打分复刻 librime-octagram 的 `Query`:命中搭配的值加上搭配罚,未命中给未搭配
+//! 罚,句末再查一次 `$`。默认参数与万象拼音方案一致;模型用
+//! `amzxyz/rime-wanxiang-data` 的 LTS 版本。
+//!
+//! 模型的键空间是**字**而不是词:调用方传入前文尾部与当前词,本模块按 librime
 //! 的规则截取前文尾部与词首部再查表。词级模型(`bgw`)与字级模型(`bgc`)共用这一
-//! 套读取与查询代码,差别只在训练数据。
+//! 套读取、查询与打分代码,差别只在训练数据。
 
 use std::fs::File;
 use std::io;
@@ -22,10 +26,20 @@ const META: usize = 44;
 const OFFSET_PTR_AT: usize = 40;
 /// darts-clone 每个 unit 4 字节。
 const UNIT: usize = 4;
-/// 单次查询最多取几个前缀匹配,对齐 `GramDb::kMaxResults`。
+//! 单次查询最多取几个前缀匹配,对齐 `GramDb::kMaxResults`。
 const MAX_RESULTS: usize = 8;
 /// 一次编码最多几个 Unicode 字符。
 const MAX_CHARS: usize = 8;
+/// 查搭配时前文与词各取几个字(librime 的 `collocation_max_length - 1`)。
+const QUERY_CHARS: usize = 5;
+/// 调用方提供的前文尾长。模型键是「前文尾 3 字 + 词首 3 字」,取 3 字最贴合。
+pub const CONTEXT_CHARS: usize = 3;
+/// librime-octagram 的搭配打分参数(与万象方案一致)。
+const MIN_COLLOCATION_CHARS: usize = 2;
+const COLLOCATION_PENALTY: f64 = -14.0;
+const NON_COLLOCATION_PENALTY: f64 = -6.0;
+const WEAK_COLLOCATION_PENALTY: f64 = -100.0;
+const REAR_PENALTY: f64 = -8.0;
 /// 值 = `ln(频次) × 10000`。
 const VALUE_SCALE: f64 = 10_000.0;
 const FORMAT_PREFIX: &str = "Rime::Grammar/";
@@ -95,15 +109,17 @@ impl Gram {
         Some(node as usize)
     }
 
-    /// 从节点出发,沿 `key` 收集每个成词节点的值。
-    fn common_prefix(&self, key: &[u8], node: usize) -> Vec<f64> {
+    /// 从节点出发,沿 `key` 收集每个成词节点的值与已匹配的编码字节数。
+    fn common_prefix(&self, key: &[u8], node: usize) -> Vec<(f64, usize)> {
         let mut out = Vec::new();
         if node >= self.units {
             return out;
         }
         let mut id = node as u32;
         let mut u = self.unit(node).unwrap_or(0);
+        let mut used = 0;
         for &b in key {
+            used += 1;
             id ^= offset_of(u) ^ u32::from(b);
             if id as usize >= self.units {
                 break;
@@ -121,47 +137,53 @@ impl Gram {
                     && let Some(score) = value(v)
                     && out.len() < MAX_RESULTS
                 {
-                    out.push(score);
+                    out.push((score, used));
                 }
             }
         }
         out
     }
 
-    /// 查询「`context` 之后接 `word`」的搭配强度,返回 `ln(频次)`。
+    /// 给「`context` 之后接 `word`」打分,复刻 librime-octagram 的 `Query`:
+    /// 取所有前文后缀与词前缀组合里的最高分,命中的值加上搭配罚;
+    /// 词尾再查一次 `$` 的句末搭配。无命中返回未搭配罚。
     ///
-    /// 与 librime 一样,前文从最长逐字缩短,每轮查一次,取所有命中的最大值;
-    /// 词只取首部 `max_chars` 个字(模型键长上限)。无命中返回 `None`。
-    pub fn query(&self, context: &str, word: &str, max_chars: usize) -> Option<f64> {
-        let n = max_chars.min(MAX_CHARS);
-        if n == 0 || context.is_empty() {
-            return None;
+    /// 这个分数直接加在词的对数权重上;首次调用(前文为空)返回 0,
+    /// 让调用方把「句首」当常数省掉。
+    pub fn score(&self, context: &str, word: &str, is_rear: bool) -> f64 {
+        if context.is_empty() {
+            return 0.0;
         }
-        let ctx = encode_tail(context, n);
-        let word_key = encode_head(word, n);
-        let mut best: Option<f64> = None;
-        // 前文从最长逐字缩短,每一级都查一次;取所有命中的最大值。
+        let ctx = encode_tail(context, QUERY_CHARS.min(MAX_CHARS));
+        let word_key = encode_head(word, QUERY_CHARS.min(MAX_CHARS));
+        let mut result = NON_COLLOCATION_PENALTY;
+        let mut context_chars = encoded_chars(&ctx);
         let mut at = 0;
         while at < ctx.len() {
             if let Some(node) = self.traverse(&ctx[at..]) {
-                for score in self.common_prefix(&word_key, node) {
-                    best = Some(best.map_or(score, |b: f64| b.max(score)));
+                for (value, matched) in self.common_prefix(&word_key, node) {
+                    let match_chars = encoded_chars_prefix(&word_key, matched);
+                    let whole = at == 0 && matched == word_key.len();
+                    let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole {
+                        COLLOCATION_PENALTY
+                    } else {
+                        WEAK_COLLOCATION_PENALTY
+                    };
+                    result = result.max(value + penalty);
                 }
             }
+            context_chars = context_chars.saturating_sub(1);
             at += char_len(ctx[at]);
         }
-        best
-    }
-
-    /// 句末搭配:`word` 后接 `$` 的强度。仅当词未被截断时有效。
-    pub fn query_rear(&self, word: &str, max_chars: usize) -> Option<f64> {
-        let n = max_chars.min(MAX_CHARS);
-        if word.chars().count() > n {
-            return None;
+        if is_rear && word.chars().count() <= QUERY_CHARS {
+            let key = encode_head(word, QUERY_CHARS.min(MAX_CHARS));
+            if let Some(node) = self.traverse(&key)
+                && let Some((value, _)) = self.common_prefix(b"$", node).first()
+            {
+                result = result.max(*value + REAR_PENALTY);
+            }
         }
-        let key = encode_head(word, n);
-        let node = self.traverse(&key)?;
-        self.common_prefix(b"$", node).into_iter().next()
+        result
     }
 }
 
@@ -233,6 +255,32 @@ fn encode_tail(s: &str, max_chars: usize) -> Vec<u8> {
         encode(ch, &mut out);
     }
     out
+}
+
+/// 编码串里的 Unicode 字符数。
+fn encoded_chars(s: &[u8]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < s.len() {
+        i += char_len(s[i]);
+        n += 1;
+    }
+    n
+}
+
+/// 编码串前 `upto` 字节覆盖的完整字符数(落在字符中间时向下取整)。
+fn encoded_chars_prefix(s: &[u8], upto: usize) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < s.len() {
+        let len = char_len(s[i]);
+        if i + len > upto {
+            break;
+        }
+        i += len;
+        n += 1;
+    }
+    n
 }
 
 /// 编码串里第一个字符占几个字节。0 字节视为非法,返回剩余长度以免死循环。

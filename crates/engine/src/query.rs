@@ -5,12 +5,12 @@
 //!
 //! 词节点分把词频归一成对数概率(`ln(freq/total)`),再减每词固定罚:拆成更多
 //! 高频碎片的路径要额外付出每词一份的归一化代价。搭配分来自 rime `.gram`
-//! 模型(可缺省),只加正分:没有搭配记录不惩罚,避免把「没见过的正确词组」压死。
+//! 模型(可缺省),按 librime-octagram 的搭配/未搭配/句末罚参与整句排序。
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use pinyin_dict::gram::Gram;
+use pinyin_dict::gram::{CONTEXT_CHARS, Gram};
 use pinyin_dict::syllables::{self, Fuzzy};
 use pinyin_dict::{Dictionary, signature};
 
@@ -24,10 +24,6 @@ pub struct Cand {
     /// 吃掉的音节数。
     pub consume: usize,
     pub score: f64,
-    /// 整句候选(覆盖全部输入)。
-    pub full: bool,
-    /// 路径里的词数(单词候选恒为 1)。
-    pub words: usize,
     /// 各音节的原始字节区间(回删与逐段上屏用)。
     pub spans: Vec<(usize, usize)>,
 }
@@ -50,10 +46,6 @@ const SCAN_VISIT_CAP: usize = 8000;
 const MAX_WORD_SYL: usize = 8;
 /// 每词固定罚:抵消归一化带来的「分词越少越占优」以外的碎片投机。
 const WORD_PENALTY: f64 = 3.0;
-/// 搭配分权重与零点。取值依据 E2E 整句语料扫描(见 dicts/eval.txt)。
-const GRAM_WEIGHT: f64 = 0.3;
-const GRAM_BASELINE: f64 = 8.0;
-const GRAM_MAX_BONUS: f64 = 4.0;
 /// 整句 Viterbi 每档保留几条路径。
 const BEAM: usize = 3;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
@@ -268,73 +260,100 @@ struct Node {
     spans: Vec<(usize, usize)>,
 }
 
-/// 搭配分:前一个词到当前词的 `.gram` 加分。查询结果按 (词,词) 缓存。
+/// 搭配分:前文尾 -> 当前词的 `.gram` 打分。查询结果按 (前文,词,句末) 缓存。
 struct Grammar<'a> {
     gram: Option<&'a Gram>,
-    cache: HashMap<(String, String), f64>,
+    cache: HashMap<(String, String, bool), f64>,
 }
 
 impl Grammar<'_> {
-    fn bonus(&mut self, prev: &str, word: &str) -> f64 {
+    fn bonus(&mut self, context: &str, word: &str, is_rear: bool) -> f64 {
         let Some(gram) = self.gram else {
             return 0.0;
         };
-        if prev.is_empty() {
+        if context.is_empty() {
             return 0.0;
         }
-        let key = (prev.to_string(), word.to_string());
+        let key = (context.to_string(), word.to_string(), is_rear);
         if let Some(v) = self.cache.get(&key) {
             return *v;
         }
-        let v = gram.query(prev, word, 3).map_or(0.0, |lnf| {
-            (GRAM_WEIGHT * (lnf - GRAM_BASELINE)).clamp(0.0, GRAM_MAX_BONUS)
-        });
+        let v = gram.score(context, word, is_rear);
         self.cache.insert(key, v);
         v
     }
 }
 
-/// 从 `pos` 起深度优先枚举词,写到 `by_end[词尾]`。
-fn collect(
-    q: &mut Querier,
-    edges: &[Vec<Syll>],
-    raw: &str,
-    root: usize,
-    pos: usize,
-    units: &mut Vec<Syll>,
-    spans: &mut Vec<(usize, usize)>,
-    by_end: &mut [Vec<Node>],
-    visits: &mut usize,
-) {
-    if !units.is_empty() {
-        let hits = q.lookup(units);
-        for h in hits.iter() {
-            by_end[pos].push(Node {
-                start: root,
-                word: h.word.clone(),
-                score: h.score(),
-                spans: spans.clone(),
-            });
+/// 前文尾部最多 `CONTEXT_CHARS` 个字,供语法模型查搭配。
+fn context_tail(path: &[(String, Vec<(usize, usize)>)]) -> String {
+    let mut chars: Vec<char> = Vec::with_capacity(CONTEXT_CHARS);
+    for (word, _) in path.iter().rev() {
+        for ch in word.chars().rev() {
+            chars.push(ch);
+            if chars.len() == CONTEXT_CHARS {
+                chars.reverse();
+                return chars.into_iter().collect();
+            }
         }
-        *visits += 1;
-        if units.len() >= MAX_WORD_SYL || *visits > NODE_BUDGET || !q.may_extend(units) {
+    }
+    chars.reverse();
+    chars.into_iter().collect()
+}
+
+/// 词枚举的游标状态。`finish[p]` 表示 `raw[p..]` 能否被音节图完整切分:
+/// 词尾落在切不动的位置(如 `si` 里只认 `s` 的「是」)不产生候选,
+/// 残留的字母永远无法上屏。
+struct Builder<'a, 'd> {
+    q: &'a mut Querier<'d>,
+    edges: &'a [Vec<Syll>],
+    raw: &'a str,
+    finish: &'a [bool],
+    by_end: &'a mut [Vec<Node>],
+    units: Vec<Syll>,
+    spans: Vec<(usize, usize)>,
+    visits: usize,
+}
+
+impl Builder<'_, '_> {
+    /// 从 `pos` 起深度优先枚举词,写到 `by_end[词尾]`。
+    fn run(&mut self, root: usize, pos: usize) {
+        if !self.units.is_empty() {
+            if !self.finish[pos] {
+                return;
+            }
+            let hits = self.q.lookup(&self.units);
+            for h in hits.iter() {
+                self.by_end[pos].push(Node {
+                    start: root,
+                    word: h.word.clone(),
+                    score: h.score(),
+                    spans: self.spans.clone(),
+                });
+            }
+            self.visits += 1;
+            if self.units.len() >= MAX_WORD_SYL
+                || self.visits > NODE_BUDGET
+                || !self.q.may_extend(&self.units)
+            {
+                return;
+            }
+        }
+        if pos >= self.raw.len() {
             return;
         }
-    }
-    if pos >= raw.len() {
-        return;
-    }
-    if raw.as_bytes()[pos] == b'\'' {
-        // 隔音符是硬边界:词可以跨过它,但不产生音节。
-        collect(q, edges, raw, root, pos + 1, units, spans, by_end, visits);
-        return;
-    }
-    for e in &edges[pos] {
-        units.push(e.clone());
-        spans.push(e.span);
-        collect(q, edges, raw, root, e.span.1, units, spans, by_end, visits);
-        spans.pop();
-        units.pop();
+        if self.raw.as_bytes()[pos] == b'\'' {
+            // 隔音符是硬边界:词可以跨过它,但不产生音节。
+            self.run(root, pos + 1);
+            return;
+        }
+        for i in 0..self.edges[pos].len() {
+            let e = self.edges[pos][i].clone();
+            self.units.push(e.clone());
+            self.spans.push(e.span);
+            self.run(root, e.span.1);
+            self.spans.pop();
+            self.units.pop();
+        }
     }
 }
 
@@ -386,23 +405,38 @@ pub fn build(
         exp_cache: HashMap::new(),
     };
     let edges = segment::edges(raw);
+    // finish[p]:raw[p..] 能否被音节图切完。词尾落在切不动的位置时,剩下
+    // 的字母永远上不了屏,这类词节点直接不要。
+    let mut finish = vec![false; raw.len() + 1];
+    finish[raw.len()] = true;
+    for i in (0..raw.len()).rev() {
+        let ok = if raw.as_bytes()[i] == b'\'' {
+            finish[i + 1]
+        } else {
+            edges[i].iter().any(|e| finish[e.span.1])
+        };
+        finish[i] = ok;
+    }
     let mut by_end: Vec<Vec<Node>> = vec![Vec::new(); raw.len() + 1];
-    let mut visits = 0usize;
-    for i in 0..raw.len() {
-        if raw.as_bytes()[i] == b'\'' {
-            continue;
-        }
-        collect(
-            &mut q,
-            &edges,
+    {
+        let mut b = Builder {
+            q: &mut q,
+            edges: &edges,
             raw,
-            i,
-            i,
-            &mut Vec::new(),
-            &mut Vec::new(),
-            &mut by_end,
-            &mut visits,
-        );
+            finish: &finish,
+            by_end: &mut by_end,
+            units: Vec::new(),
+            spans: Vec::new(),
+            visits: 0,
+        };
+        for i in 0..raw.len() {
+            if raw.as_bytes()[i] == b'\'' || !finish[i] {
+                continue;
+            }
+            b.units.clear();
+            b.spans.clear();
+            b.run(i, i);
+        }
     }
     for list in &mut by_end {
         cap_nodes(list);
@@ -425,11 +459,13 @@ pub fn build(
         }
         for node in &by_end[j] {
             for st in &best[node.start] {
-                let prev = st.path.last().map_or("", |p| p.0.as_str());
+                let tail = context_tail(&st.path);
                 let mut path = st.path.clone();
                 path.push((node.word.clone(), node.spans.clone()));
                 cands.push(State {
-                    score: st.score + node.score + gram.bonus(prev, &node.word),
+                    score: st.score
+                        + node.score
+                        + gram.bonus(&tail, &node.word, j == raw.len()),
                     path,
                 });
             }
@@ -439,43 +475,48 @@ pub fn build(
         best[j] = cands;
     }
 
-    let mut cands: Vec<Cand> = Vec::new();
+    let mut full: Vec<Cand> = Vec::new();
     for st in &best[raw.len()] {
         let text: String = st.path.iter().map(|p| p.0.as_str()).collect();
         if text.is_empty() {
             continue;
         }
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
-        cands.push(Cand {
+        full.push(Cand {
             text,
             consume: spans.len(),
             score: st.score,
-            full: true,
-            words: st.path.len(),
             spans,
         });
     }
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
+    let mut words: Vec<Cand> = Vec::new();
     for node in by_end.iter().flatten() {
         if node.start != 0 {
             continue;
         }
-        cands.push(Cand {
+        words.push(Cand {
             text: node.word.clone(),
             consume: node.spans.len(),
             score: node.score,
-            full: false,
-            words: 1,
             spans: node.spans.clone(),
         });
     }
-    cands.sort_by(|a, b| {
-        b.full
-            .cmp(&a.full)
-            .then(b.score.total_cmp(&a.score))
+    words.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
             .then(a.consume.cmp(&b.consume))
             .then(a.text.cmp(&b.text))
     });
+    // 首选整句置顶;从输入开头起的前缀词紧随其后,逐段上屏常用;
+    // 其余整句备选排在后面。
+    let mut cands: Vec<Cand> = Vec::new();
+    let mut rest = full.into_iter();
+    if let Some(top) = rest.next() {
+        cands.push(top);
+    }
+    cands.extend(words);
+    cands.extend(rest);
     let mut seen: HashSet<(String, usize)> = HashSet::new();
     cands.retain(|c| seen.insert((c.text.clone(), c.consume)));
     cands.truncate(MAX_CANDS);
