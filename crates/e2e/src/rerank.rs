@@ -279,7 +279,7 @@ pub fn run(
     push(
         &mut checks,
         "25M 上下文改变排序",
-        five_empty[0] > five_empty[1] && five_context[1] > five_context[0],
+        five_empty[1] > five_empty[0] && five_context[0] > five_context[1],
         format!("{five_empty:?} → {five_context:?}"),
     );
 
