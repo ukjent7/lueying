@@ -29,6 +29,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 安装工具链
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile default --component rustfmt --component clippy
       - name: 维护 Cargo.lock
         run: cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo generate-lockfile
       - name: 格式化
@@ -57,6 +60,9 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
+      - name: 安装工具链
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile default --component rustfmt --component clippy
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
@@ -82,6 +88,9 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
+      - name: 安装工具链
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile default --component rustfmt --component clippy
       - name: 下载白霜词库
         run: bash tools/fetch_frost.sh data/frost
       - name: 转换词典
@@ -106,6 +115,9 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
+      - name: 安装工具链
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile default --component rustfmt --component clippy
       # 缓存只留 windows job(gpui/zed 树是编译大头,ubuntu 两个 job 全量也只要几分钟);
       # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
