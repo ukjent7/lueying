@@ -3,6 +3,7 @@
 
 mod rerank;
 mod scenarios;
+mod ui;
 mod user_dict;
 
 use std::path::PathBuf;
@@ -129,6 +130,9 @@ fn main() {
             if ok { "PASS" } else { "FAIL" }
         ));
     }
+
+    // 候选窗鼠标交互:翻页边界、点选上屏与学习。
+    failures += ui::run(&mut report);
 
     // 用户词库:跨会话共享、导入合并、落盘文本往返。
     failures += user_dict::run(&mut report);
@@ -358,7 +362,7 @@ fn check_one(
     let cands = engine.candidates();
     match check {
         Check::Commits(want) => {
-            if commits != want {
+            if commits != want.as_slice() {
                 return Err(format!("上屏 {:?} ≠ 期望 {want:?}", commits));
             }
         }
@@ -399,7 +403,7 @@ fn check_one(
             }
         }
         Check::ModeSeq(want) => {
-            if *modes != *want {
+            if modes != want.as_slice() {
                 return Err(format!("模式 {modes:?} ≠ {want:?}"));
             }
         }

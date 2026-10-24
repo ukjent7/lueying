@@ -30,17 +30,34 @@ pub(crate) fn is_caps(vk: u32) -> bool {
     vk == VK_CAPITAL.0 as u32
 }
 
-/// VK → 协议键;`None` 表示不归输入法(含 Shift+字母的大写直通)。
+/// VK → 协议键;`None` 表示不归输入法。
 #[allow(clippy::match_same_arms)]
 pub(crate) fn vk_to_key(vk: u32, shift: bool) -> Option<KeyMsg> {
     let key = match vk {
         0x41..=0x5A => {
-            if shift {
-                return None;
-            }
-            return Some(KeyMsg::Letter((vk as u8 - b'A' + b'a') as char));
+            let lower = (vk as u8 - b'A' + b'a') as char;
+            // Shift+字母在组合中要先把拼音落定再上大写,不能直接直通。
+            return Some(KeyMsg::Letter(if shift {
+                lower.to_ascii_uppercase()
+            } else {
+                lower
+            }));
         }
+        0x30..=0x39 if shift => KeyMsg::Punct(match vk {
+            0x31 => '!',
+            0x32 => '@',
+            0x33 => '#',
+            0x34 => '$',
+            0x35 => '%',
+            0x36 => '^',
+            0x37 => '&',
+            0x38 => '*',
+            0x39 => '(',
+            _ => ')',
+        }),
         0x30..=0x39 => KeyMsg::Digit(vk as u8 - 0x30),
+        // 小键盘数字同样可以选词。
+        0x60..=0x69 => KeyMsg::Digit(vk as u8 - 0x60),
         0x20 => KeyMsg::Space,
         0x0D => KeyMsg::Enter,
         0x1B => KeyMsg::Esc,
@@ -94,7 +111,8 @@ impl KeyTap {
 
     /// 每个键的 TestKeyDown 都要报告。
     pub(crate) fn note_down(&self, vk: u32) {
-        self.armed.set(is_shift(vk));
+        // Ctrl/Alt+Shift 是系统或应用快捷键,不能算单击切中英。
+        self.armed.set(is_shift(vk) && !command_mods());
     }
 
     /// Shift 抬起时消费判定结果;非 Shift 返回 false。

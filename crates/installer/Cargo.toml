@@ -1,0 +1,27 @@
+[package]
+name = "pinyin-installer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "按用户安装/卸载拼音输入法:复制文件、注册 TSF、写入自启动"
+
+[[bin]]
+name = "pinyin-install"
+path = "src/main.rs"
+
+[dependencies]
+pinyin-protocol = { path = "../protocol" }
+serde_json = "1"
+
+[target."cfg(windows)".dependencies]
+windows-registry = "0.100"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

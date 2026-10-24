@@ -9,6 +9,8 @@ mod context_probe;
 mod edit;
 mod factory;
 mod keys;
+mod langbar;
+mod mode;
 mod poll;
 mod registry;
 mod service;
@@ -87,7 +89,7 @@ extern "system" fn DllGetClassObject(
     if unsafe { *rclsid } != CLSID_IME {
         return CLASS_E_CLASSNOTAVAILABLE;
     }
-    let factory: windows::Win32::System::Com::IClassFactory = factory::ClassFactory.into();
+    let factory: windows::Win32::System::Com::IClassFactory = factory::ClassFactory::new().into();
     unsafe { factory.query(riid, ppv) }
 }
 

@@ -6,6 +6,8 @@
 //! 4. 上屏不经过学习 → 空格上屏后导出里应出现该键与该词。
 //! 5. 用户词压不过词典 → 高频导入词必须排到同键词典词前面。
 //! 6. 分段上屏学错键 → 上屏前缀词时只学它吃掉的音节。
+//! 7. 长期学习让词库无限膨胀 → 超过上限后按频次/时间淘汰,文件大小有界。
+//! 8. 多音节学习键存成原始串 → 新会话必须能用 `ni'hao` 这样的音节键复现提频。
 
 use std::sync::{Arc, RwLock};
 
@@ -25,6 +27,24 @@ fn engine(dict: &Arc<Dictionary>, user: &SharedUser) -> Engine {
     Engine::new(Arc::clone(dict), Config::default()).with_user(Arc::clone(user))
 }
 
+/// 翻到候选所在页并点选;用于重复学习同一个词。
+fn pick_word(engine: &mut Engine, word: &str) -> bool {
+    let Some(index) = engine.candidates().iter().position(|c| c == word) else {
+        return false;
+    };
+    let page_size = engine.page_size().max(1);
+    let page = index / page_size;
+    while engine.page() < page {
+        if !engine.page_by(1) {
+            return false;
+        }
+    }
+    engine
+        .pick_in_page(index % page_size)
+        .iter()
+        .any(|event| matches!(event, Event::Commit(text) if text.as_str() == word))
+}
+
 pub fn run(report: &mut String) -> usize {
     let dict = Arc::new(Dictionary::builtin());
     let mut checks = Vec::new();
@@ -39,7 +59,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "上屏写入用户词库",
-        exported.lines().any(|l| l.starts_with("nihao\t你好\t")),
+        exported.lines().any(|l| l.starts_with("ni'hao\t你好\t")),
         exported.lines().next().unwrap_or_default().to_string(),
     );
 
@@ -90,6 +110,39 @@ pub fn run(report: &mut String) -> usize {
         format!("首选 {top}"),
     );
 
+    // 多音节词的学习键必须是音节形式(ni'hao);否则新会话按查询键
+    // (typed_key 也是 ni'hao)根本找不到学过的词。
+    let learned = Arc::new(RwLock::new(UserDict::new()));
+    let mut learn = engine(&dict, &learned);
+    let mut promoted = false;
+    for _ in 0..8 {
+        for c in "tianqi".chars() {
+            learn.process(Key::Letter(c));
+        }
+        if learn
+            .candidates()
+            .first()
+            .is_some_and(|c| c.as_str() == "田七")
+        {
+            promoted = true;
+            break;
+        }
+        if !pick_word(&mut learn, "田七") {
+            break;
+        }
+    }
+    let mut replay = engine(&dict, &learned);
+    for c in "tianqi".chars() {
+        replay.process(Key::Letter(c));
+    }
+    let top = replay.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "多音节学习键跨会话提频",
+        promoted && top == "田七",
+        format!("学习后首选 {top}"),
+    );
+
     // 坏行、空键、坏频次都跳过,其余词条照常导入。
     let mut f = Engine::new(Arc::clone(&dict), Config::default());
     f.import_user("坏行\nshi\t十\tx\t0\n\tshi\t十\t1\t0\nshi\t十\t4\t0\n");
@@ -120,8 +173,56 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "分段上屏只学吃掉的音节",
-        committed == "你" && exported.contains("ni\t你\t") && !exported.contains("nihao\t你\t"),
+        committed == "你" && exported.contains("ni\t你\t") && !exported.contains("ni'hao\t你\t"),
         format!("上屏 {committed:?}"),
+    );
+
+    // 连续分段上屏自动造词:先选「你」再选「好」,整串键与整词一起学。
+    let mut phrase = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "nihao".chars() {
+        phrase.process(Key::Letter(ch));
+    }
+    phrase.process(Key::Down);
+    phrase.process(Key::Space);
+    phrase.process(Key::Space);
+    let exported = phrase.export_user();
+    push(
+        &mut checks,
+        "连续分段上屏自动造词",
+        exported.contains("ni'hao\t你好\t"),
+        exported
+            .lines()
+            .filter(|l| l.starts_with("ni'hao\t"))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+
+    // 设置窗「清空用户词库」:所有会话共用的那份立即变空。
+    let mut cleared = Engine::new(Arc::clone(&dict), Config::default());
+    cleared.import_user("shi\t十\t9\t0\n");
+    cleared.clear_user();
+    push(
+        &mut checks,
+        "清空用户词库",
+        cleared.export_user().is_empty(),
+        "导出为空".into(),
+    );
+
+    // 上限:导入 20100 条后只保留 18000 条,低频先淘汰。
+    let mut h = Engine::new(Arc::clone(&dict), Config::default());
+    let bulk: String = (0..20_100)
+        .map(|i| format!("k{i}\tw{i}\t{}\t0\n", i + 1))
+        .collect();
+    h.import_user(&bulk);
+    let exported = h.export_user();
+    let kept = exported.lines().count();
+    push(
+        &mut checks,
+        "用户词库超限淘汰",
+        kept == 18_000
+            && exported.contains("k20099\tw20099\t20100\t0")
+            && !exported.contains("k0\tw0\t1\t0"),
+        format!("保留 {kept} 条"),
     );
 
     report.push_str("\n## 用户词库\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

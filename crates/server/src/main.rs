@@ -1,6 +1,8 @@
 //! pinyin-server:常驻服务进程。持有词典(一份)与每个宿主线程一个引擎会话,
 //! 经命名管道接收 TSF DLL 的按键请求并返回组句/上屏。候选窗 UI 随后接入。
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 fn main() {
     #[cfg(windows)]
     imp::real_main();
@@ -11,20 +13,27 @@ fn main() {
 #[cfg(windows)]
 mod imp {
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, RwLock, mpsc};
 
     use pinyin_dict::Dictionary;
     use pinyin_dict::gram::Gram;
-    use pinyin_engine::{Config, Engine, Event, Key, Mode, SharedUser, UserDict};
+    use pinyin_engine::{Engine, Event, Key, Mode, SharedUser, UserDict};
     use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
     use pinyin_rerank::{Model, Rerank};
+    use pinyin_server::config::{self, AppConfig};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::core::HSTRING;
 
     pub(super) struct Session {
         pub(super) engine: Engine,
         pub(super) view: SessionView,
         /// `Key` 的预演结果,`TakeKey` 取走(DLL 在 OnKeyDown 应用到文档)。
         pub(super) pending: Option<Reply>,
+        /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
+        pub(super) ui_reply: Option<Reply>,
         /// 4M 每键同步重排,前缀缓存随会话存活。
         pub(super) sync_rerank: Option<Rerank>,
         /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
@@ -44,9 +53,20 @@ mod imp {
         pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
         /// 所有会话共用一份学习结果。
         pub(super) user: SharedUser,
+        /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
+        pub(super) config: RwLock<AppConfig>,
+        pub(super) config_path: Option<PathBuf>,
+        /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
+        pub(super) chinese: AtomicBool,
     }
 
     pub(super) fn real_main() {
+        // 同一登录会话只允许一个 Server:否则两个进程会各建管道实例,
+        // 用户的词库学习和候选窗状态会分裂到不同进程。
+        let Some(_instance) = single_instance() else {
+            println!("已有 pinyin-server 在运行,本进程退出");
+            return;
+        };
         // 三档降级:二进制(mmap 零解析) → 文本(兼容旧数据) → 内置迷你词库。
         // 对应 WeType 的 "safe mode, just load buildin dict":词典坏了输入法仍可用。
         let dict = ["main.pyd", "main.tsv"]
@@ -84,6 +104,14 @@ mod imp {
         if let Some(path) = user_path {
             crate::user_store::spawn(Arc::clone(&user), path);
         }
+        // 用户配置:缺失或坏行就用默认值。
+        let config_path = config::path();
+        let app_config = config_path
+            .as_ref()
+            .map_or_else(AppConfig::default, |path| config::load(path));
+        if let Some(path) = &config_path {
+            println!("配置 ← {}", path.display());
+        }
         let (settle_tx, settle_rx) = mpsc::channel();
         let settle_tx = settled_model.as_ref().map(|_| settle_tx);
         let state = Arc::new(State {
@@ -96,6 +124,9 @@ mod imp {
             settled_model,
             settle_tx,
             user,
+            config: RwLock::new(app_config),
+            config_path,
+            chinese: AtomicBool::new(true),
         });
         if state.settle_tx.is_some() {
             crate::settle::spawn(Arc::clone(&state), settle_rx);
@@ -107,7 +138,39 @@ mod imp {
             let state = Arc::clone(&state);
             std::thread::spawn(move || crate::pipe::listen(&pipe, state));
         }
-        crate::ui::run(state);
+        // 无桌面会话(CI/服务)没有窗口站,GPUI 建窗会失败;输入法本身只依赖管道。
+        if std::env::var_os("PINYIN_SERVER_NO_UI").is_some() {
+            loop {
+                std::thread::park();
+            }
+        }
+        let ui_state = Arc::clone(&state);
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::ui::run(ui_state);
+        }))
+        .is_err()
+        {
+            println!("候选窗不可用,继续无界面服务");
+        }
+        // 窗口循环意外结束时进程也要留着,否则整个输入法跟着退出。
+        loop {
+            std::thread::park();
+        }
+    }
+
+    /// 当前会话的单实例锁;返回的句柄要活到进程结束。
+    fn single_instance() -> Option<HANDLE> {
+        let pipe = pipe_name();
+        let short = pipe.trim_start_matches(r"\\.\pipe\");
+        let name = HSTRING::from(format!("Local\\{short}"));
+        let handle = unsafe { CreateMutexW(None, true, &name) }.ok()?;
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            return None;
+        }
+        Some(handle)
     }
 
     /// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.safetensors)。
@@ -170,78 +233,158 @@ mod imp {
         match req {
             Request::Hello { session, host } => {
                 println!("会话 {session} 上线({host})");
-                sessions.entry(session).or_insert_with(|| Session {
-                    engine: {
-                        let engine = Engine::new(Arc::clone(&state.dict), Config::default())
-                            .with_user(Arc::clone(&state.user));
-                        match &state.gram {
-                            Some(g) => engine.with_gram(Arc::clone(g)),
-                            None => engine,
-                        }
+                // 同一线程号重新上线(Server 重启、DLL 重连)必须从头开始,
+                // 不能继承上一个线程留下的组合与待办。
+                sessions.remove(&session);
+                crate::settle::cancel(state, session);
+                let mut engine = {
+                    let cfg = state
+                        .config
+                        .read()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .engine();
+                    Engine::new(Arc::clone(&state.dict), cfg).with_user(Arc::clone(&state.user))
+                };
+                if let Some(g) = &state.gram {
+                    engine = engine.with_gram(Arc::clone(g));
+                }
+                engine.set_mode(current_mode(state));
+                let chinese = engine.mode() == Mode::Chinese;
+                sessions.insert(
+                    session,
+                    Session {
+                        engine,
+                        view: SessionView {
+                            host,
+                            chinese,
+                            ..SessionView::default()
+                        },
+                        pending: None,
+                        ui_reply: None,
+                        sync_rerank: state.sync_model.as_ref().map(Rerank::new),
+                        settled_rerank: state
+                            .settled_model
+                            .as_ref()
+                            .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
                     },
-                    view: SessionView {
-                        host,
-                        ..SessionView::default()
-                    },
-                    pending: None,
-                    sync_rerank: state.sync_model.as_ref().map(Rerank::new),
-                    settled_rerank: state
-                        .settled_model
-                        .as_ref()
-                        .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
-                });
+                );
                 state.active.store(session, Ordering::Relaxed);
-                Reply::default()
+                neutral(state)
             }
             Request::Key { session, key } => {
                 state.active.store(session, Ordering::Relaxed);
                 let Some(s) = sessions.get_mut(&session) else {
-                    return Reply::default();
+                    // 会话已经下线(Server 刚重启/宿主走了 Goodbye):让键直通,
+                    // 不能返回一个「已消费」的空应答把按键吞掉。
+                    return Reply {
+                        passthrough: true,
+                        chinese: state.chinese.load(Ordering::Relaxed),
+                        ..Reply::default()
+                    };
                 };
+                // 鼠标点选可能还没被 TSF 的 Sync 取走;先记下,和本次按键的
+                // 结果一起写,避免快速连打把点选上屏吞掉。
+                let carried = s.ui_reply.take();
+                let engine_key: Key = key.into();
+                let shift_toggle = state
+                    .config
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .shift_toggle;
+                if engine_key == Key::Shift && !shift_toggle {
+                    // 不切模式,但要把当前内联文本原样带回,免得 TSF 清掉组合。
+                    let mut reply = current_reply(s);
+                    if let Some(carried) = carried {
+                        let mut commits = carried.commits;
+                        commits.extend(reply.commits);
+                        reply.commits = commits;
+                    }
+                    return reply;
+                }
+                let before_mode = s.engine.mode();
                 let before_rev = s.engine.revision();
-                let events = s.engine.process(key.into());
+                let events = s.engine.process(engine_key);
                 // 只有候选集合重算过才重排;翻页/移动高亮不能把用户的选择重置。
                 if s.engine.revision() != before_rev {
                     apply_sync_rerank(s);
                 }
-                let passthrough = events.iter().any(|e| matches!(e, Event::Passthrough(_)));
-                let reply = Reply {
-                    commits: events
-                        .iter()
-                        .filter_map(|e| match e {
-                            Event::Commit(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                        .collect(),
-                    preedit: s
-                        .engine
-                        .composition()
-                        .map(|c| c.display.clone())
-                        .unwrap_or_default(),
-                    chinese: s.engine.mode() == Mode::Chinese,
-                    passthrough,
-                };
+                let mut reply = reply_from(s, &events);
+                if let Some(carried) = carried {
+                    if reply.passthrough {
+                        // 直通键不经过编辑会话,点选结果留给下一次 Sync。
+                        s.ui_reply = Some(carried);
+                    } else {
+                        let mut commits = carried.commits;
+                        commits.extend(reply.commits);
+                        reply.commits = commits;
+                    }
+                }
                 refresh_view(s);
                 s.pending = Some(reply.clone());
                 crate::settle::schedule(state, session, s);
+                let mode_changed = s.engine.mode() != before_mode;
+                let chinese = s.engine.mode() == Mode::Chinese;
+                if mode_changed {
+                    set_global_mode(state, &mut sessions, chinese);
+                }
                 reply
             }
-            Request::Sync { session } => sessions
-                .get(&session)
-                .map(|s| Reply {
-                    preedit: s.view.preedit.clone(),
-                    chinese: s.view.chinese,
-                    ..Reply::default()
-                })
-                .unwrap_or_default(),
+            Request::ToggleMode { session } => {
+                state.active.store(session, Ordering::Relaxed);
+                let Some(s) = sessions.get_mut(&session) else {
+                    return neutral(state);
+                };
+                let carried = s.ui_reply.take();
+                let before_rev = s.engine.revision();
+                let events = s.engine.process(Key::Shift);
+                if s.engine.revision() != before_rev {
+                    apply_sync_rerank(s);
+                }
+                let mut reply = reply_from(s, &events);
+                if let Some(carried) = carried {
+                    let mut commits = carried.commits;
+                    commits.extend(reply.commits);
+                    reply.commits = commits;
+                }
+                // 模式切换可能已把组合落定,之前缓存的按键应答不能再写回。
+                s.pending = None;
+                refresh_view(s);
+                crate::settle::schedule(state, session, s);
+                let chinese = s.engine.mode() == Mode::Chinese;
+                set_global_mode(state, &mut sessions, chinese);
+                reply
+            }
+            Request::Sync { session } => {
+                let Some(s) = sessions.get_mut(&session) else {
+                    return neutral(state);
+                };
+                let mut reply = s.ui_reply.take().unwrap_or_default();
+                reply.preedit = s.view.preedit.clone();
+                reply.chinese = state.chinese.load(Ordering::Relaxed);
+                reply
+            }
             Request::Context { session, text } => {
                 if let Some(s) = sessions.get_mut(&session)
                     // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
                     && (s.engine.composition().is_none() || !s.engine.composition_committed())
                 {
                     s.engine.set_context(&text);
-                    // 组合已建立时,首个按键排的任务可能带的是空上下文;重排一次。
+                    // 组合已建立时,首个按键排的任务可能带的是空上下文;用刚读到的
+                    // 左邻文本重跑同步重排,并把停顿任务也换成新上下文。
                     if s.engine.composition().is_some() {
+                        // 用户已经翻页/移动高亮时不再改变候选顺序。
+                        if s.engine.page() == 0 && s.engine.highlight() == 0 {
+                            apply_sync_rerank(s);
+                            refresh_view(s);
+                            // 在途的按键应答/点选待写回里还是重排前的内联文本。
+                            if let Some(pending) = s.pending.as_mut() {
+                                pending.preedit = s.view.preedit.clone();
+                            }
+                            if let Some(pending) = s.ui_reply.as_mut() {
+                                pending.preedit = s.view.preedit.clone();
+                            }
+                            state.version.fetch_add(1, Ordering::Relaxed);
+                        }
                         crate::settle::schedule(state, session, s);
                     }
                 }
@@ -250,42 +393,78 @@ mod imp {
             Request::TakeKey { session } => sessions
                 .get_mut(&session)
                 .and_then(|s| s.pending.take())
-                .unwrap_or_default(),
+                .unwrap_or_else(|| neutral(state)),
             Request::SetMode { session, chinese } => {
                 state.active.store(session, Ordering::Relaxed);
-                if let Some(s) = sessions.get_mut(&session) {
-                    s.engine.set_mode(if chinese {
-                        Mode::Chinese
-                    } else {
-                        Mode::English
-                    });
-                    if !chinese {
-                        crate::settle::cancel(state, session);
+                let reply = if let Some(s) = sessions.get_mut(&session) {
+                    let carried = s.ui_reply.take();
+                    let before_rev = s.engine.revision();
+                    // 组合中切模式要先把拼音落定,不能直接清掉用户敲了一半的内容。
+                    let events = switch_mode(s, chinese);
+                    if s.engine.revision() != before_rev {
+                        apply_sync_rerank(s);
                     }
+                    let mut reply = reply_from(s, &events);
+                    if let Some(carried) = carried {
+                        let mut commits = carried.commits;
+                        commits.extend(reply.commits);
+                        reply.commits = commits;
+                    }
+                    // 切模式前的按键应答已过期,避免 OnKeyDown 把旧内联文本写回。
+                    s.pending = None;
                     refresh_view(s);
-                }
-                Reply::default()
+                    crate::settle::schedule(state, session, s);
+                    reply
+                } else {
+                    neutral(state)
+                };
+                set_global_mode(state, &mut sessions, chinese);
+                reply
             }
             Request::Focus { session, focused } => {
                 state.active.store(session, Ordering::Relaxed);
+                let mut reply = neutral(state);
                 if let Some(s) = sessions.get_mut(&session) {
+                    s.pending = None;
+                    let carried = s.ui_reply.take();
                     if !focused {
-                        // 失焦:清掉没上屏的拼音和上一窗口的上下文。
-                        let _ = s.engine.process(Key::Esc);
+                        // 失焦:把敲了一半的拼音整串落定,再清上下文。
+                        // 只按一次空格会留下吃前缀候选之后的残余拼音。
+                        let events = s.engine.flush();
+                        reply = reply_from(s, &events);
+                        if let Some(carried) = carried {
+                            let mut commits = carried.commits;
+                            commits.extend(reply.commits);
+                            reply.commits = commits;
+                        }
                         s.engine.clear_context();
                         crate::settle::cancel(state, session);
+                    } else {
+                        // 回到本线程/新输入框:若上一次失焦通知丢了,残留组合
+                        // 不能带进新上下文。正常失焦已由上面的 false 分支落定。
+                        if s.engine.composition().is_some() {
+                            let _ = s.engine.process(Key::Esc);
+                        }
+                        // 点击候选后应用可能强行结束组句;保留待写文本,
+                        // 下一次按键或 Sync 再补进文档。
+                        s.ui_reply = carried;
+                        s.engine.clear_context();
                     }
                     refresh_view(s);
+                    // 清组合/换输入框后,待写回的内联文本必须跟上当前状态。
+                    sync_ui_reply(s);
                 }
-                Reply::default()
+                reply
             }
             Request::CompositionTerminated { session } => {
                 if let Some(s) = sessions.get_mut(&session) {
                     let _ = s.engine.process(Key::Esc);
+                    // 已点选、还没写回的文本不能丢;下次按键/Sync 继续带上。
                     crate::settle::cancel(state, session);
                     refresh_view(s);
+                    sync_ui_reply(s);
                 }
-                Reply::default()
+                neutral(state)
             }
             Request::Caret {
                 session,
@@ -302,6 +481,81 @@ mod imp {
                 }
                 Reply::default()
             }
+            Request::Pick { session, slot } => {
+                state.active.store(session, Ordering::Relaxed);
+                if let Some(s) = sessions.get_mut(&session) {
+                    let before = s.engine.revision();
+                    let events = s.engine.pick_in_page(slot);
+                    if s.engine.revision() != before {
+                        apply_sync_rerank(s);
+                    }
+                    refresh_view(s);
+                    let commits: Vec<String> = events
+                        .iter()
+                        .filter_map(|e| match e {
+                            Event::Commit(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if !commits.is_empty() {
+                        let pending = s.ui_reply.get_or_insert_with(Reply::default);
+                        pending.commits.extend(commits);
+                        pending.preedit = s.view.preedit.clone();
+                        pending.chinese = s.view.chinese;
+                    }
+                    crate::settle::schedule(state, session, s);
+                }
+                Reply::default()
+            }
+            Request::Page { session, delta } => {
+                state.active.store(session, Ordering::Relaxed);
+                if let Some(s) = sessions.get_mut(&session)
+                    && s.engine.page_by(delta)
+                {
+                    // 用户正在翻看候选,别让停顿重排回来把当前页换掉。
+                    crate::settle::cancel(state, session);
+                    refresh_view(s);
+                    sync_ui_reply(s);
+                }
+                Reply::default()
+            }
+            Request::ReloadConfig => {
+                if let Some(path) = &state.config_path {
+                    let cfg = config::load(path);
+                    apply_config(state, &mut sessions, cfg);
+                }
+                Reply::default()
+            }
+            Request::ClearUser => {
+                state
+                    .user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clear();
+                // 立即落盘:清空后马上退出也不能让旧词库在下一次启动回来。
+                if let Some(path) = crate::user_store::path() {
+                    crate::user_store::flush(&state.user, &path);
+                }
+                // 正在组句的候选可能含刚学过的词;按当前配置重算一遍。
+                let cfg = state
+                    .config
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                apply_config(state, &mut sessions, cfg);
+                Reply::default()
+            }
+            Request::Shutdown => {
+                // 先让管道把应答写完,再由本进程退出;退出前同步落盘。
+                if let Some(path) = crate::user_store::path() {
+                    crate::user_store::flush(&state.user, &path);
+                }
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    std::process::exit(0);
+                });
+                Reply::default()
+            }
             Request::Goodbye { session } => {
                 println!("会话 {session} 下线");
                 sessions.remove(&session);
@@ -309,6 +563,112 @@ mod imp {
                 Reply::default()
             }
         }
+    }
+
+    fn current_mode(state: &State) -> Mode {
+        if state.chinese.load(Ordering::Relaxed) {
+            Mode::Chinese
+        } else {
+            Mode::English
+        }
+    }
+
+    /// 不带文档改动的应答:只同步全局中/英状态,别把 `Reply::default()` 的 false 当英文。
+    fn neutral(state: &State) -> Reply {
+        Reply {
+            chinese: state.chinese.load(Ordering::Relaxed),
+            ..Reply::default()
+        }
+    }
+
+    /// 当前会话状态原样返回(用于被忽略的 Shift)。
+    fn current_reply(s: &Session) -> Reply {
+        Reply {
+            preedit: s.view.preedit.clone(),
+            chinese: s.engine.mode() == Mode::Chinese,
+            ..Reply::default()
+        }
+    }
+
+    fn commits_of(events: &[Event]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Commit(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn reply_from(s: &Session, events: &[Event]) -> Reply {
+        Reply {
+            commits: commits_of(events),
+            preedit: s
+                .engine
+                .composition()
+                .map(|c| c.display.clone())
+                .unwrap_or_default(),
+            chinese: s.engine.mode() == Mode::Chinese,
+            passthrough: events.iter().any(|e| matches!(e, Event::Passthrough(_))),
+        }
+    }
+
+    /// 切模式并把组合里的内容落定。`process(Shift)` 本身会先上屏首选再切。
+    fn switch_mode(s: &mut Session, chinese: bool) -> Vec<Event> {
+        if (s.engine.mode() == Mode::Chinese) == chinese {
+            Vec::new()
+        } else {
+            s.engine.process(Key::Shift)
+        }
+    }
+
+    /// 中/英是全局状态:一个应用里切了,所有会话与之后的候选窗都跟着变。
+    fn set_global_mode(state: &State, sessions: &mut HashMap<u64, Session>, chinese: bool) {
+        state.chinese.store(chinese, Ordering::Relaxed);
+        let target = if chinese {
+            Mode::Chinese
+        } else {
+            Mode::English
+        };
+        for (&session, s) in sessions.iter_mut() {
+            if s.engine.mode() != target {
+                // 别的窗口可能正组合着。清掉组合前先整串落定,把上屏文本放进
+                // ui_reply,由那个窗口自己的轮询写进文档;否则内联拼音会僵住。
+                let events = switch_mode(s, chinese);
+                let commits = commits_of(&events);
+                s.pending = None;
+                crate::settle::cancel(state, session);
+                refresh_view(s);
+                if !commits.is_empty() {
+                    let pending = s.ui_reply.get_or_insert_with(Reply::default);
+                    pending.commits.extend(commits);
+                }
+                if let Some(pending) = s.ui_reply.as_mut() {
+                    pending.preedit = s.view.preedit.clone();
+                    pending.chinese = chinese;
+                }
+            } else if s.view.chinese != chinese {
+                s.view.chinese = chinese;
+            }
+        }
+    }
+
+    /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
+    fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppConfig) {
+        let engine_cfg = cfg.engine();
+        *state.config.write().unwrap_or_else(|p| p.into_inner()) = cfg;
+        for s in sessions.values_mut() {
+            s.engine.set_config(engine_cfg.clone());
+            // 候选重算后旧按键应答的内联文本/候选都不再有效。
+            s.pending = None;
+            refresh_view(s);
+            // 点选待写回的文本保留,但内联文本要跟上新配置。
+            if let Some(pending) = s.ui_reply.as_mut() {
+                pending.preedit = s.view.preedit.clone();
+                pending.chinese = s.view.chinese;
+            }
+        }
+        state.version.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
@@ -325,9 +685,19 @@ mod imp {
         }
     }
 
+    /// 待写回的鼠标点选/跨窗口切模式内容:只更新内联文本与模式,
+    /// 已经取到的上屏文本保持不变。
+    fn sync_ui_reply(s: &mut Session) {
+        if let Some(pending) = s.ui_reply.as_mut() {
+            pending.preedit = s.view.preedit.clone();
+            pending.chinese = s.view.chinese;
+        }
+    }
+
     /// 同步会话视图(候选窗渲染的数据源)。
     pub(super) fn refresh_view(s: &mut Session) {
         if let Some(comp) = s.engine.composition() {
+            s.view.raw = comp.raw.clone();
             s.view.preedit = comp.display.clone();
             s.view.segments = comp
                 .seg_spans
@@ -335,6 +705,7 @@ mod imp {
                 .map(|(a, b)| comp.raw[*a..*b].to_string())
                 .collect();
         } else {
+            s.view.raw.clear();
             s.view.preedit.clear();
             s.view.segments.clear();
         }

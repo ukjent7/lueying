@@ -95,7 +95,9 @@ fn poll_once(context: &PollContext) {
         }
     };
     drop(guard);
-    if reply.preedit == context.shared.preedit.borrow().as_str() {
+    context.shared.set_chinese(reply.chinese);
+    let commits = reply.commits;
+    if commits.is_empty() && reply.preedit == context.shared.preedit.borrow().as_str() {
         return;
     }
     let revision = context.shared.revision.get();
@@ -111,14 +113,15 @@ fn poll_once(context: &PollContext) {
         Rc::clone(&context.shared),
         client,
         edit::Write {
-            commit: None,
+            commit: (!commits.is_empty()).then(|| commits.join("")),
             preedit: reply.preedit,
             guard: Some(edit::Guard {
                 revision,
                 base_preedit: base,
             }),
+            allow_stale: false,
         },
     ) {
-        log(&format!("停顿重排写回文档失败: {error}"));
+        log(&format!("轮询写回文档失败: {error}"));
     }
 }

@@ -3,14 +3,19 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
+use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
 
-use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE};
+use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows::core::{HRESULT, HSTRING};
 
@@ -39,22 +44,57 @@ pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
 
 /// 建一个实例。句柄交给 `File` 管:对端关闭时 std 把 `ERROR_BROKEN_PIPE` 当 EOF。
 fn create_instance(name: &HSTRING) -> io::Result<File> {
+    // 系统应用(UWP/设置/搜索)以低完整性、AppContainer 令牌连管道;默认 DACL
+    // 只给当前用户,它们会连不上而变成打不出中文。放行对象所有者(当前用户)、
+    // AppContainer 与受限 AppContainer,低完整性标签让低 IL 客户端也能读写;
+    // 管道名本身仍带每用户后缀。
+    let security = security_attributes();
     let handle = unsafe {
         CreateNamedPipeW(
             name,
             PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             BUFFER_SIZE,
             BUFFER_SIZE,
             0,
-            None,
+            security
+                .as_ref()
+                .map(|(attributes, _)| attributes as *const SECURITY_ATTRIBUTES),
         )
     };
+    if let Some((_, descriptor)) = security {
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(descriptor.0)));
+        }
+    }
     if handle.is_invalid() {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// `SECURITY_ATTRIBUTES` 与它指向的描述符要一起返回,调用方建完管道再释放。
+fn security_attributes() -> Option<(SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR)> {
+    let sddl = HSTRING::from(
+        "D:(A;;GA;;;OW)(A;;GA;;;AC)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)",
+    );
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            &sddl,
+            SDDL_REVISION_1,
+            &mut descriptor,
+            None,
+        )
+    }
+    .ok()?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.0,
+        bInheritHandle: false.into(),
+    };
+    Some((attributes, descriptor))
 }
 
 /// 阻塞等一个客户端连上这个实例。

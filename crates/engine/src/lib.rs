@@ -11,7 +11,8 @@ mod user;
 use std::sync::{Arc, RwLock};
 
 use pinyin_dict::gram::Gram;
-use pinyin_dict::{Dictionary, Fuzzy};
+use pinyin_dict::Dictionary;
+pub use pinyin_dict::Fuzzy;
 
 pub use query::Candidate;
 pub use user::UserDict;
@@ -104,6 +105,8 @@ pub struct Engine {
     comp: Option<Composition>,
     /// 当前组合里已经上屏过分段词(这时左邻文本不含这些词)。
     comp_committed: bool,
+    /// 同一次组合里连续上屏的片段,凑成整串自动造词。
+    phrase: Option<(String, String)>,
     cands: Vec<query::Candidate>,
     hl: usize,
     page: usize,
@@ -126,6 +129,7 @@ impl Engine {
             mode: Mode::Chinese,
             comp: None,
             comp_committed: false,
+            phrase: None,
             cands: Vec::new(),
             hl: 0,
             page: 0,
@@ -247,8 +251,83 @@ impl Engine {
         self.cfg.page_size
     }
 
+    /// 候选是否不止一页(`-`/`=` 只在多页时翻页)。
+    fn has_pages(&self) -> bool {
+        let ps = self.cfg.page_size.max(1);
+        self.cands.len().div_ceil(ps) > 1
+    }
+
+    /// 上下翻一页;到边界返回 `false`。
+    pub fn page_by(&mut self, delta: i32) -> bool {
+        let ps = self.cfg.page_size.max(1);
+        let pages = self.cands.len().div_ceil(ps);
+        if pages <= 1 {
+            return false;
+        }
+        let next = (self.page as i32 + delta).clamp(0, pages as i32 - 1) as usize;
+        if next == self.page {
+            return false;
+        }
+        self.page = next;
+        self.hl = next * ps;
+        self.sync_display();
+        true
+    }
+
+    /// 上下移动高亮;跨过页边界时页号一起走,候选窗始终有高亮项。
+    fn move_highlight(&mut self, delta: i32) {
+        if self.cands.is_empty() {
+            return;
+        }
+        let last = self.cands.len() - 1;
+        let next = (self.hl as i64 + i64::from(delta)).clamp(0, last as i64) as usize;
+        if next == self.hl {
+            return;
+        }
+        self.hl = next;
+        self.page = next / self.cfg.page_size.max(1);
+        self.sync_display();
+    }
+
+    /// 内联文本跟随高亮:方向键换候选后,未上屏的显示与即将上屏的内容一致。
+    fn sync_display(&mut self) {
+        if let Some(cand) = self.cands.get(self.hl)
+            && let Some(comp) = self.comp.as_mut()
+        {
+            comp.display = cand.text.clone();
+            comp.seg_spans = cand.spans.clone();
+        }
+    }
+
+    /// 候选窗点选当前页第 `slot` 条(0 基);返回上屏事件。
+    pub fn pick_in_page(&mut self, slot: usize) -> Vec<Event> {
+        let ps = self.cfg.page_size.max(1);
+        let index = self.page * ps + slot;
+        if index >= self.cands.len() {
+            return Vec::new();
+        }
+        self.hl = index;
+        let events = self
+            .commit_highlighted()
+            .map(|text| vec![Event::Commit(text)])
+            .unwrap_or_default();
+        self.note_commits(&events);
+        events
+    }
+
     pub fn config(&self) -> &Config {
         &self.cfg
+    }
+
+    /// 应用设置变更;组合中立刻按新配置重算候选。
+    pub fn set_config(&mut self, cfg: Config) {
+        self.cfg = cfg;
+        if self.comp.is_some() {
+            self.recompute();
+        } else {
+            self.page = 0;
+            self.hl = 0;
+        }
     }
 
     pub fn export_user(&self) -> String {
@@ -262,27 +341,48 @@ impl Engine {
             .import(text);
     }
 
+    /// 清空所有会话共用的用户词库。
+    pub fn clear_user(&mut self) {
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+    }
+
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
         let events = self.process_inner(key);
-        for event in &events {
+        self.note_commits(&events);
+        events
+    }
+
+    /// 把整个组合按当前切分逐段落定(失焦、别的窗口切全局模式)。
+    /// 与空格不同,这里不会只上屏吃前缀的候选而把剩余拼音留在组合里。
+    pub fn flush(&mut self) -> Vec<Event> {
+        let events = self.commit_all();
+        self.note_commits(&events);
+        events
+    }
+
+    /// 上屏文本进入左邻上下文(ASCII 直通内容不算)。
+    fn note_commits(&mut self, events: &[Event]) {
+        for event in events {
             if let Event::Commit(text) = event
                 && !text.is_ascii()
             {
                 self.push_context(text);
             }
         }
-        events
     }
 
     fn process_inner(&mut self, key: Key) -> Vec<Event> {
         if key == Key::Shift {
-            let mut events = Vec::new();
-            if self.mode == Mode::Chinese
-                && let Some(text) = self.commit_highlighted()
-            {
-                events.push(Event::Commit(text));
-            }
+            // 首选可能只吃前缀音节;切英文前把整串都落定,不能留下半个组合。
+            let mut events = if self.mode == Mode::Chinese {
+                self.commit_all()
+            } else {
+                Vec::new()
+            };
             self.mode = if self.mode == Mode::Chinese {
                 Mode::English
             } else {
@@ -342,6 +442,7 @@ impl Engine {
             Key::Enter => {
                 let raw = self.comp.take().map(|c| c.raw).unwrap_or_default();
                 self.comp_committed = false;
+                self.phrase = None;
                 self.cands.clear();
                 self.rev = self.rev.wrapping_add(1);
                 vec![Event::Commit(raw)]
@@ -379,38 +480,51 @@ impl Engine {
                 Vec::new()
             }
             Key::Up => {
-                self.hl = self.hl.saturating_sub(1);
+                self.move_highlight(-1);
                 Vec::new()
             }
             Key::Down => {
-                if !self.cands.is_empty() {
-                    self.hl = (self.hl + 1).min(self.cands.len() - 1);
-                }
+                self.move_highlight(1);
                 Vec::new()
             }
             Key::PageUp | Key::PageDown => {
-                let ps = self.cfg.page_size.max(1);
-                let pages = self.cands.len().div_ceil(ps);
-                if pages > 1 {
-                    self.page = if key == Key::PageUp {
-                        self.page.saturating_sub(1)
-                    } else {
-                        (self.page + 1).min(pages - 1)
-                    };
-                    self.hl = self.page * ps;
-                }
+                self.page_by(if key == Key::PageUp { -1 } else { 1 });
+                Vec::new()
+            }
+            // 微软拼音习惯:组合中 -/= 翻页;只有一页时退回标点。
+            Key::Punct('-') if self.has_pages() => {
+                self.page_by(-1);
+                Vec::new()
+            }
+            Key::Punct('=') if self.has_pages() => {
+                self.page_by(1);
                 Vec::new()
             }
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
-                let mut events = self
-                    .commit_highlighted()
-                    .map(|t| vec![Event::Commit(t)])
-                    .unwrap_or_default();
-                events.extend(self.punct_events(p));
+                // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
+                let mut events = self.commit_all();
+                self.phrase = None;
+                // 没有中文映射(或关了中文标点)时按 ASCII 上屏;
+                // 直通会让应用在组句未收时插入字符,文档与引擎就错位了。
+                let mapped = if self.cfg.chinese_punct {
+                    punct::map(p, &mut self.dq_open, &mut self.sq_open)
+                } else {
+                    None
+                };
+                events.push(Event::Commit(
+                    mapped.map_or_else(|| p.to_string(), |s| s.to_string()),
+                ));
                 events
             }
-            Key::Letter(_) => vec![Event::Passthrough(key)],
+            // 大写字母(Shift+字母)在这里落定整串组合,再由调用方写进文档;
+            // 返回直通会让应用在组合未收时插字,留下无法收拾的内联拼音。
+            Key::Letter(c) => {
+                let mut events = self.commit_all();
+                self.phrase = None;
+                events.push(Event::Commit(c.to_string()));
+                events
+            }
             // Shift 在 process 入口已处理,组合态里不会再遇到。
             Key::Shift => Vec::new(),
         }
@@ -438,8 +552,22 @@ impl Engine {
                 None => vec![Event::Passthrough(Key::Digit(d))],
             }
         } else {
-            vec![Event::Passthrough(Key::Digit(d))]
+            // 当前页没有这个序号:先收组句再上屏数字。组合中直通会让应用
+            // 把数字插进内联拼音里,引擎与文档随即错位。
+            let mut events = self.commit_all();
+            self.phrase = None;
+            events.push(Event::Commit(d.to_string()));
+            events
         }
+    }
+
+    /// 逐段落定整个组合;没有候选时上屏原文。返回按序的上屏事件。
+    fn commit_all(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        while let Some(text) = self.commit_highlighted() {
+            events.push(Event::Commit(text));
+        }
+        events
     }
 
     /// 上屏高亮候选;无候选时上屏原文。
@@ -448,6 +576,7 @@ impl Engine {
         if self.cands.is_empty() {
             let raw = self.comp.take().map(|c| c.raw);
             self.comp_committed = false;
+            self.phrase = None;
             self.hl = 0;
             self.page = 0;
             self.rev = self.rev.wrapping_add(1);
@@ -461,12 +590,44 @@ impl Engine {
         let cand = self.cands.get(idx)?.clone();
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
-        let learned = raw[..cut].to_string();
+        // 用户词库的键必须和查询时的音节键一致(ni'hao),不能存原始串(nihao),
+        // 否则多音节词学完也匹配不上。
+        let learned = cand
+            .spans
+            .iter()
+            .take(cand.consume)
+            .map(|&(s, e)| &raw[s..e])
+            .collect::<Vec<_>>()
+            .join("'");
         self.user
             .write()
             .unwrap_or_else(|p| p.into_inner())
             .learn(&learned, &cand.text);
         let rest = raw[cut..].trim_start_matches('\'').to_string();
+        // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
+        // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
+        let phrase = match self.phrase.take() {
+            Some((mut key, mut text)) => {
+                key.push('\'');
+                key.push_str(&learned);
+                text.push_str(&cand.text);
+                Some((key, text))
+            }
+            None if !rest.is_empty() => Some((learned, cand.text.clone())),
+            None => None,
+        };
+        if rest.is_empty() {
+            if let Some((key, text)) = phrase
+                && text.chars().count() > 1
+            {
+                self.user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .learn(&key, &text);
+            }
+        } else {
+            self.phrase = phrase;
+        }
         if rest.is_empty() {
             self.comp = None;
             self.comp_committed = false;
@@ -477,7 +638,9 @@ impl Engine {
         } else {
             let comp = self.comp.as_mut()?;
             comp.raw = rest;
-            comp.cursor = 0;
+            // 选掉前缀后光标仍在剩余拼音末尾,继续按键才会接在后面;
+            // 置 0 会让下一个字母插到最前面,变成 `htianqi`。
+            comp.cursor = comp.raw.len();
             self.comp_committed = true;
             self.recompute();
         }
@@ -537,6 +700,7 @@ impl Engine {
         if comp.raw.is_empty() {
             self.comp = None;
             self.comp_committed = false;
+            self.phrase = None;
             self.cands.clear();
             self.hl = 0;
             self.page = 0;
@@ -576,6 +740,7 @@ impl Engine {
     fn clear_comp(&mut self) {
         self.comp = None;
         self.comp_committed = false;
+        self.phrase = None;
         self.cands.clear();
         self.hl = 0;
         self.page = 0;
