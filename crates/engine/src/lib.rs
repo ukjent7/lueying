@@ -361,9 +361,7 @@ impl Engine {
         } else {
             false
         };
-        if ok
-            && let Some(comp) = self.comp.as_mut()
-        {
+        if ok && let Some(comp) = self.comp.as_mut() {
             comp.raw.insert(comp.cursor, '\'');
             comp.cursor += 1;
             self.recompute();
@@ -460,11 +458,15 @@ impl Engine {
         let segs = segmentations(&comp.raw);
         let built = query::build(&self.dict, &self.user, &self.cfg.fuzzy, &comp.raw, &segs);
         comp.display = built.display;
-        comp.seg_spans = built.cands.first().map(|c| c.spans.clone()).unwrap_or_else(|| {
-            segs.first()
-                .map(|s| s.iter().map(|x| x.span).collect())
-                .unwrap_or_default()
-        });
+        comp.seg_spans = built
+            .cands
+            .first()
+            .map(|c| c.spans.clone())
+            .unwrap_or_else(|| {
+                segs.first()
+                    .map(|s| s.iter().map(|x| x.span).collect())
+                    .unwrap_or_default()
+            });
         self.cands = built.cands;
     }
 }

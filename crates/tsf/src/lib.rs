@@ -57,7 +57,9 @@ pub(crate) fn module_path_file() -> Option<std::path::PathBuf> {
     if len == 0 || len >= buf.len() {
         None
     } else {
-        Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])))
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(
+            &buf[..len],
+        )))
     }
 }
 

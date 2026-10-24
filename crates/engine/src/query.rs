@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use pinyin_dict::syllables::{self, Fuzzy};
-use pinyin_dict::{signature, Dictionary};
+use pinyin_dict::{Dictionary, signature};
 
 use crate::segment::Syll;
 use crate::user::UserDict;

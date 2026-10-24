@@ -79,9 +79,9 @@ fn register_profile() -> Result<()> {
 
 fn unregister_profile() -> Result<()> {
     com_scope(|| {
-        if let Ok(category) =
-            unsafe { CoCreateInstance::<_, ITfCategoryMgr>(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER) }
-        {
+        if let Ok(category) = unsafe {
+            CoCreateInstance::<_, ITfCategoryMgr>(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)
+        } {
             for catid in CATEGORIES {
                 let _ = unsafe { category.UnregisterCategory(&CLSID_IME, catid, &CLSID_IME) };
             }

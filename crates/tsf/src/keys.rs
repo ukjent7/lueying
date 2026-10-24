@@ -3,7 +3,9 @@
 use std::cell::Cell;
 
 use pinyin_engine::Key;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
+};
 
 pub(crate) fn shift_down() -> bool {
     unsafe { GetKeyState(VK_SHIFT).0 as u16 & 0x8000 != 0 }
@@ -16,7 +18,8 @@ pub(crate) fn caps_on() -> bool {
 /// 带 Ctrl/Alt 的组合键归应用(快捷键)。
 pub(crate) fn command_mods() -> bool {
     unsafe {
-        (GetKeyState(VK_CONTROL).0 as u16 & 0x8000 != 0) || (GetKeyState(VK_MENU).0 as u16 & 0x8000 != 0)
+        (GetKeyState(VK_CONTROL).0 as u16 & 0x8000 != 0)
+            || (GetKeyState(VK_MENU).0 as u16 & 0x8000 != 0)
     }
 }
 

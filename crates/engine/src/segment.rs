@@ -4,7 +4,7 @@
 //! 全拼与简拼(单字母或 zh/ch/sh)混合出现,同一串可能有多条路径(xian / xi'an / xia+n),
 //! 由候选层跨切分合并排序。
 
-use pinyin_dict::syllables::{is_syllable, ABBREV_DIGRAPHS, ABBREV_LETTERS};
+use pinyin_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, is_syllable};
 
 /// 切分出的一个音节。`abbrev` 为真表示简拼。
 #[derive(Clone, Debug)]

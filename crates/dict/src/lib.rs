@@ -82,7 +82,8 @@ impl Dictionary {
             });
         }
         entries.sort_by(|a, b| {
-            a.key.cmp(&b.key)
+            a.key
+                .cmp(&b.key)
                 .then(b.freq.cmp(&a.freq))
                 .then(a.word.cmp(&b.word))
         });
@@ -95,13 +96,7 @@ impl Dictionary {
             idx.sort();
             idx
         };
-        (
-            Dictionary {
-                entries,
-                sig_index,
-            },
-            bad,
-        )
+        (Dictionary { entries, sig_index }, bad)
     }
 
     pub fn from_path(path: &Path) -> std::io::Result<(Dictionary, usize)> {
@@ -143,9 +138,7 @@ impl Dictionary {
 
     /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤)。
     pub fn lookup_sig(&self, sig: &str) -> Vec<&Entry> {
-        let lo = self
-            .sig_index
-            .partition_point(|(s, _)| s.as_str() < sig);
+        let lo = self.sig_index.partition_point(|(s, _)| s.as_str() < sig);
         let mut out = Vec::new();
         for (s, i) in &self.sig_index[lo..] {
             if s != sig {

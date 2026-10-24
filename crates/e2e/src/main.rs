@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use pinyin_dict::Dictionary;
 use pinyin_engine::{Config, Engine, Event, Key, Mode};
-use scenarios::{scenarios, probes, Check, Scenario};
+use scenarios::{Check, Scenario, probes, scenarios};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

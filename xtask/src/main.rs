@@ -131,9 +131,7 @@ fn parse_frost(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize,
             .map(|s| s.to_lowercase())
             .collect::<Vec<_>>()
             .join("'");
-        let e = best
-            .entry((word.to_string(), key))
-            .or_insert(0);
+        let e = best.entry((word.to_string(), key)).or_insert(0);
         if weight > *e {
             *e = weight;
         }

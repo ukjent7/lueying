@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 
-use windows::Win32::Foundation::{E_FAIL, CLASS_E_NOAGGREGATION};
+use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, E_FAIL};
 use windows::Win32::System::Com::{IClassFactory, IClassFactory_Impl};
 use windows::core::{BOOL, GUID, IUnknown, Interface, Ref, Result, implement};
 
