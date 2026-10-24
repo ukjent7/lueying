@@ -393,5 +393,11 @@ pub fn probes() -> Vec<(&'static str, &'static str)> {
         ("xuexi", "学习"),
         ("jintian", "今天"),
         ("tianqi", "天气"),
+        // 音节表曾漏掉 di/neng/yue/deng/rui,这几条锁死补全后的行为。
+        ("di", "地"),
+        ("neng", "能"),
+        ("yue", "月"),
+        ("deng", "等"),
+        ("rui", "瑞"),
     ]
 }

@@ -15,8 +15,8 @@ pub const SYLLABLES: &[&str] = &[
     "cui", "cun", "cuo", // ch
     "cha", "chai", "chan", "chang", "chao", "che", "chen", "cheng", "chi", "chong", "chou", "chu",
     "chua", "chuai", "chuan", "chuang", "chui", "chun", "chuo", // d
-    "da", "dai", "dan", "dang", "dao", "de", "dei", "den", "dia", "dian", "diao", "die", "ding",
-    "diu", "dong", "dou", "du", "duan", "dui", "dun", "duo", // f
+    "da", "dai", "dan", "dang", "dao", "de", "dei", "den", "deng", "di", "dia", "dian", "diao",
+    "die", "ding", "diu", "dong", "dou", "du", "duan", "dui", "dun", "duo", // f
     "fa", "fan", "fang", "fei", "fen", "feng", "fo", "fou", "fu", // g
     "ga", "gai", "gan", "gang", "gao", "ge", "gei", "gen", "geng", "gong", "gou", "gu", "gua",
     "guai", "guan", "guang", "gui", "gun", "guo", // h
@@ -27,18 +27,18 @@ pub const SYLLABLES: &[&str] = &[
     "ka", "kai", "kan", "kang", "kao", "ke", "kei", "ken", "keng", "kong", "kou", "ku", "kua",
     "kuai", "kuan", "kuang", "kui", "kun", "kuo", // l
     "la", "lai", "lan", "lang", "lao", "le", "lei", "leng", "li", "lia", "lian", "liang", "liao",
-    "lie", "lin", "ling", "liu", "long", "lou", "lu", "luan", "lun", "luo", "lv", "lve",
+    "lie", "lin", "ling", "liu", "lo", "long", "lou", "lu", "luan", "lun", "luo", "lv", "lve",
     // m
     "ma", "mai", "man", "mang", "mao", "me", "mei", "men", "meng", "mi", "mian", "miao", "mie",
-    "min", "ming", "mo", "mou", "mu", // n
-    "na", "nai", "nan", "nao", "ne", "nei", "nen", "nang", "ni", "nian", "niang", "niao", "nie",
-    "nin", "ning", "niu", "nong", "nu", "nun", "nuan", "nuo", "nv", "nve", // p
+    "min", "ming", "miu", "mo", "mou", "mu", // n
+    "na", "nai", "nan", "nao", "ne", "nei", "nen", "neng", "nang", "ni", "nian", "niang", "niao",
+    "nie", "nin", "ning", "niu", "nong", "nou", "nu", "nun", "nuan", "nuo", "nv", "nve", // p
     "pa", "pai", "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian", "piao", "pie", "pin",
-    "ping", "po", "pu", // q
+    "ping", "po", "pou", "pu", // q
     "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu", "quan",
     "que", "qun", // r
-    "ran", "rang", "rao", "re", "ren", "reng", "ri", "rong", "rou", "ru", "rua", "ruan", "run",
-    "ruo", // s
+    "ran", "rang", "rao", "re", "ren", "reng", "ri", "rong", "rou", "ru", "rua", "ruan", "rui",
+    "run", "ruo", // s
     "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "si", "song", "sou", "su", "suan",
     "sui", "sun", "suo", // sh
     "sha", "shai", "shan", "shang", "shao", "she", "shei", "shen", "sheng", "shi", "shou", "shu",
@@ -49,7 +49,7 @@ pub const SYLLABLES: &[&str] = &[
     "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong", "xiu", "xu", "xuan",
     "xue", "xun", // y
     "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yo", "yong", "you", "yu", "yuan",
-    "yun", // z
+    "yue", "yun", // z
     "za", "zai", "zan", "zang", "zao", "ze", "zei", "zen", "zeng", "zi", "zong", "zou", "zu",
     "zuan", "zui", "zun", "zuo", // zh
     "zha", "zhai", "zhan", "zhang", "zhao", "zhe", "zhei", "zhen", "zheng", "zhi", "zhong", "zhou",

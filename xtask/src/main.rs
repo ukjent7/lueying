@@ -69,6 +69,7 @@ const FILES: &[&str] = &[
 
 fn run(args: Args) -> Result<(), String> {
     let mut best: HashMap<(String, String), u64> = HashMap::new();
+    let mut unknown: HashMap<String, usize> = HashMap::new();
     let mut total = 0usize;
     let mut skipped = 0usize;
     for name in FILES {
@@ -77,10 +78,28 @@ fn run(args: Args) -> Result<(), String> {
             eprintln!("跳过缺失的 {name}");
             continue;
         };
-        let (n, bad) = parse_frost(&text, &mut best);
+        let (n, bad) = parse_frost(&text, &mut best, &mut unknown);
         total += n;
         skipped += bad;
         println!("{name}: {n} 行,坏 {bad} 行");
+    }
+    // 音节表漏一个常用音,词条会被静默地当坏行丢掉(例如 `di` 曾漏掉 2.5 万词条,
+    // 用户也打不出该音),所以这里把「未识别音节」显式暴露并在量级异常时中断。
+    if !unknown.is_empty() {
+        let mut top: Vec<(String, usize)> = unknown.into_iter().collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let list = top
+            .iter()
+            .take(10)
+            .map(|(s, n)| format!("{s}×{n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("未识别音节: {list}");
+        if let Some((s, n)) = top.first().filter(|(_, n)| *n >= 100) {
+            return Err(format!(
+                "音节表缺少常用音节 {s}({n} 次),这些词条会被静默丢弃;补 crates/dict/src/syllables.rs"
+            ));
+        }
     }
     let mut lines: Vec<(String, u64, String)> = best
         .into_iter()
@@ -116,7 +135,11 @@ fn run(args: Args) -> Result<(), String> {
 }
 
 /// 解析 Rime dict.yaml:跳过 `...` 之前的头,数据行为 `词<TAB>音节(空格分隔)<TAB>权重`。
-fn parse_frost(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize, usize) {
+fn parse_frost(
+    text: &str,
+    best: &mut HashMap<(String, String), u64>,
+    unknown: &mut HashMap<String, usize>,
+) -> (usize, usize) {
     let mut in_data = false;
     let (mut n, mut bad) = (0usize, 0usize);
     for line in text.lines() {
@@ -143,6 +166,12 @@ fn parse_frost(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize,
         if word.chars().count() != sylls.len()
             || !sylls.iter().all(|s| is_syllable(&s.to_lowercase()))
         {
+            for s in &sylls {
+                let s = s.to_lowercase();
+                if !is_syllable(&s) {
+                    *unknown.entry(s).or_insert(0) += 1;
+                }
+            }
             bad += 1;
             continue;
         }
