@@ -260,8 +260,9 @@ struct Node {
     spans: Vec<(usize, usize)>,
 }
 
-/// 解码路径:词文本 + 各音节原始字节区间。
-type Path = Vec<(String, Vec<(usize, usize)>)>;
+/// 解码路径的一步:词文本 + 各音节原始字节区间。
+type Step = (String, Vec<(usize, usize)>);
+type Path = Vec<Step>;
 
 /// 搭配分:前文尾 -> 当前词的 `.gram` 打分。查询结果按 (前文,词,句末) 缓存。
 struct Grammar<'a> {
@@ -288,7 +289,7 @@ impl Grammar<'_> {
 }
 
 /// 前文尾部最多 `CONTEXT_CHARS` 个字,供语法模型查搭配。
-fn context_tail(path: &Path) -> String {
+fn context_tail(path: &[Step]) -> String {
     let mut chars: Vec<char> = Vec::with_capacity(CONTEXT_CHARS);
     for (word, _) in path.iter().rev() {
         for ch in word.chars().rev() {
@@ -432,8 +433,8 @@ pub fn build(
             spans: Vec::new(),
             visits: 0,
         };
-        for i in 0..raw.len() {
-            if raw.as_bytes()[i] == b'\'' || !finish[i] {
+        for (i, &ok) in finish.iter().take(raw.len()).enumerate() {
+            if raw.as_bytes()[i] == b'\'' || !ok {
                 continue;
             }
             b.units.clear();
@@ -509,15 +510,17 @@ pub fn build(
             .then(a.consume.cmp(&b.consume))
             .then(a.text.cmp(&b.text))
     });
-    // 首选整句置顶;从输入开头起的前缀词紧随其后,逐段上屏常用;
-    // 其余整句备选排在后面。
+    // 首选整句置顶;留两个前缀词方便逐段上屏,随后是所有整句备选,
+    // 余下的前缀词再排后面。这样 top-5 仍然覆盖整句备选。
     let mut cands: Vec<Cand> = Vec::new();
     let mut rest = full.into_iter();
     if let Some(top) = rest.next() {
         cands.push(top);
     }
-    cands.extend(words);
+    let mut words = words.into_iter();
+    cands.extend(words.by_ref().take(2));
     cands.extend(rest);
+    cands.extend(words);
     let mut seen: HashSet<(String, usize)> = HashSet::new();
     cands.retain(|c| seen.insert((c.text.clone(), c.consume)));
     cands.truncate(MAX_CANDS);

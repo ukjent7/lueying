@@ -26,8 +26,6 @@ const META: usize = 44;
 const OFFSET_PTR_AT: usize = 40;
 /// darts-clone 每个 unit 4 字节。
 const UNIT: usize = 4;
-/// 单次查询最多取几个前缀匹配,对齐 `GramDb::kMaxResults`。
-const MAX_RESULTS: usize = 8;
 /// 一次编码最多几个 Unicode 字符。
 const MAX_CHARS: usize = 8;
 /// 查搭配时前文与词各取几个字(librime 的 `collocation_max_length - 1`)。
@@ -109,14 +107,21 @@ impl Gram {
         Some(node as usize)
     }
 
-    /// 从节点出发,沿 `key` 收集每个成词节点的值与已匹配的编码字节数。
-    fn common_prefix(&self, key: &[u8], node: usize) -> Vec<(f64, usize)> {
-        let mut out = Vec::new();
+    /// 从节点出发,沿 `key` 扫过每个成词节点:命中搭配时直接算好带罚的分数,
+    /// 只保留最高分,不分配临时 Vec。
+    fn best_collocation(
+        &self,
+        key: &[u8],
+        node: usize,
+        context_chars: usize,
+        whole_prefix: bool,
+    ) -> Option<f64> {
         if node >= self.units {
-            return out;
+            return None;
         }
+        let mut best: Option<f64> = None;
         let mut id = node as u32;
-        let mut u = self.unit(node).unwrap_or(0);
+        let mut u = self.unit(node)?;
         let mut used = 0;
         for &b in key {
             used += 1;
@@ -135,13 +140,52 @@ impl Gram {
                 let leaf = id ^ offset_of(u);
                 if let Some(v) = self.unit(leaf as usize)
                     && let Some(score) = value(v)
-                    && out.len() < MAX_RESULTS
                 {
-                    out.push((score, used));
+                    let match_chars = encoded_chars_prefix(key, used);
+                    let whole = whole_prefix && used == key.len();
+                    let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole
+                    {
+                        COLLOCATION_PENALTY
+                    } else {
+                        WEAK_COLLOCATION_PENALTY
+                    };
+                    let score = score + penalty;
+                    best = Some(best.map_or(score, |current| current.max(score)));
                 }
             }
         }
-        out
+        best
+    }
+
+    /// 沿 `key` 找到第一个成词节点;句末 `$` 只取最短的命中,与 librime 一致。
+    fn first_common_prefix(&self, key: &[u8], node: usize) -> Option<f64> {
+        if node >= self.units {
+            return None;
+        }
+        let mut id = node as u32;
+        let mut u = self.unit(node)?;
+        for &b in key {
+            id ^= offset_of(u) ^ u32::from(b);
+            if id as usize >= self.units {
+                break;
+            }
+            let Some(next) = self.unit(id as usize) else {
+                break;
+            };
+            u = next;
+            if label_of(u) != u32::from(b) {
+                break;
+            }
+            if has_leaf(u) {
+                let leaf = id ^ offset_of(u);
+                if let Some(v) = self.unit(leaf as usize)
+                    && let Some(score) = value(v)
+                {
+                    return Some(score);
+                }
+            }
+        }
+        None
     }
 
     /// 给「`context` 之后接 `word`」打分,复刻 librime-octagram 的 `Query`:
@@ -160,28 +204,21 @@ impl Gram {
         let mut context_chars = encoded_chars(&ctx);
         let mut at = 0;
         while at < ctx.len() {
-            if let Some(node) = self.traverse(&ctx[at..]) {
-                for (value, matched) in self.common_prefix(&word_key, node) {
-                    let match_chars = encoded_chars_prefix(&word_key, matched);
-                    let whole = at == 0 && matched == word_key.len();
-                    let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole {
-                        COLLOCATION_PENALTY
-                    } else {
-                        WEAK_COLLOCATION_PENALTY
-                    };
-                    result = result.max(value + penalty);
-                }
+            if let Some(node) = self.traverse(&ctx[at..])
+                && let Some(score) =
+                    self.best_collocation(&word_key, node, context_chars, at == 0)
+            {
+                result = result.max(score);
             }
             context_chars = context_chars.saturating_sub(1);
             at += char_len(ctx[at]);
         }
-        if is_rear && word.chars().count() <= QUERY_CHARS {
-            let key = encode_head(word, QUERY_CHARS.min(MAX_CHARS));
-            if let Some(node) = self.traverse(&key)
-                && let Some((value, _)) = self.common_prefix(b"$", node).first()
-            {
-                result = result.max(*value + REAR_PENALTY);
-            }
+        if is_rear
+            && word.chars().count() <= QUERY_CHARS
+            && let Some(node) = self.traverse(&word_key)
+            && let Some(score) = self.first_common_prefix(b"$", node)
+        {
+            result = result.max(score + REAR_PENALTY);
         }
         result
     }
