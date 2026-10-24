@@ -181,38 +181,48 @@ impl Dictionary {
 
     /// 从二进制布局建立视图。字段越界时按空词典处理(坏文件不拖垮输入法)。
     fn from_bytes(backing: Backing) -> Dictionary {
-        let bytes: &[u8] = &backing;
-        let empty = Dictionary {
-            backing,
-            recs: 0..0,
-            data: 0..0,
-            sigs: 0..0,
-            count: 0,
+        // 先在借用期内算好区间,再移交所有权(否则 bytes 的借用挡住 move)。
+        let layout = {
+            let bytes: &[u8] = &backing;
+            if bytes.len() < HEAD || &bytes[..MAGIC.len()] != MAGIC {
+                None
+            } else {
+                let n = |i: usize| {
+                    u32::from_le_bytes(
+                        bytes[HEAD - 16 + i * 4..HEAD - 12 + i * 4]
+                            .try_into()
+                            .unwrap(),
+                    ) as usize
+                };
+                let (count, data_len, sig_len) = (n(0), n(1), n(2));
+                let recs_at = HEAD;
+                let data_at = recs_at + count * REC;
+                let sigs_at = data_at + data_len;
+                let end = sigs_at + sig_len * SIG;
+                (end <= bytes.len()).then_some((
+                    count,
+                    recs_at..data_at,
+                    data_at..sigs_at,
+                    sigs_at..end,
+                ))
+            }
         };
-        if bytes.len() < HEAD || &bytes[..MAGIC.len()] != MAGIC {
-            return empty;
-        }
-        let n = |i: usize| {
-            u32::from_le_bytes(
-                bytes[HEAD - 16 + i * 4..HEAD - 12 + i * 4]
-                    .try_into()
-                    .unwrap(),
-            ) as usize
+        let Some((count, recs, data, sigs)) = layout else {
+            return Dictionary {
+                backing,
+                recs: 0..0,
+                data: 0..0,
+                sigs: 0..0,
+                count: 0,
+            };
         };
-        let (count, data_len, sig_len) = (n(0), n(1), n(2));
-        let recs_at = HEAD;
-        let data_at = recs_at + count * REC;
-        let sigs_at = data_at + data_len;
-        let end = sigs_at + sig_len * SIG;
-        if end > bytes.len() {
-            return empty;
-        }
         Dictionary {
             backing,
-            recs: recs_at..data_at,
-            data: data_at..sigs_at,
-            sigs: sigs_at..end,
+            recs,
+            data,
+            sigs,
             count,
+        }
         }
     }
 
