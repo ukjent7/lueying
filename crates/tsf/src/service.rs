@@ -7,15 +7,15 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use pinyin_protocol::{Reply, Request};
-use windows::Win32::Foundation::{BOOL, E_FAIL, E_INVALIDARG, FALSE, LPARAM, WPARAM};
+use windows::Win32::Foundation::{E_INVALIDARG, FALSE, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
     ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfSource, ITfTextInputProcessor,
-    ITfTextInputProcessor_Impl, ITfThreadMgr, ITfThreadMgrEventSink, ITfThreadMgrEventSink_Impl,
+    ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
 };
-use windows::core::{Error, GUID, Interface, Ref, Result, implement};
+use windows::core::{BOOL, Error, GUID, Interface, Ref, Result, implement};
 
 use crate::attr;
 use crate::client::{Client, RETRY_INTERVAL};
@@ -39,7 +39,7 @@ struct Pending {
 #[implement(
     ITfTextInputProcessor,
     ITfKeyEventSink,
-    ITfThreadMgrEventSink,
+    ITfThreadFocusSink,
     ITfDisplayAttributeProvider
 )]
 pub(crate) struct TextService {
@@ -98,12 +98,13 @@ impl TextService {
                 .is_none_or(|t| t.elapsed() >= RETRY_INTERVAL);
             if may_retry {
                 self.last_connect.set(Some(Instant::now()));
-                *guard = Client::connect().inspect(|c| {
-                    let _ = c.round_trip(&Request::Hello {
+                if let Some(mut client) = Client::connect() {
+                    let _ = client.round_trip(&Request::Hello {
                         session: self.session,
                         host: host_app_name(),
                     });
-                });
+                    *guard = Some(client);
+                }
             }
         }
         let Some(client) = guard.as_mut() else {
@@ -136,15 +137,15 @@ impl TextService {
 
 impl ITfTextInputProcessor_Impl for TextService_Impl {
     fn Activate(&self, ptim: Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
-        let thread_mgr = ptim.ok().ok_or_else(|| Error::from(E_FAIL))?.clone();
+        let thread_mgr = ptim.ok()?.clone();
         let keystroke: ITfKeystrokeMgr = thread_mgr.cast()?;
         let sink: ITfKeyEventSink = self.to_interface();
         unsafe { keystroke.AdviseKeyEventSink(tid, &sink, true)? };
 
         let source: ITfSource = thread_mgr.cast()?;
-        let focus_sink: ITfThreadMgrEventSink = self.to_interface();
+        let focus_sink: ITfThreadFocusSink = self.to_interface();
         let unknown: windows::core::IUnknown = focus_sink.into();
-        let cookie = unsafe { source.AdviseSink(&ITfThreadMgrEventSink::IID, &unknown)? };
+        let cookie = unsafe { source.AdviseSink(&ITfThreadFocusSink::IID, &unknown)? };
         *self.source.borrow_mut() = Some(source);
         self.focus_cookie.set(cookie);
 
@@ -180,29 +181,22 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
     }
 }
 
-impl ITfThreadMgrEventSink_Impl for TextService_Impl {
-    fn OnInitThreadMgr(&self, _ptim: Ref<ITfThreadMgr>) -> Result<()> {
-        Ok(())
-    }
-
-    fn OnUninitThreadMgr(&self, _ptim: Ref<ITfThreadMgr>) -> Result<()> {
-        Ok(())
-    }
-
-    /// 焦点切换:失焦侧清组合(由 Server 落定),避免拼音串跟随到下一个窗口。
-    fn OnSetFocus(&self, fforeground: BOOL) -> Result<()> {
+impl ITfThreadFocusSink_Impl for TextService_Impl {
+    /// 线程焦点:切窗口时 ITfKeyEventSink::OnSetFocus 不触发,走这条。
+    /// 失焦侧清组合(由 Server 落定),避免拼音串跟随到下一个窗口。
+    fn OnSetThreadFocus(&self) -> Result<()> {
         let _ = self.request(Request::Focus {
             session: self.session,
-            focused: fforeground.as_bool(),
+            focused: true,
         });
         Ok(())
     }
 
-    fn OnPushContext(&self, _pic: Ref<ITfContext>) -> Result<()> {
-        Ok(())
-    }
-
-    fn OnPopContext(&self, _pic: Ref<ITfContext>) -> Result<()> {
+    fn OnKillThreadFocus(&self) -> Result<()> {
+        let _ = self.request(Request::Focus {
+            session: self.session,
+            focused: false,
+        });
         Ok(())
     }
 }

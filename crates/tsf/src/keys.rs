@@ -7,19 +7,20 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 
+/// 高位为 1(返回值为负)表示按下。
 pub(crate) fn shift_down() -> bool {
-    unsafe { GetKeyState(VK_SHIFT).0 as u16 & 0x8000 != 0 }
+    unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 }
 }
 
+/// 低位为 1 表示 Caps Lock 亮着(锁定键看 toggle 位,不是按住位)。
 pub(crate) fn caps_on() -> bool {
-    unsafe { GetKeyState(VK_CAPITAL).0 as u16 & 0x8000 != 0 }
+    unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0 }
 }
 
 /// 带 Ctrl/Alt 的组合键归应用(快捷键)。
 pub(crate) fn command_mods() -> bool {
     unsafe {
-        (GetKeyState(VK_CONTROL).0 as u16 & 0x8000 != 0)
-            || (GetKeyState(VK_MENU).0 as u16 & 0x8000 != 0)
+        GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_MENU.0 as i32) < 0
     }
 }
 

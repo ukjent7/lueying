@@ -14,12 +14,12 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicIsize, AtomicPtr, Ordering};
 
 use windows::Win32::Foundation::{
-    BOOL, CLASS_E_CLASSNOTAVAILABLE, E_FAIL, HINSTANCE, HMODULE, S_FALSE, S_OK,
+    CLASS_E_CLASSNOTAVAILABLE, E_FAIL, HINSTANCE, HMODULE, S_FALSE, S_OK,
 };
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
-use windows::core::{GUID, HRESULT, Interface, PCWSTR};
+use windows::core::{BOOL, GUID, HRESULT, Interface, PCWSTR};
 
 /// 文本服务 CLSID(注册表 InprocServer32、TSF profile、DllGetClassObject 三处一致)。
 pub(crate) const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);

@@ -98,9 +98,9 @@ mod imp {
             // 3. 宿主窗口 + EDIT 控件
             let (hwnd, edit) = create_host_window()?;
             unsafe {
-                ShowWindow(hwnd, SW_SHOWNORMAL);
+                let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
                 let _ = SetForegroundWindow(hwnd);
-                SetFocus(Some(edit));
+                let _ = SetFocus(Some(edit));
             }
 
             // 4. 注入按键

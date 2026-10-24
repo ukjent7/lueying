@@ -3,7 +3,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::os::windows::fs::OpenOptionsExt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pinyin_protocol::{Reply, Request};
 
