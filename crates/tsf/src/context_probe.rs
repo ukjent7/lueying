@@ -41,8 +41,8 @@ pub(crate) fn request(
         epoch,
     }
     .into();
-    let requested = unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READ) }
-        .and_then(|hr| hr.ok());
+    let requested =
+        unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READ) }.and_then(|hr| hr.ok());
     if requested.is_err() {
         shared.probing.set(false);
     }

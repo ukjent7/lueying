@@ -386,9 +386,7 @@ pub fn run(
     push(
         &mut checks,
         "分段上屏标记组合已提交",
-        !partial.is_empty()
-            && engine.composition().is_some()
-            && engine.composition_committed(),
+        !partial.is_empty() && engine.composition().is_some() && engine.composition_committed(),
         format!("上屏 {partial:?}"),
     );
     engine.process(Key::Esc);
