@@ -9,8 +9,8 @@ use std::sync::Arc;
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE};
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
+    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows::core::{HRESULT, HSTRING};
 
@@ -70,6 +70,11 @@ fn wait_client(stream: File) -> io::Result<File> {
 }
 
 fn serve(file: File, state: Arc<State>) {
+    // 记录客户端 PID:键盘数据的来源进程,日志排查与后续限权用(mozc 同款)。
+    let mut pid = 0u32;
+    if unsafe { GetNamedPipeClientProcessId(HANDLE(file.as_raw_handle()), &mut pid) }.is_ok() {
+        println!("管道客户端 pid={pid}");
+    }
     let mut writer = match file.try_clone() {
         Ok(w) => w,
         Err(_) => return,

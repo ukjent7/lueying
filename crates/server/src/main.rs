@@ -16,7 +16,7 @@ mod imp {
 
     use pinyin_dict::Dictionary;
     use pinyin_engine::{Config, Engine, Event, Key, Mode};
-    use pinyin_protocol::{PIPE_NAME, Reply, Request, SessionView};
+    use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
 
     pub(super) struct Session {
         pub(super) engine: Engine,
@@ -51,11 +51,12 @@ mod imp {
             version: AtomicU64::new(0),
             active: AtomicU64::new(0),
         });
-        println!("pinyin-server 监听 {PIPE_NAME}");
+        let pipe = pipe_name();
+        println!("pinyin-server 监听 {pipe}");
         {
             // 管道服务在后台线程,主线程留给 gpui 事件循环。
             let state = Arc::clone(&state);
-            std::thread::spawn(move || crate::pipe::listen(PIPE_NAME, state));
+            std::thread::spawn(move || crate::pipe::listen(&pipe, state));
         }
         crate::ui::run(state);
     }

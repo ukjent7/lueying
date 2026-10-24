@@ -6,6 +6,7 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::time::Duration;
 
 use pinyin_protocol::{Reply, Request};
+use windows::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
 
 pub(crate) struct Client {
     reader: BufReader<File>,
@@ -21,7 +22,10 @@ impl Client {
             .read(true)
             .write(true)
             .share_mode(0)
-            .open(pinyin_protocol::PIPE_NAME)
+            // SQOS=IDENTIFICATION:客户端禁止管道服务端模拟自己——键盘流是敏感
+            // 数据,mozc/WeType 同款。custom_flags 正好并入 dwFlagsAndAttributes。
+            .custom_flags(SECURITY_SQOS_PRESENT.0 | SECURITY_IDENTIFICATION.0)
+            .open(pinyin_protocol::pipe_name())
             .ok()?;
         let writer = file.try_clone().ok()?;
         Some(Self {

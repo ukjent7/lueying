@@ -218,6 +218,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         let Ok(context) = pic.ok() else {
             return Ok(FALSE);
         };
+        // 密码框/空上下文:键全部放行,不组句。
+        if crate::context::keyboard_disabled(&context) {
+            return Ok(FALSE);
+        }
         let Some(reply) = self.request(Request::Key {
             session: self.session,
             key,

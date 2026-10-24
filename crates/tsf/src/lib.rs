@@ -4,6 +4,7 @@
 
 mod attr;
 mod client;
+mod context;
 mod edit;
 mod factory;
 mod keys;

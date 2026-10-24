@@ -6,6 +6,20 @@ use serde::{Deserialize, Serialize};
 /// 管道名(版本号入名,协议不兼容时换 v2)。
 pub const PIPE_NAME: &str = r"\\.\pipe\pinyin-ime-v1";
 
+/// 带每用户后缀的管道名:用户名哈希入名,防止跨用户会话抢注同名管道
+/// (mozc 的 IPCKey 防劫持方案的轻量版;两端同会话同环境变量,得到同一名字)。
+pub fn pipe_name() -> String {
+    match std::env::var("USERNAME") {
+        Ok(user) if !user.is_empty() => {
+            let hash = user
+                .bytes()
+                .fold(5381u64, |h, b| h.wrapping_mul(33).wrapping_add(b as u64));
+            format!("{PIPE_NAME}.u{hash:x}")
+        }
+        _ => PIPE_NAME.to_string(),
+    }
+}
+
 /// 线上的按键(引擎 `Key` 的可序列化镜像,引擎 crate 保持零依赖)。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KeyMsg {
