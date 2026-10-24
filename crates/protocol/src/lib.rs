@@ -79,6 +79,8 @@ pub enum Request {
     TakeKey { session: u64 },
     /// 停顿轮询:只读当前内联文本,供 TSF 定时器把异步重排后的首选写回文档。
     Sync { session: u64 },
+    /// TSF 读到的光标前文本;组合开始时上报,让重排从第一个候选就有上下文。
+    Context { session: u64, text: String },
     /// DLL 侧直接设置模式(CapsLock 大写锁定等)。
     SetMode { session: u64, chinese: bool },
     /// 焦点变化(切窗口时 Server 收候选窗)。

@@ -97,6 +97,8 @@ pub struct Engine {
     cfg: Config,
     mode: Mode,
     comp: Option<Composition>,
+    /// 当前组合里已经上屏过分段词(这时左邻文本不含这些词)。
+    comp_committed: bool,
     cands: Vec<query::Candidate>,
     hl: usize,
     page: usize,
@@ -118,6 +120,7 @@ impl Engine {
             cfg,
             mode: Mode::Chinese,
             comp: None,
+            comp_committed: false,
             cands: Vec::new(),
             hl: 0,
             page: 0,
@@ -164,9 +167,22 @@ impl Engine {
         self.rev
     }
 
+    /// 当前组合里是否已经上屏过分段词。
+    pub fn composition_committed(&self) -> bool {
+        self.comp_committed
+    }
+
     /// 最近上屏的文本(最多 [`CONTEXT_KEEP`] 字)。
     pub fn context(&self) -> &str {
         &self.context
+    }
+
+    /// 用光标前文本替换上下文,只保留末尾 [`CONTEXT_KEEP`] 字。
+    ///
+    /// TSF 在组合开始时上报左邻文本;它包含之前所有已上屏内容,因此可以整体替换。
+    pub fn set_context(&mut self, text: &str) {
+        self.context.clear();
+        self.push_context(text);
     }
 
     /// 清空已上屏上下文(焦点切到别处时调用)。
@@ -280,6 +296,7 @@ impl Engine {
                     display: String::new(),
                     seg_spans: Vec::new(),
                 });
+                self.comp_committed = false;
                 self.recompute();
                 Vec::new()
             }
@@ -310,6 +327,7 @@ impl Engine {
                 .unwrap_or_default(),
             Key::Enter => {
                 let raw = self.comp.take().map(|c| c.raw).unwrap_or_default();
+                self.comp_committed = false;
                 self.cands.clear();
                 self.rev = self.rev.wrapping_add(1);
                 vec![Event::Commit(raw)]
@@ -415,6 +433,7 @@ impl Engine {
         self.comp.as_ref()?;
         if self.cands.is_empty() {
             let raw = self.comp.take().map(|c| c.raw);
+            self.comp_committed = false;
             self.hl = 0;
             self.page = 0;
             self.rev = self.rev.wrapping_add(1);
@@ -433,6 +452,7 @@ impl Engine {
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         if rest.is_empty() {
             self.comp = None;
+            self.comp_committed = false;
             self.cands.clear();
             self.hl = 0;
             self.page = 0;
@@ -441,6 +461,7 @@ impl Engine {
             let comp = self.comp.as_mut()?;
             comp.raw = rest;
             comp.cursor = 0;
+            self.comp_committed = true;
             self.recompute();
         }
         Some(cand.text)
@@ -498,6 +519,7 @@ impl Engine {
         }
         if comp.raw.is_empty() {
             self.comp = None;
+            self.comp_committed = false;
             self.cands.clear();
             self.hl = 0;
             self.page = 0;
@@ -536,6 +558,7 @@ impl Engine {
 
     fn clear_comp(&mut self) {
         self.comp = None;
+        self.comp_committed = false;
         self.cands.clear();
         self.hl = 0;
         self.page = 0;

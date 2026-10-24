@@ -147,8 +147,8 @@ mod imp {
 
     /// 处理一条请求,返回应答。
     pub(super) fn handle(state: &State, req: Request) -> Reply {
-        // 任何请求后候选窗都可能要重摆,先记账再处理;停顿轮询只读,不触发重绘。
-        if !matches!(&req, Request::Sync { .. }) {
+        // 任何请求后候选窗都可能要重摆,先记账再处理;只读上报不触发重绘。
+        if !matches!(&req, Request::Sync { .. } | Request::Context { .. }) {
             state.version.fetch_add(1, Ordering::Relaxed);
         }
         let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
@@ -218,6 +218,19 @@ mod imp {
                     ..Reply::default()
                 })
                 .unwrap_or_default(),
+            Request::Context { session, text } => {
+                if let Some(s) = sessions.get_mut(&session)
+                    // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
+                    && (s.engine.composition().is_none() || !s.engine.composition_committed())
+                {
+                    s.engine.set_context(&text);
+                    // 组合已建立时,首个按键排的任务可能带的是空上下文;重排一次。
+                    if s.engine.composition().is_some() {
+                        crate::settle::schedule(state, session, s);
+                    }
+                }
+                Reply::default()
+            }
             Request::TakeKey { session } => sessions
                 .get_mut(&session)
                 .and_then(|s| s.pending.take())
@@ -268,6 +281,8 @@ mod imp {
                 state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session) {
                     s.view.caret = Some((left, top, right, bottom));
+                    // 组合已经建立、上下文也可能刚上报;在这里排停顿任务最可靠。
+                    crate::settle::schedule(state, session, s);
                 }
                 Reply::default()
             }

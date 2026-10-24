@@ -323,10 +323,10 @@ pub fn run(
         "100 + 120".into(),
     );
 
-    // 上屏文本进入上下文，清空后归零。
+    // 左邻上下文 + 组合内上屏，超长裁剪，清空后归零。
     let mut engine = fresh();
     engine.process(Key::Esc);
-    engine.clear_context();
+    engine.set_context("她说：");
     for c in "nihao".chars() {
         engine.process(Key::Letter(c));
     }
@@ -340,8 +340,25 @@ pub fn run(
         .collect();
     push(
         &mut checks,
-        "上屏写入上下文",
-        !committed.is_empty() && engine.context() == committed.as_str(),
+        "左邻上下文 + 上屏",
+        !committed.is_empty() && engine.context() == format!("她说：{committed}"),
+        format!("context={:?}", engine.context()),
+    );
+    engine.set_context(&format!("{}{}", "旧".repeat(100), "新".repeat(100)));
+    let kept = engine.context();
+    push(
+        &mut checks,
+        "左邻上下文只留末尾 128 字",
+        kept.chars().count() == pinyin_engine::CONTEXT_KEEP
+            && kept.chars().filter(|&c| c == '旧').count() == 28
+            && kept.ends_with(&"新".repeat(100)),
+        format!("{} 字", kept.chars().count()),
+    );
+    engine.set_context("她说：");
+    push(
+        &mut checks,
+        "左邻上下文整体替换",
+        engine.context() == "她说：",
         format!("context={:?}", engine.context()),
     );
     engine.clear_context();
@@ -349,6 +366,36 @@ pub fn run(
         &mut checks,
         "清空上下文",
         engine.context().is_empty(),
+        String::new(),
+    );
+
+    // 分段上屏后,当前组合的左邻文本不再包含已上屏的词。
+    let mut engine = fresh();
+    for c in "nihaoma".chars() {
+        engine.process(Key::Letter(c));
+    }
+    engine.process(Key::Down);
+    let partial: String = engine
+        .process(Key::Space)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Commit(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    push(
+        &mut checks,
+        "分段上屏标记组合已提交",
+        !partial.is_empty()
+            && engine.composition().is_some()
+            && engine.composition_committed(),
+        format!("上屏 {partial:?}"),
+    );
+    engine.process(Key::Esc);
+    push(
+        &mut checks,
+        "清空组合重置标记",
+        !engine.composition_committed(),
         String::new(),
     );
 

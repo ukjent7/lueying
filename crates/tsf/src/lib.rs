@@ -5,6 +5,7 @@
 mod attr;
 mod client;
 mod context;
+mod context_probe;
 mod edit;
 mod factory;
 mod keys;

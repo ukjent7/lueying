@@ -32,6 +32,10 @@ pub(crate) struct Shared {
     pub last_context: RefCell<Option<ITfContext>>,
     /// 按键/焦点/组句变化计数;轮询结果必须带着发出时的计数才能落地。
     pub revision: Cell<u64>,
+    /// 左邻文本读取正在进行;避免组合建立前每个键都排一次读。
+    pub probing: Cell<bool>,
+    /// 焦点代次;异步读到的旧窗口文本不能覆盖新窗口的上下文。
+    pub context_epoch: Cell<u64>,
 }
 
 impl Shared {
@@ -41,6 +45,12 @@ impl Shared {
 
     pub(crate) fn touch(&self) {
         self.revision.set(self.revision.get().wrapping_add(1));
+    }
+
+    pub(crate) fn bump_context_epoch(&self) {
+        self.context_epoch
+            .set(self.context_epoch.get().wrapping_add(1));
+        self.probing.set(false);
     }
 }
 
@@ -93,6 +103,8 @@ impl TextService {
                 preedit: RefCell::new(String::new()),
                 last_context: RefCell::new(None),
                 revision: Cell::new(0),
+                probing: Cell::new(false),
+                context_epoch: Cell::new(0),
             }),
             tap: KeyTap::new(),
             pending: RefCell::new(None),
@@ -188,6 +200,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         self.poll.borrow_mut().take();
+        self.shared.bump_context_epoch();
         if let Some(source) = self.source.borrow().clone() {
             unsafe {
                 let _ = source.UnadviseSink(self.focus_cookie.get());
@@ -218,6 +231,7 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
     /// 失焦侧清组合(由 Server 落定),避免拼音串跟随到下一个窗口。
     fn OnSetThreadFocus(&self) -> Result<()> {
         self.shared.touch();
+        self.shared.bump_context_epoch();
         let _ = self.request(Request::Focus {
             session: self.session,
             focused: true,
@@ -227,6 +241,7 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
 
     fn OnKillThreadFocus(&self) -> Result<()> {
         self.shared.touch();
+        self.shared.bump_context_epoch();
         let _ = self.request(Request::Focus {
             session: self.session,
             focused: false,
@@ -273,6 +288,13 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             context: context.clone(),
             reply,
         });
+        crate::context_probe::request(
+            &context,
+            self.client_id.get(),
+            self.session,
+            self.shared.clone(),
+            self.client.clone(),
+        );
         Ok(true.into())
     }
 
