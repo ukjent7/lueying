@@ -197,12 +197,10 @@ impl Dictionary {
             if bytes.len() < HEAD || &bytes[..MAGIC.len()] != MAGIC {
                 None
             } else {
+                // 头部四个 u32 紧随魔数:条数、字符串池长、签名表条数、保留。
                 let n = |i: usize| {
-                    u32::from_le_bytes(
-                        bytes[HEAD - 16 + i * 4..HEAD - 12 + i * 4]
-                            .try_into()
-                            .unwrap(),
-                    ) as usize
+                    let at = MAGIC.len() + i * 4;
+                    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
                 };
                 let (count, data_len, sig_len) = (n(0), n(1), n(2));
                 let recs_at = HEAD;
