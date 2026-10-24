@@ -139,12 +139,7 @@ mod imp {
                 .cast()
                 .map_err(|e| format!("cast ITfInputProcessorProfiles: {e}"))?;
             match unsafe {
-                profiles_api.EnableLanguageProfile(
-                    &CLSID_IME,
-                    LANGID_ZH_CN,
-                    &GUID_PROFILE,
-                    true,
-                )
+                profiles_api.EnableLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE, true)
             } {
                 Ok(()) => println!("EnableLanguageProfile: ok"),
                 Err(e) => println!("EnableLanguageProfile: {e}"),
@@ -239,9 +234,8 @@ mod imp {
 
     /// 看测试宿主线程有没有 TSF 文档管理器;没有说明 EDIT 不是 TSF 上下文,组句无法落地。
     fn report_tsf_focus() {
-        let mgr: windows::core::Result<ITfThreadMgr> = unsafe {
-            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
-        };
+        let mgr: windows::core::Result<ITfThreadMgr> =
+            unsafe { CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER) };
         let Ok(mgr) = mgr else {
             println!("TSF focus: 线程管理器创建失败");
             return;
