@@ -65,7 +65,7 @@ jobs:
         run: cargo doc --no-deps --workspace
       - name: 引擎 E2E(内置词库)
         run: cargo run -p pinyin-e2e --release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: e2e-report-mini
@@ -88,7 +88,7 @@ jobs:
         run: cargo run -p xtask --release -- dict --frost data/frost --out data/main.tsv
       - name: 主词典 E2E(质量探针 + 性能阈值)
         run: cargo run -p pinyin-e2e --release -- --dict data/main.tsv
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: dict-pipeline
@@ -114,7 +114,7 @@ jobs:
       - name: Windows 全链路 E2E(观察期,不阻断)
         continue-on-error: true
         run: cargo run -p pinyin-win-e2e --release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: win-e2e-report
