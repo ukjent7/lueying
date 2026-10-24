@@ -64,9 +64,10 @@ mod imp {
         let dll_h = unsafe { LoadLibraryW(&HSTRING::from(dll.as_os_str())) }
             .map_err(|e| format!("LoadLibraryW: {e}"))?;
         type DllServer = unsafe extern "system" fn() -> windows::core::HRESULT;
-        let reg_fn = unsafe { GetProcAddress(dll_h, PCSTR::from_raw(c"DllRegisterServer".as_ptr())) }
-            .map(|f| unsafe { std::mem::transmute::<_, DllServer>(f) })
-            .ok_or("DLL 未导出 DllRegisterServer")?;
+        let reg_fn =
+            unsafe { GetProcAddress(dll_h, PCSTR::from_raw(c"DllRegisterServer".as_ptr())) }
+                .map(|f| unsafe { std::mem::transmute::<_, DllServer>(f) })
+                .ok_or("DLL 未导出 DllRegisterServer")?;
         let hr = unsafe { reg_fn() };
         println!("DllRegisterServer: 0x{:08X}", hr.0 as u32);
         if hr.is_err() {
