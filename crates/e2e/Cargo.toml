@@ -12,3 +12,4 @@ path = "src/main.rs"
 [dependencies]
 pinyin-dict.workspace = true
 pinyin-engine.workspace = true
+pinyin-rerank.workspace = true

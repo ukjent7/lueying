@@ -625,6 +625,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "chinese-ime-lm"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3387,6 +3396,7 @@ version = "0.1.0"
 dependencies = [
  "pinyin-dict",
  "pinyin-engine",
+ "pinyin-rerank",
 ]
 
 [[package]]
@@ -3406,6 +3416,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinyin-rerank"
+version = "0.1.0"
+dependencies = [
+ "chinese-ime-lm",
+]
+
+[[package]]
 name = "pinyin-server"
 version = "0.1.0"
 dependencies = [
@@ -3414,6 +3431,7 @@ dependencies = [
  "pinyin-dict",
  "pinyin-engine",
  "pinyin-protocol",
+ "pinyin-rerank",
  "raw-window-handle",
  "serde_json",
  "windows 0.62.2",

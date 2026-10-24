@@ -19,18 +19,22 @@ use crate::user::UserDict;
 
 /// 展示给上层的候选。
 #[derive(Clone, Debug)]
-pub struct Cand {
+pub struct Candidate {
     pub text: String,
     /// 吃掉的音节数。
     pub consume: usize,
     pub score: f64,
     /// 各音节的原始字节区间(回删与逐段上屏用)。
     pub spans: Vec<(usize, usize)>,
+    /// 覆盖整个组合输入,而不是前缀词或联想补全。
+    pub full: bool,
+    /// 词典对实际键入的整键给出的精确命中:fuzzy/简拼/用户词都不算。
+    pub trusted: bool,
 }
 
 /// 一次构建的产物。
 pub struct Built {
-    pub cands: Vec<Cand>,
+    pub cands: Vec<Candidate>,
     /// 内联显示文本:首选候选文本,无候选时原文。
     pub display: String,
 }
@@ -56,12 +60,16 @@ struct Hit {
     word: String,
     /// 构造时算好(排序/回溯反复取分,不能每次都算 ln)。
     score: f64,
+    /// 精确整键命中,未经 fuzzy/简拼扩写。
+    trusted: bool,
 }
 
 impl Hit {
     /// 词典词条。白霜有大量权重 0 的长尾词,按频次 1 计,天然沉底。
-    fn dict(word: String, freq: u64, user_freq: u32, total: f64) -> Self {
-        Self::raw(word, freq.max(1) as f64, user_freq, total)
+    fn dict(word: String, freq: u64, user_freq: u32, total: f64, trusted: bool) -> Self {
+        let mut hit = Self::raw(word, freq.max(1) as f64, user_freq, total);
+        hit.trusted = trusted;
+        hit
     }
 
     /// 纯用户词(词典没有):以百万级词频为基准,学习过的词迅速领先。
@@ -77,6 +85,7 @@ impl Hit {
                 + USER_W * (1.0 + f64::from(user_freq)).ln()
                 - WORD_PENALTY,
             word,
+            trusted: false,
         }
     }
 
@@ -153,6 +162,7 @@ impl Querier<'_> {
                     e.freq,
                     self.user.freq(key, e.word),
                     self.total,
+                    true,
                 ));
             }
         } else if !fuzzy_on && sylls.first().is_some_and(|s| !s.abbrev) {
@@ -167,6 +177,7 @@ impl Querier<'_> {
                         e.freq,
                         self.user.freq(key, e.word),
                         self.total,
+                        false,
                     ));
                 }
             }
@@ -181,6 +192,7 @@ impl Querier<'_> {
                             e.freq,
                             self.user.freq(key, e.word),
                             self.total,
+                            false,
                         ));
                     }
                 }
@@ -258,6 +270,7 @@ struct Node {
     word: String,
     score: f64,
     spans: Vec<(usize, usize)>,
+    trusted: bool,
 }
 
 /// 解码路径的一步:词文本 + 各音节原始字节区间。
@@ -332,6 +345,7 @@ impl Builder<'_, '_> {
                     word: h.word.clone(),
                     score: h.score(),
                     spans: self.spans.clone(),
+                    trusted: h.trusted,
                 });
             }
             self.visits += 1;
@@ -390,6 +404,8 @@ fn cap_nodes(list: &mut Vec<Node>) {
 struct State {
     score: f64,
     path: Path,
+    /// 整条路径由单个精确词典词构成时,才允许让模型让位。
+    trusted: bool,
 }
 
 pub fn build(
@@ -452,6 +468,7 @@ pub fn build(
     best[0].push(State {
         score: 0.0,
         path: Vec::new(),
+        trusted: true,
     });
     for j in 1..=raw.len() {
         let mut cands: Vec<State> = Vec::new();
@@ -467,6 +484,8 @@ pub fn build(
                 cands.push(State {
                     score: st.score + node.score + gram.bonus(&tail, &node.word, j == raw.len()),
                     path,
+                    // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
+                    trusted: st.path.is_empty() && node.trusted,
                 });
             }
         }
@@ -475,32 +494,38 @@ pub fn build(
         best[j] = cands;
     }
 
-    let mut full: Vec<Cand> = Vec::new();
+    let mut full: Vec<Candidate> = Vec::new();
     for st in &best[raw.len()] {
         let text: String = st.path.iter().map(|p| p.0.as_str()).collect();
         if text.is_empty() {
             continue;
         }
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
-        full.push(Cand {
+        full.push(Candidate {
             text,
             consume: spans.len(),
             score: st.score,
             spans,
+            full: true,
+            trusted: st.trusted,
         });
     }
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
-    let mut words: Vec<Cand> = Vec::new();
-    for node in by_end.iter().flatten() {
-        if node.start != 0 {
-            continue;
+    let mut words: Vec<Candidate> = Vec::new();
+    for (end, nodes) in by_end.iter().enumerate() {
+        for node in nodes {
+            if node.start != 0 {
+                continue;
+            }
+            words.push(Candidate {
+                text: node.word.clone(),
+                consume: node.spans.len(),
+                score: node.score,
+                spans: node.spans.clone(),
+                full: end == raw.len(),
+                trusted: node.trusted,
+            });
         }
-        words.push(Cand {
-            text: node.word.clone(),
-            consume: node.spans.len(),
-            score: node.score,
-            spans: node.spans.clone(),
-        });
     }
     words.sort_by(|a, b| {
         b.score
@@ -510,7 +535,7 @@ pub fn build(
     });
     // 首选整句置顶;留两个前缀词方便逐段上屏,随后是所有整句备选,
     // 余下的前缀词再排后面。这样 top-5 仍然覆盖整句备选。
-    let mut cands: Vec<Cand> = Vec::new();
+    let mut cands: Vec<Candidate> = Vec::new();
     let mut rest = full.into_iter();
     if let Some(top) = rest.next() {
         cands.push(top);

@@ -4,7 +4,9 @@ members = [
     "crates/dict",
     "crates/engine",
     "crates/e2e",
+    "crates/lm",
     "crates/protocol",
+    "crates/rerank",
     "crates/server",
     "crates/tsf",
     "crates/win-e2e",
@@ -18,6 +20,7 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 pinyin-dict = { path = "crates/dict" }
 pinyin-engine = { path = "crates/engine" }
+pinyin-rerank = { path = "crates/rerank" }
 
 [profile.release]
 lto = "thin"

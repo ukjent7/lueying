@@ -33,10 +33,24 @@ struct UpdateSession {
     client: SharedClient,
     commit: Option<String>,
     preedit: String,
+    /// 轮询写回要求发出时的状态计数仍未变;按键路径为 `None`。
+    revision: Option<u64>,
+    /// 轮询写回要求文档里的内联文本仍是发出时的那份;按键路径为 `None`。
+    base_preedit: Option<String>,
 }
 
 impl ITfEditSession_Impl for UpdateSession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
+        if let Some(revision) = self.revision
+            && self.shared.revision.get() != revision
+        {
+            return Ok(());
+        }
+        if let Some(base) = &self.base_preedit
+            && self.shared.preedit.borrow().as_str() != base
+        {
+            return Ok(());
+        }
         match catch_unwind(AssertUnwindSafe(|| {
             if let Some(text) = &self.commit {
                 commit_text(&self.shared, &self.context, ec, text)?;
@@ -74,6 +88,8 @@ pub(crate) fn request_update(
     client: SharedClient,
     commit: Option<String>,
     preedit: String,
+    revision: Option<u64>,
+    base_preedit: Option<String>,
 ) -> Result<()> {
     let edit: ITfEditSession = UpdateSession {
         context: context.clone(),
@@ -82,6 +98,8 @@ pub(crate) fn request_update(
         client,
         commit,
         preedit,
+        revision,
+        base_preedit,
     }
     .into();
     unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READWRITE)? }.ok()
@@ -96,6 +114,7 @@ fn commit_text(shared: &Shared, context: &ITfContext, ec: u32, text: &str) -> Re
             unsafe { range.SetText(ec, 0, &utf16)? };
             move_selection_to_end(context, ec, &range)?;
             unsafe { composition.EndComposition(ec)? };
+            shared.preedit.borrow_mut().clear();
         }
         None => {
             let insert: ITfInsertAtSelection = context.cast()?;
@@ -125,6 +144,7 @@ fn update_preedit(
     let utf16: Vec<u16> = preedit.encode_utf16().collect();
     let range = unsafe { composition.GetRange()? };
     unsafe { range.SetText(ec, 0, &utf16)? };
+    *shared.preedit.borrow_mut() = preedit.to_string();
     attr::mark(context, ec, &range);
     move_selection_to_end(context, ec, &range)
 }
@@ -158,6 +178,7 @@ fn end_composition(shared: &Shared, ec: u32) -> Result<()> {
         unsafe { range.SetText(ec, 0, &[])? };
         unsafe { composition.EndComposition(ec)? };
     }
+    shared.preedit.borrow_mut().clear();
     Ok(())
 }
 
@@ -226,6 +247,8 @@ impl ITfCompositionSink_Impl for CompositionSink_Impl {
     ) -> Result<()> {
         log("组句被应用终止,清状态");
         self.shared.composition.borrow_mut().take();
+        self.shared.preedit.borrow_mut().clear();
+        self.shared.touch();
         let mut guard = self.client.borrow_mut();
         if let Some(c) = guard.as_mut() {
             let _ = c.round_trip(&Request::CompositionTerminated {

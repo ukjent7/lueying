@@ -1,9 +1,11 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
 //! 用法:`pinyin-e2e [--dict 主词典.tsv] [--gram 语法模型.gram]`
 
+mod rerank;
 mod scenarios;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use pinyin_dict::Dictionary;
@@ -94,6 +96,11 @@ fn main() {
         .position(|a| a == "--gram")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
+    let rerank_dir = args
+        .iter()
+        .position(|a| a == "--rerank-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
     let mut failures = 0usize;
@@ -123,6 +130,7 @@ fn main() {
     }
 
     // 主词典探针与性能
+    let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;
     if let Some(path) = dict_path {
         let (dict, bad) = match Dictionary::from_path(&path) {
             Ok(v) => v,
@@ -137,15 +145,17 @@ fn main() {
             bad
         ));
         let gram = gram_path.as_deref().and_then(|p| match Gram::open(p) {
-            Ok(g) => Some(std::sync::Arc::new(g)),
+            Ok(g) => Some(Arc::new(g)),
             Err(e) => {
                 eprintln!("语法模型不可用 {:?}: {e}", p);
                 None
             }
         });
-        let mut engine = Engine::new(std::sync::Arc::new(dict), Config::default());
+        let dict = Arc::new(dict);
+        rerank_inputs = Some((Arc::clone(&dict), gram.clone()));
+        let mut engine = Engine::new(Arc::clone(&dict), Config::default());
         if let Some(g) = &gram {
-            engine = engine.with_gram(std::sync::Arc::clone(g));
+            engine = engine.with_gram(Arc::clone(g));
         }
         // 词典解析/排序的 CPU 突发会触发 runner 的 CFS 配额节流,首个键被罚站
         // 100-200ms,是测量伪影。歇一拍,再用 niha 预热三条查询路径
@@ -237,6 +247,25 @@ fn main() {
             failures += 1;
             report.push_str("\n**整句准确率低于门限**\n");
         }
+
+        // 神经重排:同一份主词典与语法模型,先基线再 4M 同步、25M 停顿。
+        if let Some(dir) = &rerank_dir {
+            let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
+            match rerank::load(dir) {
+                Ok(models) => {
+                    failures += rerank::run(dict, gram, &models, &mut report);
+                }
+                Err(e) => {
+                    failures += 1;
+                    report.push_str(&format!("\n## 神经重排\n\n模型加载失败: {e}\n"));
+                }
+            }
+        }
+    }
+
+    if rerank_dir.is_some() && rerank_inputs.is_none() {
+        eprintln!("--rerank-dir 需要同时提供 --dict 主词典");
+        std::process::exit(2);
     }
 
     let out = std::path::Path::new("target/e2e-report.md");
@@ -266,6 +295,7 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
             continue;
         };
         engine.process(Key::Esc);
+        engine.clear_context();
         for c in raw.chars() {
             engine.process(Key::Letter(c));
         }

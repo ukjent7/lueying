@@ -77,6 +77,8 @@ pub enum Request {
     Key { session: u64, key: KeyMsg },
     /// 取走上次 `Key` 的结果(OnKeyDown 时)。
     TakeKey { session: u64 },
+    /// 停顿轮询:只读当前内联文本,供 TSF 定时器把异步重排后的首选写回文档。
+    Sync { session: u64 },
     /// DLL 侧直接设置模式(CapsLock 大写锁定等)。
     SetMode { session: u64, chinese: bool },
     /// 焦点变化(切窗口时 Server 收候选窗)。

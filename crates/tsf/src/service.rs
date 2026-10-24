@@ -26,6 +26,22 @@ use crate::log;
 /// 跨按键存活的组句状态(STA 单线程,Rc 传递)。
 pub(crate) struct Shared {
     pub composition: RefCell<Option<ITfComposition>>,
+    /// 文档里当前的内联文本,轮询时用来判断异步结果是否已经写过。
+    pub preedit: RefCell<String>,
+    /// 最近一次按键的上下文,停顿重排写回文档时申请编辑会话用。
+    pub last_context: RefCell<Option<ITfContext>>,
+    /// 按键/焦点/组句变化计数;轮询结果必须带着发出时的计数才能落地。
+    pub revision: Cell<u64>,
+}
+
+impl Shared {
+    pub(crate) fn composing(&self) -> bool {
+        self.composition.borrow().is_some()
+    }
+
+    pub(crate) fn touch(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+    }
 }
 
 pub(crate) type SharedClient = Rc<RefCell<Option<Client>>>;
@@ -54,6 +70,8 @@ pub(crate) struct TextService {
     last_connect: Cell<Option<Instant>>,
     source: RefCell<Option<ITfSource>>,
     focus_cookie: Cell<u32>,
+    /// 组句期间的停顿轮询定时器;停用时自动停表。
+    poll: RefCell<Option<crate::poll::PollTimer>>,
 }
 
 fn host_app_name() -> String {
@@ -72,12 +90,16 @@ impl TextService {
             client: Rc::new(RefCell::new(None)),
             shared: Rc::new(Shared {
                 composition: RefCell::new(None),
+                preedit: RefCell::new(String::new()),
+                last_context: RefCell::new(None),
+                revision: Cell::new(0),
             }),
             tap: KeyTap::new(),
             pending: RefCell::new(None),
             last_connect: Cell::new(None),
             source: RefCell::new(None),
             focus_cookie: Cell::new(0),
+            poll: RefCell::new(None),
         }
     }
 
@@ -118,6 +140,8 @@ impl TextService {
 
     /// 把应答写进文档(异步编辑会话,会话里量光标报给 Server 摆候选窗)。
     fn apply(&self, context: &ITfContext, reply: &Reply) {
+        // 新按键让任何在途的停顿写回失效。
+        self.shared.touch();
         let commit: String = reply.commits.concat();
         if let Err(error) = edit::request_update(
             context,
@@ -127,6 +151,8 @@ impl TextService {
             self.client.clone(),
             (!commit.is_empty()).then_some(commit),
             reply.preedit.clone(),
+            None,
+            None,
         ) {
             log(&format!("编辑会话请求失败: {error}"));
         }
@@ -149,11 +175,18 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
         *self.thread_mgr.borrow_mut() = Some(thread_mgr);
         self.client_id.set(tid);
+        *self.poll.borrow_mut() = crate::poll::PollTimer::new(
+            self.client.clone(),
+            self.shared.clone(),
+            tid,
+            self.session,
+        );
         log(&format!("激活 tid={tid} session={}", self.session));
         Ok(())
     }
 
     fn Deactivate(&self) -> Result<()> {
+        self.poll.borrow_mut().take();
         if let Some(source) = self.source.borrow().clone() {
             unsafe {
                 let _ = source.UnadviseSink(self.focus_cookie.get());
@@ -183,6 +216,7 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
     /// 线程焦点:切窗口时 ITfKeyEventSink::OnSetFocus 不触发,走这条。
     /// 失焦侧清组合(由 Server 落定),避免拼音串跟随到下一个窗口。
     fn OnSetThreadFocus(&self) -> Result<()> {
+        self.shared.touch();
         let _ = self.request(Request::Focus {
             session: self.session,
             focused: true,
@@ -191,6 +225,7 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
     }
 
     fn OnKillThreadFocus(&self) -> Result<()> {
+        self.shared.touch();
         let _ = self.request(Request::Focus {
             session: self.session,
             focused: false,
@@ -232,6 +267,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         if reply.passthrough {
             return Ok(FALSE);
         }
+        *self.shared.last_context.borrow_mut() = Some(context.clone());
         *self.pending.borrow_mut() = Some(Pending {
             context: context.clone(),
             reply,
@@ -255,6 +291,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         let vk = wparam.0 as u32;
         // CapsLock:大写锁定 = 临时英文。
         if keys::is_caps(vk) {
+            self.shared.touch();
             let _ = self.request(Request::SetMode {
                 session: self.session,
                 chinese: !keys::caps_on(),

@@ -95,10 +95,12 @@ jobs:
         run: bash tools/fetch_frost.sh data/frost
       - name: 下载语法模型
         run: bash tools/fetch_gram.sh data/main.gram
+      - name: 下载神经重排模型
+        run: bash tools/fetch_rerank.sh data/rerank
       - name: 转换词典
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
       - name: 主词典 E2E(质量探针 + 整句准确率 + 性能阈值)
-        run: cargo run -p pinyin-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram
+        run: cargo run -p pinyin-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

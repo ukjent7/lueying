@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 pinyin-dict.workspace = true
 pinyin-engine.workspace = true
+pinyin-rerank.workspace = true
 pinyin-protocol = { path = "../protocol" }
 serde_json = "1"
 

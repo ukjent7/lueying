@@ -11,10 +11,13 @@ mod user;
 use pinyin_dict::gram::Gram;
 use pinyin_dict::{Dictionary, Fuzzy};
 
+pub use query::Candidate;
 pub use user::UserDict;
 
 /// 组合缓冲上限(字母与隔音符总数)。
 pub const MAX_RAW: usize = 40;
+/// 已上屏文本保留的字符数(重排与后续上下文模型使用)。
+pub const CONTEXT_KEEP: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -94,11 +97,15 @@ pub struct Engine {
     cfg: Config,
     mode: Mode,
     comp: Option<Composition>,
-    cands: Vec<query::Cand>,
+    cands: Vec<query::Candidate>,
     hl: usize,
     page: usize,
     dq_open: bool,
     sq_open: bool,
+    /// 最近上屏的文本,最多 [`CONTEXT_KEEP`] 字。焦点切换时清空。
+    context: String,
+    /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
+    rev: u64,
 }
 
 impl Engine {
@@ -116,6 +123,8 @@ impl Engine {
             page: 0,
             dq_open: false,
             sq_open: false,
+            context: String::new(),
+            rev: 0,
         }
     }
 
@@ -144,6 +153,64 @@ impl Engine {
         self.cands.iter().map(|c| c.text.clone()).collect()
     }
 
+    /// 带来源标记的候选。重排只应把 `full` 候选移到首位;`trusted` 是
+    /// 是否由词典精确回答整个按键。
+    pub fn candidates_detailed(&self) -> &[Candidate] {
+        &self.cands
+    }
+
+    /// 候选集合版本号。异步结果只在版本号未变时落地。
+    pub fn revision(&self) -> u64 {
+        self.rev
+    }
+
+    /// 最近上屏的文本(最多 [`CONTEXT_KEEP`] 字)。
+    pub fn context(&self) -> &str {
+        &self.context
+    }
+
+    /// 清空已上屏上下文(焦点切到别处时调用)。
+    pub fn clear_context(&mut self) {
+        self.context.clear();
+    }
+
+    fn push_context(&mut self, text: &str) {
+        self.context.push_str(text);
+        let excess = self.context.chars().count().saturating_sub(CONTEXT_KEEP);
+        if excess > 0 {
+            let cut = self
+                .context
+                .char_indices()
+                .nth(excess)
+                .map_or(self.context.len(), |(at, _)| at);
+            self.context.replace_range(..cut, "");
+        }
+    }
+
+    /// 把第 `index` 条候选移到首位并同步内联显示。
+    ///
+    /// 只换顺序,不增删候选;只有覆盖整个按键的候选可以提升。成功返回 `true`。
+    pub fn promote(&mut self, index: usize) -> bool {
+        if index == 0
+            || index >= self.cands.len()
+            || !self.cands[index].full
+        {
+            return false;
+        }
+        let cand = self.cands.remove(index);
+        self.cands.insert(0, cand);
+        if let Some(comp) = self.comp.as_mut()
+            && let Some(top) = self.cands.first()
+        {
+            comp.display = top.text.clone();
+            comp.seg_spans = top.spans.clone();
+        }
+        self.hl = 0;
+        self.page = 0;
+        self.rev = self.rev.wrapping_add(1);
+        true
+    }
+
     pub fn highlight(&self) -> usize {
         self.hl
     }
@@ -170,6 +237,18 @@ impl Engine {
 
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
+        let events = self.process_inner(key);
+        for event in &events {
+            if let Event::Commit(text) = event
+                && text.chars().any(|c| !c.is_ascii())
+            {
+                self.push_context(text);
+            }
+        }
+        events
+    }
+
+    fn process_inner(&mut self, key: Key) -> Vec<Event> {
         if key == Key::Shift {
             let mut events = Vec::new();
             if self.mode == Mode::Chinese
@@ -235,6 +314,7 @@ impl Engine {
             Key::Enter => {
                 let raw = self.comp.take().map(|c| c.raw).unwrap_or_default();
                 self.cands.clear();
+                self.rev = self.rev.wrapping_add(1);
                 vec![Event::Commit(raw)]
             }
             Key::Esc => {
@@ -337,7 +417,11 @@ impl Engine {
     fn commit_highlighted(&mut self) -> Option<String> {
         self.comp.as_ref()?;
         if self.cands.is_empty() {
-            return self.comp.take().map(|c| c.raw);
+            let raw = self.comp.take().map(|c| c.raw);
+            self.hl = 0;
+            self.page = 0;
+            self.rev = self.rev.wrapping_add(1);
+            return raw;
         }
         self.apply_consume(self.hl.min(self.cands.len() - 1))
     }
@@ -355,6 +439,7 @@ impl Engine {
             self.cands.clear();
             self.hl = 0;
             self.page = 0;
+            self.rev = self.rev.wrapping_add(1);
         } else {
             let comp = self.comp.as_mut()?;
             comp.raw = rest;
@@ -419,6 +504,7 @@ impl Engine {
             self.cands.clear();
             self.hl = 0;
             self.page = 0;
+            self.rev = self.rev.wrapping_add(1);
         } else {
             self.recompute();
         }
@@ -456,10 +542,12 @@ impl Engine {
         self.cands.clear();
         self.hl = 0;
         self.page = 0;
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// 重算候选与内联显示。任何组合变化后必须调用。
     fn recompute(&mut self) {
+        self.rev = self.rev.wrapping_add(1);
         self.hl = 0;
         self.page = 0;
         let Some(comp) = self.comp.as_mut() else {

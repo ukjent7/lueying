@@ -12,18 +12,23 @@ fn main() {
 mod imp {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
 
     use pinyin_dict::Dictionary;
     use pinyin_dict::gram::Gram;
     use pinyin_engine::{Config, Engine, Event, Key, Mode};
     use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
+    use pinyin_rerank::{Model, Rerank};
 
     pub(super) struct Session {
         pub(super) engine: Engine,
         pub(super) view: SessionView,
         /// `Key` 的预演结果,`TakeKey` 取走(DLL 在 OnKeyDown 应用到文档)。
         pub(super) pending: Option<Reply>,
+        /// 4M 每键同步重排,前缀缓存随会话存活。
+        pub(super) sync_rerank: Option<Rerank>,
+        /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
+        pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     }
 
     pub(super) struct State {
@@ -34,6 +39,9 @@ mod imp {
         pub(super) version: AtomicU64,
         /// 最近收到按键/光标上报的会话,候选窗只跟它。
         pub(super) active: AtomicU64,
+        pub(super) sync_model: Option<Model>,
+        pub(super) settled_model: Option<Model>,
+        pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
     }
 
     pub(super) fn real_main() {
@@ -59,13 +67,24 @@ mod imp {
         });
         // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
         let _ = dict.total_weight();
+        // 两档神经重排都是可选数据:缺失/损坏就只保留词频候选。
+        let sync_model = load_model("rerank-4m.safetensors");
+        let settled_model = load_model("rerank-25m.safetensors");
+        let (settle_tx, settle_rx) = mpsc::channel();
+        let settle_tx = settled_model.as_ref().map(|_| settle_tx);
         let state = Arc::new(State {
             dict: Arc::new(dict),
             gram,
             sessions: Mutex::new(HashMap::new()),
             version: AtomicU64::new(0),
             active: AtomicU64::new(0),
+            sync_model,
+            settled_model,
+            settle_tx,
         });
+        if state.settle_tx.is_some() {
+            crate::settle::spawn(Arc::clone(&state), settle_rx);
+        }
         let pipe = pipe_name();
         println!("pinyin-server 监听 {pipe}");
         {
@@ -76,11 +95,37 @@ mod imp {
         crate::ui::run(state);
     }
 
-    /// exe 同目录的 main.pyd / main.tsv / main.gram。
+    /// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.safetensors)。
     fn dict_path(name: &str) -> Option<std::path::PathBuf> {
         let mut path = std::env::current_exe().ok()?;
         path.set_file_name(name);
         path.exists().then_some(path)
+    }
+
+    fn load_model(name: &str) -> Option<Model> {
+        let path = dict_path(name)?;
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                println!("重排模型 {} 读取失败: {e}", path.display());
+                return None;
+            }
+        };
+        match Model::load(&bytes) {
+            Ok(model) => {
+                println!(
+                    "重排模型 {} ← {}（{} 字节）",
+                    name,
+                    path.display(),
+                    bytes.len()
+                );
+                Some(model)
+            }
+            Err(e) => {
+                println!("重排模型 {} 不可用: {e}", path.display());
+                None
+            }
+        }
     }
 
     fn load_dict(path: std::path::PathBuf) -> Option<Dictionary> {
@@ -102,8 +147,10 @@ mod imp {
 
     /// 处理一条请求,返回应答。
     pub(super) fn handle(state: &State, req: Request) -> Reply {
-        // 任何请求后候选窗都可能要重摆,先记账再处理。
-        state.version.fetch_add(1, Ordering::Relaxed);
+        // 任何请求后候选窗都可能要重摆,先记账再处理;停顿轮询只读,不触发重绘。
+        if !matches!(&req, Request::Sync { .. }) {
+            state.version.fetch_add(1, Ordering::Relaxed);
+        }
         let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
         match req {
             Request::Hello { session, host } => {
@@ -121,6 +168,11 @@ mod imp {
                         ..SessionView::default()
                     },
                     pending: None,
+                    sync_rerank: state.sync_model.as_ref().map(Rerank::new),
+                    settled_rerank: state
+                        .settled_model
+                        .as_ref()
+                        .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
                 });
                 state.active.store(session, Ordering::Relaxed);
                 Reply::default()
@@ -130,7 +182,12 @@ mod imp {
                 let Some(s) = sessions.get_mut(&session) else {
                     return Reply::default();
                 };
+                let before_rev = s.engine.revision();
                 let events = s.engine.process(key.into());
+                // 只有候选集合重算过才重排;翻页/移动高亮不能把用户的选择重置。
+                if s.engine.revision() != before_rev {
+                    apply_sync_rerank(s);
+                }
                 let passthrough = events.iter().any(|e| matches!(e, Event::Passthrough(_)));
                 let reply = Reply {
                     commits: events
@@ -150,8 +207,17 @@ mod imp {
                 };
                 refresh_view(s);
                 s.pending = Some(reply.clone());
+                crate::settle::schedule(state, session, s);
                 reply
             }
+            Request::Sync { session } => sessions
+                .get(&session)
+                .map(|s| Reply {
+                    preedit: s.view.preedit.clone(),
+                    chinese: s.view.chinese,
+                    ..Reply::default()
+                })
+                .unwrap_or_default(),
             Request::TakeKey { session } => sessions
                 .get_mut(&session)
                 .and_then(|s| s.pending.take())
@@ -164,6 +230,9 @@ mod imp {
                     } else {
                         Mode::English
                     });
+                    if !chinese {
+                        crate::settle::cancel(state, session);
+                    }
                     refresh_view(s);
                 }
                 Reply::default()
@@ -172,8 +241,10 @@ mod imp {
                 state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session) {
                     if !focused {
-                        // 失焦:清掉没上屏的拼音。
+                        // 失焦:清掉没上屏的拼音和上一窗口的上下文。
                         let _ = s.engine.process(Key::Esc);
+                        s.engine.clear_context();
+                        crate::settle::cancel(state, session);
                     }
                     refresh_view(s);
                 }
@@ -182,6 +253,7 @@ mod imp {
             Request::CompositionTerminated { session } => {
                 if let Some(s) = sessions.get_mut(&session) {
                     let _ = s.engine.process(Key::Esc);
+                    crate::settle::cancel(state, session);
                     refresh_view(s);
                 }
                 Reply::default()
@@ -202,8 +274,23 @@ mod imp {
             Request::Goodbye { session } => {
                 println!("会话 {session} 下线");
                 sessions.remove(&session);
+                crate::settle::cancel(state, session);
                 Reply::default()
             }
+        }
+    }
+
+    /// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
+    fn apply_sync_rerank(s: &mut Session) {
+        let Some(rerank) = s.sync_rerank.as_mut() else {
+            return;
+        };
+        let Some(snap) = crate::settle::snapshot(&s.engine) else {
+            return;
+        };
+        let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+        if let Some(index) = rerank.decide(&snap.context, &texts, &snap.facts) {
+            s.engine.promote(index);
         }
     }
 
@@ -230,6 +317,9 @@ mod imp {
 
 #[cfg(windows)]
 mod pipe;
+
+#[cfg(windows)]
+mod settle;
 
 #[cfg(windows)]
 mod ui;
