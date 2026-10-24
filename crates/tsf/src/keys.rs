@@ -19,9 +19,7 @@ pub(crate) fn caps_on() -> bool {
 
 /// 带 Ctrl/Alt 的组合键归应用(快捷键)。
 pub(crate) fn command_mods() -> bool {
-    unsafe {
-        GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_MENU.0 as i32) < 0
-    }
+    unsafe { GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_MENU.0 as i32) < 0 }
 }
 
 pub(crate) fn is_shift(vk: u32) -> bool {
