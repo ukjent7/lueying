@@ -40,10 +40,24 @@ fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
             break;
         }
     }
+    let head: Vec<u32> = bytes[8..24]
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
     out.push((
         "全部词条一致",
         diff.is_none(),
-        diff.unwrap_or_else(|| format!("{} 条", dict.len())),
+        format!(
+            "{} | head={:?} len={} hex={}",
+            diff.unwrap_or_default(),
+            head,
+            bytes.len(),
+            bytes[..48.min(bytes.len())]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join("")
+        ),
     ));
     out.push((
         "再导出字节稳定",
