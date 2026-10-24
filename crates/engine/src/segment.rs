@@ -42,7 +42,8 @@ fn dfs(b: &[u8], pos: usize, cur: &mut Vec<Syll>, out: &mut Vec<Vec<Syll>>) {
     }
     for l in (1..=MAX_SYLL_LEN.min(b.len() - pos)).rev() {
         if b[pos..pos + l].contains(&b'\'') {
-            break;
+            // 更长的切片必含该隔音符,但更短的未必,只能跳过这一档。
+            continue;
         }
         if let Ok(s) = std::str::from_utf8(&b[pos..pos + l])
             && is_syllable(s)

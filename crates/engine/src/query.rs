@@ -18,6 +18,11 @@ pub struct Cand {
     /// 吃掉的音节数(整句候选 = 切分的全部音节)。
     pub consume: usize,
     pub score: f64,
+    /// 整句贪心路径(覆盖整条切分)。一元词频模型下单字链频次和天然占优,
+    /// 排序须先「整句优先」,再「词数少优先」,才不会出现 嗲你拿哦 压过 电脑。
+    pub full: bool,
+    /// 路径里的词数(前缀词恒为 1)。
+    pub words: usize,
     /// 所属切分各音节的原始区间(回删与逐段上屏用)。
     pub spans: Vec<(usize, usize)>,
 }
@@ -194,9 +199,10 @@ impl Querier<'_> {
 }
 
 /// 整句贪心:从左到右取「最长且词典有词」的前缀,直到吃完整串;任一位置无词则作废。
-fn greedy_path(querier: &mut Querier, sylls: &[Syll]) -> Option<(String, f64)> {
+fn greedy_path(querier: &mut Querier, sylls: &[Syll]) -> Option<(String, f64, usize)> {
     let mut text = String::new();
     let mut score = 0.0;
+    let mut words = 0usize;
     let mut pos = 0;
     while pos < sylls.len() {
         let mut chosen: Option<(usize, Hit)> = None;
@@ -210,9 +216,10 @@ fn greedy_path(querier: &mut Querier, sylls: &[Syll]) -> Option<(String, f64)> {
         let (l, hit) = chosen?;
         text.push_str(&hit.word);
         score += hit.score();
+        words += 1;
         pos += l;
     }
-    (!text.is_empty()).then_some((text, score))
+    (!text.is_empty()).then_some((text, score, words))
 }
 
 pub fn build(
@@ -238,30 +245,37 @@ pub fn build(
                     text: hit.word.clone(),
                     consume: l,
                     score: hit.score(),
+                    full: l == seg.len(),
+                    words: 1,
                     spans: spans.clone(),
                 });
             }
         }
-        if let Some((text, score)) = greedy_path(&mut querier, seg) {
+        if let Some((text, score, words)) = greedy_path(&mut querier, seg) {
             cands.push(Cand {
                 text,
                 consume: seg.len(),
                 score,
+                full: true,
+                words,
                 spans,
             });
         }
     }
-    // 同 (text, consume) 留最大分,再按分数、吃音节数、文本排序,保证确定性。
+    // 同 (text, consume) 留整句版本与高分;再按「整句优先、词数少优先、分数、吃音节数」排序。
     cands.sort_by(|a, b| {
         a.text
             .cmp(&b.text)
             .then(a.consume.cmp(&b.consume))
+            .then(b.full.cmp(&a.full))
             .then(b.score.total_cmp(&a.score))
     });
     cands.dedup_by(|a, b| a.text == b.text && a.consume == b.consume);
     cands.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
+        b.full
+            .cmp(&a.full)
+            .then(a.words.cmp(&b.words))
+            .then(b.score.total_cmp(&a.score))
             .then(b.consume.cmp(&a.consume))
             .then(a.text.cmp(&b.text))
     });

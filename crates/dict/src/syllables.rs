@@ -115,26 +115,26 @@ fn canonical(s: &str, fuzzy: &Fuzzy) -> String {
         t = &t[1..];
     }
     let mut out = head;
-    if fuzzy.an_ang {
-        if let Some(rest) = t.strip_suffix("ang") {
-            out.push_str(rest);
-            out.push_str("an");
-            return out;
-        }
+    if fuzzy.an_ang
+        && let Some(rest) = t.strip_suffix("ang")
+    {
+        out.push_str(rest);
+        out.push_str("an");
+        return out;
     }
-    if fuzzy.en_eng {
-        if let Some(rest) = t.strip_suffix("eng") {
-            out.push_str(rest);
-            out.push_str("en");
-            return out;
-        }
+    if fuzzy.en_eng
+        && let Some(rest) = t.strip_suffix("eng")
+    {
+        out.push_str(rest);
+        out.push_str("en");
+        return out;
     }
-    if fuzzy.in_ing {
-        if let Some(rest) = t.strip_suffix("ing") {
-            out.push_str(rest);
-            out.push_str("in");
-            return out;
-        }
+    if fuzzy.in_ing
+        && let Some(rest) = t.strip_suffix("ing")
+    {
+        out.push_str(rest);
+        out.push_str("in");
+        return out;
     }
     out.push_str(t);
     out
