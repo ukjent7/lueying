@@ -13,7 +13,7 @@
 //! 10. 重排让整句 top-1/top-5 掉出门限 → 质量门限。
 //! 11. 发布包里的模型几何/许可与预期不符 → 校验 config、license、attribution、体积。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,7 +34,7 @@ pub struct Models {
 
 /// 读取并解析两档模型。文件缺失或损坏都返回可读错误，由主程序记为 FAIL。
 pub fn load(dir: &Path) -> Result<Models, String> {
-    let read = |name: &str| {
+    let read = |name: &str| -> Result<(PathBuf, Vec<u8>), String> {
         let path = dir.join(name);
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok((path, bytes))
