@@ -256,6 +256,11 @@ impl Dictionary {
         self.count == 0
     }
 
+    /// 按记录顺序遍历全部词条(校验、导出用)。
+    pub fn iter(&self) -> impl Iterator<Item = Entry<'_>> {
+        (0..self.count).map(|i| self.entry(i))
+    }
+
     fn rec(&self, i: usize) -> &[u8] {
         let at = self.recs.start + i * REC;
         &self.backing[at..at + REC]

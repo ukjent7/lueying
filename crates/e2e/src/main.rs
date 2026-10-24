@@ -29,30 +29,49 @@ fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
         re.len() == dict.len(),
         format!("{} / {}", re.len(), dict.len()),
     ));
+    // 逐条比对:首个差异带下标与双方字段,一次 CI 就能定位问题。
+    let mut diff = None;
+    for (i, (a, b)) in dict.iter().zip(re.iter()).enumerate() {
+        if a.word != b.word || a.key != b.key || a.freq != b.freq {
+            diff = Some(format!(
+                "#{i}: ({},{},{}) vs ({},{},{})",
+                a.word, a.key, a.freq, b.word, b.key, b.freq
+            ));
+            break;
+        }
+    }
+    out.push((
+        "全部词条一致",
+        diff.is_none(),
+        diff.unwrap_or_else(|| format!("{} 条", dict.len())),
+    ));
+    out.push((
+        "再导出字节稳定",
+        dict.to_binary() == re.to_binary(),
+        "to_binary 幂等".into(),
+    ));
     let a = dict.lookup_exact("ni'hao");
     let b = re.lookup_exact("ni'hao");
     let same_entries = a.len() == b.len()
         && a.iter()
             .zip(&b)
             .all(|(x, y)| x.word == y.word && x.key == y.key && x.freq == y.freq);
-    out.push(("精确查询一致", same_entries, "ni'hao".into()));
+    out.push((
+        "精确查询一致",
+        same_entries,
+        format!("{} / {}", a.len(), b.len()),
+    ));
+    let (sa, sb) = (dict.lookup_sig("nh", 64), re.lookup_sig("nh", 64));
     out.push((
         "签名查询一致",
-        dict.lookup_sig("nh", 64)
-            .iter()
-            .zip(re.lookup_sig("nh", 64))
-            .all(|(a, b)| a.word == b.word)
-            && dict.lookup_sig("nh", 64).len() == re.lookup_sig("nh", 64).len(),
-        "nh".into(),
+        sa.len() == sb.len() && sa.iter().zip(&sb).all(|(a, b)| a.word == b.word),
+        format!("{} / {}", sa.len(), sb.len()),
     ));
+    let (pa, pb) = (dict.lookup_prefix("ni'", 64), re.lookup_prefix("ni'", 64));
     out.push((
         "前缀查询一致",
-        dict.lookup_prefix("ni'", 64)
-            .iter()
-            .zip(re.lookup_prefix("ni'", 64))
-            .all(|(a, b)| a.word == b.word)
-            && dict.lookup_prefix("ni'", 64).len() == re.lookup_prefix("ni'", 64).len(),
-        "ni'".into(),
+        pa.len() == pb.len() && pa.iter().zip(&pb).all(|(a, b)| a.word == b.word),
+        format!("{} / {}", pa.len(), pb.len()),
     ));
     out.push((
         "损坏文件被拒",
