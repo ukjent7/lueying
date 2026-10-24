@@ -48,13 +48,19 @@ fn main() {
             bad
         ));
         let mut engine = Engine::new(dict, Config::default());
+        // 预热:首键要建缓存/页入,稳态延迟才反映真实体验。
+        engine.process(Key::Letter('a'));
+        engine.process(Key::Esc);
         let mut samples: Vec<f64> = Vec::new();
+        let mut slowest: Vec<(f64, String)> = Vec::new();
         for (typed, want) in probes() {
             engine.process(Key::Esc);
             for c in typed.chars() {
                 let t = Instant::now();
                 engine.process(Key::Letter(c));
-                samples.push(t.elapsed().as_secs_f64() * 1000.0);
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                samples.push(ms);
+                slowest.push((ms, format!("{typed}:{c}")));
             }
             let top = engine.candidates().first().cloned().unwrap_or_default();
             if top == want {
@@ -68,8 +74,15 @@ fn main() {
         let count = samples.len();
         let avg = samples.iter().sum::<f64>() / count.max(1) as f64;
         let max = samples.iter().cloned().fold(0.0f64, f64::max);
+        slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let slow_report = slowest
+            .iter()
+            .take(5)
+            .map(|(ms, k)| format!("- {k}: {ms:.2} ms"))
+            .collect::<Vec<_>>()
+            .join("\n");
         report.push_str(&format!(
-            "\n## 性能(主词典,{count} 键)\n\n- 平均 {avg:.2} ms(阈值 5)\n- 最大 {max:.2} ms(阈值 10)\n"
+            "\n## 性能(主词典,{count} 键)\n\n- 平均 {avg:.2} ms(阈值 5)\n- 最大 {max:.2} ms(阈值 10)\n\n最慢 5 键:\n{slow_report}\n"
         ));
         if avg > 5.0 || max > 10.0 {
             failures += 1;

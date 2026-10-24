@@ -4,6 +4,7 @@
 //! 多字词自然领先。无匹配音节的切分不出整句候选(该切分作废)。
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use pinyin_dict::syllables::{self, Fuzzy};
 use pinyin_dict::{Dictionary, signature};
@@ -37,6 +38,8 @@ pub struct Built {
 const CHAR_BONUS: f64 = 0.5;
 const USER_W: f64 = 3.0;
 const MAX_CANDS: usize = 40;
+/// 每个前缀档位保留的最高分词条数。
+const PER_L_CAP: usize = 12;
 /// 简拼签名扫描的单次命中上限(保护首键延迟)。
 const SIG_SCAN_CAP: usize = 4000;
 
@@ -74,42 +77,46 @@ fn matches(
     entry_key: &str,
     sylls: &[Syll],
     fuzzy: &Fuzzy,
-    exp_cache: &mut HashMap<String, Vec<String>>,
+    exp_cache: &mut HashMap<String, Rc<Vec<String>>>,
 ) -> bool {
-    let parts: Vec<&str> = entry_key.split('\'').collect();
-    if parts.len() != sylls.len() {
-        return false;
-    }
-    sylls.iter().zip(parts).all(|(t, e)| {
-        if t.abbrev {
+    let mut parts = entry_key.split('\'');
+    for t in sylls {
+        let Some(e) = parts.next() else {
+            return false;
+        };
+        let ok = if t.abbrev {
             e.starts_with(t.text.as_str())
         } else if *fuzzy == Fuzzy::default() {
             e == t.text
         } else {
             let exps = exp_cache
                 .entry(t.text.clone())
-                .or_insert_with(|| syllables::expansions(&t.text, fuzzy));
+                .or_insert_with(|| Rc::new(syllables::expansions(&t.text, fuzzy)));
             exps.iter().any(|x| x == e)
+        };
+        if !ok {
+            return false;
         }
-    })
+    }
+    parts.next().is_none()
 }
 
 struct Querier<'a> {
     dict: &'a Dictionary,
     user: &'a UserDict,
     fuzzy: Fuzzy,
-    cache: HashMap<String, Vec<Hit>>,
-    exp_cache: HashMap<String, Vec<String>>,
+    cache: HashMap<String, Rc<Vec<Hit>>>,
+    exp_cache: HashMap<String, Rc<Vec<String>>>,
 }
 
 impl Querier<'_> {
-    fn lookup(&mut self, sylls: &[Syll]) -> Vec<Hit> {
+    fn lookup(&mut self, sylls: &[Syll]) -> Rc<Vec<Hit>> {
         let key = typed_key(sylls);
         if let Some(hits) = self.cache.get(&key) {
-            return hits.clone();
+            return Rc::clone(hits);
         }
-        let hits = self.compute(sylls, &key);
-        self.cache.insert(key, hits.clone());
+        let hits = Rc::new(self.compute(sylls, &key));
+        self.cache.insert(key, Rc::clone(&hits));
         hits
     }
 
@@ -240,7 +247,12 @@ pub fn build(
     for seg in segs {
         let spans: Vec<(usize, usize)> = seg.iter().map(|s| s.span).collect();
         for l in 1..=seg.len() {
-            for hit in querier.lookup(&seg[..l]) {
+            // 每档只取分数最高的若干词,避免把整段命中(可达数千)都转成候选。
+            let hits = querier.lookup(&seg[..l]);
+            let mut top: Vec<&Hit> = hits.iter().collect();
+            top.sort_by(|a, b| b.score().total_cmp(&a.score()));
+            top.truncate(PER_L_CAP);
+            for hit in top {
                 cands.push(Cand {
                     text: hit.word.clone(),
                     consume: l,

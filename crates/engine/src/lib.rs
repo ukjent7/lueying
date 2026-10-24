@@ -322,9 +322,7 @@ impl Engine {
 
     /// 上屏高亮候选;无候选时上屏原文。
     fn commit_highlighted(&mut self) -> Option<String> {
-        if self.comp.is_none() {
-            return None;
-        }
+        self.comp.as_ref()?;
         if self.cands.is_empty() {
             return self.comp.take().map(|c| c.raw);
         }
