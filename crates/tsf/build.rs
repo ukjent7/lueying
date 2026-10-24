@@ -1,13 +1,7 @@
-//! MSVC 链接器对 `#[no_mangle]` 导出的 cdylib 报 LNK4104
-//! (export of symbol 'Dll*' should be PRIVATE)。显式以 PRIVATE 重新声明
-//! 这四个导出消除告警,导出集合不变。
+//! rustc 给 cdylib 的 `#[no_mangle]` 导出经 .drectve 传给链接器,MSVC 对此
+//! 固定报 LNK4104(should be PRIVATE,rust-lang/rust#86431,无害);再手动
+//! `/EXPORT:...,PRIVATE` 会与 drectve 撞成 LNK4197。直接按官方 /IGNORE
+//! 白名单压制该编号。
 fn main() {
-    for sym in [
-        "DllCanUnloadNow",
-        "DllGetClassObject",
-        "DllRegisterServer",
-        "DllUnregisterServer",
-    ] {
-        println!("cargo:rustc-cdylib-link-arg=/EXPORT:{sym}={sym},PRIVATE");
-    }
+    println!("cargo:rustc-cdylib-link-arg=/IGNORE:4104");
 }
