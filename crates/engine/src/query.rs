@@ -466,9 +466,7 @@ pub fn build(
                 let mut path = st.path.clone();
                 path.push((node.word.clone(), node.spans.clone()));
                 cands.push(State {
-                    score: st.score
-                        + node.score
-                        + gram.bonus(&tail, &node.word, j == raw.len()),
+                    score: st.score + node.score + gram.bonus(&tail, &node.word, j == raw.len()),
                     path,
                 });
             }
