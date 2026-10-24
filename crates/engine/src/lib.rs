@@ -191,10 +191,7 @@ impl Engine {
     ///
     /// 只换顺序,不增删候选;只有覆盖整个按键的候选可以提升。成功返回 `true`。
     pub fn promote(&mut self, index: usize) -> bool {
-        if index == 0
-            || index >= self.cands.len()
-            || !self.cands[index].full
-        {
+        if index == 0 || index >= self.cands.len() || !self.cands[index].full {
             return false;
         }
         let cand = self.cands.remove(index);

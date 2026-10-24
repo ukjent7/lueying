@@ -470,9 +470,7 @@ pub fn run(
         &mut checks,
         "可信命中全部跳过",
         trusted_skips > 0,
-        format!(
-            "{trusted_skips} 条首条可信，其中模型想改 {trusted_disagreements} 条"
-        ),
+        format!("{trusted_skips} 条首条可信，其中模型想改 {trusted_disagreements} 条"),
     );
     push(
         &mut checks,

@@ -68,10 +68,11 @@ impl Rerank {
         if texts.len() != facts.len() {
             return None;
         }
-        self.inner.best_where(context, texts, |index| CandidateFacts {
-            answers_key: facts[index].answers_key,
-            trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
-        })
+        self.inner
+            .best_where(context, texts, |index| CandidateFacts {
+                answers_key: facts[index].answers_key,
+                trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
+            })
     }
 
     /// 每条候选的每字符平均对数概率,按输入顺序返回。评测与诊断用。
