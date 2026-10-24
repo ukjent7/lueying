@@ -11,6 +11,7 @@ fn main() {
 #[cfg(windows)]
 mod imp {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     use pinyin_dict::Dictionary;
@@ -27,6 +28,10 @@ mod imp {
     pub(super) struct State {
         pub(super) dict: Arc<Dictionary>,
         pub(super) sessions: Mutex<HashMap<u64, Session>>,
+        /// 每次会话变化自增,候选窗轮询它决定刷新。
+        pub(super) version: AtomicU64,
+        /// 最近收到按键/光标上报的会话,候选窗只跟它。
+        pub(super) active: AtomicU64,
     }
 
     pub(super) fn real_main() {
@@ -43,9 +48,16 @@ mod imp {
         let state = Arc::new(State {
             dict: Arc::new(dict),
             sessions: Mutex::new(HashMap::new()),
+            version: AtomicU64::new(0),
+            active: AtomicU64::new(0),
         });
         println!("pinyin-server 监听 {PIPE_NAME}");
-        crate::pipe::listen(PIPE_NAME, state);
+        {
+            // 管道服务在后台线程,主线程留给 gpui 事件循环。
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || crate::pipe::listen(PIPE_NAME, state));
+        }
+        crate::ui::run(state);
     }
 
     /// exe 同目录的 main.tsv。
@@ -57,6 +69,8 @@ mod imp {
 
     /// 处理一条请求,返回应答。
     pub(super) fn handle(state: &State, req: Request) -> Reply {
+        // 任何请求后候选窗都可能要重摆,先记账再处理。
+        state.version.fetch_add(1, Ordering::Relaxed);
         let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
         match req {
             Request::Hello { session, host } => {
@@ -69,9 +83,11 @@ mod imp {
                     },
                     pending: None,
                 });
+                state.active.store(session, Ordering::Relaxed);
                 Reply::default()
             }
             Request::Key { session, key } => {
+                state.active.store(session, Ordering::Relaxed);
                 let Some(s) = sessions.get_mut(&session) else {
                     return Reply::default();
                 };
@@ -102,6 +118,7 @@ mod imp {
                 .and_then(|s| s.pending.take())
                 .unwrap_or_default(),
             Request::SetMode { session, chinese } => {
+                state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session) {
                     s.engine.set_mode(if chinese {
                         Mode::Chinese
@@ -113,6 +130,7 @@ mod imp {
                 Reply::default()
             }
             Request::Focus { session, focused } => {
+                state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session) {
                     if !focused {
                         // 失焦:清掉没上屏的拼音。
@@ -136,6 +154,7 @@ mod imp {
                 right,
                 bottom,
             } => {
+                state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session) {
                     s.view.caret = Some((left, top, right, bottom));
                 }
@@ -172,3 +191,6 @@ mod imp {
 
 #[cfg(windows)]
 mod pipe;
+
+#[cfg(windows)]
+mod ui;

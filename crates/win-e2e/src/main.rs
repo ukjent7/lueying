@@ -66,6 +66,11 @@ mod imp {
             .map_err(|e| e.to_string())?;
         println!("regsvr32: {status}");
 
+        // 拉起 server(主词典缺失会退回内置迷你词库,E2E 断言用它)
+        let mut server = std::process::Command::new(dir.join("pinyin-server.exe")).spawn().ok();
+        // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。
+        std::thread::sleep(Duration::from_millis(600));
+
         unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
             .ok()
             .map_err(|e| format!("CoInitializeEx: {e}"))?;
@@ -123,6 +128,10 @@ mod imp {
         })();
 
         // 6. 清理(尽力)
+        if let Some(mut child) = server.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         let _ = std::process::Command::new("regsvr32")
             .arg("/s")
             .arg("/u")
