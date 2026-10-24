@@ -289,6 +289,8 @@ impl Engine {
                 events
             }
             Key::Letter(_) => vec![Event::Passthrough(key)],
+            // Shift 在 process 入口已处理,组合态里不会再遇到。
+            Key::Shift => Vec::new(),
         }
     }
 

@@ -16,13 +16,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  engine:
+  fmt:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Format
+      - name: 格式化并回推(如有差异)
+        if: github.event_name == 'push'
+        run: |
+          cargo fmt --all
+          if ! git diff --quiet; then
+            git config user.name "fmt-bot"
+            git config user.email "bot@users.noreply.github.com"
+            git add -A
+            git commit -m "style: cargo fmt"
+            git push
+          fi
+      - name: Format 校验
         run: cargo fmt --all --check
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: 引擎 E2E(内置词库)
@@ -55,5 +68,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build (release)
         run: cargo build --release --workspace

@@ -35,6 +35,7 @@ const MAX_CANDS: usize = 40;
 /// 简拼签名扫描的单次命中上限(保护首键延迟)。
 const SIG_SCAN_CAP: usize = 4000;
 
+#[derive(Clone)]
 struct Hit {
     word: String,
     freq: u64,
