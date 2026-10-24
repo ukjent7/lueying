@@ -43,13 +43,7 @@ fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
     out.push((
         "全部词条一致",
         diff.is_none(),
-        format!(
-            "{} | dict布局={:?} re布局={:?} re首记录={:?}",
-            diff.unwrap_or_default(),
-            dict.layout_debug(),
-            re.layout_debug(),
-            re.rec_debug(0)
-        ),
+        diff.unwrap_or_else(|| format!("{} 条", dict.len())),
     ));
     out.push((
         "再导出字节稳定",

@@ -32,8 +32,8 @@ const MAGIC: &[u8; 8] = b"PYD1\x00\x00\x00\x01";
 const REC: usize = 24;
 /// 签名表条目:签名字节池偏移/长度(2×u32)+ 记录下标(u32)。
 const SIG: usize = 12;
-/// 头部长度:魔数 + 条数 + 三段长度。
-const HEAD: usize = MAGIC.len() + 16;
+/// 头部长度:魔数 + 条数、字符串池长、签名条数(各 4 字节)。
+const HEAD: usize = MAGIC.len() + 12;
 
 /// 词典字节的来源:映射文件或内存。
 enum Backing {
@@ -112,7 +112,6 @@ fn pack(raw: &[(String, String, u64)]) -> Vec<u8> {
     out.extend_from_slice(&(raw.len() as u32).to_le_bytes());
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(&(sigs.len() as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&recs);
     out.extend_from_slice(&data);
     for (so, sl, idx) in sigs {
@@ -197,7 +196,7 @@ impl Dictionary {
             if bytes.len() < HEAD || &bytes[..MAGIC.len()] != MAGIC {
                 None
             } else {
-                // 头部四个 u32 紧随魔数:条数、字符串池长、签名表条数、保留。
+                // 头部三个 u32 紧随魔数:条数、字符串池长、签名表条数。
                 let n = |i: usize| {
                     let at = MAGIC.len() + i * 4;
                     u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
@@ -225,18 +224,14 @@ impl Dictionary {
         })
     }
 
-    /// 物化二进制格式(写盘用)。二进制载入的词典再导出仍是等价字节。
+    /// 物化二进制格式(写盘用)。从词条重新打包而非复制内部字节,
+    /// 输出与 `pack` 严格同构,因此对任何来源的词典都幂等。
     pub fn to_binary(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.backing.len());
-        out.extend_from_slice(MAGIC);
-        out.extend_from_slice(&(self.count as u32).to_le_bytes());
-        out.extend_from_slice(&((self.data.end - self.data.start) as u32).to_le_bytes());
-        out.extend_from_slice(&((self.sigs.end - self.sigs.start) / SIG).to_le_bytes());
-        out.extend_from_slice(&0u32.to_le_bytes());
-        out.extend_from_slice(&self.backing[self.recs.clone()]);
-        out.extend_from_slice(&self.backing[self.data.clone()]);
-        out.extend_from_slice(&self.backing[self.sigs.clone()]);
-        out
+        let raw: Vec<(String, String, u64)> = self
+            .iter()
+            .map(|e| (e.word.to_string(), e.key.to_string(), e.freq))
+            .collect();
+        pack(&raw)
     }
 
     /// 内置迷你词库(离线开发与 E2E 用)。
@@ -257,23 +252,6 @@ impl Dictionary {
     /// 按记录顺序遍历全部词条(校验、导出用)。
     pub fn iter(&self) -> impl Iterator<Item = Entry<'_>> {
         (0..self.count).map(|i| self.entry(i))
-    }
-
-    /// 内部区间(诊断用):(记录表起点, 记录表终点, 池起点, 池终点, 签名起点, 签名终点)。
-    pub fn layout_debug(&self) -> (usize, usize, usize, usize, usize, usize) {
-        (
-            self.recs.start,
-            self.recs.end,
-            self.data.start,
-            self.data.end,
-            self.sigs.start,
-            self.sigs.end,
-        )
-    }
-
-    /// 第 i 条记录的原始字节(诊断用)。
-    pub fn rec_debug(&self, i: usize) -> Vec<u8> {
-        self.rec(i).to_vec()
     }
 
     fn rec(&self, i: usize) -> &[u8] {
