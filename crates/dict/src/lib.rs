@@ -27,7 +27,7 @@ pub struct Entry<'a> {
 }
 
 /// 二进制格式魔数:`PYD1` + 版本 1。
-const MAGIC: &[u8; 8] = b"PYD1\0\0\0\1";
+const MAGIC: &[u8; 8] = b"PYD1\x00\x00\x00\x01";
 /// 记录字节数:word 偏移/长度、key 偏移/长度(4×u32)+ 词频(u64)。
 const REC: usize = 24;
 /// 签名表条目:签名字节池偏移/长度(2×u32)+ 记录下标(u32)。
