@@ -24,8 +24,9 @@ mod imp {
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
-        CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, TF_INPUTPROCESSORPROFILE,
-        TF_IPPMF_ENABLEPROFILE, TF_PROFILETYPE_INPUTPROCESSOR,
+        CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfileMgr,
+        ITfInputProcessorProfiles, ITfThreadMgr, TF_INPUTPROCESSORPROFILE, TF_IPPMF_ENABLEPROFILE,
+        TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetWindowTextW, MSG, PM_REMOVE,
@@ -132,34 +133,56 @@ mod imp {
                 println!("EnumProfiles(0x{LANGID_ZH_CN:04x}): {n} 个");
             }
 
-            // 2. 激活本输入法(本进程);先默认 flags,失败换 ENABLEPROFILE
-            let act = unsafe {
+            // 2. 激活本输入法。EnableLanguageProfile 保证它出现在输入法列表里;
+            //    ActivateLanguageProfile 只对当前线程生效,测试宿主与按键同线程。
+            let profiles_api: ITfInputProcessorProfiles = profiles
+                .cast()
+                .map_err(|e| format!("cast ITfInputProcessorProfiles: {e}"))?;
+            match unsafe {
+                profiles_api.EnableLanguageProfile(
+                    &CLSID_IME,
+                    LANGID_ZH_CN,
+                    &GUID_PROFILE,
+                    true,
+                )
+            } {
+                Ok(()) => println!("EnableLanguageProfile: ok"),
+                Err(e) => println!("EnableLanguageProfile: {e}"),
+            }
+            match unsafe {
+                profiles_api.ActivateLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
+            } {
+                Ok(()) => println!("ActivateLanguageProfile: ok"),
+                Err(e) => return Err(format!("ActivateLanguageProfile: {e}")),
+            }
+            let mut active_lang = 0u16;
+            let mut active_guid = GUID::default();
+            match unsafe {
+                profiles_api.GetActiveLanguageProfile(
+                    &CLSID_IME,
+                    &mut active_lang,
+                    &mut active_guid,
+                )
+            } {
+                Ok(()) => println!(
+                    "GetActiveLanguageProfile: lang=0x{active_lang:04x} guid={active_guid:?}"
+                ),
+                Err(e) => println!("GetActiveLanguageProfile: {e}"),
+            }
+            // 新版接口的进程级激活;失败只记日志,以 ActivateLanguageProfile 为准。
+            match unsafe {
                 mgr.ActivateProfile(
                     TF_PROFILETYPE_INPUTPROCESSOR,
                     LANGID_ZH_CN,
                     &CLSID_IME,
                     &GUID_PROFILE,
                     HKL::default(),
-                    0,
+                    TF_IPPMF_FORPROCESS | TF_IPPMF_ENABLEPROFILE,
                 )
-            };
-            let act = match act {
-                Ok(()) => Ok(()),
-                Err(e0) => {
-                    println!("ActivateProfile(flags=0): {e0},重试 ENABLEPROFILE");
-                    unsafe {
-                        mgr.ActivateProfile(
-                            TF_PROFILETYPE_INPUTPROCESSOR,
-                            LANGID_ZH_CN,
-                            &CLSID_IME,
-                            &GUID_PROFILE,
-                            HKL::default(),
-                            TF_IPPMF_ENABLEPROFILE,
-                        )
-                    }
-                }
-            };
-            act.map_err(|e| format!("ActivateProfile: {e}"))?;
+            } {
+                Ok(()) => println!("ActivateProfile(FORPROCESS|ENABLEPROFILE): ok"),
+                Err(e) => println!("ActivateProfile(FORPROCESS|ENABLEPROFILE): {e}"),
+            }
 
             // 3. 宿主窗口 + EDIT 控件
             let (hwnd, edit) = create_host_window()?;
@@ -168,6 +191,8 @@ mod imp {
                 let _ = SetForegroundWindow(hwnd);
                 let _ = SetFocus(Some(edit));
             }
+            pump_for(Duration::from_millis(150));
+            report_tsf_focus();
 
             // 4. 注入按键
             for c in "nihao".chars() {
@@ -210,6 +235,24 @@ mod imp {
         lparam: LPARAM,
     ) -> LRESULT {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+
+    /// 看测试宿主线程有没有 TSF 文档管理器;没有说明 EDIT 不是 TSF 上下文,组句无法落地。
+    fn report_tsf_focus() {
+        let mgr: windows::core::Result<ITfThreadMgr> = unsafe {
+            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
+        };
+        let Ok(mgr) = mgr else {
+            println!("TSF focus: 线程管理器创建失败");
+            return;
+        };
+        match unsafe { mgr.GetFocus() } {
+            Ok(dm) => match unsafe { dm.GetTop() } {
+                Ok(_) => println!("TSF focus: 文档管理器有顶层上下文"),
+                Err(e) => println!("TSF focus: 文档管理器无上下文 {e}"),
+            },
+            Err(e) => println!("TSF focus: 无文档管理器 {e}"),
+        }
     }
 
     fn create_host_window() -> Result<(HWND, HWND), String> {
