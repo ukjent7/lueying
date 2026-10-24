@@ -13,25 +13,25 @@ fn main() {
 mod imp {
     use std::time::{Duration, Instant};
 
-    use windows::core::{GUID, Interface, PCWSTR};
-    use windows::Win32::Foundation::{HINSTANCE, HMODULE, HKL, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, HKL, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, SetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetWindowTextW, MSG, PeekMessageW,
-        PM_REMOVE, RegisterClassW, SetForegroundWindow, ShowWindow, TranslateMessage,
-        WINDOW_EX_STYLE, WNDCLASSW, SW_SHOWNORMAL, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
-        WS_TABSTOP, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetWindowTextW, MSG, PM_REMOVE,
+        PeekMessageW, RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow, ShowWindow,
+        TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE,
+        WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
     };
+    use windows::core::{GUID, Interface, PCWSTR};
 
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcdaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);

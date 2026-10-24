@@ -137,9 +137,7 @@ impl Querier<'_> {
                     self.user.freq(key, &e.word),
                 ));
             }
-        } else if !fuzzy_on
-            && sylls.first().is_some_and(|s| !s.abbrev)
-        {
+        } else if !fuzzy_on && sylls.first().is_some_and(|s| !s.abbrev) {
             // 前导全拼音节已知:按键前缀扫全拼索引,区间比签名细得多(ni'h 只扫 ni* 词)。
             let full_len = sylls.iter().take_while(|s| !s.abbrev).count();
             let mut prefix = typed_key(&sylls[..full_len]);

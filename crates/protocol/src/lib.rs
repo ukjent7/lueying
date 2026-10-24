@@ -70,7 +70,13 @@ pub enum Request {
     /// 应用强行终止了组句。
     CompositionTerminated { session: u64 },
     /// 组句/光标的屏幕矩形(编辑会话里量得,候选窗定位用)。
-    Caret { session: u64, left: i32, top: i32, right: i32, bottom: i32 },
+    Caret {
+        session: u64,
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    },
     /// 会话下线。
     Goodbye { session: u64 },
 }

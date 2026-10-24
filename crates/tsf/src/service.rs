@@ -171,7 +171,9 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         *self.thread_mgr.borrow_mut() = None;
         self.client_id.set(0);
         if let Some(mut client) = self.client.borrow_mut().take() {
-            let _ = client.round_trip(&Request::Goodbye { session: self.session });
+            let _ = client.round_trip(&Request::Goodbye {
+                session: self.session,
+            });
         }
         log("停用");
         Ok(())

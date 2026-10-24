@@ -12,8 +12,8 @@ use windows::Win32::Foundation::{E_FAIL, RECT};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
     ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
-    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READWRITE,
-    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
+    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READWRITE, TF_IAS_QUERYONLY,
+    TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{Error, Interface, Ref, Result, implement};
 
@@ -228,7 +228,9 @@ impl ITfCompositionSink_Impl for CompositionSink_Impl {
         self.shared.composition.borrow_mut().take();
         let mut guard = self.client.borrow_mut();
         if let Some(c) = guard.as_mut() {
-            let _ = c.round_trip(&Request::CompositionTerminated { session: self.session });
+            let _ = c.round_trip(&Request::CompositionTerminated {
+                session: self.session,
+            });
         }
         Ok(())
     }

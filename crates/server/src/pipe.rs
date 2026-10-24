@@ -6,13 +6,13 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
 
-use windows::core::HSTRING;
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HRESULT};
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
     PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
+use windows::core::HSTRING;
 
 use pinyin_protocol::Request;
 

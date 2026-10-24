@@ -15,7 +15,7 @@ mod imp {
 
     use pinyin_dict::Dictionary;
     use pinyin_engine::{Config, Engine, Event, Key, Mode};
-    use pinyin_protocol::{Reply, Request, SessionView, PIPE_NAME};
+    use pinyin_protocol::{PIPE_NAME, Reply, Request, SessionView};
 
     pub(super) struct Session {
         pub(super) engine: Engine,
