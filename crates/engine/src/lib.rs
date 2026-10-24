@@ -88,6 +88,8 @@ pub struct Engine {
     dict: std::sync::Arc<Dictionary>,
     /// 可选的 rime `.gram` 语言模型;缺失或损坏时整句退化为纯词频。
     gram: Option<std::sync::Arc<Gram>>,
+    /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
+    gram_cache: std::collections::HashMap<(String, String, bool), f64>,
     user: UserDict,
     cfg: Config,
     mode: Mode,
@@ -104,6 +106,7 @@ impl Engine {
         Self {
             dict,
             gram: None,
+            gram_cache: std::collections::HashMap::new(),
             user: UserDict::new(),
             cfg,
             mode: Mode::Chinese,
@@ -463,11 +466,16 @@ impl Engine {
             self.cands.clear();
             return;
         };
+        // 缓存只增不减会随输入历史膨胀;超过上限就整体丢弃,后续按键会重新填充。
+        if self.gram_cache.len() > 4096 {
+            self.gram_cache.clear();
+        }
         let built = query::build(
             &self.dict,
             &self.user,
             &self.cfg.fuzzy,
             self.gram.as_deref(),
+            &mut self.gram_cache,
             &comp.raw,
         );
         comp.display = built.display;

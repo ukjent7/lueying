@@ -267,7 +267,7 @@ type Path = Vec<Step>;
 /// 搭配分:前文尾 -> 当前词的 `.gram` 打分。查询结果按 (前文,词,句末) 缓存。
 struct Grammar<'a> {
     gram: Option<&'a Gram>,
-    cache: HashMap<(String, String, bool), f64>,
+    cache: &'a mut HashMap<(String, String, bool), f64>,
 }
 
 impl Grammar<'_> {
@@ -397,6 +397,7 @@ pub fn build(
     user: &UserDict,
     fuzzy: &Fuzzy,
     gram: Option<&Gram>,
+    cache: &mut HashMap<(String, String, bool), f64>,
     raw: &str,
 ) -> Built {
     let total = dict.total_weight() as f64;
@@ -446,10 +447,7 @@ pub fn build(
         cap_nodes(list);
     }
 
-    let mut gram = Grammar {
-        gram,
-        cache: HashMap::new(),
-    };
+    let mut gram = Grammar { gram, cache };
     let mut best: Vec<Vec<State>> = vec![Vec::new(); raw.len() + 1];
     best[0].push(State {
         score: 0.0,
