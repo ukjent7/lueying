@@ -260,6 +260,9 @@ struct Node {
     spans: Vec<(usize, usize)>,
 }
 
+/// 解码路径:词文本 + 各音节原始字节区间。
+type Path = Vec<(String, Vec<(usize, usize)>)>;
+
 /// 搭配分:前文尾 -> 当前词的 `.gram` 打分。查询结果按 (前文,词,句末) 缓存。
 struct Grammar<'a> {
     gram: Option<&'a Gram>,
@@ -285,7 +288,7 @@ impl Grammar<'_> {
 }
 
 /// 前文尾部最多 `CONTEXT_CHARS` 个字,供语法模型查搭配。
-fn context_tail(path: &[(String, Vec<(usize, usize)>)]) -> String {
+fn context_tail(path: &Path) -> String {
     let mut chars: Vec<char> = Vec::with_capacity(CONTEXT_CHARS);
     for (word, _) in path.iter().rev() {
         for ch in word.chars().rev() {
@@ -385,7 +388,7 @@ fn cap_nodes(list: &mut Vec<Node>) {
 #[derive(Clone)]
 struct State {
     score: f64,
-    path: Vec<(String, Vec<(usize, usize)>)>,
+    path: Path,
 }
 
 pub fn build(
