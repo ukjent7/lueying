@@ -107,9 +107,7 @@ impl TextService {
                 }
             }
         }
-        let Some(client) = guard.as_mut() else {
-            return None;
-        };
+        let client = guard.as_mut()?;
         let reply = client.round_trip(&req);
         if reply.is_none() {
             // 断线:丢弃连接,下键重新尝试。
@@ -162,11 +160,11 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             }
         }
         *self.source.borrow_mut() = None;
-        if let Some(thread_mgr) = self.thread_mgr.borrow().clone() {
-            if let Ok(keystroke) = thread_mgr.cast::<ITfKeystrokeMgr>() {
-                unsafe {
-                    let _ = keystroke.UnadviseKeyEventSink(self.client_id.get());
-                }
+        if let Some(thread_mgr) = self.thread_mgr.borrow().clone()
+            && let Ok(keystroke) = thread_mgr.cast::<ITfKeystrokeMgr>()
+        {
+            unsafe {
+                let _ = keystroke.UnadviseKeyEventSink(self.client_id.get());
             }
         }
         *self.thread_mgr.borrow_mut() = None;

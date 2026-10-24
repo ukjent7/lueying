@@ -49,7 +49,7 @@ fn write_registry(module: &std::path::Path) -> windows_registry::Result<()> {
     let base = CLASSES_ROOT.create(clsid_key())?;
     base.set_string("", NAME)?;
     let inproc = base.create("InprocServer32")?;
-    inproc.set_string("", &module.to_string_lossy())?;
+    inproc.set_string("", module.to_string_lossy())?;
     inproc.set_string("ThreadingModel", "Apartment")?;
     Ok(())
 }
