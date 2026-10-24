@@ -87,11 +87,11 @@ fn run(args: Args) -> Result<(), String> {
         .map(|((word, key), freq)| (word, freq, key))
         .collect();
     lines.sort_by(|a, b| a.2.cmp(&b.2).then(b.1.cmp(&a.1)).then(a.0.cmp(&b.0)));
-    let mut out = String::new();
+    let mut tsv = String::new();
     for (word, freq, key) in &lines {
-        out.push_str(&format!("{word}\t{freq}\t{key}\n"));
+        tsv.push_str(&format!("{word}\t{freq}\t{key}\n"));
     }
-    std::fs::write(&args.out, out).map_err(|e| format!("写 {}: {e}", args.out.display()))?;
+    std::fs::write(&args.out, &tsv).map_err(|e| format!("写 {}: {e}", args.out.display()))?;
     println!(
         "合计: 收录 {} 条(去重前 {total},坏行 {skipped}) → {}",
         lines.len(),
@@ -99,7 +99,7 @@ fn run(args: Args) -> Result<(), String> {
     );
     if let Some(bin) = &args.bin {
         // 与运行期同一条构造路径,保证二进制与 TSV 语义一致。
-        let (dict, bad) = pinyin_dict::Dictionary::from_text(&out);
+        let (dict, bad) = pinyin_dict::Dictionary::from_text(&tsv);
         if bad != 0 {
             eprintln!("警告: 物化时跳过 {bad} 行");
         }
