@@ -159,28 +159,38 @@ impl Dictionary {
             raw.push((word.to_string(), key.to_string(), freq));
         }
         raw.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
-        (Self::from_bytes(Backing::Owned(pack(&raw))), bad)
+        // pack 产出的字节一定合法,unwrap 安全。
+        let dict = Self::from_bytes(Backing::Owned(pack(&raw))).unwrap();
+        (dict, bad)
     }
 
     /// 打开词典:二进制则 mmap(零解析),否则按 UTF-8 文本解析。
     pub fn from_path(path: &Path) -> std::io::Result<(Dictionary, usize)> {
         let file = std::fs::File::open(path)?;
-        // 先看魔数决定走哪条路;映射失败(空文件等)退回读入内存。
         let bytes = std::fs::read(path)?;
         if bytes.len() >= MAGIC.len() && &bytes[..MAGIC.len()] == MAGIC {
+            // 映射失败(空文件等)退回读入内存,不让路径差异阻断加载。
             let mapped = unsafe { Mmap::map(&file) }.ok();
-            return match mapped {
-                Some(m) if m.len() == bytes.len() => Ok((Self::from_bytes(Backing::Mapped(m)), 0)),
-                _ => Ok((Self::from_bytes(Backing::Owned(bytes)), 0)),
+            let backing = match mapped {
+                Some(m) if m.len() == bytes.len() => Backing::Mapped(m),
+                _ => Backing::Owned(bytes),
             };
+            return Self::from_bytes(backing)
+                .map(|d| (d, 0))
+                .ok_or_else(|| std::io::Error::other("二进制词典损坏"));
         }
         let text = String::from_utf8(bytes)
             .map_err(|_| std::io::Error::other("词典既非二进制也非 UTF-8 文本"))?;
         Ok(Self::from_text(&text))
     }
 
-    /// 从二进制布局建立视图。字段越界时按空词典处理(坏文件不拖垮输入法)。
-    fn from_bytes(backing: Backing) -> Dictionary {
+    /// 从二进制字节建立词典(内存来源)。魔数/长度不符返回 None。
+    pub fn from_binary(bytes: &[u8]) -> Option<Dictionary> {
+        Self::from_bytes(Backing::Owned(bytes.to_vec()))
+    }
+
+    /// 从二进制布局建立视图。魔数或长度不符返回 None;空词典是合法结果。
+    fn from_bytes(backing: Backing) -> Option<Dictionary> {
         // 先在借用期内算好区间,再移交所有权(否则 bytes 的借用挡住 move)。
         let layout = {
             let bytes: &[u8] = &backing;
@@ -207,22 +217,14 @@ impl Dictionary {
                 ))
             }
         };
-        let Some((count, recs, data, sigs)) = layout else {
-            return Dictionary {
-                backing,
-                recs: 0..0,
-                data: 0..0,
-                sigs: 0..0,
-                count: 0,
-            };
-        };
-        Dictionary {
+        let (count, recs, data, sigs) = layout?;
+        Some(Dictionary {
             backing,
             recs,
             data,
             sigs,
             count,
-        }
+        })
     }
 
     /// 物化二进制格式(写盘用)。二进制载入的词典再导出仍是等价字节。
