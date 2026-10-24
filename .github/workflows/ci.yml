@@ -17,9 +17,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 格式化 + 生成 Cargo.lock,有变化就回推(仅 push 到 main;GITHUB_TOKEN 推送不触发新 run)。
+  # 格式化 + 维护 Cargo.lock,有变化就回推(仅 push 到 main;GITHUB_TOKEN 推送不触发新 run)。
   # 锁文件必须入库:git 依赖(zed main)不锁则每次 run 解析新 rev,天然抖动。
-  # 本机不装工具链,锁只能在这里生成;fmt 与锁合并成一个 job 是为了避免两个 bot 推送互相撞车。
+  # 锁只在缺失或与清单失配时才重新生成(重新生成=把 zed 解析到当天 HEAD 并从此钉住);
+  # 已有锁原样保留——rust-cache 的键含锁哈希,锁稳定缓存才不会每次全量重存挤爆配额。
+  # 要跟进 zed main 时 `cargo update` 一次(本地或本 job 手动触发均可)。
   fmt:
     runs-on: ubuntu-latest
     permissions:
@@ -27,8 +29,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: 生成 Cargo.lock
-        run: cargo generate-lockfile
+      - name: 维护 Cargo.lock
+        run: cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo generate-lockfile
       - name: 格式化
         run: cargo fmt --all
       - name: 回推(如有变化)
@@ -55,16 +57,15 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --locked
       - name: 引擎 E2E(内置词库)
-        run: cargo run -p pinyin-e2e --release
+        run: cargo run -p pinyin-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -81,13 +82,12 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: 下载白霜词库
         run: bash tools/fetch_frost.sh data/frost
       - name: 转换词典
-        run: cargo run -p xtask --release -- dict --frost data/frost --out data/main.tsv
+        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv
       - name: 主词典 E2E(质量探针 + 性能阈值)
-        run: cargo run -p pinyin-e2e --release -- --dict data/main.tsv
+        run: cargo run -p pinyin-e2e --release --locked -- --dict data/main.tsv
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -106,14 +106,18 @@ jobs:
         with:
           ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
+      # 缓存只留 windows job(gpui/zed 树是编译大头,ubuntu 两个 job 全量也只要几分钟);
+      # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build (release)
-        run: cargo build --release --workspace
+        run: cargo build --release --workspace --locked
       - name: Windows 全链路 E2E(观察期,不阻断)
         continue-on-error: true
-        run: cargo run -p pinyin-win-e2e --release
+        run: cargo run -p pinyin-win-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
