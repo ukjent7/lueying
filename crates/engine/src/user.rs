@@ -16,6 +16,8 @@ struct UserEntry {
 #[derive(Default)]
 pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
+    /// 内容每次变化自增;持久化线程据此决定是否写盘。
+    rev: u64,
 }
 
 fn now() -> u64 {
@@ -28,6 +30,11 @@ fn now() -> u64 {
 impl UserDict {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 内容修订号;只增不减。
+    pub fn revision(&self) -> u64 {
+        self.rev
     }
 
     /// 记录一次「在 key 下选了 word」。
@@ -49,6 +56,7 @@ impl UserDict {
                 ts,
             }),
         }
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// 该键下某词的用户频次(未学过为 0)。
@@ -74,19 +82,24 @@ impl UserDict {
             .flat_map(|(k, v)| v.iter().map(move |e| (k.as_str(), e.word.as_str(), e.freq)))
     }
 
-    /// 导出为行文本(`键<TAB>词<TAB>频次<TAB>时间戳`)。
+    /// 导出为行文本(`键<TAB>词<TAB>频次<TAB>时间戳`),按键排序保证文件稳定。
     pub fn export(&self) -> String {
+        let mut keys: Vec<_> = self.map.iter().collect();
+        keys.sort_by(|a, b| a.0.cmp(b.0));
         let mut out = String::new();
-        for (k, v) in &self.map {
-            for e in v {
+        for (k, v) in keys {
+            let mut words = v.iter().collect::<Vec<_>>();
+            words.sort_by(|a, b| a.word.cmp(&b.word));
+            for e in words {
                 out.push_str(&format!("{k}\t{}\t{}\t{}\n", e.word, e.freq, e.ts));
             }
         }
         out
     }
 
-    /// 从 [`Self::export`] 的输出导入,坏行跳过。
+    /// 从 [`Self::export`] 的输出导入,坏行跳过,同键同词合并。
     pub fn import(&mut self, text: &str) {
+        let mut changed = false;
         for line in text.lines() {
             let mut parts = line.split('\t');
             if let (Some(k), Some(w), Some(f), Some(t)) =
@@ -95,12 +108,23 @@ impl UserDict {
                 && !k.is_empty()
                 && !w.is_empty()
             {
-                self.map.entry(k.to_string()).or_default().push(UserEntry {
-                    word: w.to_string(),
-                    freq,
-                    ts,
-                });
+                let entries = self.map.entry(k.to_string()).or_default();
+                match entries.iter_mut().find(|e| e.word == w) {
+                    Some(e) => {
+                        e.freq = e.freq.max(freq);
+                        e.ts = e.ts.max(ts);
+                    }
+                    None => entries.push(UserEntry {
+                        word: w.to_string(),
+                        freq,
+                        ts,
+                    }),
+                }
+                changed = true;
             }
+        }
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
         }
     }
 }

@@ -3,6 +3,7 @@
 
 mod rerank;
 mod scenarios;
+mod user_dict;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -128,6 +129,9 @@ fn main() {
             if ok { "PASS" } else { "FAIL" }
         ));
     }
+
+    // 用户词库:跨会话共享、导入合并、落盘文本往返。
+    failures += user_dict::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

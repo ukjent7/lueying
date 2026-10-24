@@ -12,11 +12,11 @@ fn main() {
 mod imp {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{Arc, Mutex, RwLock, mpsc};
 
     use pinyin_dict::Dictionary;
     use pinyin_dict::gram::Gram;
-    use pinyin_engine::{Config, Engine, Event, Key, Mode};
+    use pinyin_engine::{Config, Engine, Event, Key, Mode, SharedUser, UserDict};
     use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
     use pinyin_rerank::{Model, Rerank};
 
@@ -42,6 +42,8 @@ mod imp {
         pub(super) sync_model: Option<Model>,
         pub(super) settled_model: Option<Model>,
         pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
+        /// 所有会话共用一份学习结果。
+        pub(super) user: SharedUser,
     }
 
     pub(super) fn real_main() {
@@ -70,6 +72,18 @@ mod imp {
         // 两档神经重排都是可选数据:缺失/损坏就只保留词频候选。
         let sync_model = load_model("rerank-4m.safetensors");
         let settled_model = load_model("rerank-25m.safetensors");
+        // 用户词库是可选数据:读不到就从空开始,坏行跳过。
+        let user_path = crate::user_store::path();
+        let user = Arc::new(RwLock::new(match &user_path {
+            Some(path) => crate::user_store::load(path),
+            None => {
+                println!("用户词库不可持久化:LOCALAPPDATA 缺失");
+                UserDict::new()
+            }
+        }));
+        if let Some(path) = user_path {
+            crate::user_store::spawn(Arc::clone(&user), path);
+        }
         let (settle_tx, settle_rx) = mpsc::channel();
         let settle_tx = settled_model.as_ref().map(|_| settle_tx);
         let state = Arc::new(State {
@@ -81,6 +95,7 @@ mod imp {
             sync_model,
             settled_model,
             settle_tx,
+            user,
         });
         if state.settle_tx.is_some() {
             crate::settle::spawn(Arc::clone(&state), settle_rx);
@@ -157,7 +172,8 @@ mod imp {
                 println!("会话 {session} 上线({host})");
                 sessions.entry(session).or_insert_with(|| Session {
                     engine: {
-                        let engine = Engine::new(Arc::clone(&state.dict), Config::default());
+                        let engine = Engine::new(Arc::clone(&state.dict), Config::default())
+                            .with_user(Arc::clone(&state.user));
                         match &state.gram {
                             Some(g) => engine.with_gram(Arc::clone(g)),
                             None => engine,
@@ -338,3 +354,6 @@ mod settle;
 
 #[cfg(windows)]
 mod ui;
+
+#[cfg(windows)]
+mod user_store;

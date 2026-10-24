@@ -8,11 +8,16 @@ mod query;
 mod segment;
 mod user;
 
+use std::sync::{Arc, RwLock};
+
 use pinyin_dict::gram::Gram;
 use pinyin_dict::{Dictionary, Fuzzy};
 
 pub use query::Candidate;
 pub use user::UserDict;
+
+/// 多个会话共享的用户词库;Server 让所有应用看到同一份学习结果。
+pub type SharedUser = Arc<RwLock<UserDict>>;
 
 /// 组合缓冲上限(字母与隔音符总数)。
 pub const MAX_RAW: usize = 40;
@@ -93,7 +98,7 @@ pub struct Engine {
     gram: Option<std::sync::Arc<Gram>>,
     /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
     gram_cache: std::collections::HashMap<(String, String, bool), f64>,
-    user: UserDict,
+    user: SharedUser,
     cfg: Config,
     mode: Mode,
     comp: Option<Composition>,
@@ -116,7 +121,7 @@ impl Engine {
             dict,
             gram: None,
             gram_cache: std::collections::HashMap::new(),
-            user: UserDict::new(),
+            user: Arc::new(RwLock::new(UserDict::new())),
             cfg,
             mode: Mode::Chinese,
             comp: None,
@@ -134,6 +139,12 @@ impl Engine {
     /// 挂上语言模型(链式构造;Server 启动时按文件是否存在决定)。
     pub fn with_gram(mut self, gram: std::sync::Arc<Gram>) -> Self {
         self.gram = Some(gram);
+        self
+    }
+
+    /// 与其他会话共用用户词库(链式构造;Server 里所有宿主共用一份)。
+    pub fn with_user(mut self, user: SharedUser) -> Self {
+        self.user = user;
         self
     }
 
@@ -241,11 +252,17 @@ impl Engine {
     }
 
     pub fn export_user(&self) -> String {
-        self.user.export()
+        self.user
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .export()
     }
 
     pub fn import_user(&mut self, text: &str) {
-        self.user.import(text);
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .import(text);
     }
 
     /// 处理一次按键,返回由此产生的全部事件。
@@ -448,7 +465,10 @@ impl Engine {
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
         let learned = raw[..cut].to_string();
-        self.user.learn(&learned, &cand.text);
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .learn(&learned, &cand.text);
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         if rest.is_empty() {
             self.comp = None;
@@ -578,9 +598,10 @@ impl Engine {
         if self.gram_cache.len() > 4096 {
             self.gram_cache.clear();
         }
+        let user = self.user.read().unwrap_or_else(|p| p.into_inner());
         let built = query::build(
             &self.dict,
-            &self.user,
+            &user,
             &self.cfg.fuzzy,
             self.gram.as_deref(),
             &mut self.gram_cache,
