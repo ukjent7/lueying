@@ -233,7 +233,7 @@ impl Dictionary {
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&(self.count as u32).to_le_bytes());
         out.extend_from_slice(&((self.data.end - self.data.start) as u32).to_le_bytes());
-        out.extend_from_slice(&((self.sigs.end - self.sigs.start) / SIG as usize).to_le_bytes());
+        out.extend_from_slice(&((self.sigs.end - self.sigs.start) / SIG).to_le_bytes());
         out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&self.backing[self.recs.clone()]);
         out.extend_from_slice(&self.backing[self.data.clone()]);

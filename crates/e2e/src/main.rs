@@ -13,7 +13,7 @@ use scenarios::{Check, Scenario, probes, scenarios};
 /// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。
 fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
     let mut out = Vec::new();
-    let (dict, _) = Dictionary::from_text(include_str!("../../dicts/mini.txt"));
+    let (dict, _) = Dictionary::from_text(include_str!("../../../dicts/mini.txt"));
     let bytes = dict.to_binary();
     let reloaded = Dictionary::from_binary(&bytes);
     out.push((
