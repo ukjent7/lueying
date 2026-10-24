@@ -198,7 +198,7 @@ mod imp {
             .arg("/u")
             .arg(&dll)
             .status();
-        unsafe { FreeLibrary(dll_h) };
+        let _ = unsafe { FreeLibrary(dll_h) };
         unsafe { CoUninitialize() };
         result
     }
