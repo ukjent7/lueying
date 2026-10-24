@@ -237,7 +237,7 @@ impl Engine {
         let events = self.process_inner(key);
         for event in &events {
             if let Event::Commit(text) = event
-                && text.chars().any(|c| !c.is_ascii())
+                && !text.is_ascii()
             {
                 self.push_context(text);
             }
