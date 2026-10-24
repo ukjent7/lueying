@@ -52,7 +52,7 @@ fn main() {
         // 100-200ms,是测量伪影。歇一拍,再用 niha 预热三条查询路径
         // (n=签名、ni=精确、nih=前缀)后才开始计时,阈值反映稳态打字延迟。
         std::thread::sleep(std::time::Duration::from_millis(800));
-        for c in "niha" {
+        for c in "niha".chars() {
             engine.process(Key::Letter(c));
         }
         engine.process(Key::Esc);
