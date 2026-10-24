@@ -110,10 +110,14 @@ fn poll_once(context: &PollContext) {
         context.session,
         Rc::clone(&context.shared),
         client,
-        None,
-        reply.preedit,
-        Some(revision),
-        Some(base),
+        edit::Write {
+            commit: None,
+            preedit: reply.preedit,
+            guard: Some(edit::Guard {
+                revision,
+                base_preedit: base,
+            }),
+        },
     ) {
         log(&format!("停顿重排写回文档失败: {error}"));
     }

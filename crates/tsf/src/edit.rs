@@ -24,38 +24,43 @@ use crate::service::Shared;
 
 type SharedClient = Rc<RefCell<Option<Client>>>;
 
-/// 一次按键的文档更新:先上屏 commit,再放 preedit(空 = 收组句)。
+/// 一次写回的内容。按键路径带 commit;停顿轮询只换 preedit。
+pub(crate) struct Write {
+    pub(crate) commit: Option<String>,
+    pub(crate) preedit: String,
+    /// 轮询写回发出时的状态;按键路径为 `None`。
+    pub(crate) guard: Option<Guard>,
+}
+
+/// 停顿轮询写回的过期条件:发出后输入没变,文档里仍是那份内联文本。
+pub(crate) struct Guard {
+    pub(crate) revision: u64,
+    pub(crate) base_preedit: String,
+}
+
+/// 一次文档更新:先上屏 commit,再放 preedit(空 = 收组句)。
 #[implement(ITfEditSession)]
 struct UpdateSession {
     context: ITfContext,
     session: u64,
     shared: Rc<Shared>,
     client: SharedClient,
-    commit: Option<String>,
-    preedit: String,
-    /// 轮询写回要求发出时的状态计数仍未变;按键路径为 `None`。
-    revision: Option<u64>,
-    /// 轮询写回要求文档里的内联文本仍是发出时的那份;按键路径为 `None`。
-    base_preedit: Option<String>,
+    write: Write,
 }
 
 impl ITfEditSession_Impl for UpdateSession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
-        if let Some(revision) = self.revision
-            && self.shared.revision.get() != revision
-        {
-            return Ok(());
-        }
-        if let Some(base) = &self.base_preedit
-            && self.shared.preedit.borrow().as_str() != base
+        if let Some(guard) = &self.write.guard
+            && (self.shared.revision.get() != guard.revision
+                || self.shared.preedit.borrow().as_str() != guard.base_preedit.as_str())
         {
             return Ok(());
         }
         match catch_unwind(AssertUnwindSafe(|| {
-            if let Some(text) = &self.commit {
+            if let Some(text) = &self.write.commit {
                 commit_text(&self.shared, &self.context, ec, text)?;
             }
-            if self.preedit.is_empty() {
+            if self.write.preedit.is_empty() {
                 end_composition(&self.shared, ec)
             } else {
                 update_preedit(
@@ -64,7 +69,7 @@ impl ITfEditSession_Impl for UpdateSession_Impl {
                     self.session,
                     &self.context,
                     ec,
-                    &self.preedit,
+                    &self.write.preedit,
                 )
             }?;
             report_caret(&self.shared, &self.client, self.session, &self.context, ec);
@@ -86,20 +91,14 @@ pub(crate) fn request_update(
     session: u64,
     shared: Rc<Shared>,
     client: SharedClient,
-    commit: Option<String>,
-    preedit: String,
-    revision: Option<u64>,
-    base_preedit: Option<String>,
+    write: Write,
 ) -> Result<()> {
     let edit: ITfEditSession = UpdateSession {
         context: context.clone(),
         session,
         shared,
         client,
-        commit,
-        preedit,
-        revision,
-        base_preedit,
+        write,
     }
     .into();
     unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READWRITE)? }.ok()

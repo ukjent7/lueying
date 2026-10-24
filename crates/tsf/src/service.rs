@@ -149,10 +149,11 @@ impl TextService {
             self.session,
             self.shared.clone(),
             self.client.clone(),
-            (!commit.is_empty()).then_some(commit),
-            reply.preedit.clone(),
-            None,
-            None,
+            edit::Write {
+                commit: (!commit.is_empty()).then_some(commit),
+                preedit: reply.preedit.clone(),
+                guard: None,
+            },
         ) {
             log(&format!("编辑会话请求失败: {error}"));
         }

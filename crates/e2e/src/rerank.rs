@@ -36,9 +36,8 @@ pub struct Models {
 pub fn load(dir: &Path) -> Result<Models, String> {
     let read = |name: &str| {
         let path = dir.join(name);
-        std::fs::read(&path)
-            .map(|bytes| (path, bytes))
-            .map_err(|e| format!("{}: {e}", path.display()))
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok((path, bytes))
     };
     let (four_path, four_bytes) = read("rerank-4m.safetensors")?;
     let (five_path, five_bytes) = read("rerank-25m.safetensors")?;
@@ -391,7 +390,7 @@ pub fn run(
         base1 += usize::from(b1);
         base5 += usize::from(b5);
 
-        let snap = snapshot(engine);
+        let snap = snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
         if before.first().is_some_and(|c| c.trusted) {
             trusted_skips += 1;
@@ -419,7 +418,7 @@ pub fn run(
         four1 += usize::from(f1);
         four5 += usize::from(f5);
 
-        let snap = snapshot(engine);
+        let snap = snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
         let started = Instant::now();
         let promote = five.decide(&snap.context, &texts, &snap.facts);
