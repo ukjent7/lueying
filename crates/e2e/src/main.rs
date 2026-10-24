@@ -48,8 +48,13 @@ fn main() {
             bad
         ));
         let mut engine = Engine::new(std::sync::Arc::new(dict), Config::default());
-        // 预热:首键要建缓存/页入,稳态延迟才反映真实体验。
-        engine.process(Key::Letter('a'));
+        // 词典解析/排序的 CPU 突发会触发 runner 的 CFS 配额节流,首个键被罚站
+        // 100-200ms,是测量伪影。歇一拍,再用 niha 预热三条查询路径
+        // (n=签名、ni=精确、nih=前缀)后才开始计时,阈值反映稳态打字延迟。
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        for c in "niha" {
+            engine.process(Key::Letter(c));
+        }
         engine.process(Key::Esc);
         let mut samples: Vec<f64> = Vec::new();
         let mut slowest: Vec<(f64, String)> = Vec::new();

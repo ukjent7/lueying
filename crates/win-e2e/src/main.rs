@@ -13,13 +13,13 @@ fn main() {
 mod imp {
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{HINSTANCE, HKL, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
+        HKL, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
@@ -33,7 +33,7 @@ mod imp {
     };
     use windows::core::{GUID, Interface, PCWSTR};
 
-    const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcdaa8fa17);
+    const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
 
@@ -100,7 +100,7 @@ mod imp {
             unsafe {
                 ShowWindow(hwnd, SW_SHOWNORMAL);
                 let _ = SetForegroundWindow(hwnd);
-                SetFocus(edit);
+                SetFocus(Some(edit));
             }
 
             // 4. 注入按键
@@ -146,7 +146,7 @@ mod imp {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             lpszClassName: PCWSTR(class_name.as_ptr()),
-            hInstance: HMODULE::default(),
+            hInstance: HINSTANCE::default(),
             ..Default::default()
         };
         let atom = unsafe { RegisterClassW(&wc) };
@@ -166,7 +166,7 @@ mod imp {
                 300,
                 None,
                 None,
-                HINSTANCE::default(),
+                None,
                 None,
             )
         }
@@ -184,7 +184,7 @@ mod imp {
                 200,
                 Some(hwnd),
                 None,
-                HINSTANCE::default(),
+                None,
                 None,
             )
         }

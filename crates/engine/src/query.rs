@@ -51,13 +51,18 @@ struct Hit {
 }
 
 impl Hit {
-    fn new(word: String, freq: u64, user_freq: u32) -> Self {
+    /// 词典词条。白霜有大量权重 0 的长尾词(腾讯词向量),按频次 1 计,天然沉底。
+    fn dict(word: String, freq: u64, user_freq: u32) -> Self {
+        Self::raw(word, freq.max(1) as f64, user_freq)
+    }
+
+    /// 纯用户词(词典没有):以高频词为基准,学习过的词迅速领先。
+    fn user_only(word: String, user_freq: u32) -> Self {
+        Self::raw(word, 1_000_000.0, user_freq)
+    }
+
+    fn raw(word: String, base: f64, user_freq: u32) -> Self {
         let chars = word.chars().count().max(1) as f64;
-        let base = if freq == 0 {
-            1_000_000.0 // 纯用户词(词典没有)的基准频次
-        } else {
-            freq as f64
-        };
         Self {
             score: base.ln() + CHAR_BONUS * chars + USER_W * (1.0 + f64::from(user_freq)).ln(),
             word,
@@ -131,7 +136,7 @@ impl Querier<'_> {
         let mut hits: Vec<Hit> = Vec::new();
         if !any_abbrev && !fuzzy_on {
             for e in self.dict.lookup_exact(key) {
-                hits.push(Hit::new(
+                hits.push(Hit::dict(
                     e.word.clone(),
                     e.freq,
                     self.user.freq(key, &e.word),
@@ -144,7 +149,7 @@ impl Querier<'_> {
             prefix.push('\'');
             for e in self.dict.lookup_prefix(&prefix, SCAN_VISIT_CAP) {
                 if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
-                    hits.push(Hit::new(
+                    hits.push(Hit::dict(
                         e.word.clone(),
                         e.freq,
                         self.user.freq(key, &e.word),
@@ -157,7 +162,7 @@ impl Querier<'_> {
             for sig in self.sig_variants(&base, sylls) {
                 for e in self.dict.lookup_sig(&sig, SCAN_VISIT_CAP) {
                     if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
-                        hits.push(Hit::new(
+                        hits.push(Hit::dict(
                             e.word.clone(),
                             e.freq,
                             self.user.freq(key, &e.word),
@@ -171,7 +176,7 @@ impl Querier<'_> {
             if matches(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
                 && !hits.iter().any(|h| h.word == uword)
             {
-                hits.push(Hit::new(uword.to_string(), 0, ufreq));
+                hits.push(Hit::user_only(uword.to_string(), ufreq));
             }
         }
         hits

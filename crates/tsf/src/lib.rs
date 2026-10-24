@@ -22,7 +22,7 @@ use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::core::{GUID, HRESULT, Interface, PCWSTR};
 
 /// 文本服务 CLSID(注册表 InprocServer32、TSF profile、DllGetClassObject 三处一致)。
-pub(crate) const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcdaa8fa17);
+pub(crate) const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
 
 pub(crate) const CLSID_STR: &str = "{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}";
 

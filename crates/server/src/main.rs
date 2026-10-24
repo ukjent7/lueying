@@ -101,6 +101,14 @@ mod imp {
                 .get_mut(&session)
                 .and_then(|s| s.pending.take())
                 .unwrap_or_default(),
+            Request::SetMode { session, chinese } => {
+                if let Some(s) = sessions.get_mut(&session) {
+                    s.engine
+                        .set_mode(if chinese { Mode::Chinese } else { Mode::English });
+                    refresh_view(s);
+                }
+                Reply::default()
+            }
             Request::Focus { session, focused } => {
                 if let Some(s) = sessions.get_mut(&session) {
                     if !focused {
