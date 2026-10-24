@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # actions 全部钉了 commit,靠 Dependabot 每周提 PR 升级(与 workflow 里注释的 tag 对照审阅)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

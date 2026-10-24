@@ -17,52 +17,79 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 格式化 + 生成 Cargo.lock,有变化就回推(仅 push 到 main;GITHUB_TOKEN 推送不触发新 run)。
+  # 锁文件必须入库:git 依赖(zed main)不锁则每次 run 解析新 rev,天然抖动。
+  # 本机不装工具链,锁只能在这里生成;fmt 与锁合并成一个 job 是为了避免两个 bot 推送互相撞车。
   fmt:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: 格式化并回推(如有差异)
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - name: 生成 Cargo.lock
+        run: cargo generate-lockfile
+      - name: 格式化
+        run: cargo fmt --all
+      - name: 回推(如有变化)
         if: github.event_name == 'push'
         run: |
-          cargo fmt --all
           if ! git diff --quiet; then
             git config user.name "fmt-bot"
             git config user.email "bot@users.noreply.github.com"
             git add -A
-            git commit -m "style: cargo fmt"
-            git push
+            git commit -m "style: cargo fmt + 重新生成 Cargo.lock"
+            (git pull --rebase && git push) || echo "推送被拒(并发提交撞车),下一轮 run 处理"
           fi
       - name: Format 校验
         run: cargo fmt --all --check
 
   engine:
+    needs: fmt
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      # push 到 main 时检出 fmt/lock 回推后的最新头(锁与代码同进,不靠事件重放);PR 检出合并引用
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --workspace
       - name: 引擎 E2E(内置词库)
         run: cargo run -p pinyin-e2e --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: e2e-report-mini
           path: target/e2e-report.md
 
   dict:
+    needs: fmt
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: 下载白霜词库
         run: bash tools/fetch_frost.sh data/frost
       - name: 转换词典
         run: cargo run -p xtask --release -- dict --frost data/frost --out data/main.tsv
       - name: 主词典 E2E(质量探针 + 性能阈值)
         run: cargo run -p pinyin-e2e --release -- --dict data/main.tsv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: dict-pipeline
           path: |
@@ -70,10 +97,16 @@ jobs:
             target/e2e-report.md
 
   windows:
+    needs: fmt
+    if: ${{ !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build (release)
@@ -81,7 +114,7 @@ jobs:
       - name: Windows 全链路 E2E(观察期,不阻断)
         continue-on-error: true
         run: cargo run -p pinyin-win-e2e --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: win-e2e-report
