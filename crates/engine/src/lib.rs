@@ -252,10 +252,7 @@ impl Engine {
     }
 
     pub fn export_user(&self) -> String {
-        self.user
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .export()
+        self.user.read().unwrap_or_else(|p| p.into_inner()).export()
     }
 
     pub fn import_user(&mut self, text: &str) {

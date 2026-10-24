@@ -12,7 +12,12 @@ use std::sync::{Arc, RwLock};
 use pinyin_dict::Dictionary;
 use pinyin_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 
-fn push(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
+fn push(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    ok: bool,
+    note: String,
+) {
     checks.push((name, ok, note));
 }
 
@@ -114,9 +119,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "分段上屏只学吃掉的音节",
-        committed == "你"
-            && exported.contains("ni\t你\t")
-            && !exported.contains("nihao\t你\t"),
+        committed == "你" && exported.contains("ni\t你\t") && !exported.contains("nihao\t你\t"),
         format!("上屏 {committed:?}"),
     );
 

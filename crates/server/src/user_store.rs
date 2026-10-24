@@ -44,10 +44,7 @@ pub(super) fn spawn(user: SharedUser, path: PathBuf) {
                 if rev == saved {
                     continue;
                 }
-                let text = user
-                    .read()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .export();
+                let text = user.read().unwrap_or_else(|p| p.into_inner()).export();
                 match write(&path, &text) {
                     Ok(()) => saved = rev,
                     Err(e) => println!("用户词库 {} 写入失败: {e}", path.display()),
