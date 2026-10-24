@@ -18,7 +18,7 @@ pub(crate) fn load_engine() -> Engine {
             log("主词典缺失,退回内置迷你词库");
             Dictionary::builtin()
         });
-    Engine::new(dict, Config::default())
+    Engine::new(std::sync::Arc::new(dict), Config::default())
 }
 
 /// DLL 同目录的 main.tsv。

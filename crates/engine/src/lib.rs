@@ -84,7 +84,8 @@ pub struct Composition {
 }
 
 pub struct Engine {
-    dict: Dictionary,
+    /// 词典跨会话共享(Server 进程里多个宿主会话共用一份)。
+    dict: std::sync::Arc<Dictionary>,
     user: UserDict,
     cfg: Config,
     mode: Mode,
@@ -97,7 +98,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(dict: Dictionary, cfg: Config) -> Self {
+    pub fn new(dict: std::sync::Arc<Dictionary>, cfg: Config) -> Self {
         Self {
             dict,
             user: UserDict::new(),

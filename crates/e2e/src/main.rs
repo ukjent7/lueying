@@ -47,7 +47,7 @@ fn main() {
             dict.len(),
             bad
         ));
-        let mut engine = Engine::new(dict, Config::default());
+        let mut engine = Engine::new(std::sync::Arc::new(dict), Config::default());
         // 预热:首键要建缓存/页入,稳态延迟才反映真实体验。
         engine.process(Key::Letter('a'));
         engine.process(Key::Esc);
@@ -109,7 +109,7 @@ fn run_scenario(sc: &Scenario) -> Result<(), String> {
     if sc.fuzzy {
         cfg.fuzzy.zcs = true;
     }
-    let mut engine = Engine::new(Dictionary::builtin(), cfg);
+    let mut engine = Engine::new(std::sync::Arc::new(Dictionary::builtin()), cfg);
     let mut modes = vec![engine.mode()];
     for (si, stage) in sc.stages.iter().enumerate() {
         let mut commits: Vec<String> = Vec::new();
