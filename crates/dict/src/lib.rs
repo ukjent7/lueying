@@ -391,6 +391,8 @@ impl Dictionary {
 
     /// 词频总和(每个词条至少按 1 计),用于把词频归一成对数概率。
     pub fn total_weight(&self) -> u64 {
-        *self.total.get_or_init(|| self.iter().map(|e| e.freq.max(1)).sum())
+        *self
+            .total
+            .get_or_init(|| self.iter().map(|e| e.freq.max(1)).sum())
     }
 }

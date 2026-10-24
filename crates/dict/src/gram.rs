@@ -60,11 +60,7 @@ impl Gram {
             return Err(io::Error::other(format!("不是 rime 语法模型: {format:?}")));
         }
         let units = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
-        let ptr = i32::from_le_bytes(
-            bytes[OFFSET_PTR_AT..OFFSET_PTR_AT + 4]
-                .try_into()
-                .unwrap(),
-        );
+        let ptr = i32::from_le_bytes(bytes[OFFSET_PTR_AT..OFFSET_PTR_AT + 4].try_into().unwrap());
         let da = (OFFSET_PTR_AT as i64 + i64::from(ptr)) as usize;
         // 这个等式本身就是格式判据:双数组紧贴 metadata 后的剩余字节,unit 4 字节。
         let Some(size) = units.checked_mul(UNIT) else {

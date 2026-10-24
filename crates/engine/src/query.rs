@@ -286,9 +286,9 @@ impl Grammar<'_> {
         if let Some(v) = self.cache.get(&key) {
             return *v;
         }
-        let v = gram
-            .query(prev, word, 3)
-            .map_or(0.0, |lnf| (GRAM_WEIGHT * (lnf - GRAM_BASELINE)).clamp(0.0, GRAM_MAX_BONUS));
+        let v = gram.query(prev, word, 3).map_or(0.0, |lnf| {
+            (GRAM_WEIGHT * (lnf - GRAM_BASELINE)).clamp(0.0, GRAM_MAX_BONUS)
+        });
         self.cache.insert(key, v);
         v
     }
@@ -369,7 +369,13 @@ struct State {
     path: Vec<(String, Vec<(usize, usize)>)>,
 }
 
-pub fn build(dict: &Dictionary, user: &UserDict, fuzzy: &Fuzzy, gram: Option<&Gram>, raw: &str) -> Built {
+pub fn build(
+    dict: &Dictionary,
+    user: &UserDict,
+    fuzzy: &Fuzzy,
+    gram: Option<&Gram>,
+    raw: &str,
+) -> Built {
     let total = dict.total_weight() as f64;
     let mut q = Querier {
         dict,
@@ -402,7 +408,10 @@ pub fn build(dict: &Dictionary, user: &UserDict, fuzzy: &Fuzzy, gram: Option<&Gr
         cap_nodes(list);
     }
 
-    let mut gram = Grammar { gram, cache: HashMap::new() };
+    let mut gram = Grammar {
+        gram,
+        cache: HashMap::new(),
+    };
     let mut best: Vec<Vec<State>> = vec![Vec::new(); raw.len() + 1];
     best[0].push(State {
         score: 0.0,
