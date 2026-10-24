@@ -3,8 +3,8 @@
 //! 经异步编辑会话写组句/上屏。激活流程、按键模式参考青简(qingjian)验证过的写法。
 
 mod attr;
+mod client;
 mod edit;
-mod engine_host;
 mod factory;
 mod keys;
 mod registry;

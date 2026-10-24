@@ -10,7 +10,8 @@ name = "pinyin_tsf"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pinyin-engine.workspace = true
+pinyin-protocol = { path = "../protocol" }
+serde_json = "1"
 
 [target."cfg(windows)".dependencies]
 windows-registry = "0.100"

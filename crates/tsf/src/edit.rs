@@ -1,31 +1,36 @@
 //! 编辑会话与组句写操作。TSF 不允许直接改文档,必须经 RequestEditSession;
 //! 只用异步会话(不带 TF_ES_SYNC):沉浸式应用的文本存区跨进程,同步会话会崩宿主。
+//! 会话末尾量组句/光标屏幕矩形报给 Server(候选窗定位)。
 
 use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use pinyin_engine::{Engine, Key};
-use windows::Win32::Foundation::E_FAIL;
+use pinyin_protocol::Request;
+use windows::Win32::Foundation::{E_FAIL, RECT};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
-    ITfContext, ITfContextComposition, ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection,
-    ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READWRITE, TF_IAS_QUERYONLY, TF_SELECTION,
-    TF_SELECTIONSTYLE,
+    ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
+    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READWRITE,
+    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{Error, Interface, Ref, Result, implement};
 
 use crate::attr;
+use crate::client::Client;
 use crate::log;
 use crate::service::Shared;
+
+type SharedClient = Rc<RefCell<Option<Client>>>;
 
 /// 一次按键的文档更新:先上屏 commit,再放 preedit(空 = 收组句)。
 #[implement(ITfEditSession)]
 struct UpdateSession {
     context: ITfContext,
+    session: u64,
     shared: Rc<Shared>,
-    engine: Rc<RefCell<Engine>>,
+    client: SharedClient,
     commit: Option<String>,
     preedit: String,
 }
@@ -39,8 +44,17 @@ impl ITfEditSession_Impl for UpdateSession_Impl {
             if self.preedit.is_empty() {
                 end_composition(&self.shared, ec)
             } else {
-                update_preedit(&self.shared, &self.engine, &self.context, ec, &self.preedit)
-            }
+                update_preedit(
+                    &self.shared,
+                    &self.client,
+                    self.session,
+                    &self.context,
+                    ec,
+                    &self.preedit,
+                )
+            }?;
+            report_caret(&self.shared, &self.client, self.session, &self.context, ec);
+            Ok(())
         })) {
             Ok(result) => result,
             Err(_) => {
@@ -55,20 +69,22 @@ impl ITfEditSession_Impl for UpdateSession_Impl {
 pub(crate) fn request_update(
     context: &ITfContext,
     client_id: u32,
+    session: u64,
     shared: Rc<Shared>,
-    engine: Rc<RefCell<Engine>>,
+    client: SharedClient,
     commit: Option<String>,
     preedit: String,
 ) -> Result<()> {
-    let session: ITfEditSession = UpdateSession {
+    let edit: ITfEditSession = UpdateSession {
         context: context.clone(),
+        session,
         shared,
-        engine,
+        client,
         commit,
         preedit,
     }
     .into();
-    unsafe { context.RequestEditSession(client_id, &session, TF_ES_READWRITE)? }.ok()
+    unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READWRITE)? }.ok()
 }
 
 /// 有组句就把组句范围替换成文本再收组句,否则在选区插入。
@@ -96,14 +112,15 @@ fn commit_text(shared: &Shared, context: &ITfContext, ec: u32, text: &str) -> Re
 
 fn update_preedit(
     shared: &Rc<Shared>,
-    engine: &Rc<RefCell<Engine>>,
+    client: &SharedClient,
+    session: u64,
     context: &ITfContext,
     ec: u32,
     preedit: &str,
 ) -> Result<()> {
     let composition = match shared.composition.borrow().clone() {
         Some(composition) => composition,
-        None => start_composition(shared, engine, context, ec)?,
+        None => start_composition(shared, client, session, context, ec)?,
     };
     let utf16: Vec<u16> = preedit.encode_utf16().collect();
     let range = unsafe { composition.GetRange()? };
@@ -115,7 +132,8 @@ fn update_preedit(
 /// 在当前选区起一个空组句;组句 sink 交给框架持有。
 fn start_composition(
     shared: &Rc<Shared>,
-    engine: &Rc<RefCell<Engine>>,
+    client: &SharedClient,
+    session: u64,
     context: &ITfContext,
     ec: u32,
 ) -> Result<ITfComposition> {
@@ -124,7 +142,8 @@ fn start_composition(
     let context_composition: ITfContextComposition = context.cast()?;
     let sink: ITfCompositionSink = CompositionSink {
         shared: shared.clone(),
-        engine: engine.clone(),
+        client: Rc::clone(client),
+        session,
     }
     .into();
     let composition = unsafe { context_composition.StartComposition(ec, &range, &sink)? };
@@ -140,6 +159,39 @@ fn end_composition(shared: &Shared, ec: u32) -> Result<()> {
         unsafe { composition.EndComposition(ec)? };
     }
     Ok(())
+}
+
+/// 量组句的屏幕矩形,报给 Server 摆候选窗。
+fn report_caret(
+    shared: &Shared,
+    client: &SharedClient,
+    session: u64,
+    context: &ITfContext,
+    ec: u32,
+) {
+    let Some((left, top, right, bottom)) = caret_rect(shared, context, ec) else {
+        return;
+    };
+    let mut guard = client.borrow_mut();
+    if let Some(c) = guard.as_mut() {
+        let _ = c.round_trip(&Request::Caret {
+            session,
+            left,
+            top,
+            right,
+            bottom,
+        });
+    }
+}
+
+fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i32, i32, i32)> {
+    let composition = shared.composition.borrow().clone()?;
+    let range = unsafe { composition.GetRange().ok()? };
+    let view: ITfContextView = unsafe { context.GetActiveView().ok()? };
+    let mut rect = RECT::default();
+    let mut clipped = windows::core::BOOL::default();
+    unsafe { view.GetTextExt(ec, &range, &mut rect, &mut clipped).ok()? };
+    Some((rect.left, rect.top, rect.right, rect.bottom))
 }
 
 fn move_selection_to_end(context: &ITfContext, ec: u32, range: &ITfRange) -> Result<()> {
@@ -158,11 +210,12 @@ fn move_selection_to_end(context: &ITfContext, ec: u32, range: &ITfRange) -> Res
     result
 }
 
-/// 应用强行终止组句(切窗口等):清本地组句与引擎缓冲。
+/// 应用强行终止组句(切窗口等):清本地组句并通知 Server。
 #[implement(ITfCompositionSink)]
 struct CompositionSink {
     shared: Rc<Shared>,
-    engine: Rc<RefCell<Engine>>,
+    client: SharedClient,
+    session: u64,
 }
 
 impl ITfCompositionSink_Impl for CompositionSink_Impl {
@@ -173,10 +226,10 @@ impl ITfCompositionSink_Impl for CompositionSink_Impl {
     ) -> Result<()> {
         log("组句被应用终止,清状态");
         self.shared.composition.borrow_mut().take();
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let mut engine = self.engine.borrow_mut();
-            let _ = engine.process(Key::Esc);
-        }));
+        let mut guard = self.client.borrow_mut();
+        if let Some(c) = guard.as_mut() {
+            let _ = c.round_trip(&Request::CompositionTerminated { session: self.session });
+        }
         Ok(())
     }
 }

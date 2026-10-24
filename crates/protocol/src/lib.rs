@@ -63,6 +63,8 @@ pub enum Request {
     Key { session: u64, key: KeyMsg },
     /// 取走上次 `Key` 的结果(OnKeyDown 时)。
     TakeKey { session: u64 },
+    /// DLL 侧直接设置模式(CapsLock 大写锁定等)。
+    SetMode { session: u64, chinese: bool },
     /// 焦点变化(切窗口时 Server 收候选窗)。
     Focus { session: u64, focused: bool },
     /// 应用强行终止了组句。

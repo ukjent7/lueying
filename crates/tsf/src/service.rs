@@ -1,23 +1,25 @@
-//! 文本服务主体:激活/停用、按键接收(TestKeyDown 推进引擎并缓存结果,KeyDown 写文档)、
-//! 显示属性提供。引擎在 TestKeyDown 阶段推进一次,OnKeyDown 只应用文档更新,
-//! 引擎说直通的键在 Test 就放行,不会出现「吃了又吞」。
+//! 文本服务主体:激活/停用、按键接收、焦点通知、显示属性提供。
+//! 键在 TestKeyDown 阶段经管道送 Server 预演并缓存应答,OnKeyDown 只应用文档更新;
+//! Server 不在时全部放行(字母直通,防死键盘)。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Instant;
 
-use pinyin_engine::{Engine, Event, Key, Mode};
+use pinyin_protocol::{Reply, Request};
 use windows::Win32::Foundation::{BOOL, E_FAIL, E_INVALIDARG, FALSE, LPARAM, WPARAM};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
     ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
-    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfTextInputProcessor, ITfTextInputProcessor_Impl,
-    ITfThreadMgr,
+    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfSource, ITfTextInputProcessor,
+    ITfTextInputProcessor_Impl, ITfThreadMgr, ITfThreadMgrEventSink, ITfThreadMgrEventSink_Impl,
 };
 use windows::core::{Error, GUID, Interface, Ref, Result, implement};
 
 use crate::attr;
+use crate::client::{Client, RETRY_INTERVAL};
 use crate::edit;
-use crate::engine_host;
 use crate::keys::{self, KeyTap};
 use crate::log;
 
@@ -26,20 +28,39 @@ pub(crate) struct Shared {
     pub composition: RefCell<Option<ITfComposition>>,
 }
 
-/// TestKeyDown 缓存、待 KeyDown 写文档的结果。
+pub(crate) type SharedClient = Rc<RefCell<Option<Client>>>;
+
+/// TestKeyDown 缓存、待 KeyDown 写文档的应答。
 struct Pending {
     context: ITfContext,
-    events: Vec<Event>,
+    reply: Reply,
 }
 
-#[implement(ITfTextInputProcessor, ITfKeyEventSink, ITfDisplayAttributeProvider)]
+#[implement(
+    ITfTextInputProcessor,
+    ITfKeyEventSink,
+    ITfThreadMgrEventSink,
+    ITfDisplayAttributeProvider
+)]
 pub(crate) struct TextService {
     thread_mgr: RefCell<Option<ITfThreadMgr>>,
     client_id: Cell<u32>,
-    engine: Rc<RefCell<Engine>>,
+    /// 会话号:宿主线程 id(TSF client id 各进程都一样,会撞号)。
+    session: u64,
+    client: SharedClient,
     shared: Rc<Shared>,
     tap: KeyTap,
     pending: RefCell<Option<Pending>>,
+    last_connect: Cell<Option<Instant>>,
+    source: RefCell<Option<ITfSource>>,
+    focus_cookie: Cell<u32>,
+}
+
+fn host_app_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
 }
 
 impl TextService {
@@ -47,44 +68,66 @@ impl TextService {
         Self {
             thread_mgr: RefCell::new(None),
             client_id: Cell::new(0),
-            engine: Rc::new(RefCell::new(engine_host::load_engine())),
+            session: u64::from(unsafe { GetCurrentThreadId() }),
+            client: Rc::new(RefCell::new(None)),
             shared: Rc::new(Shared {
                 composition: RefCell::new(None),
             }),
             tap: KeyTap::new(),
             pending: RefCell::new(None),
+            last_connect: Cell::new(None),
+            source: RefCell::new(None),
+            focus_cookie: Cell::new(0),
         }
     }
 
-    fn mapped_key(&self, vk: u32) -> Option<Key> {
+    fn mapped_key(&self, vk: u32) -> Option<pinyin_protocol::KeyMsg> {
         if keys::command_mods() {
             return None;
         }
         keys::vk_to_key(vk, keys::shift_down())
     }
 
-    /// 把缓存的按键结果写进文档(异步编辑会话)。
-    fn apply(&self, context: &ITfContext, events: &[Event]) {
-        let commit: String = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Commit(t) => Some(t.as_str()),
-                _ => None,
-            })
-            .collect();
-        let preedit = self
-            .engine
-            .borrow()
-            .composition()
-            .map(|c| c.display.clone())
-            .unwrap_or_default();
+    /// 发请求(懒连接 + 退避);连上时先 Hello。
+    fn request(&self, req: Request) -> Option<Reply> {
+        let mut guard = self.client.borrow_mut();
+        if guard.is_none() {
+            let may_retry = self
+                .last_connect
+                .get()
+                .is_none_or(|t| t.elapsed() >= RETRY_INTERVAL);
+            if may_retry {
+                self.last_connect.set(Some(Instant::now()));
+                *guard = Client::connect().inspect(|c| {
+                    let _ = c.round_trip(&Request::Hello {
+                        session: self.session,
+                        host: host_app_name(),
+                    });
+                });
+            }
+        }
+        let Some(client) = guard.as_mut() else {
+            return None;
+        };
+        let reply = client.round_trip(&req);
+        if reply.is_none() {
+            // 断线:丢弃连接,下键重新尝试。
+            *guard = None;
+        }
+        reply
+    }
+
+    /// 把应答写进文档(异步编辑会话,会话里量光标报给 Server 摆候选窗)。
+    fn apply(&self, context: &ITfContext, reply: &Reply) {
+        let commit: String = reply.commits.concat();
         if let Err(error) = edit::request_update(
             context,
             self.client_id.get(),
+            self.session,
             self.shared.clone(),
-            self.engine.clone(),
+            self.client.clone(),
             (!commit.is_empty()).then_some(commit),
-            preedit,
+            reply.preedit.clone(),
         ) {
             log(&format!("编辑会话请求失败: {error}"));
         }
@@ -97,13 +140,27 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         let keystroke: ITfKeystrokeMgr = thread_mgr.cast()?;
         let sink: ITfKeyEventSink = self.to_interface();
         unsafe { keystroke.AdviseKeyEventSink(tid, &sink, true)? };
+
+        let source: ITfSource = thread_mgr.cast()?;
+        let focus_sink: ITfThreadMgrEventSink = self.to_interface();
+        let unknown: windows::core::IUnknown = focus_sink.into();
+        let cookie = unsafe { source.AdviseSink(&ITfThreadMgrEventSink::IID, &unknown)? };
+        *self.source.borrow_mut() = Some(source);
+        self.focus_cookie.set(cookie);
+
         *self.thread_mgr.borrow_mut() = Some(thread_mgr);
         self.client_id.set(tid);
-        log(&format!("激活 tid={tid}"));
+        log(&format!("激活 tid={tid} session={}", self.session));
         Ok(())
     }
 
     fn Deactivate(&self) -> Result<()> {
+        if let Some(source) = self.source.borrow().clone() {
+            unsafe {
+                let _ = source.UnadviseSink(self.focus_cookie.get());
+            }
+        }
+        *self.source.borrow_mut() = None;
         if let Some(thread_mgr) = self.thread_mgr.borrow().clone() {
             if let Ok(keystroke) = thread_mgr.cast::<ITfKeystrokeMgr>() {
                 unsafe {
@@ -113,7 +170,37 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         }
         *self.thread_mgr.borrow_mut() = None;
         self.client_id.set(0);
+        if let Some(mut client) = self.client.borrow_mut().take() {
+            let _ = client.round_trip(&Request::Goodbye { session: self.session });
+        }
         log("停用");
+        Ok(())
+    }
+}
+
+impl ITfThreadMgrEventSink_Impl for TextService_Impl {
+    fn OnInitThreadMgr(&self, _ptim: Ref<ITfThreadMgr>) -> Result<()> {
+        Ok(())
+    }
+
+    fn OnUninitThreadMgr(&self, _ptim: Ref<ITfThreadMgr>) -> Result<()> {
+        Ok(())
+    }
+
+    /// 焦点切换:失焦侧清组合(由 Server 落定),避免拼音串跟随到下一个窗口。
+    fn OnSetFocus(&self, fforeground: BOOL) -> Result<()> {
+        let _ = self.request(Request::Focus {
+            session: self.session,
+            focused: fforeground.as_bool(),
+        });
+        Ok(())
+    }
+
+    fn OnPushContext(&self, _pic: Ref<ITfContext>) -> Result<()> {
+        Ok(())
+    }
+
+    fn OnPopContext(&self, _pic: Ref<ITfContext>) -> Result<()> {
         Ok(())
     }
 }
@@ -123,7 +210,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         Ok(())
     }
 
-    /// 所有键先过这里:推进引擎、缓存结果;直通的键立即放行。
+    /// 所有键先过这里:问 Server 吃不吃;直通的键立即放行。
     fn OnTestKeyDown(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
         let vk = wparam.0 as u32;
         self.tap.note_down(vk);
@@ -137,23 +224,26 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         let Ok(context) = pic.ok() else {
             return Ok(FALSE);
         };
-        let events = {
-            let mut engine = self.engine.borrow_mut();
-            engine_host::safe_process(&mut engine, key)
+        let Some(reply) = self.request(Request::Key {
+            session: self.session,
+            key,
+        }) else {
+            // Server 不在:全部放行(宁可英文直通,不能死键盘)。
+            return Ok(FALSE);
         };
-        let eaten = !events.iter().any(|e| matches!(e, Event::Passthrough(_)));
-        if eaten {
-            *self.pending.borrow_mut() = Some(Pending {
-                context: context.clone(),
-                events,
-            });
+        if reply.passthrough {
+            return Ok(FALSE);
         }
-        Ok(eaten.into())
+        *self.pending.borrow_mut() = Some(Pending {
+            context: context.clone(),
+            reply,
+        });
+        Ok(true.into())
     }
 
     fn OnKeyDown(&self, _pic: Ref<ITfContext>, _wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
         if let Some(pending) = self.pending.borrow_mut().take() {
-            self.apply(&pending.context, &pending.events);
+            self.apply(&pending.context, &pending.reply);
             return Ok(true.into());
         }
         Ok(FALSE)
@@ -165,27 +255,23 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 
     fn OnKeyUp(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
         let vk = wparam.0 as u32;
-        // CapsLock:按大写锁定同步中英。
+        // CapsLock:大写锁定 = 临时英文。
         if keys::is_caps(vk) {
-            let mode = if keys::caps_on() {
-                Mode::English
-            } else {
-                Mode::Chinese
-            };
-            let mut engine = self.engine.borrow_mut();
-            engine_host::safe_process(&mut engine, Key::Esc);
-            engine.set_mode(mode);
+            let _ = self.request(Request::SetMode {
+                session: self.session,
+                chinese: !keys::caps_on(),
+            });
             return Ok(FALSE);
         }
-        // Shift 单击:切中英(组合中先上屏再切)。
+        // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
         if self.tap.take_shift_tap(vk)
             && let Ok(context) = pic.ok()
+            && let Some(reply) = self.request(Request::Key {
+                session: self.session,
+                key: pinyin_protocol::KeyMsg::Shift,
+            })
         {
-            let events = {
-                let mut engine = self.engine.borrow_mut();
-                engine_host::safe_process(&mut engine, Key::Shift)
-            };
-            self.apply(context, &events);
+            self.apply(context, &reply);
         }
         Ok(FALSE)
     }
