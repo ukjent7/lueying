@@ -1,52 +1,72 @@
 //! 命名管道监听:多实例阻塞模式,每连接一个线程,行 JSON 请求-应答。
+//! 建法与青简 server 相同:CreateNamedPipeW + ConnectNamedPipe,句柄交给 `File` 管。
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::os::windows::io::FromRawHandle;
+use std::io::{self, BufRead, BufReader, Write};
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
 
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
-use windows::Win32::System::Pipes::{ConnectNamedPipeW, CreateNamedPipeW};
+use windows::core::HSTRING;
+use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HRESULT};
+use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+use windows::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+};
+
+use pinyin_protocol::Request;
 
 use crate::imp::State;
-use pinyin_protocol::Request;
+
+const BUFFER_SIZE: u32 = 64 * 1024;
 
 /// 阻塞主线程:循环建管道实例并等待连接。永不返回。
 pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
+    let wide: HSTRING = name.into();
     loop {
-        let handle = create_instance(name);
-        if handle == INVALID_HANDLE_VALUE {
-            eprintln!("CreateNamedPipeW 失败,5 秒后重试");
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            continue;
+        match create_instance(&wide).and_then(wait_client) {
+            Ok(stream) => {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || serve(stream, state));
+            }
+            Err(e) => {
+                eprintln!("管道实例建立失败: {e},5 秒后重试");
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
         }
-        let connected = unsafe { ConnectNamedPipeW(handle, None) }.as_bool();
-        if !connected && unsafe { windows::Win32::Foundation::GetLastError() } != ERROR_PIPE_CONNECTED {
-            unsafe { let _ = CloseHandle(handle) };
-            continue;
-        }
-        let file = unsafe { File::from_raw_handle(handle.0 as _) };
-        let state = Arc::clone(&state);
-        std::thread::spawn(move || serve(file, state));
     }
 }
 
-fn create_instance(name: &str) -> windows::Win32::Foundation::HANDLE {
-    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-    unsafe {
+/// 建一个实例。句柄交给 `File` 管:对端关闭时 std 把 `ERROR_BROKEN_PIPE` 当 EOF。
+fn create_instance(name: &HSTRING) -> io::Result<File> {
+    let handle = unsafe {
         CreateNamedPipeW(
-            PCWSTR(wide.as_ptr()),
-            windows::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
-            windows::Win32::System::Pipes::PIPE_READMODE_BYTE
-                | windows::Win32::System::Pipes::PIPE_WAIT,
-            windows::Win32::System::Pipes::PIPE_UNLIMITED_INSTANCES,
-            64 * 1024,
-            64 * 1024,
+            name,
+            PIPE_ACCESS_DUPLEX,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_UNLIMITED_INSTANCES,
+            BUFFER_SIZE,
+            BUFFER_SIZE,
             0,
             None,
         )
+    };
+    if handle.is_invalid() {
+        return Err(io::Error::last_os_error());
     }
+    Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
+/// 阻塞等一个客户端连上这个实例。
+fn wait_client(stream: File) -> io::Result<File> {
+    let handle = HANDLE(stream.as_raw_handle());
+    // 客户端在建实例与 ConnectNamedPipe 之间就连上了也算成功。
+    if let Err(error) = unsafe { ConnectNamedPipe(handle, None) }
+        && error.code() != HRESULT::from_win32(ERROR_PIPE_CONNECTED.0)
+    {
+        return Err(io::Error::other(error));
+    }
+    Ok(stream)
 }
 
 fn serve(file: File, state: Arc<State>) {
@@ -62,18 +82,17 @@ fn serve(file: File, state: Arc<State>) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let reply = serde_json_parse(&line)
+        let reply = serde_json::from_str::<Request>(line.trim())
+            .ok()
             .map(|req| crate::imp::handle(&state, req))
             .unwrap_or_default();
-        let mut out = serde_json::to_string(&reply).unwrap_or_default();
+        let mut out = match serde_json::to_string(&reply) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
         out.push('\n');
         if writer.write_all(out.as_bytes()).is_err() || writer.flush().is_err() {
             break;
         }
     }
-}
-
-/// 解析一行请求。
-fn serde_json_parse(line: &str) -> Option<Request> {
-    serde_json::from_str(line.trim()).ok()
 }

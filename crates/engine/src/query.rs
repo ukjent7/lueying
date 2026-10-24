@@ -40,27 +40,32 @@ const USER_W: f64 = 3.0;
 const MAX_CANDS: usize = 40;
 /// 每个前缀档位保留的最高分词条数。
 const PER_L_CAP: usize = 12;
-/// 简拼签名扫描的单次命中上限(保护首键延迟)。
-const SIG_SCAN_CAP: usize = 4000;
+/// 索引扫描的访问上限(保护首键延迟)。
+const SCAN_VISIT_CAP: usize = 8000;
 
 #[derive(Clone)]
 struct Hit {
     word: String,
-    freq: u64,
-    user_freq: u32,
-    /// 仅用户词(词典没有此词)。
-    user_only: bool,
+    /// 构造时一次算好(排序/贪心反复取分,不能每次都算三个 ln)。
+    score: f64,
 }
 
 impl Hit {
-    fn score(&self) -> f64 {
-        let chars = self.word.chars().count().max(1) as f64;
-        let base = if self.user_only {
-            1_000_000.0
+    fn new(word: String, freq: u64, user_freq: u32) -> Self {
+        let chars = word.chars().count().max(1) as f64;
+        let base = if freq == 0 {
+            1_000_000.0 // 纯用户词(词典没有)的基准频次
         } else {
-            self.freq as f64
+            freq as f64
         };
-        base.ln() + CHAR_BONUS * chars + USER_W * (1.0 + f64::from(self.user_freq)).ln()
+        Self {
+            score: base.ln() + CHAR_BONUS * chars + USER_W * (1.0 + f64::from(user_freq)).ln(),
+            word,
+        }
+    }
+
+    fn score(&self) -> f64 {
+        self.score
     }
 }
 
@@ -126,27 +131,39 @@ impl Querier<'_> {
         let mut hits: Vec<Hit> = Vec::new();
         if !any_abbrev && !fuzzy_on {
             for e in self.dict.lookup_exact(key) {
-                hits.push(Hit {
-                    word: e.word.clone(),
-                    freq: e.freq,
-                    user_freq: self.user.freq(key, &e.word),
-                    user_only: false,
-                });
+                hits.push(Hit::new(
+                    e.word.clone(),
+                    e.freq,
+                    self.user.freq(key, &e.word),
+                ));
+            }
+        } else if !fuzzy_on
+            && sylls.first().is_some_and(|s| !s.abbrev)
+        {
+            // 前导全拼音节已知:按键前缀扫全拼索引,区间比签名细得多(ni'h 只扫 ni* 词)。
+            let full_len = sylls.iter().take_while(|s| !s.abbrev).count();
+            let mut prefix = typed_key(&sylls[..full_len]);
+            prefix.push('\'');
+            for e in self.dict.lookup_prefix(&prefix, SCAN_VISIT_CAP) {
+                if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
+                    hits.push(Hit::new(
+                        e.word.clone(),
+                        e.freq,
+                        self.user.freq(key, &e.word),
+                    ));
+                }
             }
         } else {
+            // 纯简拼或模糊音:签名区间(模糊首字母时枚举翻转变体)。
             let base = signature(key);
             for sig in self.sig_variants(&base, sylls) {
-                for e in self.dict.lookup_sig(&sig) {
-                    if hits.len() >= SIG_SCAN_CAP {
-                        break;
-                    }
+                for e in self.dict.lookup_sig(&sig, SCAN_VISIT_CAP) {
                     if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
-                        hits.push(Hit {
-                            word: e.word.clone(),
-                            freq: e.freq,
-                            user_freq: self.user.freq(key, &e.word),
-                            user_only: false,
-                        });
+                        hits.push(Hit::new(
+                            e.word.clone(),
+                            e.freq,
+                            self.user.freq(key, &e.word),
+                        ));
                     }
                 }
             }
@@ -156,12 +173,7 @@ impl Querier<'_> {
             if matches(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
                 && !hits.iter().any(|h| h.word == uword)
             {
-                hits.push(Hit {
-                    word: uword.to_string(),
-                    freq: 0,
-                    user_freq: ufreq,
-                    user_only: true,
-                });
+                hits.push(Hit::new(uword.to_string(), 0, ufreq));
             }
         }
         hits
@@ -247,11 +259,14 @@ pub fn build(
     for seg in segs {
         let spans: Vec<(usize, usize)> = seg.iter().map(|s| s.span).collect();
         for l in 1..=seg.len() {
-            // 每档只取分数最高的若干词,避免把整段命中(可达数千)都转成候选。
+            // 每档只取分数最高的若干词,先 select_nth 再排序,避免全量排序数千命中。
             let hits = querier.lookup(&seg[..l]);
             let mut top: Vec<&Hit> = hits.iter().collect();
+            if top.len() > PER_L_CAP {
+                top.select_nth_unstable_by(PER_L_CAP, |a, b| b.score().total_cmp(&a.score()));
+                top.truncate(PER_L_CAP);
+            }
             top.sort_by(|a, b| b.score().total_cmp(&a.score()));
-            top.truncate(PER_L_CAP);
             for hit in top {
                 cands.push(Cand {
                     text: hit.word.clone(),

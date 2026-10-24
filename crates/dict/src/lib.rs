@@ -136,15 +136,28 @@ impl Dictionary {
         out
     }
 
-    /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤)。
-    pub fn lookup_sig(&self, sig: &str) -> Vec<&Entry> {
+    /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤),最多返回 `max_visits` 条。
+    pub fn lookup_sig(&self, sig: &str, max_visits: usize) -> Vec<&Entry> {
         let lo = self.sig_index.partition_point(|(s, _)| s.as_str() < sig);
         let mut out = Vec::new();
         for (s, i) in &self.sig_index[lo..] {
-            if s != sig {
+            if s != sig || out.len() >= max_visits {
                 break;
             }
             out.push(&self.entries[*i]);
+        }
+        out
+    }
+
+    /// 键前缀查询(前缀以 `'` 结尾保证音节边界),最多返回 `max_visits` 条。
+    pub fn lookup_prefix(&self, prefix: &str, max_visits: usize) -> Vec<&Entry> {
+        let lo = self.entries.partition_point(|e| e.key.as_str() < prefix);
+        let mut out = Vec::new();
+        for e in &self.entries[lo..] {
+            if !e.key.starts_with(prefix) || out.len() >= max_visits {
+                break;
+            }
+            out.push(e);
         }
         out
     }

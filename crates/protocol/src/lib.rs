@@ -76,7 +76,7 @@ pub enum Request {
 }
 
 /// Server → DLL。
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Reply {
     /// 要写进文档的上屏文本(按序)。
     pub commits: Vec<String>,
