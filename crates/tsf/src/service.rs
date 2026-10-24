@@ -289,7 +289,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             reply,
         });
         crate::context_probe::request(
-            &context,
+            context,
             self.client_id.get(),
             self.session,
             self.shared.clone(),

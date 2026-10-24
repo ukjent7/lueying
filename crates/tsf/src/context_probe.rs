@@ -102,7 +102,7 @@ impl ContextProbe {
                 unsafe { ManuallyDrop::take(&mut selection[0].range) }?
             }
         };
-        let mut range = unsafe { range.Clone().ok()? };
+        let range = unsafe { range.Clone().ok()? };
         unsafe { range.Collapse(ec, TF_ANCHOR_START).ok()? };
         let mut shifted = 0i32;
         unsafe {
