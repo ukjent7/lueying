@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: 引擎 E2E(内置词库)
+        run: cargo run -p pinyin-e2e --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-mini
+          path: target/e2e-report.md
+
+  dict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 下载白霜词库
+        run: bash tools/fetch_frost.sh data/frost
+      - name: 转换词典
+        run: cargo run -p xtask --release -- dict --frost data/frost --out data/main.tsv
+      - name: 主词典 E2E(质量探针 + 性能阈值)
+        run: cargo run -p pinyin-e2e --release -- --dict data/main.tsv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dict-pipeline
+          path: |
+            data/main.tsv
+            target/e2e-report.md
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (release)
+        run: cargo build --release --workspace

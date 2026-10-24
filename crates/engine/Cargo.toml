@@ -1,0 +1,9 @@
+[package]
+name = "pinyin-engine"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "拼音输入引擎:切分、候选、键状态机(平台无关)"
+
+[dependencies]
+pinyin-dict.workspace = true
