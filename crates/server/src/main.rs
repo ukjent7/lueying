@@ -35,14 +35,13 @@ mod imp {
     }
 
     pub(super) fn real_main() {
-        let dict = dict_path()
-            .and_then(|p| Dictionary::from_path(&p).ok())
-            .map(|(d, bad)| {
-                println!("词典 {} 条(跳过坏行 {bad})", d.len());
-                d
-            })
+        // 三档降级:二进制(mmap 零解析) → 文本(兼容旧数据) → 内置迷你词库。
+        // 对应 WeType 的 "safe mode, just load buildin dict":词典坏了输入法仍可用。
+        let dict = ["main.pyd", "main.tsv"]
+            .iter()
+            .find_map(|name| dict_path(name).and_then(load_dict))
             .unwrap_or_else(|| {
-                println!("主词典缺失,退回内置迷你词库");
+                println!("主词典缺失或损坏,退回内置迷你词库");
                 Dictionary::builtin()
             });
         let state = Arc::new(State {
@@ -61,11 +60,28 @@ mod imp {
         crate::ui::run(state);
     }
 
-    /// exe 同目录的 main.tsv。
-    fn dict_path() -> Option<std::path::PathBuf> {
+    /// exe 同目录的 main.pyd / main.tsv。
+    fn dict_path(name: &str) -> Option<std::path::PathBuf> {
         let mut path = std::env::current_exe().ok()?;
-        path.set_file_name("main.tsv");
-        Some(path)
+        path.set_file_name(name);
+        path.exists().then_some(path)
+    }
+
+    fn load_dict(path: std::path::PathBuf) -> Option<Dictionary> {
+        match Dictionary::from_path(&path) {
+            Ok((d, 0)) if !d.is_empty() => {
+                println!("词典 {} 条 ← {}", d.len(), path.display());
+                Some(d)
+            }
+            Ok((_, bad)) => {
+                println!("{} 有 {bad} 处问题,跳过", path.display());
+                None
+            }
+            Err(e) => {
+                println!("{} 加载失败: {e}", path.display());
+                None
+            }
+        }
     }
 
     /// 处理一条请求,返回应答。

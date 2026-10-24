@@ -10,6 +10,58 @@ use pinyin_dict::Dictionary;
 use pinyin_engine::{Config, Engine, Event, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
+/// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。
+fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
+    let mut out = Vec::new();
+    let (dict, _) = Dictionary::from_text(include_str!("../../dicts/mini.txt"));
+    let bytes = dict.to_binary();
+    let reloaded = Dictionary::from_binary(&bytes);
+    out.push((
+        "二进制可解析",
+        reloaded.is_some(),
+        format!("{} 字节", bytes.len()),
+    ));
+    let Some(re) = reloaded else {
+        return out;
+    };
+    out.push((
+        "条数一致",
+        re.len() == dict.len(),
+        format!("{} / {}", re.len(), dict.len()),
+    ));
+    let a = dict.lookup_exact("ni'hao");
+    let b = re.lookup_exact("ni'hao");
+    let same_entries = a.len() == b.len()
+        && a.iter()
+            .zip(&b)
+            .all(|(x, y)| x.word == y.word && x.key == y.key && x.freq == y.freq);
+    out.push(("精确查询一致", same_entries, "ni'hao".into()));
+    out.push((
+        "签名查询一致",
+        dict.lookup_sig("nh", 64)
+            .iter()
+            .zip(re.lookup_sig("nh", 64))
+            .all(|(a, b)| a.word == b.word)
+            && dict.lookup_sig("nh", 64).len() == re.lookup_sig("nh", 64).len(),
+        "nh".into(),
+    ));
+    out.push((
+        "前缀查询一致",
+        dict.lookup_prefix("ni'", 64)
+            .iter()
+            .zip(re.lookup_prefix("ni'", 64))
+            .all(|(a, b)| a.word == b.word)
+            && dict.lookup_prefix("ni'", 64).len() == re.lookup_prefix("ni'", 64).len(),
+        "ni'".into(),
+    ));
+    out.push((
+        "损坏文件被拒",
+        Dictionary::from_binary(&bytes[..bytes.len() / 2]).is_none(),
+        "截断到一半".into(),
+    ));
+    out
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dict_path = args
@@ -31,6 +83,18 @@ fn main() {
                 report.push_str(&format!("| {} | FAIL | {e} |\n", sc.name));
             }
         }
+    }
+
+    // 二进制词典往返:布局一致才允许运行期走 mmap 路径。
+    report.push_str("\n## 二进制词典往返\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
+    for (name, ok, note) in binary_roundtrip() {
+        if !ok {
+            failures += 1;
+        }
+        report.push_str(&format!(
+            "| {name} | {} | {note} |\n",
+            if ok { "PASS" } else { "FAIL" }
+        ));
     }
 
     // 主词典探针与性能

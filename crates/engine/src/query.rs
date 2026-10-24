@@ -137,9 +137,9 @@ impl Querier<'_> {
         if !any_abbrev && !fuzzy_on {
             for e in self.dict.lookup_exact(key) {
                 hits.push(Hit::dict(
-                    e.word.clone(),
+                    e.word.to_string(),
                     e.freq,
-                    self.user.freq(key, &e.word),
+                    self.user.freq(key, e.word),
                 ));
             }
         } else if !fuzzy_on && sylls.first().is_some_and(|s| !s.abbrev) {
@@ -148,11 +148,11 @@ impl Querier<'_> {
             let mut prefix = typed_key(&sylls[..full_len]);
             prefix.push('\'');
             for e in self.dict.lookup_prefix(&prefix, SCAN_VISIT_CAP) {
-                if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
+                if matches(e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
                     hits.push(Hit::dict(
-                        e.word.clone(),
+                        e.word.to_string(),
                         e.freq,
-                        self.user.freq(key, &e.word),
+                        self.user.freq(key, e.word),
                     ));
                 }
             }
@@ -161,11 +161,11 @@ impl Querier<'_> {
             let base = signature(key);
             for sig in self.sig_variants(&base, sylls) {
                 for e in self.dict.lookup_sig(&sig, SCAN_VISIT_CAP) {
-                    if matches(&e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
+                    if matches(e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
                         hits.push(Hit::dict(
-                            e.word.clone(),
+                            e.word.to_string(),
                             e.freq,
-                            self.user.freq(key, &e.word),
+                            self.user.freq(key, e.word),
                         ));
                     }
                 }

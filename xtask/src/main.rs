@@ -10,6 +10,8 @@ use pinyin_dict::syllables::is_syllable;
 struct Args {
     frost: PathBuf,
     out: PathBuf,
+    /// 另行物化的二进制词典(运行期 mmap 零解析加载)。
+    bin: Option<PathBuf>,
 }
 
 fn main() {
@@ -37,10 +39,12 @@ fn main() {
 fn parse_dict(it: &mut impl Iterator<Item = String>) -> Args {
     let mut frost = None;
     let mut out = None;
+    let mut bin = None;
     while let Some(a) = it.next() {
         match a.as_str() {
             "--frost" => frost = it.next().map(PathBuf::from),
             "--out" => out = it.next().map(PathBuf::from),
+            "--bin" => bin = it.next().map(PathBuf::from),
             other => {
                 eprintln!("未知参数: {other}");
                 std::process::exit(2);
@@ -50,6 +54,7 @@ fn parse_dict(it: &mut impl Iterator<Item = String>) -> Args {
     Args {
         frost: frost.expect("--frost 需要 <白霜 cn_dicts 目录>"),
         out: out.expect("--out 需要 <输出文件>"),
+        bin,
     }
 }
 
@@ -92,6 +97,21 @@ fn run(args: Args) -> Result<(), String> {
         lines.len(),
         args.out.display()
     );
+    if let Some(bin) = &args.bin {
+        // 与运行期同一条构造路径,保证二进制与 TSV 语义一致。
+        let (dict, bad) = pinyin_dict::Dictionary::from_text(&out);
+        if bad != 0 {
+            eprintln!("警告: 物化时跳过 {bad} 行");
+        }
+        let bytes = dict.to_binary();
+        std::fs::write(bin, &bytes).map_err(|e| format!("写 {}: {e}", bin.display()))?;
+        println!(
+            "二进制: {} 条, {} MiB → {}",
+            dict.len(),
+            bytes.len() / (1024 * 1024),
+            bin.display()
+        );
+    }
     Ok(())
 }
 

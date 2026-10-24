@@ -6,3 +6,5 @@ license.workspace = true
 description = "拼音词典:加载与查询"
 
 [dependencies]
+# 二进制词典整文件映射:启动零解析。Linux/Windows/macOS 都有实现。
+memmap2 = "0.9"
