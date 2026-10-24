@@ -22,8 +22,8 @@ pub const SYLLABLES: &[&str] = &[
     "guai", "guan", "guang", "gui", "gun", "guo", // h
     "ha", "hai", "han", "hang", "hao", "he", "hei", "hen", "heng", "hong", "hou", "hu", "hua",
     "huai", "huan", "huang", "hui", "hun", "huo", // j
-    "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong", "jiu", "ju", "juan", "jue",
-    "jun", // k
+    "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong", "jiu", "ju", "juan",
+    "jue", "jun", // k
     "ka", "kai", "kan", "kang", "kao", "ke", "kei", "ken", "keng", "kong", "kou", "ku", "kua",
     "kuai", "kuan", "kuang", "kui", "kun", "kuo", // l
     "la", "lai", "lan", "lang", "lao", "le", "lei", "leng", "li", "lia", "lian", "liang", "liao",
@@ -35,8 +35,8 @@ pub const SYLLABLES: &[&str] = &[
     "nin", "ning", "niu", "nong", "nu", "nun", "nuan", "nuo", "nv", "nve", // p
     "pa", "pai", "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian", "piao", "pie", "pin",
     "ping", "po", "pu", // q
-    "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu", "quan", "que",
-    "qun", // r
+    "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu", "quan",
+    "que", "qun", // r
     "ran", "rang", "rao", "re", "ren", "reng", "ri", "rong", "rou", "ru", "rua", "ruan", "run",
     "ruo", // s
     "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "si", "song", "sou", "su", "suan",
@@ -46,10 +46,10 @@ pub const SYLLABLES: &[&str] = &[
     "ta", "tai", "tan", "tang", "tao", "te", "tei", "teng", "ti", "tian", "tiao", "tie", "ting",
     "tong", "tou", "tu", "tuan", "tui", "tun", "tuo", // w
     "wa", "wai", "wan", "wang", "wei", "wen", "weng", "wo", "wu", // x
-    "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong", "xiu", "xu", "xuan", "xue",
-    "xun", // y
-    "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yo", "yong", "you", "yu", "yuan", "yun",
-    // z
+    "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong", "xiu", "xu", "xuan",
+    "xue", "xun", // y
+    "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yo", "yong", "you", "yu", "yuan",
+    "yun", // z
     "za", "zai", "zan", "zang", "zao", "ze", "zei", "zen", "zeng", "zi", "zong", "zou", "zu",
     "zuan", "zui", "zun", "zuo", // zh
     "zha", "zhai", "zhan", "zhang", "zhao", "zhe", "zhei", "zhen", "zheng", "zhi", "zhong", "zhou",
