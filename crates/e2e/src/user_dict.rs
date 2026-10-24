@@ -93,7 +93,8 @@ pub fn run(report: &mut String) -> usize {
     // 坏行、空键、坏频次都跳过,其余词条照常导入。
     let mut f = Engine::new(Arc::clone(&dict), Config::default());
     f.import_user("坏行\nshi\t十\tx\t0\n\tshi\t十\t1\t0\nshi\t十\t4\t0\n");
-    let lines: Vec<_> = f.export_user().lines().collect();
+    let exported = f.export_user();
+    let lines: Vec<_> = exported.lines().collect();
     push(
         &mut checks,
         "坏行跳过",
