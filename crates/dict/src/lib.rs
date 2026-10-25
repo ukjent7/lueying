@@ -11,7 +11,8 @@
 pub mod gram;
 pub mod syllables;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::io::Read;
 use std::ops::{Deref, Range};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -132,7 +133,7 @@ impl Dictionary {
     pub fn from_text(text: &str) -> (Dictionary, usize) {
         let mut raw: Vec<(String, String, u64)> = Vec::new();
         let mut bad = 0usize;
-        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut seen: HashMap<(String, String), usize> = HashMap::new();
         for line in text.lines() {
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -157,9 +158,12 @@ impl Dictionary {
                 bad += 1;
                 continue;
             }
-            if !seen.insert((word.to_string(), key.to_string())) {
+            let ident = (word.to_string(), key.to_string());
+            if let Some(&at) = seen.get(&ident) {
+                raw[at].2 = raw[at].2.max(freq);
                 continue;
             }
+            seen.insert(ident, raw.len());
             raw.push((word.to_string(), key.to_string(), freq));
         }
         raw.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
@@ -171,15 +175,22 @@ impl Dictionary {
     /// 打开词典:二进制则 mmap(零解析),否则按 UTF-8 文本解析。
     pub fn from_path(path: &Path) -> std::io::Result<(Dictionary, usize)> {
         let file = std::fs::File::open(path)?;
+        // 只读魔数判断格式;别把几十 MB 的二进制词典先整份读进内存,否则
+        // mmap 的启动/峰值内存优势会被抵消。
+        let mut magic = [0u8; MAGIC.len()];
+        let mut probe = &file;
+        let count = probe.read(&mut magic)?;
+        if count == MAGIC.len() && magic == *MAGIC {
+            if let Ok(mapped) = unsafe { Mmap::map(&file) } {
+                return Self::from_bytes(Backing::Mapped(mapped))
+                    .map(|d| (d, 0))
+                    .ok_or_else(|| std::io::Error::other("二进制词典损坏"));
+            }
+            // 映射失败(空文件、权限等)再退回读入内存。
+        }
         let bytes = std::fs::read(path)?;
         if bytes.len() >= MAGIC.len() && &bytes[..MAGIC.len()] == MAGIC {
-            // 映射失败(空文件等)退回读入内存,不让路径差异阻断加载。
-            let mapped = unsafe { Mmap::map(&file) }.ok();
-            let backing = match mapped {
-                Some(m) if m.len() == bytes.len() => Backing::Mapped(m),
-                _ => Backing::Owned(bytes),
-            };
-            return Self::from_bytes(backing)
+            return Self::from_bytes(Backing::Owned(bytes))
                 .map(|d| (d, 0))
                 .ok_or_else(|| std::io::Error::other("二进制词典损坏"));
         }
@@ -320,15 +331,17 @@ impl Dictionary {
 
     fn sig_at(&self, i: usize) -> (&str, u32) {
         let at = self.sigs.start + i * SIG;
-        let r = &self.backing[at..at + SIG];
+        let Some(r) = self.backing.get(at..at + SIG) else {
+            return ("", 0);
+        };
         let off = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
         let len = u32::from_le_bytes(r[4..8].try_into().unwrap()) as usize;
         let idx = u32::from_le_bytes(r[8..12].try_into().unwrap());
-        let at = self.data.start + off;
-        (
-            std::str::from_utf8(&self.backing[at..at + len]).unwrap_or(""),
-            idx,
-        )
+        let at = self.data.start.saturating_add(off);
+        let Some(text) = self.backing.get(at..at.saturating_add(len)) else {
+            return ("", 0);
+        };
+        (std::str::from_utf8(text).unwrap_or(""), idx)
     }
 
     /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤),最多 `max_visits` 条。
@@ -347,6 +360,9 @@ impl Dictionary {
         for i in lo..n {
             let (s, idx) = self.sig_at(i);
             if s != sig || out.len() >= max_visits {
+                break;
+            }
+            if idx as usize >= self.count {
                 break;
             }
             out.push(self.entry(idx as usize));

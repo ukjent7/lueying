@@ -3,7 +3,7 @@
 //! - `pack`:把可执行文件与数据装进发布目录,生成清单与版本号。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
-//! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/lueying`
+//! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying`
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ struct Args {
 
 struct PackArgs {
     bin: PathBuf,
+    /// i686 构建目录;提供时打包 32 位 TSF DLL。
+    bin32: Option<PathBuf>,
     data: PathBuf,
     out: PathBuf,
     version: String,
@@ -82,6 +84,7 @@ fn parse_dict(it: &mut impl Iterator<Item = String>) -> Args {
 fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
     let mut args = PackArgs {
         bin: PathBuf::from("target/release"),
+        bin32: None,
         data: PathBuf::from("data"),
         out: PathBuf::from("dist/lueying"),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -90,6 +93,7 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--bin" => args.bin = it.next().map(PathBuf::from).unwrap_or(args.bin),
+            "--bin32" => args.bin32 = it.next().map(PathBuf::from),
             "--data" => args.data = it.next().map(PathBuf::from).unwrap_or(args.data),
             "--out" => args.out = it.next().map(PathBuf::from).unwrap_or(args.out),
             "--version" => args.version = it.next().unwrap_or(args.version),
@@ -145,6 +149,17 @@ fn pack(args: PackArgs) -> Result<(), String> {
     // 版本号入 DLL 文件名:升级时新文件不被正在运行的旧 DLL 锁住。
     let dll_name = format!("pinyin_tsf-{}.dll", safe_version(&args.version));
     copy_file(&dll, &args.out, &dll_name, &mut files)?;
+    if let Some(bin32) = &args.bin32 {
+        let dll32 = PACK_DLLS
+            .iter()
+            .map(|name| bin32.join(name))
+            .find(|path| path.exists())
+            .ok_or_else(|| format!("{} 里缺少 32 位 pinyin_tsf.dll", bin32.display()))?;
+        let dll32_name = format!("pinyin_tsf32-{}.dll", safe_version(&args.version));
+        copy_file(&dll32, &args.out, &dll32_name, &mut files)?;
+    } else {
+        println!("警告: 未提供 --bin32,发布包只含 x64 TSF DLL");
+    }
 
     for name in PACK_DATA {
         // fetch_rerank.sh 默认下载到 data/rerank/,发布目录却是平铺的;两种布局都接受。

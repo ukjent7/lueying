@@ -363,8 +363,21 @@ mod imp {
                 reply.chinese = state.chinese.load(Ordering::Relaxed);
                 reply
             }
-            Request::Context { session, text } => {
-                if let Some(s) = sessions.get_mut(&session)
+            Request::Context {
+                session,
+                text,
+                private,
+            } => {
+                if let Some(s) = sessions.get_mut(&session) {
+                    // 输入范围每次焦点/组合开始都重报;私密字段不学、不记前文。
+                    s.engine.set_learning(!private);
+                    if private {
+                        s.engine.clear_context();
+                        crate::settle::cancel(state, session);
+                    }
+                }
+                if !private
+                    && let Some(s) = sessions.get_mut(&session)
                     // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
                     && (s.engine.composition().is_none() || !s.engine.composition_committed())
                 {

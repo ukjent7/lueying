@@ -102,6 +102,8 @@ pub struct Engine {
     /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
     gram_cache: std::collections::HashMap<(String, String, bool), f64>,
     user: SharedUser,
+    /// 私密输入范围里关闭学习;输入本身不受影响。
+    learning: bool,
     cfg: Config,
     mode: Mode,
     comp: Option<Composition>,
@@ -127,6 +129,7 @@ impl Engine {
             gram: None,
             gram_cache: std::collections::HashMap::new(),
             user: Arc::new(RwLock::new(UserDict::new())),
+            learning: true,
             cfg,
             mode: Mode::Chinese,
             comp: None,
@@ -152,6 +155,14 @@ impl Engine {
     pub fn with_user(mut self, user: SharedUser) -> Self {
         self.user = user;
         self
+    }
+
+    /// 私密字段里关掉用户词库/自动造词学习。切回普通字段时恢复。
+    pub fn set_learning(&mut self, enabled: bool) {
+        self.learning = enabled;
+        if !enabled {
+            self.phrase = None;
+        }
     }
 
     pub fn mode(&self) -> Mode {
@@ -615,28 +626,34 @@ impl Engine {
                 .collect::<Vec<_>>()
                 .join("'")
         });
-        self.user
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .learn(&learned, &cand.text);
-        if cand.groups != 0 {
+        if self.learning {
             self.user
                 .write()
                 .unwrap_or_else(|p| p.into_inner())
-                .learn_groups(cand.groups);
+                .learn(&learned, &cand.text);
+            if cand.groups != 0 {
+                self.user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .learn_groups(cand.groups);
+            }
         }
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
-        let phrase = match self.phrase.take() {
-            Some((mut key, mut text)) => {
-                key.push('\'');
-                key.push_str(&learned);
-                text.push_str(&cand.text);
-                Some((key, text))
+        let phrase = if self.learning {
+            match self.phrase.take() {
+                Some((mut key, mut text)) => {
+                    key.push('\'');
+                    key.push_str(&learned);
+                    text.push_str(&cand.text);
+                    Some((key, text))
+                }
+                None if !rest.is_empty() => Some((learned, cand.text.clone())),
+                None => None,
             }
-            None if !rest.is_empty() => Some((learned, cand.text.clone())),
-            None => None,
+        } else {
+            None
         };
         if rest.is_empty() {
             if let Some((key, text)) = phrase

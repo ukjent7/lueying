@@ -1,19 +1,30 @@
 //! Server 管道客户端:懒连接 + 失败退避;断线时上层直接放行字母(宁可英文直通也不死键盘)。
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pinyin_protocol::{Reply, Request};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
+use windows::Win32::System::Pipes::PeekNamedPipe;
 
 pub(crate) struct Client {
-    reader: BufReader<File>,
+    reader: File,
+    /// 已读到但还没凑成完整行的字节(管道是字节流)。
+    pending: Vec<u8>,
     writer: File,
 }
+
+/// 单次请求-应答的上限。Server 卡住时不能让宿主 UI 线程无限等;
+/// 超时按断线处理,下一次按键重新连接。
+const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(1500);
+/// 一行协议的上限,防止坏对端把内存撑爆。
+const MAX_LINE: usize = 1024 * 1024;
 
 /// 连不上时两次尝试之间的退避(每次尝试都在应用 UI 线程上)。
 pub(crate) const RETRY_INTERVAL: Duration = Duration::from_secs(2);
@@ -46,21 +57,68 @@ impl Client {
             .ok()?;
         let writer = file.try_clone().ok()?;
         Some(Self {
-            reader: BufReader::new(file),
+            reader: file,
+            pending: Vec::new(),
             writer,
         })
     }
 
-    /// 一次请求-应答;任何一步失败都返回 None(上层视作断线)。
+    /// 一次请求-应答;任何一步失败或超时都返回 None(上层视作断线)。
     pub(crate) fn round_trip(&mut self, req: &Request) -> Option<Reply> {
         let mut line = serde_json::to_string(req).ok()?;
         line.push('\n');
         self.writer.write_all(line.as_bytes()).ok()?;
         self.writer.flush().ok()?;
-        let mut buf = String::new();
-        self.reader.read_line(&mut buf).ok()?;
-        serde_json::from_str(buf.trim()).ok()
+        let deadline = Instant::now() + ROUND_TRIP_TIMEOUT;
+        loop {
+            if let Some(line) = take_line(&mut self.pending) {
+                if line.is_empty() {
+                    continue;
+                }
+                return serde_json::from_str(&line).ok();
+            }
+            if self.pending.len() > MAX_LINE {
+                return None;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            let mut available = 0u32;
+            let peek = unsafe {
+                PeekNamedPipe(
+                    HANDLE(self.reader.as_raw_handle()),
+                    None,
+                    0,
+                    None,
+                    Some(&mut available),
+                    None,
+                )
+            };
+            if peek.is_err() {
+                return None;
+            }
+            if available == 0 {
+                std::thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+            let mut buf = [0u8; 4096];
+            let read = self.reader.read(&mut buf).ok()?;
+            if read == 0 {
+                return None;
+            }
+            self.pending.extend_from_slice(&buf[..read]);
+        }
     }
+}
+
+/// 从缓冲区取出一行(不含换行符);没有完整行时返回 None。
+fn take_line(pending: &mut Vec<u8>) -> Option<String> {
+    let end = pending.iter().position(|&byte| byte == b'\n')?;
+    let line: Vec<u8> = pending.drain(..=end).collect();
+    String::from_utf8(line)
+        .ok()
+        .map(|line| line.trim_end_matches(|c| c == '\r' || c == '\n').to_string())
 }
 
 /// 每个宿主进程每 10 秒最多拉起一次 Server;正常注入的 DLL 与 Server 同目录。

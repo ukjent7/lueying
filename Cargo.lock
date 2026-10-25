@@ -3430,6 +3430,7 @@ dependencies = [
  "pinyin-engine",
  "serde",
  "serde_json",
+ "windows 0.62.2",
 ]
 
 [[package]]

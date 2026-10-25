@@ -249,6 +249,31 @@ pub fn run(report: &mut String) -> usize {
         format!("保留 {kept} 条"),
     );
 
+    // 私密输入范围:关闭学习后上屏不得写入词库;切回普通字段恢复学习。
+    let mut private = Engine::new(Arc::clone(&dict), Config::default());
+    private.set_learning(false);
+    for c in "nihao".chars() {
+        private.process(Key::Letter(c));
+    }
+    private.process(Key::Space);
+    let private_export = private.export_user();
+    private.set_learning(true);
+    for c in "nihao".chars() {
+        private.process(Key::Letter(c));
+    }
+    private.process(Key::Space);
+    let public_export = private.export_user();
+    push(
+        &mut checks,
+        "私密字段关闭学习",
+        private_export.is_empty() && public_export.contains("ni'hao\t你好\t"),
+        format!(
+            "私密 {} 行,恢复 {} 行",
+            private_export.lines().count(),
+            public_export.lines().count()
+        ),
+    );
+
     report.push_str("\n## 用户词库\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0usize;
     for (name, ok, note) in checks {

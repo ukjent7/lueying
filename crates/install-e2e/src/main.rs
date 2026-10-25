@@ -1,5 +1,5 @@
-//! Windows 安装/卸载冒烟测试:把真实安装器指向隔离的 `LOCALAPPDATA`,
-//! 检查文件、自启动/卸载项与 TSF 注册,再执行真实卸载并确认清理干净。
+//! Windows 安装/卸载冒烟测试:把真实安装器指向隔离的 `PINYIN_INSTALL_DIR`,
+//! 检查 x64/x86 文件、自启动/卸载项与两套 TSF 注册,再执行真实卸载并确认清理。
 //! 产物 `target/install-e2e-report.md`。
 
 fn main() {
@@ -49,14 +49,17 @@ mod imp {
         let payload = root.join("payload");
         let local = root.join("local");
         let appdata = root.join("appdata");
+        let program = root.join("program-files");
         std::fs::create_dir_all(&payload).map_err(|e| format!("创建 payload: {e}"))?;
         std::fs::create_dir_all(&local).map_err(|e| format!("创建 LOCALAPPDATA: {e}"))?;
         std::fs::create_dir_all(&appdata).map_err(|e| format!("创建 APPDATA: {e}"))?;
+        std::fs::create_dir_all(&program).map_err(|e| format!("创建 Program Files: {e}"))?;
         for name in [
             "pinyin-install.exe",
             "pinyin-server.exe",
             "pinyin-settings.exe",
             "pinyin_tsf.dll",
+            "pinyin_tsf32.dll",
         ] {
             std::fs::copy(bin.join(name), payload.join(name))
                 .map_err(|e| format!("复制 {name}: {e}"))?;
@@ -64,12 +67,13 @@ mod imp {
         std::fs::write(payload.join("version.txt"), env!("CARGO_PKG_VERSION"))
             .map_err(|e| format!("写 version.txt: {e}"))?;
 
-        let target = local.join("Programs").join("pinyin-ime");
+        let target = program.join("pinyin-ime");
         let result = (|| -> Result<String, String> {
             let status = Command::new(payload.join("pinyin-install.exe"))
                 .arg("--quiet")
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
+                .env("PINYIN_INSTALL_DIR", &target)
                 // 与真实安装/其他 E2E 的常驻服务隔离。
                 .env(
                     "PINYIN_PIPE_SUFFIX",
@@ -95,15 +99,27 @@ mod imp {
                 }
                 checks.push(format!("文件 {name}"));
             }
-            let dll = std::fs::read_dir(&target)
+            let mut dll64 = None;
+            let mut dll32 = None;
+            for entry in std::fs::read_dir(&target)
                 .map_err(|e| format!("读取安装目录: {e}"))?
                 .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().to_string())
-                .find(|name| {
-                    name.starts_with("pinyin_tsf") && name.to_ascii_lowercase().ends_with(".dll")
-                })
-                .ok_or("安装目录没有版本化 TSF DLL")?;
-            checks.push(format!("TSF DLL {dll}"));
+            {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let lower = name.to_ascii_lowercase();
+                if !lower.starts_with("pinyin_tsf") || !lower.ends_with(".dll") {
+                    continue;
+                }
+                if lower.starts_with("pinyin_tsf32") {
+                    dll32 = Some(name);
+                } else {
+                    dll64 = Some(name);
+                }
+            }
+            let dll64 = dll64.ok_or("安装目录没有版本化 x64 TSF DLL")?;
+            let dll32 = dll32.ok_or("安装目录没有版本化 x86 TSF DLL")?;
+            checks.push(format!("x64 TSF DLL {dll64}"));
+            checks.push(format!("x86 TSF DLL {dll32}"));
 
             if !reg_query(RUN_KEY, Some("PinyinIme")) {
                 return Err("缺少 HKCU 自启动项".into());
@@ -113,17 +129,24 @@ mod imp {
                 return Err("缺少 HKCU 卸载项".into());
             }
             checks.push("卸载项".into());
-            let inproc = format!(r"HKCR\CLSID\{CLSID}\InprocServer32");
-            if !reg_query(&inproc, Some("")) {
-                return Err("缺少 TSF CLSID InprocServer32".into());
+            let inproc64 = format!(r"HKCR\CLSID\{CLSID}\InprocServer32");
+            let inproc32 = format!(r"HKCR\WOW6432Node\CLSID\{CLSID}\InprocServer32");
+            let target_text = target.to_string_lossy().to_ascii_lowercase();
+            for (key, label) in [(&inproc64, "x64"), (&inproc32, "x86")] {
+                let value = reg_read(key, Some(""))
+                    .ok_or_else(|| format!("缺少 {label} TSF CLSID InprocServer32"))?;
+                if !value.to_ascii_lowercase().contains(&target_text) {
+                    return Err(format!("{label} TSF 注册指向了错误路径: {value}"));
+                }
             }
-            checks.push("TSF 注册".into());
+            checks.push("x64/x86 TSF 注册指向安装目录".into());
 
             let installed = target.join("pinyin-install.exe");
             let status = Command::new(&installed)
                 .args(["--uninstall", "--quiet"])
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
+                .env("PINYIN_INSTALL_DIR", &target)
                 .env(
                     "PINYIN_PIPE_SUFFIX",
                     format!("install{}", std::process::id()),
@@ -148,7 +171,7 @@ mod imp {
             if reg_query(UNINSTALL_KEY, None) {
                 return Err("卸载后卸载项仍在".into());
             }
-            if reg_query(&inproc, Some("")) {
+            if reg_query(&inproc64, Some("")) || reg_query(&inproc32, Some("")) {
                 return Err("卸载后 TSF CLSID 仍在".into());
             }
             checks.push("注册项已清理".into());
@@ -167,6 +190,7 @@ mod imp {
                 .args(["--uninstall", "--quiet"])
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
+                .env("PINYIN_INSTALL_DIR", &target)
                 .env(
                     "PINYIN_PIPE_SUFFIX",
                     format!("install{}", std::process::id()),
@@ -179,6 +203,10 @@ mod imp {
 
     /// `reg query` 是否成功;空值名用 `/ve` 查默认值。
     fn reg_query(key: &str, value: Option<&str>) -> bool {
+        reg_read(key, value).is_some()
+    }
+
+    fn reg_read(key: &str, value: Option<&str>) -> Option<String> {
         let mut command = Command::new("reg");
         command.args(["query", key]);
         match value {
@@ -190,6 +218,10 @@ mod imp {
             }
             None => {}
         }
-        command.status().is_ok_and(|status| status.success())
+        let output = command.output().ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }

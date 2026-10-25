@@ -6,8 +6,12 @@ use serde::{Deserialize, Serialize};
 /// 管道名(版本号入名,协议不兼容时换 v2)。
 pub const PIPE_NAME: &str = r"\\.\pipe\pinyin-ime-v1";
 
-/// 带每用户后缀的管道名:用户名哈希入名,防止跨用户会话抢注同名管道
-/// (mozc 的 IPCKey 防劫持方案的轻量版;两端同会话同环境变量,得到同一名字)。
+/// 带每用户、每会话后缀的管道名:用户名哈希 + 登录会话号入名。
+///
+/// 只按用户区分时,RDP/快速用户切换下同一用户的两个会话会连到同一个
+/// Server,候选窗可能出现在另一个桌面。会话号由系统分配,两端在同一
+/// 会话里得到同一个名字。
+///
 /// `PINYIN_PIPE_SUFFIX` 只给自动化测试隔离用,避免连到本机已安装的服务。
 pub fn pipe_name() -> String {
     if let Ok(suffix) = std::env::var("PINYIN_PIPE_SUFFIX") {
@@ -20,14 +24,33 @@ pub fn pipe_name() -> String {
             return format!("{PIPE_NAME}.t{clean}");
         }
     }
-    match std::env::var("USERNAME") {
+    let user = match std::env::var("USERNAME") {
         Ok(user) if !user.is_empty() => {
             let hash = user
                 .bytes()
                 .fold(5381u64, |h, b| h.wrapping_mul(33).wrapping_add(b as u64));
-            format!("{PIPE_NAME}.u{hash:x}")
+            format!(".u{hash:x}")
         }
-        _ => PIPE_NAME.to_string(),
+        _ => String::new(),
+    };
+    format!("{PIPE_NAME}{user}.s{}", current_session())
+}
+
+/// 当前进程所属的 Windows 登录会话号;非 Windows 构建固定为 0。
+fn current_session() -> u32 {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+        let mut session = 0u32;
+        // 查询失败时退回 0:最坏情况是两个会话共用名字,不影响单会话输入。
+        unsafe {
+            let _ = ProcessIdToSessionId(std::process::id(), &mut session);
+        }
+        session
+    }
+    #[cfg(not(windows))]
+    {
+        0
     }
 }
 
@@ -91,7 +114,13 @@ pub enum Request {
     /// 停顿轮询:只读当前内联文本,供 TSF 定时器把异步重排后的首选写回文档。
     Sync { session: u64 },
     /// TSF 读到的光标前文本;组合开始时上报,让重排从第一个候选就有上下文。
-    Context { session: u64, text: String },
+    /// `private` 来自输入范围 `IS_PRIVATE`(私密字段),只影响学习,不影响输入。
+    Context {
+        session: u64,
+        text: String,
+        #[serde(default)]
+        private: bool,
+    },
     /// DLL 侧直接设置模式(CapsLock 大写锁定、系统转换模式等)。
     SetMode { session: u64, chinese: bool },
     /// 语言栏/右键菜单切中英;不受「Shift 单击切换」开关限制。

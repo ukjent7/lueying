@@ -1,0 +1,10 @@
+# Windows 产物静态链接 CRT:AppContainer/UWP 宿主不保证能加载
+# vcruntime140.dll,TSF DLL 缺运行库会让整个输入法加载失败。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

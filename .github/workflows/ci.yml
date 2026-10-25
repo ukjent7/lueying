@@ -141,6 +141,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build (release)
         run: cargo build --release --workspace --locked
+      - name: Build 32-bit TSF
+        run: cargo build --release -p pinyin-tsf --target i686-pc-windows-msvc --locked
+      - name: Stage 32-bit DLL for install E2E
+        shell: pwsh
+        run: Copy-Item target/i686-pc-windows-msvc/release/pinyin_tsf.dll target/release/pinyin_tsf32.dll
       - name: Windows 全链路 E2E
         run: cargo run -p pinyin-win-e2e --release --locked
       - name: 安装/卸载冒烟
@@ -170,13 +175,15 @@ jobs:
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
       - name: 打包发布目录
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        run: cargo run -p xtask --release --locked -- pack --bin target/release --data data --out dist/lueying
+        run: cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying
       - name: 校验发布目录
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           test -f dist/lueying/LICENSE
           test -f dist/lueying/licenses/Apache-2.0.txt
+          ls dist/lueying/pinyin_tsf-*.dll >/dev/null
+          ls dist/lueying/pinyin_tsf32-*.dll >/dev/null
           test ! -f dist/lueying/main.gram
           du -sh dist/lueying
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
