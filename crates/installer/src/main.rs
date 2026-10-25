@@ -415,9 +415,8 @@ mod imp {
 
     fn start_menu() -> PathBuf {
         // 企业环境可能重定向开始菜单;按 Known Folder 取,不用拼 APPDATA。
-        if let Ok(path) = unsafe {
-            SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_DEFAULT, None)
-        } {
+        if let Ok(path) = unsafe { SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_DEFAULT, None) }
+        {
             let text = unsafe { path.to_string() }.ok();
             unsafe { CoTaskMemFree(Some(path.0 as *const core::ffi::c_void)) };
             if let Some(text) = text {

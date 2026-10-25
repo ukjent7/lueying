@@ -188,18 +188,17 @@ mod imp {
         if pages > 1 {
             unsafe { list.SetSelection(page_starts[1]) }
                 .map_err(|e| format!("SetSelection(第二页): {e}"))?;
-            let current = unsafe { list.GetCurrentPage() }
-                .map_err(|e| format!("GetCurrentPage: {e}"))?;
-            let selection = unsafe { list.GetSelection() }
-                .map_err(|e| format!("GetSelection: {e}"))?;
+            let current =
+                unsafe { list.GetCurrentPage() }.map_err(|e| format!("GetCurrentPage: {e}"))?;
+            let selection =
+                unsafe { list.GetSelection() }.map_err(|e| format!("GetSelection: {e}"))?;
             if current != 1 || selection != page_starts[1] {
                 return Err(format!(
                     "宿主选中第二页首项后 current={current} selection={selection},应为 1/{}",
                     page_starts[1]
                 ));
             }
-            unsafe { list.SetSelection(0) }
-                .map_err(|e| format!("SetSelection(复位): {e}"))?;
+            unsafe { list.SetSelection(0) }.map_err(|e| format!("SetSelection(复位): {e}"))?;
             let current = unsafe { list.GetCurrentPage() }
                 .map_err(|e| format!("GetCurrentPage(复位): {e}"))?;
             if current != 0 {
@@ -207,9 +206,7 @@ mod imp {
             }
             paging = format!(",{pages} 页");
         }
-        Ok(format!(
-            "候选 UI 元素:{count} 条{paging},首条 `{first}`"
-        ))
+        Ok(format!("候选 UI 元素:{count} 条{paging},首条 `{first}`"))
     }
 
     fn real_run() -> Result<(String, String), String> {

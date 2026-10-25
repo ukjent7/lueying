@@ -57,9 +57,7 @@ pub(crate) fn sync(shared: &Rc<Shared>, client: &SharedClient, reply: &Reply) {
     let id = shared.ui_id.get();
     if id == UI_ID_NONE {
         begin(shared, client);
-    } else if changed
-        && let Some(mgr) = shared.ui_mgr.borrow().as_ref()
-    {
+    } else if changed && let Some(mgr) = shared.ui_mgr.borrow().as_ref() {
         // 40ms 轮询会带同一份快照;没变就不打扰宿主/读屏软件。
         unsafe {
             let _ = mgr.UpdateUIElement(id);
@@ -229,14 +227,7 @@ impl ITfCandidateListUIElement_Impl for CandidateElement_Impl {
 impl ITfCandidateListUIElementBehavior_Impl for CandidateElement_Impl {
     fn SetSelection(&self, nindex: u32) -> Result<()> {
         let index = nindex as usize;
-        if index
-            >= self
-                .shared
-                .ui_snapshot
-                .borrow()
-                .candidates
-                .len()
-        {
+        if index >= self.shared.ui_snapshot.borrow().candidates.len() {
             return Err(Error::from(E_FAIL));
         }
         self.shared.ui_snapshot.borrow_mut().highlight = index;
