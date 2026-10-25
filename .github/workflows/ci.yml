@@ -154,6 +154,7 @@ jobs:
           name: win-e2e-report
           path: |
             target/win-e2e-report.md
+            target/win-e2e-tsf.log
             target/install-e2e-report.md
       # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
       # 早期迭代只需要构建与 E2E 信号。这里不签名;签名与自动更新是后续发布工作。

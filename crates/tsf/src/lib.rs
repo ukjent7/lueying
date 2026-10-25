@@ -17,6 +17,7 @@ mod service;
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicIsize, AtomicPtr, Ordering};
+use std::io::Write as _;
 
 use windows::Win32::Foundation::{
     CLASS_E_CLASSNOTAVAILABLE, E_FAIL, HINSTANCE, HMODULE, S_FALSE, S_OK,
@@ -69,12 +70,21 @@ pub(crate) fn module_path_file() -> Option<std::path::PathBuf> {
 }
 
 /// 日志走 OutputDebugString(DebugView / VS 调试器可见)。
+/// E2E 设 `PINYIN_TSF_LOG` 时另写文件,CI 里能拿到宿主进程内的按键/编辑轨迹。
 pub(crate) fn log(msg: &str) {
     let text: Vec<u16> = format!("[pinyin-ime] {msg}\n")
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
     unsafe { OutputDebugStringW(PCWSTR(text.as_ptr())) };
+    if let Some(path) = std::env::var_os("PINYIN_TSF_LOG")
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+    {
+        let _ = writeln!(file, "{msg}");
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -56,6 +56,10 @@ impl ITfEditSession_Impl for UpdateSession_Impl {
         // 旧输入框的写回不能落到新输入框的组句/光标状态上。
         let current = is_write_context(&self.shared, &self.context);
         if !current && !self.write.allow_stale {
+            log(&format!(
+                "编辑会话跳过:上下文已切换 commit={:?} preedit={:?}",
+                self.write.commit, self.write.preedit
+            ));
             return Ok(());
         }
         if !current {
@@ -99,6 +103,10 @@ impl ITfEditSession_Impl for UpdateSession_Impl {
                 )
             }?;
             report_caret(&self.shared, &self.client, self.session, &self.context, ec);
+            log(&format!(
+                "编辑会话完成 commit={:?} preedit={:?}",
+                self.write.commit, self.write.preedit
+            ));
             Ok(())
         })) {
             Ok(result) => result,

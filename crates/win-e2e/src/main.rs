@@ -47,7 +47,10 @@ mod imp {
             Ok((text, extra)) => {
                 format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
             }
-            Err(e) => format!("# Windows E2E\n\nFAIL\n\n{e}\n"),
+            Err(e) => {
+                let tail = log_tail();
+                format!("# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tail}\n```\n")
+            }
         };
         println!("{report}");
         let _ = std::fs::create_dir_all("target");
@@ -57,12 +60,30 @@ mod imp {
         }
     }
 
+    fn log_tail() -> String {
+        let Ok(path) = std::env::var("PINYIN_TSF_LOG") else {
+            return String::new();
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return String::new();
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        lines[lines.len().saturating_sub(160)..].join("\n")
+    }
+
     fn real_run() -> Result<(String, String), String> {
         // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
         let suffix = format!("e2e{}", std::process::id());
+        let log = std::env::current_dir()
+            .unwrap_or_default()
+            .join("target")
+            .join("win-e2e-tsf.log");
+        let _ = std::fs::create_dir_all("target");
+        let _ = std::fs::remove_file(&log);
         unsafe {
             // 尚未启动任何线程,设置环境变量不会与并发读取竞争。
             std::env::set_var("PINYIN_PIPE_SUFFIX", &suffix);
+            std::env::set_var("PINYIN_TSF_LOG", &log);
         }
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = exe.parent().ok_or("无父目录")?.to_path_buf();
@@ -93,6 +114,12 @@ mod imp {
         // 用户词库与配置指向本目录,重复运行不受上一轮学习结果影响。
         let data = dir.join("e2e-data");
         std::fs::create_dir_all(&data).map_err(|e| format!("创建 E2E 数据目录: {e}"))?;
+        // TSF 在断线时可能懒拉起 Server;测试进程本身也指向隔离目录,
+        // 避免清理阶段复活的 Server 读到 runner 的真实配置。
+        unsafe {
+            std::env::set_var("LOCALAPPDATA", &data);
+            std::env::set_var("APPDATA", &data);
+        }
         let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
             .env("LOCALAPPDATA", &data)
             .env("APPDATA", &data)
@@ -291,7 +318,10 @@ mod imp {
             Ok((text, latency))
         })();
 
-        // 6. 清理(尽力)
+        // 6. 清理(尽力)。先停 TSF 再杀 Server:TIP 的 Deactivate 还会发
+        //    Focus/Goodbye,顺序反了会让 DLL 懒拉起一个新 Server 留在后台。
+        let _ = unsafe { thread_mgr.Deactivate() };
+        pump_for(Duration::from_millis(200));
         if let Some(mut child) = server.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -301,7 +331,6 @@ mod imp {
             .arg("/u")
             .arg(&dll)
             .status();
-        let _ = unsafe { thread_mgr.Deactivate() };
         drop(thread_mgr);
         let _ = unsafe { FreeLibrary(dll_h) };
         unsafe { CoUninitialize() };

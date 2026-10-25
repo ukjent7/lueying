@@ -205,6 +205,11 @@ impl TextService {
         // 新按键让任何在途的停顿写回失效。
         self.shared.touch();
         self.shared.set_chinese(reply.chinese);
+        // 没有文档改动且当前没有组句(例如纯模式切换):不要再排一个空编辑会话,
+        // 它会与紧接着的组句写回竞争,延迟执行时把新组句结束掉。
+        if reply.commits.is_empty() && reply.preedit.is_empty() && !self.shared.composing() {
+            return;
+        }
         let commit: String = reply.commits.concat();
         if let Err(error) = edit::request_update(
             context,
@@ -530,6 +535,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 // Server 不在:全部放行(宁可英文直通,不能死键盘)。
                 return Ok(FALSE);
             };
+            log(&format!(
+                "预演 vk={vk} 直通={} 中文={} 上屏={:?} 内联={:?}",
+                reply.passthrough, reply.chinese, reply.commits, reply.preedit
+            ));
             // 英文模式下字母会直通,但语言栏仍要跟上全局模式。
             self.shared.set_chinese(reply.chinese);
             if reply.passthrough {
@@ -577,6 +586,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 }
             };
             if let Some(pending) = pending {
+                log(&format!(
+                    "应用 vk={vk} 上屏={:?} 内联={:?}",
+                    pending.reply.commits, pending.reply.preedit
+                ));
                 self.apply(&pending.context, &pending.reply);
                 return Ok(true.into());
             }
@@ -645,6 +658,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                     key: pinyin_protocol::KeyMsg::Shift,
                 })
             {
+                log(&format!("Shift 单击 -> 中文={}", reply.chinese));
                 *self.shared.last_context.borrow_mut() = Some(context.clone());
                 self.apply(context, &reply);
             }
@@ -664,6 +678,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         }
         let _ = catch_unwind(AssertUnwindSafe(|| {
             // 开关写回配置并让 Server 立即生效;组件组合不受影响。
+            log("保留键 Ctrl+.");
             let _ = self.request(Request::TogglePunct);
         }));
         Ok(true.into())
