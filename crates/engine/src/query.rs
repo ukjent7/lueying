@@ -31,6 +31,8 @@ pub struct Candidate {
     pub full: bool,
     /// 逐音节精确命中(含简拼),未经模糊扩写;用户词不算。
     pub trusted: bool,
+    /// 两个及以上精确词典词拼成的整句。没有单词条频次,保护时另设门槛。
+    pub sentence: bool,
     /// 模糊改动处数;0 表示逐音节精确命中。
     pub edits: usize,
     /// 词典词频(用户独有词为 0)。精确首位保护只锁有 corpus 依据的常用词。
@@ -82,6 +84,9 @@ const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
 const EXACT_PROTECT_MIN_FREQ: u64 = 1;
 /// 同一按键下选过两次的模糊词,允许拿回首选的位次。
 const LEARNED_FUZZY_TOP: u32 = 2;
+/// 整句精确保护允许的落后幅度(对数概率)。整句没有词典频次背书,只有分数
+/// 与首位接近时才说明两种读法都成立;差距过大留给模糊读法。
+const EXACT_SENTENCE_MARGIN: f64 = 1.0;
 /// 签名翻转变体上限;超过后只保留原键与单点翻转,保证至少有一条召回。
 const MAX_SIG_VARIANTS: usize = 32;
 /// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
@@ -649,6 +654,8 @@ struct State {
     path: Path,
     /// 整条路径由单个精确词典词构成时,才允许让模型让位。
     trusted: bool,
+    /// 路径由两个及以上精确词拼成。
+    sentence: bool,
     /// 路径累计的模糊改动处数。
     edits: usize,
     /// 单节点路径的词典词频;多词拼句为 0。
@@ -726,6 +733,7 @@ fn build_exact(
         score: 0.0,
         path: Vec::new(),
         trusted: true,
+        sentence: false,
         edits: 0,
         freq: 0,
         groups: 0,
@@ -747,6 +755,7 @@ fn build_exact(
                     path,
                     // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
                     trusted: st.path.is_empty() && node.trusted,
+                    sentence: !st.path.is_empty() && st.edits + node.edits == 0,
                     edits: st.edits + node.edits,
                     freq: if st.path.is_empty() { node.freq } else { 0 },
                     groups: st.groups | node.groups,
@@ -778,6 +787,7 @@ fn build_exact(
             spans,
             full: true,
             trusted: st.trusted,
+            sentence: st.sentence,
             edits: st.edits,
             freq: st.freq,
             user_freq: user.freq(&key, &text),
@@ -800,6 +810,7 @@ fn build_exact(
                 spans: node.spans.clone(),
                 full: end == raw.len(),
                 trusted: node.trusted,
+                sentence: false,
                 edits: node.edits,
                 freq: node.freq,
                 user_freq: node.user_freq,
@@ -878,6 +889,7 @@ pub fn build(
             cand.spans = vec![(0, raw.len())];
             cand.consume = 1;
             cand.trusted = false;
+            cand.sentence = false;
             cand.edits = 0;
             cand.groups = 0;
             cand.hint = Some(format!("纠正 {}", key.replace('\'', " ")));
@@ -910,6 +922,9 @@ pub fn build(
 ///
 /// 学习覆盖优先于精确保护:同一按键下选过两次的模糊词,说明用户确实
 /// 分不清这个音,允许它拿回首选的位次。
+///
+/// 多词整句也保护,但只在分数与首位接近时生效:整句没有单词条频次,
+/// 勉强成立的精确切分(如 `zongguo` 拼出「总过」)不该顶掉真正的模糊词。
 fn protect_exact(cands: &mut [Candidate]) {
     if cands.is_empty() {
         return;
@@ -924,10 +939,16 @@ fn protect_exact(cands: &mut [Candidate]) {
         cands[..=index].rotate_right(1);
         return;
     }
+    let leader = cands[0].score;
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.full && c.edits == 0 && c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ)
+        .filter(|(_, c)| {
+            c.full
+                && c.edits == 0
+                && (c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
+                    || c.sentence && c.score + EXACT_SENTENCE_MARGIN >= leader)
+        })
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {
