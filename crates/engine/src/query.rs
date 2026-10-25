@@ -86,7 +86,7 @@ const EXACT_PROTECT_MIN_FREQ: u64 = 1;
 const LEARNED_FUZZY_TOP: u32 = 2;
 /// 整句精确保护允许的落后幅度(对数概率)。整句没有词典频次背书,只有分数
 /// 与首位接近时才说明两种读法都成立;差距过大留给模糊读法。
-const EXACT_SENTENCE_MARGIN: f64 = 2.0;
+const EXACT_SENTENCE_MARGIN: f64 = 3.0;
 /// 签名翻转变体上限;超过后只保留原键与单点翻转,保证至少有一条召回。
 const MAX_SIG_VARIANTS: usize = 32;
 /// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
