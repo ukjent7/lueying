@@ -26,7 +26,7 @@ mod imp {
     use pinyin_server::config::{self, AppConfig};
     use windows::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
-        OFN_PATHMUSTEXIST, OPENFILENAMEW, OPEN_FILENAME_FLAGS,
+        OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
     };
     use windows::core::{PCWSTR, PWSTR};
 

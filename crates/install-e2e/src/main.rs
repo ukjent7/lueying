@@ -190,8 +190,6 @@ mod imp {
             }
             None => {}
         }
-        command
-            .status()
-            .is_ok_and(|status| status.success())
+        command.status().is_ok_and(|status| status.success())
     }
 }

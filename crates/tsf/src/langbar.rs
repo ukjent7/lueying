@@ -152,11 +152,7 @@ impl ModeButton_Impl {
         match command.0 as u32 {
             MENU_TOGGLE => self.toggle(),
             MENU_PUNCT => {
-                let _ = request_with(
-                    &self.client,
-                    &self.shared,
-                    Request::TogglePunct,
-                );
+                let _ = request_with(&self.client, &self.shared, Request::TogglePunct);
             }
             MENU_SETTINGS => Self::open_settings(),
             MENU_ABOUT => Self::about(),

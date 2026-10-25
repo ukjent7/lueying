@@ -14,10 +14,9 @@ use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
     ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
-    ITfTextInputProcessor, ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl,
-    ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
-    TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY,
-    TF_TMAE_SECUREMODE,
+    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
+    ITfTextInputProcessorEx_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
+    TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
 };
 use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
 
@@ -364,9 +363,8 @@ impl TextService_Impl {
             uModifiers: TF_MOD_CONTROL,
         };
         let description: Vec<u16> = "切换中文标点".encode_utf16().collect();
-        match unsafe {
-            keystroke.PreserveKey(tid, &GUID_PRESERVED_PUNCT, &preserved, &description)
-        } {
+        match unsafe { keystroke.PreserveKey(tid, &GUID_PRESERVED_PUNCT, &preserved, &description) }
+        {
             Ok(()) => self.preserved.set(Some(preserved)),
             Err(error) => log(&format!("注册保留键 Ctrl+. 失败: {error}")),
         }
