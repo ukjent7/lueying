@@ -359,23 +359,12 @@ impl Engine {
         let Some(cand) = self.cands.get(self.hl).cloned() else {
             return false;
         };
-        let Some(comp) = self.comp.as_ref() else {
-            return false;
-        };
-        // 与学习时用同一个键:纠正候选有单独的 learn_key,普通候选取吃掉的音节。
-        let key = cand.learn_key.clone().unwrap_or_else(|| {
-            cand.spans
-                .iter()
-                .take(cand.consume)
-                .map(|&(s, e)| &comp.raw[s..e])
-                .collect::<Vec<_>>()
-                .join("'")
-        });
+        // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录。
         let removed = self
             .user
             .write()
             .unwrap_or_else(|p| p.into_inner())
-            .remove(&key, &cand.text);
+            .remove_word(&cand.text);
         if removed {
             self.recompute();
             // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。

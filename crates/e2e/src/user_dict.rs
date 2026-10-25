@@ -9,7 +9,8 @@
 //! 7. 长期学习让词库无限膨胀 → 超过上限后按频次/时间淘汰,文件大小有界。
 //! 8. 多音节学习键存成原始串 → 新会话必须能用 `ni'hao` 这样的音节键复现提频。
 //! 9. 组级适应只留在内存 → 导出/导入后模糊组计数必须还在。
-//! 10. 学习时用简拼、查询时用全拼(或反过来)丢掉提频 → 两种输入形态必须互相识别。
+//! 10. 学习时用简拼、查询时用全拼(或反过来)丢掉提频 → 两种输入形态必须互相识别,
+//!     Shift+Delete 也要按词删掉所有形态的记录。
 //! 11. 用户词库到 2 万条后每个音节组合线性扫全表 → 查询按音节数与首字母收窄,
 //!     既不能漏掉该命中的用户词,也不能随词库增长拖慢首键。
 
@@ -168,6 +169,24 @@ pub fn run(report: &mut String) -> usize {
             format!("{learn_key} → {typed}:首选 {top}"),
         );
     }
+
+    // 忘掉也要跨输入形态:简拼学过,全拼查询时 Shift+Delete 必须删掉那条记录。
+    let forgotten = Arc::new(RwLock::new(UserDict::new()));
+    engine(&dict, &forgotten).import_user("t'q\t田七\t100000\t0\n");
+    let mut forget = engine(&dict, &forgotten);
+    for c in "tianqi".chars() {
+        forget.process(Key::Letter(c));
+    }
+    let before = forget.candidates().first().cloned().unwrap_or_default();
+    forget.process(Key::DeleteCandidate);
+    let top = forget.candidates().first().cloned().unwrap_or_default();
+    let exported = forget.export_user();
+    push(
+        &mut checks,
+        "跨输入形态忘掉学习词",
+        before == "田七" && top != "田七" && !exported.contains("\t田七\t"),
+        format!("忘掉前 {before},忘掉后首选 {top}"),
+    );
 
     // 坏行、空键、坏频次都跳过,其余词条照常导入。
     let mut f = Engine::new(Arc::clone(&dict), Config::default());

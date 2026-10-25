@@ -207,18 +207,25 @@ impl UserDict {
         self.count = self.map.values().map(Vec::len).sum();
     }
 
-    /// 删除一条学习记录;返回是否命中。
-    pub fn remove(&mut self, key: &str, word: &str) -> bool {
-        let Some(entries) = self.map.get_mut(key) else {
-            return false;
-        };
-        let Some(index) = entries.iter().position(|e| e.word == word) else {
-            return false;
-        };
-        entries.remove(index);
-        if entries.is_empty() {
+    /// 删除该词在所有学习键下的记录。用户可能用全拼学过、现在用简拼忘掉,
+    /// 不能因为当前键不同就留下旧记录。
+    pub fn remove_word(&mut self, word: &str) -> bool {
+        let mut removed = 0usize;
+        let mut empty_keys = Vec::new();
+        self.map.retain(|key, entries| {
+            let before = entries.len();
+            entries.retain(|e| e.word.as_str() != word);
+            removed += before - entries.len();
+            if entries.is_empty() {
+                empty_keys.push(key.clone());
+                false
+            } else {
+                true
+            }
+        });
+        self.count = self.count.saturating_sub(removed);
+        for key in &empty_keys {
             let key_shape = shape(key);
-            self.map.remove(key);
             let empty = if let Some(keys) = self.by_shape.get_mut(&key_shape) {
                 keys.retain(|item| item != key);
                 keys.is_empty()
@@ -229,25 +236,10 @@ impl UserDict {
                 self.by_shape.remove(&key_shape);
             }
         }
-        self.count = self.count.saturating_sub(1);
-        self.rev = self.rev.wrapping_add(1);
-        true
-    }
-
-    /// 该键下某词的用户频次(未学过为 0)。
-    pub fn freq(&self, key: &str, word: &str) -> u32 {
-        self.map
-            .get(key)
-            .and_then(|v| v.iter().find(|e| e.word == word))
-            .map_or(0, |e| e.freq)
-    }
-
-    /// 键下的全部用户词条。
-    pub fn entries(&self, key: &str) -> impl Iterator<Item = (&str, u32)> {
-        self.map
-            .get(key)
-            .into_iter()
-            .flat_map(|v| v.iter().map(|e| (e.word.as_str(), e.freq)))
+        if removed > 0 {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        removed > 0
     }
 
     pub fn is_empty(&self) -> bool {
