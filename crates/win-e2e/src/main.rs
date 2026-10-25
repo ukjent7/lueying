@@ -188,14 +188,18 @@ mod imp {
                 }
                 Err(e) => println!("ActivateProfile(FORPROCESS|ENABLE|DONTLANG): {e}"),
             }
-            match unsafe {
-                profiles_api.ActivateLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
-            } {
-                Ok(()) => {
-                    println!("ActivateLanguageProfile: ok");
-                    activated = true;
+            // 只有新版接口失败时才走老接口。两个都调会再切一次 profile,
+            // 已上线的 TSF 实例收到 Deactivate 后不会自动复活,后续按键全部直通。
+            if !activated {
+                match unsafe {
+                    profiles_api.ActivateLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
+                } {
+                    Ok(()) => {
+                        println!("ActivateLanguageProfile: ok");
+                        activated = true;
+                    }
+                    Err(e) => println!("ActivateLanguageProfile(当前语言非中文时忽略): {e}"),
                 }
-                Err(e) => println!("ActivateLanguageProfile(当前语言非中文时忽略): {e}"),
             }
             if !activated {
                 return Err("无法激活输入法配置".into());
