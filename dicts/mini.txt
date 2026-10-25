@@ -95,3 +95,5 @@
 我们	900000	wo'men
 谢谢	800000	xie'xie
 早上	500000	zao'shang
+略	300000	lve
+虐	80000	nve

@@ -28,6 +28,8 @@ pub enum Check {
     Cands(Vec<String>),
     /// 组合原文。
     Raw(String),
+    /// 组合光标在原始串里的字节位置。
+    Cursor(usize),
     NoComp,
     /// 模式序列(含初始 Chinese)。
     ModeSeq(Vec<Mode>),
@@ -109,6 +111,26 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
+            "ü 写作 ue:lue/nue 兼容",
+            false,
+            vec![
+                stage(l("lue"), vec![Check::Top("略".into())]),
+                stage(
+                    vec![Key::Space],
+                    vec![
+                        commits(&["略"]),
+                        Check::UserHas {
+                            key: "lve",
+                            word: "略",
+                        },
+                        Check::NoComp,
+                    ],
+                ),
+                stage(l("nue"), vec![Check::Top("虐".into())]),
+                stage(vec![Key::Space], vec![commits(&["虐"]), Check::NoComp]),
+            ],
+        ),
+        s(
             "隔音符消歧 xi'an→西安",
             false,
             vec![
@@ -161,6 +183,43 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Raw("ni".into())],
                 ),
                 stage(vec![Key::Space], vec![commits(&["你"]), Check::NoComp]),
+            ],
+        ),
+        s(
+            "Ctrl+Backspace/方向键按音节编辑",
+            false,
+            vec![
+                stage(
+                    l("nihaoma"),
+                    vec![Check::Raw("nihaoma".into()), Check::Cursor(7)],
+                ),
+                stage(
+                    vec![Key::SegmentBackspace],
+                    vec![Check::Raw("nihao".into()), Check::Cursor(5)],
+                ),
+                stage(vec![Key::SegmentLeft], vec![Check::Cursor(2)]),
+                stage(vec![Key::SegmentLeft], vec![Check::Cursor(0)]),
+                stage(vec![Key::SegmentRight], vec![Check::Cursor(2)]),
+                stage(
+                    vec![Key::SegmentDelete],
+                    vec![Check::Raw("ni".into()), Check::Cursor(2)],
+                ),
+                stage(vec![Key::SegmentDelete], vec![Check::Raw("ni".into())]),
+                stage(vec![Key::Esc], vec![Check::NoComp]),
+                stage(
+                    vec![
+                        Key::Letter('x'),
+                        Key::Letter('i'),
+                        Key::Punct('\''),
+                        Key::Letter('a'),
+                        Key::Letter('n'),
+                    ],
+                    vec![Check::Raw("xi'an".into())],
+                ),
+                stage(
+                    vec![Key::SegmentBackspace],
+                    vec![Check::Raw("xi".into()), Check::Cursor(2)],
+                ),
             ],
         ),
         s(

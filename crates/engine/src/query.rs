@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use lueying_dict::gram::{CONTEXT_CHARS, Gram};
 use lueying_dict::syllables::{self, Fuzzy};
@@ -174,7 +175,7 @@ fn typed_key(sylls: &[Syll]) -> String {
 fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
     spans
         .iter()
-        .map(|&(start, end)| &raw[start..end])
+        .map(|&(start, end)| syllables::canonical(&raw[start..end]))
         .collect::<Vec<_>>()
         .join("'")
 }
@@ -953,6 +954,11 @@ fn build_exact(
     }
 }
 
+/// 错音纠正的总预算。最长 24 键最多 400 条纠正,每条都要整图解码;
+/// 慢机器上全部跑完会把首键拖到几百毫秒。按时间截断,常见手误在前几条
+/// 就能命中,正常输入完全不受影响。
+const TYPO_BUDGET: Duration = Duration::from_millis(6);
+
 /// 候选生成入口:正常解码没有整句候选时,尝试一次相邻键/漏键纠正。
 ///
 /// 纠正只在精确与模糊都出不了整句时发生,避免影响正常输入。纠正串可能与
@@ -973,7 +979,11 @@ pub fn build(
     {
         return built;
     }
+    let deadline = Instant::now() + TYPO_BUDGET;
     for correction in typo::variants(raw) {
+        if Instant::now() >= deadline {
+            break;
+        }
         if !segment::complete(&correction) {
             continue;
         }

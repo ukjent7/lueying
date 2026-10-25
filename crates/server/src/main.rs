@@ -607,6 +607,14 @@ mod imp {
                         sync_ui_reply(s);
                     }
                     fill_view(&mut reply, s);
+                    // 宿主自绘候选时,高亮变化要同步到内联预编辑;否则文档里
+                    // 还是旧候选,点选前后看到的文本对不上。
+                    reply.preedit = s
+                        .engine
+                        .composition()
+                        .map(|c| c.display.clone())
+                        .unwrap_or_default();
+                    reply.chinese = s.engine.mode() == Mode::Chinese;
                 }
                 reply
             }

@@ -43,8 +43,15 @@ pub enum Key {
     Esc,
     Backspace,
     Delete,
+    /// Ctrl+Backspace:删除光标前一个音节。
+    SegmentBackspace,
+    /// Ctrl+Delete:删除光标后一个音节。
+    SegmentDelete,
     Left,
     Right,
+    /// Ctrl+Left/Ctrl+Right:按音节移动组合光标。
+    SegmentLeft,
+    SegmentRight,
     Up,
     Down,
     Home,
@@ -581,6 +588,22 @@ impl Engine {
                 self.delete_char(false);
                 Vec::new()
             }
+            Key::SegmentBackspace => {
+                self.delete_segment(true);
+                Vec::new()
+            }
+            Key::SegmentDelete => {
+                self.delete_segment(false);
+                Vec::new()
+            }
+            Key::SegmentLeft => {
+                self.move_segment(-1);
+                Vec::new()
+            }
+            Key::SegmentRight => {
+                self.move_segment(1);
+                Vec::new()
+            }
             Key::DeleteCandidate => {
                 self.forget_highlighted();
                 Vec::new()
@@ -724,7 +747,7 @@ impl Engine {
             cand.spans
                 .iter()
                 .take(cand.consume)
-                .map(|&(s, e)| &raw[s..e])
+                .map(|&(s, e)| lueying_dict::syllables::canonical(&raw[s..e]))
                 .collect::<Vec<_>>()
                 .join("'")
         });
@@ -847,6 +870,89 @@ impl Engine {
         } else {
             (comp.cursor + 1).min(comp.raw.len())
         };
+    }
+
+    /// Ctrl+Left/Ctrl+Right:按音节移动光标。音节边界取音节图的最长匹配路径,
+    /// 与候选无关;隔音符只当分隔,不占音节。
+    fn move_segment(&mut self, dir: i32) {
+        let Some(comp) = self.comp.as_ref() else {
+            return;
+        };
+        let spans = segment::first_path(&comp.raw);
+        let bytes = comp.raw.as_bytes();
+        let cursor = comp.cursor;
+        let next = if dir < 0 {
+            let mut at = cursor;
+            while at > 0 && bytes[at - 1] == b'\'' {
+                at -= 1;
+            }
+            spans
+                .iter()
+                .rev()
+                .find(|span| span.0 < at && at <= span.1)
+                .map_or(0, |span| span.0)
+        } else {
+            let mut at = cursor;
+            while at < bytes.len() && bytes[at] == b'\'' {
+                at += 1;
+            }
+            spans
+                .iter()
+                .find(|span| span.0 <= at && at < span.1)
+                .map_or(bytes.len(), |span| span.1)
+        };
+        if let Some(comp) = self.comp.as_mut() {
+            comp.cursor = next;
+        }
+    }
+
+    /// Ctrl+Backspace/Ctrl+Delete:删除光标前/后一个音节,连同相邻的一个隔音符。
+    fn delete_segment(&mut self, left: bool) {
+        let Some(comp) = self.comp.as_ref() else {
+            return;
+        };
+        let mut raw = comp.raw.clone();
+        let cursor = comp.cursor;
+        let spans = segment::first_path(&raw);
+        let bytes = raw.as_bytes();
+        let (mut start, mut end) = if left {
+            let mut at = cursor;
+            while at > 0 && bytes[at - 1] == b'\'' {
+                at -= 1;
+            }
+            let Some(span) = spans.iter().rev().find(|span| span.0 < at && at <= span.1) else {
+                return;
+            };
+            (span.0, cursor)
+        } else {
+            let mut at = cursor;
+            while at < bytes.len() && bytes[at] == b'\'' {
+                at += 1;
+            }
+            let Some(span) = spans.iter().find(|span| span.0 <= at && at < span.1) else {
+                return;
+            };
+            (cursor, span.1)
+        };
+        // 删掉音节时连同它一侧的隔音符一起收走,避免留下孤立的 `'`。
+        if start > 0 && bytes[start - 1] == b'\'' {
+            start -= 1;
+        } else if end < bytes.len() && bytes[end] == b'\'' {
+            end += 1;
+        }
+        if start >= end {
+            return;
+        }
+        raw.replace_range(start..end, "");
+        if raw.is_empty() {
+            self.clear_comp();
+            return;
+        }
+        if let Some(comp) = self.comp.as_mut() {
+            comp.raw = raw;
+            comp.cursor = start.min(comp.raw.len());
+        }
+        self.recompute();
     }
 
     fn clear_comp(&mut self) {

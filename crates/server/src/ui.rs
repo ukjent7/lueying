@@ -26,8 +26,8 @@ use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-    HWND_TOPMOST, IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
+    GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
@@ -193,6 +193,9 @@ impl CandidatePanel {
             }
             let (park_x, park_y) = park_point();
             let width = view.as_ref().map_or(WIDTH, panel_width);
+            // 会话号高 32 位是宿主进程号。浏览器 F11、全屏终端这类宿主
+            // 自己铺满屏幕时仍要显示候选窗,只有别的进程独占全屏才让位。
+            let host_pid = (self.state.active.load(Ordering::Relaxed) >> 32) as u32;
             let (x, y, w, h) = match view.as_ref().and_then(|v| v.caret) {
                 Some((l, t, r, b)) => {
                     let left = l.min(r);
@@ -215,7 +218,7 @@ impl CandidatePanel {
                     x = x.clamp(work.left, (work.right - w).max(work.left));
                     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
                     // 最大化窗口保留候选窗(它的矩形通常只到工作区)。
-                    let hidden = foreground_fullscreen_at(left, b);
+                    let hidden = foreground_fullscreen_at(left, b, host_pid);
                     (x, y, if hidden { 0 } else { w }, h)
                 }
                 None => (park_x, park_y, 0, 0),
@@ -358,13 +361,21 @@ fn work_area_at(x: i32, y: i32) -> RECT {
 
 /// 前台窗口是否铺满光标所在显示器。最大化窗口不算(任务栏仍在),
 /// 这样 F11/独占全屏游戏不弹候选窗,普通最大化应用照常输入。
-fn foreground_fullscreen_at(x: i32, y: i32) -> bool {
+/// `host_pid` 是当前输入会话的宿主进程:它自己的全屏窗口仍要显示候选窗。
+fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.is_invalid()
         || !unsafe { IsWindowVisible(foreground) }.as_bool()
         || unsafe { IsZoomed(foreground) }.as_bool()
     {
         return false;
+    }
+    if host_pid != 0 {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(foreground, Some(&mut pid)) };
+        if pid == host_pid {
+            return false;
+        }
     }
     let mut rect = RECT::default();
     if unsafe { GetWindowRect(foreground, &mut rect) }.is_err() {

@@ -219,10 +219,16 @@ impl TextService {
 
     fn mapped_key(&self, vk: u32, scan: u32) -> Option<lueying_protocol::KeyMsg> {
         // 安全桌面里全部直通:密码/凭据不能进入组句、学习或候选窗。
-        if self.secure.get() || keys::command_mods() || keys::caps_on() {
+        // Alt 组合一律归应用;Ctrl 只放行按音节编辑的四个键,其余快捷键
+        // (Ctrl+C/V/A/Z 等)不经过输入法。
+        if self.secure.get() || keys::caps_on() || keys::alt_down() {
             return None;
         }
-        keys::vk_to_key(vk, scan, keys::shift_down())
+        let ctrl = keys::ctrl_down();
+        if ctrl && !keys::is_segment_key(vk) {
+            return None;
+        }
+        keys::vk_to_key(vk, scan, keys::shift_down(), ctrl)
     }
 
     /// 发请求(懒连接 + 退避);连上时先 Hello。

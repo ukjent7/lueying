@@ -19,9 +19,22 @@ pub(crate) fn caps_on() -> bool {
     unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 != 0 }
 }
 
+pub(crate) fn ctrl_down() -> bool {
+    unsafe { GetKeyState(VK_CONTROL.0 as i32) < 0 }
+}
+
+pub(crate) fn alt_down() -> bool {
+    unsafe { GetKeyState(VK_MENU.0 as i32) < 0 }
+}
+
 /// 带 Ctrl/Alt 的组合键归应用(快捷键)。
 pub(crate) fn command_mods() -> bool {
-    unsafe { GetKeyState(VK_CONTROL.0 as i32) < 0 || GetKeyState(VK_MENU.0 as i32) < 0 }
+    ctrl_down() || alt_down()
+}
+
+/// 组合中由 Ctrl 改写的编辑键。其余 Ctrl 组合仍归应用。
+pub(crate) fn is_segment_key(vk: u32) -> bool {
+    matches!(vk, 0x08 | 0x2E | 0x25 | 0x27)
 }
 
 pub(crate) fn is_shift(vk: u32) -> bool {
@@ -38,19 +51,25 @@ pub(crate) fn is_caps(vk: u32) -> bool {
 /// 布局的字母。`scan` 来自按键消息,`ToUnicodeEx` 需要它区分同一 VK 的
 /// 不同物理键。布局查询失败时退回 US 映射,输入法仍可用。
 #[allow(clippy::match_same_arms)]
-pub(crate) fn vk_to_key(vk: u32, scan: u32, shift: bool) -> Option<KeyMsg> {
+pub(crate) fn vk_to_key(vk: u32, scan: u32, shift: bool, ctrl: bool) -> Option<KeyMsg> {
     let key = match vk {
         // 小键盘数字同样可以选词;主键区数字走布局翻译,Shift 时是符号。
         0x60..=0x69 => KeyMsg::Digit(vk as u8 - 0x60),
         0x20 => KeyMsg::Space,
         0x0D => KeyMsg::Enter,
         0x1B => KeyMsg::Esc,
+        // 组合中 Ctrl+Backspace/Delete 按音节删,Ctrl+左右按音节移动;
+        // 没有组合时引擎回直通,应用仍拿到原来的快捷键。
+        0x08 if ctrl => KeyMsg::SegmentBackspace,
         0x08 => KeyMsg::Backspace,
+        0x2E if ctrl => KeyMsg::SegmentDelete,
         // Shift+Delete 删除当前候选的学习记录,与微软拼音一致。
         0x2E if shift => KeyMsg::DeleteCandidate,
         0x2E => KeyMsg::Delete,
+        0x25 if ctrl => KeyMsg::SegmentLeft,
         0x25 => KeyMsg::Left,
         0x26 => KeyMsg::Up,
+        0x27 if ctrl => KeyMsg::SegmentRight,
         0x27 => KeyMsg::Right,
         0x28 => KeyMsg::Down,
         0x24 => KeyMsg::Home,

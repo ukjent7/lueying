@@ -150,6 +150,12 @@ impl Dictionary {
                 continue;
             };
             let word = word.trim();
+            // 词库统一存规范形,查询用 `lue`/`nue` 也能命中 `lve`/`nve` 词条。
+            let key = key
+                .split('\'')
+                .map(syllables::canonical)
+                .collect::<Vec<_>>()
+                .join("'");
             if !is_hanzi(word)
                 || key.is_empty()
                 || word.chars().count() != key.split('\'').count()
@@ -158,13 +164,13 @@ impl Dictionary {
                 bad += 1;
                 continue;
             }
-            let ident = (word.to_string(), key.to_string());
+            let ident = (word.to_string(), key.clone());
             if let Some(&at) = seen.get(&ident) {
                 raw[at].2 = raw[at].2.max(freq);
                 continue;
             }
             seen.insert(ident, raw.len());
-            raw.push((word.to_string(), key.to_string(), freq));
+            raw.push((word.to_string(), key, freq));
         }
         raw.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)));
         // pack 产出的字节一定合法,unwrap 安全。
@@ -219,15 +225,20 @@ impl Dictionary {
                 };
                 let (count, data_len, sig_len) = (n(0), n(1), n(2));
                 let recs_at = HEAD;
-                let data_at = recs_at + count * REC;
-                let sigs_at = data_at + data_len;
-                let end = sigs_at + sig_len * SIG;
-                (end <= bytes.len()).then_some((
-                    count,
-                    recs_at..data_at,
-                    data_at..sigs_at,
-                    sigs_at..end,
-                ))
+                // 32 位宿主上 count/sig_len 来自文件,乘法可能回绕;损坏的头
+                // 必须整份拒绝,不能靠回绕后的区间碰巧通过长度检查。
+                let layout = || {
+                    let data_at = HEAD.checked_add(count.checked_mul(REC)?)?;
+                    let sigs_at = data_at.checked_add(data_len)?;
+                    let end = sigs_at.checked_add(sig_len.checked_mul(SIG)?)?;
+                    (end <= bytes.len()).then_some((
+                        count,
+                        recs_at..data_at,
+                        data_at..sigs_at,
+                        sigs_at..end,
+                    ))
+                };
+                layout()
             }
         };
         let (count, recs, data, sigs) = layout?;

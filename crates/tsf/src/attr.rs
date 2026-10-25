@@ -148,9 +148,17 @@ impl IEnumTfDisplayAttributeInfo_Impl for AttributeEnum_Impl {
     }
 
     fn Skip(&self, ulcount: u32) -> Result<()> {
-        if ulcount >= 1 {
-            self.done.set(true);
+        // 只有一个元素:跳过 0 个是成功且不改变位置;要跳的比剩下的多,
+        // 走到末尾并回 S_FALSE。把 Skip(0) 当成取完会让后续 Next 全部空转。
+        if ulcount == 0 {
+            return Ok(());
         }
-        Ok(())
+        let remaining = usize::from(!self.done.get());
+        self.done.set(true);
+        if ulcount as usize <= remaining {
+            Ok(())
+        } else {
+            Err(Error::from(S_FALSE))
+        }
     }
 }

@@ -417,6 +417,12 @@ fn check_one(
                 return Err(format!("组合 {raw:?} ≠ {w:?}"));
             }
         }
+        Check::Cursor(want) => {
+            let cursor = engine.composition().map(|c| c.cursor);
+            if cursor != Some(*want) {
+                return Err(format!("光标 {cursor:?} ≠ {want:?}"));
+            }
+        }
         Check::NoComp => {
             if engine.composition().is_some() {
                 return Err("组合应已清空".into());

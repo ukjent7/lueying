@@ -65,6 +65,11 @@ mod imp {
         }
         std::fs::write(payload.join("version.txt"), env!("CARGO_PKG_VERSION"))
             .map_err(|e| format!("写 version.txt: {e}"))?;
+        // 发布包里的许可子目录必须一起进安装目录;这里用一份样例覆盖递归复制。
+        let licenses = payload.join("licenses");
+        std::fs::create_dir_all(&licenses).map_err(|e| format!("创建 licenses: {e}"))?;
+        std::fs::write(licenses.join("README.md"), "第三方许可见此处。\n")
+            .map_err(|e| format!("写 licenses/README.md: {e}"))?;
 
         let target = program.join("lueying");
         let result = (|| -> Result<String, String> {
@@ -92,6 +97,7 @@ mod imp {
                 "lueying-server.exe",
                 "lueying-settings.exe",
                 "version.txt",
+                "licenses/README.md",
             ] {
                 if !target.join(name).exists() {
                     return Err(format!("安装目录缺少 {name}"));

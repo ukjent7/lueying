@@ -359,31 +359,37 @@ fn report_caret(
 fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i32, i32, i32)> {
     let composition = live_composition(shared, context)?;
     let range = unsafe { composition.GetRange().ok()? };
+    // `GetRange` 可能返回组合内部持有的活范围;先克隆再折叠,避免把组句
+    // 本身收到串尾,后续内联文本写入就会丢掉整段。
+    let caret = unsafe { range.Clone().ok()? };
     // 量光标所在的串尾,而不是整段组句的左端:长拼音时候选窗要跟着光标走。
-    unsafe { range.Collapse(ec, TF_ANCHOR_END).ok()? };
-    let view: ITfContextView = unsafe { context.GetActiveView().ok()? };
-    let mut rect = RECT::default();
-    let mut clipped = windows::core::BOOL::default();
-    if unsafe { view.GetTextExt(ec, &range, &mut rect, &mut clipped) }.is_ok()
-        && rect.right > rect.left
-        && rect.bottom > rect.top
-    {
-        to_physical(&view, &mut rect);
-        if on_screen(&rect) {
-            return Some((rect.left, rect.top, rect.right, rect.bottom));
-        }
-    }
-    // 有些宿主对折叠到串尾的 range 回退化矩形,但对整个组合串能给出有效行框。
-    // 取行框右端作为候选窗锚点,仍贴着光标所在行,比直接退回视图矩形准确。
-    if let Ok(full) = unsafe { composition.GetRange() } {
-        let mut line = RECT::default();
-        if unsafe { view.GetTextExt(ec, &full, &mut line, &mut clipped) }.is_ok()
-            && line.right > line.left
-            && line.bottom > line.top
+    unsafe { caret.Collapse(ec, TF_ANCHOR_END).ok()? };
+    // 少数宿主不实现 GetActiveView;取不到视图仍可退回原生插入符。
+    let view = unsafe { context.GetActiveView().ok() };
+    if let Some(view) = view.as_ref() {
+        let mut rect = RECT::default();
+        let mut clipped = windows::core::BOOL::default();
+        if unsafe { view.GetTextExt(ec, &caret, &mut rect, &mut clipped) }.is_ok()
+            && rect.right > rect.left
+            && rect.bottom > rect.top
         {
-            to_physical(&view, &mut line);
-            if on_screen(&line) {
-                return Some((line.right, line.top, line.right, line.bottom));
+            to_physical(view, &mut rect);
+            if on_screen(&rect) {
+                return Some((rect.left, rect.top, rect.right, rect.bottom));
+            }
+        }
+        // 有些宿主对折叠到串尾的 range 回退化矩形,但对整个组合串能给出有效行框。
+        // 取行框右端作为候选窗锚点,仍贴着光标所在行,比直接退回视图矩形准确。
+        if let Ok(full) = unsafe { composition.GetRange() } {
+            let mut line = RECT::default();
+            if unsafe { view.GetTextExt(ec, &full, &mut line, &mut clipped) }.is_ok()
+                && line.right > line.left
+                && line.bottom > line.top
+            {
+                to_physical(view, &mut line);
+                if on_screen(&line) {
+                    return Some((line.right, line.top, line.right, line.bottom));
+                }
             }
         }
     }
@@ -393,11 +399,12 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
         return Some(rect);
     }
     // 最后退回视图矩形,至少让候选窗出现在编辑区底部,而不是完全消失。
+    let view = view.as_ref()?;
     let mut view_rect = unsafe { view.GetScreenExt() }.ok()?;
     if view_rect.right <= view_rect.left || view_rect.bottom <= view_rect.top {
         return None;
     }
-    to_physical(&view, &mut view_rect);
+    to_physical(view, &mut view_rect);
     on_screen(&view_rect).then_some((
         view_rect.left,
         view_rect.bottom,

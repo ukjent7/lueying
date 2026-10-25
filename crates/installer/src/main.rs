@@ -434,18 +434,28 @@ mod imp {
         if source == target {
             return Ok(());
         }
+        Self::copy_tree(source, target, true)
+    }
+
+    /// 递归复制发布目录。`licenses/` 这类子目录要随二进制一起进安装目录,
+    /// 否则第三方许可在分发时丢失。顶层跳过 TSF DLL,它们单独按版本名复制。
+    fn copy_tree(source: &Path, target: &Path, top: bool) -> Result<(), String> {
         std::fs::create_dir_all(target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
         let entries = std::fs::read_dir(source)
             .map_err(|e| format!("读取安装包目录 {}: {e}", source.display()))?;
         for entry in entries {
             let entry = entry.map_err(|e| format!("读取安装包文件: {e}"))?;
             let path = entry.path();
+            if path.is_dir() {
+                Self::copy_tree(&path, &target.join(entry.file_name()), false)?;
+                continue;
+            }
             if !path.is_file() {
                 continue;
             }
             // TSF DLL 以版本号命名单独复制,避免覆盖正在被应用加载的旧文件。
             let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-            if name.starts_with("lueying_tsf") && name.ends_with(".dll") {
+            if top && name.starts_with("lueying_tsf") && name.ends_with(".dll") {
                 continue;
             }
             let destination = target.join(entry.file_name());

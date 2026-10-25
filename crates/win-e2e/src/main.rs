@@ -299,6 +299,24 @@ mod imp {
         Ok(format!("## 宿主原样落定\n\nPASS,文本 `{text}`"))
     }
 
+    /// 组合中 Ctrl+Backspace 删除一个音节,再空格上屏剩下的候选。
+    fn check_segment_edit(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
+        type_text("nihao")?;
+        pump_for(Duration::from_millis(250));
+        chord(0x11, 0x08)?; // Ctrl+Backspace
+        pump_for(Duration::from_millis(250));
+        tap(0x20)?; // 空格
+        pump_for(Duration::from_millis(500));
+        if composing(thread_mgr)? {
+            return Err("Ctrl+Backspace 后组合没有在空格上屏时结束".into());
+        }
+        let text = edit_text(edit);
+        if !text.ends_with('你') {
+            return Err(format!("Ctrl+Backspace 后文本 `{text}` 不以「你」结尾"));
+        }
+        Ok(format!("## 组合按音节删除\n\nPASS,文本 `{text}`"))
+    }
+
     fn real_run() -> Result<(String, String), String> {
         // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
         let suffix = format!("e2e{}", std::process::id());
@@ -570,10 +588,14 @@ mod imp {
             // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
             //    拼音,也不改选候选;组合与 UI 元素都必须结束。
             let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
+            // 组合里 Ctrl+Backspace 由输入法按音节删除,不能漏给宿主去改文档。
+            let segment_note = check_segment_edit(edit, &thread_mgr)?;
             let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
             Ok((
                 text,
-                format!("{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}"),
+                format!(
+                    "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}"
+                ),
             ))
         })();
 

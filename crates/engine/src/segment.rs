@@ -4,7 +4,7 @@
 //! 上的路径,不再枚举成一条条完整切分,避免组合爆炸与路径上限漏解。
 //! 隔音符只作硬边界,不产音节。
 
-use lueying_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, is_syllable};
+use lueying_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, canonical, is_syllable};
 
 /// 音节图上的一个单元。`abbrev` 为真表示简拼。
 #[derive(Clone, Debug)]
@@ -34,7 +34,9 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
                 && is_syllable(s)
             {
                 out[pos].push(Syll {
-                    text: s.to_string(),
+                    // `lue`/`nue` 落到词库使用的 `lve`/`nve`;span 仍指原文,
+                    // 显示与回删不受影响。
+                    text: canonical(s).to_string(),
                     abbrev: false,
                     span: (pos, pos + len),
                 });

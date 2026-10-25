@@ -1,6 +1,7 @@
 //! 合法拼音音节全集与简拼、模糊音工具。
 //!
-//! 约定:全部 ASCII,ü 一律写作 `v`(`lv`/`nv`/`lve`/`nve`),与白霜词库的注音习惯一致。
+//! 约定:全部 ASCII,词库与学习键里的 ü 一律写作 `v`(`lv`/`nv`/`lve`/`nve`),
+//! 与白霜词库的注音习惯一致;输入另接受 `lue`/`nue` 作为 `lve`/`nve` 的别名。
 
 use std::collections::HashSet;
 use std::sync::OnceLock;
@@ -79,9 +80,19 @@ fn set() -> &'static HashSet<&'static str> {
     SET.get_or_init(|| SYLLABLES.iter().copied().collect())
 }
 
-/// 是否合法全拼音节。
+/// ü 的常见输入别名。词库与学习键统一用 `v`,但用户习惯把 ü 打成 `ue`,
+/// 两种写法要落到同一个音节上。
+pub fn canonical(s: &str) -> &str {
+    match s {
+        "lue" => "lve",
+        "nue" => "nve",
+        _ => s,
+    }
+}
+
+/// 是否合法全拼音节。`lue`/`nue` 作为 `lve`/`nve` 的别名同样合法。
 pub fn is_syllable(s: &str) -> bool {
-    set().contains(&s)
+    set().contains(&s) || matches!(s, "lue" | "nue")
 }
 
 /// 单字母是否可作简拼。
@@ -235,6 +246,7 @@ fn final_variants(final_part: &str, fuzzy: &Fuzzy) -> Vec<(String, u8)> {
 /// 一个音节的模糊等价音节、改动处数与命中的组。自身在首位(处数 0)。
 /// 简拼串原样返回。声母、韵母各算一处:改声母或改韵母为 1,两者都改为 2。
 pub fn expansions_scored(s: &str, fuzzy: &Fuzzy) -> Vec<(String, usize, u8)> {
+    let s = canonical(s);
     if !is_syllable(s) || fuzzy.is_off() {
         return vec![(s.to_string(), 0, 0)];
     }

@@ -243,10 +243,8 @@ impl ITfCandidateListUIElementBehavior_Impl for CandidateElement_Impl {
                 index,
             },
         ) {
-            let mut snapshot = self.shared.ui_snapshot.borrow_mut();
-            snapshot.candidates.clone_from(&reply.candidates);
-            snapshot.highlight = reply.highlight;
-            snapshot.page_size = reply.page_size.max(1);
+            // 把高亮对应的内联预编辑也写回文档,候选列表与编辑框保持同一项。
+            apply_reply(&self.shared, &self.client, &reply);
         }
         Ok(())
     }
