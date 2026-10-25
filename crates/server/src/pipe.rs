@@ -130,11 +130,12 @@ fn serve(file: File, state: Arc<State>) {
             .ok()
             .map(|req| {
                 // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
-                catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req)))
-                    .unwrap_or_else(|_| {
+                catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
+                    |_| {
                         eprintln!("请求处理 panic,已回中性应答");
                         crate::imp::neutral(&state)
-                    })
+                    },
+                )
             })
             .unwrap_or_else(|| crate::imp::neutral(&state));
         let mut out = match serde_json::to_string(&reply) {

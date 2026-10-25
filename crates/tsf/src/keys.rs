@@ -84,16 +84,7 @@ fn layout_key(vk: u32, scan: u32) -> Result<Option<KeyMsg>, ()> {
     // bit 2:不修改内核键盘状态。查字符时不能吃掉待组合的死键或连字,
     // 否则应用随后的 TranslateMessage 会得到错误结果。
     const NO_STATE_CHANGE: u32 = 0x4;
-    let count = unsafe {
-        ToUnicodeEx(
-            vk,
-            scan,
-            &state,
-            &mut buf,
-            NO_STATE_CHANGE,
-            Some(layout),
-        )
-    };
+    let count = unsafe { ToUnicodeEx(vk, scan, &state, &mut buf, NO_STATE_CHANGE, Some(layout)) };
     // 负数是死键,0 是无可输入字符,多字符是连字;都交给应用。
     if count != 1 {
         return Ok(None);
