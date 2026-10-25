@@ -7,3 +7,4 @@
 - 剪贴板:替代 Win+V。
 - 截图:对标微信桌面版的截图流程,图片处理参考 Pi。
 - OCR:对标 LunaTranslator。
+- macOS 版:GUI 美学与动效参考 macOS 26–27 的 Liquid Glass,但以输入法延迟和资源占用为硬约束;笔记见 `docs/macos-liquid-glass.md`。
