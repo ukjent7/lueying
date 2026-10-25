@@ -159,6 +159,44 @@ pub fn run(report: &mut String) -> usize {
         format!("显示 {shown:?} → 落定 {finalized:?}"),
     );
 
+    // 长句候选:默认一页五条里最多四条整句,最高分前缀词固定第二位,
+    // 方便逐段上屏的同时不把正确整句挤到页外。
+    let mut e = engine();
+    type_into(&mut e, "jintiantianqi");
+    let detailed = e.candidates_detailed();
+    let available = detailed.iter().filter(|c| c.full).count();
+    let first_page = detailed.iter().take(5).filter(|c| c.full).count();
+    let word_second = detailed.get(1).is_some_and(|c| !c.full);
+    push(
+        &mut checks,
+        "整句备选占满候选首页",
+        available >= 4 && first_page == 4 && word_second,
+        format!("整句 {available} 条,首页 {first_page} 条,第二位前缀词={word_second}"),
+    );
+
+    // 分段上屏学到的前缀词不能顶掉整句首选:选过一次「今天」后重打整句,
+    // 首位仍应是整句候选,「今天」留在前缀词位置。
+    let mut e = engine();
+    type_into(&mut e, "jintiantianqi");
+    let slot = e.candidates().iter().position(|c| c == "今天");
+    if let Some(digit) = slot.and_then(|index| u8::try_from(index + 1).ok()) {
+        e.process(Key::Digit(digit));
+    }
+    e.process(Key::Esc);
+    type_into(&mut e, "jintiantianqi");
+    let detailed = e.candidates_detailed();
+    let top_is_sentence = detailed.first().is_some_and(|c| c.full && c.text != "今天");
+    let prefix_kept = detailed.iter().any(|c| c.text == "今天" && !c.full);
+    push(
+        &mut checks,
+        "学过的前缀词不顶掉整句",
+        slot.is_some() && top_is_sentence && prefix_kept,
+        format!(
+            "首位 {:?},仍保留前缀={prefix_kept}",
+            detailed.first().map(|c| (c.text.as_str(), c.full))
+        ),
+    );
+
     // 宿主自绘候选时按全局序号移动高亮(TSF 的 SetSelection):
     // 页号必须跟着高亮走,GetCurrentPage 才能把候选画到正确的页。
     let mut e = engine();

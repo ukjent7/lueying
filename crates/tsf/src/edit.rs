@@ -366,6 +366,17 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
     {
         return Some((rect.left, rect.top, rect.right, rect.bottom));
     }
+    // 有些宿主对折叠到串尾的 range 回退化矩形,但对整个组合串能给出有效行框。
+    // 取行框右端作为候选窗锚点,仍贴着光标所在行,比直接退回视图矩形准确。
+    if let Ok(full) = unsafe { composition.GetRange() } {
+        let mut line = RECT::default();
+        if unsafe { view.GetTextExt(ec, &full, &mut line, &mut clipped) }.is_ok()
+            && line.right > line.left
+            && line.bottom > line.top
+        {
+            return Some((line.right, line.top, line.right, line.bottom));
+        }
+    }
     // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。退回视图矩形,
     // 至少让候选窗出现在编辑区底部,而不是因为拿不到光标就完全消失。
     let view_rect = unsafe { view.GetScreenExt() }.ok()?;

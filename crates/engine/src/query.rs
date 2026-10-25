@@ -837,7 +837,12 @@ fn build_exact(
         cands.push(top);
     }
     let mut words = words.into_iter();
-    cands.extend(words.next());
+    // 第二位的分段入口不能与首选整句重复;重复项留着也会被去重掉。
+    if let Some(top_text) = cands.first().map(|c| c.text.clone())
+        && let Some(prefix) = words.find(|w| w.text != top_text)
+    {
+        cands.push(prefix);
+    }
     cands.extend(rest.by_ref().take(3));
     cands.extend(words.next());
     cands.extend(rest);

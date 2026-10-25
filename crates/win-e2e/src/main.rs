@@ -28,11 +28,12 @@ mod imp {
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCandidateListUIElement,
         ITfCandidateListUIElementBehavior, ITfCompositionView, ITfContextComposition,
-        ITfInputProcessorProfileMgr,
+        ITfFnGetPreferredTouchKeyboardLayout, ITfInputProcessorProfileMgr,
         ITfInputProcessorProfiles, ITfIntegratableCandidateListUIElement, ITfSource, ITfThreadMgr,
         ITfUIElementMgr, ITfUIElementSink, ITfUIElementSink_Impl, STYLE_ACTIVE_SELECTION,
         TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE,
-        TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
+        TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR, TKBLT_OPTIMIZED,
+        TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN, TKBLayoutType,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
@@ -228,6 +229,30 @@ mod imp {
             paging = format!(",{pages} 页");
         }
         Ok(format!("候选 UI 元素:{count} 条{paging},首条 `{first}`"))
+    }
+
+    /// 触屏键盘经 Function Provider 查询首选布局;返回简体拼音优化布局。
+    fn check_touch_layout(thread_mgr: &ITfThreadMgr) -> Result<String, String> {
+        let provider = unsafe { thread_mgr.GetFunctionProvider(&CLSID_IME) }
+            .map_err(|e| format!("GetFunctionProvider: {e}"))?;
+        let unknown = unsafe {
+            provider.GetFunction(
+                std::ptr::null(),
+                &ITfFnGetPreferredTouchKeyboardLayout::IID,
+            )
+        }
+        .map_err(|e| format!("GetFunction(触屏布局): {e}"))?;
+        let layout: ITfFnGetPreferredTouchKeyboardLayout = unknown
+            .cast()
+            .map_err(|e| format!("cast ITfFnGetPreferredTouchKeyboardLayout: {e}"))?;
+        let mut kind = TKBLayoutType::default();
+        let mut id = 0u16;
+        unsafe { layout.GetLayout(&mut kind, (&mut id) as *mut u16 as *const u16) }
+            .map_err(|e| format!("GetLayout: {e}"))?;
+        if kind != TKBLT_OPTIMIZED || id != TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN as u16 {
+            return Err(format!("触屏布局 kind={kind:?} id={id},应为简体拼音优化布局"));
+        }
+        Ok(format!("## 触屏键盘\n\nPASS,layout={id}"))
     }
 
     /// 搜索框按 Enter 时宿主调用原样落定:提交眼前显示的汉字,组合与 UI 元素结束。
@@ -478,6 +503,7 @@ mod imp {
             // 激活 profile 到服务实例挂上焦点是异步的;给 TSF 一点消息泵时间。
             pump_for(Duration::from_millis(400));
             report_tsf_focus();
+            let touch_note = check_touch_layout(&thread_mgr)?;
             // SendInput 发给前台窗口;CI 里窗口即使已 Show,也可能没抢到前台。
             let mut foreground = unsafe { GetForegroundWindow() };
             if foreground != hwnd {
@@ -545,7 +571,10 @@ mod imp {
             //    拼音,也不改选候选;组合与 UI 元素都必须结束。
             let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
             let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
-            Ok((text, format!("{latency}\n\n{ui_note}\n\n{finalize_note}")))
+            Ok((
+                text,
+                format!("{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}"),
+            ))
         })();
 
         // 6. 清理(尽力)。先停 TSF 再杀 Server:TIP 的 Deactivate 还会发
