@@ -145,6 +145,16 @@ fn serve(file: File, state: Arc<State>) {
                 .insert(*hello_session, conn);
             session = Some(*hello_session);
         }
+        // 正常下线立即解除连接绑定;旧连接的断开回调不能再清理已重连的会话。
+        if let Some(Request::Goodbye {
+            session: gone_session,
+        }) = request.as_ref()
+        {
+            let mut conns = state.conns.lock().unwrap_or_else(|p| p.into_inner());
+            if conns.get(gone_session) == Some(&conn) {
+                conns.remove(gone_session);
+            }
+        }
         let reply = request
             .map(|req| {
                 // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。

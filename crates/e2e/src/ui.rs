@@ -10,11 +10,13 @@
 //! 8. 组合中按 Shift+字母 → 整串落定再上屏大写,不能把大写插进拼音。
 //! 9. 失焦/别的窗口切模式时只落定前缀 → 剩余音节必须继续按首选上屏。
 //! 10. 部分选词后光标跑到剩余拼音前面 → 继续输入必须接在末尾。
+//! 11. 长句超过组合上限后被截断或吞键 → 常见长句要完整保留,到上限时先落定
+//!     旧组合再用新键起组。
 
 use std::sync::Arc;
 
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Event, Key};
+use lueying_engine::{Config, Engine, Event, Key, MAX_RAW};
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
@@ -433,6 +435,40 @@ pub fn run(report: &mut String) -> usize {
         "部分选词后继续输入接在末尾",
         slot.is_some() && before.as_deref() == Some("tianqi") && after.as_deref() == Some("tianqih"),
         format!("候选位 {slot:?},选后 {before:?},再输入 h 后 {after:?}"),
+    );
+
+    // 长句不能被 40 字母的旧上限截断:45 个字母的常见句子要完整留在组合里,
+    // 否则末尾拼音直接丢失,正确整句候选永远出不来。
+    let mut e = engine();
+    let long = "gaodewohaihuaiyishibushizijidacuoguanjiancile";
+    type_into(&mut e, long);
+    let kept = e.composition().map(|comp| comp.raw.clone()).unwrap_or_default();
+    push(
+        &mut checks,
+        "长句完整保留在组合中",
+        kept == long,
+        format!("输入 {} 字母,组合保留 {} 字母", long.len(), kept.len()),
+    );
+
+    // 到达上限后继续按键:先落定旧组合,再用新键起组,不能把键吞掉。
+    let mut e = engine();
+    let full: String = "a".repeat(MAX_RAW);
+    type_into(&mut e, &full);
+    let at_limit = e.composition().map(|comp| comp.raw.len()).unwrap_or(0);
+    let events = e.process(Key::Letter('a'));
+    let committed = events.iter().any(|event| matches!(event, Event::Commit(_)));
+    let restart = e
+        .composition()
+        .map(|comp| (comp.raw.as_str(), comp.cursor))
+        .unwrap_or_default();
+    push(
+        &mut checks,
+        "组合上限先落定再起新组",
+        at_limit == MAX_RAW
+            && committed
+            && restart == ("a", 1)
+            && !events.iter().any(|event| matches!(event, Event::Passthrough(_))),
+        format!("上限 {at_limit},上屏 {committed},新组合 {restart:?}"),
     );
 
     report.push_str("\n## 候选窗交互\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

@@ -466,7 +466,8 @@ impl Querier<'_> {
         if self.fuzzy.is_off() {
             return false;
         }
-        self.expanded_keys(sylls).iter().any(|(key, _, _)| {
+        let keys = self.expanded_keys(sylls);
+        keys.iter().any(|(key, _, _)| {
             let mut prefix = key.clone();
             prefix.push('\'');
             self.dict.has_key_prefix(&prefix)

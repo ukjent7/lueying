@@ -22,7 +22,9 @@ pub use user::UserDict;
 pub type SharedUser = Arc<RwLock<UserDict>>;
 
 /// 组合缓冲上限(字母与隔音符总数)。
-pub const MAX_RAW: usize = 40;
+/// 单次组合的原始输入上限。整句输入要能覆盖常见长句(约 26 个汉字);
+/// 超过上限先落定当前组合,再用新按键起组,不能静默吞键。
+pub const MAX_RAW: usize = 80;
 /// 已上屏文本保留的字符数(重排与后续上下文模型使用)。
 pub const CONTEXT_KEEP: usize = 128;
 
@@ -493,14 +495,7 @@ impl Engine {
     fn process_idle(&mut self, key: Key) -> Vec<Event> {
         match key {
             Key::Letter(c) if c.is_ascii_lowercase() => {
-                self.comp = Some(Composition {
-                    raw: c.to_string(),
-                    cursor: 1,
-                    display: String::new(),
-                    seg_spans: Vec::new(),
-                });
-                self.comp_committed = false;
-                self.recompute();
+                self.begin_composition(c);
                 Vec::new()
             }
             Key::Punct(p) => self.punct_events(p),
@@ -508,12 +503,29 @@ impl Engine {
         }
     }
 
+    fn begin_composition(&mut self, c: char) {
+        self.comp = Some(Composition {
+            raw: c.to_string(),
+            cursor: 1,
+            display: String::new(),
+            seg_spans: Vec::new(),
+        });
+        self.comp_committed = false;
+        self.recompute();
+    }
+
     fn process_composing(&mut self, key: Key) -> Vec<Event> {
         match key {
             Key::Letter(c) if c.is_ascii_lowercase() => {
-                if let Some(comp) = self.comp.as_mut()
-                    && comp.raw.len() < MAX_RAW
-                {
+                if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
+                    // 组合到达上限:先把当前输入按首选落定,再用这一键起新组合。
+                    // 直接丢弃会让长句末尾的按键无声消失,文档与用户预期错位。
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    self.begin_composition(c);
+                    return events;
+                }
+                if let Some(comp) = self.comp.as_mut() {
                     comp.raw.insert(comp.cursor, c);
                     comp.cursor += 1;
                 }
@@ -761,7 +773,10 @@ impl Engine {
         } else {
             false
         };
-        if ok && let Some(comp) = self.comp.as_mut() {
+        if ok
+            && let Some(comp) = self.comp.as_mut()
+            && comp.raw.len() < MAX_RAW
+        {
             comp.raw.insert(comp.cursor, '\'');
             comp.cursor += 1;
             self.recompute();

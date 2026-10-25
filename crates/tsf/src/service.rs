@@ -463,6 +463,9 @@ impl TextService_Impl {
 
         self.client_id.set(tid);
         self.shared.tid.set(tid);
+        // 先记下线程管理器,激活阶段的布局监听才有目标;否则要等第一次
+        // 焦点回调才挂上,首次输入时滚动宿主不会跟随光标。
+        *self.thread_mgr.borrow_mut() = Some(thread_mgr.clone());
         *self.shared.thread_mgr.borrow_mut() = Some(thread_mgr.clone());
         *self.shared.ui_mgr.borrow_mut() = thread_mgr.cast::<ITfUIElementMgr>().ok();
         // Chromium/QQNT 会检查本线程是否登记了 Function Provider;登记后
@@ -507,7 +510,6 @@ impl TextService_Impl {
         {
             self.langbar.borrow_mut().replace(button);
         }
-        *self.thread_mgr.borrow_mut() = Some(thread_mgr);
         log(&format!("激活 tid={tid} session={}", self.shared.session));
         Ok(())
     }

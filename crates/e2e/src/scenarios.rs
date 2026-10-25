@@ -474,11 +474,13 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
-            "缓冲上限40",
+            "长输入不截断",
             false,
             vec![stage(
-                l(&"a".repeat(41)),
-                vec![Check::Raw("a".repeat(40)), Check::Cands(vec![])],
+                l("gaodewohaihuaiyishibushizijidacuoguanjiancile"),
+                vec![Check::Raw(
+                    "gaodewohaihuaiyishibushizijidacuoguanjiancile".into(),
+                )],
             )],
         ),
         s(

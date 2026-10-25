@@ -8,7 +8,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 use lueying_protocol::Request;
-use windows::Win32::Foundation::{E_FAIL, RECT};
+use windows::Win32::Foundation::{E_FAIL, POINT, RECT};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
@@ -405,11 +406,31 @@ fn gui_caret() -> Option<(i32, i32, i32, i32)> {
         return None;
     }
     let rect = info.rcCaret;
-    (rect.right > rect.left && rect.bottom > rect.top).then_some((
-        rect.left,
-        rect.top,
-        rect.right,
-        rect.bottom,
+    if rect.right <= rect.left || rect.bottom <= rect.top {
+        return None;
+    }
+    // GUITHREADINFO.rcCaret 是 hwndCaret 的客户区坐标,不是屏幕坐标;
+    // 不换算会把候选窗放到窗口左上角。
+    let mut top_left = POINT {
+        x: rect.left,
+        y: rect.top,
+    };
+    let mut bottom_right = POINT {
+        x: rect.right,
+        y: rect.bottom,
+    };
+    unsafe {
+        if !ClientToScreen(info.hwndCaret, &mut top_left).as_bool()
+            || !ClientToScreen(info.hwndCaret, &mut bottom_right).as_bool()
+        {
+            return None;
+        }
+    }
+    Some((
+        top_left.x,
+        top_left.y,
+        bottom_right.x,
+        bottom_right.y,
     ))
 }
 
