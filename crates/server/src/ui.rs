@@ -194,7 +194,9 @@ impl CandidatePanel {
                     let mut x = left;
                     let mut y = b;
                     if y + h > work.bottom {
-                        y = (t.max(0) - h).max(work.top);
+                        // 副屏可以位于主屏上方,`top` 是负数;按光标所在屏的
+                        // 工作区上沿夹取,不能直接 `.max(0)`。
+                        y = (t - h).max(work.top);
                     }
                     x = x.clamp(work.left, (work.right - w).max(work.left));
                     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。

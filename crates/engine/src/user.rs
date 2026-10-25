@@ -42,6 +42,9 @@ struct UserEntry {
 #[derive(Default)]
 pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
+    /// (音节数, 首字母) → 键。查询只扫同形用户词,用户词库到达上限后
+    /// 也不会退化成每个音节组合线性扫全表;首字母的模糊等价由调用方展开。
+    by_shape: HashMap<(usize, char), Vec<String>>,
     /// 词条总数,避免每次学习都扫全表。
     count: usize,
     /// 各模糊组的连续选择次数,与词条一起持久化。
@@ -57,6 +60,10 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+fn shape(key: &str) -> (usize, char) {
+    (key.split('\'').count(), key.chars().next().unwrap_or('\0'))
+}
+
 impl UserDict {
     pub fn new() -> Self {
         Self::default()
@@ -70,6 +77,7 @@ impl UserDict {
     /// 清空全部学习结果(设置窗的「清空用户词库」)。
     pub fn clear(&mut self) {
         self.map.clear();
+        self.by_shape.clear();
         self.count = 0;
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
@@ -135,6 +143,7 @@ impl UserDict {
     /// 记录一次「在 key 下选了 word」。
     pub fn learn(&mut self, key: &str, word: &str) {
         let ts = now();
+        let new_key = !self.map.contains_key(key);
         let entries = self.map.entry(key.to_string()).or_default();
         match entries.iter_mut().find(|e| e.word == word) {
             Some(e) => {
@@ -153,6 +162,12 @@ impl UserDict {
                 });
                 self.count += 1;
             }
+        }
+        if new_key {
+            self.by_shape
+                .entry(shape(key))
+                .or_default()
+                .push(key.to_string());
         }
         if self.count > MAX_ENTRIES {
             self.prune();
@@ -176,8 +191,18 @@ impl UserDict {
                 .then(a.1.word.cmp(&b.1.word))
         });
         all.truncate(keep);
+        self.by_shape.clear();
         for (key, entry) in all {
+            self.by_shape
+                .entry(shape(&key))
+                .or_default()
+                .push(key.clone());
             self.map.entry(key).or_default().push(entry);
+        }
+        // 同一个键可能有多条词,上面按词条遍历会重复加入形状索引。
+        for keys in self.by_shape.values_mut() {
+            keys.sort();
+            keys.dedup();
         }
         self.count = self.map.values().map(Vec::len).sum();
     }
@@ -192,7 +217,17 @@ impl UserDict {
         };
         entries.remove(index);
         if entries.is_empty() {
+            let key_shape = shape(key);
             self.map.remove(key);
+            let empty = if let Some(keys) = self.by_shape.get_mut(&key_shape) {
+                keys.retain(|item| item != key);
+                keys.is_empty()
+            } else {
+                false
+            };
+            if empty {
+                self.by_shape.remove(&key_shape);
+            }
         }
         self.count = self.count.saturating_sub(1);
         self.rev = self.rev.wrapping_add(1);
@@ -215,11 +250,30 @@ impl UserDict {
             .flat_map(|v| v.iter().map(|e| (e.word.as_str(), e.freq)))
     }
 
-    /// 全部 (键, 词, 频次),签名扫描用。
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str, u32)> {
-        self.map
-            .iter()
-            .flat_map(|(k, v)| v.iter().map(move |e| (k.as_str(), e.word.as_str(), e.freq)))
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// 只遍历音节数与首字母可能匹配的用户键。首字母模糊等价由调用方展开;
+    /// 同一音节数、同一首字母是逐音节匹配的必要条件,不会漏词。
+    pub fn for_each_matching(
+        &self,
+        shapes: &[(usize, char)],
+        mut f: impl FnMut(&str, &str, u32),
+    ) {
+        for shape in shapes {
+            let Some(keys) = self.by_shape.get(shape) else {
+                continue;
+            };
+            for key in keys {
+                let Some(entries) = self.map.get(key) else {
+                    continue;
+                };
+                for entry in entries {
+                    f(key, &entry.word, entry.freq);
+                }
+            }
+        }
     }
 
     /// 导出为行文本(`键<TAB>词<TAB>频次<TAB>时间戳`),按键排序保证文件稳定。
@@ -279,6 +333,7 @@ impl UserDict {
                 && !k.is_empty()
                 && !w.is_empty()
             {
+                let new_key = !self.map.contains_key(k);
                 let entries = self.map.entry(k.to_string()).or_default();
                 match entries.iter_mut().find(|e| e.word == w) {
                     Some(e) => {
@@ -293,6 +348,12 @@ impl UserDict {
                         });
                         self.count += 1;
                     }
+                }
+                if new_key {
+                    self.by_shape
+                        .entry(shape(k))
+                        .or_default()
+                        .push(k.to_string());
                 }
                 changed = true;
             }

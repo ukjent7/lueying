@@ -324,19 +324,35 @@ impl Querier<'_> {
             }
         }
         // 用户词并入:词典已有的词已带上提频,只补词典没有的。
-        for (ukey, uword, ufreq) in self.user.iter() {
-            let Some((edits, groups)) = match_edits(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
-            else {
-                continue;
+        // 用户词库可能有 2 万条;先按音节数与首字母收窄,避免每个音节组合扫全表。
+        let shapes: Vec<(usize, char)> = if self.user.is_empty() {
+            Vec::new()
+        } else {
+            let first = sylls
+                .first()
+                .and_then(|s| s.text.chars().next())
+                .unwrap_or('\0');
+            syllables::initial_alternatives(first, &self.fuzzy)
+                .into_iter()
+                .map(|c| (sylls.len(), c))
+                .collect()
+        };
+        let user = self.user;
+        let exp_cache = &mut self.exp_cache;
+        let fuzzy = self.fuzzy;
+        let total = self.total;
+        user.for_each_matching(&shapes, |ukey, uword, ufreq| {
+            let Some((edits, groups)) = match_edits(ukey, sylls, &fuzzy, exp_cache) else {
+                return;
             };
             if !hits.iter().any(|h| h.word == uword) {
-                let mut hit = Hit::user_only(uword.to_string(), ufreq, self.total, edits, groups);
+                let mut hit = Hit::user_only(uword.to_string(), ufreq, total, edits, groups);
                 if edits > 0 {
                     hit.hint = Some(ukey.replace('\'', " "));
                 }
                 hits.push(hit);
             }
-        }
+        });
         // 组级学习只降低该组的模糊罚分,不改精确命中的 `trusted` 保护。
         for hit in &mut hits {
             if hit.groups != 0 {

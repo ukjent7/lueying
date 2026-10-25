@@ -461,7 +461,13 @@ mod imp {
                 reply
             }
             Request::Focus { session, focused } => {
-                state.active.store(session, Ordering::Relaxed);
+                // 失焦通知可能晚于新窗口的聚焦通知;只允许聚焦者抢占 active,
+                // 失焦只清理自己,避免候选窗跟到已经切走的旧输入框。
+                if focused {
+                    state.active.store(session, Ordering::Relaxed);
+                } else if state.active.load(Ordering::Relaxed) == session {
+                    state.active.store(0, Ordering::Relaxed);
+                }
                 let mut reply = neutral(state);
                 if let Some(s) = sessions.get_mut(&session) {
                     s.pending = None;

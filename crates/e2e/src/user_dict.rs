@@ -9,8 +9,11 @@
 //! 7. 长期学习让词库无限膨胀 → 超过上限后按频次/时间淘汰,文件大小有界。
 //! 8. 多音节学习键存成原始串 → 新会话必须能用 `ni'hao` 这样的音节键复现提频。
 //! 9. 组级适应只留在内存 → 导出/导入后模糊组计数必须还在。
+//! 10. 用户词库到 2 万条后每个音节组合线性扫全表 → 查询按音节数与首字母收窄,
+//!     既不能漏掉该命中的用户词,也不能随词库增长拖慢首键。
 
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
@@ -272,6 +275,46 @@ pub fn run(report: &mut String) -> usize {
             private_export.lines().count(),
             public_export.lines().count()
         ),
+    );
+
+    // 用户词库上限 2 万条时,按键查询不能退化成每次扫全表。噪声词条刻意避开
+    // `ni'hao` 的两个音节与首字母 `n`;目标词条必须仍能排到第一。
+    let full_user = Arc::new(RwLock::new(UserDict::new()));
+    {
+        let syllables = [
+            "a", "ba", "ca", "da", "fa", "ga", "ka", "la", "ma", "pa", "qi", "ra", "sa", "ta",
+            "wa", "ya", "za", "zha", "cha", "sha",
+        ];
+        let mut bulk = String::new();
+        for i in 0..19_999usize {
+            let a = syllables[i % syllables.len()];
+            let b = syllables[(i / syllables.len()) % syllables.len()];
+            let c = syllables[(i / (syllables.len() * syllables.len())) % syllables.len()];
+            let d = syllables[(i / (syllables.len().pow(3))) % syllables.len()];
+            bulk.push_str(&format!("{a}'{b}'{c}'{d}\t词{i}\t1\t0\n"));
+        }
+        bulk.push_str("ni'hao\t尼豪\t100000\t0\n");
+        full_user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .import(&bulk);
+    }
+    let mut large = engine(&dict, &full_user);
+    let start = Instant::now();
+    let mut top = String::new();
+    for _ in 0..5 {
+        large.process(Key::Esc);
+        for c in "nihao".chars() {
+            large.process(Key::Letter(c));
+        }
+        top = large.candidates().first().cloned().unwrap_or_default();
+    }
+    let per_key = start.elapsed().as_secs_f64() * 1000.0 / 5.0;
+    push(
+        &mut checks,
+        "大用户词库按形状查询",
+        top == "尼豪" && per_key < 100.0,
+        format!("{per_key:.1} ms/次,首选 {top}"),
     );
 
     report.push_str("\n## 用户词库\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
