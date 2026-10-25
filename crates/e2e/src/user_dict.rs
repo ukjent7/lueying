@@ -9,7 +9,8 @@
 //! 7. 长期学习让词库无限膨胀 → 超过上限后按频次/时间淘汰,文件大小有界。
 //! 8. 多音节学习键存成原始串 → 新会话必须能用 `ni'hao` 这样的音节键复现提频。
 //! 9. 组级适应只留在内存 → 导出/导入后模糊组计数必须还在。
-//! 10. 用户词库到 2 万条后每个音节组合线性扫全表 → 查询按音节数与首字母收窄,
+//! 10. 学习时用简拼、查询时用全拼(或反过来)丢掉提频 → 两种输入形态必须互相识别。
+//! 11. 用户词库到 2 万条后每个音节组合线性扫全表 → 查询按音节数与首字母收窄,
 //!     既不能漏掉该命中的用户词,也不能随词库增长拖慢首键。
 
 use std::sync::{Arc, RwLock};
@@ -146,6 +147,27 @@ pub fn run(report: &mut String) -> usize {
         promoted && top == "田七",
         format!("学习后首选 {top}"),
     );
+
+    // 学习时的输入形态与查询形态可以不同:简拼学过换全拼、全拼学过换简拼,
+    // 同一个词都要继续提频,否则混用全拼/简拼的用户会觉得「学了没用」。
+    for (name, learn_key, typed) in [
+        ("简拼学习全拼提频", "t'q", "tianqi"),
+        ("全拼学习简拼提频", "tian'qi", "tq"),
+    ] {
+        let cross = Arc::new(RwLock::new(UserDict::new()));
+        engine(&dict, &cross).import_user(&format!("{learn_key}\t田七\t100000\t0\n"));
+        let mut reader = engine(&dict, &cross);
+        for c in typed.chars() {
+            reader.process(Key::Letter(c));
+        }
+        let top = reader.candidates().first().cloned().unwrap_or_default();
+        push(
+            &mut checks,
+            name,
+            top == "田七",
+            format!("{learn_key} → {typed}:首选 {top}"),
+        );
+    }
 
     // 坏行、空键、坏频次都跳过,其余词条照常导入。
     let mut f = Engine::new(Arc::clone(&dict), Config::default());

@@ -181,13 +181,20 @@ fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
 /// 一个音节的模糊展开:变体键、改动处数、命中组位。
 type Expansions = Rc<Vec<(String, usize, u8)>>;
 
+/// 用户键里的简拼单元:单字母,或 zh/ch/sh。
+fn is_abbrev_key(e: &str) -> bool {
+    e.chars().count() == 1 || matches!(e, "zh" | "ch" | "sh")
+}
+
 /// 词条键是否逐音节匹配输入;命中时返回模糊改动处数。
 ///
 /// 简拼按首字母前缀匹配,n/l、f/h、r/l 等改首字母的模糊组也在这里放宽;
-/// 全拼按等价音节匹配,处数由声母、韵母各算一处。
+/// 全拼按等价音节匹配,处数由声母、韵母各算一处。`entry_may_abbrev` 用于
+/// 用户键:学习时可能用简拼、查询时用全拼,两边都要按同一音节识别。
 fn match_edits(
     entry_key: &str,
     sylls: &[Syll],
+    entry_may_abbrev: bool,
     fuzzy: &Fuzzy,
     exp_cache: &mut HashMap<String, Expansions>,
 ) -> Option<(usize, u8)> {
@@ -196,16 +203,41 @@ fn match_edits(
     let mut parts = entry_key.split('\'');
     for t in sylls {
         let e = parts.next()?;
+        // 学习时用简拼、现在用全拼(或反过来)是同一个词,不该丢掉提频。
+        // 简拼只保留音节首字母,首字母相同就视为本音节,模糊等价才计一处改动。
+        let typed_first = t.text.chars().next()?;
+        let found_first = e.chars().next()?;
         if t.abbrev {
-            if e.starts_with(t.text.as_str()) {
+            if e.starts_with(t.text.as_str())
+                || (entry_may_abbrev && is_abbrev_key(e) && typed_first == found_first)
+            {
                 continue;
             }
-            let mut chars = t.text.chars();
-            let (Some(typed), None) = (chars.next(), chars.next()) else {
+            if fuzzy.is_off() {
                 return None;
-            };
-            let found = e.chars().next()?;
-            let group = syllables::initial_group(typed, found, fuzzy)?;
+            }
+            let group = syllables::initial_group(typed_first, found_first, fuzzy)?;
+            if group == 0 {
+                return None;
+            }
+            edits += 1;
+            groups |= group;
+            continue;
+        }
+        if e == t.text {
+            continue;
+        }
+        if entry_may_abbrev && is_abbrev_key(e) {
+            // `z` 之于 `zhi`、`zh` 之于 `zhi` 都是同一音节的简拼;`zh` 之于
+            // `zi` 也是简拼没写全,不能按模糊改动罚分。词典键必须按完整音节
+            // 比较,否则单韵母词(啊/饿/哦)会错误命中 `ai/ei/ou`。
+            if t.text.starts_with(e) || typed_first == found_first {
+                continue;
+            }
+            if fuzzy.is_off() {
+                return None;
+            }
+            let group = syllables::initial_group(typed_first, found_first, fuzzy)?;
             if group == 0 {
                 return None;
             }
@@ -214,10 +246,7 @@ fn match_edits(
             continue;
         }
         if fuzzy.is_off() {
-            if e != t.text {
-                return None;
-            }
-            continue;
+            return None;
         }
         let exps = exp_cache
             .entry(t.text.clone())
@@ -232,12 +261,26 @@ fn match_edits(
     parts.next().is_none().then_some((edits, groups))
 }
 
+/// 同一个用户词可能以全拼、简拼或模糊键各学过一次;查询按当前输入取最有力的一条。
+struct UserMatch {
+    freq: u32,
+    edits: usize,
+    groups: u8,
+    key: String,
+}
+
+fn user_freq(users: &HashMap<String, UserMatch>, word: &str) -> u32 {
+    users.get(word).map_or(0, |m| m.freq)
+}
+
 struct Querier<'a> {
     dict: &'a Dictionary,
     user: &'a UserDict,
     fuzzy: Fuzzy,
     total: f64,
     cache: HashMap<String, Rc<Vec<Hit>>>,
+    /// 与 `cache` 同键:当前输入能匹配上的用户词及最有力的一条记录。
+    user_cache: HashMap<String, Rc<HashMap<String, UserMatch>>>,
     exp_cache: HashMap<String, Expansions>,
 }
 
@@ -247,14 +290,61 @@ impl Querier<'_> {
         if let Some(hits) = self.cache.get(&key) {
             return Rc::clone(hits);
         }
-        let hits = Rc::new(self.compute(sylls, &key));
+        let (hits, users) = self.compute(sylls, &key);
+        self.user_cache.insert(key.clone(), Rc::new(users));
+        let hits = Rc::new(hits);
         self.cache.insert(key, Rc::clone(&hits));
         hits
     }
 
-    fn compute(&mut self, sylls: &[Syll], key: &str) -> Vec<Hit> {
+    fn compute(
+        &mut self,
+        sylls: &[Syll],
+        key: &str,
+    ) -> (Vec<Hit>, HashMap<String, UserMatch>) {
         let any_abbrev = sylls.iter().any(|s| s.abbrev);
         let fuzzy_on = !self.fuzzy.is_off();
+        // 用户词先按音节数与首字母收窄,再做逐音节匹配。词典命中也要用这份
+        // 结果提频:同一个词用简拼学过,换成全拼输入时仍然应该靠前。
+        let mut users: HashMap<String, UserMatch> = HashMap::new();
+        if !self.user.is_empty() {
+            let first = sylls
+                .first()
+                .and_then(|s| s.text.chars().next())
+                .unwrap_or('\0');
+            let shapes: Vec<(usize, char)> = syllables::initial_alternatives(first, &self.fuzzy)
+                .into_iter()
+                .map(|c| (sylls.len(), c))
+                .collect();
+            let user_dict = self.user;
+            let fuzzy = self.fuzzy;
+            let exp_cache = &mut self.exp_cache;
+            user_dict.for_each_matching(&shapes, |ukey, uword, ufreq| {
+                let Some((edits, groups)) = match_edits(ukey, sylls, true, &fuzzy, exp_cache)
+                else {
+                    return;
+                };
+                if let Some(current) = users.get_mut(uword) {
+                    if ufreq > current.freq || (ufreq == current.freq && edits < current.edits) {
+                        current.freq = ufreq;
+                        current.edits = edits;
+                        current.groups = groups;
+                        current.key.clear();
+                        current.key.push_str(ukey);
+                    }
+                } else {
+                    users.insert(
+                        uword.to_string(),
+                        UserMatch {
+                            freq: ufreq,
+                            edits,
+                            groups,
+                            key: ukey.to_string(),
+                        },
+                    );
+                }
+            });
+        }
         let mut hits: Vec<Hit> = Vec::new();
         let mut seen: HashSet<(String, String)> = HashSet::new();
         // 精确整键走专用索引:最快,也是 `trusted` 的证据来源。
@@ -265,7 +355,7 @@ impl Querier<'_> {
                     hits.push(Hit::dict(
                         word,
                         e.freq,
-                        self.user.freq(key, e.word),
+                        user_freq(&users, e.word),
                         self.total,
                         0,
                         true,
@@ -285,14 +375,14 @@ impl Querier<'_> {
                         continue;
                     }
                     let Some((edits, groups)) =
-                        match_edits(e.key, sylls, &self.fuzzy, &mut self.exp_cache)
+                        match_edits(e.key, sylls, false, &self.fuzzy, &mut self.exp_cache)
                     else {
                         continue;
                     };
                     hits.push(Hit::dict(
                         e.word.to_string(),
                         e.freq,
-                        self.user.freq(key, e.word),
+                        user_freq(&users, e.word),
                         self.total,
                         edits,
                         edits == 0,
@@ -313,7 +403,7 @@ impl Querier<'_> {
                     hits.push(Hit::dict(
                         e.word.to_string(),
                         e.freq,
-                        self.user.freq(key, e.word),
+                        user_freq(&users, e.word),
                         self.total,
                         edits,
                         false,
@@ -324,42 +414,24 @@ impl Querier<'_> {
             }
         }
         // 用户词并入:词典已有的词已带上提频,只补词典没有的。
-        // 用户词库可能有 2 万条;先按音节数与首字母收窄,避免每个音节组合扫全表。
-        let shapes: Vec<(usize, char)> = if self.user.is_empty() {
-            Vec::new()
-        } else {
-            let first = sylls
-                .first()
-                .and_then(|s| s.text.chars().next())
-                .unwrap_or('\0');
-            syllables::initial_alternatives(first, &self.fuzzy)
-                .into_iter()
-                .map(|c| (sylls.len(), c))
-                .collect()
-        };
-        let user = self.user;
-        let exp_cache = &mut self.exp_cache;
-        let fuzzy = self.fuzzy;
         let total = self.total;
-        user.for_each_matching(&shapes, |ukey, uword, ufreq| {
-            let Some((edits, groups)) = match_edits(ukey, sylls, &fuzzy, exp_cache) else {
-                return;
-            };
-            if !hits.iter().any(|h| h.word == uword) {
-                let mut hit = Hit::user_only(uword.to_string(), ufreq, total, edits, groups);
-                if edits > 0 {
-                    hit.hint = Some(ukey.replace('\'', " "));
+        let mut hit_words: HashSet<String> = hits.iter().map(|h| h.word.clone()).collect();
+        for (uword, m) in &users {
+            if hit_words.insert(uword.clone()) {
+                let mut hit = Hit::user_only(uword.clone(), m.freq, total, m.edits, m.groups);
+                if m.edits > 0 {
+                    hit.hint = Some(m.key.replace('\'', " "));
                 }
                 hits.push(hit);
             }
-        });
+        }
         // 组级学习只降低该组的模糊罚分,不改精确命中的 `trusted` 保护。
         for hit in &mut hits {
             if hit.groups != 0 {
                 hit.score += self.user.group_bonus(hit.groups);
             }
         }
-        hits
+        (hits, users)
     }
 
     /// 当前输入是否是某个词典键的逐字前缀。末音节没打完时键里没有结尾
@@ -699,6 +771,7 @@ fn build_exact(
         fuzzy: *fuzzy,
         total,
         cache: HashMap::new(),
+        user_cache: HashMap::new(),
         exp_cache: HashMap::new(),
     };
     let edges = segment::edges(raw);
@@ -808,7 +881,11 @@ fn build_exact(
             sentence: st.sentence,
             edits: st.edits,
             freq: st.freq,
-            user_freq: user.freq(&key, &text),
+            user_freq: q
+                .user_cache
+                .get(&key)
+                .and_then(|users| users.get(&text))
+                .map_or(0, |m| m.freq),
             groups: st.groups,
             hint: st.hint.clone(),
             learn_key: None,
