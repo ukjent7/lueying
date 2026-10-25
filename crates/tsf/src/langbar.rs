@@ -284,10 +284,10 @@ fn icon(label: &str) -> Option<HICON> {
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
         SelectObject(memory, old_font);
-        DeleteObject(HGDIOBJ(font.0));
-        DeleteObject(HGDIOBJ(brush.0));
+        let _ = DeleteObject(HGDIOBJ(font.0));
+        let _ = DeleteObject(HGDIOBJ(brush.0));
         SelectObject(memory, old_bitmap);
-        DeleteDC(memory);
+        let _ = DeleteDC(memory);
         ReleaseDC(None, screen);
 
         // 1bpp 全 0 掩码 = 整个图标不透明。16 像素宽的掩码按 4 字节
@@ -302,8 +302,8 @@ fn icon(label: &str) -> Option<HICON> {
             hbmColor: color,
         };
         let result = CreateIconIndirect(&info).ok();
-        DeleteObject(HGDIOBJ(mask.0));
-        DeleteObject(HGDIOBJ(color.0));
+        let _ = DeleteObject(HGDIOBJ(mask.0));
+        let _ = DeleteObject(HGDIOBJ(color.0));
         result
     }
 }

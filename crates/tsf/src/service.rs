@@ -572,10 +572,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                         || !reply.preedit.is_empty()
                         || self.shared.composing())
                         && let Ok(context) = pic.ok()
-                        && !crate::context::keyboard_disabled(&context)
+                        && !crate::context::keyboard_disabled(context)
                     {
                         *self.shared.last_context.borrow_mut() = Some(context.clone());
-                        self.apply(&context, &reply);
+                        self.apply(context, &reply);
                     } else {
                         self.shared.set_chinese(reply.chinese);
                     }
@@ -587,14 +587,14 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
             if self.tap.take_shift_tap(vk)
                 && let Ok(context) = pic.ok()
-                && !crate::context::keyboard_disabled(&context)
+                && !crate::context::keyboard_disabled(context)
                 && let Some(reply) = self.request(Request::Key {
                     session: self.shared.session,
                     key: pinyin_protocol::KeyMsg::Shift,
                 })
             {
                 *self.shared.last_context.borrow_mut() = Some(context.clone());
-                self.apply(&context, &reply);
+                self.apply(context, &reply);
             }
             Ok(FALSE)
         })) {
