@@ -285,7 +285,11 @@ mod imp {
                 .child(row(
                     "自动模糊音",
                     pill(
-                        if self.cfg.fuzzy.is_off() { "关" } else { "开" },
+                        if self.cfg.fuzzy.is_off() {
+                            "关"
+                        } else {
+                            "开"
+                        },
                         !self.cfg.fuzzy.is_off(),
                         colors,
                         cx.listener(|this, _, _, cx| {
