@@ -97,6 +97,30 @@ pub fn run(report: &mut String) -> usize {
         format!("内联 {display:?} / 第二候选 {second:?}"),
     );
 
+    // 宿主自绘候选时按全局序号移动高亮(TSF 的 SetSelection):
+    // 页号必须跟着高亮走,GetCurrentPage 才能把候选画到正确的页。
+    let mut e = engine();
+    type_into(&mut e, "yi");
+    let ps = e.page_size();
+    let count = e.candidates().len();
+    let pages = count.div_ceil(ps);
+    let moved = e.set_highlight(ps);
+    let second = (e.page(), e.highlight());
+    e.set_highlight(count.saturating_sub(1));
+    let last = (e.page(), e.highlight());
+    let home = e.set_highlight(0);
+    push(
+        &mut checks,
+        "宿主移动高亮时页号跟随",
+        pages > 1
+            && moved
+            && second == (1, ps)
+            && last == (pages - 1, count - 1)
+            && home
+            && (e.page(), e.highlight()) == (0, 0),
+        format!("pages={pages} second={second:?} last={last:?}"),
+    );
+
     // 翻页越界:停在上/下边界。
     let mut e = engine();
     type_into(&mut e, "yi");

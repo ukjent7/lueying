@@ -4,7 +4,7 @@
 
 ## 进程与安装
 
-- `lueying_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。字符键按当前键盘布局经 `ToUnicodeEx` 翻译，支持 AZERTY/QWERTZ/Dvorak 等非 US 布局。组合期间向 TSF 登记 `ITfCandidateListUIElement`，宿主（UWP、全屏应用）或读屏软件可直接读取候选；宿主在 `BeginUIElement` 回 `FALSE` 接管绘制时，服务端候选窗自动收起。
+- `lueying_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。字符键按当前键盘布局经 `ToUnicodeEx` 翻译，支持 AZERTY/QWERTZ/Dvorak 等非 US 布局。组合期间向 TSF 登记 `ITfCandidateListUIElement`，宿主（UWP、全屏应用）或读屏软件可读取全量候选、分页与当前高亮，并通过序号选中/提交；宿主在 `BeginUIElement` 回 `FALSE` 接管绘制时，服务端候选窗自动收起。
 - `lueying-server.exe`：常驻服务。持有词典、引擎、用户词库和重排模型；每个宿主会话一份 `Engine`，通过命名管道响应请求。
 - `lueying-settings.exe`：独立设置窗。写 `config.ini` 后通知服务重载。
 - `lueying-install.exe`：安装到 `%ProgramFiles%\lueying`。复制版本化 x64/x86 DLL（`lueying_tsf-<版本>.dll`、`lueying_tsf32-<版本>.dll`）、注册 TSF、写自启动/卸载项；文件与注册表动作按需提权。
@@ -36,7 +36,8 @@
 4. 默认开启核心模糊组：`z/zh`、`c/ch`、`s/sh`、`l/n`、`f/h`、`r/l`、前后鼻音。模糊改动按处数罚分，精确常用词锁首位，与首位接近的精确整句同样保护，学过的模糊词可拿回首选的位次。
 5. 无整句候选时尝试相邻键替换、漏键插入、多键删除；纠正候选按整串上屏，学习键单独记录。
 6. 4M 模型在按键返回前重排可比较候选；25M 模型在静默 120ms 后异步重排，只允许上下文明确的模糊候选越过可信精确首位。
-7. 候选窗是无焦点置顶 GPUI 窗口，支持深浅色、鼠标点选、翻页、DPI/多屏贴靠与全屏隐藏；Server 进程显式声明 Per-Monitor V2 DPI 感知，避免高缩放与副屏下窗口尺寸/位置被系统虚拟化。首次出现做 140ms 淡入，组合结束做 90ms 淡出，系统开启减少动态效果时直接呈现与收起。
+7. Backspace/Delete 与左右方向键按字符移动，空格/数字选词、Enter 上屏原文、Esc 取消组合；对齐微软拼音与微信输入法的编辑习惯。
+8. 候选窗是无焦点置顶 GPUI 窗口，支持深浅色、鼠标点选、翻页、DPI/多屏贴靠与全屏隐藏；Server 进程显式声明 Per-Monitor V2 DPI 感知，避免高缩放与副屏下窗口尺寸/位置被系统虚拟化。首次出现做 140ms 淡入，组合结束做 90ms 淡出，系统开启减少动态效果时直接呈现与收起。
 
 已上屏文本保留最近 128 字作为上下文；焦点丢失或光标跳转时清空。所有宿主会话共享同一份用户词库，学习结果跨应用立即可见；词库按周衰减、上限 2 万条，词条与模糊组统计一起写入 `%LOCALAPPDATA%\lueying\user.tsv`；设置页可经 Server 导出/合并导入 TSV，写入后立即落盘。
 
@@ -51,7 +52,7 @@
 ## 验证
 
 - `lueying-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。`--bench-fast` 跑确定性等距子集并并行各语料，`--bench` 跑全量。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
-- `lueying-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证 Shift 中英切换与 Ctrl+. 中文标点落盘；同时挂 `ITfUIElementSink`，确认候选 UI 元素登记、更新、结束且能读回首条候选，再量 5 轮空格到文本落地的全链路延迟（p95 ≤ 250ms）。产物 `target/win-e2e-report.md`；失败时附 TSF 与 Server 日志末尾。CI 另用 i686 构建运行同一套宿主，验证 x86 TSF 的真实加载与输入链路，而不只检查注册表。
+- `lueying-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证 Shift 中英切换与 Ctrl+. 中文标点落盘；同时挂 `ITfUIElementSink`，确认候选 UI 元素登记、更新、结束且能读回首条候选，多页时读回页起点并用 `SetSelection` 切页，校验 `GetCurrentPage` 与 `GetSelection` 跟随，再量 5 轮空格到文本落地的全链路延迟（p95 ≤ 250ms）。产物 `target/win-e2e-report.md`；失败时附 TSF 与 Server 日志末尾。CI 另用 i686 构建运行同一套宿主，验证 x86 TSF 的真实加载与输入链路，而不只检查注册表。
 - `lueying-install-e2e`：把真实安装器指向隔离的 `LUEYING_INSTALL_DIR`，检查 x64/x86 文件、自启动/卸载项与两套 TSF CLSID，再执行真实卸载并确认清理。产物 `target/install-e2e-report.md`。
 - CI：`fmt`、`engine`、`dict`、`windows` 四个 job；windows job 构建 i686 TSF 并做 ARM64 编译检查，x64/x86 全链路与安装/卸载冒烟为阻断项；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
 

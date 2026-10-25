@@ -142,6 +142,9 @@ pub(crate) struct TextService {
     mode_advice: RefCell<crate::mode::Advice>,
     /// Caps Lock 亮起前的模式,灭灯后恢复。
     caps_restore: Cell<Option<bool>>,
+    /// 上一次处理过的 Caps Lock 状态;TestKeyUp 与 KeyUp 可能都到达,
+    /// 同一状态只处理一次,避免灭灯时第二次默认回中文。
+    caps_seen: Cell<Option<bool>>,
     /// 组句期间的停顿轮询定时器;停用时自动停表。
     poll: RefCell<Option<crate::poll::PollTimer>>,
     /// 已注册的保留键;停用时按同一定义撤销。
@@ -191,6 +194,7 @@ impl TextService {
             langbar: RefCell::new(None),
             mode_advice: RefCell::new(Vec::new()),
             caps_restore: Cell::new(None),
+            caps_seen: Cell::new(None),
             poll: RefCell::new(None),
             preserved: Cell::new(None),
             secure: Cell::new(false),
@@ -403,6 +407,11 @@ impl TextService_Impl {
         self.shared.tid.set(tid);
         *self.shared.thread_mgr.borrow_mut() = Some(thread_mgr.clone());
         *self.shared.ui_mgr.borrow_mut() = thread_mgr.cast::<ITfUIElementMgr>().ok();
+        // 激活时 Caps 已经亮着:记下当前模式,灭灯时恢复到它而不是默认中文。
+        let caps = keys::caps_on();
+        self.caps_seen.set(Some(caps));
+        self.caps_restore
+            .set(caps.then(|| self.shared.chinese.get()));
         // 激活时先把系统指示器对齐当前模式;Focus 回调随后再跟 Server 的全局值。
         self.shared.mode_writing.set(true);
         crate::mode::write_indicator(&thread_mgr, tid, self.shared.chinese.get());
@@ -437,8 +446,12 @@ impl TextService_Impl {
             }
             // CapsLock:大写锁定 = 临时英文;灭灯后回到亮灯前的模式。
             if keys::is_caps(vk) {
-                self.shared.touch();
                 let caps = keys::caps_on();
+                // TestKeyUp 与 KeyUp 都会到达;同一 Caps 状态只处理一次。
+                if self.caps_seen.replace(Some(caps)) == Some(caps) {
+                    return Ok(FALSE);
+                }
+                self.shared.touch();
                 let chinese = if caps {
                     let previous = self
                         .caps_restore

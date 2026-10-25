@@ -546,29 +546,35 @@ mod imp {
             }
             Request::PickIndex { session, index } => {
                 state.active.store(session, Ordering::Relaxed);
+                let mut reply = Reply::default();
                 if let Some(s) = sessions.get_mut(&session) {
                     let before = s.engine.revision();
                     let events = s.engine.pick(index);
                     if s.engine.revision() != before {
                         apply_sync_rerank(s);
                     }
+                    // 宿主自绘候选时由 TSF 直接收走上屏文本并写进文档,
+                    // 不走候选窗的 Sync 队列。
+                    reply = reply_from(s, &events);
                     refresh_view(s);
-                    let commits: Vec<String> = events
-                        .iter()
-                        .filter_map(|e| match e {
-                            Event::Commit(t) => Some(t.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    if !commits.is_empty() {
-                        let pending = s.ui_reply.get_or_insert_with(Reply::default);
-                        pending.commits.extend(commits);
-                        pending.preedit = s.view.preedit.clone();
-                        pending.chinese = s.view.chinese;
-                    }
+                    fill_view(&mut reply, s);
                     crate::settle::schedule(state, session, s);
                 }
-                Reply::default()
+                reply
+            }
+            Request::SelectIndex { session, index } => {
+                state.active.store(session, Ordering::Relaxed);
+                let mut reply = Reply::default();
+                if let Some(s) = sessions.get_mut(&session) {
+                    if s.engine.set_highlight(index) {
+                        // 用户正在挑候选,停顿重排不能把高亮挪走。
+                        crate::settle::cancel(state, session);
+                        refresh_view(s);
+                        sync_ui_reply(s);
+                    }
+                    fill_view(&mut reply, s);
+                }
+                reply
             }
             Request::Page { session, delta } => {
                 state.active.store(session, Ordering::Relaxed);

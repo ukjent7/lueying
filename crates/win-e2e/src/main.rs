@@ -176,7 +176,40 @@ mod imp {
         if first.is_empty() {
             return Err("候选 UI 元素首条候选为空".into());
         }
-        Ok(format!("候选 UI 元素:{count} 条,首条 `{first}`"))
+        // 宿主自绘时要能翻页:页索引必须可读,SetSelection 换页后当前页要跟随。
+        let mut page_starts = [0u32; 8];
+        let mut pages = 0u32;
+        unsafe { list.GetPageIndex(&mut page_starts, &mut pages) }
+            .map_err(|e| format!("GetPageIndex: {e}"))?;
+        if pages == 0 {
+            return Err("候选 UI 元素没有页索引".into());
+        }
+        let mut paging = String::new();
+        if pages > 1 {
+            unsafe { list.SetSelection(page_starts[1]) }
+                .map_err(|e| format!("SetSelection(第二页): {e}"))?;
+            let current = unsafe { list.GetCurrentPage() }
+                .map_err(|e| format!("GetCurrentPage: {e}"))?;
+            let selection = unsafe { list.GetSelection() }
+                .map_err(|e| format!("GetSelection: {e}"))?;
+            if current != 1 || selection != page_starts[1] {
+                return Err(format!(
+                    "宿主选中第二页首项后 current={current} selection={selection},应为 1/{}",
+                    page_starts[1]
+                ));
+            }
+            unsafe { list.SetSelection(0) }
+                .map_err(|e| format!("SetSelection(复位): {e}"))?;
+            let current = unsafe { list.GetCurrentPage() }
+                .map_err(|e| format!("GetCurrentPage(复位): {e}"))?;
+            if current != 0 {
+                return Err(format!("复位后当前页是 {current},应为 0"));
+            }
+            paging = format!(",{pages} 页");
+        }
+        Ok(format!(
+            "候选 UI 元素:{count} 条{paging},首条 `{first}`"
+        ))
     }
 
     fn real_run() -> Result<(String, String), String> {

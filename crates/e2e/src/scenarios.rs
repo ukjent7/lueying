@@ -142,7 +142,7 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
-            "Backspace按音节回删",
+            "Backspace逐字母回删",
             false,
             vec![
                 stage(
@@ -154,6 +154,10 @@ pub fn scenarios() -> Vec<Scenario> {
                         Key::Letter('o'),
                         Key::Backspace,
                     ],
+                    vec![Check::Raw("niha".into())],
+                ),
+                stage(
+                    vec![Key::Backspace, Key::Backspace],
                     vec![Check::Raw("ni".into())],
                 ),
                 stage(vec![Key::Space], vec![commits(&["你"]), Check::NoComp]),
@@ -328,7 +332,7 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
-            "Home+Delete前删音节",
+            "Home+Delete逐字母前删",
             false,
             vec![stage(
                 vec![
@@ -342,7 +346,7 @@ pub fn scenarios() -> Vec<Scenario> {
                     Key::Home,
                     Key::Delete,
                 ],
-                vec![Check::Raw("tian".into())],
+                vec![Check::Raw("intian".into())],
             )],
         ),
         s(
@@ -478,7 +482,7 @@ pub fn scenarios() -> Vec<Scenario> {
             )],
         ),
         s(
-            "方向键按音节移动+回删",
+            "方向键逐字母移动+回删",
             false,
             vec![
                 stage(
@@ -492,7 +496,7 @@ pub fn scenarios() -> Vec<Scenario> {
                     ],
                     vec![Check::Raw("nihao".into())],
                 ),
-                stage(vec![Key::Backspace], vec![Check::Raw("hao".into())]),
+                stage(vec![Key::Backspace], vec![Check::Raw("niho".into())]),
             ],
         ),
     ]

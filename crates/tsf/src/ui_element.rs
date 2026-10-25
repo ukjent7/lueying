@@ -1,4 +1,4 @@
-//! TSF 候选 UI 元素:把当前页候选交给宿主/读屏软件。
+//! TSF 候选 UI 元素:把整份候选与分页交给宿主/读屏软件。
 //!
 //! 桌面程序一般回 `BeginUIElement(TRUE)`,候选仍由服务进程的候选窗绘制;
 //! UWP、全屏游戏、部分搜索框会回 `FALSE` 接管绘制,此时通知 Server 收起
@@ -18,7 +18,7 @@ use windows::Win32::UI::TextServices::{
 use windows::core::{BOOL, BSTR, Error, GUID, Interface, Result, implement};
 
 use crate::log;
-use crate::service::{Shared, SharedClient, request_with};
+use crate::service::{Shared, SharedClient, apply_reply, request_with};
 
 pub(crate) const UI_ID_NONE: u32 = u32::MAX;
 
@@ -30,18 +30,26 @@ const GUID_CANDIDATE_UI: GUID = GUID::from_u128(0x4d5e6f70_8192_4a3b_8c1d_2e3f40
 pub(crate) struct Snapshot {
     pub(crate) candidates: Vec<String>,
     pub(crate) highlight: usize,
+    pub(crate) page_size: usize,
     pub(crate) visible: bool,
 }
 
 /// 每个按键应答/停顿轮询后调用:组合中登记或刷新候选元素,组合结束则撤销。
 pub(crate) fn sync(shared: &Rc<Shared>, client: &SharedClient, reply: &Reply) {
     let active = !reply.preedit.is_empty() && !reply.candidates.is_empty();
-    {
+    let page_size = reply.page_size.max(1);
+    let changed = {
         let mut snapshot = shared.ui_snapshot.borrow_mut();
+        let changed = snapshot.candidates != reply.candidates
+            || snapshot.highlight != reply.highlight
+            || snapshot.page_size != page_size
+            || snapshot.visible != active;
         snapshot.candidates.clone_from(&reply.candidates);
         snapshot.highlight = reply.highlight;
+        snapshot.page_size = page_size;
         snapshot.visible = active;
-    }
+        changed
+    };
     if !active {
         end(shared, client);
         return;
@@ -49,7 +57,10 @@ pub(crate) fn sync(shared: &Rc<Shared>, client: &SharedClient, reply: &Reply) {
     let id = shared.ui_id.get();
     if id == UI_ID_NONE {
         begin(shared, client);
-    } else if let Some(mgr) = shared.ui_mgr.borrow().as_ref() {
+    } else if changed
+        && let Some(mgr) = shared.ui_mgr.borrow().as_ref()
+    {
+        // 40ms 轮询会带同一份快照;没变就不打扰宿主/读屏软件。
         unsafe {
             let _ = mgr.UpdateUIElement(id);
         }
@@ -188,53 +199,92 @@ impl ITfCandidateListUIElement_Impl for CandidateElement_Impl {
             if pupagecnt.is_null() {
                 return Err(Error::from(E_FAIL));
             }
-            // 当前只把一页候选交给宿主;分页由服务端候选窗负责。
-            *pupagecnt = 1;
-            if !pindex.is_null() && size > 0 {
-                *pindex = 0;
+            let snapshot = self.shared.ui_snapshot.borrow();
+            let page_size = snapshot.page_size.max(1);
+            let count = snapshot.candidates.len();
+            let pages = count.div_ceil(page_size);
+            *pupagecnt = pages as u32;
+            if !pindex.is_null() {
+                // 每一页的起始候选序号;宿主按这个数组分页显示。
+                for index in 0..(size as usize).min(pages) {
+                    *pindex.add(index) = (index * page_size) as u32;
+                }
             }
         }
         Ok(())
     }
 
     fn SetPageIndex(&self, _pindex: *const u32, _upagecnt: u32) -> Result<()> {
+        // 分页由服务端候选数设置决定,列表存续期间不改切法(Weasel 同款)。
         Ok(())
     }
 
     fn GetCurrentPage(&self) -> Result<u32> {
-        Ok(0)
+        let snapshot = self.shared.ui_snapshot.borrow();
+        let page_size = snapshot.page_size.max(1);
+        Ok((snapshot.highlight / page_size) as u32)
     }
 }
 
 impl ITfCandidateListUIElementBehavior_Impl for CandidateElement_Impl {
     fn SetSelection(&self, nindex: u32) -> Result<()> {
-        self.shared.ui_snapshot.borrow_mut().highlight = nindex as usize;
+        let index = nindex as usize;
+        if index
+            >= self
+                .shared
+                .ui_snapshot
+                .borrow()
+                .candidates
+                .len()
+        {
+            return Err(Error::from(E_FAIL));
+        }
+        self.shared.ui_snapshot.borrow_mut().highlight = index;
+        // 把高亮同步给服务端:候选窗(若可见)与随后的 Finalize 用同一项。
+        if let Some(reply) = request_with(
+            &self.client,
+            &self.shared,
+            Request::SelectIndex {
+                session: self.shared.session,
+                index,
+            },
+        ) {
+            let mut snapshot = self.shared.ui_snapshot.borrow_mut();
+            snapshot.candidates.clone_from(&reply.candidates);
+            snapshot.highlight = reply.highlight;
+            snapshot.page_size = reply.page_size.max(1);
+        }
         Ok(())
     }
 
     fn Finalize(&self) -> Result<()> {
         let index = self.shared.ui_snapshot.borrow().highlight;
-        let _ = request_with(
+        if let Some(reply) = request_with(
             &self.client,
             &self.shared,
             Request::PickIndex {
                 session: self.shared.session,
                 index,
             },
-        );
+        ) {
+            // 宿主自绘时上屏文本由 TSF 自己写进文档;光选中不够。
+            apply_reply(&self.shared, &self.client, &reply);
+        }
         self.shared.ui_snapshot.borrow_mut().visible = false;
         Ok(())
     }
 
     fn Abort(&self) -> Result<()> {
-        let _ = request_with(
+        if let Some(reply) = request_with(
             &self.client,
             &self.shared,
             Request::Key {
                 session: self.shared.session,
                 key: lueying_protocol::KeyMsg::Esc,
             },
-        );
+        ) {
+            apply_reply(&self.shared, &self.client, &reply);
+        }
         self.shared.ui_snapshot.borrow_mut().visible = false;
         Ok(())
     }

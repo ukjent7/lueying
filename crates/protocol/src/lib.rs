@@ -157,6 +157,8 @@ pub enum Request {
     Pick { session: u64, slot: usize },
     /// 宿主自绘候选时按全局候选序号点选。
     PickIndex { session: u64, index: usize },
+    /// 宿主自绘候选时移动高亮(不提交)。
+    SelectIndex { session: u64, index: usize },
     /// 候选窗滚轮翻页:`delta` 为 ±1。
     Page { session: u64, delta: i32 },
     /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
@@ -182,15 +184,16 @@ pub struct Reply {
     /// 用户词库文本(仅 `ExportUser` 应答使用)。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
-    /// 当前页候选,供 TSF 的 `ITfCandidateListUIElement` 回答宿主与读屏软件。
+    /// 全部候选(按页切片由 `page`/`page_size` 决定),供 TSF 的
+    /// `ITfCandidateListUIElement` 回答宿主与读屏软件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidates: Vec<String>,
-    /// 当前页起始序号与页大小(候选 UI 元素的分页信息)。
+    /// 当前页号与每页候选数(候选 UI 元素的分页信息)。
     #[serde(default)]
     pub page: usize,
     #[serde(default)]
     pub page_size: usize,
-    /// 当前页内高亮序号。
+    /// 全局候选序号中的高亮项。
     #[serde(default)]
     pub highlight: usize,
 }

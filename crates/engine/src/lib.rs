@@ -1,7 +1,7 @@
 //! 拼音输入引擎:键状态机 + 组合编辑 + 候选管理。平台无关,上屏以事件表达。
 //!
 //! 默认行为对齐微软拼音习惯:空格上屏首选、数字选词、Enter 上屏原文、
-//! Backspace 按音节回删、Shift 切中英(组合中先上屏再切)、中文态标点转全角。
+//! Backspace 逐字母回删、Shift 切中英(组合中先上屏再切)、中文态标点转全角。
 
 mod punct;
 mod query;
@@ -256,6 +256,18 @@ impl Engine {
         self.hl
     }
 
+    /// 移动高亮而不提交;宿主自绘候选时由 TSF 的 `SetSelection` 调用。
+    /// 页号跟随高亮,内联预览与随后点选的内容保持一致。
+    pub fn set_highlight(&mut self, index: usize) -> bool {
+        if index >= self.cands.len() || index == self.hl {
+            return false;
+        }
+        self.hl = index;
+        self.page = index / self.cfg.page_size.max(1);
+        self.sync_display();
+        true
+    }
+
     pub fn page(&self) -> usize {
         self.page
     }
@@ -482,19 +494,19 @@ impl Engine {
                 Vec::new()
             }
             Key::Backspace => {
-                self.delete_syllable(true);
+                self.delete_char(true);
                 Vec::new()
             }
             Key::Delete => {
-                self.delete_syllable(false);
+                self.delete_char(false);
                 Vec::new()
             }
             Key::Left => {
-                self.move_cursor(-1);
+                self.move_cursor_char(-1);
                 Vec::new()
             }
             Key::Right => {
-                self.move_cursor(1);
+                self.move_cursor_char(1);
                 Vec::new()
             }
             Key::Home => {
@@ -705,40 +717,23 @@ impl Engine {
         }
     }
 
-    /// 按音节回删/前删;光标不在音节边界时退化为单字母。
-    fn delete_syllable(&mut self, left: bool) {
+    /// 逐字母回删/前删;与微软拼音、微信输入法一致,不按音节整段删。
+    fn delete_char(&mut self, left: bool) {
         let Some(comp) = self.comp.as_mut() else {
             return;
         };
-        let spans = comp.seg_spans.clone();
         if left {
             if comp.cursor == 0 {
                 return;
             }
-            if let Some(&(s, _)) = spans.iter().rev().find(|&&(_, e)| e == comp.cursor) {
-                comp.raw.drain(s..comp.cursor);
-                comp.cursor = s;
-            } else {
-                let at = comp.cursor - 1;
-                comp.raw.remove(at);
-                comp.cursor = at;
-            }
-            while comp.cursor > 0 && comp.raw.as_bytes().get(comp.cursor - 1) == Some(&b'\'') {
-                comp.raw.remove(comp.cursor - 1);
-                comp.cursor -= 1;
-            }
+            let at = comp.cursor - 1;
+            comp.raw.remove(at);
+            comp.cursor = at;
         } else {
             if comp.cursor >= comp.raw.len() {
                 return;
             }
-            if let Some(&(_, e)) = spans.iter().find(|&&(s, _)| s == comp.cursor) {
-                comp.raw.drain(comp.cursor..e);
-            } else {
-                comp.raw.remove(comp.cursor);
-            }
-            if comp.cursor == 0 && comp.raw.starts_with('\'') {
-                comp.raw.remove(0);
-            }
+            comp.raw.remove(comp.cursor);
         }
         if comp.raw.is_empty() {
             self.comp = None;
@@ -753,30 +748,15 @@ impl Engine {
         }
     }
 
-    /// 按音节边界移动光标。
-    fn move_cursor(&mut self, dir: i32) {
+    /// 光标左右移动一个字符。
+    fn move_cursor_char(&mut self, dir: i32) {
         let Some(comp) = self.comp.as_mut() else {
             return;
         };
-        let mut stops: Vec<usize> = comp.seg_spans.iter().flat_map(|&(s, e)| [s, e]).collect();
-        stops.push(0);
-        stops.push(comp.raw.len());
-        stops.sort_unstable();
-        stops.dedup();
-        let cur = comp.cursor;
         comp.cursor = if dir < 0 {
-            stops
-                .iter()
-                .rev()
-                .find(|&&p| p < cur)
-                .copied()
-                .unwrap_or(cur.saturating_sub(1))
+            comp.cursor.saturating_sub(1)
         } else {
-            stops
-                .iter()
-                .find(|&&p| p > cur)
-                .copied()
-                .unwrap_or((cur + 1).min(comp.raw.len()))
+            (comp.cursor + 1).min(comp.raw.len())
         };
     }
 

@@ -23,14 +23,15 @@ mod imp {
     use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        CoUninitialize, IPersistFile,
+        CoTaskMemFree, CoUninitialize, IPersistFile,
     };
     use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
     use windows::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
     use windows::Win32::UI::Shell::{
-        IShellLinkW, IsUserAnAdmin, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+        FOLDERID_Programs, IShellLinkW, IsUserAnAdmin, KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS,
+        SHELLEXECUTEINFOW, SHGetKnownFolderPath, ShellExecuteExW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_SHOWNORMAL,
@@ -413,6 +414,16 @@ mod imp {
     }
 
     fn start_menu() -> PathBuf {
+        // 企业环境可能重定向开始菜单;按 Known Folder 取,不用拼 APPDATA。
+        if let Ok(path) = unsafe {
+            SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_DEFAULT, None)
+        } {
+            let text = unsafe { path.to_string() }.ok();
+            unsafe { CoTaskMemFree(Some(path.0 as *const core::ffi::c_void)) };
+            if let Some(text) = text {
+                return PathBuf::from(text);
+            }
+        }
         appdata()
             .join("Microsoft")
             .join("Windows")
