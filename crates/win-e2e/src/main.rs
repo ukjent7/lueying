@@ -48,8 +48,7 @@ mod imp {
                 format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
             }
             Err(e) => {
-                let tsf =
-                    tail_of(std::env::var_os("PINYIN_TSF_LOG").map(std::path::PathBuf::from));
+                let tsf = tail_of(std::env::var_os("PINYIN_TSF_LOG").map(std::path::PathBuf::from));
                 let server = tail_of(Some(server_log()));
                 format!(
                     "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
