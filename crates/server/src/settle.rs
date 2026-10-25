@@ -1,6 +1,7 @@
 //! 25M 停顿重排:按键后只记一个每会话待办,静默 120ms 才跑模型;
 //! 推理不持有 `sessions` 锁,回来时用 revision/页/高亮确认结果仍然有效。
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -112,12 +113,15 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                 }
                 let now = elapsed_ms(start);
                 for job in debounce.take_due(now) {
-                    let promote = {
-                        let mut rerank = job.rerank.lock().unwrap_or_else(|p| p.into_inner());
-                        let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
-                        rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
-                    };
-                    apply(&state, &job, promote);
+                    // 一次推理 panic 不能让整条 25M 线程退出;丢掉本次结果即可。
+                    let _ = catch_unwind(AssertUnwindSafe(|| {
+                        let promote = {
+                            let mut rerank = job.rerank.lock().unwrap_or_else(|p| p.into_inner());
+                            let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
+                            rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
+                        };
+                        apply(&state, &job, promote);
+                    }));
                 }
             }
         })

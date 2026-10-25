@@ -18,7 +18,9 @@ use crate::edit;
 use crate::log;
 use crate::service::{Shared, SharedClient};
 
-const INTERVAL_MS: u32 = 80;
+// 候选窗点选和 25M 停顿重排都靠这条轮询写回文档;40ms 内落地,
+// 同时把「组句中每 40ms 一次管道往返」的代价控制在可忽略范围。
+const INTERVAL_MS: u32 = 40;
 
 struct PollContext {
     client: SharedClient,

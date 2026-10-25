@@ -323,7 +323,7 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
     }
     // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。退回视图矩形,
     // 至少让候选窗出现在编辑区底部,而不是因为拿不到光标就完全消失。
-    let view_rect = unsafe { view.GetScreenExt(ec) }.ok()?;
+    let view_rect = unsafe { view.GetScreenExt() }.ok()?;
     (view_rect.right > view_rect.left && view_rect.bottom > view_rect.top).then_some((
         view_rect.left,
         view_rect.bottom,

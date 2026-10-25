@@ -28,6 +28,9 @@ mod imp {
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
         OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
     };
+    use windows::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+    };
     use windows::core::{PCWSTR, PWSTR};
 
     const WIDTH: f32 = 440.0;
@@ -47,6 +50,9 @@ mod imp {
     }
 
     pub(super) fn run() {
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
         let path = config::path();
         let cfg = path
             .as_ref()

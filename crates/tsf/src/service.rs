@@ -187,12 +187,12 @@ impl TextService {
         service
     }
 
-    fn mapped_key(&self, vk: u32) -> Option<pinyin_protocol::KeyMsg> {
+    fn mapped_key(&self, vk: u32, scan: u32) -> Option<pinyin_protocol::KeyMsg> {
         // 安全桌面里全部直通:密码/凭据不能进入组句、学习或候选窗。
         if self.secure.get() || keys::command_mods() || keys::caps_on() {
             return None;
         }
-        keys::vk_to_key(vk, keys::shift_down())
+        keys::vk_to_key(vk, scan, keys::shift_down())
     }
 
     /// 发请求(懒连接 + 退避);连上时先 Hello。
@@ -568,10 +568,12 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     }
 
     /// 所有键先过这里:问 Server 吃不吃;直通的键立即放行。
-    fn OnTestKeyDown(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
+    fn OnTestKeyDown(&self, pic: Ref<ITfContext>, wparam: WPARAM, lparam: LPARAM) -> Result<BOOL> {
         // 任何意外 panic 都不能穿过 COM 边界拖垮宿主进程。
         match catch_unwind(AssertUnwindSafe(|| {
             let vk = wparam.0 as u32;
+            // 字符键按物理扫描码 + 当前布局翻译。
+            let scan = ((lparam.0 >> 16) & 0xff) as u32;
             self.tap.note_down(vk);
             // 上一个键没被消费时留下的应答不能落到这个键头上(例如语言栏切换后按 Ctrl+C)。
             let stale = self
@@ -586,7 +588,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 // 单击判定与模式同步都在 keyup。
                 return Ok(FALSE);
             }
-            let Some(key) = self.mapped_key(vk) else {
+            let Some(key) = self.mapped_key(vk, scan) else {
                 return Ok(FALSE);
             };
             let Ok(context) = pic.ok() else {

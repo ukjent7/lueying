@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
@@ -127,8 +128,15 @@ fn serve(file: File, state: Arc<State>) {
         }
         let reply = serde_json::from_str::<Request>(line.trim())
             .ok()
-            .map(|req| crate::imp::handle(&state, req))
-            .unwrap_or_default();
+            .map(|req| {
+                // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
+                catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req)))
+                    .unwrap_or_else(|_| {
+                        eprintln!("请求处理 panic,已回中性应答");
+                        crate::imp::neutral(&state)
+                    })
+            })
+            .unwrap_or_else(|| crate::imp::neutral(&state));
         let mut out = match serde_json::to_string(&reply) {
             Ok(s) => s,
             Err(_) => break,

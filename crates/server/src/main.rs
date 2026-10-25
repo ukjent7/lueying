@@ -25,6 +25,9 @@ mod imp {
     use pinyin_server::config::{self, AppConfig};
     use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+    };
     use windows::core::HSTRING;
 
     pub(super) struct Session {
@@ -61,6 +64,11 @@ mod imp {
     }
 
     pub(super) fn real_main() {
+        // 候选窗坐标来自 TSF 的物理像素光标矩形;进程必须 Per-Monitor V2,
+        // 否则 SetWindowPos 会被系统按 96 DPI 虚拟化,副屏与高缩放下会偏移。
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
         // 同一登录会话只允许一个 Server:否则两个进程会各建管道实例,
         // 用户的词库学习和候选窗状态会分裂到不同进程。
         let Some(_instance) = single_instance() else {
@@ -644,7 +652,7 @@ mod imp {
     }
 
     /// 不带文档改动的应答:只同步全局中/英状态,别把 `Reply::default()` 的 false 当英文。
-    fn neutral(state: &State) -> Reply {
+    pub(super) fn neutral(state: &State) -> Reply {
         Reply {
             chinese: state.chinese.load(Ordering::Relaxed),
             ..Reply::default()

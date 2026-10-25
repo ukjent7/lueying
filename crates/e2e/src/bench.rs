@@ -62,6 +62,8 @@ struct Miss {
     typed: String,
     want: String,
     got: String,
+    /// 前几条候选,用于判断是分词、词频还是模糊扩展导致的首选偏差。
+    alternatives: Vec<String>,
 }
 
 /// 与 rime-schema-compare 对齐的同义写法归一化。
@@ -238,6 +240,7 @@ fn run_suite(
                 typed: typed.clone(),
                 want: want.clone(),
                 got: cands.first().cloned().unwrap_or_default(),
+                alternatives: cands.iter().take(8).cloned().collect(),
             });
         }
         engine.process(Key::Esc);
@@ -340,9 +343,19 @@ fn misses(text: &mut String, misses: &[Miss]) {
     if misses.is_empty() {
         return;
     }
-    text.push_str("\n未命中示例:\n\n| 输入 | 期望 | 首选 |\n|---|---|---|\n");
+    text.push_str(
+        "\n未命中示例(附前 8 条候选,便于判断是分词、词频还是模糊扩展导致):\n\n\
+         | 输入 | 期望 | 首选 | 候选 |\n|---|---|---|---|\n",
+    );
     for miss in misses {
-        let _ = writeln!(text, "| {} | {} | {} |", miss.typed, miss.want, miss.got);
+        let _ = writeln!(
+            text,
+            "| {} | {} | {} | {} |",
+            miss.typed,
+            miss.want,
+            miss.got,
+            miss.alternatives.join(" / ")
+        );
     }
 }
 
