@@ -1,7 +1,6 @@
 //! 自注册:COM InprocServer32(HKCR,regsvr32 要管理员)+ TSF profile 与能力类别。
 //! 缺少沉浸式等能力声明时,Win10/11 的输入切换器会把这个输入法过滤掉(装上又消失)。
 
-use windows::Win32::Foundation::E_NOTIMPL;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,

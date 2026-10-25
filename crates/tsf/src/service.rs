@@ -393,7 +393,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         {
             self.apply(&context, &reply);
         }
-        crate::mode::unadvise(self.mode_advice.borrow_mut().take());
+        crate::mode::unadvise(std::mem::take(&mut *self.mode_advice.borrow_mut()));
         if let Some(button) = self.langbar.borrow_mut().take() {
             crate::langbar::remove(&button, self.thread_mgr.borrow().as_ref());
         }
