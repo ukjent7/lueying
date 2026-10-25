@@ -103,10 +103,10 @@ impl ModeButton_Impl {
 
     fn about() {
         let text = HSTRING::from(format!(
-            "拼音输入法 {}\nGPL-3.0-or-later\n\n词典:白霜(rime-frost)",
+            "掠影 {}\nGPL-3.0-or-later\n\n词典:白霜(rime-frost)",
             env!("CARGO_PKG_VERSION")
         ));
-        let caption = HSTRING::from("关于拼音输入法");
+        let caption = HSTRING::from("关于掠影");
         let owner = unsafe { GetForegroundWindow() };
         unsafe {
             MessageBoxW(
@@ -125,7 +125,7 @@ impl ModeButton_Impl {
         };
         let toggle = HSTRING::from("切换中/英");
         let settings = HSTRING::from("设置…");
-        let about = HSTRING::from("关于拼音输入法…");
+        let about = HSTRING::from("关于掠影…");
         unsafe {
             let _ = AppendMenuW(menu, MF_STRING, MENU_TOGGLE as usize, &toggle);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -167,7 +167,7 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
         info.ulSort = 0;
         // 结构体由系统分配,没写的字节可能是垃圾;先清零再拷描述。
         info.szDescription = [0; 32];
-        let description: Vec<u16> = "拼音中英模式".encode_utf16().collect();
+        let description: Vec<u16> = "掠影中英模式".encode_utf16().collect();
         let len = description.len().min(info.szDescription.len());
         info.szDescription[..len].copy_from_slice(&description[..len]);
         Ok(())
@@ -182,7 +182,7 @@ impl ITfLangBarItem_Impl for ModeButton_Impl {
     }
 
     fn GetTooltipString(&self) -> Result<BSTR> {
-        Ok(BSTR::from("拼音输入法(Shift 切换中/英)"))
+        Ok(BSTR::from("掠影(Shift 切换中/英)"))
     }
 }
 

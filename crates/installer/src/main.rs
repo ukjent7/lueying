@@ -37,7 +37,7 @@ mod imp {
     };
     use windows::core::{GUID, HRESULT, HSTRING, Interface, PCSTR, PCWSTR};
 
-    const APP: &str = "拼音输入法";
+    const APP: &str = "掠影";
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "PinyinIme";
     const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
@@ -115,7 +115,7 @@ mod imp {
             message(
                 APP,
                 &format!(
-                    "已安装到:\n{}\n\n按 Win+空格 切换到「拼音」。",
+                    "已安装到:\n{}\n\n按 Win+空格 切换到「掠影」。",
                     target.display()
                 ),
                 false,
@@ -153,17 +153,21 @@ mod imp {
         register_uninstall(target)?;
         let settings = target.join("pinyin-settings.exe");
         let _ = shortcut(
-            &start_menu().join("拼音输入法设置.lnk"),
+            &start_menu().join("掠影设置.lnk"),
             &settings,
             "",
-            "拼音输入法设置",
+            "掠影设置",
         );
         let _ = shortcut(
-            &start_menu().join("卸载拼音输入法.lnk"),
+            &start_menu().join("卸载掠影.lnk"),
             &target.join("pinyin-install.exe"),
             "--uninstall",
-            "卸载拼音输入法",
+            "卸载掠影",
         );
+        // 旧产品名的快捷方式不留在开始菜单。
+        for name in ["拼音输入法设置.lnk", "卸载拼音输入法.lnk"] {
+            let _ = std::fs::remove_file(start_menu().join(name));
+        }
         Ok(())
     }
 
@@ -412,7 +416,7 @@ mod imp {
         };
         set("DisplayName", APP.to_string())?;
         set("DisplayVersion", version(target))?;
-        set("Publisher", "pinyin-ime".into())?;
+        set("Publisher", "掠影".into())?;
         set("InstallLocation", target.display().to_string())?;
         let settings = target.join("pinyin-settings.exe");
         set("DisplayIcon", settings.display().to_string())?;
@@ -462,7 +466,7 @@ mod imp {
 
     fn remove_shortcuts() {
         let dir = start_menu();
-        for name in ["拼音输入法设置.lnk", "卸载拼音输入法.lnk"] {
+        for name in ["掠影设置.lnk", "卸载掠影.lnk"] {
             let _ = std::fs::remove_file(dir.join(name));
         }
     }

@@ -3,7 +3,7 @@
 //! - `pack`:把可执行文件与数据装进发布目录,生成清单与版本号。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
-//! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/pinyin-ime`
+//! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/lueying`
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -83,7 +83,7 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
     let mut args = PackArgs {
         bin: PathBuf::from("target/release"),
         data: PathBuf::from("data"),
-        out: PathBuf::from("dist/pinyin-ime"),
+        out: PathBuf::from("dist/lueying"),
         version: env!("CARGO_PKG_VERSION").to_string(),
         allow_missing_data: false,
     };
@@ -214,7 +214,7 @@ revision 75295b373a7ef0d14e9bebd32c1625c9cfcfea49。
     std::fs::write(args.out.join("version.txt"), format!("{}\n", args.version))
         .map_err(|e| format!("写 version.txt: {e}"))?;
     let manifest = serde_json::json!({
-        "name": "pinyin-ime",
+        "name": "lueying",
         "version": args.version,
         "files": files.iter().map(|(name, bytes)| {
             serde_json::json!({ "path": name, "bytes": bytes })

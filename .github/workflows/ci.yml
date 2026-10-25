@@ -144,17 +144,17 @@ jobs:
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
       - name: 打包发布目录
         if: github.event_name != 'pull_request'
-        run: cargo run -p xtask --release --locked -- pack --bin target/release --data data --out dist/pinyin-ime
+        run: cargo run -p xtask --release --locked -- pack --bin target/release --data data --out dist/lueying
       - name: 校验发布目录
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          test -f dist/pinyin-ime/LICENSE
-          test -f dist/pinyin-ime/licenses/Apache-2.0.txt
-          test ! -f dist/pinyin-ime/main.gram
-          du -sh dist/pinyin-ime
+          test -f dist/lueying/LICENSE
+          test -f dist/lueying/licenses/Apache-2.0.txt
+          test ! -f dist/lueying/main.gram
+          du -sh dist/lueying
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name != 'pull_request'
         with:
-          name: pinyin-ime-windows
-          path: dist/pinyin-ime
+          name: lueying-windows
+          path: dist/lueying

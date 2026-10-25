@@ -55,7 +55,7 @@ mod imp {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("拼音输入法设置".into()),
+                        title: Some("掠影设置".into()),
                         ..Default::default()
                     }),
                     focus: true,
@@ -365,7 +365,7 @@ mod imp {
                 .h(px(HEIGHT))
                 .bg(rgb(colors.bg))
                 .text_color(rgb(colors.text))
-                .child(div().text_size(px(18.0)).child("拼音输入法设置"))
+                .child(div().text_size(px(18.0)).child("掠影设置"))
                 .child(
                     div()
                         .text_size(px(12.0))

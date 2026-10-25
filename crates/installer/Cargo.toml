@@ -3,7 +3,7 @@ name = "pinyin-installer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "按用户安装/卸载拼音输入法:复制文件、注册 TSF、写入自启动"
+description = "按用户安装/卸载掠影拼音输入法:复制文件、注册 TSF、写入自启动"
 
 [[bin]]
 name = "pinyin-install"

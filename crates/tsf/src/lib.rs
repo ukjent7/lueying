@@ -38,7 +38,7 @@ pub(crate) const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_
 pub(crate) const LANGID_ZH_CN: u16 = 0x0804;
 
 /// 系统里显示的输入法名。
-pub(crate) const NAME: &str = "拼音";
+pub(crate) const NAME: &str = "掠影";
 
 /// 存活 COM 对象计数,DllCanUnloadNow 依据。
 static DLL_REFERENCES: AtomicIsize = AtomicIsize::new(0);
