@@ -4,6 +4,7 @@ members = [
     "crates/dict",
     "crates/engine",
     "crates/e2e",
+    "crates/install-e2e",
     "crates/installer",
     "crates/lm",
     "crates/protocol",

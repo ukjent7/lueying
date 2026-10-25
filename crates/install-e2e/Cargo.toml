@@ -1,0 +1,15 @@
+[package]
+name = "pinyin-install-e2e"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Windows 安装/卸载冒烟测试:真实安装器装到隔离目录、查注册项、再卸载"
+
+[[bin]]
+name = "pinyin-install-e2e"
+path = "src/main.rs"
+
+[dependencies]
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = ["Win32_UI_Shell"] }

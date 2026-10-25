@@ -4,7 +4,7 @@
 
 ## 进程
 
-- `pinyin_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步。
+- `pinyin_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。
 - `pinyin-server.exe`：常驻服务。持有词典、引擎、用户词库和重排模型；每个宿主会话一份 `Engine`，通过命名管道响应请求。
 - `pinyin-settings.exe`：独立设置窗。写 `config.ini` 后通知服务重载。
 - `pinyin-install.exe`：按用户安装。复制版本化 DLL、注册 TSF、写自启动/卸载项；注册表动作按需提权。
@@ -36,7 +36,7 @@
 6. 4M 模型在按键返回前重排可比较候选；25M 模型在静默 120ms 后异步重排，只允许上下文明确的模糊候选越过可信精确首位。
 7. 候选窗是无焦点置顶 GPUI 窗口，支持深浅色、鼠标点选、翻页、DPI/多屏贴靠与全屏隐藏。
 
-已上屏文本保留最近 128 字作为上下文；焦点丢失或光标跳转时清空。用户词库按周衰减、上限 2 万条，词条与模糊组统计一起写入 `%LOCALAPPDATA%\pinyin-ime\user.tsv`。
+已上屏文本保留最近 128 字作为上下文；焦点丢失或光标跳转时清空。用户词库按周衰减、上限 2 万条，词条与模糊组统计一起写入 `%LOCALAPPDATA%\pinyin-ime\user.tsv`；设置页可经 Server 导出/合并导入 TSV，写入后立即落盘。
 
 ## 数据与发布
 
@@ -49,8 +49,9 @@
 ## 验证
 
 - `pinyin-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。`--bench-fast` 跑确定性等距子集并并行各语料，`--bench` 跑全量。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
-- `pinyin-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证中英切换。产物 `target/win-e2e-report.md`；该任务目前在 CI 中为观察项。
-- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
+- `pinyin-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证中英切换，再量 5 轮空格到文本落地的全链路延迟（p95 ≤ 250ms）。产物 `target/win-e2e-report.md`；该任务目前在 CI 中为观察项。
+- `pinyin-install-e2e`：把真实安装器指向隔离的 `LOCALAPPDATA`，检查文件、自启动/卸载项与 TSF CLSID，再执行真实卸载并确认清理。产物 `target/install-e2e-report.md`。
+- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；windows job 另做 i686/ARM64 TSF 编译检查；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
 
 ## 许可
 

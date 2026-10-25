@@ -98,8 +98,14 @@ pub enum Request {
     ToggleMode { session: u64 },
     /// 设置窗保存后通知 Server 重新读配置文件。
     ReloadConfig,
+    /// 保留键 Ctrl+.：切换中文标点并持久化。
+    TogglePunct,
     /// 设置窗清空共享用户词库(所有会话立即生效)。
     ClearUser,
+    /// 设置窗导出用户词库文本。
+    ExportUser,
+    /// 设置窗导入用户词库文本(与现有词条合并)。
+    ImportUser { text: String },
     /// 设置窗读取模糊组学习统计。
     FuzzyStats,
     /// 设置窗只重置组级适应,保留词条。
@@ -140,6 +146,9 @@ pub struct Reply {
     /// 模糊组统计(仅设置窗的 `FuzzyStats`/`ResetFuzzy` 应答使用)。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<(String, u32)>,
+    /// 用户词库文本(仅 `ExportUser` 应答使用)。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user: String,
 }
 
 /// 会话快照(Server 内部与候选窗渲染共用)。

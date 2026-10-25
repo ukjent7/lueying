@@ -30,8 +30,9 @@ use crate::log;
 use crate::service::{Shared, SharedClient, request_with};
 
 const MENU_TOGGLE: u32 = 1;
-const MENU_SETTINGS: u32 = 2;
-const MENU_ABOUT: u32 = 3;
+const MENU_PUNCT: u32 = 2;
+const MENU_SETTINGS: u32 = 3;
+const MENU_ABOUT: u32 = 4;
 
 /// 登记语言栏按钮;拿不到管理器时返回 `None`(不影响打字)。
 pub(crate) fn add(
@@ -124,10 +125,12 @@ impl ModeButton_Impl {
             return;
         };
         let toggle = HSTRING::from("切换中/英");
+        let punct = HSTRING::from("切换中文标点(Ctrl+.)");
         let settings = HSTRING::from("设置…");
         let about = HSTRING::from("关于掠影…");
         unsafe {
             let _ = AppendMenuW(menu, MF_STRING, MENU_TOGGLE as usize, &toggle);
+            let _ = AppendMenuW(menu, MF_STRING, MENU_PUNCT as usize, &punct);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS as usize, &settings);
             let _ = AppendMenuW(menu, MF_STRING, MENU_ABOUT as usize, &about);
@@ -148,6 +151,13 @@ impl ModeButton_Impl {
         }
         match command.0 as u32 {
             MENU_TOGGLE => self.toggle(),
+            MENU_PUNCT => {
+                let _ = request_with(
+                    &self.client,
+                    &self.shared,
+                    Request::TogglePunct,
+                );
+            }
             MENU_SETTINGS => Self::open_settings(),
             MENU_ABOUT => Self::about(),
             _ => {}

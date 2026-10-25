@@ -31,10 +31,10 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
-        GetWindowTextW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWNORMAL,
-        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-        WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
-        WS_VSCROLL,
+        GetForegroundWindow, GetWindowTextW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
+        SW_SHOWNORMAL, SetForegroundWindow, SetWindowTextW, ShowWindow, TranslateMessage,
+        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
+        WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
     };
     use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
 
@@ -44,7 +44,9 @@ mod imp {
 
     pub(super) fn run() {
         let report = match real_run() {
-            Ok(text) => format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n"),
+            Ok((text, extra)) => {
+                format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
+            }
             Err(e) => format!("# Windows E2E\n\nFAIL\n\n{e}\n"),
         };
         println!("{report}");
@@ -55,7 +57,7 @@ mod imp {
         }
     }
 
-    fn real_run() -> Result<String, String> {
+    fn real_run() -> Result<(String, String), String> {
         // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
         let suffix = format!("e2e{}", std::process::id());
         unsafe {
@@ -114,7 +116,7 @@ mod imp {
             Err(e) => println!("ITfThreadMgr::Activate: {e}"),
         }
 
-        let result = (|| -> Result<String, String> {
+        let result = (|| -> Result<(String, String), String> {
             // 2. 先建宿主窗口并聚焦。TSF 在激活 profile 时需要有一个文档管理器,
             //    否则服务实例刚上线就会被 Deactivate,后续按键全部直通。
             let (hwnd, edit) = create_host_window()?;
@@ -125,6 +127,11 @@ mod imp {
             }
             pump_for(Duration::from_millis(150));
             report_tsf_focus();
+            // 有窗口焦点后 TSF 才会为这个线程建立文档管理器;等它真正出现,
+            // 否则激活 profile 仍可能在上下文就绪前被停用。
+            if !wait_for_tsf_focus(Duration::from_secs(3)) {
+                return Err("TSF 文档管理器在 3 秒内没有就绪".into());
+            }
 
             // 3. 激活本输入法(本进程)
             let profiles = unsafe {
@@ -230,12 +237,35 @@ mod imp {
                 Err(e) => println!("GetActiveLanguageProfile: {e}"),
             }
             // 激活 profile 到服务实例挂上焦点是异步的;给 TSF 一点消息泵时间。
-            pump_for(Duration::from_millis(200));
+            pump_for(Duration::from_millis(400));
+            report_tsf_focus();
+            // SendInput 发给前台窗口;CI 里窗口即使已 Show,也可能没抢到前台。
+            let mut foreground = unsafe { GetForegroundWindow() };
+            if foreground != hwnd {
+                println!("前台窗口不是宿主,重试 SetForegroundWindow");
+                unsafe {
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = SetFocus(Some(edit));
+                }
+                pump_for(Duration::from_millis(300));
+                foreground = unsafe { GetForegroundWindow() };
+            }
+            println!(
+                "前台窗口 {}",
+                if foreground == hwnd {
+                    "是宿主".to_string()
+                } else {
+                    format!("不是宿主(0x{:X})", foreground.0 as usize)
+                }
+            );
 
             // 4. 中文:注入「nihao+空格」
             type_text("nihao")?;
             tap(0x20)?; // 空格
             pump_for(Duration::from_millis(600));
+
+            // 4b. 保留键 Ctrl+.:切换中文标点并持久化到 Server 的 config.ini。
+            check_preserved_punct(&data)?;
 
             // 5. 单击 Shift 切英文,字母应原样进入 RichEdit;再切回中文验证全局模式。
             tap(0x10)?; // VK_SHIFT
@@ -252,11 +282,13 @@ mod imp {
             let mut buf = [0u16; 512];
             let n = unsafe { GetWindowTextW(edit, &mut buf) };
             let text = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
-            if text.contains("你好abc你好") {
-                Ok(text)
-            } else {
-                Err(format!("RichEdit 文本 `{text}` 不含 你好abc你好"))
+            if !text.contains("你好abc你好") {
+                return Err(format!("RichEdit 文本 `{text}` 不含 你好abc你好"));
             }
+            // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
+            // pinyin-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
+            let latency = commit_latency(edit)?;
+            Ok((text, latency))
         })();
 
         // 6. 清理(尽力)
@@ -286,20 +318,79 @@ mod imp {
     }
 
     /// 看测试宿主线程有没有 TSF 文档管理器;没有说明 EDIT 不是 TSF 上下文,组句无法落地。
+    fn tsf_focus_state() -> Result<(), String> {
+        let mgr: ITfThreadMgr =
+            unsafe { CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER) }
+                .map_err(|e| format!("线程管理器创建失败: {e}"))?;
+        let dm = unsafe { mgr.GetFocus() }.map_err(|e| format!("无文档管理器: {e}"))?;
+        unsafe { dm.GetTop() }
+            .map(|_| ())
+            .map_err(|e| format!("文档管理器无上下文: {e}"))
+    }
+
     fn report_tsf_focus() {
-        let mgr: windows::core::Result<ITfThreadMgr> =
-            unsafe { CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER) };
-        let Ok(mgr) = mgr else {
-            println!("TSF focus: 线程管理器创建失败");
-            return;
-        };
-        match unsafe { mgr.GetFocus() } {
-            Ok(dm) => match unsafe { dm.GetTop() } {
-                Ok(_) => println!("TSF focus: 文档管理器有顶层上下文"),
-                Err(e) => println!("TSF focus: 文档管理器无上下文 {e}"),
-            },
-            Err(e) => println!("TSF focus: 无文档管理器 {e}"),
+        match tsf_focus_state() {
+            Ok(()) => println!("TSF focus: 文档管理器有顶层上下文"),
+            Err(e) => println!("TSF focus: {e}"),
         }
+    }
+
+    /// 等 TSF 文档管理器就绪;期间持续泵消息,让 RichEdit 完成焦点/文档绑定。
+    fn wait_for_tsf_focus(timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if tsf_focus_state().is_ok() {
+                println!("TSF focus: 就绪");
+                return true;
+            }
+            if Instant::now() >= deadline {
+                report_tsf_focus();
+                return false;
+            }
+            pump_for(Duration::from_millis(100));
+        }
+    }
+
+    fn edit_text(edit: HWND) -> String {
+        let mut buf = [0u16; 512];
+        let n = unsafe { GetWindowTextW(edit, &mut buf) };
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
+
+    /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到文本落地。
+    /// 只设上限抓卡死/秒级回归,精确引擎耗时由 pinyin-e2e 的分位数门禁负责。
+    fn commit_latency(edit: HWND) -> Result<String, String> {
+        const ROUNDS: usize = 5;
+        let mut samples = Vec::with_capacity(ROUNDS);
+        for round in 0..ROUNDS {
+            unsafe {
+                let _ = SetWindowTextW(edit, &HSTRING::from(""));
+            }
+            pump_for(Duration::from_millis(80));
+            type_text("nihao")?;
+            pump_for(Duration::from_millis(120));
+            let start = Instant::now();
+            tap(0x20)?;
+            let deadline = Instant::now() + Duration::from_millis(800);
+            while edit_text(edit).is_empty() {
+                if Instant::now() >= deadline {
+                    return Err(format!("第 {} 轮提交超过 800ms", round + 1));
+                }
+                pump_for(Duration::from_millis(5));
+            }
+            samples.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples.sort_by(f64::total_cmp);
+        let pick = |p: f64| samples[((p * (ROUNDS - 1) as f64).round() as usize).min(ROUNDS - 1)];
+        let (p50, p95) = (pick(0.5), pick(0.95));
+        let slowest = samples.last().copied().unwrap_or(0.0);
+        let summary = format!(
+            "## 全链路提交延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 250 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
+        );
+        if p95 > 250.0 {
+            return Err(format!("{summary}\n\np95 超过 250ms"));
+        }
+        Ok(summary)
     }
 
     fn create_host_window() -> Result<(HWND, HWND), String> {
@@ -376,35 +467,79 @@ mod imp {
         Ok(())
     }
 
+    fn key_input(vk: u16, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(vk),
+                    wScan: 0,
+                    dwFlags: if up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        Default::default()
+                    },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
     fn tap(vk: u16) -> Result<(), String> {
-        let down = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(vk),
-                    wScan: 0,
-                    dwFlags: Default::default(),
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
+        let sent = unsafe {
+            SendInput(
+                &[key_input(vk, false), key_input(vk, true)],
+                std::mem::size_of::<INPUT>() as i32,
+            )
         };
-        let up = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(vk),
-                    wScan: 0,
-                    dwFlags: KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-        let sent = unsafe { SendInput(&[down, up], std::mem::size_of::<INPUT>() as i32) };
         if sent != 2 {
             return Err(format!("SendInput 只发出 {sent}"));
         }
+        Ok(())
+    }
+
+    /// 修饰键 + 普通键的组合(按下修饰键、按键、抬键、抬修饰键)。
+    fn chord(modifier: u16, vk: u16) -> Result<(), String> {
+        let sent = unsafe {
+            SendInput(
+                &[
+                    key_input(modifier, false),
+                    key_input(vk, false),
+                    key_input(vk, true),
+                    key_input(modifier, true),
+                ],
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent != 4 {
+            return Err(format!("SendInput 只发出 {sent}"));
+        }
+        Ok(())
+    }
+
+    /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。
+    fn check_preserved_punct(data: &std::path::Path) -> Result<(), String> {
+        const VK_CONTROL: u16 = 0x11;
+        const VK_OEM_PERIOD: u16 = 0xBE;
+        let config = data.join("pinyin-ime").join("config.ini");
+        let expect = |want: &str| -> Result<(), String> {
+            let text = std::fs::read_to_string(&config).unwrap_or_default();
+            if text.contains(&format!("chinese_punct={want}")) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{} 不含 chinese_punct={want}: `{text}`",
+                    config.display()
+                ))
+            }
+        };
+        chord(VK_CONTROL, VK_OEM_PERIOD)?;
+        pump_for(Duration::from_millis(400));
+        expect("false")?;
+        chord(VK_CONTROL, VK_OEM_PERIOD)?;
+        pump_for(Duration::from_millis(400));
+        expect("true")?;
         Ok(())
     }
 

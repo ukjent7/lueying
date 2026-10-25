@@ -14,8 +14,10 @@ use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
     ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
-    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl,
-    ITfThreadMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP,
+    ITfTextInputProcessor, ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl,
+    ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
+    TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY,
+    TF_TMAE_SECUREMODE,
 };
 use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
 
@@ -24,6 +26,11 @@ use crate::client::{Client, RETRY_INTERVAL};
 use crate::edit;
 use crate::keys::{self, KeyTap};
 use crate::log;
+
+/// 保留键 Ctrl+.：切换中文标点。GUID 只在本 DLL 内解释,取值稳定即可。
+const GUID_PRESERVED_PUNCT: GUID = GUID::from_u128(0x5c7a4b0e_2f61_4a6b_9c1d_7e8f0a1b2c3d);
+/// VK_OEM_PERIOD。
+const VK_OEM_PERIOD: u32 = 0xBE;
 
 /// 跨按键存活的组句状态(STA 单线程,Rc 传递)。
 pub(crate) struct Shared {
@@ -107,6 +114,7 @@ struct Pending {
 
 #[implement(
     ITfTextInputProcessor,
+    ITfTextInputProcessorEx,
     ITfKeyEventSink,
     ITfThreadFocusSink,
     ITfDisplayAttributeProvider
@@ -128,6 +136,10 @@ pub(crate) struct TextService {
     caps_restore: Cell<Option<bool>>,
     /// 组句期间的停顿轮询定时器;停用时自动停表。
     poll: RefCell<Option<crate::poll::PollTimer>>,
+    /// 已注册的保留键;停用时按同一定义撤销。
+    preserved: Cell<Option<TF_PRESERVEDKEY>>,
+    /// 安全桌面(TF_TMAE_SECUREMODE):不组句、不学习、不弹候选窗。
+    secure: Cell<bool>,
 }
 
 fn host_app_name() -> String {
@@ -168,6 +180,8 @@ impl TextService {
             mode_advice: RefCell::new(Vec::new()),
             caps_restore: Cell::new(None),
             poll: RefCell::new(None),
+            preserved: Cell::new(None),
+            secure: Cell::new(false),
         };
         // COM 对象活着时不能让 DllCanUnloadNow 放行卸载。
         crate::lock_module();
@@ -175,7 +189,8 @@ impl TextService {
     }
 
     fn mapped_key(&self, vk: u32) -> Option<pinyin_protocol::KeyMsg> {
-        if keys::command_mods() || keys::caps_on() {
+        // 安全桌面里全部直通:密码/凭据不能进入组句、学习或候选窗。
+        if self.secure.get() || keys::command_mods() || keys::caps_on() {
             return None;
         }
         keys::vk_to_key(vk, keys::shift_down())
@@ -236,6 +251,9 @@ impl TextService {
     /// 焦点变化:失焦把敲了一半的拼音落定到最近上下文。
     /// `ITfKeyEventSink::OnSetFocus`(同应用换输入框)与线程焦点走同一条。
     fn focus_changed(&self, focused: bool) {
+        if self.secure.get() {
+            return;
+        }
         self.shared.touch();
         self.shared.bump_context_epoch();
         self.pending.borrow_mut().take();
@@ -333,12 +351,25 @@ pub(crate) fn apply_reply(shared: &Rc<Shared>, client: &SharedClient, reply: &Re
     }
 }
 
-impl ITfTextInputProcessor_Impl for TextService_Impl {
-    fn Activate(&self, ptim: Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
+impl TextService_Impl {
+    fn activate(&self, ptim: Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
         let thread_mgr = ptim.ok()?.clone();
         let keystroke: ITfKeystrokeMgr = thread_mgr.cast()?;
         let sink: ITfKeyEventSink = self.to_interface();
         unsafe { keystroke.AdviseKeyEventSink(tid, &sink, true)? };
+
+        // Ctrl+. 由本输入法保留,应用即使也注册了同一快捷键也先到 TSF。
+        let preserved = TF_PRESERVEDKEY {
+            uVKey: VK_OEM_PERIOD,
+            uModifiers: TF_MOD_CONTROL,
+        };
+        let description: Vec<u16> = "切换中文标点".encode_utf16().collect();
+        match unsafe {
+            keystroke.PreserveKey(tid, &GUID_PRESERVED_PUNCT, &preserved, &description)
+        } {
+            Ok(()) => self.preserved.set(Some(preserved)),
+            Err(error) => log(&format!("注册保留键 Ctrl+. 失败: {error}")),
+        }
 
         let source: ITfSource = thread_mgr.cast()?;
         let focus_sink: ITfThreadFocusSink = self.to_interface();
@@ -371,20 +402,35 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         log(&format!("激活 tid={tid} session={}", self.shared.session));
         Ok(())
     }
+}
+
+impl ITfTextInputProcessor_Impl for TextService_Impl {
+    fn Activate(&self, ptim: Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
+        self.secure.set(false);
+        self.activate(ptim, tid)
+    }
 
     fn Deactivate(&self) -> Result<()> {
+        let secure = self.secure.replace(false);
         self.poll.borrow_mut().take();
         self.shared.bump_context_epoch();
         self.shared.langbar_sink.borrow_mut().take();
         // 停用可能发生在切换输入法/关闭应用时;先把敲了一半的拼音落定。
         self.pending.borrow_mut().take();
-        if let Some(context) = self.shared.last_context.borrow().clone()
+        if !secure
+            && let Some(context) = self.shared.last_context.borrow().clone()
             && let Some(reply) = self.request(Request::Focus {
                 session: self.shared.session,
                 focused: false,
             })
         {
             self.apply(&context, &reply);
+        }
+        if let Some(key) = self.preserved.take()
+            && let Some(thread_mgr) = self.thread_mgr.borrow().clone()
+            && let Ok(keystroke) = thread_mgr.cast::<ITfKeystrokeMgr>()
+        {
+            let _ = unsafe { keystroke.UnpreserveKey(&GUID_PRESERVED_PUNCT, &key) };
         }
         crate::mode::unadvise(std::mem::take(&mut *self.mode_advice.borrow_mut()));
         if let Some(button) = self.langbar.borrow_mut().take() {
@@ -413,6 +459,17 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         }
         log("停用");
         Ok(())
+    }
+}
+
+impl ITfTextInputProcessorEx_Impl for TextService_Impl {
+    /// 安全桌面(登录/凭据 UI)以 Ex 接口激活;记下标记后全部按键直通。
+    fn ActivateEx(&self, ptim: Ref<ITfThreadMgr>, tid: u32, dwflags: u32) -> Result<()> {
+        self.secure.set(dwflags & TF_TMAE_SECUREMODE != 0);
+        if self.secure.get() {
+            log("安全桌面:输入法只直通按键");
+        }
+        self.activate(ptim, tid)
     }
 }
 
@@ -542,6 +599,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     fn OnKeyUp(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
         match catch_unwind(AssertUnwindSafe(|| {
             let vk = wparam.0 as u32;
+            // 安全桌面里不响应 Shift/Caps 模式切换。
+            if self.secure.get() {
+                return Ok(FALSE);
+            }
             // CapsLock:大写锁定 = 临时英文;灭灯后回到亮灯前的模式。
             if keys::is_caps(vk) {
                 self.shared.touch();
@@ -599,8 +660,15 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         }
     }
 
-    fn OnPreservedKey(&self, _pic: Ref<ITfContext>, _rguid: *const GUID) -> Result<BOOL> {
-        Ok(FALSE)
+    fn OnPreservedKey(&self, _pic: Ref<ITfContext>, rguid: *const GUID) -> Result<BOOL> {
+        if rguid.is_null() || unsafe { *rguid } != GUID_PRESERVED_PUNCT {
+            return Ok(FALSE);
+        }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            // 开关写回配置并让 Server 立即生效;组件组合不受影响。
+            let _ = self.request(Request::TogglePunct);
+        }));
+        Ok(true.into())
     }
 }
 

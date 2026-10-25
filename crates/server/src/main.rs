@@ -526,6 +526,45 @@ mod imp {
                 }
                 Reply::default()
             }
+            Request::TogglePunct => {
+                let cfg = {
+                    let mut cfg = state.config.write().unwrap_or_else(|p| p.into_inner());
+                    cfg.chinese_punct = !cfg.chinese_punct;
+                    cfg.clone()
+                };
+                if let Some(path) = &state.config_path
+                    && let Err(e) = config::save(path, &cfg)
+                {
+                    println!("保存配置 {} 失败: {e}", path.display());
+                }
+                apply_config(state, &mut sessions, cfg);
+                neutral(state)
+            }
+            Request::ExportUser => Reply {
+                user: state
+                    .user
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .export(),
+                ..Reply::default()
+            },
+            Request::ImportUser { text } => {
+                state
+                    .user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .import(&text);
+                if let Some(path) = crate::user_store::path() {
+                    crate::user_store::flush(&state.user, &path);
+                }
+                let cfg = state
+                    .config
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                apply_config(state, &mut sessions, cfg);
+                group_reply(&state.user)
+            }
             Request::ClearUser => {
                 state
                     .user

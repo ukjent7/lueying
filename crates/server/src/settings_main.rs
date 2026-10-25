@@ -24,6 +24,11 @@ mod imp {
     use pinyin_engine::Fuzzy;
     use pinyin_protocol::{Reply, Request, pipe_name};
     use pinyin_server::config::{self, AppConfig};
+    use windows::Win32::UI::Controls::Dialogs::{
+        GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
+        OFN_PATHMUSTEXIST, OPENFILENAMEW, OPEN_FILENAME_FLAGS,
+    };
+    use windows::core::{PCWSTR, PWSTR};
 
     const WIDTH: f32 = 440.0;
     /// 6 行设置 + 标题/说明/底部按钮;留足行高与间距,避免底部被裁。
@@ -96,6 +101,39 @@ mod imp {
                 Err(e) => self.message = format!("保存失败: {e}"),
             }
         }
+
+        fn export_user(&mut self) {
+            let Some(path) = choose_user_file(true) else {
+                return;
+            };
+            self.message = match call(&Request::ExportUser) {
+                Some(reply) => match std::fs::write(&path, reply.user) {
+                    Ok(()) => format!("已导出到 {}", path.display()),
+                    Err(e) => format!("导出失败: {e}"),
+                },
+                None => "输入法服务未运行,启动后再试".into(),
+            };
+        }
+
+        fn import_user(&mut self) {
+            let Some(path) = choose_user_file(false) else {
+                return;
+            };
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(e) => {
+                    self.message = format!("读取失败: {e}");
+                    return;
+                }
+            };
+            self.message = match call(&Request::ImportUser { text }) {
+                Some(reply) => {
+                    self.groups = reply.groups;
+                    format!("已从 {} 合并", path.display())
+                }
+                None => "输入法服务未运行,启动后再试".into(),
+            };
+        }
     }
 
     /// 给常驻 Server 发一条请求并取回应答;没在运行返回 None。
@@ -122,6 +160,56 @@ mod imp {
     /// 通知常驻 Server 重读配置。
     fn reload() {
         let _ = send(&Request::ReloadConfig);
+    }
+
+    /// 系统文件对话框;取消或失败时返回 None。
+    fn choose_user_file(save: bool) -> Option<PathBuf> {
+        let mut buf = [0u16; 1024];
+        if save {
+            for (slot, ch) in buf.iter_mut().zip("lueying-user.tsv".encode_utf16()) {
+                *slot = ch;
+            }
+        }
+        let filter: Vec<u16> = "用户词库 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0\0"
+            .encode_utf16()
+            .collect();
+        let title: Vec<u16> = if save {
+            "导出用户词库"
+        } else {
+            "导入用户词库"
+        }
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+        let extension: Vec<u16> = "tsv\0".encode_utf16().collect();
+        let mut dialog = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            lpstrFilter: PCWSTR(filter.as_ptr()),
+            lpstrFile: PWSTR(buf.as_mut_ptr()),
+            nMaxFile: buf.len() as u32,
+            lpstrTitle: PCWSTR(title.as_ptr()),
+            Flags: OFN_FILEMUSTEXIST
+                | OFN_PATHMUSTEXIST
+                | if save {
+                    OFN_OVERWRITEPROMPT
+                } else {
+                    OPEN_FILENAME_FLAGS(0)
+                },
+            lpstrDefExt: PCWSTR(extension.as_ptr()),
+            ..Default::default()
+        };
+        let picked = unsafe {
+            if save {
+                GetSaveFileNameW(&mut dialog)
+            } else {
+                GetOpenFileNameW(&mut dialog)
+            }
+        };
+        if !picked.as_bool() {
+            return None;
+        }
+        let len = buf.iter().position(|&ch| ch == 0).unwrap_or(buf.len());
+        Some(PathBuf::from(String::from_utf16_lossy(&buf[..len])))
     }
 
     #[derive(Clone, Copy)]
@@ -306,29 +394,50 @@ mod imp {
                 ))
                 .child(row(
                     "用户词库",
-                    pill(
-                        if self.confirm_clear {
-                            "确认清空"
-                        } else {
-                            "清空"
-                        },
-                        self.confirm_clear,
-                        colors,
-                        cx.listener(|this, _, _, cx| {
-                            if this.confirm_clear {
-                                this.confirm_clear = false;
-                                this.message = if send(&Request::ClearUser) {
-                                    "已清空用户词库".into()
-                                } else {
-                                    "输入法服务未运行,启动后再试".into()
-                                };
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(pill(
+                            "导出",
+                            false,
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                this.export_user();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(pill(
+                            "导入",
+                            false,
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                this.import_user();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(pill(
+                            if self.confirm_clear {
+                                "确认清空"
                             } else {
-                                this.confirm_clear = true;
-                                this.message = "再点一次确认清空".into();
-                            }
-                            cx.notify();
-                        }),
-                    ),
+                                "清空"
+                            },
+                            self.confirm_clear,
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                if this.confirm_clear {
+                                    this.confirm_clear = false;
+                                    this.message = if send(&Request::ClearUser) {
+                                        "已清空用户词库".into()
+                                    } else {
+                                        "输入法服务未运行,启动后再试".into()
+                                    };
+                                } else {
+                                    this.confirm_clear = true;
+                                    this.message = "再点一次确认清空".into();
+                                }
+                                cx.notify();
+                            }),
+                        )),
                     colors,
                 ));
 
