@@ -387,9 +387,11 @@ pub fn run(
     let rounds = long_term(&dict, &gram, &long_corpus);
 
     let mut text = String::from("# 候选准确率基准\n\n");
-    text.push_str("固定外部语料与按键序列,只切换候选排序因素;绝对准确率按来源分表,"
-        "跨 CI 对比同一张表即可量化改动。判定沿用 rime-schema-compare 的归一化:"
-        "其它→其他、他/她/它→他、的/地/得→的。神经重排另见同次 E2E 的「神经重排」节。\n\n");
+    text.push_str(concat!(
+        "固定外部语料与按键序列,只切换候选排序因素;绝对准确率按来源分表,",
+        "跨 CI 对比同一张表即可量化改动。判定沿用 rime-schema-compare 的归一化:",
+        "其它→其他、他/她/它→他、的/地/得→的。神经重排另见同次 E2E 的「神经重排」节。\n\n"
+    ));
     text.push_str("## 词级(外部微软词表)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
     row(&mut text, "精确基线(模糊关/语法关)", word_base);
     row(&mut text, "模糊自动/语法关", word_fuzzy);
@@ -549,9 +551,11 @@ pub fn run(
     let (sent_t1, sent_t5) = change(accent_sent_off, accent_sent_auto);
     let _ = writeln!(
         text,
-        "\n口音词级 top-1 {word_t1:+.1} pt、top-5 {word_t5:+.1} pt;"
-        "口音句级 top-1 {sent_t1:+.1} pt、top-5 {sent_t5:+.1} pt;"
-        "长期学习 top-1 {:+.1} pt。",
+        concat!(
+            "\n口音词级 top-1 {word_t1:+.1} pt、top-5 {word_t5:+.1} pt;",
+            "口音句级 top-1 {sent_t1:+.1} pt、top-5 {sent_t5:+.1} pt;",
+            "长期学习 top-1 {:+.1} pt。"
+        ),
         last.top1_rate() - first.top1_rate()
     );
 
