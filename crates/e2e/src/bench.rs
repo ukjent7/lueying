@@ -548,14 +548,19 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
     }
     let (word_t1, word_t5) = change(accent_word_off, accent_word_auto);
     let (sent_t1, sent_t5) = change(accent_sent_off, accent_sent_auto);
+    let learned_t1 = last.top1_rate() - first.top1_rate();
     let _ = writeln!(
         text,
         concat!(
             "\n口音词级 top-1 {word_t1:+.1} pt、top-5 {word_t5:+.1} pt;",
             "口音句级 top-1 {sent_t1:+.1} pt、top-5 {sent_t5:+.1} pt;",
-            "长期学习 top-1 {:+.1} pt。"
+            "长期学习 top-1 {learned_t1:+.1} pt。"
         ),
-        last.top1_rate() - first.top1_rate()
+        word_t1 = word_t1,
+        word_t5 = word_t5,
+        sent_t1 = sent_t1,
+        sent_t5 = sent_t5,
+        learned_t1 = learned_t1
     );
 
     if let Some(dir) = std::path::Path::new("target/bench-report.md").parent() {
