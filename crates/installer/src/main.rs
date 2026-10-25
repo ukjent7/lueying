@@ -253,7 +253,10 @@ mod imp {
         } else {
             "pinyin_tsf.dll"
         });
-        plain.exists().then_some(plain).or_else(|| newest_dll(source, want32))
+        plain
+            .exists()
+            .then_some(plain)
+            .or_else(|| newest_dll(source, want32))
     }
 
     fn copy_dll(source: &Path, target: &Path, want32: bool, name: &str) -> Result<(), String> {

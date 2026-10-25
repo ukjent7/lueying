@@ -116,9 +116,10 @@ impl Client {
 fn take_line(pending: &mut Vec<u8>) -> Option<String> {
     let end = pending.iter().position(|&byte| byte == b'\n')?;
     let line: Vec<u8> = pending.drain(..=end).collect();
-    String::from_utf8(line)
-        .ok()
-        .map(|line| line.trim_end_matches(|c| c == '\r' || c == '\n').to_string())
+    String::from_utf8(line).ok().map(|line| {
+        line.trim_end_matches(|c| c == '\r' || c == '\n')
+            .to_string()
+    })
 }
 
 /// 每个宿主进程每 10 秒最多拉起一次 Server;正常注入的 DLL 与 Server 同目录。
