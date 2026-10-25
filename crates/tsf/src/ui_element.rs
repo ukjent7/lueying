@@ -10,12 +10,12 @@ use std::rc::Rc;
 use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::E_FAIL;
 use windows::Win32::UI::TextServices::{
-    ITfCandidateListUIElement, ITfCandidateListUIElementBehavior,
-    ITfCandidateListUIElementBehavior_Impl, ITfCandidateListUIElement_Impl, ITfDocumentMgr,
-    ITfUIElement, ITfUIElementMgr, ITfUIElement_Impl, TF_CLUIE_COUNT, TF_CLUIE_CURRENTPAGE,
-    TF_CLUIE_DOCUMENTMGR, TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION, TF_CLUIE_STRING,
+    ITfCandidateListUIElement, ITfCandidateListUIElement_Impl, ITfCandidateListUIElementBehavior,
+    ITfCandidateListUIElementBehavior_Impl, ITfDocumentMgr, ITfUIElement, ITfUIElement_Impl,
+    ITfUIElementMgr, TF_CLUIE_COUNT, TF_CLUIE_CURRENTPAGE, TF_CLUIE_DOCUMENTMGR,
+    TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION, TF_CLUIE_STRING,
 };
-use windows::core::{BSTR, BOOL, Error, GUID, Interface, Result, implement};
+use windows::core::{BOOL, BSTR, Error, GUID, Interface, Result, implement};
 
 use crate::log;
 use crate::service::{Shared, SharedClient, request_with};

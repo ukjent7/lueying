@@ -40,9 +40,8 @@ impl AppConfig {
 
 /// 配置文件路径(`%APPDATA%` 优先,退回 `%LOCALAPPDATA%`)。
 pub fn path() -> Option<PathBuf> {
-    let base = PathBuf::from(
-        std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?,
-    );
+    let base =
+        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
     let dir = base.join("lueying");
     let path = dir.join("config.ini");
     // 一次性接走改名前的配置,升级后用户不必重设。

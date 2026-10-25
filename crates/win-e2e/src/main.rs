@@ -15,9 +15,7 @@ mod imp {
     use std::rc::Rc;
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{
-        FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM,
-    };
+    use windows::Win32::Foundation::{FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
@@ -61,7 +59,11 @@ mod imp {
     }
 
     impl ITfUIElementSink_Impl for UiSink_Impl {
-        fn BeginUIElement(&self, dwuielementid: u32, pbshow: *mut windows::core::BOOL) -> windows::core::Result<()> {
+        fn BeginUIElement(
+            &self,
+            dwuielementid: u32,
+            pbshow: *mut windows::core::BOOL,
+        ) -> windows::core::Result<()> {
             let mut events = self.events.borrow_mut();
             events.began = true;
             events.id = dwuielementid;
@@ -90,7 +92,8 @@ mod imp {
                 format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
             }
             Err(e) => {
-                let tsf = tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
+                let tsf =
+                    tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
                 let server = tail_of(Some(server_log()));
                 format!(
                     "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
@@ -158,8 +161,8 @@ mod imp {
         let mgr: ITfUIElementMgr = thread_mgr
             .cast()
             .map_err(|e| format!("cast ITfUIElementMgr: {e}"))?;
-        let element = unsafe { mgr.GetUIElement(id) }
-            .map_err(|e| format!("GetUIElement({id}): {e}"))?;
+        let element =
+            unsafe { mgr.GetUIElement(id) }.map_err(|e| format!("GetUIElement({id}): {e}"))?;
         let list: ITfCandidateListUIElement = element
             .cast()
             .map_err(|e| format!("cast ITfCandidateListUIElement: {e}"))?;

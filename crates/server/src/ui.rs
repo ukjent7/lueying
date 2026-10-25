@@ -100,8 +100,7 @@ pub(super) fn run(state: Arc<State>) {
 fn snapshot(state: &State) -> Option<SessionView> {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    (!session.host_draws && session.engine.composition().is_some())
-        .then(|| session.view.clone())
+    (!session.host_draws && session.engine.composition().is_some()).then(|| session.view.clone())
 }
 
 /// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。

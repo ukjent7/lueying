@@ -582,7 +582,10 @@ mod imp {
                 }
                 Reply::default()
             }
-            Request::UiMode { session, host_draws } => {
+            Request::UiMode {
+                session,
+                host_draws,
+            } => {
                 if let Some(s) = sessions.get_mut(&session) {
                     s.host_draws = host_draws;
                 }

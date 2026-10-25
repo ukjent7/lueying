@@ -20,8 +20,7 @@ mod imp {
 
     const CLSID: &str = "{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}";
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-    const UNINSTALL_KEY: &str =
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
+    const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
 
     pub(super) fn run() {
         let report = real_run().map_or_else(
