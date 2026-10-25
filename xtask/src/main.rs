@@ -147,7 +147,13 @@ fn pack(args: PackArgs) -> Result<(), String> {
     copy_file(&dll, &args.out, &dll_name, &mut files)?;
 
     for name in PACK_DATA {
-        let source = args.data.join(name);
+        // fetch_rerank.sh 默认下载到 data/rerank/,发布目录却是平铺的;两种布局都接受。
+        let flat = args.data.join(name);
+        let source = if flat.exists() {
+            flat
+        } else {
+            args.data.join("rerank").join(name)
+        };
         if source.exists() {
             copy_file(&source, &args.out, name, &mut files)?;
         } else if args.allow_missing_data {
