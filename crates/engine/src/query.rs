@@ -179,6 +179,9 @@ fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
         .join("'")
 }
 
+/// 一个音节的模糊展开:变体键、改动处数、命中组位。
+type Expansions = Rc<Vec<(String, usize, u8)>>;
+
 /// 词条键是否逐音节匹配输入;命中时返回模糊改动处数。
 ///
 /// 简拼按首字母前缀匹配,n/l、f/h、r/l 等改首字母的模糊组也在这里放宽;
@@ -187,7 +190,7 @@ fn match_edits(
     entry_key: &str,
     sylls: &[Syll],
     fuzzy: &Fuzzy,
-    exp_cache: &mut HashMap<String, Rc<Vec<(String, usize, u8)>>>,
+    exp_cache: &mut HashMap<String, Expansions>,
 ) -> Option<(usize, u8)> {
     let mut edits = 0;
     let mut groups = 0;
@@ -236,7 +239,7 @@ struct Querier<'a> {
     fuzzy: Fuzzy,
     total: f64,
     cache: HashMap<String, Rc<Vec<Hit>>>,
-    exp_cache: HashMap<String, Rc<Vec<(String, usize, u8)>>>,
+    exp_cache: HashMap<String, Expansions>,
 }
 
 impl Querier<'_> {
