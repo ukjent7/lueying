@@ -100,6 +100,10 @@ pub enum Request {
     ReloadConfig,
     /// 设置窗清空共享用户词库(所有会话立即生效)。
     ClearUser,
+    /// 设置窗读取模糊组学习统计。
+    FuzzyStats,
+    /// 设置窗只重置组级适应,保留词条。
+    ResetFuzzy,
     /// 安装器卸载前让常驻服务干净退出。
     Shutdown,
     /// 焦点变化(切窗口时 Server 收候选窗)。
@@ -133,6 +137,9 @@ pub struct Reply {
     pub chinese: bool,
     /// 键应直通给应用。
     pub passthrough: bool,
+    /// 模糊组统计(仅设置窗的 `FuzzyStats`/`ResetFuzzy` 应答使用)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<(String, u32)>,
 }
 
 /// 会话快照(Server 内部与候选窗渲染共用)。
@@ -144,6 +151,8 @@ pub struct SessionView {
     /// 分段显示的拼音。
     pub segments: Vec<String>,
     pub candidates: Vec<String>,
+    /// 与 `candidates` 一一对应的注音提示;空串表示不显示。
+    pub hints: Vec<String>,
     pub page: usize,
     pub page_size: usize,
     pub highlight: usize,

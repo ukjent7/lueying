@@ -25,6 +25,7 @@ pub(super) struct SettleJob {
     context: String,
     texts: Vec<String>,
     facts: Vec<Fact>,
+    fuzzy: Vec<bool>,
     rerank: Arc<Mutex<pinyin_rerank::Rerank>>,
 }
 
@@ -33,6 +34,7 @@ pub(super) struct Snapshot {
     pub(super) revision: u64,
     pub(super) texts: Vec<String>,
     pub(super) facts: Vec<Fact>,
+    pub(super) fuzzy: Vec<bool>,
 }
 
 /// 候选及其事实的一次快照;没有组合时返回 `None`。
@@ -50,6 +52,7 @@ pub(super) fn snapshot(engine: &Engine) -> Option<Snapshot> {
                 trusted_dictionary_hit: c.trusted,
             })
             .collect(),
+        fuzzy: cands.iter().map(|c| c.edits > 0).collect(),
     })
 }
 
@@ -75,6 +78,7 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
         context: snap.context,
         texts: snap.texts,
         facts: snap.facts,
+        fuzzy: snap.fuzzy,
         rerank: Arc::clone(rerank),
     }));
 }
@@ -111,7 +115,7 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                     let promote = {
                         let mut rerank = job.rerank.lock().unwrap_or_else(|p| p.into_inner());
                         let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
-                        rerank.decide(&job.context, &texts, &job.facts)
+                        rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
                     };
                     apply(&state, &job, promote);
                 }

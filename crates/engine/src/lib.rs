@@ -6,6 +6,7 @@
 mod punct;
 mod query;
 mod segment;
+mod typo;
 mod user;
 
 use std::sync::{Arc, RwLock};
@@ -72,7 +73,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            fuzzy: Fuzzy::default(),
+            // 零配置:核心模糊组默认参与召回,排序由处数罚分与学习覆盖负责。
+            fuzzy: Fuzzy::auto(),
             chinese_punct: true,
             page_size: 5,
         }
@@ -172,7 +174,7 @@ impl Engine {
     }
 
     /// 带来源标记的候选。重排只应把 `full` 候选移到首位;`trusted` 是
-    /// 是否由词典精确回答整个按键。
+    /// 是否由词典精确回答整个按键,`edits` 是模糊改动处数。
     pub fn candidates_detailed(&self) -> &[Candidate] {
         &self.cands
     }
@@ -347,6 +349,22 @@ impl Engine {
             .write()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
+    }
+
+    /// 模糊组的当前有效学习次数,设置页展示与 E2E 断言用。
+    pub fn group_stats(&self) -> Vec<(&'static str, u32)> {
+        self.user
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .group_stats()
+    }
+
+    /// 只清空组级适应,保留词条。
+    pub fn reset_groups(&mut self) {
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .reset_groups();
     }
 
     /// 处理一次按键,返回由此产生的全部事件。
@@ -592,17 +610,24 @@ impl Engine {
         let raw = self.comp.as_ref()?.raw.clone();
         // 用户词库的键必须和查询时的音节键一致(ni'hao),不能存原始串(nihao),
         // 否则多音节词学完也匹配不上。
-        let learned = cand
-            .spans
-            .iter()
-            .take(cand.consume)
-            .map(|&(s, e)| &raw[s..e])
-            .collect::<Vec<_>>()
-            .join("'");
+        let learned = cand.learn_key.clone().unwrap_or_else(|| {
+            cand.spans
+                .iter()
+                .take(cand.consume)
+                .map(|&(s, e)| &raw[s..e])
+                .collect::<Vec<_>>()
+                .join("'")
+        });
         self.user
             .write()
             .unwrap_or_else(|p| p.into_inner())
             .learn(&learned, &cand.text);
+        if cand.groups != 0 {
+            self.user
+                .write()
+                .unwrap_or_else(|p| p.into_inner())
+                .learn_groups(cand.groups);
+        }
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。

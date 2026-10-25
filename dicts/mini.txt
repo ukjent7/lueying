@@ -69,6 +69,7 @@
 谢	600000	xie
 间	500000	jian
 你好	2000000	ni'hao
+你害怕	100000	ni'hai'pa
 今天	1500000	jin'tian
 明天	800000	ming'tian
 天气	900000	tian'qi

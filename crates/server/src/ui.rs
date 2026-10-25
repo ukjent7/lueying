@@ -177,11 +177,19 @@ impl CandidatePanel {
 /// 当前页候选估算占几行(按字数估宽,避免窗口比内容高出几行)。
 fn panel_rows(view: &SessionView) -> usize {
     let ps = view.page_size.max(1);
-    let items = view.candidates.iter().skip(view.page * ps).take(ps);
+    let start = view.page * ps;
+    let end = (start + ps).min(view.candidates.len());
     let mut rows = 0usize;
     let mut used = 0.0f32;
-    for text in items {
-        let width = 22.0 + 18.0 * text.chars().count() as f32;
+    for index in start..end {
+        let text = &view.candidates[index];
+        let hint_width = view
+            .hints
+            .get(index)
+            .filter(|hint| !hint.is_empty())
+            .map_or(0.0, |hint| 8.0 + 7.0 * hint.chars().count() as f32)
+            .min(110.0);
+        let width = 22.0 + 18.0 * text.chars().count() as f32 + hint_width;
         if rows == 0 {
             rows = 1;
             used = width;
@@ -343,13 +351,20 @@ impl Render for CandidatePanel {
         let start = view.page * ps;
         let pages = view.candidates.len().div_ceil(ps).max(1);
         let page_no = view.page + 1;
-        let items: Vec<(usize, String, bool)> = view
+        let items: Vec<(usize, String, String, bool)> = view
             .candidates
             .iter()
             .enumerate()
             .skip(start)
             .take(ps)
-            .map(|(i, text)| (i - start, text.clone(), i == view.highlight))
+            .map(|(i, text)| {
+                (
+                    i - start,
+                    text.clone(),
+                    view.hints.get(i).cloned().unwrap_or_default(),
+                    i == view.highlight,
+                )
+            })
             .collect();
         let state = Arc::clone(&self.state);
         let scroll_state = Arc::clone(&self.state);
@@ -426,7 +441,7 @@ impl Render for CandidatePanel {
                     .px_2()
                     .pb_2()
                     .gap_1()
-                    .children(items.into_iter().map(|(slot, text, hl)| {
+                    .children(items.into_iter().map(|(slot, text, hint, hl)| {
                         let state = Arc::clone(&state);
                         div()
                             .flex()
@@ -464,6 +479,20 @@ impl Render for CandidatePanel {
                                     .child(format!("{}.", slot + 1)),
                             )
                             .child(SharedString::from(text))
+                            .when(!hint.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .max_w(px(110.0))
+                                        .truncate()
+                                        .text_size(px(11.0))
+                                        .text_color(if hl {
+                                            rgb(colors.selected_index)
+                                        } else {
+                                            rgb(colors.index)
+                                        })
+                                        .child(SharedString::from(hint)),
+                                )
+                            })
                     }))
             }))
             .into_any_element()

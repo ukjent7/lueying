@@ -64,6 +64,21 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
     out
 }
 
+/// 整串能否被音节图切完。错音纠正在建词典图前先用它过滤明显不合法的串。
+pub fn complete(raw: &str) -> bool {
+    let edges = edges(raw);
+    let mut reach = vec![false; raw.len() + 1];
+    reach[raw.len()] = true;
+    for i in (0..raw.len()).rev() {
+        reach[i] = if raw.as_bytes()[i] == b'\'' {
+            reach[i + 1]
+        } else {
+            edges[i].iter().any(|e| reach[e.span.1])
+        };
+    }
+    reach[0]
+}
+
 /// 无候选时的回删粒度:按最长音节贪心走一遍图。
 pub fn first_path(raw: &str) -> Vec<(usize, usize)> {
     let edges = edges(raw);

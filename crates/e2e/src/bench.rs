@@ -1,0 +1,564 @@
+//! 候选准确率基准:固定外部语料与按键序列,量化每一层候选排序因素。
+//!
+//! 语料全部来自仓库外,本项目词典只生成候选、不参与造题:
+//! - 词级:Microsoft Windows 经典示例的 2998 条全拼词表(MIT),经 msime 固化;
+//! - 手写整句:项目内 80 条 + msime/WindInput 的 247 条(GPL-3.0);
+//! - 白霜脚本:rime-frost 自带 93 条用例(GPL-3.0),单独成表;
+//! - 难例:msime 中立收割的 1105 条(C4,ODC-BY),用于比较语言模型/重排器。
+//!
+//! 判定沿用 gaboolic/rime-schema-compare 的归一化:其它→其他、他/她/它→他、
+//! 的/地/得→的,避免拼音本身不可分的写法被当成错。
+//!
+//! 同一份报告里比较模糊音、语法模型与长期学习;神经重排的 4M/25M 指标由同一次
+//! E2E 的「神经重排」节给出。绝对准确率按语料来源分表,难例表的绝对值不可与
+//! 手写集相减——它按构造全是引擎原序会错的句子。
+//!
+//! 参考项目的经验直接写进选材:不用项目词典出题(msime),n=60 的置信半宽约
+//! ±13 点、模型对比要用千条级集合(qingjian),测量工具看 delta 而非单次汇总
+//! (WindInput)。语料冻结在仓库里,改题就换文件名/版本,避免两次 CI 不可比。
+
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+use pinyin_dict::Dictionary;
+use pinyin_dict::gram::Gram;
+use pinyin_dict::syllables::is_syllable;
+use pinyin_engine::{Config, Engine, Event, Fuzzy, Key};
+
+const LONG_TERM_WORDS: usize = 60;
+const LONG_TERM_ROUNDS: usize = 6;
+/// 长期学习从主词典高频词里选可学会的歧义词;准确率套件仍用外部语料。
+const LEARN_WORD_LIMIT: usize = 2000;
+
+#[derive(Clone, Copy, Default)]
+struct Score {
+    total: usize,
+    top1: usize,
+    top5: usize,
+}
+
+impl Score {
+    fn add(&mut self, rank: Option<usize>) {
+        self.total += 1;
+        if rank == Some(0) {
+            self.top1 += 1;
+        }
+        if rank.is_some_and(|i| i < 5) {
+            self.top5 += 1;
+        }
+    }
+
+    fn top1_rate(self) -> f64 {
+        self.top1 as f64 * 100.0 / self.total.max(1) as f64
+    }
+
+    fn top5_rate(self) -> f64 {
+        self.top5 as f64 * 100.0 / self.total.max(1) as f64
+    }
+}
+
+struct Miss {
+    typed: String,
+    want: String,
+    got: String,
+}
+
+/// 与 rime-schema-compare 对齐的同义写法归一化。
+fn normalize(text: &str) -> String {
+    text.replace("其它", "其他")
+        .chars()
+        .map(|c| match c {
+            '她' | '它' => '他',
+            '地' | '得' => '的',
+            _ => c,
+        })
+        .collect()
+}
+
+/// 两列 `输入<TAB>期望`,跳过注释与空行。
+fn corpus(text: &'static str) -> Vec<(String, String)> {
+    text.lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let (typed, want) = line.split_once('\t')?;
+            Some((typed.to_string(), want.to_string()))
+        })
+        .collect()
+}
+
+/// 长期学习的目标词池:主词典高频、1~4 字、全拼音节。只用于模拟学习,
+/// 不参与准确率统计,因此这里用词典自身选词不会让准确率表自证。
+fn learn_pool(dict: &Dictionary, limit: usize) -> Vec<(String, String)> {
+    let mut entries: Vec<_> = dict
+        .iter()
+        .filter(|e| e.freq > 0)
+        .filter(|e| {
+            let chars = e.word.chars().count();
+            (1..=4).contains(&chars)
+                && e.word
+                    .chars()
+                    .all(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+        })
+        .filter(|e| e.key.split('\'').all(is_syllable))
+        .collect();
+    entries.sort_by_key(|e| std::cmp::Reverse(e.freq));
+    entries
+        .into_iter()
+        .take(limit)
+        .map(|e| (accent_key(e.key, 3), e.word.to_string()))
+        .collect()
+}
+
+/// 口音模拟:1 = 翘舌/平舌,2 = n/l、f/h、r/l 与前后鼻音,3 = 两者叠加。
+fn accent_key(key: &str, profile: u8) -> String {
+    key.split('\'')
+        .map(|syllable| accent_syllable(syllable, profile))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn accent_syllable(syllable: &str, profile: u8) -> String {
+    let mut out = syllable.to_string();
+    if profile & 1 != 0 {
+        for (from, to) in [("zh", "z"), ("ch", "c"), ("sh", "s")] {
+            if let Some(next) = replace_prefix(&out, from, to) {
+                out = next;
+                break;
+            }
+        }
+    }
+    if profile & 2 != 0 {
+        for (from, to) in [("n", "l"), ("f", "h"), ("r", "l")] {
+            if let Some(next) = replace_prefix(&out, from, to) {
+                out = next;
+                break;
+            }
+        }
+        for (from, to) in [("ang", "an"), ("eng", "en"), ("ing", "in")] {
+            if let Some(next) = replace_suffix(&out, from, to) {
+                out = next;
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// 口音改写只在结果是合法音节时生效。`din`、`zua` 这类拼音图里不存在的串
+/// 会让引擎连音节都切不出来,拿它测评口音召回只会得到假阴性。
+fn replace_prefix(syllable: &str, from: &str, to: &str) -> Option<String> {
+    let rest = syllable.strip_prefix(from)?;
+    let candidate = format!("{to}{rest}");
+    is_syllable(&candidate).then_some(candidate)
+}
+
+fn replace_suffix(syllable: &str, from: &str, to: &str) -> Option<String> {
+    let rest = syllable.strip_suffix(from)?;
+    let candidate = format!("{rest}{to}");
+    is_syllable(&candidate).then_some(candidate)
+}
+
+fn make_engine(dict: &Arc<Dictionary>, gram: &Option<Arc<Gram>>, fuzzy: Fuzzy) -> Engine {
+    let mut engine = Engine::new(Arc::clone(dict), Config {
+        fuzzy,
+        ..Config::default()
+    });
+    if let Some(gram) = gram {
+        engine = engine.with_gram(Arc::clone(gram));
+    }
+    engine
+}
+
+/// 跑一批 `(输入, 期望)`;返回分数与前 5 条未命中。
+fn run_suite(
+    dict: &Arc<Dictionary>,
+    gram: &Option<Arc<Gram>>,
+    fuzzy: Fuzzy,
+    corpus: &[(String, String)],
+) -> (Score, Vec<Miss>) {
+    let mut engine = make_engine(dict, gram, fuzzy);
+    let mut score = Score::default();
+    let mut misses = Vec::new();
+    for (typed, want) in corpus {
+        engine.process(Key::Esc);
+        engine.clear_context();
+        for c in typed.chars() {
+            engine.process(Key::Letter(c));
+        }
+        let cands = engine.candidates();
+        let want_norm = normalize(want);
+        let rank = cands.iter().position(|c| normalize(c) == want_norm);
+        score.add(rank);
+        if rank != Some(0) && misses.len() < 5 {
+            misses.push(Miss {
+                typed: typed.clone(),
+                want: want.clone(),
+                got: cands.first().cloned().unwrap_or_default(),
+            });
+        }
+        engine.process(Key::Esc);
+    }
+    (score, misses)
+}
+
+/// 翻到候选所在页并点选;用于模拟用户纠正。
+fn pick(engine: &mut Engine, word: &str) -> bool {
+    let Some(index) = engine.candidates().iter().position(|c| c.as_str() == word) else {
+        return false;
+    };
+    let page_size = engine.page_size().max(1);
+    while engine.page() < index / page_size {
+        if !engine.page_by(1) {
+            return false;
+        }
+    }
+    engine
+        .pick_in_page(index % page_size)
+        .iter()
+        .any(|event| matches!(event, Event::Commit(text) if text == word))
+}
+
+/// 长期学习:每轮逐条查询,用户从候选里选中期望词,学习结果累积。
+/// 第 3 轮结束后导出并重新导入用户词库,模拟一次进程重启。
+fn long_term(
+    dict: &Arc<Dictionary>,
+    gram: &Option<Arc<Gram>>,
+    corpus: &[(String, String)],
+) -> Vec<Score> {
+    let mut engine = make_engine(dict, gram, Fuzzy::auto());
+    let mut rounds = Vec::with_capacity(LONG_TERM_ROUNDS);
+    for round in 0..LONG_TERM_ROUNDS {
+        if round == 3 {
+            let saved = engine.export_user();
+            engine = make_engine(dict, gram, Fuzzy::auto());
+            engine.import_user(&saved);
+        }
+        let mut score = Score::default();
+        for (typed, want) in corpus {
+            engine.process(Key::Esc);
+            engine.clear_context();
+            for c in typed.chars() {
+                engine.process(Key::Letter(c));
+            }
+            let cands = engine.candidates();
+            let rank = cands.iter().position(|c| c == want);
+            score.add(rank);
+            if !pick(&mut engine, want) {
+                engine.process(Key::Esc);
+            }
+        }
+        rounds.push(score);
+    }
+    rounds
+}
+
+/// 从口音语料里挑出「当前不在首选、但能翻到」的词,学习才有可量化空间。
+/// 只选候选里真有的期望,否则 oracle 也无从选起。
+fn ambiguous_corpus(
+    dict: &Arc<Dictionary>,
+    gram: &Option<Arc<Gram>>,
+    corpus: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut engine = make_engine(dict, gram, Fuzzy::auto());
+    let mut out = Vec::new();
+    for (typed, want) in corpus {
+        engine.process(Key::Esc);
+        for c in typed.chars() {
+            engine.process(Key::Letter(c));
+        }
+        let rank = engine.candidates().iter().position(|c| c == want);
+        if rank.is_some_and(|i| i > 0 && i < 40) {
+            out.push((typed.clone(), want.clone()));
+        }
+        if out.len() >= LONG_TERM_WORDS {
+            break;
+        }
+        engine.process(Key::Esc);
+    }
+    out
+}
+
+fn row(text: &mut String, label: &str, score: Score) {
+    let _ = writeln!(
+        text,
+        "| {label} | {:.1}% ({}/{}) | {:.1}% ({}/{}) | {} |",
+        score.top1_rate(),
+        score.top1,
+        score.total,
+        score.top5_rate(),
+        score.top5,
+        score.total,
+        score.total
+    );
+}
+
+fn misses(text: &mut String, misses: &[Miss]) {
+    if misses.is_empty() {
+        return;
+    }
+    text.push_str("\n未命中示例:\n\n| 输入 | 期望 | 首选 |\n|---|---|---|\n");
+    for miss in misses {
+        let _ = writeln!(
+            text,
+            "| {} | {} | {} |",
+            miss.typed, miss.want, miss.got
+        );
+    }
+}
+
+fn change(before: Score, after: Score) -> (f64, f64) {
+    (
+        after.top1_rate() - before.top1_rate(),
+        after.top5_rate() - before.top5_rate(),
+    )
+}
+
+pub fn run(
+    dict: Arc<Dictionary>,
+    gram: Option<Arc<Gram>>,
+    report: &mut String,
+) -> usize {
+    let words = corpus(include_str!("../../../dicts/eval-words.tsv"));
+    let clean = corpus(include_str!("../../../dicts/eval.txt"));
+    let extra = corpus(include_str!("../../../dicts/eval-clean-extra.tsv"));
+    let frost = corpus(include_str!("../../../dicts/eval-frost.tsv"));
+    let neutral = corpus(include_str!("../../../dicts/eval-neutral.tsv"));
+    let accent_words: Vec<_> = words
+        .iter()
+        .map(|(typed, want)| (accent_key(typed, 3), want.clone()))
+        .collect();
+    // 同一输入在两份手写集里可能有不同金标准;保留项目内那份,避免同一键两个答案。
+    let mut clean_sentences = clean.clone();
+    for row in &extra {
+        if !clean_sentences.iter().any(|(typed, _)| typed == &row.0) {
+            clean_sentences.push(row.clone());
+        }
+    }
+    let accent_sentences: Vec<_> = clean_sentences
+        .iter()
+        .map(|(typed, want)| (accent_key(typed, 3), want.clone()))
+        .collect();
+
+    let no_gram: Option<Arc<Gram>> = None;
+    let (word_base, _) = run_suite(&dict, &no_gram, Fuzzy::off(), &words);
+    let (word_fuzzy, _) = run_suite(&dict, &no_gram, Fuzzy::auto(), &words);
+    let (word_default, word_miss) = if gram.is_some() {
+        run_suite(&dict, &gram, Fuzzy::auto(), &words)
+    } else {
+        (word_fuzzy, Vec::new())
+    };
+    let (clean_base, _) = run_suite(&dict, &no_gram, Fuzzy::off(), &clean);
+    let (clean_fuzzy, _) = run_suite(&dict, &no_gram, Fuzzy::auto(), &clean);
+    let (clean_default, clean_miss) = if gram.is_some() {
+        run_suite(&dict, &gram, Fuzzy::auto(), &clean)
+    } else {
+        (clean_fuzzy, Vec::new())
+    };
+    let (extra_base, _) = run_suite(&dict, &no_gram, Fuzzy::off(), &extra);
+    let (extra_fuzzy, _) = run_suite(&dict, &no_gram, Fuzzy::auto(), &extra);
+    let (extra_default, extra_miss) = if gram.is_some() {
+        run_suite(&dict, &gram, Fuzzy::auto(), &extra)
+    } else {
+        (extra_fuzzy, Vec::new())
+    };
+    let (frost_base, _) = run_suite(&dict, &no_gram, Fuzzy::off(), &frost);
+    let (frost_fuzzy, _) = run_suite(&dict, &no_gram, Fuzzy::auto(), &frost);
+    let (frost_default, frost_miss) = if gram.is_some() {
+        run_suite(&dict, &gram, Fuzzy::auto(), &frost)
+    } else {
+        (frost_fuzzy, Vec::new())
+    };
+    let (neutral_base, _) = run_suite(&dict, &no_gram, Fuzzy::off(), &neutral);
+    let (neutral_fuzzy, _) = run_suite(&dict, &no_gram, Fuzzy::auto(), &neutral);
+    let (neutral_default, neutral_miss) = if gram.is_some() {
+        run_suite(&dict, &gram, Fuzzy::auto(), &neutral)
+    } else {
+        (neutral_fuzzy, Vec::new())
+    };
+    let (accent_word_off, _) = run_suite(&dict, &gram, Fuzzy::off(), &accent_words);
+    let (accent_word_auto, accent_word_miss) =
+        run_suite(&dict, &gram, Fuzzy::auto(), &accent_words);
+    let (accent_sent_off, _) = run_suite(&dict, &gram, Fuzzy::off(), &accent_sentences);
+    let (accent_sent_auto, accent_sent_miss) =
+        run_suite(&dict, &gram, Fuzzy::auto(), &accent_sentences);
+
+    let learn_words = learn_pool(&dict, LEARN_WORD_LIMIT);
+    let long_corpus = ambiguous_corpus(&dict, &gram, &learn_words);
+    let rounds = long_term(&dict, &gram, &long_corpus);
+
+    let mut text = String::from("# 候选准确率基准\n\n");
+    text.push_str("固定外部语料与按键序列,只切换候选排序因素;绝对准确率按来源分表,"
+        "跨 CI 对比同一张表即可量化改动。判定沿用 rime-schema-compare 的归一化:"
+        "其它→其他、他/她/它→他、的/地/得→的。神经重排另见同次 E2E 的「神经重排」节。\n\n");
+    text.push_str("## 词级(外部微软词表)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
+    row(&mut text, "精确基线(模糊关/语法关)", word_base);
+    row(&mut text, "模糊自动/语法关", word_fuzzy);
+    row(
+        &mut text,
+        if gram.is_some() {
+            "当前默认(模糊自动/语法开)"
+        } else {
+            "当前默认(模糊自动/无语法模型)"
+        },
+        word_default,
+    );
+    misses(&mut text, &word_miss);
+
+    text.push_str("\n## 句级(项目内手写)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
+    row(&mut text, "精确基线(模糊关/语法关)", clean_base);
+    row(&mut text, "模糊自动/语法关", clean_fuzzy);
+    row(
+        &mut text,
+        if gram.is_some() {
+            "当前默认(模糊自动/语法开)"
+        } else {
+            "当前默认(模糊自动/无语法模型)"
+        },
+        clean_default,
+    );
+    misses(&mut text, &clean_miss);
+
+    text.push_str("\n## 句级(外部手写)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
+    row(&mut text, "精确基线(模糊关/语法关)", extra_base);
+    row(&mut text, "模糊自动/语法关", extra_fuzzy);
+    row(
+        &mut text,
+        if gram.is_some() {
+            "当前默认(模糊自动/语法开)"
+        } else {
+            "当前默认(模糊自动/无语法模型)"
+        },
+        extra_default,
+    );
+    misses(&mut text, &extra_miss);
+
+    text.push_str("\n## 句级(白霜脚本)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
+    row(&mut text, "精确基线(模糊关/语法关)", frost_base);
+    row(&mut text, "模糊自动/语法关", frost_fuzzy);
+    row(
+        &mut text,
+        if gram.is_some() {
+            "当前默认(模糊自动/语法开)"
+        } else {
+            "当前默认(模糊自动/无语法模型)"
+        },
+        frost_default,
+    );
+    misses(&mut text, &frost_miss);
+
+    text.push_str("\n## 句级难例(中立收割,只用于比较模型)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n");
+    row(&mut text, "引擎原序(模糊关/语法关)", neutral_base);
+    row(&mut text, "模糊自动/语法关", neutral_fuzzy);
+    row(
+        &mut text,
+        if gram.is_some() {
+            "当前默认(模糊自动/语法开)"
+        } else {
+            "当前默认(模糊自动/无语法模型)"
+        },
+        neutral_default,
+    );
+    misses(&mut text, &neutral_miss);
+
+    text.push_str(
+        "\n## 口音召回(同一份语料,按口音改写输入)\n\n| 配置 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n",
+    );
+    row(&mut text, "词级/模糊关", accent_word_off);
+    row(&mut text, "词级/模糊自动", accent_word_auto);
+    row(&mut text, "句级/模糊关", accent_sent_off);
+    row(&mut text, "句级/模糊自动", accent_sent_auto);
+    misses(&mut text, &accent_word_miss);
+    misses(&mut text, &accent_sent_miss);
+
+    if gram.is_some() {
+        let (clean_t1, clean_t5) = change(clean_fuzzy, clean_default);
+        let (extra_t1, extra_t5) = change(extra_fuzzy, extra_default);
+        let (frost_t1, frost_t5) = change(frost_fuzzy, frost_default);
+        let (neutral_t1, neutral_t5) = change(neutral_fuzzy, neutral_default);
+        text.push_str(&format!(
+            "\n## 语法模型贡献\n\n| 语料 | top-1 变化 | top-5 变化 |\n|---|---:|---:|\n| 项目内手写 | {clean_t1:+.1} pt | {clean_t5:+.1} pt |\n| 外部手写 | {extra_t1:+.1} pt | {extra_t5:+.1} pt |\n| 白霜脚本 | {frost_t1:+.1} pt | {frost_t5:+.1} pt |\n| 中立难例 | {neutral_t1:+.1} pt | {neutral_t5:+.1} pt |\n"
+        ));
+    }
+
+    text.push_str(&format!(
+        "\n## 长期学习({} 个歧义词 × {} 轮)\n\n| 轮次 | top-1 | top-5 | 样本 |\n|---|---|---|---|\n",
+        long_corpus.len(),
+        LONG_TERM_ROUNDS
+    ));
+    for (index, score) in rounds.iter().enumerate() {
+        row(
+            &mut text,
+            &format!("第 {} 轮{}", index + 1, if index == 3 { "(重启后)" } else { "" }),
+            *score,
+        );
+    }
+
+    let stable = |base: Score, current: Score| current.top1_rate() + 1.0 >= base.top1_rate();
+    let word_ok = stable(word_base, word_default);
+    let clean_ok = stable(clean_base, clean_default);
+    let extra_ok = stable(extra_base, extra_default);
+    let frost_ok = stable(frost_base, frost_default);
+    let neutral_ok = stable(neutral_base, neutral_default);
+    let quality_ok = clean_default.top1_rate() >= 92.0 && clean_default.top5_rate() >= 95.0;
+    let accent_word_ok = accent_word_auto.top1_rate() + 0.5 >= accent_word_off.top1_rate()
+        && accent_word_auto.top5_rate() + 0.5 >= accent_word_off.top5_rate()
+        && (accent_word_auto.top1_rate() > accent_word_off.top1_rate()
+            || accent_word_auto.top5_rate() > accent_word_off.top5_rate());
+    let accent_sent_ok = accent_sent_auto.top1_rate() + 0.5 >= accent_sent_off.top1_rate()
+        && accent_sent_auto.top5_rate() + 0.5 >= accent_sent_off.top5_rate()
+        && (accent_sent_auto.top1_rate() > accent_sent_off.top1_rate()
+            || accent_sent_auto.top5_rate() > accent_sent_off.top5_rate());
+    let gram_ok = gram.is_none()
+        || (clean_default.top1_rate() + 1.0 >= clean_fuzzy.top1_rate()
+            && clean_default.top5_rate() + 1.0 >= clean_fuzzy.top5_rate()
+            && extra_default.top1_rate() + 1.0 >= extra_fuzzy.top1_rate()
+            && extra_default.top5_rate() + 1.0 >= extra_fuzzy.top5_rate()
+            && frost_default.top1_rate() + 1.0 >= frost_fuzzy.top1_rate()
+            && frost_default.top5_rate() + 1.0 >= frost_fuzzy.top5_rate()
+            && neutral_default.top1_rate() + 1.0 >= neutral_fuzzy.top1_rate()
+            && neutral_default.top5_rate() + 1.0 >= neutral_fuzzy.top5_rate());
+    let first = rounds.first().copied().unwrap_or_default();
+    let last = rounds.last().copied().unwrap_or_default();
+    let learning_ok = long_corpus.len() >= 10 && last.top1_rate() >= first.top1_rate() + 5.0;
+    let restart = rounds.get(3).copied().unwrap_or_default();
+    let before_restart = rounds.get(2).copied().unwrap_or_default();
+    let restart_ok = restart.top1_rate() + 2.0 >= before_restart.top1_rate();
+
+    let checks = [
+        ("词级外部集不回归", word_ok),
+        ("项目内句级不回归", clean_ok),
+        ("外部手写句级不回归", extra_ok),
+        ("白霜脚本集不回归", frost_ok),
+        ("中立难例不回归", neutral_ok),
+        ("项目内句级绝对准确率达标", quality_ok),
+        ("口音词级有提升", accent_word_ok),
+        ("口音句级有提升", accent_sent_ok),
+        ("语法模型不拖低各语料", gram_ok),
+        ("长期学习有提升", learning_ok),
+        ("重启后学习保留", restart_ok),
+    ];
+    text.push_str("\n## 判定\n\n| 检查 | 结果 |\n|---|---|\n");
+    let mut failures = 0;
+    for (name, ok) in checks {
+        if !ok {
+            failures += 1;
+        }
+        let _ = writeln!(text, "| {name} | {} |", if ok { "PASS" } else { "FAIL" });
+    }
+    let (word_t1, word_t5) = change(accent_word_off, accent_word_auto);
+    let (sent_t1, sent_t5) = change(accent_sent_off, accent_sent_auto);
+    let _ = writeln!(
+        text,
+        "\n口音词级 top-1 {word_t1:+.1} pt、top-5 {word_t5:+.1} pt;"
+        "口音句级 top-1 {sent_t1:+.1} pt、top-5 {sent_t5:+.1} pt;"
+        "长期学习 top-1 {:+.1} pt。",
+        last.top1_rate() - first.top1_rate()
+    );
+
+    if let Some(dir) = std::path::Path::new("target/bench-report.md").parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write("target/bench-report.md", &text);
+    report.push_str("\n## 候选准确率基准(模糊/语法/长期学习)\n\n详见 `target/bench-report.md`。\n");
+    failures
+}

@@ -60,6 +60,7 @@ struct Snap {
     context: String,
     texts: Vec<String>,
     facts: Vec<Fact>,
+    fuzzy: Vec<bool>,
 }
 
 fn snapshot(engine: &Engine) -> Snap {
@@ -75,6 +76,7 @@ fn snapshot(engine: &Engine) -> Snap {
                 trusted_dictionary_hit: c.trusted,
             })
             .collect(),
+        fuzzy: cands.iter().map(|c| c.edits > 0).collect(),
     }
 }
 
@@ -281,6 +283,44 @@ pub fn run(
         "25M 上下文改变排序",
         five_empty[1] > five_empty[0] && five_context[0] > five_context[1],
         format!("{five_empty:?} → {five_context:?}"),
+    );
+
+    // 停顿重载:上下文明确时,模糊候选可以越过可信精确首位。
+    let mut fuzzy_engine = fresh();
+    fuzzy_engine.set_context("我");
+    for c in "si".chars() {
+        fuzzy_engine.process(Key::Letter(c));
+    }
+    let snap = snapshot(&fuzzy_engine);
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let shi = fuzzy_engine
+        .candidates_detailed()
+        .iter()
+        .position(|c| c.text.as_str() == "是");
+    push(
+        &mut checks,
+        "25M 上下文让模糊候选越过精确首位",
+        shi.is_some() && promoted == shi,
+        format!("{:?} / 是={shi:?} / 提升={promoted:?}", snap.texts),
+    );
+    let mut ordinal = fresh();
+    ordinal.set_context("第");
+    for c in "si".chars() {
+        ordinal.process(Key::Letter(c));
+    }
+    let snap = snapshot(&ordinal);
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let shi = ordinal
+        .candidates_detailed()
+        .iter()
+        .position(|c| c.text.as_str() == "是");
+    push(
+        &mut checks,
+        "25M 上下文保留序数首选",
+        shi.is_some() && promoted != shi,
+        format!("{:?} / 是={shi:?} / 提升={promoted:?}", snap.texts),
     );
 
     // 去抖：同一会话只保留最后一次提交，多会话互不拖累，取消后不再执行。

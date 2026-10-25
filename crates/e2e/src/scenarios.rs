@@ -5,8 +5,8 @@ use pinyin_engine::{Key, Mode};
 
 pub struct Scenario {
     pub name: &'static str,
-    /// 该场景启用 z↔zh/c↔ch/s↔sh 模糊音。
-    pub fuzzy: bool,
+    /// 该场景显式关闭自动模糊音(`config.ini` 的 `fuzzy=off`)。
+    pub fuzzy_off: bool,
     pub stages: Vec<Stage>,
 }
 
@@ -33,6 +33,12 @@ pub enum Check {
     ModeSeq(Vec<Mode>),
     /// 至少一个直通事件。
     Passthrough,
+    /// 指定候选带注音提示。
+    Hint { text: String, hint: String },
+    /// 用户词库里已有这个「音节键 → 词」。
+    UserHas { key: &'static str, word: &'static str },
+    /// 某模糊组的有效学习次数至少为 `min`。
+    GroupAtLeast { group: &'static str, min: u32 },
 }
 
 /// 字母串转按键(小写字母;数字字符转数字键)。
@@ -52,10 +58,10 @@ fn stage(keys: Vec<Key>, checks: Vec<Check>) -> Stage {
     Stage { keys, checks }
 }
 
-fn s(name: &'static str, fuzzy: bool, stages: Vec<Stage>) -> Scenario {
+fn s(name: &'static str, fuzzy_off: bool, stages: Vec<Stage>) -> Scenario {
     Scenario {
         name,
-        fuzzy,
+        fuzzy_off,
         stages,
     }
 }
@@ -331,20 +337,120 @@ pub fn scenarios() -> Vec<Scenario> {
             )],
         ),
         s(
-            "模糊音默认关:si不含shi的字",
+            "默认自动模糊:si首选四且含是",
             false,
+            vec![stage(
+                l("si"),
+                vec![Check::Top("四".into()), Check::Contains("是".into())],
+            )],
+        ),
+        s(
+            "默认自动模糊:shi首选是且含四",
+            false,
+            vec![stage(
+                l("shi"),
+                vec![Check::Top("是".into()), Check::Contains("四".into())],
+            )],
+        ),
+        s(
+            "显式关闭模糊:si不含是",
+            true,
             vec![stage(
                 l("si"),
                 vec![Check::Top("四".into()), Check::NotContains("是".into())],
             )],
         ),
         s(
-            "模糊音开:si命中shi的字",
-            true,
+            "学习覆盖:si选是两次后首选是",
+            false,
+            vec![
+                stage(
+                    l("si"),
+                    vec![Check::Top("四".into()), Check::Contains("是".into())],
+                ),
+                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
+                stage(
+                    l("si"),
+                    vec![Check::Top("四".into()), Check::Contains("是".into())],
+                ),
+                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
+                stage(l("si"), vec![Check::Top("是".into())]),
+            ],
+        ),
+        s(
+            "简拼首字母模糊:lh→你好",
+            false,
+            vec![
+                stage(l("lh"), vec![Check::Top("你好".into())]),
+                stage(vec![Key::Space], vec![commits(&["你好"])]),
+            ],
+        ),
+        s(
+            "整句模糊:zongguo→中国",
+            false,
+            vec![
+                stage(l("zongguo"), vec![Check::Top("中国".into())]),
+                stage(vec![Key::Space], vec![commits(&["中国"])]),
+            ],
+        ),
+        s(
+            "模糊候选带注音",
+            false,
             vec![stage(
                 l("si"),
-                vec![Check::Top("是".into()), Check::Contains("四".into())],
+                vec![
+                    Check::Top("四".into()),
+                    Check::Hint {
+                        text: "是".into(),
+                        hint: "shi".into(),
+                    },
+                ],
             )],
+        ),
+        s(
+            "相邻键纠正:nihap→你好",
+            false,
+            vec![
+                stage(
+                    l("nihap"),
+                    vec![
+                        Check::Top("你好".into()),
+                        Check::Hint {
+                            text: "你好".into(),
+                            hint: "纠正 ni hao".into(),
+                        },
+                    ],
+                ),
+                stage(
+                    vec![Key::Space],
+                    vec![
+                        commits(&["你好"]),
+                        Check::UserHas {
+                            key: "ni'hao",
+                            word: "你好",
+                        },
+                    ],
+                ),
+            ],
+        ),
+        s(
+            "组级学习:同一模糊组连续选择计数",
+            false,
+            vec![
+                stage(l("zongguo"), vec![Check::Top("中国".into())]),
+                stage(vec![Key::Space], vec![commits(&["中国"])]),
+                stage(l("zongguo"), vec![Check::Top("中国".into())]),
+                stage(vec![Key::Space], vec![commits(&["中国"])]),
+                stage(l("zongguo"), vec![Check::Top("中国".into())]),
+                stage(vec![Key::Space], vec![commits(&["中国"])]),
+                stage(
+                    l("zongguo"),
+                    vec![Check::GroupAtLeast {
+                        group: "zcs",
+                        min: 3,
+                    }],
+                ),
+            ],
         ),
         s(
             "长简拼 zhrmghg→中华人民共和国",

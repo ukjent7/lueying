@@ -62,6 +62,18 @@ pub const ABBREV_LETTERS: &str = "abcdfghjklmnpqrstwxyz";
 /// 能整体做简拼的双字母声母。
 pub const ABBREV_DIGRAPHS: &[&str] = &["zh", "ch", "sh"];
 
+/// 模糊组位掩码。每组一个 bit,候选可同时命中多组,组级学习按位累加。
+pub const GROUP_ZCS: u8 = 1 << 0;
+pub const GROUP_LN: u8 = 1 << 1;
+pub const GROUP_FH: u8 = 1 << 2;
+pub const GROUP_RL: u8 = 1 << 3;
+pub const GROUP_AN_ANG: u8 = 1 << 4;
+pub const GROUP_EN_ENG: u8 = 1 << 5;
+pub const GROUP_IN_ING: u8 = 1 << 6;
+
+/// 组名与位掩码一一对应;持久化与设置页统计共用这一份顺序。
+pub const FUZZY_GROUPS: [&str; 7] = ["zcs", "ln", "fh", "rl", "an_ang", "en_eng", "in_ing"];
+
 fn set() -> &'static HashSet<&'static str> {
     static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| SYLLABLES.iter().copied().collect())
@@ -82,73 +94,232 @@ pub fn is_abbrev(s: &str) -> bool {
     ABBREV_DIGRAPHS.contains(&s) || (s.chars().count() == 1 && s.chars().all(is_abbrev_letter))
 }
 
-/// 模糊音开关集合,默认全关。
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// 模糊音开关集合。引擎默认用 [`Self::auto`] 全开核心组;`off` 只留给
+/// `config.ini` 的排障开关与自动化测试。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fuzzy {
     pub zcs: bool,    // z↔zh、c↔ch、s↔sh
     pub ln: bool,     // l↔n
     pub fh: bool,     // f↔h
-    pub an_ang: bool, // an↔ang
+    pub rl: bool,     // r↔l
+    pub an_ang: bool, // an↔ang(含 ian↔iang、uan↔uang)
     pub en_eng: bool, // en↔eng
     pub in_ing: bool, // in↔ing
 }
 
-/// 把音节折叠到等价类代表形:zh→z、ch→c、sh→s、n→l、f→h、ang→an、eng→en、ing→in。
-fn canonical(s: &str, fuzzy: &Fuzzy) -> String {
-    let mut t = s;
-    let mut head = String::new();
-    if fuzzy.zcs {
-        for d in ABBREV_DIGRAPHS {
-            if let Some(rest) = t.strip_prefix(d) {
-                head.push(d.as_bytes()[0] as char);
-                t = rest;
-                break;
-            }
+impl Fuzzy {
+    /// 全关。`Default` 保持全关,方便测试明确表达「关闭」。
+    pub const fn off() -> Self {
+        Self {
+            zcs: false,
+            ln: false,
+            fh: false,
+            rl: false,
+            an_ang: false,
+            en_eng: false,
+            in_ing: false,
         }
     }
-    if t == s && fuzzy.ln && t.starts_with('n') {
-        head.push('l');
-        t = &t[1..];
+
+    /// 核心模糊组全开。用户不再逐项配置,排序由处数罚分与学习覆盖负责。
+    pub const fn auto() -> Self {
+        Self {
+            zcs: true,
+            ln: true,
+            fh: true,
+            rl: true,
+            an_ang: true,
+            en_eng: true,
+            in_ing: true,
+        }
     }
-    if t == s && fuzzy.fh && t.starts_with('f') {
-        head.push('h');
-        t = &t[1..];
+
+    pub const fn any(&self) -> bool {
+        self.zcs || self.ln || self.fh || self.rl || self.an_ang || self.en_eng || self.in_ing
     }
-    let mut out = head;
-    if fuzzy.an_ang
-        && let Some(rest) = t.strip_suffix("ang")
+
+    pub const fn is_off(&self) -> bool {
+        !self.any()
+    }
+}
+
+impl Default for Fuzzy {
+    fn default() -> Self {
+        Self::off()
+    }
+}
+
+/// 拆声母与韵母。双字母声母按 zh/ch/sh 处理,其余辅音单字母,零声母整体算韵母。
+fn split_initial(s: &str) -> (&str, &str) {
+    let len = if s.starts_with("zh") || s.starts_with("ch") || s.starts_with("sh") {
+        2
+    } else if s
+        .chars()
+        .next()
+        .is_some_and(|c| "bpmfdtnlgkhjqxrzcsyw".contains(c))
     {
-        out.push_str(rest);
-        out.push_str("an");
-        return out;
+        1
+    } else {
+        0
+    };
+    s.split_at(len)
+}
+
+/// 声母的直接等价形(含自身)。按规则两两展开,不做传递闭包:
+/// 同时开 n/l 与 r/l 时,l 可到 n 或 r,n 与 r 仍互相独立。
+fn initial_variants(initial: &str, fuzzy: &Fuzzy) -> Vec<(String, u8)> {
+    let mut out = vec![(initial.to_string(), 0)];
+    if fuzzy.zcs {
+        match initial {
+            "zh" => out.push(("z".into(), GROUP_ZCS)),
+            "z" => out.push(("zh".into(), GROUP_ZCS)),
+            "ch" => out.push(("c".into(), GROUP_ZCS)),
+            "c" => out.push(("ch".into(), GROUP_ZCS)),
+            "sh" => out.push(("s".into(), GROUP_ZCS)),
+            "s" => out.push(("sh".into(), GROUP_ZCS)),
+            _ => {}
+        }
     }
-    if fuzzy.en_eng
-        && let Some(rest) = t.strip_suffix("eng")
-    {
-        out.push_str(rest);
-        out.push_str("en");
-        return out;
+    if fuzzy.ln {
+        match initial {
+            "n" => out.push(("l".into(), GROUP_LN)),
+            "l" => out.push(("n".into(), GROUP_LN)),
+            _ => {}
+        }
     }
-    if fuzzy.in_ing
-        && let Some(rest) = t.strip_suffix("ing")
-    {
-        out.push_str(rest);
-        out.push_str("in");
-        return out;
+    if fuzzy.fh {
+        match initial {
+            "f" => out.push(("h".into(), GROUP_FH)),
+            "h" => out.push(("f".into(), GROUP_FH)),
+            _ => {}
+        }
     }
-    out.push_str(t);
+    if fuzzy.rl {
+        match initial {
+            "r" => out.push(("l".into(), GROUP_RL)),
+            "l" => out.push(("r".into(), GROUP_RL)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 韵母的直接等价形(含自身)。后缀替换覆盖 an/ang、ian/iang、uan/uang
+/// 与 en/eng、in/ing。
+fn final_variants(final_part: &str, fuzzy: &Fuzzy) -> Vec<(String, u8)> {
+    let mut out = vec![(final_part.to_string(), 0)];
+    if fuzzy.an_ang {
+        if let Some(rest) = final_part.strip_suffix("ang") {
+            out.push((format!("{rest}an"), GROUP_AN_ANG));
+        } else if let Some(rest) = final_part.strip_suffix("an") {
+            out.push((format!("{rest}ang"), GROUP_AN_ANG));
+        }
+    }
+    if fuzzy.en_eng {
+        if let Some(rest) = final_part.strip_suffix("eng") {
+            out.push((format!("{rest}en"), GROUP_EN_ENG));
+        } else if let Some(rest) = final_part.strip_suffix("en") {
+            out.push((format!("{rest}eng"), GROUP_EN_ENG));
+        }
+    }
+    if fuzzy.in_ing {
+        if let Some(rest) = final_part.strip_suffix("ing") {
+            out.push((format!("{rest}in"), GROUP_IN_ING));
+        } else if let Some(rest) = final_part.strip_suffix("in") {
+            out.push((format!("{rest}ing"), GROUP_IN_ING));
+        }
+    }
+    out
+}
+
+/// 一个音节的模糊等价音节、改动处数与命中的组。自身在首位(处数 0)。
+/// 简拼串原样返回。声母、韵母各算一处:改声母或改韵母为 1,两者都改为 2。
+pub fn expansions_scored(s: &str, fuzzy: &Fuzzy) -> Vec<(String, usize, u8)> {
+    if !is_syllable(s) || fuzzy.is_off() {
+        return vec![(s.to_string(), 0, 0)];
+    }
+    let (initial, final_part) = split_initial(s);
+    let initials = initial_variants(initial, fuzzy);
+    let finals = final_variants(final_part, fuzzy);
+    let mut out = Vec::with_capacity(initials.len() * finals.len());
+    for (i, initial_group) in &initials {
+        for (f, final_group) in &finals {
+            let mut variant = String::with_capacity(i.len() + f.len());
+            variant.push_str(i);
+            variant.push_str(f);
+            if variant.as_str() != s && !is_syllable(&variant) {
+                continue;
+            }
+            let edits = usize::from(i.as_str() != initial) + usize::from(f.as_str() != final_part);
+            out.push((variant, edits, *initial_group | *final_group));
+        }
+    }
     out
 }
 
 /// 一个音节在给定模糊音配置下的等价音节集合(含自身)。简拼串原样返回。
 pub fn expansions(s: &str, fuzzy: &Fuzzy) -> Vec<String> {
-    if !is_syllable(s) {
-        return vec![s.to_string()];
-    }
-    let c = canonical(s, fuzzy);
-    SYLLABLES
-        .iter()
-        .filter(|&&sy| canonical(sy, fuzzy) == c)
-        .map(|sy| sy.to_string())
+    expansions_scored(s, fuzzy)
+        .into_iter()
+        .map(|(text, _, _)| text)
         .collect()
+}
+
+/// 某个首字母在开启的模糊组下的等价首字母及命中组(含自身,组为 0)。
+/// `l` 在 n/l 与 r/l 同时开启时得到 `{l, n, r}`,是唯一一个三元素等价集。
+pub fn initial_alternatives_scored(c: char, fuzzy: &Fuzzy) -> Vec<(char, u8)> {
+    let mut out = vec![(c, 0)];
+    if fuzzy.ln {
+        match c {
+            'n' => out.push(('l', GROUP_LN)),
+            'l' => out.push(('n', GROUP_LN)),
+            _ => {}
+        }
+    }
+    if fuzzy.fh {
+        match c {
+            'f' => out.push(('h', GROUP_FH)),
+            'h' => out.push(('f', GROUP_FH)),
+            _ => {}
+        }
+    }
+    if fuzzy.rl {
+        match c {
+            'r' => out.push(('l', GROUP_RL)),
+            'l' => out.push(('r', GROUP_RL)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 某个首字母在开启的模糊组下的等价首字母(含自身)。
+pub fn initial_alternatives(c: char, fuzzy: &Fuzzy) -> Vec<char> {
+    initial_alternatives_scored(c, fuzzy)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect()
+}
+
+/// 两个首字母相同或属于同一模糊组时返回命中的组;相同为 0。
+/// 只做直接配对,不让 n/l 与 r/l 经 l 传递成 n/r。
+pub fn initial_group(a: char, b: char, fuzzy: &Fuzzy) -> Option<u8> {
+    if a == b {
+        return Some(0);
+    }
+    if fuzzy.ln && ((a == 'n' && b == 'l') || (a == 'l' && b == 'n')) {
+        return Some(GROUP_LN);
+    }
+    if fuzzy.fh && ((a == 'f' && b == 'h') || (a == 'h' && b == 'f')) {
+        return Some(GROUP_FH);
+    }
+    if fuzzy.rl && ((a == 'r' && b == 'l') || (a == 'l' && b == 'r')) {
+        return Some(GROUP_RL);
+    }
+    None
+}
+
+/// 两个首字母是否模糊等价(含相等)。简拼键与声母段校验共用这一份判据。
+pub fn initials_fuzzy_equal(a: char, b: char, fuzzy: &Fuzzy) -> bool {
+    initial_group(a, b, fuzzy).is_some()
 }

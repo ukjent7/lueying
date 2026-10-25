@@ -15,6 +15,7 @@ use pinyin_dict::syllables::{self, Fuzzy};
 use pinyin_dict::{Dictionary, signature};
 
 use crate::segment::{self, Syll};
+use crate::typo;
 use crate::user::UserDict;
 
 /// 展示给上层的候选。
@@ -28,8 +29,20 @@ pub struct Candidate {
     pub spans: Vec<(usize, usize)>,
     /// 覆盖整个组合输入,而不是前缀词或联想补全。
     pub full: bool,
-    /// 词典对实际键入的整键给出的精确命中:fuzzy/简拼/用户词都不算。
+    /// 逐音节精确命中(含简拼),未经模糊扩写;用户词不算。
     pub trusted: bool,
+    /// 模糊改动处数;0 表示逐音节精确命中。
+    pub edits: usize,
+    /// 词典词频(用户独有词为 0)。精确首位保护只锁有 corpus 依据的常用词。
+    pub freq: u64,
+    /// 同一按键下用户选过该词的次数。
+    pub user_freq: u32,
+    /// 命中的模糊组位掩码(0 表示精确)。
+    pub groups: u8,
+    /// 模糊候选的注音提示(如 `shi`);精确候选为空。
+    pub hint: Option<String>,
+    /// 纠正候选的学习键(原串与纠正串不同,不能从 `spans` 反推)。
+    pub learn_key: Option<String>,
 }
 
 /// 一次构建的产物。
@@ -37,6 +50,14 @@ pub struct Built {
     pub cands: Vec<Candidate>,
     /// 内联显示文本:首选候选文本,无候选时原文。
     pub display: String,
+    /// 能接长,且不是「全拼音节后面又接简拼」的伪前缀。
+    ///
+    /// 签名只取首字母:`nihap` 会撞上「你害怕」的 `nhp`,但 `ha` 后面已经
+    /// 跟了 `p`,不可能再补成 `hai`。末单元是全拼时还能继续打长该音节,
+    /// 全简拼时也能继续补简拼,这两种才算真的还在输入。
+    pub safe_extend: bool,
+    /// 当前输入是某个词典键的逐字前缀(末音节可以没打完)。
+    pub typing_prefix: bool,
 }
 
 const CHAR_BONUS: f64 = 0.5;
@@ -54,38 +75,79 @@ const WORD_PENALTY: f64 = 3.0;
 const BEAM: usize = 3;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
+/// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。
+const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
+/// 精确首位保护的最低词频:长尾精确词继续按分数竞争。
+const EXACT_PROTECT_MIN_FREQ: u64 = 1000;
+/// 同一按键下选过两次的模糊词,允许拿回首选的位次。
+const LEARNED_FUZZY_TOP: u32 = 2;
+/// 签名翻转变体上限;超过后只保留原键与单点翻转,保证至少有一条召回。
+const MAX_SIG_VARIANTS: usize = 32;
+/// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
+const MAX_FUZZY_KEYS: usize = 64;
 
 #[derive(Clone)]
 struct Hit {
     word: String,
     /// 构造时算好(排序/回溯反复取分,不能每次都算 ln)。
     score: f64,
-    /// 精确整键命中,未经 fuzzy/简拼扩写。
+    /// 逐音节精确命中(含简拼),未经模糊扩写。
     trusted: bool,
+    /// 模糊改动处数。
+    edits: usize,
+    /// 词典词频;用户独有词为 0。
+    freq: u64,
+    /// 同一按键下用户选过该词的次数。
+    user_freq: u32,
+    /// 命中的模糊组位掩码。
+    groups: u8,
+    /// 模糊候选的注音提示。
+    hint: Option<String>,
 }
 
 impl Hit {
     /// 词典词条。白霜有大量权重 0 的长尾词,按频次 1 计,天然沉底。
-    fn dict(word: String, freq: u64, user_freq: u32, total: f64, trusted: bool) -> Self {
-        let mut hit = Self::raw(word, freq.max(1) as f64, user_freq, total);
+    #[allow(clippy::too_many_arguments)]
+    fn dict(
+        word: String,
+        freq: u64,
+        user_freq: u32,
+        total: f64,
+        edits: usize,
+        trusted: bool,
+        groups: u8,
+        hint: Option<String>,
+    ) -> Self {
+        let mut hit = Self::raw(word, freq.max(1) as f64, user_freq, total, edits);
         hit.trusted = trusted;
+        hit.freq = freq;
+        hit.groups = groups;
+        hit.hint = hint;
         hit
     }
 
     /// 纯用户词(词典没有):以百万级词频为基准,学习过的词迅速领先。
-    fn user_only(word: String, user_freq: u32, total: f64) -> Self {
-        Self::raw(word, 1_000_000.0, user_freq, total)
+    fn user_only(word: String, user_freq: u32, total: f64, edits: usize, groups: u8) -> Self {
+        let mut hit = Self::raw(word, 1_000_000.0, user_freq, total, edits);
+        hit.groups = groups;
+        hit
     }
 
-    fn raw(word: String, base: f64, user_freq: u32, total: f64) -> Self {
+    fn raw(word: String, base: f64, user_freq: u32, total: f64, edits: usize) -> Self {
         let chars = word.chars().count().max(1) as f64;
         Self {
             score: (base / total).ln()
                 + CHAR_BONUS * chars
                 + USER_W * (1.0 + f64::from(user_freq)).ln()
-                - WORD_PENALTY,
+                - WORD_PENALTY
+                - FUZZY_PENALTY * edits as f64,
             word,
             trusted: false,
+            edits,
+            freq: 0,
+            user_freq,
+            groups: 0,
+            hint: None,
         }
     }
 
@@ -102,33 +164,64 @@ fn typed_key(sylls: &[Syll]) -> String {
         .join("'")
 }
 
-/// 词条键是否逐音节匹配输入:简拼前缀匹配;全拼等值(或模糊音等价)。
-fn matches(
+/// 候选吃掉的那些原始输入片段拼成用户词典键(`ni'hao`)。
+fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
+    spans
+        .iter()
+        .map(|&(start, end)| &raw[start..end])
+        .collect::<Vec<_>>()
+        .join("'")
+}
+
+/// 词条键是否逐音节匹配输入;命中时返回模糊改动处数。
+///
+/// 简拼按首字母前缀匹配,n/l、f/h、r/l 等改首字母的模糊组也在这里放宽;
+/// 全拼按等价音节匹配,处数由声母、韵母各算一处。
+fn match_edits(
     entry_key: &str,
     sylls: &[Syll],
     fuzzy: &Fuzzy,
-    exp_cache: &mut HashMap<String, Rc<Vec<String>>>,
-) -> bool {
+    exp_cache: &mut HashMap<String, Rc<Vec<(String, usize, u8)>>>,
+) -> Option<(usize, u8)> {
+    let mut edits = 0;
+    let mut groups = 0;
     let mut parts = entry_key.split('\'');
     for t in sylls {
-        let Some(e) = parts.next() else {
-            return false;
-        };
-        let ok = if t.abbrev {
-            e.starts_with(t.text.as_str())
-        } else if *fuzzy == Fuzzy::default() {
-            e == t.text
-        } else {
-            let exps = exp_cache
-                .entry(t.text.clone())
-                .or_insert_with(|| Rc::new(syllables::expansions(&t.text, fuzzy)));
-            exps.iter().any(|x| x == e)
-        };
-        if !ok {
-            return false;
+        let e = parts.next()?;
+        if t.abbrev {
+            if e.starts_with(t.text.as_str()) {
+                continue;
+            }
+            let mut chars = t.text.chars();
+            let (Some(typed), None) = (chars.next(), chars.next()) else {
+                return None;
+            };
+            let found = e.chars().next()?;
+            let group = syllables::initial_group(typed, found, fuzzy)?;
+            if group == 0 {
+                return None;
+            }
+            edits += 1;
+            groups |= group;
+            continue;
         }
+        if fuzzy.is_off() {
+            if e != t.text {
+                return None;
+            }
+            continue;
+        }
+        let exps = exp_cache
+            .entry(t.text.clone())
+            .or_insert_with(|| Rc::new(syllables::expansions_scored(&t.text, fuzzy)));
+        let (cost, group) = exps
+            .iter()
+            .find(|item| item.0.as_str() == e)
+            .map(|item| (item.1, item.2))?;
+        edits += cost;
+        groups |= group;
     }
-    parts.next().is_none()
+    parts.next().is_none().then_some((edits, groups))
 }
 
 struct Querier<'a> {
@@ -137,7 +230,7 @@ struct Querier<'a> {
     fuzzy: Fuzzy,
     total: f64,
     cache: HashMap<String, Rc<Vec<Hit>>>,
-    exp_cache: HashMap<String, Rc<Vec<String>>>,
+    exp_cache: HashMap<String, Rc<Vec<(String, usize, u8)>>>,
 }
 
 impl Querier<'_> {
@@ -153,111 +246,246 @@ impl Querier<'_> {
 
     fn compute(&mut self, sylls: &[Syll], key: &str) -> Vec<Hit> {
         let any_abbrev = sylls.iter().any(|s| s.abbrev);
-        let fuzzy_on = self.fuzzy != Fuzzy::default();
+        let fuzzy_on = !self.fuzzy.is_off();
         let mut hits: Vec<Hit> = Vec::new();
-        if !any_abbrev && !fuzzy_on {
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        // 精确整键走专用索引:最快,也是 `trusted` 的证据来源。
+        if !any_abbrev {
             for e in self.dict.lookup_exact(key) {
-                hits.push(Hit::dict(
-                    e.word.to_string(),
-                    e.freq,
-                    self.user.freq(key, e.word),
-                    self.total,
-                    true,
-                ));
+                let word = e.word.to_string();
+                if seen.insert((word.clone(), e.key.to_string())) {
+                    hits.push(Hit::dict(
+                        word,
+                        e.freq,
+                        self.user.freq(key, e.word),
+                        self.total,
+                        0,
+                        true,
+                        0,
+                        None,
+                    ));
+                }
             }
-        } else if !fuzzy_on && sylls.first().is_some_and(|s| !s.abbrev) {
-            // 前导全拼音节已知:按键前缀扫全拼索引,区间比签名细得多(ni'h 只扫 ni* 词)。
-            let full_len = sylls.iter().take_while(|s| !s.abbrev).count();
-            let mut prefix = typed_key(&sylls[..full_len]);
-            prefix.push('\'');
-            for e in self.dict.lookup_prefix(&prefix, SCAN_VISIT_CAP) {
-                if matches(e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
+        }
+        // 简拼走签名区间;全拼模糊按等价音节枚举精确键。后者只做几次二分,
+        // 不用为每个首字母翻转扫整段签名,长句输入也保持首键延迟。
+        if any_abbrev {
+            let base = signature(key);
+            for sig in self.sig_variants(&base, sylls) {
+                for e in self.dict.lookup_sig(&sig, SCAN_VISIT_CAP) {
+                    if !seen.insert((e.word.to_string(), e.key.to_string())) {
+                        continue;
+                    }
+                    let Some((edits, groups)) =
+                        match_edits(e.key, sylls, &self.fuzzy, &mut self.exp_cache)
+                    else {
+                        continue;
+                    };
                     hits.push(Hit::dict(
                         e.word.to_string(),
                         e.freq,
                         self.user.freq(key, e.word),
                         self.total,
-                        false,
+                        edits,
+                        edits == 0,
+                        groups,
+                        (edits > 0).then(|| e.key.replace('\'', " ")),
                     ));
                 }
             }
-        } else {
-            // 纯简拼或模糊音:签名区间(模糊首字母时枚举翻转变体)。
-            let base = signature(key);
-            for sig in self.sig_variants(&base, sylls) {
-                for e in self.dict.lookup_sig(&sig, SCAN_VISIT_CAP) {
-                    if matches(e.key, sylls, &self.fuzzy, &mut self.exp_cache) {
-                        hits.push(Hit::dict(
-                            e.word.to_string(),
-                            e.freq,
-                            self.user.freq(key, e.word),
-                            self.total,
-                            false,
-                        ));
+        } else if fuzzy_on {
+            for (variant, edits, groups) in self.expanded_keys(sylls) {
+                if variant == key {
+                    continue;
+                }
+                for e in self.dict.lookup_exact(&variant) {
+                    if !seen.insert((e.word.to_string(), e.key.to_string())) {
+                        continue;
                     }
+                    hits.push(Hit::dict(
+                        e.word.to_string(),
+                        e.freq,
+                        self.user.freq(key, e.word),
+                        self.total,
+                        edits,
+                        false,
+                        groups,
+                        Some(e.key.replace('\'', " ")),
+                    ));
                 }
             }
         }
         // 用户词并入:词典已有的词已带上提频,只补词典没有的。
         for (ukey, uword, ufreq) in self.user.iter() {
-            if matches(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
-                && !hits.iter().any(|h| h.word == uword)
-            {
-                hits.push(Hit::user_only(uword.to_string(), ufreq, self.total));
+            let Some((edits, groups)) =
+                match_edits(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
+            else {
+                continue;
+            };
+            if !hits.iter().any(|h| h.word == uword) {
+                let mut hit = Hit::user_only(
+                    uword.to_string(),
+                    ufreq,
+                    self.total,
+                    edits,
+                    groups,
+                );
+                if edits > 0 {
+                    hit.hint = Some(ukey.replace('\'', " "));
+                }
+                hits.push(hit);
+            }
+        }
+        // 组级学习只降低该组的模糊罚分,不改精确命中的 `trusted` 保护。
+        for hit in &mut hits {
+            if hit.groups != 0 {
+                hit.score += self.user.group_bonus(hit.groups);
             }
         }
         hits
     }
 
-    /// 还能不能接更长的词:用键/签名前缀判断,避免无意义的组合爆炸。
-    fn may_extend(&mut self, sylls: &[Syll]) -> bool {
+    /// 当前输入是否是某个词典键的逐字前缀。末音节没打完时键里没有结尾
+    /// 隔音符,`has_key_prefix` 仍能命中,用来避免把半截输入当成手误。
+    fn is_typing_prefix(&mut self, sylls: &[Syll]) -> bool {
         let key = typed_key(sylls);
-        if self.fuzzy != Fuzzy::default() {
-            // 模糊音的签名会翻转,前缀判定不成立;交给深度上限与访问预算兜底。
+        if self.dict.has_key_prefix(&key) {
             return true;
         }
-        if sylls.iter().any(|s| s.abbrev) {
-            self.dict.has_sig_prefix(&signature(&key))
-        } else {
-            let mut prefix = key;
-            prefix.push('\'');
-            self.dict.has_key_prefix(&prefix)
+        if self.fuzzy.is_off() {
+            return false;
         }
+        let keys = self.expanded_keys(sylls);
+        keys.iter()
+            .any(|(key, _, _)| self.dict.has_key_prefix(key))
     }
 
-    /// l/n、f/h 模糊会改变签名首字母:枚举前三个翻转位的组合(最多 8 个签名)。
-    fn sig_variants(&self, base: &str, sylls: &[Syll]) -> Vec<String> {
-        let flips: Vec<usize> = sylls
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| {
-                !s.abbrev
-                    && ((self.fuzzy.ln && (s.text.starts_with('n') || s.text.starts_with('l')))
-                        || (self.fuzzy.fh && (s.text.starts_with('f') || s.text.starts_with('h'))))
-            })
-            .map(|(i, _)| i)
-            .take(3)
-            .collect();
-        if flips.is_empty() {
-            return vec![base.to_string()];
+    /// 还能不能接更长的词:用键/签名前缀判断,避免无意义的组合爆炸。
+    /// 模糊等价音会改变键面,所以逐一检查等价键前缀。
+    fn may_extend(&mut self, sylls: &[Syll]) -> bool {
+        if sylls.iter().any(|s| s.abbrev) {
+            let key = typed_key(sylls);
+            return self
+                .sig_variants(&signature(&key), sylls)
+                .iter()
+                .any(|sig| self.dict.has_sig_prefix(sig));
         }
-        let mut out = Vec::new();
-        for mask in 0..(1u32 << flips.len()) {
-            let mut sig: Vec<char> = base.chars().collect();
-            for (bit, &pos) in flips.iter().enumerate() {
-                if mask & (1 << bit) != 0
-                    && let Some(c) = sylls[pos].text.chars().next()
-                {
-                    sig[pos] = match c {
-                        'n' => 'l',
-                        'l' => 'n',
-                        'f' => 'h',
-                        'h' => 'f',
-                        _ => c,
-                    };
+        let mut prefix = typed_key(sylls);
+        prefix.push('\'');
+        if self.dict.has_key_prefix(&prefix) {
+            return true;
+        }
+        if self.fuzzy.is_off() {
+            return false;
+        }
+        self.expanded_keys(sylls).iter().any(|(key, _, _)| {
+            let mut prefix = key.clone();
+            prefix.push('\'');
+            self.dict.has_key_prefix(&prefix)
+        })
+    }
+
+    /// 全拼模糊召回:逐音节展开等价音节,组合成精确键再查主索引。
+    ///
+    /// 只做字符串组合与二分,不像签名扫描那样把同首字母的整段词条都读一遍。
+    /// 组合数超过 [`MAX_FUZZY_KEYS`] 时按改动处数从少到多截断,保证原键与
+    /// 单点模糊仍在。
+    fn expanded_keys(&mut self, sylls: &[Syll]) -> Vec<(String, usize, u8)> {
+        if sylls.iter().any(|s| s.abbrev) {
+            return vec![(typed_key(sylls), 0, 0)];
+        }
+        let fuzzy = self.fuzzy;
+        let mut out = vec![(String::new(), 0usize, 0u8)];
+        for t in sylls {
+            let exps = self
+                .exp_cache
+                .entry(t.text.clone())
+                .or_insert_with(|| Rc::new(syllables::expansions_scored(&t.text, &fuzzy)));
+            let mut next = Vec::with_capacity(out.len() * exps.len());
+            for (prefix, cost, groups) in &out {
+                for (text, extra, group) in exps.iter() {
+                    let mut key = String::with_capacity(prefix.len() + text.len() + 1);
+                    key.push_str(prefix);
+                    if !prefix.is_empty() {
+                        key.push('\'');
+                    }
+                    key.push_str(text);
+                    next.push((key, cost + extra, *groups | *group));
                 }
             }
-            out.push(sig.into_iter().collect());
+            out = next;
+            if out.len() > MAX_FUZZY_KEYS {
+                out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+                out.truncate(MAX_FUZZY_KEYS);
+            }
+        }
+        out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        out.dedup_by(|a, b| {
+            if a.0 == b.0 {
+                b.2 |= a.2;
+                true
+            } else {
+                false
+            }
+        });
+        out
+    }
+
+    /// 改首字母的模糊组会改变签名:枚举各位置的首字母等价集。
+    ///
+    /// 单点翻转全部保留;多点组合最多 [`MAX_SIG_VARIANTS`] 个,超出后
+    /// 只保留原键与单点翻转,保证四个以上音节的输入仍能召回一次模糊。
+    fn sig_variants(&self, base: &str, sylls: &[Syll]) -> Vec<String> {
+        let base_chars: Vec<char> = base.chars().collect();
+        if self.fuzzy.is_off() || base_chars.len() != sylls.len() {
+            return vec![base.to_string()];
+        }
+        let mut positions: Vec<(usize, Vec<char>)> = Vec::new();
+        for (i, s) in sylls.iter().enumerate() {
+            let Some(c) = s.text.chars().next() else {
+                continue;
+            };
+            let alternatives = syllables::initial_alternatives(c, &self.fuzzy);
+            if alternatives.len() > 1 {
+                positions.push((i, alternatives));
+            }
+        }
+        if positions.is_empty() {
+            return vec![base.to_string()];
+        }
+        let mut out = vec![base.to_string()];
+        for (i, alternatives) in &positions {
+            let mut next = Vec::new();
+            for sig in &out {
+                for &c in alternatives {
+                    if sig.chars().nth(*i) == Some(c) {
+                        continue;
+                    }
+                    let mut chars: Vec<char> = sig.chars().collect();
+                    chars[*i] = c;
+                    next.push(chars.into_iter().collect::<String>());
+                }
+            }
+            out.extend(next);
+            out.sort();
+            out.dedup();
+            if out.len() > MAX_SIG_VARIANTS {
+                // 预算用尽:退回原键 + 每个位置的单点翻转。
+                let mut capped = vec![base.to_string()];
+                for (pos, alternatives) in &positions {
+                    for &c in alternatives {
+                        if c == base_chars[*pos] {
+                            continue;
+                        }
+                        let mut chars = base_chars.clone();
+                        chars[*pos] = c;
+                        capped.push(chars.into_iter().collect());
+                    }
+                }
+                capped.sort();
+                capped.dedup();
+                return capped;
+            }
         }
         out
     }
@@ -271,6 +499,11 @@ struct Node {
     score: f64,
     spans: Vec<(usize, usize)>,
     trusted: bool,
+    edits: usize,
+    freq: u64,
+    user_freq: u32,
+    groups: u8,
+    hint: Option<String>,
 }
 
 /// 解码路径的一步:词文本 + 各音节原始字节区间。
@@ -329,6 +562,8 @@ struct Builder<'a, 'd> {
     units: Vec<Syll>,
     spans: Vec<(usize, usize)>,
     visits: usize,
+    safe_extend: bool,
+    typing: bool,
 }
 
 impl Builder<'_, '_> {
@@ -346,13 +581,28 @@ impl Builder<'_, '_> {
                     score: h.score(),
                     spans: self.spans.clone(),
                     trusted: h.trusted,
+                    edits: h.edits,
+                    freq: h.freq,
+                    user_freq: h.user_freq,
+                    groups: h.groups,
+                    hint: h.hint.clone(),
                 });
             }
             self.visits += 1;
-            if self.units.len() >= MAX_WORD_SYL
-                || self.visits > NODE_BUDGET
-                || !self.q.may_extend(&self.units)
-            {
+            if pos == self.raw.len() && self.q.is_typing_prefix(&self.units) {
+                self.typing = true;
+            }
+            if self.units.len() >= MAX_WORD_SYL || self.visits > NODE_BUDGET {
+                return;
+            }
+            if self.q.may_extend(&self.units) {
+                if pos == self.raw.len()
+                    && (self.units.last().is_some_and(|s| !s.abbrev)
+                        || self.units.iter().all(|s| s.abbrev))
+                {
+                    self.safe_extend = true;
+                }
+            } else {
                 return;
             }
         }
@@ -406,9 +656,17 @@ struct State {
     path: Path,
     /// 整条路径由单个精确词典词构成时,才允许让模型让位。
     trusted: bool,
+    /// 路径累计的模糊改动处数。
+    edits: usize,
+    /// 单节点路径的词典词频;多词拼句为 0。
+    freq: u64,
+    /// 路径累计的模糊组。
+    groups: u8,
+    /// 单节点路径的注音提示;多词拼句为空。
+    hint: Option<String>,
 }
 
-pub fn build(
+fn build_exact(
     dict: &Dictionary,
     user: &UserDict,
     fuzzy: &Fuzzy,
@@ -439,6 +697,8 @@ pub fn build(
         finish[i] = ok;
     }
     let mut by_end: Vec<Vec<Node>> = vec![Vec::new(); raw.len() + 1];
+    let safe_extend;
+    let typing;
     {
         let mut b = Builder {
             q: &mut q,
@@ -449,6 +709,8 @@ pub fn build(
             units: Vec::new(),
             spans: Vec::new(),
             visits: 0,
+            safe_extend: false,
+            typing: false,
         };
         for (i, &ok) in finish.iter().take(raw.len()).enumerate() {
             if raw.as_bytes()[i] == b'\'' || !ok {
@@ -458,6 +720,8 @@ pub fn build(
             b.spans.clear();
             b.run(i, i);
         }
+        safe_extend = b.safe_extend;
+        typing = b.typing;
     }
     for list in &mut by_end {
         cap_nodes(list);
@@ -469,6 +733,10 @@ pub fn build(
         score: 0.0,
         path: Vec::new(),
         trusted: true,
+        edits: 0,
+        freq: 0,
+        groups: 0,
+        hint: None,
     });
     for j in 1..=raw.len() {
         let mut cands: Vec<State> = Vec::new();
@@ -486,6 +754,14 @@ pub fn build(
                     path,
                     // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
                     trusted: st.path.is_empty() && node.trusted,
+                    edits: st.edits + node.edits,
+                    freq: if st.path.is_empty() { node.freq } else { 0 },
+                    groups: st.groups | node.groups,
+                    hint: if st.path.is_empty() {
+                        node.hint.clone()
+                    } else {
+                        None
+                    },
                 });
             }
         }
@@ -501,13 +777,20 @@ pub fn build(
             continue;
         }
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
+        let key = spans_key(raw, &spans);
         full.push(Candidate {
-            text,
+            text: text.clone(),
             consume: spans.len(),
             score: st.score,
             spans,
             full: true,
             trusted: st.trusted,
+            edits: st.edits,
+            freq: st.freq,
+            user_freq: user.freq(&key, &text),
+            groups: st.groups,
+            hint: st.hint.clone(),
+            learn_key: None,
         });
     }
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
@@ -524,6 +807,12 @@ pub fn build(
                 spans: node.spans.clone(),
                 full: end == raw.len(),
                 trusted: node.trusted,
+                edits: node.edits,
+                freq: node.freq,
+                user_freq: node.user_freq,
+                groups: node.groups,
+                hint: node.hint.clone(),
+                learn_key: None,
             });
         }
     }
@@ -546,10 +835,111 @@ pub fn build(
     cands.extend(words);
     let mut seen: HashSet<(String, usize)> = HashSet::new();
     cands.retain(|c| seen.insert((c.text.clone(), c.consume)));
+    protect_exact(&mut cands);
     cands.truncate(MAX_CANDS);
     let display = cands
         .first()
         .map(|c| c.text.clone())
         .unwrap_or_else(|| raw.to_string());
-    Built { cands, display }
+    Built {
+        cands,
+        display,
+        safe_extend,
+        typing_prefix: typing,
+    }
+}
+
+/// 候选生成入口:正常解码没有整句候选时,尝试一次相邻键/漏键纠正。
+///
+/// 纠正只在精确与模糊都出不了整句时发生,避免影响正常输入。纠正串可能与
+/// 原串长度不同,候选按整串上屏,学习键单独记录纠正后的音节串。
+pub fn build(
+    dict: &Dictionary,
+    user: &UserDict,
+    fuzzy: &Fuzzy,
+    gram: Option<&Gram>,
+    cache: &mut HashMap<(String, String, bool), f64>,
+    raw: &str,
+) -> Built {
+    let built = build_exact(dict, user, fuzzy, gram, cache, raw);
+    if built.cands.iter().any(|c| c.full)
+        || built.safe_extend
+        || built.typing_prefix
+        || !typo::eligible(raw)
+    {
+        return built;
+    }
+    for correction in typo::variants(raw) {
+        if !segment::complete(&correction) {
+            continue;
+        }
+        let mut fixed = build_exact(dict, user, fuzzy, gram, cache, &correction);
+        let mut kept = Vec::new();
+        for mut cand in fixed.cands.drain(..) {
+            if !cand.full {
+                continue;
+            }
+            let key = spans_key(&correction, &cand.spans);
+            // 纠正串与原串长度可能不同,音节区间无法可靠映射;整串上屏,
+            // 学习键单独保存纠正后的音节串。
+            cand.spans = vec![(0, raw.len())];
+            cand.consume = 1;
+            cand.trusted = false;
+            cand.edits = 0;
+            cand.groups = 0;
+            cand.hint = Some(format!("纠正 {}", key.replace('\'', " ")));
+            cand.learn_key = Some(key);
+            kept.push(cand);
+        }
+        if kept.is_empty() {
+            continue;
+        }
+        kept.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let mut seen = HashSet::new();
+        kept.retain(|c| seen.insert((c.text.clone(), c.consume)));
+        kept.truncate(MAX_CANDS);
+        fixed.cands = kept;
+        fixed.display = fixed
+            .cands
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+        return fixed;
+    }
+    built
+}
+
+/// 排序后的最后一道闸:没打错音时,常用精确整词固定首位。
+///
+/// 只锁首位,不锁整页。青简把全部精确候选压在模糊前,模糊可能永远翻不到;
+/// 完全按分数排,80 倍词频差又会让高频模糊词压过精确词。这里取中间:
+/// 精确常用词占第 1 位,模糊候选从第 2 位开始按分数竞争。
+///
+/// 学习覆盖优先于精确保护:同一按键下选过两次的模糊词,说明用户确实
+/// 分不清这个音,允许它拿回首选的位次。
+fn protect_exact(cands: &mut [Candidate]) {
+    if cands.is_empty() {
+        return;
+    }
+    if let Some(index) = cands
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.full && c.edits > 0 && c.user_freq >= LEARNED_FUZZY_TOP)
+        .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
+        .map(|(i, _)| i)
+    {
+        cands[..=index].rotate_right(1);
+        return;
+    }
+    if let Some(index) = cands
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| {
+            c.full && c.edits == 0 && c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
+        })
+        .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
+        .map(|(i, _)| i)
+    {
+        cands[..=index].rotate_right(1);
+    }
 }

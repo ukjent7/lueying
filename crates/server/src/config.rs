@@ -20,7 +20,8 @@ impl Default for AppConfig {
         Self {
             page_size: 5,
             chinese_punct: true,
-            fuzzy: Fuzzy::default(),
+            // 零配置:模糊音默认自动召回,设置页不再逐项开关。
+            fuzzy: Fuzzy::auto(),
             shift_toggle: true,
         }
     }
@@ -74,36 +75,13 @@ pub fn load(path: &Path) -> AppConfig {
                     cfg.shift_toggle = on;
                 }
             }
-            "fuzzy_zcs" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.zcs = on;
-                }
-            }
-            "fuzzy_ln" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.ln = on;
-                }
-            }
-            "fuzzy_fh" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.fh = on;
-                }
-            }
-            "fuzzy_an_ang" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.an_ang = on;
-                }
-            }
-            "fuzzy_en_eng" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.en_eng = on;
-                }
-            }
-            "fuzzy_in_ing" => {
-                if let Some(on) = flag(value) {
-                    cfg.fuzzy.in_ing = on;
-                }
-            }
+            // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
+            // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
+            "fuzzy" => match value {
+                "off" | "0" | "false" | "no" => cfg.fuzzy = Fuzzy::off(),
+                "auto" | "1" | "true" | "on" | "yes" => cfg.fuzzy = Fuzzy::auto(),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -119,21 +97,11 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         "page_size={}\n\
          chinese_punct={}\n\
          shift_toggle={}\n\
-         fuzzy_zcs={}\n\
-         fuzzy_ln={}\n\
-         fuzzy_fh={}\n\
-         fuzzy_an_ang={}\n\
-         fuzzy_en_eng={}\n\
-         fuzzy_in_ing={}\n",
+         fuzzy={}\n",
         cfg.page_size,
         cfg.chinese_punct,
         cfg.shift_toggle,
-        cfg.fuzzy.zcs,
-        cfg.fuzzy.ln,
-        cfg.fuzzy.fh,
-        cfg.fuzzy.an_ang,
-        cfg.fuzzy.en_eng,
-        cfg.fuzzy.in_ing,
+        if cfg.fuzzy.is_off() { "off" } else { "auto" },
     );
     let tmp = path.with_extension("ini.tmp");
     std::fs::write(&tmp, text)?;

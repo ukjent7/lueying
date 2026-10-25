@@ -545,6 +545,24 @@ mod imp {
                 apply_config(state, &mut sessions, cfg);
                 Reply::default()
             }
+            Request::FuzzyStats => group_reply(&state.user),
+            Request::ResetFuzzy => {
+                state
+                    .user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .reset_groups();
+                if let Some(path) = crate::user_store::path() {
+                    crate::user_store::flush(&state.user, &path);
+                }
+                let cfg = state
+                    .config
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                apply_config(state, &mut sessions, cfg);
+                group_reply(&state.user)
+            }
             Request::Shutdown => {
                 // 先让管道把应答写完,再由本进程退出;退出前同步落盘。
                 if let Some(path) = crate::user_store::path() {
@@ -610,6 +628,7 @@ mod imp {
                 .unwrap_or_default(),
             chinese: s.engine.mode() == Mode::Chinese,
             passthrough: events.iter().any(|e| matches!(e, Event::Passthrough(_))),
+            ..Reply::default()
         }
     }
 
@@ -650,6 +669,20 @@ mod imp {
             } else if s.view.chinese != chinese {
                 s.view.chinese = chinese;
             }
+        }
+    }
+
+    /// 设置窗读取/重置模糊组学习后的应答。
+    fn group_reply(user: &SharedUser) -> Reply {
+        Reply {
+            groups: user
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .group_stats()
+                .into_iter()
+                .map(|(name, count)| (name.to_string(), count))
+                .collect(),
+            ..Reply::default()
         }
     }
 
@@ -709,7 +742,14 @@ mod imp {
             s.view.preedit.clear();
             s.view.segments.clear();
         }
-        s.view.candidates = s.engine.candidates();
+        let (texts, hints): (Vec<String>, Vec<String>) = s
+            .engine
+            .candidates_detailed()
+            .iter()
+            .map(|c| (c.text.clone(), c.hint.clone().unwrap_or_default()))
+            .unzip();
+        s.view.candidates = texts;
+        s.view.hints = hints;
         s.view.page = s.engine.page();
         s.view.page_size = s.engine.page_size();
         s.view.highlight = s.engine.highlight();

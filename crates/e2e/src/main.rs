@@ -1,6 +1,7 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
-//! 用法:`pinyin-e2e [--dict 主词典.tsv] [--gram 语法模型.gram]`
+//! 用法:`pinyin-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench]`
 
+mod bench;
 mod rerank;
 mod scenarios;
 mod ui;
@@ -12,7 +13,7 @@ use std::time::Instant;
 
 use pinyin_dict::Dictionary;
 use pinyin_dict::gram::Gram;
-use pinyin_engine::{Config, Engine, Event, Key, Mode};
+use pinyin_engine::{Config, Engine, Event, Fuzzy, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
 /// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。
@@ -103,6 +104,7 @@ fn main() {
         .position(|a| a == "--rerank-dir")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
+    let bench = args.iter().any(|a| a == "--bench");
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
     let mut failures = 0usize;
@@ -269,10 +271,20 @@ fn main() {
                 }
             }
         }
+
+        // 候选准确率基准:模糊音、语法模型、长期学习在同一份报告里对比。
+        if bench {
+            let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
+            failures += bench::run(dict, gram, &mut report);
+        }
     }
 
     if rerank_dir.is_some() && rerank_inputs.is_none() {
         eprintln!("--rerank-dir 需要同时提供 --dict 主词典");
+        std::process::exit(2);
+    }
+    if bench && rerank_inputs.is_none() {
+        eprintln!("--bench 需要同时提供 --dict 主词典");
         std::process::exit(2);
     }
 
@@ -327,8 +339,8 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
 
 fn run_scenario(sc: &Scenario) -> Result<(), String> {
     let mut cfg = Config::default();
-    if sc.fuzzy {
-        cfg.fuzzy.zcs = true;
+    if sc.fuzzy_off {
+        cfg.fuzzy = Fuzzy::off();
     }
     let mut engine = Engine::new(std::sync::Arc::new(Dictionary::builtin()), cfg);
     let mut modes = vec![engine.mode()];
@@ -410,6 +422,41 @@ fn check_one(
         Check::Passthrough => {
             if !passed {
                 return Err("应有直通事件".into());
+            }
+        }
+        Check::Hint { text, hint } => {
+            let found = engine
+                .candidates_detailed()
+                .iter()
+                .find(|c| c.text.as_str() == text.as_str());
+            match found {
+                Some(c) if c.hint.as_deref() == Some(hint.as_str()) => {}
+                _ => {
+                    return Err(format!(
+                        "候选 {text:?} 注音 {:?} ≠ {hint:?}",
+                        found.and_then(|c| c.hint.clone())
+                    ));
+                }
+            }
+        }
+        Check::UserHas { key, word } => {
+            let prefix = format!("{key}\t{word}\t");
+            if !engine
+                .export_user()
+                .lines()
+                .any(|line| line.starts_with(prefix.as_str()))
+            {
+                return Err(format!("用户词库缺少 {key} → {word}"));
+            }
+        }
+        Check::GroupAtLeast { group, min } => {
+            let count = engine
+                .group_stats()
+                .into_iter()
+                .find_map(|(name, count)| (name == *group).then_some(count))
+                .unwrap_or(0);
+            if count < *min {
+                return Err(format!("组 {group} 学习次数 {count} < {min}"));
             }
         }
     }

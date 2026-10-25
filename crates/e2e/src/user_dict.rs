@@ -8,6 +8,7 @@
 //! 6. 分段上屏学错键 → 上屏前缀词时只学它吃掉的音节。
 //! 7. 长期学习让词库无限膨胀 → 超过上限后按频次/时间淘汰,文件大小有界。
 //! 8. 多音节学习键存成原始串 → 新会话必须能用 `ni'hao` 这样的音节键复现提频。
+//! 9. 组级适应只留在内存 → 导出/导入后模糊组计数必须还在。
 
 use std::sync::{Arc, RwLock};
 
@@ -195,6 +196,29 @@ pub fn run(report: &mut String) -> usize {
             .filter(|l| l.starts_with("ni'hao\t"))
             .collect::<Vec<_>>()
             .join(","),
+    );
+
+    // 组级适应:连续选两次模糊词后计数应随导出/导入保留。
+    let mut group = Engine::new(Arc::clone(&dict), Config::default());
+    for _ in 0..2 {
+        for c in "zongguo".chars() {
+            group.process(Key::Letter(c));
+        }
+        group.process(Key::Space);
+    }
+    let saved = group.export_user();
+    let mut restored = Engine::new(Arc::clone(&dict), Config::default());
+    restored.import_user(&saved);
+    let count = restored
+        .group_stats()
+        .into_iter()
+        .find_map(|(name, count)| (name == "zcs").then_some(count))
+        .unwrap_or(0);
+    push(
+        &mut checks,
+        "组级学习随用户词库持久化",
+        count == 2,
+        format!("zcs={count}"),
     );
 
     // 设置窗「清空用户词库」:所有会话共用的那份立即变空。

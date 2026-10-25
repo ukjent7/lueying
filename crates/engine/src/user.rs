@@ -3,10 +3,36 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pinyin_dict::syllables::FUZZY_GROUPS;
+
 /// 超过该间隔再选同一词,频次先减半再加一(近似近期使用优先)。
 const DECAY_SECS: u64 = 7 * 24 * 3600;
 /// 用户词条上限。超过后按频次/时间保留九成,防止长期使用后文件与查询无限膨胀。
 const MAX_ENTRIES: usize = 20_000;
+/// 组级适应按周减半;用户改口音或换输入习惯后一周内就会自然回退,
+/// 不会因为历史上选过几次就让所有组一起顶到上限、失去区分度。
+const GROUP_DECAY_SECS: u64 = 7 * 24 * 3600;
+/// 每组每选一次给模糊候选加的分,以及单组/总计的上限。
+const GROUP_BONUS_STEP: f64 = 0.12;
+const GROUP_BONUS_COUNT_CAP: u32 = 5;
+const GROUP_BONUS_MAX: f64 = 0.6;
+const GROUP_COUNT: usize = FUZZY_GROUPS.len();
+
+#[derive(Clone, Copy, Default)]
+struct GroupStat {
+    count: u32,
+    ts: u64,
+}
+
+impl GroupStat {
+    /// 按完整周数减半后的有效次数。
+    fn effective(self, current: u64) -> u32 {
+        let weeks = current.saturating_sub(self.ts) / GROUP_DECAY_SECS;
+        self.count
+            .checked_shr(weeks.min(31) as u32)
+            .unwrap_or(0)
+    }
+}
 
 #[derive(Clone)]
 struct UserEntry {
@@ -20,6 +46,8 @@ pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
     /// 词条总数,避免每次学习都扫全表。
     count: usize,
+    /// 各模糊组的连续选择次数,与词条一起持久化。
+    groups: [GroupStat; GROUP_COUNT],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
     rev: u64,
 }
@@ -45,7 +73,65 @@ impl UserDict {
     pub fn clear(&mut self) {
         self.map.clear();
         self.count = 0;
+        self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 清空组级适应统计,保留词条。
+    pub fn reset_groups(&mut self) {
+        self.groups = [GroupStat::default(); GROUP_COUNT];
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 记录一次模糊组命中;每组按周衰减后加一。
+    pub fn learn_groups(&mut self, mask: u8) {
+        if mask == 0 {
+            return;
+        }
+        let current = now();
+        for (index, stat) in self.groups.iter_mut().enumerate() {
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let weeks = current.saturating_sub(stat.ts) / GROUP_DECAY_SECS;
+            stat.count = stat
+                .count
+                .checked_shr(weeks.min(31) as u32)
+                .unwrap_or(0)
+                .saturating_add(1);
+            stat.ts = current;
+        }
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 命中这些组时给候选的加分;低于模糊罚分,精确首位仍由 `trusted` 保护。
+    pub fn group_bonus(&self, mask: u8) -> f64 {
+        if mask == 0 {
+            return 0.0;
+        }
+        let current = now();
+        let mut bonus = 0.0;
+        for (index, stat) in self.groups.iter().enumerate() {
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let effective = stat.effective(current);
+            // 前两次由词级学习负责;同一组连续选到第三次才开始整组上浮。
+            if effective >= 3 {
+                bonus += f64::from(effective.min(GROUP_BONUS_COUNT_CAP)) * GROUP_BONUS_STEP;
+            }
+        }
+        bonus.min(GROUP_BONUS_MAX)
+    }
+
+    /// 设置页展示用:所有组及当前有效次数(已按周衰减)。
+    pub fn group_stats(&self) -> Vec<(&'static str, u32)> {
+        let current = now();
+        FUZZY_GROUPS
+            .iter()
+            .copied()
+            .zip(self.groups.iter().map(|stat| stat.effective(current)))
+            .collect()
     }
 
     /// 记录一次「在 key 下选了 word」。
@@ -133,6 +219,11 @@ impl UserDict {
                 out.push_str(&format!("{k}\t{}\t{}\t{}\n", e.word, e.freq, e.ts));
             }
         }
+        for (name, stat) in FUZZY_GROUPS.iter().zip(self.groups.iter()) {
+            if stat.count > 0 {
+                out.push_str(&format!("@group\t{name}\t{}:{}\n", stat.count, stat.ts));
+            }
+        }
         out
     }
 
@@ -141,9 +232,36 @@ impl UserDict {
         let mut changed = false;
         for line in text.lines() {
             let mut parts = line.split('\t');
-            if let (Some(k), Some(w), Some(f), Some(t)) =
+            let Some(k) = parts.next() else {
+                continue;
+            };
+            if k == "@group" {
+                let (Some(name), Some(value), None) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                let Some((count, ts)) = value.split_once(':') else {
+                    continue;
+                };
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                let Some(index) = FUZZY_GROUPS.iter().position(|group| *group == name) else {
+                    continue;
+                };
+                let stat = &mut self.groups[index];
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
+            let (Some(w), Some(f), Some(t), None) =
                 (parts.next(), parts.next(), parts.next(), parts.next())
-                && let (Ok(freq), Ok(ts)) = (f.parse::<u32>(), t.parse::<u64>())
+            else {
+                continue;
+            };
+            if let (Ok(freq), Ok(ts)) = (f.parse::<u32>(), t.parse::<u64>())
                 && !k.is_empty()
                 && !w.is_empty()
             {

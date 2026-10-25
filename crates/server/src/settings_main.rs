@@ -1,4 +1,5 @@
-//! 设置窗独立进程:候选数、模糊音、中文标点、Shift 切中英。
+//! 设置窗独立进程:候选数、中文标点、Shift 切中英。
+//! 模糊音按输入习惯自动召回,不再提供逐项开关。
 //! 保存写 `config.ini`,再经命名管道让常驻 Server 立即重载。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -20,16 +21,18 @@ mod imp {
         Window, WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use gpui_platform::application;
-    use pinyin_protocol::{Request, pipe_name};
+    use pinyin_protocol::{Reply, Request, pipe_name};
     use pinyin_server::config::{self, AppConfig};
 
     const WIDTH: f32 = 440.0;
-    /// 12 行设置 + 标题/说明/底部按钮;留足行高与间距,避免底部被裁。
-    const HEIGHT: f32 = 640.0;
+    /// 6 行设置 + 标题/说明/底部按钮;留足行高与间距,避免底部被裁。
+    const HEIGHT: f32 = 600.0;
 
     struct SettingsPanel {
         cfg: AppConfig,
         path: Option<PathBuf>,
+        /// 模糊组当前适应次数,来自常驻 Server。
+        groups: Vec<(String, u32)>,
         message: String,
         /// 清空词库需要点两次,防误触。
         confirm_clear: bool,
@@ -63,6 +66,9 @@ mod imp {
                     cx.new(|_| SettingsPanel {
                         cfg: cfg.clone(),
                         path: path.clone(),
+                        groups: call(&Request::FuzzyStats)
+                            .map(|reply| reply.groups)
+                            .unwrap_or_default(),
                         message: String::new(),
                         confirm_clear: false,
                         close_hooked: false,
@@ -91,24 +97,25 @@ mod imp {
         }
     }
 
-    /// 给常驻 Server 发一条请求;没在运行返回 false。
-    fn send(request: &Request) -> bool {
-        let Ok(mut file) = std::fs::OpenOptions::new()
+    /// 给常驻 Server 发一条请求并取回应答;没在运行返回 None。
+    fn call(request: &Request) -> Option<Reply> {
+        let mut file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(pipe_name())
-        else {
-            return false;
-        };
-        let Ok(mut line) = serde_json::to_string(request) else {
-            return false;
-        };
+            .ok()?;
+        let mut line = serde_json::to_string(request).ok()?;
         line.push('\n');
-        if file.write_all(line.as_bytes()).is_err() || file.flush().is_err() {
-            return false;
-        }
+        file.write_all(line.as_bytes()).ok()?;
+        file.flush().ok()?;
         let mut reply = String::new();
-        BufReader::new(file).read_line(&mut reply).is_ok()
+        BufReader::new(file).read_line(&mut reply).ok()?;
+        serde_json::from_str(&reply).ok()
+    }
+
+    /// 给常驻 Server 发一条请求;没在运行返回 false。
+    fn send(request: &Request) -> bool {
+        call(request).is_some()
     }
 
     /// 通知常驻 Server 重读配置。
@@ -171,6 +178,20 @@ mod imp {
             .child(value)
     }
 
+    /// 组名转为设置页可读的模糊对。
+    fn group_label(name: &str) -> &'static str {
+        match name {
+            "zcs" => "z/zh c/ch s/sh",
+            "ln" => "l/n",
+            "fh" => "f/h",
+            "rl" => "r/l",
+            "an_ang" => "an/ang",
+            "en_eng" => "en/eng",
+            "in_ing" => "in/ing",
+            _ => "其他",
+        }
+    }
+
     fn pill(
         label: impl Into<SharedString>,
         on: bool,
@@ -205,7 +226,6 @@ mod imp {
                 WindowAppearance::Dark | WindowAppearance::VibrantDark
             ));
             let page = self.cfg.page_size;
-            let fuzzy = self.cfg.fuzzy;
             let mut card = div()
                 .flex()
                 .flex_col()
@@ -289,37 +309,51 @@ mod imp {
                     colors,
                 ));
 
-            type Toggle = (&'static str, bool, fn(&mut AppConfig));
-            let toggles: [Toggle; 6] = [
-                ("模糊 z/zh c/ch s/sh", fuzzy.zcs, |c| c.fuzzy.zcs = !c.fuzzy.zcs),
-                ("模糊 l/n", fuzzy.ln, |c| c.fuzzy.ln = !c.fuzzy.ln),
-                ("模糊 f/h", fuzzy.fh, |c| c.fuzzy.fh = !c.fuzzy.fh),
-                ("模糊 an/ang", fuzzy.an_ang, |c| {
-                    c.fuzzy.an_ang = !c.fuzzy.an_ang
-                }),
-                ("模糊 en/eng", fuzzy.en_eng, |c| {
-                    c.fuzzy.en_eng = !c.fuzzy.en_eng
-                }),
-                ("模糊 in/ing", fuzzy.in_ing, |c| {
-                    c.fuzzy.in_ing = !c.fuzzy.in_ing
-                }),
-            ];
-            for (label, value, flip) in toggles {
-                card = card.child(row(
-                    label,
-                    pill(
-                        if value { "开" } else { "关" },
-                        value,
+            let adapted = self
+                .groups
+                .iter()
+                .filter(|(_, count)| *count > 0)
+                .map(|(name, count)| format!("{} ×{count}", group_label(name)))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let adapted = if adapted.is_empty() {
+                "自动学习".to_string()
+            } else {
+                adapted
+            };
+            card = card.child(row(
+                "模糊音",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .max_w(px(220.0))
+                            .truncate()
+                            .text_size(px(12.0))
+                            .text_color(rgb(colors.muted))
+                            .child(adapted),
+                    )
+                    .child(pill(
+                        "重置",
+                        false,
                         colors,
-                        cx.listener(move |this, _, _, cx| {
-                            flip(&mut this.cfg);
-                            this.message.clear();
+                        cx.listener(|this, _, _, cx| {
+                            match call(&Request::ResetFuzzy) {
+                                Some(reply) => {
+                                    this.groups = reply.groups;
+                                    this.message = "已重置模糊音组统计".into();
+                                }
+                                None => {
+                                    this.message = "输入法服务未运行,启动后再试".into();
+                                }
+                            }
                             cx.notify();
                         }),
-                    ),
-                    colors,
-                ));
-            }
+                    )),
+                colors,
+            ));
 
             div()
                 .font_family("Microsoft YaHei")

@@ -49,6 +49,10 @@ pub struct Fact {
     pub trusted_dictionary_hit: bool,
 }
 
+/// 停顿重排越过精确首位的门槛(每字符平均对数概率)。
+/// 只让上下文明确的模糊候选小幅领先时才改首选,快速连打时仍保持稳定。
+pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
+
 /// 一个会话独享的推理状态:跨按键前缀缓存和候选续算都放在这里。
 pub struct Rerank {
     inner: Reranker,
@@ -73,6 +77,41 @@ impl Rerank {
                 answers_key: facts[index].answers_key,
                 trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
             })
+    }
+
+    /// 停顿重排:精确首位在上下文明确时给模糊候选让位。
+    ///
+    /// `decide` 在首条是可信精确命中时直接放弃;这里补一条受控通道:只有
+    /// 后置的模糊候选在 25M 模型下领先超过 [`SETTLE_OVERRIDE_MARGIN`] 才改。
+    /// 调用方只应在静默停顿、未翻页、未移动高亮且组合仍活跃时使用。
+    pub fn decide_settled(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        fuzzy: &[bool],
+    ) -> Option<usize> {
+        if texts.len() != facts.len() || texts.len() != fuzzy.len() {
+            return None;
+        }
+        let leader = facts.first()?;
+        if !leader.trusted_dictionary_hit || !leader.answers_key {
+            return self.decide(context, texts, facts);
+        }
+        if context.is_empty() {
+            return None;
+        }
+        let scores = self.scores(context, texts);
+        if scores.len() != texts.len() {
+            return None;
+        }
+        let mut best = 0;
+        for (index, &score) in scores.iter().enumerate().take(9) {
+            if facts[index].answers_key && fuzzy[index] && score > scores[best] {
+                best = index;
+            }
+        }
+        (best != 0 && scores[best] - scores[0] >= SETTLE_OVERRIDE_MARGIN).then_some(best)
     }
 
     /// 每条候选的每字符平均对数概率,按输入顺序返回。评测与诊断用。
