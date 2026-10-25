@@ -17,6 +17,7 @@
 //! ±13 点、模型对比要用千条级集合(qingjian),测量工具看 delta 而非单次汇总
 //! (WindInput)。语料冻结在仓库里,改题就换文件名/版本,避免两次 CI 不可比。
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -115,6 +116,46 @@ fn accent_key(key: &str, profile: u8) -> String {
         .map(|syllable| accent_syllable(syllable, profile))
         .collect::<Vec<_>>()
         .join("")
+}
+
+/// 没有词典键的整句按最长合法音节切分后再改口音;切分歧义无法完全消除,
+/// 但比把整串当一个音节可靠。词语优先用词典里带隔音符的键(`accent_words`)。
+fn accent_text(raw: &str, profile: u8) -> String {
+    let mut out = String::new();
+    let mut pos = 0;
+    while pos < raw.len() {
+        let rest = &raw[pos..];
+        let len = (1..=6.min(rest.len()))
+            .rev()
+            .find(|&len| is_syllable(&rest[..len]))
+            .unwrap_or(1);
+        out.push_str(&accent_syllable(&rest[..len], profile));
+        pos += len;
+    }
+    out
+}
+
+/// 从词典取「词 + 去隔音符键」到带隔音符键的映射,只处理评测语料里出现的词。
+fn build_accent_words(dict: &Dictionary, words: &[(String, String)]) -> Vec<(String, String)> {
+    let wanted: HashSet<&str> = words.iter().map(|(_, word)| word.as_str()).collect();
+    let mut keys: HashMap<(String, String), String> = HashMap::new();
+    for entry in dict.iter() {
+        if !wanted.contains(entry.word) {
+            continue;
+        }
+        let bare = entry.key.replace('\'', "");
+        keys.entry((entry.word.to_string(), bare))
+            .or_insert_with(|| entry.key.to_string());
+    }
+    words
+        .iter()
+        .map(|(typed, want)| {
+            let accented = keys
+                .get(&(want.clone(), typed.clone()))
+                .map_or_else(|| accent_text(typed, 3), |key| accent_key(key, 3));
+            (accented, want.clone())
+        })
+        .collect()
 }
 
 fn accent_syllable(syllable: &str, profile: u8) -> String {
@@ -386,10 +427,7 @@ pub fn run(
         corpus(include_str!("../../../dicts/eval-neutral.tsv")),
         FAST_NEUTRAL,
     );
-    let accent_words: Vec<_> = words
-        .iter()
-        .map(|(typed, want)| (accent_key(typed, 3), want.clone()))
-        .collect();
+    let accent_words = build_accent_words(&dict, &words);
     // 同一输入在两份手写集里可能有不同金标准;保留项目内那份,避免同一键两个答案。
     let mut clean_sentences = clean.clone();
     for row in &extra {
@@ -400,7 +438,7 @@ pub fn run(
     let accent_sentences = mode.cap(
         clean_sentences
             .iter()
-            .map(|(typed, want)| (accent_key(typed, 3), want.clone()))
+            .map(|(typed, want)| (accent_text(typed, 3), want.clone()))
             .collect(),
         FAST_ACCENT_SENTENCES,
     );

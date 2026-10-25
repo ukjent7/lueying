@@ -115,7 +115,18 @@ mod imp {
         }
 
         let result = (|| -> Result<String, String> {
-            // 2. 激活本输入法(本进程)
+            // 2. 先建宿主窗口并聚焦。TSF 在激活 profile 时需要有一个文档管理器,
+            //    否则服务实例刚上线就会被 Deactivate,后续按键全部直通。
+            let (hwnd, edit) = create_host_window()?;
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+                let _ = SetForegroundWindow(hwnd);
+                let _ = SetFocus(Some(edit));
+            }
+            pump_for(Duration::from_millis(150));
+            report_tsf_focus();
+
+            // 3. 激活本输入法(本进程)
             let profiles = unsafe {
                 CoCreateInstance::<_, windows::core::IUnknown>(
                     &CLSID_TF_InputProcessorProfiles,
@@ -218,16 +229,8 @@ mod imp {
                 ),
                 Err(e) => println!("GetActiveLanguageProfile: {e}"),
             }
-
-            // 3. 宿主窗口 + RichEdit(自带 TSF 文本存区)
-            let (hwnd, edit) = create_host_window()?;
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
-                let _ = SetForegroundWindow(hwnd);
-                let _ = SetFocus(Some(edit));
-            }
-            pump_for(Duration::from_millis(150));
-            report_tsf_focus();
+            // 激活 profile 到服务实例挂上焦点是异步的;给 TSF 一点消息泵时间。
+            pump_for(Duration::from_millis(200));
 
             // 4. 中文:注入「nihao+空格」
             type_text("nihao")?;

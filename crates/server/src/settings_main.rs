@@ -1,5 +1,5 @@
 //! 设置窗独立进程:候选数、中文标点、Shift 切中英。
-//! 模糊音按输入习惯自动召回,不再提供逐项开关。
+//! 模糊音按输入习惯自动召回,保留一个总开关用于排障或个人偏好。
 //! 保存写 `config.ini`,再经命名管道让常驻 Server 立即重载。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -21,6 +21,7 @@ mod imp {
         Window, WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use gpui_platform::application;
+    use pinyin_engine::Fuzzy;
     use pinyin_protocol::{Reply, Request, pipe_name};
     use pinyin_server::config::{self, AppConfig};
 
@@ -275,6 +276,24 @@ mod imp {
                         colors,
                         cx.listener(|this, _, _, cx| {
                             this.cfg.shift_toggle = !this.cfg.shift_toggle;
+                            this.message.clear();
+                            cx.notify();
+                        }),
+                    ),
+                    colors,
+                ))
+                .child(row(
+                    "自动模糊音",
+                    pill(
+                        if self.cfg.fuzzy.is_off() { "关" } else { "开" },
+                        !self.cfg.fuzzy.is_off(),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.cfg.fuzzy = if this.cfg.fuzzy.is_off() {
+                                Fuzzy::auto()
+                            } else {
+                                Fuzzy::off()
+                            };
                             this.message.clear();
                             cx.notify();
                         }),

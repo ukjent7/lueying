@@ -131,6 +131,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
+      - name: 32 位 / ARM64 TSF 编译检查
+        run: |
+          rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
+          cargo check -p pinyin-tsf --target i686-pc-windows-msvc --locked
+          cargo check -p pinyin-tsf --target aarch64-pc-windows-msvc --locked
       - name: Clippy(观察期,不阻断)
         continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

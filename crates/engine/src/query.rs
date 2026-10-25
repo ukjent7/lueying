@@ -77,8 +77,9 @@ const BEAM: usize = 3;
 const NODE_BUDGET: usize = 4096;
 /// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。
 const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
-/// 精确首位保护的最低词频:长尾精确词继续按分数竞争。
-const EXACT_PROTECT_MIN_FREQ: u64 = 1000;
+/// 精确首位保护的最低词频。只要词库给出非零频次,就优先保住用户实际打出的
+/// 全拼整词;零频长尾仍按分数竞争,避免把无意义词条顶到首位。
+const EXACT_PROTECT_MIN_FREQ: u64 = 1;
 /// 同一按键下选过两次的模糊词,允许拿回首选的位次。
 const LEARNED_FUZZY_TOP: u32 = 2;
 /// 签名翻转变体上限;超过后只保留原键与单点翻转,保证至少有一条召回。
