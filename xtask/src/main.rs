@@ -106,9 +106,10 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
 /// 发布目录的必需文件。DLL 文件名随 Cargo 包名生成,两种拼写都接受。
 const PACK_BINS: &[&str] = &["pinyin-server.exe", "pinyin-settings.exe", "pinyin-install.exe"];
 const PACK_DLLS: &[&str] = &["pinyin_tsf.dll", "pinyin-tsf.dll"];
+/// 默认包只带精确词典与两档重排模型。`.gram` 是可选增强,由用户自行放到
+/// 安装目录;默认包不下载、不打包,避免把 380MB 级的语法模型带进安装器。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
-    "main.gram",
     "rerank-4m.safetensors",
     "rerank-25m.safetensors",
 ];
@@ -157,13 +158,40 @@ fn pack(args: PackArgs) -> Result<(), String> {
         copy_file(&args.data.join("main.tsv"), &args.out, "main.tsv", &mut files)?;
     }
 
-    let license = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // 许可与第三方署名随二进制分发。主程序 GPL 放根目录;LM 运行时与两档
+    // 重排模型是 Apache-2.0,放 licenses/,避免安装包里只有可执行文件。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|root| root.join("LICENSE"))
-        .filter(|path| path.exists());
-    if let Some(license) = license {
+        .map(Path::to_path_buf)
+        .ok_or("找不到仓库根目录")?;
+    let license = root.join("LICENSE");
+    if license.exists() {
         copy_file(&license, &args.out, "LICENSE", &mut files)?;
     }
+    let licenses = args.out.join("licenses");
+    std::fs::create_dir_all(&licenses)
+        .map_err(|e| format!("创建 {}: {e}", licenses.display()))?;
+    let lm_license = root.join("crates/lm/LICENSE");
+    if lm_license.exists() {
+        copy_file(&lm_license, &args.out, "licenses/Apache-2.0.txt", &mut files)?;
+    }
+    let notice = "\
+# 随包第三方许可与署名
+
+- 白霜拼音词库:GPL-3.0,https://github.com/gaboolic/rime-frost,\
+commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
+- chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
+commit b97e99cbaa4a1a358158d717ffd434c472d5d5ca;全文见 Apache-2.0.txt。
+- pinyin-ime-reranker-4M:Apache-2.0,\
+https://huggingface.co/metasequoiaime/pinyin-ime-reranker-4M,\
+revision e5b1f7e768d7cb2b6ff334db4e34af153920c6ff。
+- pinyin-ime-reranker-25M:Apache-2.0,\
+https://huggingface.co/metasequoiaime/pinyin-ime-reranker-25M,\
+revision 75295b373a7ef0d14e9bebd32c1625c9cfcfea49。
+";
+    std::fs::write(licenses.join("README.md"), notice)
+        .map_err(|e| format!("写 licenses/README.md: {e}"))?;
+    files.push(("licenses/README.md".into(), notice.len() as u64));
 
     std::fs::write(args.out.join("version.txt"), format!("{}\n", args.version))
         .map_err(|e| format!("写 version.txt: {e}"))?;

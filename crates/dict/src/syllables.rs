@@ -257,14 +257,6 @@ pub fn expansions_scored(s: &str, fuzzy: &Fuzzy) -> Vec<(String, usize, u8)> {
     out
 }
 
-/// 一个音节在给定模糊音配置下的等价音节集合(含自身)。简拼串原样返回。
-pub fn expansions(s: &str, fuzzy: &Fuzzy) -> Vec<String> {
-    expansions_scored(s, fuzzy)
-        .into_iter()
-        .map(|(text, _, _)| text)
-        .collect()
-}
-
 /// 某个首字母在开启的模糊组下的等价首字母及命中组(含自身,组为 0)。
 /// `l` 在 n/l 与 r/l 同时开启时得到 `{l, n, r}`,是唯一一个三元素等价集。
 pub fn initial_alternatives_scored(c: char, fuzzy: &Fuzzy) -> Vec<(char, u8)> {
@@ -317,9 +309,4 @@ pub fn initial_group(a: char, b: char, fuzzy: &Fuzzy) -> Option<u8> {
         return Some(GROUP_RL);
     }
     None
-}
-
-/// 两个首字母是否模糊等价(含相等)。简拼键与声母段校验共用这一份判据。
-pub fn initials_fuzzy_equal(a: char, b: char, fuzzy: &Fuzzy) -> bool {
-    initial_group(a, b, fuzzy).is_some()
 }
