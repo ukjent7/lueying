@@ -34,11 +34,20 @@ pub enum Check {
     /// 至少一个直通事件。
     Passthrough,
     /// 指定候选带注音提示。
-    Hint { text: String, hint: String },
+    Hint {
+        text: String,
+        hint: String,
+    },
     /// 用户词库里已有这个「音节键 → 词」。
-    UserHas { key: &'static str, word: &'static str },
+    UserHas {
+        key: &'static str,
+        word: &'static str,
+    },
     /// 某模糊组的有效学习次数至少为 `min`。
-    GroupAtLeast { group: &'static str, min: u32 },
+    GroupAtLeast {
+        group: &'static str,
+        min: u32,
+    },
 }
 
 /// 字母串转按键(小写字母;数字字符转数字键)。

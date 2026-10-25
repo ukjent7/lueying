@@ -8,10 +8,10 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
+use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
@@ -76,9 +76,7 @@ fn create_instance(name: &HSTRING) -> io::Result<File> {
 
 /// `SECURITY_ATTRIBUTES` 与它指向的描述符要一起返回,调用方建完管道再释放。
 fn security_attributes() -> Option<(SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR)> {
-    let sddl = HSTRING::from(
-        "D:(A;;GA;;;OW)(A;;GA;;;AC)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)",
-    );
+    let sddl = HSTRING::from("D:(A;;GA;;;OW)(A;;GA;;;AC)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)");
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(

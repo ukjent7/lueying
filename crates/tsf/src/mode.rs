@@ -63,13 +63,16 @@ pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool
     {
         let current = read_i32(&compartment);
         let base = current.unwrap_or(NATIVE);
-        let next = if chinese { base | NATIVE } else { base & !NATIVE };
+        let next = if chinese {
+            base | NATIVE
+        } else {
+            base & !NATIVE
+        };
         if current != Some(next) {
             let _ = unsafe { compartment.SetValue(tid, &VARIANT::from(next)) };
         }
     }
-    if let Ok(compartment) =
-        unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
+    if let Ok(compartment) = unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
     {
         let target = i32::from(chinese);
         if read_i32(&compartment) != Some(target) {

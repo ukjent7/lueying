@@ -78,9 +78,9 @@ fn maybe_spawn_server() {
     {
         return;
     }
-    let Some(dir) = crate::module_path_file().and_then(|p| {
-        p.parent().map(std::path::Path::to_path_buf)
-    }) else {
+    let Some(dir) =
+        crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+    else {
         return;
     };
     let exe = dir.join("pinyin-server.exe");

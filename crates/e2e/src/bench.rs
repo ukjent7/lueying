@@ -159,10 +159,13 @@ fn replace_suffix(syllable: &str, from: &str, to: &str) -> Option<String> {
 }
 
 fn make_engine(dict: &Arc<Dictionary>, gram: &Option<Arc<Gram>>, fuzzy: Fuzzy) -> Engine {
-    let mut engine = Engine::new(Arc::clone(dict), Config {
-        fuzzy,
-        ..Config::default()
-    });
+    let mut engine = Engine::new(
+        Arc::clone(dict),
+        Config {
+            fuzzy,
+            ..Config::default()
+        },
+    );
     if let Some(gram) = gram {
         engine = engine.with_gram(Arc::clone(gram));
     }
@@ -298,11 +301,7 @@ fn misses(text: &mut String, misses: &[Miss]) {
     }
     text.push_str("\n未命中示例:\n\n| 输入 | 期望 | 首选 |\n|---|---|---|\n");
     for miss in misses {
-        let _ = writeln!(
-            text,
-            "| {} | {} | {} |",
-            miss.typed, miss.want, miss.got
-        );
+        let _ = writeln!(text, "| {} | {} | {} |", miss.typed, miss.want, miss.got);
     }
 }
 
@@ -313,11 +312,7 @@ fn change(before: Score, after: Score) -> (f64, f64) {
     )
 }
 
-pub fn run(
-    dict: Arc<Dictionary>,
-    gram: Option<Arc<Gram>>,
-    report: &mut String,
-) -> usize {
+pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) -> usize {
     let words = corpus(include_str!("../../../dicts/eval-words.tsv"));
     let clean = corpus(include_str!("../../../dicts/eval.txt"));
     let extra = corpus(include_str!("../../../dicts/eval-clean-extra.tsv"));
@@ -490,7 +485,11 @@ pub fn run(
     for (index, score) in rounds.iter().enumerate() {
         row(
             &mut text,
-            &format!("第 {} 轮{}", index + 1, if index == 3 { "(重启后)" } else { "" }),
+            &format!(
+                "第 {} 轮{}",
+                index + 1,
+                if index == 3 { "(重启后)" } else { "" }
+            ),
             *score,
         );
     }

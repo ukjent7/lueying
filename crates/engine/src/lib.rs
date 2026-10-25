@@ -11,9 +11,9 @@ mod user;
 
 use std::sync::{Arc, RwLock};
 
-use pinyin_dict::gram::Gram;
 use pinyin_dict::Dictionary;
 pub use pinyin_dict::Fuzzy;
+use pinyin_dict::gram::Gram;
 
 pub use query::Candidate;
 pub use user::UserDict;
@@ -345,10 +345,7 @@ impl Engine {
 
     /// 清空所有会话共用的用户词库。
     pub fn clear_user(&mut self) {
-        self.user
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
+        self.user.write().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     /// 模糊组的当前有效学习次数,设置页展示与 E2E 断言用。

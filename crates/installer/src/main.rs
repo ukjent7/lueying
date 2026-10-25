@@ -40,8 +40,7 @@ mod imp {
     const APP: &str = "拼音输入法";
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "PinyinIme";
-    const UNINSTALL_KEY: &str =
-        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
+    const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
     /// 提权子进程最长等待时间。
     const ELEVATED_TIMEOUT_MS: u32 = 60_000;
@@ -79,7 +78,10 @@ mod imp {
                 unregister(&target);
                 true
             } else {
-                elevate(&["--unregister".into(), target.display().to_string()], quiet)
+                elevate(
+                    &["--unregister".into(), target.display().to_string()],
+                    quiet,
+                )
             };
             if !ok {
                 fail(quiet, "注销输入法失败(注册表未清理)");
@@ -310,8 +312,7 @@ mod imp {
         if source == target {
             return Ok(());
         }
-        std::fs::create_dir_all(target)
-            .map_err(|e| format!("创建 {}: {e}", target.display()))?;
+        std::fs::create_dir_all(target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
         let entries = std::fs::read_dir(source)
             .map_err(|e| format!("读取安装包目录 {}: {e}", source.display()))?;
         for entry in entries {

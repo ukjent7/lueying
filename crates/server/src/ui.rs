@@ -21,9 +21,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IsWindowVisible,
-    IsZoomed, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
+    IsWindowVisible, IsZoomed, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
 use crate::imp::State;
@@ -462,10 +462,8 @@ impl Render for CandidatePanel {
                             .on_mouse_down(MouseButton::Left, move |_, _, _| {
                                 let session = state.active.load(Ordering::Relaxed);
                                 if session != 0 {
-                                    let _ = crate::imp::handle(
-                                        &state,
-                                        Request::Pick { session, slot },
-                                    );
+                                    let _ =
+                                        crate::imp::handle(&state, Request::Pick { session, slot });
                                 }
                             })
                             .child(

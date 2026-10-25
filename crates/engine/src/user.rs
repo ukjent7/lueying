@@ -28,9 +28,7 @@ impl GroupStat {
     /// 按完整周数减半后的有效次数。
     fn effective(self, current: u64) -> u32 {
         let weeks = current.saturating_sub(self.ts) / GROUP_DECAY_SECS;
-        self.count
-            .checked_shr(weeks.min(31) as u32)
-            .unwrap_or(0)
+        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
     }
 }
 
@@ -236,8 +234,7 @@ impl UserDict {
                 continue;
             };
             if k == "@group" {
-                let (Some(name), Some(value), None) =
-                    (parts.next(), parts.next(), parts.next())
+                let (Some(name), Some(value), None) = (parts.next(), parts.next(), parts.next())
                 else {
                     continue;
                 };

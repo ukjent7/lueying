@@ -80,11 +80,10 @@ fn neighbors(c: char) -> Vec<char> {
 }
 
 fn position(c: char) -> Option<(usize, usize)> {
-    KEY_ROWS.iter().enumerate().find_map(|(row, keys)| {
-        keys.chars()
-            .position(|key| key == c)
-            .map(|col| (row, col))
-    })
+    KEY_ROWS
+        .iter()
+        .enumerate()
+        .find_map(|(row, keys)| keys.chars().position(|key| key == c).map(|col| (row, col)))
 }
 
 /// 三排键盘的相对横向坐标,让上下排的键位错开半格。

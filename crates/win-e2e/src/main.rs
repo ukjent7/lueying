@@ -32,8 +32,9 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
         GetWindowTextW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWNORMAL,
-        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
-        WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+        WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+        WS_VSCROLL,
     };
     use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
 
@@ -105,10 +106,9 @@ mod imp {
             .map_err(|e| format!("CoInitializeEx: {e}"))?;
 
         // 应用必须激活 TSF 线程管理器,按键才会送到文本服务;只选 profile 不够。
-        let thread_mgr: ITfThreadMgr = unsafe {
-            CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER)
-        }
-        .map_err(|e| format!("CoCreateInstance(ThreadMgr): {e}"))?;
+        let thread_mgr: ITfThreadMgr =
+            unsafe { CoCreateInstance(&CLSID_TF_ThreadMgr, None, CLSCTX_INPROC_SERVER) }
+                .map_err(|e| format!("CoCreateInstance(ThreadMgr): {e}"))?;
         match unsafe { thread_mgr.Activate() } {
             Ok(_) => println!("ITfThreadMgr::Activate: ok"),
             Err(e) => println!("ITfThreadMgr::Activate: {e}"),

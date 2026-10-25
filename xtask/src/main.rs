@@ -104,7 +104,11 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
 }
 
 /// 发布目录的必需文件。DLL 文件名随 Cargo 包名生成,两种拼写都接受。
-const PACK_BINS: &[&str] = &["pinyin-server.exe", "pinyin-settings.exe", "pinyin-install.exe"];
+const PACK_BINS: &[&str] = &[
+    "pinyin-server.exe",
+    "pinyin-settings.exe",
+    "pinyin-install.exe",
+];
 const PACK_DLLS: &[&str] = &["pinyin_tsf.dll", "pinyin-tsf.dll"];
 /// 默认包只带精确词典与两档重排模型。`.gram` 是可选增强,由用户自行放到
 /// 安装目录;默认包不下载、不打包,避免把 380MB 级的语法模型带进安装器。
@@ -127,8 +131,7 @@ fn pack(args: PackArgs) -> Result<(), String> {
         std::fs::remove_dir_all(&args.out)
             .map_err(|e| format!("清理 {}: {e}", args.out.display()))?;
     }
-    std::fs::create_dir_all(&args.out)
-        .map_err(|e| format!("创建 {}: {e}", args.out.display()))?;
+    std::fs::create_dir_all(&args.out).map_err(|e| format!("创建 {}: {e}", args.out.display()))?;
 
     let mut files = Vec::new();
     for name in PACK_BINS {
@@ -155,7 +158,12 @@ fn pack(args: PackArgs) -> Result<(), String> {
     }
     // TSV 是二进制不可用时的兼容回退,可选。
     if args.data.join("main.tsv").exists() {
-        copy_file(&args.data.join("main.tsv"), &args.out, "main.tsv", &mut files)?;
+        copy_file(
+            &args.data.join("main.tsv"),
+            &args.out,
+            "main.tsv",
+            &mut files,
+        )?;
     }
 
     // 许可与第三方署名随二进制分发。主程序 GPL 放根目录;LM 运行时与两档
@@ -169,11 +177,15 @@ fn pack(args: PackArgs) -> Result<(), String> {
         copy_file(&license, &args.out, "LICENSE", &mut files)?;
     }
     let licenses = args.out.join("licenses");
-    std::fs::create_dir_all(&licenses)
-        .map_err(|e| format!("创建 {}: {e}", licenses.display()))?;
+    std::fs::create_dir_all(&licenses).map_err(|e| format!("创建 {}: {e}", licenses.display()))?;
     let lm_license = root.join("crates/lm/LICENSE");
     if lm_license.exists() {
-        copy_file(&lm_license, &args.out, "licenses/Apache-2.0.txt", &mut files)?;
+        copy_file(
+            &lm_license,
+            &args.out,
+            "licenses/Apache-2.0.txt",
+            &mut files,
+        )?;
     }
     let notice = "\
 # 随包第三方许可与署名
@@ -240,8 +252,8 @@ fn copy_file(
     files: &mut Vec<(String, u64)>,
 ) -> Result<(), String> {
     let target = out.join(name);
-    let bytes = std::fs::copy(source, &target)
-        .map_err(|e| format!("复制 {}: {e}", source.display()))?;
+    let bytes =
+        std::fs::copy(source, &target).map_err(|e| format!("复制 {}: {e}", source.display()))?;
     files.push((name.to_string(), bytes));
     Ok(())
 }

@@ -142,12 +142,7 @@ fn unregister_profile() -> Result<()> {
         } {
             unsafe {
                 if let Ok(manager) = profiles.cast::<ITfInputProcessorProfileMgr>() {
-                    let _ = manager.UnregisterProfile(
-                        &CLSID_IME,
-                        LANGID_ZH_CN,
-                        &GUID_PROFILE,
-                        0,
-                    );
+                    let _ = manager.UnregisterProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE, 0);
                 }
                 let _ = profiles.RemoveLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE);
                 let _ = profiles.Unregister(&CLSID_IME);

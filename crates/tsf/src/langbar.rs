@@ -14,8 +14,8 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::TextServices::{
-    GUID_LBI_INPUTMODE, ITfLangBarItemButton, ITfLangBarItemButton_Impl, ITfLangBarItemMgr,
-    ITfLangBarItemSink, ITfLangBarItem_Impl, ITfMenu, ITfSource, ITfSource_Impl, ITfThreadMgr,
+    GUID_LBI_INPUTMODE, ITfLangBarItem_Impl, ITfLangBarItemButton, ITfLangBarItemButton_Impl,
+    ITfLangBarItemMgr, ITfLangBarItemSink, ITfMenu, ITfSource, ITfSource_Impl, ITfThreadMgr,
     TF_LANGBARITEMINFO, TF_LBI_CLK_RIGHT, TF_LBI_STYLE_BTN_BUTTON, TfLBIClick,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -90,9 +90,9 @@ impl ModeButton_Impl {
     }
 
     fn open_settings() {
-        let Some(dir) = crate::module_path_file().and_then(|p| {
-            p.parent().map(std::path::Path::to_path_buf)
-        }) else {
+        let Some(dir) =
+            crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        else {
             return;
         };
         let exe = dir.join("pinyin-settings.exe");

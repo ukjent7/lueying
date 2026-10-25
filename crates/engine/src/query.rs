@@ -317,19 +317,12 @@ impl Querier<'_> {
         }
         // 用户词并入:词典已有的词已带上提频,只补词典没有的。
         for (ukey, uword, ufreq) in self.user.iter() {
-            let Some((edits, groups)) =
-                match_edits(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
+            let Some((edits, groups)) = match_edits(ukey, sylls, &self.fuzzy, &mut self.exp_cache)
             else {
                 continue;
             };
             if !hits.iter().any(|h| h.word == uword) {
-                let mut hit = Hit::user_only(
-                    uword.to_string(),
-                    ufreq,
-                    self.total,
-                    edits,
-                    groups,
-                );
+                let mut hit = Hit::user_only(uword.to_string(), ufreq, self.total, edits, groups);
                 if edits > 0 {
                     hit.hint = Some(ukey.replace('\'', " "));
                 }
@@ -356,8 +349,7 @@ impl Querier<'_> {
             return false;
         }
         let keys = self.expanded_keys(sylls);
-        keys.iter()
-            .any(|(key, _, _)| self.dict.has_key_prefix(key))
+        keys.iter().any(|(key, _, _)| self.dict.has_key_prefix(key))
     }
 
     /// 还能不能接更长的词:用键/签名前缀判断,避免无意义的组合爆炸。
@@ -934,9 +926,7 @@ fn protect_exact(cands: &mut [Candidate]) {
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| {
-            c.full && c.edits == 0 && c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
-        })
+        .filter(|(_, c)| c.full && c.edits == 0 && c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ)
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {

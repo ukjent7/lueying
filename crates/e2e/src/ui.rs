@@ -26,7 +26,12 @@ fn type_into(engine: &mut Engine, raw: &str) {
     }
 }
 
-fn push(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
+fn push(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    ok: bool,
+    note: String,
+) {
     checks.push((name, ok, note));
 }
 
@@ -95,7 +100,11 @@ pub fn run(report: &mut String) -> usize {
     // 翻页越界:停在上/下边界。
     let mut e = engine();
     type_into(&mut e, "yi");
-    let last = e.candidates().len().div_ceil(e.page_size()).saturating_sub(1);
+    let last = e
+        .candidates()
+        .len()
+        .div_ceil(e.page_size())
+        .saturating_sub(1);
     while e.page() < last {
         let _ = e.page_by(1);
     }

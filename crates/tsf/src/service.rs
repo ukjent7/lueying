@@ -14,8 +14,8 @@ use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
     ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
-    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfThreadFocusSink,
-    ITfThreadFocusSink_Impl, ITfThreadMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP,
+    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl,
+    ITfThreadMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP,
 };
 use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
 
@@ -263,11 +263,7 @@ impl Drop for TextService {
 }
 
 /// 懒连接 + 退避 + Hello;语言栏按钮也走这条路,连接状态与会话号只有一份。
-pub(crate) fn request_with(
-    client: &SharedClient,
-    shared: &Shared,
-    req: Request,
-) -> Option<Reply> {
+pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request) -> Option<Reply> {
     // Hello 的应答带全局中/英状态;先放开连接锁再写 compartment,
     // 因为 SetValue 可能同步回调 OnChange,回调里还要借同一个客户端。
     let hello_chinese = {
@@ -364,11 +360,8 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             tid,
             self.shared.session,
         );
-        *self.mode_advice.borrow_mut() = crate::mode::advise(
-            &thread_mgr,
-            self.shared.clone(),
-            self.client.clone(),
-        );
+        *self.mode_advice.borrow_mut() =
+            crate::mode::advise(&thread_mgr, self.shared.clone(), self.client.clone());
         if let Some(button) =
             crate::langbar::add(self.shared.clone(), self.client.clone(), &thread_mgr)
         {

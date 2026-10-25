@@ -17,7 +17,7 @@ mod imp {
     use std::path::PathBuf;
 
     use gpui::{
-        App, Bounds, Context, MouseDownEvent, MouseButton, Point, SharedString, TitlebarOptions,
+        App, Bounds, Context, MouseButton, MouseDownEvent, Point, SharedString, TitlebarOptions,
         Window, WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use gpui_platform::application;
@@ -365,11 +365,7 @@ mod imp {
                 .h(px(HEIGHT))
                 .bg(rgb(colors.bg))
                 .text_color(rgb(colors.text))
-                .child(
-                    div()
-                        .text_size(px(18.0))
-                        .child("拼音输入法设置"),
-                )
+                .child(div().text_size(px(18.0)).child("拼音输入法设置"))
                 .child(
                     div()
                         .text_size(px(12.0))
