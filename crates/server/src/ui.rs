@@ -9,8 +9,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString, Window, WindowAppearance,
-    WindowBounds, WindowKind, WindowOptions, div, prelude::*, px, rgb, size,
+    Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
+    Window, WindowAppearance, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint,
+    prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 use pinyin_protocol::{Request, SessionView};
@@ -371,7 +372,7 @@ impl Render for CandidatePanel {
         let previous = Arc::clone(&self.state);
         let next = Arc::clone(&self.state);
         let preedit = SharedString::from(view.raw.clone());
-        div()
+        let panel = div()
             .font_family("Microsoft YaHei")
             .flex()
             .flex_col()
@@ -492,7 +493,14 @@ impl Render for CandidatePanel {
                                 )
                             })
                     }))
-            }))
+            }));
+        // 首次出现 140ms 淡入,从光标处自然展开;GPUI 的 reduced-motion 会自动跳过。
+        panel
+            .with_animation(
+                "candidate-show",
+                Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()),
+                |panel, delta| panel.opacity(delta),
+            )
             .into_any_element()
     }
 }
