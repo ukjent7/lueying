@@ -18,12 +18,16 @@ use lueying_protocol::{Request, SessionView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    COLOR_3DFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWFRAME,
+    COLOR_WINDOWTEXT, GetMonitorInfoW, GetSysColor, HMONITOR, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromPoint, SYS_COLOR_INDEX,
 };
+use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-    IsWindowVisible, IsZoomed, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
+    IsWindowVisible, IsZoomed, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
@@ -359,6 +363,46 @@ struct Palette {
     selected_index: u32,
 }
 
+/// 系统高对比度主题:用用户选定的系统颜色,不覆盖成自定义蓝底。
+fn high_contrast() -> bool {
+    let mut info = HIGHCONTRASTW {
+        cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST,
+            info.cbSize,
+            Some((&mut info as *mut HIGHCONTRASTW).cast::<c_void>()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .is_ok()
+        && info.dwFlags.contains(HCF_HIGHCONTRASTON)
+}
+
+/// COLORREF(0x00BBGGRR)→ GPUI 的 0xRRGGBB。
+fn system_color(index: SYS_COLOR_INDEX) -> u32 {
+    let color = unsafe { GetSysColor(index) };
+    ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff)
+}
+
+fn system_palette() -> Palette {
+    let text = system_color(COLOR_WINDOWTEXT);
+    Palette {
+        bg: system_color(COLOR_WINDOW),
+        border: system_color(COLOR_WINDOWFRAME),
+        preedit: text,
+        text,
+        // 候选编号是辅助信息,但高对比度下也要清楚可读。
+        index: text,
+        hover: system_color(COLOR_3DFACE),
+        selected_bg: system_color(COLOR_HIGHLIGHT),
+        selected_text: system_color(COLOR_HIGHLIGHTTEXT),
+        selected_index: system_color(COLOR_HIGHLIGHTTEXT),
+    }
+}
+
 fn palette(dark: bool) -> Palette {
     if dark {
         Palette {
@@ -396,10 +440,14 @@ impl Render for CandidatePanel {
         let Some(view) = live.or_else(|| self.last.borrow().clone()) else {
             return div().into_any_element();
         };
-        let colors = palette(matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        ));
+        let colors = if high_contrast() {
+            system_palette()
+        } else {
+            palette(matches!(
+                window.appearance(),
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            ))
+        };
         let ps = view.page_size.max(1);
         let start = view.page * ps;
         let pages = view.candidates.len().div_ceil(ps).max(1);

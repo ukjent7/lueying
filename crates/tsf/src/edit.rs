@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use lueying_protocol::Request;
 use windows::Win32::Foundation::{E_FAIL, RECT};
+use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
     ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
@@ -377,14 +378,38 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
             return Some((line.right, line.top, line.right, line.bottom));
         }
     }
-    // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。退回视图矩形,
-    // 至少让候选窗出现在编辑区底部,而不是因为拿不到光标就完全消失。
+    // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。系统仍可能知道
+    // 前台线程的原生插入符位置;它比整个视图矩形更贴近用户正在看的地方。
+    if let Some(rect) = gui_caret() {
+        return Some(rect);
+    }
+    // 最后退回视图矩形,至少让候选窗出现在编辑区底部,而不是完全消失。
     let view_rect = unsafe { view.GetScreenExt() }.ok()?;
     (view_rect.right > view_rect.left && view_rect.bottom > view_rect.top).then_some((
         view_rect.left,
         view_rect.bottom,
         view_rect.right,
         view_rect.bottom,
+    ))
+}
+
+/// 前台线程的原生插入符矩形(屏幕坐标)。TSF 的 GetTextExt 在 Java/Swing
+/// 和自绘编辑器里常失败,但同一线程的 Win32 插入符仍可能有效。
+fn gui_caret() -> Option<(i32, i32, i32, i32)> {
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetGUIThreadInfo(0, &mut info) }.ok()?;
+    if info.hwndCaret.is_invalid() {
+        return None;
+    }
+    let rect = info.rcCaret;
+    (rect.right > rect.left && rect.bottom > rect.top).then_some((
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
     ))
 }
 
