@@ -51,7 +51,7 @@
 - `pinyin-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。`--bench-fast` 跑确定性等距子集并并行各语料，`--bench` 跑全量。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
 - `pinyin-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证 Shift 中英切换与 Ctrl+. 中文标点落盘，再量 5 轮空格到文本落地的全链路延迟（p95 ≤ 250ms）。产物 `target/win-e2e-report.md`；失败时附 TSF 与 Server 日志末尾。
 - `pinyin-install-e2e`：把真实安装器指向隔离的 `LOCALAPPDATA`，检查文件、自启动/卸载项与 TSF CLSID，再执行真实卸载并确认清理。产物 `target/install-e2e-report.md`。
-- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；windows job 另做 i686/ARM64 TSF 编译检查；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
+- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；windows job 另做 i686/ARM64 TSF 编译检查，全链路与安装/卸载冒烟为阻断项；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
 
 ## 许可
 

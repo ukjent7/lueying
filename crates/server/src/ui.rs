@@ -24,7 +24,7 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
     IsWindowVisible, IsZoomed, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
 use crate::imp::State;
@@ -151,15 +151,6 @@ impl CandidatePanel {
             return;
         };
         unsafe {
-            if !self.styled.get() {
-                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-                SetWindowLongPtrW(
-                    hwnd,
-                    GWL_EXSTYLE,
-                    (style | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0) as isize,
-                );
-                self.styled.set(true);
-            }
             let view = match snapshot(&self.state) {
                 Some(view) => {
                     *self.last.borrow_mut() = Some(view.clone());
@@ -178,6 +169,21 @@ impl CandidatePanel {
                     self.last.borrow().clone()
                 }
             };
+            // 淡出期间让点击穿透到下层应用;实时组合才接鼠标。
+            let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let mut style = old;
+            if !self.styled.get() {
+                style |= WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
+                self.styled.set(true);
+            }
+            if self.fading.get().is_some() {
+                style |= WS_EX_TRANSPARENT.0;
+            } else {
+                style &= !WS_EX_TRANSPARENT.0;
+            }
+            if style != old {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize);
+            }
             let (x, y, w, h) = match view.as_ref().and_then(|v| v.caret) {
                 Some((l, t, r, b)) => {
                     let left = l.min(r);
