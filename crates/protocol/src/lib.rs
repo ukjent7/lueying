@@ -72,6 +72,7 @@ pub enum KeyMsg {
     End,
     PageUp,
     PageDown,
+    DeleteCandidate,
     Punct(char),
     Shift,
 }
@@ -95,6 +96,7 @@ impl From<KeyMsg> for lueying_engine::Key {
             KeyMsg::End => Key::End,
             KeyMsg::PageUp => Key::PageUp,
             KeyMsg::PageDown => Key::PageDown,
+            KeyMsg::DeleteCandidate => Key::DeleteCandidate,
             KeyMsg::Punct(c) => Key::Punct(c),
             KeyMsg::Shift => Key::Shift,
         }

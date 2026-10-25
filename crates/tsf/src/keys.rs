@@ -46,6 +46,8 @@ pub(crate) fn vk_to_key(vk: u32, scan: u32, shift: bool) -> Option<KeyMsg> {
         0x0D => KeyMsg::Enter,
         0x1B => KeyMsg::Esc,
         0x08 => KeyMsg::Backspace,
+        // Shift+Delete 删除当前候选的学习记录,与微软拼音一致。
+        0x2E if shift => KeyMsg::DeleteCandidate,
         0x2E => KeyMsg::Delete,
         0x25 => KeyMsg::Left,
         0x26 => KeyMsg::Up,

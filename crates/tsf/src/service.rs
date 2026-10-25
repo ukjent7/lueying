@@ -8,18 +8,20 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use lueying_protocol::{Reply, Request};
-use windows::Win32::Foundation::{E_INVALIDARG, FALSE, LPARAM, WPARAM};
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOINTERFACE, FALSE, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
-    ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfKeyEventSink,
-    ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
-    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
-    ITfTextInputProcessorEx_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
-    ITfUIElementMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY,
-    TF_TMAE_SECUREMODE,
+    ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfFunctionProvider,
+    ITfFunctionProvider_Impl, ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr,
+    ITfLangBarItemButton, ITfLangBarItemSink, ITfSource, ITfSourceSingle, ITfTextInputProcessor,
+    ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
+    ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr, ITfUIElementMgr, TF_LBI_ICON,
+    TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
 };
-use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
+use windows::core::{
+    BOOL, BSTR, Error, GUID, IUnknown, IUnknownImpl, Interface, Ref, Result, implement,
+};
 
 use crate::attr;
 use crate::client::{Client, RETRY_INTERVAL};
@@ -125,7 +127,8 @@ struct Pending {
     ITfTextInputProcessorEx,
     ITfKeyEventSink,
     ITfThreadFocusSink,
-    ITfDisplayAttributeProvider
+    ITfDisplayAttributeProvider,
+    ITfFunctionProvider
 )]
 pub(crate) struct TextService {
     thread_mgr: RefCell<Option<ITfThreadMgr>>,
@@ -140,6 +143,8 @@ pub(crate) struct TextService {
     langbar: RefCell<Option<ITfLangBarItemButton>>,
     /// 系统模式 compartment 的监听;停用时撤销。
     mode_advice: RefCell<crate::mode::Advice>,
+    /// 向 TSF 登记 Function Provider 的通道;Chromium/QQNT 据此识别为完整 IME。
+    function_source: RefCell<Option<ITfSourceSingle>>,
     /// Caps Lock 亮起前的模式,灭灯后恢复。
     caps_restore: Cell<Option<bool>>,
     /// 上一次处理过的 Caps Lock 状态;TestKeyUp 与 KeyUp 可能都到达,
@@ -193,6 +198,7 @@ impl TextService {
             focus_cookie: Cell::new(0),
             langbar: RefCell::new(None),
             mode_advice: RefCell::new(Vec::new()),
+            function_source: RefCell::new(None),
             caps_restore: Cell::new(None),
             caps_seen: Cell::new(None),
             poll: RefCell::new(None),
@@ -407,6 +413,16 @@ impl TextService_Impl {
         self.shared.tid.set(tid);
         *self.shared.thread_mgr.borrow_mut() = Some(thread_mgr.clone());
         *self.shared.ui_mgr.borrow_mut() = thread_mgr.cast::<ITfUIElementMgr>().ok();
+        // Chromium/QQNT 会检查本线程是否登记了 Function Provider;登记后
+        // 才把 Ctrl+数字一类组合键完整交给输入法,不再与宿主抢。
+        if let Ok(single) = thread_mgr.cast::<ITfSourceSingle>() {
+            let provider: ITfFunctionProvider = self.to_interface();
+            let unknown: IUnknown = provider.into();
+            match unsafe { single.AdviseSingleSink(tid, &ITfFunctionProvider::IID, &unknown) } {
+                Ok(()) => *self.function_source.borrow_mut() = Some(single),
+                Err(error) => log(&format!("登记 Function Provider 失败: {error}")),
+            }
+        }
         // 激活时 Caps 已经亮着:记下当前模式,灭灯时恢复到它而不是默认中文。
         let caps = keys::caps_on();
         self.caps_seen.set(Some(caps));
@@ -538,6 +554,11 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             let _ = unsafe { keystroke.UnpreserveKey(&GUID_PRESERVED_PUNCT, &key) };
         }
         crate::mode::unadvise(std::mem::take(&mut *self.mode_advice.borrow_mut()));
+        if let Some(single) = self.function_source.borrow_mut().take() {
+            let _ = unsafe {
+                single.UnadviseSingleSink(self.client_id.get(), &ITfFunctionProvider::IID)
+            };
+        }
         if let Some(button) = self.langbar.borrow_mut().take() {
             crate::langbar::remove(&button, self.thread_mgr.borrow().as_ref());
         }
@@ -744,5 +765,20 @@ impl ITfDisplayAttributeProvider_Impl for TextService_Impl {
         } else {
             Err(Error::from(E_INVALIDARG))
         }
+    }
+}
+
+impl ITfFunctionProvider_Impl for TextService_Impl {
+    fn GetType(&self) -> Result<GUID> {
+        Ok(crate::CLSID_IME)
+    }
+
+    fn GetDescription(&self) -> Result<BSTR> {
+        Ok(BSTR::from(crate::NAME))
+    }
+
+    fn GetFunction(&self, _group: *const GUID, _riid: *const GUID) -> Result<IUnknown> {
+        // 只登记 Provider 本身;具体功能(设置/候选搜索)以后按需实现。
+        Err(Error::from(E_NOINTERFACE))
     }
 }

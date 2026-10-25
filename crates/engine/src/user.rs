@@ -182,6 +182,23 @@ impl UserDict {
         self.count = self.map.values().map(Vec::len).sum();
     }
 
+    /// 删除一条学习记录;返回是否命中。
+    pub fn remove(&mut self, key: &str, word: &str) -> bool {
+        let Some(entries) = self.map.get_mut(key) else {
+            return false;
+        };
+        let Some(index) = entries.iter().position(|e| e.word == word) else {
+            return false;
+        };
+        entries.remove(index);
+        if entries.is_empty() {
+            self.map.remove(key);
+        }
+        self.count = self.count.saturating_sub(1);
+        self.rev = self.rev.wrapping_add(1);
+        true
+    }
+
     /// 该键下某词的用户频次(未学过为 0)。
     pub fn freq(&self, key: &str, word: &str) -> u32 {
         self.map

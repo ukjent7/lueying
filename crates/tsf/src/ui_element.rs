@@ -8,12 +8,14 @@
 use std::rc::Rc;
 
 use lueying_protocol::{Reply, Request};
-use windows::Win32::Foundation::E_FAIL;
+use windows::Win32::Foundation::{E_FAIL, LPARAM, WPARAM};
 use windows::Win32::UI::TextServices::{
     ITfCandidateListUIElement, ITfCandidateListUIElement_Impl, ITfCandidateListUIElementBehavior,
-    ITfCandidateListUIElementBehavior_Impl, ITfDocumentMgr, ITfUIElement, ITfUIElement_Impl,
-    ITfUIElementMgr, TF_CLUIE_COUNT, TF_CLUIE_CURRENTPAGE, TF_CLUIE_DOCUMENTMGR,
-    TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION, TF_CLUIE_STRING,
+    ITfCandidateListUIElementBehavior_Impl, ITfDocumentMgr,
+    ITfIntegratableCandidateListUIElement, ITfIntegratableCandidateListUIElement_Impl, ITfUIElement,
+    ITfUIElement_Impl, ITfUIElementMgr, STYLE_ACTIVE_SELECTION, TF_CLUIE_COUNT,
+    TF_CLUIE_CURRENTPAGE, TF_CLUIE_DOCUMENTMGR, TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION,
+    TF_CLUIE_STRING, TfIntegratableCandidateListSelectionStyle,
 };
 use windows::core::{BOOL, BSTR, Error, GUID, Interface, Result, implement};
 
@@ -122,7 +124,8 @@ fn set_host_draws(shared: &Rc<Shared>, client: &SharedClient, host_draws: bool) 
 #[implement(
     ITfUIElement,
     ITfCandidateListUIElement,
-    ITfCandidateListUIElementBehavior
+    ITfCandidateListUIElementBehavior,
+    ITfIntegratableCandidateListUIElement
 )]
 struct CandidateElement {
     shared: Rc<Shared>,
@@ -277,6 +280,42 @@ impl ITfCandidateListUIElementBehavior_Impl for CandidateElement_Impl {
             apply_reply(&self.shared, &self.client, &reply);
         }
         self.shared.ui_snapshot.borrow_mut().visible = false;
+        Ok(())
+    }
+}
+
+impl ITfIntegratableCandidateListUIElement_Impl for CandidateElement_Impl {
+    fn SetIntegrationStyle(&self, _guid: &GUID) -> Result<()> {
+        // Windows 搜索框等宿主用它声明候选样式;当前只有一种内嵌列表样式。
+        Ok(())
+    }
+
+    fn GetSelectionStyle(&self) -> Result<TfIntegratableCandidateListSelectionStyle> {
+        // 高亮项就是空格/回车将上屏的那一项,与桌面候选窗一致。
+        Ok(STYLE_ACTIVE_SELECTION)
+    }
+
+    fn OnKeyDown(&self, _wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
+        // 键的权威处理在 ITfKeyEventSink;这里吃键会把宿主导航键吞掉。
+        Ok(false.into())
+    }
+
+    fn ShowCandidateNumbers(&self) -> Result<BOOL> {
+        Ok(true.into())
+    }
+
+    fn FinalizeExactCompositionString(&self) -> Result<()> {
+        // 搜索框要求把当前组合串原样提交,不选候选:与 Enter 语义一致。
+        if let Some(reply) = request_with(
+            &self.client,
+            &self.shared,
+            Request::Key {
+                session: self.shared.session,
+                key: lueying_protocol::KeyMsg::Enter,
+            },
+        ) {
+            apply_reply(&self.shared, &self.client, &reply);
+        }
         Ok(())
     }
 }

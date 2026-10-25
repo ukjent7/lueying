@@ -35,6 +35,13 @@ fn push(
     checks.push((name, ok, note));
 }
 
+/// 用户词库导出里是否还有某个词(行格式:`键<TAB>词<TAB>频次<TAB>时间戳`)。
+fn learned(export: &str, word: &str) -> bool {
+    export
+        .lines()
+        .any(|line| line.split('\t').nth(1) == Some(word))
+}
+
 pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
 
@@ -95,6 +102,41 @@ pub fn run(report: &mut String) -> usize {
         "高亮候选同步内联文本",
         !second.is_empty() && display == second,
         format!("内联 {display:?} / 第二候选 {second:?}"),
+    );
+
+    // Shift+Delete 忘掉误学的候选:学习记录必须从用户词库消失;
+    // 空组合里该键要直通给应用。
+    let mut e = engine();
+    type_into(&mut e, "shi");
+    let second = e.candidates().get(1).cloned().unwrap_or_default();
+    e.process(Key::Digit(2));
+    let saved = e.export_user();
+    type_into(&mut e, "shi");
+    // 学过的词可能已经被排序到首位,也可能仍在原位;先定位再高亮。
+    let index = e.candidates().iter().position(|c| c == &second);
+    if let Some(index) = index {
+        e.set_highlight(index);
+    }
+    e.process(Key::DeleteCandidate);
+    let after = e.export_user();
+    // 删除后仍保持原候选高亮,再按一次不会误删别的学习词。
+    let kept = e.candidates().get(e.highlight()) == Some(&second);
+    let repeat = e.process(Key::DeleteCandidate);
+    e.process(Key::Esc);
+    let idle = e.process(Key::DeleteCandidate);
+    push(
+        &mut checks,
+        "Shift+Delete 删除学习记录",
+        !second.is_empty()
+            && learned(&saved, &second)
+            && index.is_some()
+            && !learned(&after, &second)
+            && kept
+            && repeat.is_empty()
+            && idle
+                .iter()
+                .any(|event| matches!(event, Event::Passthrough(Key::DeleteCandidate))),
+        format!("学过 {second:?} → 删除后剩余 {}", after.lines().count()),
     );
 
     // 宿主自绘候选时按全局序号移动高亮(TSF 的 SetSelection):

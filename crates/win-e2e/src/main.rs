@@ -27,10 +27,12 @@ mod imp {
     };
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCandidateListUIElement,
-        ITfCompositionView, ITfContextComposition, ITfInputProcessorProfileMgr,
-        ITfInputProcessorProfiles, ITfSource, ITfThreadMgr, ITfUIElementMgr, ITfUIElementSink,
-        ITfUIElementSink_Impl, TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
-        TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
+        ITfCandidateListUIElementBehavior, ITfCompositionView, ITfContextComposition,
+        ITfInputProcessorProfileMgr,
+        ITfInputProcessorProfiles, ITfIntegratableCandidateListUIElement, ITfSource, ITfThreadMgr,
+        ITfUIElementMgr, ITfUIElementSink, ITfUIElementSink_Impl, STYLE_ACTIVE_SELECTION,
+        TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE,
+        TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
@@ -166,6 +168,10 @@ mod imp {
         let list: ITfCandidateListUIElement = element
             .cast()
             .map_err(|e| format!("cast ITfCandidateListUIElement: {e}"))?;
+        // SetSelection/Finalize/Abort 在 Behavior 接口上,与列表接口分开查询。
+        let behavior: ITfCandidateListUIElementBehavior = element
+            .cast()
+            .map_err(|e| format!("cast ITfCandidateListUIElementBehavior: {e}"))?;
         let count = unsafe { list.GetCount() }.map_err(|e| format!("GetCount: {e}"))?;
         if count == 0 {
             return Err("候选 UI 元素返回 0 条候选".into());
@@ -175,6 +181,20 @@ mod imp {
             .to_string();
         if first.is_empty() {
             return Err("候选 UI 元素首条候选为空".into());
+        }
+        // Windows 搜索框一类宿主会 QI 集成候选接口;内部列表必须声明
+        // 高亮即待上屏项,并允许宿主画候选编号。
+        let integrated: ITfIntegratableCandidateListUIElement = element
+            .cast()
+            .map_err(|e| format!("cast ITfIntegratableCandidateListUIElement: {e}"))?;
+        let style = unsafe { integrated.GetSelectionStyle() }
+            .map_err(|e| format!("GetSelectionStyle: {e}"))?;
+        let numbers = unsafe { integrated.ShowCandidateNumbers() }
+            .map_err(|e| format!("ShowCandidateNumbers: {e}"))?;
+        if style != STYLE_ACTIVE_SELECTION || !numbers.as_bool() {
+            return Err(format!(
+                "集成候选接口返回 style={style:?} numbers={numbers:?}"
+            ));
         }
         // 宿主自绘时要能翻页:页索引必须可读,SetSelection 换页后当前页要跟随。
         let mut page_starts = [0u32; 8];
@@ -186,7 +206,7 @@ mod imp {
         }
         let mut paging = String::new();
         if pages > 1 {
-            unsafe { list.SetSelection(page_starts[1]) }
+            unsafe { behavior.SetSelection(page_starts[1]) }
                 .map_err(|e| format!("SetSelection(第二页): {e}"))?;
             let current =
                 unsafe { list.GetCurrentPage() }.map_err(|e| format!("GetCurrentPage: {e}"))?;
@@ -198,7 +218,8 @@ mod imp {
                     page_starts[1]
                 ));
             }
-            unsafe { list.SetSelection(0) }.map_err(|e| format!("SetSelection(复位): {e}"))?;
+            unsafe { behavior.SetSelection(0) }
+                .map_err(|e| format!("SetSelection(复位): {e}"))?;
             let current = unsafe { list.GetCurrentPage() }
                 .map_err(|e| format!("GetCurrentPage(复位): {e}"))?;
             if current != 0 {

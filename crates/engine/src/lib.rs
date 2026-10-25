@@ -49,6 +49,8 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
+    /// 删除当前高亮候选的学习记录(Shift+Delete);词典词条本身不受影响。
+    DeleteCandidate,
     Punct(char),
     Shift,
 }
@@ -330,6 +332,41 @@ impl Engine {
         self.pick(self.page * ps + slot)
     }
 
+    /// 忘掉高亮候选的学习记录;候选仍可由主词典提供,只是回到原始词频。
+    /// 返回是否真的删掉了一条用户词。
+    pub fn forget_highlighted(&mut self) -> bool {
+        let Some(cand) = self.cands.get(self.hl).cloned() else {
+            return false;
+        };
+        let Some(comp) = self.comp.as_ref() else {
+            return false;
+        };
+        // 与学习时用同一个键:纠正候选有单独的 learn_key,普通候选取吃掉的音节。
+        let key = cand.learn_key.clone().unwrap_or_else(|| {
+            cand.spans
+                .iter()
+                .take(cand.consume)
+                .map(|&(s, e)| &comp.raw[s..e])
+                .collect::<Vec<_>>()
+                .join("'")
+        });
+        let removed = self
+            .user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&key, &cand.text);
+        if removed {
+            self.recompute();
+            // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。
+            if let Some(index) = self.cands.iter().position(|c| c.text == cand.text) {
+                self.hl = index;
+                self.page = index / self.cfg.page_size.max(1);
+                self.sync_display();
+            }
+        }
+        removed
+    }
+
     /// 按全局候选序号点选;宿主自绘候选时可能直接给绝对序号。
     pub fn pick(&mut self, index: usize) -> Vec<Event> {
         if index >= self.cands.len() {
@@ -499,6 +536,10 @@ impl Engine {
             }
             Key::Delete => {
                 self.delete_char(false);
+                Vec::new()
+            }
+            Key::DeleteCandidate => {
+                self.forget_highlighted();
                 Vec::new()
             }
             Key::Left => {
