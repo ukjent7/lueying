@@ -31,8 +31,8 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
         GetWindowTextW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWNORMAL,
-        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_CHILD,
-        WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+        SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+        WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
     };
     use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
 
@@ -334,8 +334,8 @@ mod imp {
                     | WS_VISIBLE
                     | WS_TABSTOP
                     | WS_VSCROLL
-                    | ES_MULTILINE
-                    | ES_AUTOVSCROLL,
+                    | WINDOW_STYLE(ES_MULTILINE as u32)
+                    | WINDOW_STYLE(ES_AUTOVSCROLL as u32),
                 10,
                 10,
                 550,
