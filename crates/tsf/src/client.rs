@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use lueying_protocol::{Reply, Request};
@@ -29,15 +29,18 @@ const MAX_LINE: usize = 1024 * 1024;
 impl Client {
     pub(crate) fn connect() -> Option<Self> {
         if let Some(client) = Self::open() {
+            WARMING.store(false, Ordering::Relaxed);
             return Some(client);
         }
         // Server 没在跑:拉起安装目录里的兄弟进程,等它建好管道。
-        // 只有这次真的起了进程才等;刚起过说明它还在加载,让这一键直通,
-        // 下一键再试,不能在 UI 线程上反复睡。
-        if !spawn_server_once() {
+        if !spawn_server_once() && !WARMING.load(Ordering::Relaxed) {
             return None;
         }
-        for _ in 0..8 {
+        // 刚拉起(含激活时预热)说明服务正在加载词典/模型。只等这一次:
+        // 首键直接放行会少一个字母,后续键还会把拼音接错;等不到就清标记,
+        // 服务真起不来时后面的按键不再陪等。
+        WARMING.store(false, Ordering::Relaxed);
+        for _ in 0..16 {
             std::thread::sleep(Duration::from_millis(15));
             if let Some(client) = Self::open() {
                 return Some(client);
@@ -160,11 +163,17 @@ fn spawn_server_once() -> bool {
     {
         return false;
     }
-    std::process::Command::new(exe)
+    let started = std::process::Command::new(exe)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .is_ok()
+        .is_ok();
+    if started {
+        WARMING.store(true, Ordering::Relaxed);
+    }
+    started
 }
 
 /// 上次尝试拉起 Server 的秒级时间戳。
 static LAST_SPAWN: AtomicU64 = AtomicU64::new(0);
+/// 刚发起过 Server 进程、还没确认管道就绪;下一次连接最多等一轮。
+static WARMING: AtomicBool = AtomicBool::new(false);
