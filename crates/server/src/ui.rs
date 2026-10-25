@@ -2,11 +2,11 @@
 //! gpui 未暴露窗口移动/置顶,经 raw-window-handle 拿 HWND 走 SetWindowPos;
 //! 空闲时把窗口挪出屏幕而不是隐藏,避免和 gpui 自己的可见性状态打架。
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
@@ -35,6 +35,8 @@ const PREEDIT_H: f32 = 30.0;
 const ROW_H: f32 = 36.0;
 /// 空闲停靠位:主屏左侧外。
 const PARK: i32 = -4000;
+/// 组合结束后的淡出时长;期间沿用最后一份内容,结束后再停靠窗口。
+const HIDE_FADE: Duration = Duration::from_millis(90);
 
 pub(super) fn run(state: Arc<State>) {
     application().run(move |cx: &mut App| {
@@ -58,6 +60,9 @@ pub(super) fn run(state: Arc<State>) {
                     cx.new(|_| CandidatePanel {
                         state: panel_state,
                         styled: Cell::new(false),
+                        last: RefCell::new(None),
+                        fading: Cell::new(None),
+                        reduce: Cell::new(false),
                     })
                 },
             )
@@ -76,13 +81,14 @@ pub(super) fn run(state: Arc<State>) {
                     .timer(Duration::from_millis(15))
                     .await;
                 let version = poll.version.load(Ordering::Relaxed);
-                if version == last {
-                    continue;
-                }
+                let changed = version != last;
                 last = version;
                 let _ = handle.update(cx, |panel: &mut CandidatePanel, window, cx| {
-                    panel.place(window);
-                    cx.notify();
+                    // 淡出结束也要进来一次:清掉旧内容并把窗口停靠出去。
+                    if changed || panel.tick() {
+                        panel.place(window);
+                        cx.notify();
+                    }
                 });
             }
         })
@@ -101,13 +107,34 @@ fn snapshot(state: &State) -> Option<SessionView> {
         .then(|| session.view.clone())
 }
 
+/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。
+fn composing(state: &State) -> bool {
+    snapshot(state).is_some()
+}
+
 struct CandidatePanel {
     state: Arc<State>,
     /// HWND 扩展样式只补一次。
     styled: Cell<bool>,
+    /// 最后一份组合内容;淡出期间继续画它。
+    last: RefCell<Option<SessionView>>,
+    /// 淡出截止时刻;`None` 表示没有在淡出。
+    fading: Cell<Option<Instant>>,
+    /// 上一帧读到的系统「减少动态效果」设置。
+    reduce: Cell<bool>,
 }
 
 impl CandidatePanel {
+    /// 淡出到期后丢掉旧内容并停靠窗口。返回是否改了显示状态。
+    fn tick(&self) -> bool {
+        if self.fading.get().is_some_and(|end| Instant::now() >= end) {
+            self.fading.set(None);
+            self.last.borrow_mut().take();
+            return true;
+        }
+        false
+    }
+
     fn hwnd(window: &Window) -> Option<HWND> {
         let raw = <Window as HasWindowHandle>::window_handle(window)
             .ok()?
@@ -133,7 +160,24 @@ impl CandidatePanel {
                 );
                 self.styled.set(true);
             }
-            let view = snapshot(&self.state);
+            let view = match snapshot(&self.state) {
+                Some(view) => {
+                    *self.last.borrow_mut() = Some(view.clone());
+                    self.fading.set(None);
+                    Some(view)
+                }
+                None => {
+                    if self.reduce.get() {
+                        // 减少动态效果:不淡出,直接停靠,避免空窗口挡住点击。
+                        self.last.borrow_mut().take();
+                        self.fading.set(None);
+                    } else if self.last.borrow().is_some() && self.fading.get().is_none() {
+                        // 组合刚结束:窗口先留在原地淡出,到期由 `tick` 停靠。
+                        self.fading.set(Some(Instant::now() + HIDE_FADE));
+                    }
+                    self.last.borrow().clone()
+                }
+            };
             let (x, y, w, h) = match view.as_ref().and_then(|v| v.caret) {
                 Some((l, t, r, b)) => {
                     let left = l.min(r);
@@ -219,7 +263,7 @@ fn page_arrow(
         .hover(|style| style.bg(rgb(colors.hover)))
         .on_mouse_down(MouseButton::Left, move |_, _, _| {
             let session = state.active.load(Ordering::Relaxed);
-            if session != 0 {
+            if session != 0 && composing(&state) {
                 let _ = crate::imp::handle(&state, Request::Page { session, delta });
             }
         })
@@ -340,8 +384,12 @@ fn palette(dark: bool) -> Palette {
 }
 
 impl Render for CandidatePanel {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(view) = snapshot(&self.state) else {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.reduce.set(cx.reduce_motion());
+        let live = snapshot(&self.state);
+        // 组合结束后的淡出沿用最后一份内容;旧内容已清掉则什么都不画。
+        let fading = live.is_none();
+        let Some(view) = live.or_else(|| self.last.borrow().clone()) else {
             return div().into_any_element();
         };
         let colors = palette(matches!(
@@ -392,7 +440,7 @@ impl Render for CandidatePanel {
                     return;
                 }
                 let session = scroll_state.active.load(Ordering::Relaxed);
-                if session != 0 {
+                if session != 0 && composing(&scroll_state) {
                     let _ = crate::imp::handle(
                         &scroll_state,
                         Request::Page {
@@ -462,7 +510,7 @@ impl Render for CandidatePanel {
                             })
                             .on_mouse_down(MouseButton::Left, move |_, _, _| {
                                 let session = state.active.load(Ordering::Relaxed);
-                                if session != 0 {
+                                if session != 0 && composing(&state) {
                                     let _ =
                                         crate::imp::handle(&state, Request::Pick { session, slot });
                                 }
@@ -494,13 +542,24 @@ impl Render for CandidatePanel {
                             })
                     }))
             }));
-        // 首次出现 140ms 淡入,从光标处自然展开;GPUI 的 reduced-motion 会自动跳过。
-        panel
-            .with_animation(
-                "candidate-show",
-                Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()),
-                |panel, delta| panel.opacity(delta),
-            )
-            .into_any_element()
+        // 首次出现 140ms 淡入,组合结束 90ms 淡出;GPUI 的 reduced-motion
+        // 会自动给终态,淡出期间点击由 `composing` 拦掉。
+        if fading {
+            panel
+                .with_animation(
+                    "candidate-hide",
+                    Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
+                    |panel, delta| panel.opacity(1.0 - delta),
+                )
+                .into_any_element()
+        } else {
+            panel
+                .with_animation(
+                    "candidate-show",
+                    Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()),
+                    |panel, delta| panel.opacity(delta),
+                )
+                .into_any_element()
+        }
     }
 }

@@ -405,6 +405,74 @@ impl TextService_Impl {
         log(&format!("激活 tid={tid} session={}", self.shared.session));
         Ok(())
     }
+
+    /// 抬键处理:Shift 单击切中英、Caps 同步。
+    ///
+    /// Shift/Caps 在 `OnTestKeyDown` 里就放行给应用,TSF 不会再调 `OnKeyUp`;
+    /// 两个阶段都接上,状态判定本身幂等,重复到达不会二次切换。
+    fn key_up(&self, pic: Ref<ITfContext>, vk: u32) -> Result<BOOL> {
+        match catch_unwind(AssertUnwindSafe(|| {
+            // 安全桌面里不响应 Shift/Caps 模式切换。
+            if self.secure.get() {
+                return Ok(FALSE);
+            }
+            // CapsLock:大写锁定 = 临时英文;灭灯后回到亮灯前的模式。
+            if keys::is_caps(vk) {
+                self.shared.touch();
+                let caps = keys::caps_on();
+                let chinese = if caps {
+                    let previous = self
+                        .caps_restore
+                        .get()
+                        .unwrap_or_else(|| self.shared.chinese.get());
+                    self.caps_restore.set(Some(previous));
+                    false
+                } else {
+                    self.caps_restore.take().unwrap_or(true)
+                };
+                if let Some(reply) = self.request(Request::SetMode {
+                    session: self.shared.session,
+                    chinese,
+                }) {
+                    // 组合中切大写要先把拼音落定。
+                    if (!reply.commits.is_empty()
+                        || !reply.preedit.is_empty()
+                        || self.shared.composing())
+                        && let Ok(context) = pic.ok()
+                        && !crate::context::keyboard_disabled(context)
+                    {
+                        *self.shared.last_context.borrow_mut() = Some(context.clone());
+                        self.apply(context, &reply);
+                    } else {
+                        self.shared.set_chinese(reply.chinese);
+                    }
+                }
+                // 已经是英文时 SetMode 不改变 chinese,但图标要从「英」变成「A」。
+                self.shared.refresh_langbar();
+                return Ok(FALSE);
+            }
+            // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
+            if self.tap.take_shift_tap(vk)
+                && let Ok(context) = pic.ok()
+                && !crate::context::keyboard_disabled(context)
+                && let Some(reply) = self.request(Request::Key {
+                    session: self.shared.session,
+                    key: pinyin_protocol::KeyMsg::Shift,
+                })
+            {
+                log(&format!("Shift 单击 -> 中文={}", reply.chinese));
+                *self.shared.last_context.borrow_mut() = Some(context.clone());
+                self.apply(context, &reply);
+            }
+            Ok(FALSE)
+        })) {
+            Ok(result) => result,
+            Err(_) => {
+                log("抬键处理 panic(已兜住)");
+                Ok(FALSE)
+            }
+        }
+    }
 }
 
 impl ITfTextInputProcessor_Impl for TextService_Impl {
@@ -603,73 +671,14 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         }
     }
 
-    fn OnTestKeyUp(&self, _pic: Ref<ITfContext>, _wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
-        Ok(FALSE)
+    fn OnTestKeyUp(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
+        // 预演阶段对每个键都会调用;Shift/Caps 只在这里能收到抬起。
+        self.key_up(pic, wparam.0 as u32)
     }
 
     fn OnKeyUp(&self, pic: Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
-        match catch_unwind(AssertUnwindSafe(|| {
-            let vk = wparam.0 as u32;
-            // 安全桌面里不响应 Shift/Caps 模式切换。
-            if self.secure.get() {
-                return Ok(FALSE);
-            }
-            // CapsLock:大写锁定 = 临时英文;灭灯后回到亮灯前的模式。
-            if keys::is_caps(vk) {
-                self.shared.touch();
-                let caps = keys::caps_on();
-                let chinese = if caps {
-                    let previous = self
-                        .caps_restore
-                        .get()
-                        .unwrap_or_else(|| self.shared.chinese.get());
-                    self.caps_restore.set(Some(previous));
-                    false
-                } else {
-                    self.caps_restore.take().unwrap_or(true)
-                };
-                if let Some(reply) = self.request(Request::SetMode {
-                    session: self.shared.session,
-                    chinese,
-                }) {
-                    // 组合中切大写要先把拼音落定。
-                    if (!reply.commits.is_empty()
-                        || !reply.preedit.is_empty()
-                        || self.shared.composing())
-                        && let Ok(context) = pic.ok()
-                        && !crate::context::keyboard_disabled(context)
-                    {
-                        *self.shared.last_context.borrow_mut() = Some(context.clone());
-                        self.apply(context, &reply);
-                    } else {
-                        self.shared.set_chinese(reply.chinese);
-                    }
-                }
-                // 已经是英文时 SetMode 不改变 chinese,但图标要从「英」变成「A」。
-                self.shared.refresh_langbar();
-                return Ok(FALSE);
-            }
-            // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
-            if self.tap.take_shift_tap(vk)
-                && let Ok(context) = pic.ok()
-                && !crate::context::keyboard_disabled(context)
-                && let Some(reply) = self.request(Request::Key {
-                    session: self.shared.session,
-                    key: pinyin_protocol::KeyMsg::Shift,
-                })
-            {
-                log(&format!("Shift 单击 -> 中文={}", reply.chinese));
-                *self.shared.last_context.borrow_mut() = Some(context.clone());
-                self.apply(context, &reply);
-            }
-            Ok(FALSE)
-        })) {
-            Ok(result) => result,
-            Err(_) => {
-                log("抬键处理 panic(已兜住)");
-                Ok(FALSE)
-            }
-        }
+        // 被吃掉的键在应用阶段还会经过这里。
+        self.key_up(pic, wparam.0 as u32)
     }
 
     fn OnPreservedKey(&self, _pic: Ref<ITfContext>, rguid: *const GUID) -> Result<BOOL> {

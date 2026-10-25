@@ -48,8 +48,12 @@ mod imp {
                 format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
             }
             Err(e) => {
-                let tail = log_tail();
-                format!("# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tail}\n```\n")
+                let tsf =
+                    tail_of(std::env::var_os("PINYIN_TSF_LOG").map(std::path::PathBuf::from));
+                let server = tail_of(Some(server_log()));
+                format!(
+                    "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
+                )
             }
         };
         println!("{report}");
@@ -60,8 +64,15 @@ mod imp {
         }
     }
 
-    fn log_tail() -> String {
-        let Ok(path) = std::env::var("PINYIN_TSF_LOG") else {
+    fn server_log() -> std::path::PathBuf {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join("target")
+            .join("win-e2e-server.log")
+    }
+
+    fn tail_of(path: Option<std::path::PathBuf>) -> String {
+        let Some(path) = path else {
             return String::new();
         };
         let Ok(text) = std::fs::read_to_string(path) else {
@@ -120,11 +131,20 @@ mod imp {
             std::env::set_var("LOCALAPPDATA", &data);
             std::env::set_var("APPDATA", &data);
         }
+        let server_out = server_log();
+        let _ = std::fs::remove_file(&server_out);
+        let out =
+            std::fs::File::create(&server_out).map_err(|e| format!("创建 Server 日志: {e}"))?;
+        let err = out
+            .try_clone()
+            .map_err(|e| format!("复制 Server 日志句柄: {e}"))?;
         let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
             .env("LOCALAPPDATA", &data)
             .env("APPDATA", &data)
             // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
             .env("PINYIN_SERVER_NO_UI", "1")
+            .stdout(std::process::Stdio::from(out))
+            .stderr(std::process::Stdio::from(err))
             .spawn()
             .ok();
         // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。
@@ -553,21 +573,25 @@ mod imp {
         const VK_OEM_PERIOD: u16 = 0xBE;
         let config = data.join("pinyin-ime").join("config.ini");
         let expect = |want: &str| -> Result<(), String> {
-            let text = std::fs::read_to_string(&config).unwrap_or_default();
-            if text.contains(&format!("chinese_punct={want}")) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{} 不含 chinese_punct={want}: `{text}`",
-                    config.display()
-                ))
+            // 配置在 Server 线程写完才改名,给 CI 磁盘留足时间。
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            loop {
+                let text = std::fs::read_to_string(&config).unwrap_or_default();
+                if text.contains(&format!("chinese_punct={want}")) {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "{} 不含 chinese_punct={want}: `{text}`",
+                        config.display()
+                    ));
+                }
+                pump_for(Duration::from_millis(25));
             }
         };
         chord(VK_CONTROL, VK_OEM_PERIOD)?;
-        pump_for(Duration::from_millis(400));
         expect("false")?;
         chord(VK_CONTROL, VK_OEM_PERIOD)?;
-        pump_for(Duration::from_millis(400));
         expect("true")?;
         Ok(())
     }
