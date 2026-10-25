@@ -289,7 +289,8 @@ mod imp {
                     colors,
                 ));
 
-            let toggles: [(&'static str, bool, fn(&mut AppConfig)); 6] = [
+            type Toggle = (&'static str, bool, fn(&mut AppConfig));
+            let toggles: [Toggle; 6] = [
                 ("模糊 z/zh c/ch s/sh", fuzzy.zcs, |c| c.fuzzy.zcs = !c.fuzzy.zcs),
                 ("模糊 l/n", fuzzy.ln, |c| c.fuzzy.ln = !c.fuzzy.ln),
                 ("模糊 f/h", fuzzy.fh, |c| c.fuzzy.fh = !c.fuzzy.fh),
