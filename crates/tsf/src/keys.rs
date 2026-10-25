@@ -3,7 +3,7 @@
 
 use std::cell::Cell;
 
-use pinyin_protocol::KeyMsg;
+use lueying_protocol::KeyMsg;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, GetKeyboardLayout, GetKeyboardState, MAPVK_VK_TO_VSC, MapVirtualKeyExW,
     ToUnicodeEx, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,

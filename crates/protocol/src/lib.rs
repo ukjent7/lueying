@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 管道名(版本号入名,协议不兼容时换 v2)。
-pub const PIPE_NAME: &str = r"\\.\pipe\pinyin-ime-v1";
+pub const PIPE_NAME: &str = r"\\.\pipe\lueying-v1";
 
 /// 带每用户、每会话后缀的管道名:用户名哈希 + 登录会话号入名。
 ///
@@ -12,9 +12,9 @@ pub const PIPE_NAME: &str = r"\\.\pipe\pinyin-ime-v1";
 /// Server,候选窗可能出现在另一个桌面。会话号由系统分配,两端在同一
 /// 会话里得到同一个名字。
 ///
-/// `PINYIN_PIPE_SUFFIX` 只给自动化测试隔离用,避免连到本机已安装的服务。
+/// `LUEYING_PIPE_SUFFIX` 只给自动化测试隔离用,避免连到本机已安装的服务。
 pub fn pipe_name() -> String {
-    if let Ok(suffix) = std::env::var("PINYIN_PIPE_SUFFIX") {
+    if let Ok(suffix) = std::env::var("LUEYING_PIPE_SUFFIX") {
         let clean: String = suffix
             .chars()
             .filter(char::is_ascii_alphanumeric)
@@ -76,9 +76,9 @@ pub enum KeyMsg {
     Shift,
 }
 
-impl From<KeyMsg> for pinyin_engine::Key {
+impl From<KeyMsg> for lueying_engine::Key {
     fn from(k: KeyMsg) -> Self {
-        use pinyin_engine::Key;
+        use lueying_engine::Key;
         match k {
             KeyMsg::Letter(c) => Key::Letter(c),
             KeyMsg::Digit(d) => Key::Digit(d),
@@ -155,8 +155,12 @@ pub enum Request {
     },
     /// 候选窗鼠标点选:当前页内 0 基序号。
     Pick { session: u64, slot: usize },
+    /// 宿主自绘候选时按全局候选序号点选。
+    PickIndex { session: u64, index: usize },
     /// 候选窗滚轮翻页:`delta` 为 ±1。
     Page { session: u64, delta: i32 },
+    /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
+    UiMode { session: u64, host_draws: bool },
     /// 会话下线。
     Goodbye { session: u64 },
 }
@@ -178,6 +182,17 @@ pub struct Reply {
     /// 用户词库文本(仅 `ExportUser` 应答使用)。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
+    /// 当前页候选,供 TSF 的 `ITfCandidateListUIElement` 回答宿主与读屏软件。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
+    /// 当前页起始序号与页大小(候选 UI 元素的分页信息)。
+    #[serde(default)]
+    pub page: usize,
+    #[serde(default)]
+    pub page_size: usize,
+    /// 当前页内高亮序号。
+    #[serde(default)]
+    pub highlight: usize,
 }
 
 /// 会话快照(Server 内部与候选窗渲染共用)。

@@ -1,4 +1,4 @@
-//! Windows 安装/卸载冒烟测试:把真实安装器指向隔离的 `PINYIN_INSTALL_DIR`,
+//! Windows 安装/卸载冒烟测试:把真实安装器指向隔离的 `LUEYING_INSTALL_DIR`,
 //! 检查 x64/x86 文件、自启动/卸载项与两套 TSF 注册,再执行真实卸载并确认清理。
 //! 产物 `target/install-e2e-report.md`。
 
@@ -8,7 +8,7 @@ fn main() {
         imp::run();
     }
     #[cfg(not(windows))]
-    println!("pinyin-install-e2e 仅支持 Windows");
+    println!("lueying-install-e2e 仅支持 Windows");
 }
 
 #[cfg(windows)]
@@ -21,7 +21,7 @@ mod imp {
     const CLSID: &str = "{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}";
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const UNINSTALL_KEY: &str =
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
 
     pub(super) fn run() {
         let report = real_run().map_or_else(
@@ -55,11 +55,11 @@ mod imp {
         std::fs::create_dir_all(&appdata).map_err(|e| format!("创建 APPDATA: {e}"))?;
         std::fs::create_dir_all(&program).map_err(|e| format!("创建 Program Files: {e}"))?;
         for name in [
-            "pinyin-install.exe",
-            "pinyin-server.exe",
-            "pinyin-settings.exe",
-            "pinyin_tsf.dll",
-            "pinyin_tsf32.dll",
+            "lueying-install.exe",
+            "lueying-server.exe",
+            "lueying-settings.exe",
+            "lueying_tsf.dll",
+            "lueying_tsf32.dll",
         ] {
             std::fs::copy(bin.join(name), payload.join(name))
                 .map_err(|e| format!("复制 {name}: {e}"))?;
@@ -67,20 +67,20 @@ mod imp {
         std::fs::write(payload.join("version.txt"), env!("CARGO_PKG_VERSION"))
             .map_err(|e| format!("写 version.txt: {e}"))?;
 
-        let target = program.join("pinyin-ime");
+        let target = program.join("lueying");
         let result = (|| -> Result<String, String> {
-            let status = Command::new(payload.join("pinyin-install.exe"))
+            let status = Command::new(payload.join("lueying-install.exe"))
                 .arg("--quiet")
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
-                .env("PINYIN_INSTALL_DIR", &target)
+                .env("LUEYING_INSTALL_DIR", &target)
                 // 与真实安装/其他 E2E 的常驻服务隔离。
                 .env(
-                    "PINYIN_PIPE_SUFFIX",
+                    "LUEYING_PIPE_SUFFIX",
                     format!("install{}", std::process::id()),
                 )
                 // 测试只验证安装/注册/卸载;候选窗在无桌面 CI 上不启动。
-                .env("PINYIN_SERVER_NO_UI", "1")
+                .env("LUEYING_SERVER_NO_UI", "1")
                 .status()
                 .map_err(|e| format!("启动安装器: {e}"))?;
             if !status.success() {
@@ -89,9 +89,9 @@ mod imp {
 
             let mut checks = Vec::new();
             for name in [
-                "pinyin-install.exe",
-                "pinyin-server.exe",
-                "pinyin-settings.exe",
+                "lueying-install.exe",
+                "lueying-server.exe",
+                "lueying-settings.exe",
                 "version.txt",
             ] {
                 if !target.join(name).exists() {
@@ -107,10 +107,10 @@ mod imp {
             {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let lower = name.to_ascii_lowercase();
-                if !lower.starts_with("pinyin_tsf") || !lower.ends_with(".dll") {
+                if !lower.starts_with("lueying_tsf") || !lower.ends_with(".dll") {
                     continue;
                 }
-                if lower.starts_with("pinyin_tsf32") {
+                if lower.starts_with("lueying_tsf32") {
                     dll32 = Some(name);
                 } else {
                     dll64 = Some(name);
@@ -121,7 +121,7 @@ mod imp {
             checks.push(format!("x64 TSF DLL {dll64}"));
             checks.push(format!("x86 TSF DLL {dll32}"));
 
-            if !reg_query(RUN_KEY, Some("PinyinIme")) {
+            if !reg_query(RUN_KEY, Some("Lueying")) {
                 return Err("缺少 HKCU 自启动项".into());
             }
             checks.push("自启动项".into());
@@ -141,14 +141,14 @@ mod imp {
             }
             checks.push("x64/x86 TSF 注册指向安装目录".into());
 
-            let installed = target.join("pinyin-install.exe");
+            let installed = target.join("lueying-install.exe");
             let status = Command::new(&installed)
                 .args(["--uninstall", "--quiet"])
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
-                .env("PINYIN_INSTALL_DIR", &target)
+                .env("LUEYING_INSTALL_DIR", &target)
                 .env(
-                    "PINYIN_PIPE_SUFFIX",
+                    "LUEYING_PIPE_SUFFIX",
                     format!("install{}", std::process::id()),
                 )
                 .status()
@@ -165,7 +165,7 @@ mod imp {
                 return Err(format!("卸载后目录仍在: {}", target.display()));
             }
             checks.push("文件已删除".into());
-            if reg_query(RUN_KEY, Some("PinyinIme")) {
+            if reg_query(RUN_KEY, Some("Lueying")) {
                 return Err("卸载后自启动项仍在".into());
             }
             if reg_query(UNINSTALL_KEY, None) {
@@ -180,19 +180,19 @@ mod imp {
 
         // 失败时尽力卸载,别把 runner 的注册表/目录留脏。
         if result.is_err() {
-            let installed = target.join("pinyin-install.exe");
+            let installed = target.join("lueying-install.exe");
             let installer = if installed.exists() {
                 installed
             } else {
-                payload.join("pinyin-install.exe")
+                payload.join("lueying-install.exe")
             };
             let _ = Command::new(installer)
                 .args(["--uninstall", "--quiet"])
                 .env("LOCALAPPDATA", &local)
                 .env("APPDATA", &appdata)
-                .env("PINYIN_INSTALL_DIR", &target)
+                .env("LUEYING_INSTALL_DIR", &target)
                 .env(
-                    "PINYIN_PIPE_SUFFIX",
+                    "LUEYING_PIPE_SUFFIX",
                     format!("install{}", std::process::id()),
                 )
                 .status();

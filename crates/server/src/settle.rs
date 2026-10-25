@@ -6,10 +6,10 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use pinyin_engine::Engine;
-use pinyin_rerank::Fact;
-use pinyin_rerank::debounce::Debounce;
-use pinyin_rerank::settle::result_is_current;
+use lueying_engine::Engine;
+use lueying_rerank::Fact;
+use lueying_rerank::debounce::Debounce;
+use lueying_rerank::settle::result_is_current;
 
 use crate::imp::{Session, State, refresh_view};
 
@@ -27,7 +27,7 @@ pub(super) struct SettleJob {
     texts: Vec<String>,
     facts: Vec<Fact>,
     fuzzy: Vec<bool>,
-    rerank: Arc<Mutex<pinyin_rerank::Rerank>>,
+    rerank: Arc<Mutex<lueying_rerank::Rerank>>,
 }
 
 pub(super) struct Snapshot {
@@ -92,7 +92,7 @@ pub(super) fn cancel(state: &State, session: u64) {
 
 pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
     std::thread::Builder::new()
-        .name("pinyin-settle".into())
+        .name("lueying-settle".into())
         .spawn(move || {
             let start = Instant::now();
             let mut debounce: Debounce<SettleJob> = Debounce::new(DELAY_MS);

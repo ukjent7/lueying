@@ -8,7 +8,7 @@ use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pinyin_protocol::{Reply, Request};
+use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
 use windows::Win32::System::Pipes::PeekNamedPipe;
@@ -53,7 +53,7 @@ impl Client {
             // SQOS=IDENTIFICATION:客户端禁止管道服务端模拟自己——键盘流是敏感
             // 数据,mozc/WeType 同款。custom_flags 正好并入 dwFlagsAndAttributes。
             .custom_flags(SECURITY_SQOS_PRESENT.0 | SECURITY_IDENTIFICATION.0)
-            .open(pinyin_protocol::pipe_name())
+            .open(lueying_protocol::pipe_name())
             .ok()?;
         let writer = file.try_clone().ok()?;
         Some(Self {
@@ -142,7 +142,7 @@ fn maybe_spawn_server() {
     else {
         return;
     };
-    let exe = dir.join("pinyin-server.exe");
+    let exe = dir.join("lueying-server.exe");
     if !exe.exists() {
         return;
     }

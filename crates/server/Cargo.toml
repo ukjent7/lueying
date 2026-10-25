@@ -1,23 +1,23 @@
 [package]
-name = "pinyin-server"
+name = "lueying-server"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 description = "常驻服务进程:命名管道服务各 TSF 会话,持有词典与引擎"
 
 [[bin]]
-name = "pinyin-server"
+name = "lueying-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "pinyin-settings"
+name = "lueying-settings"
 path = "src/settings_main.rs"
 
 [dependencies]
-pinyin-dict.workspace = true
-pinyin-engine.workspace = true
-pinyin-rerank.workspace = true
-pinyin-protocol = { path = "../protocol" }
+lueying-dict.workspace = true
+lueying-engine.workspace = true
+lueying-rerank.workspace = true
+lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 
 [target."cfg(windows)".dependencies]

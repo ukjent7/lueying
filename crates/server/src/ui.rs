@@ -14,7 +14,7 @@ use gpui::{
     prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
-use pinyin_protocol::{Request, SessionView};
+use lueying_protocol::{Request, SessionView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -96,14 +96,11 @@ pub(super) fn run(state: Arc<State>) {
     });
 }
 
-/// 激活会话且在组合中才有窗口内容。
+/// 激活会话且在组合中才有窗口内容。宿主接管候选绘制时让位。
 fn snapshot(state: &State) -> Option<SessionView> {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    session
-        .engine
-        .composition()
-        .is_some()
+    (!session.host_draws && session.engine.composition().is_some())
         .then(|| session.view.clone())
 }
 

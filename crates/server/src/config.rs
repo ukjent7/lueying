@@ -1,10 +1,10 @@
-//! 用户配置:`%APPDATA%\pinyin-ime\config.ini`,设置窗与常驻服务共用。
+//! 用户配置:`%APPDATA%\lueying\config.ini`,设置窗与常驻服务共用。
 //!
 //! 行式 `键=值`,未知键和坏值跳过;保存先写临时文件再改名。
 
 use std::path::{Path, PathBuf};
 
-use pinyin_engine::{Config, Fuzzy};
+use lueying_engine::{Config, Fuzzy};
 
 /// 运行时配置。引擎只关心其中三项,`shift_toggle` 由 Server 处理。
 #[derive(Clone, Debug, PartialEq)]
@@ -40,8 +40,20 @@ impl AppConfig {
 
 /// 配置文件路径(`%APPDATA%` 优先,退回 `%LOCALAPPDATA%`)。
 pub fn path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?;
-    Some(PathBuf::from(base).join("pinyin-ime").join("config.ini"))
+    let base = PathBuf::from(
+        std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?,
+    );
+    let dir = base.join("lueying");
+    let path = dir.join("config.ini");
+    // 一次性接走改名前的配置,升级后用户不必重设。
+    if !path.exists() {
+        let old = base.join("pinyin-ime").join("config.ini");
+        if old.is_file() {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::copy(&old, &path);
+        }
+    }
+    Some(path)
 }
 
 /// 读配置;文件缺失或坏行都退回默认值。

@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use pinyin_dict::syllables::is_syllable;
+use lueying_dict::syllables::is_syllable;
 
 struct Args {
     frost: PathBuf,
@@ -109,11 +109,11 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
 
 /// 发布目录的必需文件。DLL 文件名随 Cargo 包名生成,两种拼写都接受。
 const PACK_BINS: &[&str] = &[
-    "pinyin-server.exe",
-    "pinyin-settings.exe",
-    "pinyin-install.exe",
+    "lueying-server.exe",
+    "lueying-settings.exe",
+    "lueying-install.exe",
 ];
-const PACK_DLLS: &[&str] = &["pinyin_tsf.dll", "pinyin-tsf.dll"];
+const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
 /// 默认包只带精确词典与两档重排模型。`.gram` 是可选增强,由用户自行放到
 /// 安装目录;默认包不下载、不打包,避免把 380MB 级的语法模型带进安装器。
 const PACK_DATA: &[&str] = &[
@@ -145,17 +145,17 @@ fn pack(args: PackArgs) -> Result<(), String> {
         .iter()
         .map(|name| args.bin.join(name))
         .find(|path| path.exists())
-        .ok_or_else(|| format!("{} 里缺少 pinyin_tsf.dll", args.bin.display()))?;
+        .ok_or_else(|| format!("{} 里缺少 lueying_tsf.dll", args.bin.display()))?;
     // 版本号入 DLL 文件名:升级时新文件不被正在运行的旧 DLL 锁住。
-    let dll_name = format!("pinyin_tsf-{}.dll", safe_version(&args.version));
+    let dll_name = format!("lueying_tsf-{}.dll", safe_version(&args.version));
     copy_file(&dll, &args.out, &dll_name, &mut files)?;
     if let Some(bin32) = &args.bin32 {
         let dll32 = PACK_DLLS
             .iter()
             .map(|name| bin32.join(name))
             .find(|path| path.exists())
-            .ok_or_else(|| format!("{} 里缺少 32 位 pinyin_tsf.dll", bin32.display()))?;
-        let dll32_name = format!("pinyin_tsf32-{}.dll", safe_version(&args.version));
+            .ok_or_else(|| format!("{} 里缺少 32 位 lueying_tsf.dll", bin32.display()))?;
+        let dll32_name = format!("lueying_tsf32-{}.dll", safe_version(&args.version));
         copy_file(&dll32, &args.out, &dll32_name, &mut files)?;
     } else {
         println!("警告: 未提供 --bin32,发布包只含 x64 TSF DLL");
@@ -339,7 +339,7 @@ fn run(args: Args) -> Result<(), String> {
     );
     if let Some(bin) = &args.bin {
         // 与运行期同一条构造路径,保证二进制与 TSV 语义一致。
-        let (dict, bad) = pinyin_dict::Dictionary::from_text(&tsv);
+        let (dict, bad) = lueying_dict::Dictionary::from_text(&tsv);
         if bad != 0 {
             eprintln!("警告: 物化时跳过 {bad} 行");
         }

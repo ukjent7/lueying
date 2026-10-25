@@ -1,5 +1,5 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
-//! 用法:`pinyin-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast]`
+//! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast]`
 
 mod bench;
 mod rerank;
@@ -11,9 +11,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use pinyin_dict::Dictionary;
-use pinyin_dict::gram::Gram;
-use pinyin_engine::{Config, Engine, Event, Fuzzy, Key, Mode};
+use lueying_dict::Dictionary;
+use lueying_dict::gram::Gram;
+use lueying_engine::{Config, Engine, Event, Fuzzy, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
 /// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。

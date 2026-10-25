@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pinyin_dict::syllables::FUZZY_GROUPS;
+use lueying_dict::syllables::FUZZY_GROUPS;
 
 /// 超过该间隔再选同一词,频次先减半再加一(近似近期使用优先)。
 const DECAY_SECS: u64 = 7 * 24 * 3600;

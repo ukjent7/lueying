@@ -11,9 +11,13 @@ fn main() {
 
 #[cfg(windows)]
 mod imp {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::time::{Duration, Instant};
 
-    use windows::Win32::Foundation::{FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{
+        FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM,
+    };
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
@@ -24,9 +28,10 @@ mod imp {
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
-        CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCompositionView,
-        ITfContextComposition, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
-        ITfThreadMgr, TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
+        CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCandidateListUIElement,
+        ITfCompositionView, ITfContextComposition, ITfInputProcessorProfileMgr,
+        ITfInputProcessorProfiles, ITfSource, ITfThreadMgr, ITfUIElementMgr, ITfUIElementSink,
+        ITfUIElementSink_Impl, TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
         TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -36,11 +41,48 @@ mod imp {
         WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
         WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
     };
-    use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR};
+    use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR, implement};
 
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
+
+    #[derive(Default)]
+    struct UiEvents {
+        began: bool,
+        ended: bool,
+        updates: u32,
+        id: u32,
+    }
+
+    #[implement(ITfUIElementSink)]
+    struct UiSink {
+        events: Rc<RefCell<UiEvents>>,
+    }
+
+    impl ITfUIElementSink_Impl for UiSink_Impl {
+        fn BeginUIElement(&self, dwuielementid: u32, pbshow: *mut windows::core::BOOL) -> windows::core::Result<()> {
+            let mut events = self.events.borrow_mut();
+            events.began = true;
+            events.id = dwuielementid;
+            // 宿主保留输入法自己的候选窗;服务端候选窗在 CI 里被 NO_UI 关掉,
+            // 这里只验证 UI 元素确实登记并能被读走。
+            if !pbshow.is_null() {
+                unsafe { *pbshow = TRUE };
+            }
+            Ok(())
+        }
+
+        fn UpdateUIElement(&self, _dwuielementid: u32) -> windows::core::Result<()> {
+            self.events.borrow_mut().updates += 1;
+            Ok(())
+        }
+
+        fn EndUIElement(&self, _dwuielementid: u32) -> windows::core::Result<()> {
+            self.events.borrow_mut().ended = true;
+            Ok(())
+        }
+    }
 
     pub(super) fn run() {
         let report = match real_run() {
@@ -48,7 +90,7 @@ mod imp {
                 format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
             }
             Err(e) => {
-                let tsf = tail_of(std::env::var_os("PINYIN_TSF_LOG").map(std::path::PathBuf::from));
+                let tsf = tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
                 let server = tail_of(Some(server_log()));
                 format!(
                     "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
@@ -81,6 +123,59 @@ mod imp {
         lines[lines.len().saturating_sub(160)..].join("\n")
     }
 
+    fn install_ui_sink(
+        thread_mgr: &ITfThreadMgr,
+    ) -> Result<(ITfSource, u32, Rc<RefCell<UiEvents>>), String> {
+        let source: ITfSource = thread_mgr
+            .cast()
+            .map_err(|e| format!("cast ITfSource: {e}"))?;
+        let events = Rc::new(RefCell::new(UiEvents::default()));
+        let sink: ITfUIElementSink = UiSink {
+            events: Rc::clone(&events),
+        }
+        .into();
+        let unknown: windows::core::IUnknown = sink.into();
+        let cookie = unsafe { source.AdviseSink(&ITfUIElementSink::IID, &unknown) }
+            .map_err(|e| format!("AdviseSink(ITfUIElementSink): {e}"))?;
+        Ok((source, cookie, events))
+    }
+
+    /// TSF 的候选 UI 元素必须能回答宿主/读屏软件:至少有一条候选。
+    fn check_candidate_ui(
+        thread_mgr: &ITfThreadMgr,
+        events: &Rc<RefCell<UiEvents>>,
+    ) -> Result<String, String> {
+        let (began, id, updates) = {
+            let events = events.borrow();
+            (events.began, events.id, events.updates)
+        };
+        if !began {
+            return Err("TSF 没有登记候选 UI 元素".into());
+        }
+        if updates == 0 {
+            return Err("候选 UI 元素没有收到 UpdateUIElement".into());
+        }
+        let mgr: ITfUIElementMgr = thread_mgr
+            .cast()
+            .map_err(|e| format!("cast ITfUIElementMgr: {e}"))?;
+        let element = unsafe { mgr.GetUIElement(id) }
+            .map_err(|e| format!("GetUIElement({id}): {e}"))?;
+        let list: ITfCandidateListUIElement = element
+            .cast()
+            .map_err(|e| format!("cast ITfCandidateListUIElement: {e}"))?;
+        let count = unsafe { list.GetCount() }.map_err(|e| format!("GetCount: {e}"))?;
+        if count == 0 {
+            return Err("候选 UI 元素返回 0 条候选".into());
+        }
+        let first = unsafe { list.GetString(0) }
+            .map_err(|e| format!("GetString(0): {e}"))?
+            .to_string();
+        if first.is_empty() {
+            return Err("候选 UI 元素首条候选为空".into());
+        }
+        Ok(format!("候选 UI 元素:{count} 条,首条 `{first}`"))
+    }
+
     fn real_run() -> Result<(String, String), String> {
         // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
         let suffix = format!("e2e{}", std::process::id());
@@ -92,12 +187,12 @@ mod imp {
         let _ = std::fs::remove_file(&log);
         unsafe {
             // 尚未启动任何线程,设置环境变量不会与并发读取竞争。
-            std::env::set_var("PINYIN_PIPE_SUFFIX", &suffix);
-            std::env::set_var("PINYIN_TSF_LOG", &log);
+            std::env::set_var("LUEYING_PIPE_SUFFIX", &suffix);
+            std::env::set_var("LUEYING_TSF_LOG", &log);
         }
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let dir = exe.parent().ok_or("无父目录")?.to_path_buf();
-        let dll = dir.join("pinyin_tsf.dll");
+        let dll = dir.join("lueying_tsf.dll");
         if !dll.exists() {
             return Err(format!("找不到 {}", dll.display()));
         }
@@ -137,11 +232,11 @@ mod imp {
         let err = out
             .try_clone()
             .map_err(|e| format!("复制 Server 日志句柄: {e}"))?;
-        let mut server = std::process::Command::new(dir.join("pinyin-server.exe"))
+        let mut server = std::process::Command::new(dir.join("lueying-server.exe"))
             .env("LOCALAPPDATA", &data)
             .env("APPDATA", &data)
             // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
-            .env("PINYIN_SERVER_NO_UI", "1")
+            .env("LUEYING_SERVER_NO_UI", "1")
             .stdout(std::process::Stdio::from(out))
             .stderr(std::process::Stdio::from(err))
             .spawn()
@@ -305,10 +400,18 @@ mod imp {
                 }
             );
 
-            // 4. 中文:注入「nihao+空格」
+            // 4. 中文:注入「nihao+空格」。先挂 UIElementSink,确认候选
+            //    确实经 TSF 暴露给宿主/读屏软件。
+            let (ui_source, ui_cookie, ui_events) = install_ui_sink(&thread_mgr)?;
             type_text("nihao")?;
+            pump_for(Duration::from_millis(200));
+            let ui_note = check_candidate_ui(&thread_mgr, &ui_events)?;
             tap(0x20)?; // 空格
             pump_for(Duration::from_millis(600));
+            let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
+            if !ui_events.borrow().ended {
+                return Err("候选 UI 元素在组合结束后没有 EndUIElement".into());
+            }
 
             // 4b. 保留键 Ctrl+.:切换中文标点并持久化到 Server 的 config.ini。
             check_preserved_punct(&data)?;
@@ -332,9 +435,9 @@ mod imp {
                 return Err(format!("RichEdit 文本 `{text}` 不含 你好abc你好"));
             }
             // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
-            // pinyin-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
+            // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
             let latency = commit_latency(edit, &thread_mgr)?;
-            Ok((text, latency))
+            Ok((text, format!("{latency}\n\n{ui_note}")))
         })();
 
         // 6. 清理(尽力)。先停 TSF 再杀 Server:TIP 的 Deactivate 还会发
@@ -406,7 +509,7 @@ mod imp {
     }
 
     /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到组合结束、文本落地。
-    /// 只设上限抓卡死/秒级回归,精确引擎耗时由 pinyin-e2e 的分位数门禁负责。
+    /// 只设上限抓卡死/秒级回归,精确引擎耗时由 lueying-e2e 的分位数门禁负责。
     fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
         const ROUNDS: usize = 5;
         let mut samples = Vec::with_capacity(ROUNDS);
@@ -471,7 +574,7 @@ mod imp {
         if msftedit.is_invalid() {
             return Err("Msftedit.dll 句柄无效".into());
         }
-        let class_name: Vec<u16> = "pinyin-e2e-host\0".encode_utf16().collect();
+        let class_name: Vec<u16> = "lueying-e2e-host\0".encode_utf16().collect();
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             lpszClassName: PCWSTR(class_name.as_ptr()),
@@ -593,7 +696,7 @@ mod imp {
     fn check_preserved_punct(data: &std::path::Path) -> Result<(), String> {
         const VK_CONTROL: u16 = 0x11;
         const VK_OEM_PERIOD: u16 = 0xBE;
-        let config = data.join("pinyin-ime").join("config.ini");
+        let config = data.join("lueying").join("config.ini");
         let expect = |want: &str| -> Result<(), String> {
             // 配置在 Server 线程写完才改名,给 CI 磁盘留足时间。
             let deadline = Instant::now() + Duration::from_millis(1500);

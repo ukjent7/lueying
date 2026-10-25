@@ -8,7 +8,7 @@ fn main() {
     #[cfg(windows)]
     imp::run();
     #[cfg(not(windows))]
-    println!("pinyin-settings 仅支持 Windows");
+    println!("lueying-settings 仅支持 Windows");
 }
 
 #[cfg(windows)]
@@ -21,9 +21,9 @@ mod imp {
         Window, WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use gpui_platform::application;
-    use pinyin_engine::Fuzzy;
-    use pinyin_protocol::{Reply, Request, pipe_name};
-    use pinyin_server::config::{self, AppConfig};
+    use lueying_engine::Fuzzy;
+    use lueying_protocol::{Reply, Request, pipe_name};
+    use lueying_server::config::{self, AppConfig};
     use windows::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
         OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,

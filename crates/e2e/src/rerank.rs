@@ -17,12 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use pinyin_dict::Dictionary;
-use pinyin_dict::gram::Gram;
-use pinyin_engine::{Candidate, Config, Engine, Event, Key};
-use pinyin_rerank::debounce::Debounce;
-use pinyin_rerank::settle::result_is_current;
-use pinyin_rerank::{Fact, Model, Rerank};
+use lueying_dict::Dictionary;
+use lueying_dict::gram::Gram;
+use lueying_engine::{Candidate, Config, Engine, Event, Key};
+use lueying_rerank::debounce::Debounce;
+use lueying_rerank::settle::result_is_current;
+use lueying_rerank::{Fact, Model, Rerank};
 
 pub struct Models {
     pub four: Model,
@@ -389,7 +389,7 @@ pub fn run(
     push(
         &mut checks,
         "左邻上下文只留末尾 128 字",
-        kept.chars().count() == pinyin_engine::CONTEXT_KEEP
+        kept.chars().count() == lueying_engine::CONTEXT_KEEP
             && kept.chars().filter(|&c| c == '旧').count() == 28
             && kept.ends_with(&"新".repeat(100)),
         format!("{} 字", kept.chars().count()),

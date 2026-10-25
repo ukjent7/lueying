@@ -8,7 +8,7 @@ use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use pinyin_protocol::Request;
+use lueying_protocol::Request;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Variant::{VT_UNKNOWN, VariantClear};
 use windows::Win32::UI::TextServices::{
@@ -21,7 +21,7 @@ use windows::core::{Interface, Result, implement};
 use crate::log;
 use crate::service::{Shared, SharedClient};
 
-/// 与 `pinyin_engine::CONTEXT_KEEP` 一致;DLL 不为了一个常量依赖整个引擎。
+/// 与 `lueying_engine::CONTEXT_KEEP` 一致;DLL 不为了一个常量依赖整个引擎。
 const KEEP: usize = 128;
 
 /// 在当前文档上排一次左邻文本读取;已有读取在途时跳过。

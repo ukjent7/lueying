@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use pinyin_dict::Dictionary;
-use pinyin_engine::{Config, Engine, Event, Key};
+use lueying_dict::Dictionary;
+use lueying_engine::{Config, Engine, Event, Key};
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())

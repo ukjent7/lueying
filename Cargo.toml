@@ -20,9 +20,9 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
-pinyin-dict = { path = "crates/dict" }
-pinyin-engine = { path = "crates/engine" }
-pinyin-rerank = { path = "crates/rerank" }
+lueying-dict = { path = "crates/dict" }
+lueying-engine = { path = "crates/engine" }
+lueying-rerank = { path = "crates/rerank" }
 
 [profile.release]
 lto = "thin"

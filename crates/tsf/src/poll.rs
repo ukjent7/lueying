@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use pinyin_protocol::Request;
+use lueying_protocol::Request;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{KillTimer, SetTimer};
 
@@ -98,6 +98,7 @@ fn poll_once(context: &PollContext) {
     };
     drop(guard);
     context.shared.set_chinese(reply.chinese);
+    crate::ui_element::sync(&context.shared, &context.client, &reply);
     let commits = reply.commits;
     if commits.is_empty() && reply.preedit == context.shared.preedit.borrow().as_str() {
         return;

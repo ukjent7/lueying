@@ -20,7 +20,7 @@ use windows::Win32::System::Pipes::{
 };
 use windows::core::{HRESULT, HSTRING};
 
-use pinyin_protocol::Request;
+use lueying_protocol::Request;
 
 use crate::imp::State;
 

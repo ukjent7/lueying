@@ -1,12 +1,12 @@
 [package]
-name = "pinyin-win-e2e"
+name = "lueying-win-e2e"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 description = "Windows 全链路 E2E:注册 TSF DLL、激活、注入按键、读回 EDIT 文本断言"
 
 [[bin]]
-name = "pinyin-win-e2e"
+name = "lueying-win-e2e"
 path = "src/main.rs"
 
 [dependencies]

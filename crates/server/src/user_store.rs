@@ -7,18 +7,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use pinyin_engine::{SharedUser, UserDict};
+use lueying_engine::{SharedUser, UserDict};
 
 const CHECK_EVERY: Duration = Duration::from_secs(1);
 
 /// 保存线程与「清空/退出」的同步落盘不能同时写同一个临时文件。
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-/// 用户词库路径(`%LOCALAPPDATA%\pinyin-ime\user.tsv`),目录随之创建。
+/// 用户词库路径(`%LOCALAPPDATA%\lueying\user.tsv`),目录随之创建。
 pub(super) fn path() -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("pinyin-ime");
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    let dir = base.join("lueying");
     std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("user.tsv"))
+    let path = dir.join("user.tsv");
+    // 一次性接走改名前的词库,升级后学习结果不丢。
+    if !path.exists() {
+        let old = base.join("pinyin-ime").join("user.tsv");
+        if old.is_file() {
+            let _ = std::fs::copy(&old, &path);
+        }
+    }
+    Some(path)
 }
 
 /// 读入已有词库;文件缺失或个别坏行都不影响启动。
@@ -40,7 +49,7 @@ pub(super) fn spawn(user: SharedUser, path: PathBuf) {
     // 在起线程前取基准,避免线程启动晚于第一次学习而漏存。
     let mut saved = revision(&user);
     std::thread::Builder::new()
-        .name("pinyin-user-save".into())
+        .name("lueying-user-save".into())
         .spawn(move || {
             loop {
                 std::thread::sleep(CHECK_EVERY);

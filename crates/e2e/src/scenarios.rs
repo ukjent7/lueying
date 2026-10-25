@@ -1,7 +1,7 @@
 //! E2E 场景规格:每个场景列出「它可能怎么坏」。分阶段推进,阶段末逐条断言。
 //! 全部基于内置迷你词库;主词典质量与性能探针见 [`probes`]。
 
-use pinyin_engine::{Key, Mode};
+use lueying_engine::{Key, Mode};
 
 pub struct Scenario {
     pub name: &'static str,

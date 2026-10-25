@@ -7,7 +7,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::time::Instant;
 
-use pinyin_protocol::{Reply, Request};
+use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::{E_INVALIDARG, FALSE, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::TextServices::{
@@ -16,7 +16,8 @@ use windows::Win32::UI::TextServices::{
     ITfKeyEventSink_Impl, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
     ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
     ITfTextInputProcessorEx_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr,
-    TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
+    ITfUIElementMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY,
+    TF_TMAE_SECUREMODE,
 };
 use windows::core::{BOOL, Error, GUID, IUnknownImpl, Interface, Ref, Result, implement};
 
@@ -60,6 +61,14 @@ pub(crate) struct Shared {
     pub mode_writing: Cell<bool>,
     /// 语言栏更新回调,由按钮在 AddItem 后登记。
     pub langbar_sink: RefCell<Option<ITfLangBarItemSink>>,
+    /// TSF 候选 UI 元素管理器;激活时缓存,停用时清空。
+    pub ui_mgr: RefCell<Option<ITfUIElementMgr>>,
+    /// 当前候选 UI 元素 ID;`UI_ID_NONE` 表示没有登记。
+    pub ui_id: Cell<u32>,
+    /// 宿主是否接管候选绘制;Server 据此收起自己的候选窗。
+    pub ui_host_draws: Cell<bool>,
+    /// 候选 UI 元素的快照,与 Server 应答同步。
+    pub ui_snapshot: RefCell<crate::ui_element::Snapshot>,
 }
 
 impl Shared {
@@ -170,6 +179,10 @@ impl TextService {
                 thread_mgr: RefCell::new(None),
                 mode_writing: Cell::new(false),
                 langbar_sink: RefCell::new(None),
+                ui_mgr: RefCell::new(None),
+                ui_id: Cell::new(crate::ui_element::UI_ID_NONE),
+                ui_host_draws: Cell::new(false),
+                ui_snapshot: RefCell::new(crate::ui_element::Snapshot::default()),
             }),
             tap: KeyTap::new(),
             pending: RefCell::new(None),
@@ -187,7 +200,7 @@ impl TextService {
         service
     }
 
-    fn mapped_key(&self, vk: u32, scan: u32) -> Option<pinyin_protocol::KeyMsg> {
+    fn mapped_key(&self, vk: u32, scan: u32) -> Option<lueying_protocol::KeyMsg> {
         // 安全桌面里全部直通:密码/凭据不能进入组句、学习或候选窗。
         if self.secure.get() || keys::command_mods() || keys::caps_on() {
             return None;
@@ -202,6 +215,7 @@ impl TextService {
 
     /// 把应答写进文档(异步编辑会话,会话里量光标报给 Server 摆候选窗)。
     fn apply(&self, context: &ITfContext, reply: &Reply) {
+        crate::ui_element::sync(&self.shared, &self.client, reply);
         // 新按键让任何在途的停顿写回失效。
         self.shared.touch();
         self.shared.set_chinese(reply.chinese);
@@ -257,6 +271,9 @@ impl TextService {
     fn focus_changed(&self, focused: bool) {
         if self.secure.get() {
             return;
+        }
+        if !focused {
+            crate::ui_element::end(&self.shared, &self.client);
         }
         self.shared.touch();
         self.shared.bump_context_epoch();
@@ -329,6 +346,7 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
 
 /// 用最近一次按键的上下文写回应答(语言栏、系统模式切换走这条路)。
 pub(crate) fn apply_reply(shared: &Rc<Shared>, client: &SharedClient, reply: &Reply) {
+    crate::ui_element::sync(shared, client, reply);
     shared.touch();
     shared.set_chinese(reply.chinese);
     let commit = reply.commits.concat();
@@ -384,6 +402,7 @@ impl TextService_Impl {
         self.client_id.set(tid);
         self.shared.tid.set(tid);
         *self.shared.thread_mgr.borrow_mut() = Some(thread_mgr.clone());
+        *self.shared.ui_mgr.borrow_mut() = thread_mgr.cast::<ITfUIElementMgr>().ok();
         // 激活时先把系统指示器对齐当前模式;Focus 回调随后再跟 Server 的全局值。
         self.shared.mode_writing.set(true);
         crate::mode::write_indicator(&thread_mgr, tid, self.shared.chinese.get());
@@ -457,7 +476,7 @@ impl TextService_Impl {
                 && !crate::context::keyboard_disabled(context)
                 && let Some(reply) = self.request(Request::Key {
                     session: self.shared.session,
-                    key: pinyin_protocol::KeyMsg::Shift,
+                    key: lueying_protocol::KeyMsg::Shift,
                 })
             {
                 log(&format!("Shift 单击 -> 中文={}", reply.chinese));
@@ -483,6 +502,8 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         let secure = self.secure.replace(false);
+        crate::ui_element::end(&self.shared, &self.client);
+        self.shared.ui_mgr.borrow_mut().take();
         self.poll.borrow_mut().take();
         self.shared.bump_context_epoch();
         self.shared.langbar_sink.borrow_mut().take();

@@ -1,4 +1,4 @@
-//! 安装到 `%ProgramFiles%\pinyin-ime`(管理员可写,避免机器级 COM 指向
+//! 安装到 `%ProgramFiles%\lueying`(管理员可写,避免机器级 COM 指向
 //! 用户可替换的 DLL);自启动与卸载项写当前用户 HKCU。文件复制与 TSF 注册
 //! 由提权子进程完成,UAC 使用其他管理员账号时自启动仍落在原用户名下。
 
@@ -8,7 +8,7 @@ fn main() {
     #[cfg(windows)]
     imp::run();
     #[cfg(not(windows))]
-    println!("pinyin-install 仅支持 Windows");
+    println!("lueying-install 仅支持 Windows");
 }
 
 #[cfg(windows)]
@@ -19,7 +19,7 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    use pinyin_protocol::{Request, pipe_name};
+    use lueying_protocol::{Request, pipe_name};
     use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
@@ -39,8 +39,12 @@ mod imp {
 
     const APP: &str = "掠影";
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-    const RUN_VALUE: &str = "PinyinIme";
-    const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
+    const RUN_VALUE: &str = "Lueying";
+    const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
+    // 改名前的注册项:升级安装时清掉,避免自启动指向旧目录。
+    const LEGACY_RUN_VALUE: &str = "PinyinIme";
+    const LEGACY_UNINSTALL_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
     /// 提权子进程最长等待时间。
     const ELEVATED_TIMEOUT_MS: u32 = 60_000;
@@ -119,7 +123,7 @@ mod imp {
             fail(quiet, &error);
         }
         // 立即拉起常驻服务;单实例互斥保证不会重复。
-        let _ = std::process::Command::new(target.join("pinyin-server.exe"))
+        let _ = std::process::Command::new(target.join("lueying-server.exe"))
             .current_dir(&target)
             .spawn();
         if !quiet {
@@ -162,9 +166,9 @@ mod imp {
 
     /// 当前用户部分:自启动、卸载项、快捷方式。
     fn install_user_state(target: &Path) -> Result<(), String> {
-        set_run_key(&target.join("pinyin-server.exe"))?;
+        set_run_key(&target.join("lueying-server.exe"))?;
         register_uninstall(target)?;
-        let settings = target.join("pinyin-settings.exe");
+        let settings = target.join("lueying-settings.exe");
         let _ = shortcut(
             &start_menu().join("掠影设置.lnk"),
             &settings,
@@ -173,14 +177,15 @@ mod imp {
         );
         let _ = shortcut(
             &start_menu().join("卸载掠影.lnk"),
-            &target.join("pinyin-install.exe"),
+            &target.join("lueying-install.exe"),
             "--uninstall",
             "卸载掠影",
         );
-        // 旧产品名的快捷方式不留在开始菜单。
+        // 改名前的快捷方式与注册项不留在系统里。
         for name in ["拼音输入法设置.lnk", "卸载拼音输入法.lnk"] {
             let _ = std::fs::remove_file(start_menu().join(name));
         }
+        remove_legacy_registry();
         Ok(())
     }
 
@@ -220,8 +225,8 @@ mod imp {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-            if name.starts_with("pinyin_tsf") && name.ends_with(".dll") {
-                let wow64 = name.starts_with("pinyin_tsf32");
+            if name.starts_with("lueying_tsf") && name.ends_with(".dll") {
+                let wow64 = name.starts_with("lueying_tsf32");
                 let _ = regsvr32(&entry.path(), wow64, true);
             }
         }
@@ -237,7 +242,7 @@ mod imp {
             let lower = name.to_ascii_lowercase();
             if name.eq_ignore_ascii_case(keep64)
                 || name.eq_ignore_ascii_case(keep32)
-                || !lower.starts_with("pinyin_tsf")
+                || !lower.starts_with("lueying_tsf")
                 || !lower.ends_with(".dll")
             {
                 continue;
@@ -249,9 +254,9 @@ mod imp {
     /// 安装包里找 x64/x86 DLL:优先无版本名的构建产物,其次版本化文件。
     fn source_dll(source: &Path, want32: bool) -> Option<PathBuf> {
         let plain = source.join(if want32 {
-            "pinyin_tsf32.dll"
+            "lueying_tsf32.dll"
         } else {
-            "pinyin_tsf.dll"
+            "lueying_tsf.dll"
         });
         plain
             .exists()
@@ -290,9 +295,9 @@ mod imp {
                     .unwrap_or_default();
                 is_dll
                     && if want32 {
-                        name.starts_with("pinyin_tsf32")
+                        name.starts_with("lueying_tsf32")
                     } else {
-                        name.starts_with("pinyin_tsf") && !name.starts_with("pinyin_tsf32")
+                        name.starts_with("lueying_tsf") && !name.starts_with("lueying_tsf32")
                     }
             })
             .max_by_key(|path| {
@@ -388,17 +393,17 @@ mod imp {
     fn install_dir() -> PathBuf {
         // 测试用隔离目录;正式安装走 Program Files(管理员可写),避免机器级
         // COM 指向用户可替换的 DLL。
-        if let Some(dir) = std::env::var_os("PINYIN_INSTALL_DIR") {
+        if let Some(dir) = std::env::var_os("LUEYING_INSTALL_DIR") {
             return PathBuf::from(dir);
         }
         if let Some(dir) = std::env::var_os("ProgramFiles") {
-            return PathBuf::from(dir).join("pinyin-ime");
+            return PathBuf::from(dir).join("lueying");
         }
         std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
             .join("Programs")
-            .join("pinyin-ime")
+            .join("lueying")
     }
 
     fn appdata() -> PathBuf {
@@ -430,7 +435,7 @@ mod imp {
             }
             // TSF DLL 以版本号命名单独复制,避免覆盖正在被应用加载的旧文件。
             let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-            if name.starts_with("pinyin_tsf") && name.ends_with(".dll") {
+            if name.starts_with("lueying_tsf") && name.ends_with(".dll") {
                 continue;
             }
             let destination = target.join(entry.file_name());
@@ -482,7 +487,7 @@ mod imp {
         let key = windows_registry::CURRENT_USER
             .create(UNINSTALL_KEY)
             .map_err(|e| format!("打开卸载注册表: {e}"))?;
-        let installer = target.join("pinyin-install.exe");
+        let installer = target.join("lueying-install.exe");
         let set = |name: &str, value: String| {
             key.set_string(name, value)
                 .map_err(|e| format!("写卸载项 {name}: {e}"))
@@ -491,7 +496,7 @@ mod imp {
         set("DisplayVersion", version(target))?;
         set("Publisher", "掠影".into())?;
         set("InstallLocation", target.display().to_string())?;
-        let settings = target.join("pinyin-settings.exe");
+        let settings = target.join("lueying-settings.exe");
         set("DisplayIcon", settings.display().to_string())?;
         set(
             "UninstallString",
@@ -530,11 +535,11 @@ mod imp {
     }
 
     fn dll_name(version: &str) -> String {
-        format!("pinyin_tsf-{}.dll", safe_version(version))
+        format!("lueying_tsf-{}.dll", safe_version(version))
     }
 
     fn dll_name32(version: &str) -> String {
-        format!("pinyin_tsf32-{}.dll", safe_version(version))
+        format!("lueying_tsf32-{}.dll", safe_version(version))
     }
 
     fn remove_registry() {
@@ -542,6 +547,14 @@ mod imp {
             .create(RUN_KEY)
             .and_then(|key| key.remove_value(RUN_VALUE));
         let _ = windows_registry::CURRENT_USER.remove_tree(UNINSTALL_KEY);
+        remove_legacy_registry();
+    }
+
+    fn remove_legacy_registry() {
+        let _ = windows_registry::CURRENT_USER
+            .create(RUN_KEY)
+            .and_then(|key| key.remove_value(LEGACY_RUN_VALUE));
+        let _ = windows_registry::CURRENT_USER.remove_tree(LEGACY_UNINSTALL_KEY);
     }
 
     fn remove_shortcuts() {

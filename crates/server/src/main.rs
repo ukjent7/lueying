@@ -1,4 +1,4 @@
-//! pinyin-server:常驻服务进程。持有词典(一份)与每个宿主线程一个引擎会话,
+//! lueying-server:常驻服务进程。持有词典(一份)与每个宿主线程一个引擎会话,
 //! 经命名管道接收 TSF DLL 的按键请求并返回组句/上屏。候选窗 UI 随后接入。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -7,7 +7,7 @@ fn main() {
     #[cfg(windows)]
     imp::real_main();
     #[cfg(not(windows))]
-    println!("pinyin-server 仅支持 Windows");
+    println!("lueying-server 仅支持 Windows");
 }
 
 #[cfg(windows)]
@@ -17,12 +17,12 @@ mod imp {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, RwLock, mpsc};
 
-    use pinyin_dict::Dictionary;
-    use pinyin_dict::gram::Gram;
-    use pinyin_engine::{Engine, Event, Key, Mode, SharedUser, UserDict};
-    use pinyin_protocol::{Reply, Request, SessionView, pipe_name};
-    use pinyin_rerank::{Model, Rerank};
-    use pinyin_server::config::{self, AppConfig};
+    use lueying_dict::Dictionary;
+    use lueying_dict::gram::Gram;
+    use lueying_engine::{Engine, Event, Key, Mode, SharedUser, UserDict};
+    use lueying_protocol::{Reply, Request, SessionView, pipe_name};
+    use lueying_rerank::{Model, Rerank};
+    use lueying_server::config::{self, AppConfig};
     use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::UI::HiDpi::{
@@ -41,6 +41,8 @@ mod imp {
         pub(super) sync_rerank: Option<Rerank>,
         /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
         pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
+        /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
+        pub(super) host_draws: bool,
     }
 
     pub(super) struct State {
@@ -72,7 +74,7 @@ mod imp {
         // 同一登录会话只允许一个 Server:否则两个进程会各建管道实例,
         // 用户的词库学习和候选窗状态会分裂到不同进程。
         let Some(_instance) = single_instance() else {
-            println!("已有 pinyin-server 在运行,本进程退出");
+            println!("已有 lueying-server 在运行,本进程退出");
             return;
         };
         // 三档降级:二进制(mmap 零解析) → 文本(兼容旧数据) → 内置迷你词库。
@@ -140,14 +142,14 @@ mod imp {
             crate::settle::spawn(Arc::clone(&state), settle_rx);
         }
         let pipe = pipe_name();
-        println!("pinyin-server 监听 {pipe}");
+        println!("lueying-server 监听 {pipe}");
         {
             // 管道服务在后台线程,主线程留给 gpui 事件循环。
             let state = Arc::clone(&state);
             std::thread::spawn(move || crate::pipe::listen(&pipe, state));
         }
         // 无桌面会话(CI/服务)没有窗口站,GPUI 建窗会失败;输入法本身只依赖管道。
-        if std::env::var_os("PINYIN_SERVER_NO_UI").is_some() {
+        if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
             loop {
                 std::thread::park();
             }
@@ -274,6 +276,7 @@ mod imp {
                             .settled_model
                             .as_ref()
                             .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
+                        host_draws: false,
                     },
                 );
                 state.active.store(session, Ordering::Relaxed);
@@ -328,6 +331,7 @@ mod imp {
                     }
                 }
                 refresh_view(s);
+                fill_view(&mut reply, s);
                 s.pending = Some(reply.clone());
                 crate::settle::schedule(state, session, s);
                 let mode_changed = s.engine.mode() != before_mode;
@@ -357,6 +361,7 @@ mod imp {
                 // 模式切换可能已把组合落定,之前缓存的按键应答不能再写回。
                 s.pending = None;
                 refresh_view(s);
+                fill_view(&mut reply, s);
                 crate::settle::schedule(state, session, s);
                 let chinese = s.engine.mode() == Mode::Chinese;
                 set_global_mode(state, &mut sessions, chinese);
@@ -369,6 +374,7 @@ mod imp {
                 let mut reply = s.ui_reply.take().unwrap_or_default();
                 reply.preedit = s.view.preedit.clone();
                 reply.chinese = state.chinese.load(Ordering::Relaxed);
+                fill_view(&mut reply, s);
                 reply
             }
             Request::Context {
@@ -400,9 +406,17 @@ mod imp {
                             // 在途的按键应答/点选待写回里还是重排前的内联文本。
                             if let Some(pending) = s.pending.as_mut() {
                                 pending.preedit = s.view.preedit.clone();
+                                pending.candidates = s.view.candidates.clone();
+                                pending.page = s.view.page;
+                                pending.page_size = s.view.page_size;
+                                pending.highlight = s.view.highlight;
                             }
                             if let Some(pending) = s.ui_reply.as_mut() {
                                 pending.preedit = s.view.preedit.clone();
+                                pending.candidates = s.view.candidates.clone();
+                                pending.page = s.view.page;
+                                pending.page_size = s.view.page_size;
+                                pending.highlight = s.view.highlight;
                             }
                             state.version.fetch_add(1, Ordering::Relaxed);
                         }
@@ -434,6 +448,7 @@ mod imp {
                     // 切模式前的按键应答已过期,避免 OnKeyDown 把旧内联文本写回。
                     s.pending = None;
                     refresh_view(s);
+                    fill_view(&mut reply, s);
                     crate::settle::schedule(state, session, s);
                     reply
                 } else {
@@ -472,6 +487,7 @@ mod imp {
                         s.engine.clear_context();
                     }
                     refresh_view(s);
+                    fill_view(&mut reply, s);
                     // 清组合/换输入框后,待写回的内联文本必须跟上当前状态。
                     sync_ui_reply(s);
                 }
@@ -528,6 +544,32 @@ mod imp {
                 }
                 Reply::default()
             }
+            Request::PickIndex { session, index } => {
+                state.active.store(session, Ordering::Relaxed);
+                if let Some(s) = sessions.get_mut(&session) {
+                    let before = s.engine.revision();
+                    let events = s.engine.pick(index);
+                    if s.engine.revision() != before {
+                        apply_sync_rerank(s);
+                    }
+                    refresh_view(s);
+                    let commits: Vec<String> = events
+                        .iter()
+                        .filter_map(|e| match e {
+                            Event::Commit(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    if !commits.is_empty() {
+                        let pending = s.ui_reply.get_or_insert_with(Reply::default);
+                        pending.commits.extend(commits);
+                        pending.preedit = s.view.preedit.clone();
+                        pending.chinese = s.view.chinese;
+                    }
+                    crate::settle::schedule(state, session, s);
+                }
+                Reply::default()
+            }
             Request::Page { session, delta } => {
                 state.active.store(session, Ordering::Relaxed);
                 if let Some(s) = sessions.get_mut(&session)
@@ -539,6 +581,12 @@ mod imp {
                     sync_ui_reply(s);
                 }
                 Reply::default()
+            }
+            Request::UiMode { session, host_draws } => {
+                if let Some(s) = sessions.get_mut(&session) {
+                    s.host_draws = host_draws;
+                }
+                neutral(state)
             }
             Request::ReloadConfig => {
                 if let Some(path) = &state.config_path {
@@ -661,11 +709,21 @@ mod imp {
 
     /// 当前会话状态原样返回(用于被忽略的 Shift)。
     fn current_reply(s: &Session) -> Reply {
-        Reply {
+        let mut reply = Reply {
             preedit: s.view.preedit.clone(),
             chinese: s.engine.mode() == Mode::Chinese,
             ..Reply::default()
-        }
+        };
+        fill_view(&mut reply, s);
+        reply
+    }
+
+    /// 把当前候选页附在应答上;TSF 的候选 UI 元素据此回答宿主和读屏软件。
+    fn fill_view(reply: &mut Reply, s: &Session) {
+        reply.candidates.clone_from(&s.view.candidates);
+        reply.page = s.view.page;
+        reply.page_size = s.view.page_size;
+        reply.highlight = s.view.highlight;
     }
 
     fn commits_of(events: &[Event]) -> Vec<String> {

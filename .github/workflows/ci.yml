@@ -74,7 +74,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --locked
       - name: 引擎 E2E(内置词库)
-        run: cargo run -p pinyin-e2e --release --locked
+        run: cargo run -p lueying-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -105,7 +105,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.full_bench }}" = "true" ]; then
             mode=--bench
           fi
-          cargo run -p pinyin-e2e --release --locked -- --dict data/main.tsv --rerank-dir data/rerank "$mode"
+          cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --rerank-dir data/rerank "$mode"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -134,8 +134,8 @@ jobs:
       - name: 32 位 / ARM64 TSF 编译检查
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
-          cargo check -p pinyin-tsf --target i686-pc-windows-msvc --locked
-          cargo check -p pinyin-tsf --target aarch64-pc-windows-msvc --locked
+          cargo check -p lueying-tsf --target i686-pc-windows-msvc --locked
+          cargo check -p lueying-tsf --target aarch64-pc-windows-msvc --locked
       - name: Clippy(观察期,不阻断)
         continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -143,31 +143,31 @@ jobs:
         id: build
         run: cargo build --release --workspace --locked
       - name: Build 32-bit TSF
-        run: cargo build --release -p pinyin-tsf --target i686-pc-windows-msvc --locked
+        run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
         shell: pwsh
-        run: Copy-Item target/i686-pc-windows-msvc/release/pinyin_tsf.dll target/release/pinyin_tsf32.dll
+        run: Copy-Item target/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
       - name: Build 32-bit E2E host
         id: build32
-        run: cargo build --release -p pinyin-win-e2e --target i686-pc-windows-msvc --locked
+        run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
       - name: Windows 全链路 E2E
-        run: cargo run -p pinyin-win-e2e --release --locked
+        run: cargo run -p lueying-win-e2e --release --locked
       - name: 32 位 TSF 全链路 E2E
         if: always() && steps.build.outcome == 'success' && steps.build32.outcome == 'success'
         shell: pwsh
         run: |
           $dir = "target/i686-pc-windows-msvc/release"
-          Copy-Item target/release/pinyin-server.exe $dir -Force
+          Copy-Item target/release/lueying-server.exe $dir -Force
           New-Item -ItemType Directory -Force target/x86-e2e | Out-Null
           Push-Location target/x86-e2e
-          & "..\i686-pc-windows-msvc\release\pinyin-win-e2e.exe"
+          & "..\i686-pc-windows-msvc\release\lueying-win-e2e.exe"
           $code = $LASTEXITCODE
           Pop-Location
           exit $code
       - name: 安装/卸载冒烟
-        # 构建失败时没有 pinyin-install.exe,这条只会在日志里添一条假失败。
+        # 构建失败时没有 lueying-install.exe,这条只会在日志里添一条假失败。
         if: always() && steps.build.outcome == 'success'
-        run: cargo run -p pinyin-install-e2e --release --locked
+        run: cargo run -p lueying-install-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -202,8 +202,8 @@ jobs:
         run: |
           test -f dist/lueying/LICENSE
           test -f dist/lueying/licenses/Apache-2.0.txt
-          ls dist/lueying/pinyin_tsf-*.dll >/dev/null
-          ls dist/lueying/pinyin_tsf32-*.dll >/dev/null
+          ls dist/lueying/lueying_tsf-*.dll >/dev/null
+          ls dist/lueying/lueying_tsf32-*.dll >/dev/null
           test ! -f dist/lueying/main.gram
           du -sh dist/lueying
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

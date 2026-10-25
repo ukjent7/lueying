@@ -11,9 +11,9 @@ mod user;
 
 use std::sync::{Arc, RwLock};
 
-use pinyin_dict::Dictionary;
-pub use pinyin_dict::Fuzzy;
-use pinyin_dict::gram::Gram;
+use lueying_dict::Dictionary;
+pub use lueying_dict::Fuzzy;
+use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
 pub use user::UserDict;
@@ -315,7 +315,11 @@ impl Engine {
     /// 候选窗点选当前页第 `slot` 条(0 基);返回上屏事件。
     pub fn pick_in_page(&mut self, slot: usize) -> Vec<Event> {
         let ps = self.cfg.page_size.max(1);
-        let index = self.page * ps + slot;
+        self.pick(self.page * ps + slot)
+    }
+
+    /// 按全局候选序号点选;宿主自绘候选时可能直接给绝对序号。
+    pub fn pick(&mut self, index: usize) -> Vec<Event> {
         if index >= self.cands.len() {
             return Vec::new();
         }
@@ -689,7 +693,7 @@ impl Engine {
     fn try_insert_apostrophe(&mut self) {
         let ok = if let Some(comp) = self.comp.as_ref() {
             comp.seg_spans.iter().rev().any(|&(s, e)| {
-                e == comp.cursor && pinyin_dict::syllables::is_syllable(&comp.raw[s..e])
+                e == comp.cursor && lueying_dict::syllables::is_syllable(&comp.raw[s..e])
             })
         } else {
             false

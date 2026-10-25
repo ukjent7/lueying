@@ -4,7 +4,7 @@
 //! 上的路径,不再枚举成一条条完整切分,避免组合爆炸与路径上限漏解。
 //! 隔音符只作硬边界,不产音节。
 
-use pinyin_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, is_syllable};
+use lueying_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, is_syllable};
 
 /// 音节图上的一个单元。`abbrev` 为真表示简拼。
 #[derive(Clone, Debug)]

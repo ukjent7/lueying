@@ -5,7 +5,7 @@
 use std::ffi::c_void;
 use std::rc::Rc;
 
-use pinyin_protocol::Request;
+use lueying_protocol::Request;
 use windows::Win32::Foundation::{COLORREF, E_FAIL, E_INVALIDARG, E_NOINTERFACE, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateBitmap, CreateCompatibleBitmap,
@@ -96,7 +96,7 @@ impl ModeButton_Impl {
         else {
             return;
         };
-        let exe = dir.join("pinyin-settings.exe");
+        let exe = dir.join("lueying-settings.exe");
         if let Err(error) = std::process::Command::new(&exe).spawn() {
             log(&format!("启动设置失败 {}: {error}", exe.display()));
         }

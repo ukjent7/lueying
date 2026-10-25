@@ -3384,72 +3384,72 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pinyin-dict"
+name = "lueying-dict"
 version = "0.1.0"
 dependencies = [
  "memmap2",
 ]
 
 [[package]]
-name = "pinyin-e2e"
+name = "lueying-e2e"
 version = "0.1.0"
 dependencies = [
- "pinyin-dict",
- "pinyin-engine",
- "pinyin-rerank",
+ "lueying-dict",
+ "lueying-engine",
+ "lueying-rerank",
 ]
 
 [[package]]
-name = "pinyin-engine"
+name = "lueying-engine"
 version = "0.1.0"
 dependencies = [
- "pinyin-dict",
+ "lueying-dict",
 ]
 
 [[package]]
-name = "pinyin-install-e2e"
+name = "lueying-install-e2e"
 version = "0.1.0"
 dependencies = [
  "windows 0.62.2",
 ]
 
 [[package]]
-name = "pinyin-installer"
+name = "lueying-installer"
 version = "0.1.0"
 dependencies = [
- "pinyin-protocol",
+ "lueying-protocol",
  "serde_json",
  "windows 0.62.2",
  "windows-registry 0.100.0",
 ]
 
 [[package]]
-name = "pinyin-protocol"
+name = "lueying-protocol"
 version = "0.1.0"
 dependencies = [
- "pinyin-engine",
+ "lueying-engine",
  "serde",
  "serde_json",
  "windows 0.62.2",
 ]
 
 [[package]]
-name = "pinyin-rerank"
+name = "lueying-rerank"
 version = "0.1.0"
 dependencies = [
  "chinese-ime-lm",
 ]
 
 [[package]]
-name = "pinyin-server"
+name = "lueying-server"
 version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui_platform",
- "pinyin-dict",
- "pinyin-engine",
- "pinyin-protocol",
- "pinyin-rerank",
+ "lueying-dict",
+ "lueying-engine",
+ "lueying-protocol",
+ "lueying-rerank",
  "raw-window-handle",
  "serde_json",
  "windows 0.62.2",
@@ -3457,10 +3457,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinyin-tsf"
+name = "lueying-tsf"
 version = "0.1.0"
 dependencies = [
- "pinyin-protocol",
+ "lueying-protocol",
  "serde_json",
  "windows 0.62.2",
  "windows-core 0.62.2",
@@ -3468,7 +3468,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinyin-win-e2e"
+name = "lueying-win-e2e"
 version = "0.1.0"
 dependencies = [
  "windows 0.62.2",
@@ -5914,7 +5914,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "pinyin-dict",
+ "lueying-dict",
  "serde_json",
 ]
 

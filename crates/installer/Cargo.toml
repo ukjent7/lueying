@@ -1,16 +1,16 @@
 [package]
-name = "pinyin-installer"
+name = "lueying-installer"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 description = "安装/卸载掠影拼音输入法:复制 x64/x86 文件、注册 TSF、写入自启动"
 
 [[bin]]
-name = "pinyin-install"
+name = "lueying-install"
 path = "src/main.rs"
 
 [dependencies]
-pinyin-protocol = { path = "../protocol" }
+lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 
 [target."cfg(windows)".dependencies]

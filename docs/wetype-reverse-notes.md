@@ -243,7 +243,7 @@ renderer 还导入 `CreateNamedPipeW/ConnectNamedPipe` + `CreateIoCompletionPort
 1. **管道安全细节**(成本:小/直接抄配置)
    - client `CreateFileW` 加 `SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION`(防 server 模拟客户端);
    - server 侧 `GetNamedPipeClientProcessId` 记录客户端 PID(日志/限权);
-   - 管道名加每用户/每会话后缀而非全局固定名 `pinyin-ime-v1`(防跨会话抢注;我们尚无 IPCKey
+   - 管道名加每用户/每会话后缀而非全局固定名 `lueying-v1`(防跨会话抢注;我们尚无 IPCKey
      握手,可先做"用户 SID 哈希入名",成本小收益立得)。
 2. **崩溃双层 + 自托管上报**(成本:中):TIP 侧(宿主进程内)装 CrashRpt 等价物(Rust:
    `windows` crate 的 SEH/vector handler + minidump),server 崩溃时 TSF 直通英文(已有);

@@ -10,9 +10,9 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use pinyin_dict::gram::{CONTEXT_CHARS, Gram};
-use pinyin_dict::syllables::{self, Fuzzy};
-use pinyin_dict::{Dictionary, signature};
+use lueying_dict::gram::{CONTEXT_CHARS, Gram};
+use lueying_dict::syllables::{self, Fuzzy};
+use lueying_dict::{Dictionary, signature};
 
 use crate::segment::{self, Syll};
 use crate::typo;

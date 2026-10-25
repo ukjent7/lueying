@@ -21,10 +21,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use pinyin_dict::Dictionary;
-use pinyin_dict::gram::Gram;
-use pinyin_dict::syllables::is_syllable;
-use pinyin_engine::{Config, Engine, Event, Fuzzy, Key};
+use lueying_dict::Dictionary;
+use lueying_dict::gram::Gram;
+use lueying_dict::syllables::is_syllable;
+use lueying_engine::{Config, Engine, Event, Fuzzy, Key};
 
 const LONG_TERM_WORDS: usize = 60;
 const LONG_TERM_ROUNDS: usize = 6;

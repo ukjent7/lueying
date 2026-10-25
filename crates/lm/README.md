@@ -5,4 +5,4 @@
 许可 Apache-2.0，见同目录 `LICENSE`。
 
 只复制运行所需的 `src/lib.rs`、`src/weights.rs` 与上游单元测试文件；没有改动源码。
-更新时整目录替换，并同步 `pinyin-rerank` 的调用点。
+更新时整目录替换，并同步 `lueying-rerank` 的调用点。

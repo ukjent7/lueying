@@ -1,3 +1,3 @@
-//! pinyin-server 的共享部分:配置读写(常驻服务与设置窗共用)。
+//! lueying-server 的共享部分:配置读写(常驻服务与设置窗共用)。
 
 pub mod config;

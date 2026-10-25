@@ -12,8 +12,8 @@
 
 use std::sync::{Arc, RwLock};
 
-use pinyin_dict::Dictionary;
-use pinyin_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
+use lueying_dict::Dictionary;
+use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
