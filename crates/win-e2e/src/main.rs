@@ -26,9 +26,8 @@ mod imp {
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCompositionView,
         ITfContextComposition, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
-        ITfThreadMgr, TF_INPUTPROCESSORPROFILE,
-        TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS,
-        TF_PROFILETYPE_INPUTPROCESSOR,
+        ITfThreadMgr, TF_INPUTPROCESSORPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
+        TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
