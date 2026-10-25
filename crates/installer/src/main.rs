@@ -35,7 +35,7 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_SHOWNORMAL,
     };
-    use windows::core::{GUID, HRESULT, HSTRING, PCSTR, PCWSTR};
+    use windows::core::{GUID, HRESULT, HSTRING, Interface, PCSTR, PCWSTR};
 
     const APP: &str = "拼音输入法";
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
