@@ -107,7 +107,7 @@ impl ModeButton_Impl {
             env!("CARGO_PKG_VERSION")
         ));
         let caption = HSTRING::from("关于拼音输入法");
-        let owner = GetForegroundWindow();
+        let owner = unsafe { GetForegroundWindow() };
         unsafe {
             MessageBoxW(
                 (!owner.is_invalid()).then_some(owner),
