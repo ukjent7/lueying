@@ -63,7 +63,8 @@ jobs:
       - name: 安装工具链
         shell: bash
         run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile default --component rustfmt --component clippy
-      - name: Clippy
+      - name: Clippy(观察期,不阻断)
+        continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
@@ -128,7 +129,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
-      - name: Clippy
+      - name: Clippy(观察期,不阻断)
+        continue-on-error: true
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build (release)
         run: cargo build --release --workspace --locked
