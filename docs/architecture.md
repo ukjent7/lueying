@@ -48,9 +48,9 @@
 
 ## 验证
 
-- `pinyin-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
+- `pinyin-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。`--bench-fast` 跑确定性等距子集并并行各语料，`--bench` 跑全量。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
 - `pinyin-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证中英切换。产物 `target/win-e2e-report.md`；该任务目前在 CI 中为观察项。
-- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；push 到 `main` 或手动触发时，`windows` job 额外生成可下载的发布目录 artifact。
+- CI：`fmt`、`engine`、`dict`、`windows` 四个 job；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
 
 ## 许可
 

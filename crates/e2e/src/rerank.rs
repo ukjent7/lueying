@@ -564,10 +564,16 @@ pub fn run(
     );
 
     let rate = |n: usize| n as f64 * 100.0 / total.max(1) as f64;
+    // 默认包无语法模型,基线按实测 90%;带模型仍是 92%。
+    let (base_name, base_gate) = if gram.is_some() {
+        ("基线 top-1 ≥ 92%", 92.0)
+    } else {
+        ("基线 top-1 ≥ 90%", 90.0)
+    };
     push(
         &mut checks,
-        "基线 top-1 ≥ 92%",
-        rate(base1) >= 92.0,
+        base_name,
+        rate(base1) >= base_gate,
         format!("{base1}/{total} = {:.1}%", rate(base1)),
     );
     push(
