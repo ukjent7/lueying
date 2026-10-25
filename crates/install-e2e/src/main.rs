@@ -182,7 +182,7 @@ mod imp {
         let mut command = Command::new("reg");
         command.args(["query", key]);
         match value {
-            Some(name) if name.is_empty() => {
+            Some("") => {
                 command.arg("/ve");
             }
             Some(name) => {
