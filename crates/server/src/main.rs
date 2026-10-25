@@ -49,6 +49,8 @@ mod imp {
         pub(super) dict: Arc<Dictionary>,
         pub(super) gram: Option<Arc<Gram>>,
         pub(super) sessions: Mutex<HashMap<u64, Session>>,
+        /// 会话 → 当前管道的连接号。宿主崩溃后按连接清理,避免会话与缓存常驻。
+        pub(super) conns: Mutex<HashMap<u64, u64>>,
         /// 每次会话变化自增,候选窗轮询它决定刷新。
         pub(super) version: AtomicU64,
         /// 最近收到按键/光标上报的会话,候选窗只跟它。
@@ -128,6 +130,7 @@ mod imp {
             dict: Arc::new(dict),
             gram,
             sessions: Mutex::new(HashMap::new()),
+            conns: Mutex::new(HashMap::new()),
             version: AtomicU64::new(0),
             active: AtomicU64::new(0),
             sync_model,
@@ -717,8 +720,12 @@ mod imp {
                 Reply::default()
             }
             Request::Goodbye { session } => {
-                println!("会话 {session} 下线");
-                sessions.remove(&session);
+                if sessions.remove(&session).is_some() {
+                    println!("会话 {session} 下线");
+                }
+                if state.active.load(Ordering::Relaxed) == session {
+                    state.active.store(0, Ordering::Relaxed);
+                }
                 crate::settle::cancel(state, session);
                 Reply::default()
             }

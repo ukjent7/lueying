@@ -7,6 +7,7 @@ use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::{
@@ -25,6 +26,8 @@ use lueying_protocol::Request;
 use crate::imp::State;
 
 const BUFFER_SIZE: u32 = 64 * 1024;
+/// 连接号只增不减;用于区分同一会话的重连与旧连接断开。
+static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 
 /// 阻塞主线程:循环建管道实例并等待连接。永不返回。
 pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
@@ -120,14 +123,29 @@ fn serve(file: File, state: Arc<State>) {
     };
     let mut reader = BufReader::new(file);
     let mut line = String::new();
+    let conn = NEXT_CONN.fetch_add(1, Ordering::Relaxed);
+    let mut session = None;
     loop {
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let reply = serde_json::from_str::<Request>(line.trim())
-            .ok()
+        let request = serde_json::from_str::<Request>(line.trim()).ok();
+        // Hello 与连接绑定:同一会话重连后,旧连接断开不能删掉新会话。
+        if let Some(Request::Hello {
+            session: hello_session,
+            ..
+        }) = request.as_ref()
+        {
+            state
+                .conns
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(*hello_session, conn);
+            session = Some(*hello_session);
+        }
+        let reply = request
             .map(|req| {
                 // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
                 catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
@@ -145,6 +163,16 @@ fn serve(file: File, state: Arc<State>) {
         out.push('\n');
         if writer.write_all(out.as_bytes()).is_err() || writer.flush().is_err() {
             break;
+        }
+    }
+    // 宿主崩溃/被结束不会发 Goodbye;连接断开即清理会话,词典与重排缓存不常驻。
+    if let Some(session) = session {
+        let mut conns = state.conns.lock().unwrap_or_else(|p| p.into_inner());
+        if conns.get(&session) == Some(&conn) {
+            conns.remove(&session);
+            drop(conns);
+            println!("会话 {session} 连接断开,清理");
+            let _ = crate::imp::handle(&state, Request::Goodbye { session });
         }
     }
 }

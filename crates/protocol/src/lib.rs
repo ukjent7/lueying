@@ -106,7 +106,8 @@ impl From<KeyMsg> for lueying_engine::Key {
 /// DLL → Server。
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    /// 会话上线(会话号 = 宿主线程 id;host 为宿主 exe 名,兼容性判断用)。
+    /// 会话上线(会话号 = 宿主进程 id 高 32 位 + 线程 id 低 32 位;
+    /// host 为宿主 exe 名,兼容性判断用)。
     Hello { session: u64, host: String },
     /// 一次按键(TSF 的 TestKeyDown 阶段送达;Server 无副作用地预演,
     /// 结果缓存在会话里,随后的 `TakeKey` 取走写文档)。

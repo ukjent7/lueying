@@ -11,7 +11,7 @@
 
 用户数据只落在当前用户目录：配置 `%APPDATA%\lueying\config.ini`，用户词库 `%LOCALAPPDATA%\lueying\user.tsv`。升级安装会一次性接走旧 `pinyin-ime` 目录下的配置与词库，并清理旧自启动项、卸载项和快捷方式。自启动与卸载项写在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Lueying` 与 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying`；开始菜单快捷方式为「掠影设置」与「卸载掠影」。
 
-管道名是 `\\.\pipe\lueying-v1.<用户哈希>.s<登录会话号>`，行 JSON 请求-应答。SDDL 放行当前用户、AppContainer 与低完整性客户端；服务端用 `Local\` 互斥锁保证同一登录会话只有一个实例。DLL 在服务未运行时从同目录拉起 `lueying-server.exe`，服务不可用时按键直通，避免死键盘。TSF 在组合开始时读取 `GUID_PROP_INPUTSCOPE`，私密字段只关闭学习，不影响输入。
+管道名是 `\\.\pipe\lueying-v1.<用户哈希>.s<登录会话号>`，行 JSON 请求-应答。SDDL 放行当前用户、AppContainer 与低完整性客户端；服务端用 `Local\` 互斥锁保证同一登录会话只有一个实例。DLL 在服务未运行时从同目录拉起 `lueying-server.exe`，服务不可用时按键直通，避免死键盘。宿主崩溃不会发 `Goodbye`，连接断开时服务端按连接号清理会话、重排缓存与停顿任务。TSF 在组合开始时读取 `GUID_PROP_INPUTSCOPE`，私密字段只关闭学习，不影响输入。
 
 ## Crates
 

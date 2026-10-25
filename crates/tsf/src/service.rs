@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOINTERFACE, FALSE, LPARAM, WPARAM};
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::TextServices::{
     IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfContextView,
     ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
@@ -174,7 +174,9 @@ fn host_app_name() -> String {
 
 impl TextService {
     pub(crate) fn new() -> Self {
-        let session = u64::from(unsafe { GetCurrentThreadId() });
+        // 线程号只在进程内唯一;不同宿主进程的线程号会重复,必须带上进程号。
+        let session = (u64::from(unsafe { GetCurrentProcessId() }) << 32)
+            | u64::from(unsafe { GetCurrentThreadId() });
         let service = Self {
             thread_mgr: RefCell::new(None),
             client_id: Cell::new(0),
@@ -395,8 +397,11 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
     let connection = guard.as_mut()?;
     let reply = connection.round_trip(&req);
     if reply.is_none() {
-        // 断线:丢弃连接,下键重新尝试。
+        // 断线:丢弃连接,下键重新尝试;已连上过说明 Server 可能刚崩,
+        // 清掉拉起节流与连接退避,让下一次连接立刻重启它。
         *guard = None;
+        shared.last_connect.set(None);
+        crate::client::note_disconnect();
     }
     reply
 }
@@ -471,13 +476,20 @@ impl TextService_Impl {
             }
         }
         // 激活时就把常驻 Server 拉起:词典/重排模型加载不占用首键时间。
-        crate::client::warm_server();
-        self.advise_layout();
+        // 安全桌面不启动进程,也不为候选窗挂布局监听。
+        if !self.secure.get() {
+            crate::client::warm_server();
+            self.advise_layout();
+        }
         // 激活时 Caps 已经亮着:记下当前模式,灭灯时恢复到它而不是默认中文。
         let caps = keys::caps_on();
         self.caps_seen.set(Some(caps));
         self.caps_restore
             .set(caps.then(|| self.shared.chinese.get()));
+        if caps {
+            // 大写锁定期间字母直通,实际是英文;语言栏先对齐,灭灯后再恢复。
+            self.shared.set_chinese(false);
+        }
         // 激活时先把系统指示器对齐当前模式;Focus 回调随后再跟 Server 的全局值。
         self.shared.mode_writing.set(true);
         crate::mode::write_indicator(&thread_mgr, tid, self.shared.chinese.get());

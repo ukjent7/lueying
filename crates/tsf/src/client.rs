@@ -35,7 +35,10 @@ impl Client {
             return Some(client);
         }
         // Server 没在跑:拉起安装目录里的兄弟进程,等它建好管道。
-        maybe_spawn_server();
+        // 同目录没有 Server 时不要白等,键盘立即可用。
+        if !maybe_spawn_server() {
+            return None;
+        }
         for _ in 0..4 {
             std::thread::sleep(Duration::from_millis(30));
             if let Some(client) = Self::open() {
@@ -125,13 +128,28 @@ fn take_line(pending: &mut Vec<u8>) -> Option<String> {
 /// 激活输入法时先拉起 Server,让词典与重排模型在用户敲第一键前开始加载。
 /// 只起进程不建连接:真正的 Hello 仍由首键按需完成。
 pub(crate) fn warm_server() {
-    maybe_spawn_server();
+    let _ = maybe_spawn_server();
+}
+
+/// 已经连上的 Server 掉线:清掉拉起节流,下一次连接立即尝试重启。
+pub(crate) fn note_disconnect() {
+    LAST_SPAWN.store(0, Ordering::Relaxed);
 }
 
 /// 每个宿主进程每 10 秒最多拉起一次 Server;正常注入的 DLL 与 Server 同目录。
-fn maybe_spawn_server() {
+/// 返回同目录是否有 Server(exe 存在)。没装 Server 时调用方不必等待管道。
+fn maybe_spawn_server() -> bool {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const RETRY_SECS: u64 = 10;
+    let Some(dir) =
+        crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+    else {
+        return false;
+    };
+    let exe = dir.join("lueying-server.exe");
+    if !exe.exists() {
+        return false;
+    }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -141,20 +159,12 @@ fn maybe_spawn_server() {
             .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
             .is_err()
     {
-        return;
-    }
-    let Some(dir) =
-        crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
-    else {
-        return;
-    };
-    let exe = dir.join("lueying-server.exe");
-    if !exe.exists() {
-        return;
+        return true;
     }
     let _ = std::process::Command::new(exe)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn();
+    true
 }
 
 /// 上次尝试拉起 Server 的秒级时间戳。
