@@ -25,8 +25,9 @@ mod imp {
     };
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfileMgr,
-        ITfInputProcessorProfiles, ITfThreadMgr, TF_INPUTPROCESSORPROFILE, TF_IPPMF_ENABLEPROFILE,
-        TF_IPPMF_FORPROCESS, TF_PROFILETYPE_INPUTPROCESSOR,
+        ITfInputProcessorProfiles, ITfThreadMgr, TF_INPUTPROCESSORPROFILE,
+        TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS,
+        TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, ES_AUTOVSCROLL, ES_MULTILINE,
@@ -156,8 +157,9 @@ mod imp {
                 println!("EnumProfiles(0x{LANGID_ZH_CN:04x}): {n} 个");
             }
 
-            // 2. 激活本输入法。EnableLanguageProfile 保证它出现在输入法列表里;
-            //    ActivateLanguageProfile 只对当前线程生效,测试宿主与按键同线程。
+            // 2. 激活本输入法。CI runner 的当前语言通常是 en-US,
+            //    ActivateLanguageProfile 会因此返回 E_INVALIDARG;新版接口带
+            //    DONTCARECURRENTINPUTLANGUAGE,不依赖宿主当前语言。
             let profiles_api: ITfInputProcessorProfiles = profiles
                 .cast()
                 .map_err(|e| format!("cast ITfInputProcessorProfiles: {e}"))?;
@@ -172,11 +174,36 @@ mod imp {
                 Ok(()) => println!("EnableLanguageProfile: ok"),
                 Err(e) => println!("EnableLanguageProfile: {e}"),
             }
+            let mut activated = false;
+            match unsafe {
+                mgr.ActivateProfile(
+                    TF_PROFILETYPE_INPUTPROCESSOR,
+                    LANGID_ZH_CN,
+                    &CLSID_IME,
+                    &GUID_PROFILE,
+                    HKL::default(),
+                    TF_IPPMF_FORPROCESS
+                        | TF_IPPMF_ENABLEPROFILE
+                        | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
+                )
+            } {
+                Ok(()) => {
+                    println!("ActivateProfile(FORPROCESS|ENABLE|DONTLANG): ok");
+                    activated = true;
+                }
+                Err(e) => println!("ActivateProfile(FORPROCESS|ENABLE|DONTLANG): {e}"),
+            }
             match unsafe {
                 profiles_api.ActivateLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
             } {
-                Ok(()) => println!("ActivateLanguageProfile: ok"),
-                Err(e) => return Err(format!("ActivateLanguageProfile: {e}")),
+                Ok(()) => {
+                    println!("ActivateLanguageProfile: ok");
+                    activated = true;
+                }
+                Err(e) => println!("ActivateLanguageProfile(当前语言非中文时忽略): {e}"),
+            }
+            if !activated {
+                return Err("无法激活输入法配置".into());
             }
             let mut active_lang = 0u16;
             let mut active_guid = GUID::default();
@@ -191,20 +218,6 @@ mod imp {
                     "GetActiveLanguageProfile: lang=0x{active_lang:04x} guid={active_guid:?}"
                 ),
                 Err(e) => println!("GetActiveLanguageProfile: {e}"),
-            }
-            // 新版接口的进程级激活;失败只记日志,以 ActivateLanguageProfile 为准。
-            match unsafe {
-                mgr.ActivateProfile(
-                    TF_PROFILETYPE_INPUTPROCESSOR,
-                    LANGID_ZH_CN,
-                    &CLSID_IME,
-                    &GUID_PROFILE,
-                    HKL::default(),
-                    TF_IPPMF_FORPROCESS | TF_IPPMF_ENABLEPROFILE,
-                )
-            } {
-                Ok(()) => println!("ActivateProfile(FORPROCESS|ENABLEPROFILE): ok"),
-                Err(e) => println!("ActivateProfile(FORPROCESS|ENABLEPROFILE): {e}"),
             }
 
             // 3. 宿主窗口 + RichEdit(自带 TSF 文本存区)
