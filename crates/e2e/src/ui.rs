@@ -12,6 +12,8 @@
 //! 10. 部分选词后光标跑到剩余拼音前面 → 继续输入必须接在末尾。
 //! 11. 长句超过组合上限后被截断或吞键 → 常见长句要完整保留,到上限时先落定
 //!     旧组合再用新键起组。
+//! 12. 换输入框后沿用上个文档的引号奇偶 → 新文档首个引号必须是开引号。
+//! 13. 正确整句被分段前缀挤出首页 → 首页五条优先整句,前缀词顺延到第 6 位。
 
 use std::sync::Arc;
 
@@ -161,19 +163,19 @@ pub fn run(report: &mut String) -> usize {
         format!("显示 {shown:?} → 落定 {finalized:?}"),
     );
 
-    // 长句候选:默认一页五条里最多四条整句,最高分前缀词固定第二位,
-    // 方便逐段上屏的同时不把正确整句挤到页外。
+    // 长句候选:默认一页五条全部给整句,最高分前缀词顺延到第 6 位;
+    // 正确读法不会被人名/单字的分段入口挤出首页,逐段上屏下移一格即可。
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
     let detailed = e.candidates_detailed();
     let available = detailed.iter().filter(|c| c.full).count();
     let first_page = detailed.iter().take(5).filter(|c| c.full).count();
-    let word_second = detailed.get(1).is_some_and(|c| !c.full);
+    let prefix_sixth = detailed.get(5).is_some_and(|c| !c.full);
     push(
         &mut checks,
         "整句备选占满候选首页",
-        available >= 4 && first_page == 4 && word_second,
-        format!("整句 {available} 条,首页 {first_page} 条,第二位前缀词={word_second}"),
+        available >= 5 && first_page == 5 && prefix_sixth,
+        format!("整句 {available} 条,首页 {first_page} 条,第六位前缀词={prefix_sixth}"),
     );
 
     // 分段上屏学到的前缀词不能顶掉整句首选:选过一次「今天」后重打整句,
@@ -181,8 +183,10 @@ pub fn run(report: &mut String) -> usize {
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
     let slot = e.candidates().iter().position(|c| c == "今天");
-    if let Some(digit) = slot.and_then(|index| u8::try_from(index + 1).ok()) {
-        e.process(Key::Digit(digit));
+    if let Some(index) = slot {
+        // 前缀词现在在第 6 位;先移动高亮再空格上屏,不依赖当前页的序号。
+        e.set_highlight(index);
+        e.process(Key::Space);
     }
     e.process(Key::Esc);
     type_into(&mut e, "jintiantianqi");
@@ -321,6 +325,19 @@ pub fn run(report: &mut String) -> usize {
         "无映射标点先收组句再上屏 ASCII",
         committed == vec![best.clone(), "/".into()] && e.composition().is_none(),
         format!("上屏 {committed:?}"),
+    );
+
+    // 换输入框后引号重新从开引号配对;沿用上一个文档的奇偶会打出闭引号。
+    let mut e = engine();
+    let first = e.process(Key::Punct('"'));
+    e.clear_context();
+    let second = e.process(Key::Punct('"'));
+    push(
+        &mut checks,
+        "失焦后引号重新配对",
+        first == vec![Event::Commit("“".into())]
+            && second == vec![Event::Commit("“".into())],
+        format!("先 {first:?},换框后 {second:?}"),
     );
 
     // 关闭中文标点后,逗号同样按 ASCII 上屏并结束组句。

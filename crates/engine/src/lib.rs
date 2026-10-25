@@ -228,6 +228,10 @@ impl Engine {
     pub fn clear_context(&mut self) {
         self.context.clear();
         self.after_digit = false;
+        // 新输入框的引号从开引号重新配对;沿用上一个文档的奇偶会把
+        // 句首引号打成闭引号。
+        self.dq_open = false;
+        self.sq_open = false;
     }
 
     fn push_context(&mut self, text: &str) {

@@ -323,8 +323,10 @@ pub fn scenarios() -> Vec<Scenario> {
             false,
             vec![
                 stage(l("jintiantianqi"), vec![Check::Top("今天天气".into())]),
+                // 首页五条全是整句,最高分前缀词「今天」在第 6 位(第二页首条)。
+                stage(vec![Key::PageDown], vec![]),
                 stage(
-                    vec![Key::Digit(2)],
+                    vec![Key::Digit(1)],
                     vec![commits(&["今天"]), Check::Raw("tianqi".into())],
                 ),
                 stage(vec![Key::Space], vec![commits(&["天气"]), Check::NoComp]),

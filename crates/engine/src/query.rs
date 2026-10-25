@@ -72,7 +72,8 @@ const SCAN_VISIT_CAP: usize = 8000;
 /// 一个词最多几个音节(与词库最长词组一致)。
 const MAX_WORD_SYL: usize = 8;
 /// 每词固定罚:抵消归一化带来的「分词越少越占优」以外的碎片投机。
-const WORD_PENALTY: f64 = 3.0;
+/// 2.2 在项目、外部手写、白霜脚本和中立难例上同时不退步。
+const WORD_PENALTY: f64 = 2.2;
 /// 整句 Viterbi 每档保留几条路径。3 条时模糊扩写会把正确切分挤出束,
 /// 与 librime/清风同为 7 条,长句仍只保留常数级状态。
 const BEAM: usize = 7;
@@ -922,23 +923,18 @@ fn build_exact(
             .then(a.consume.cmp(&b.consume))
             .then(a.text.cmp(&b.text))
     });
-    // 首选整句置顶;第二位给最高分的前缀词,方便逐段上屏;随后三条整句备选,
-    // 再放第二个前缀词,余下按分数排。默认一页五条里四条是整句,正确读法
-    // 不会被人名/单字挤出前五,同时保留最常用的分段入口。
+    // 首页优先放满整句备选:长句的正确读法常排在第 6-8 条,第二位的分段
+    // 前缀会把它挤出页外。五条名额先给整句,最高分前缀词顺延到第 6 位;
+    // 需要逐段上屏时下移一格即可,整句不足五条时前缀词自动补位。
     let mut cands: Vec<Candidate> = Vec::new();
     let mut rest = full.into_iter();
-    if let Some(top) = rest.next() {
-        cands.push(top);
-    }
+    cands.extend(rest.by_ref().take(5));
+    let taken: HashSet<String> = cands.iter().map(|c| c.text.clone()).collect();
     let mut words = words.into_iter();
-    // 第二位的分段入口不能与首选整句重复;重复项留着也会被去重掉。
-    if let Some(top_text) = cands.first().map(|c| c.text.clone())
-        && let Some(prefix) = words.find(|w| w.text != top_text)
-    {
+    // 第 6 位的分段入口不能与已收录的整句重复;重复项留着也会被去重掉。
+    if let Some(prefix) = words.find(|w| !taken.contains(&w.text)) {
         cands.push(prefix);
     }
-    cands.extend(rest.by_ref().take(3));
-    cands.extend(words.next());
     cands.extend(rest);
     cands.extend(words);
     let mut seen: HashSet<(String, usize)> = HashSet::new();
