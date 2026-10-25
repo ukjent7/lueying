@@ -363,7 +363,12 @@ fn run_accent(
     (off, auto, miss)
 }
 
-pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String, mode: Mode) -> usize {
+pub fn run(
+    dict: Arc<Dictionary>,
+    gram: Option<Arc<Gram>>,
+    report: &mut String,
+    mode: Mode,
+) -> usize {
     let words = mode.cap(
         corpus(include_str!("../../../dicts/eval-words.tsv")),
         FAST_WORDS,
@@ -556,8 +561,7 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String, 
     let frost_ok = stable(frost_base, frost_default);
     let neutral_ok = stable(neutral_base, neutral_default);
     let quality_gate = if gram.is_some() { 92.0 } else { 90.0 };
-    let quality_ok = clean_default.top1_rate() >= quality_gate
-        && clean_default.top5_rate() >= 95.0;
+    let quality_ok = clean_default.top1_rate() >= quality_gate && clean_default.top5_rate() >= 95.0;
     let accent_word_ok = accent_word_auto.top1_rate() + 0.5 >= accent_word_off.top1_rate()
         && accent_word_auto.top5_rate() + 0.5 >= accent_word_off.top5_rate()
         && (accent_word_auto.top1_rate() > accent_word_off.top1_rate()
