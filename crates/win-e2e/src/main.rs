@@ -230,6 +230,50 @@ mod imp {
         Ok(format!("候选 UI 元素:{count} 条{paging},首条 `{first}`"))
     }
 
+    /// 搜索框按 Enter 时宿主调用原样落定:提交眼前显示的汉字,组合与 UI 元素结束。
+    fn check_finalize(
+        edit: HWND,
+        thread_mgr: &ITfThreadMgr,
+        events: &Rc<RefCell<UiEvents>>,
+    ) -> Result<String, String> {
+        *events.borrow_mut() = UiEvents::default();
+        type_text("nihao")?;
+        pump_for(Duration::from_millis(300));
+        let (began, id) = {
+            let events = events.borrow();
+            (events.began, events.id)
+        };
+        if !began {
+            return Err("原样落定前没有登记候选 UI 元素".into());
+        }
+        let mgr: ITfUIElementMgr = thread_mgr
+            .cast()
+            .map_err(|e| format!("cast ITfUIElementMgr: {e}"))?;
+        let element = unsafe { mgr.GetUIElement(id) }.map_err(|e| format!("GetUIElement: {e}"))?;
+        let integrated: ITfIntegratableCandidateListUIElement = element
+            .cast()
+            .map_err(|e| format!("cast ITfIntegratableCandidateListUIElement: {e}"))?;
+        unsafe { integrated.FinalizeExactCompositionString() }
+            .map_err(|e| format!("FinalizeExactCompositionString: {e}"))?;
+        let deadline = Instant::now() + Duration::from_millis(800);
+        while composing(thread_mgr)? {
+            if Instant::now() >= deadline {
+                return Err("原样落定后组合没有结束".into());
+            }
+            pump_for(Duration::from_millis(5));
+        }
+        pump_for(Duration::from_millis(100));
+        let text = edit_text(edit);
+        // 上一轮延迟测试已上屏「你好」;原样落定提交当前显示,再追加一次。
+        if !text.ends_with("你好你好") {
+            return Err(format!("原样落定后文本 `{text}` 不以 你好你好 结尾"));
+        }
+        if !events.borrow().ended {
+            return Err("原样落定后候选 UI 元素没有结束".into());
+        }
+        Ok(format!("## 宿主原样落定\n\nPASS,文本 `{text}`"))
+    }
+
     fn real_run() -> Result<(String, String), String> {
         // 与本机真实安装的 Server 隔离:管道名加测试后缀,DLL 与子进程都继承。
         let suffix = format!("e2e{}", std::process::id());
@@ -459,10 +503,16 @@ mod imp {
             let (ui_source, ui_cookie, ui_events) = install_ui_sink(&thread_mgr)?;
             type_text("nihao")?;
             pump_for(Duration::from_millis(200));
+            // 布局监听必须挂上,否则宿主滚动后候选窗会停在旧位置。
+            if !std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .contains("登记布局监听")
+            {
+                return Err("TSF 日志里没有布局监听登记".into());
+            }
             let ui_note = check_candidate_ui(&thread_mgr, &ui_events)?;
             tap(0x20)?; // 空格
             pump_for(Duration::from_millis(600));
-            let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
             if !ui_events.borrow().ended {
                 return Err("候选 UI 元素在组合结束后没有 EndUIElement".into());
             }
@@ -491,7 +541,11 @@ mod imp {
             // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
             // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
             let latency = commit_latency(edit, &thread_mgr)?;
-            Ok((text, format!("{latency}\n\n{ui_note}")))
+            // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
+            //    拼音,也不改选候选;组合与 UI 元素都必须结束。
+            let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
+            let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
+            Ok((text, format!("{latency}\n\n{ui_note}\n\n{finalize_note}")))
         })();
 
         // 6. 清理(尽力)。先停 TSF 再杀 Server:TIP 的 Deactivate 还会发

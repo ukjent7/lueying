@@ -159,6 +159,8 @@ pub enum Request {
     Pick { session: u64, slot: usize },
     /// 宿主自绘候选时按全局候选序号点选。
     PickIndex { session: u64, index: usize },
+    /// 宿主要求原样落定当前显示文本(`FinalizeExactCompositionString`)。
+    Finalize { session: u64 },
     /// 宿主自绘候选时移动高亮(不提交)。
     SelectIndex { session: u64, index: usize },
     /// 候选窗滚轮翻页:`delta` 为 ±1。

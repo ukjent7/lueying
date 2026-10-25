@@ -11,13 +11,15 @@ use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOINTERFACE, FALSE, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::TextServices::{
-    IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfDisplayAttributeInfo,
-    ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl, ITfFunctionProvider,
-    ITfFunctionProvider_Impl, ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr,
+    IEnumTfDisplayAttributeInfo, ITfComposition, ITfContext, ITfContextView,
+    ITfDisplayAttributeInfo, ITfDisplayAttributeProvider, ITfDisplayAttributeProvider_Impl,
+    ITfFnGetPreferredTouchKeyboardLayout, ITfFunctionProvider, ITfFunctionProvider_Impl,
+    ITfKeyEventSink, ITfKeyEventSink_Impl, ITfKeystrokeMgr,
     ITfLangBarItemButton, ITfLangBarItemSink, ITfSource, ITfSourceSingle, ITfTextInputProcessor,
     ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextInputProcessor_Impl,
-    ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr, ITfUIElementMgr, TF_LBI_ICON,
-    TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
+    ITfTextLayoutSink, ITfTextLayoutSink_Impl, ITfThreadFocusSink, ITfThreadFocusSink_Impl,
+    ITfThreadMgr, ITfUIElementMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_LC_CHANGE,
+    TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE, TfLayoutCode,
 };
 use windows::core::{
     BOOL, BSTR, Error, GUID, IUnknown, IUnknownImpl, Interface, Ref, Result, implement,
@@ -65,6 +67,8 @@ pub(crate) struct Shared {
     pub langbar_sink: RefCell<Option<ITfLangBarItemSink>>,
     /// TSF 候选 UI 元素管理器;激活时缓存,停用时清空。
     pub ui_mgr: RefCell<Option<ITfUIElementMgr>>,
+    /// 布局变化触发的光标重报已排队;合并连续 reflow。
+    pub caret_pending: Cell<bool>,
     /// 当前候选 UI 元素 ID;`UI_ID_NONE` 表示没有登记。
     pub ui_id: Cell<u32>,
     /// 宿主是否接管候选绘制;Server 据此收起自己的候选窗。
@@ -128,7 +132,8 @@ struct Pending {
     ITfKeyEventSink,
     ITfThreadFocusSink,
     ITfDisplayAttributeProvider,
-    ITfFunctionProvider
+    ITfFunctionProvider,
+    ITfTextLayoutSink
 )]
 pub(crate) struct TextService {
     thread_mgr: RefCell<Option<ITfThreadMgr>>,
@@ -145,6 +150,8 @@ pub(crate) struct TextService {
     mode_advice: RefCell<crate::mode::Advice>,
     /// 向 TSF 登记 Function Provider 的通道;Chromium/QQNT 据此识别为完整 IME。
     function_source: RefCell<Option<ITfSourceSingle>>,
+    /// 当前输入框的布局监听;宿主滚动时重摆候选窗。
+    layout: RefCell<Option<(ITfContext, ITfSource, u32)>>,
     /// Caps Lock 亮起前的模式,灭灯后恢复。
     caps_restore: Cell<Option<bool>>,
     /// 上一次处理过的 Caps Lock 状态;TestKeyUp 与 KeyUp 可能都到达,
@@ -190,6 +197,7 @@ impl TextService {
                 ui_mgr: RefCell::new(None),
                 ui_id: Cell::new(crate::ui_element::UI_ID_NONE),
                 ui_host_draws: Cell::new(false),
+                caret_pending: Cell::new(false),
                 ui_snapshot: RefCell::new(crate::ui_element::Snapshot::default()),
             }),
             tap: KeyTap::new(),
@@ -199,6 +207,7 @@ impl TextService {
             langbar: RefCell::new(None),
             mode_advice: RefCell::new(Vec::new()),
             function_source: RefCell::new(None),
+            layout: RefCell::new(None),
             caps_restore: Cell::new(None),
             caps_seen: Cell::new(None),
             poll: RefCell::new(None),
@@ -276,13 +285,51 @@ impl TextService {
         }
     }
 
+    /// 监听当前输入框的布局变化;滚动或改窗口大小时候选窗跟着光标重摆。
+    fn advise_layout(&self) {
+        self.unadvise_layout();
+        let Some(thread_mgr) = self.thread_mgr.borrow().clone() else {
+            return;
+        };
+        let Ok(doc) = (unsafe { thread_mgr.GetFocus() }) else {
+            return;
+        };
+        let Ok(context) = (unsafe { doc.GetTop() }) else {
+            return;
+        };
+        self.advise_layout_context(&context);
+    }
+
+    fn advise_layout_context(&self, context: &ITfContext) {
+        let Ok(source) = context.cast::<ITfSource>() else {
+            return;
+        };
+        let sink: ITfTextLayoutSink = self.to_interface();
+        let unknown: IUnknown = sink.into();
+        if let Ok(cookie) = unsafe { source.AdviseSink(&ITfTextLayoutSink::IID, &unknown) } {
+            *self.layout.borrow_mut() = Some((context.clone(), source, cookie));
+            log("登记布局监听");
+        }
+    }
+
+    fn unadvise_layout(&self) {
+        if let Some((_, source, cookie)) = self.layout.borrow_mut().take() {
+            unsafe {
+                let _ = source.UnadviseSink(cookie);
+            }
+        }
+    }
+
     /// 焦点变化:失焦把敲了一半的拼音落定到最近上下文。
     /// `ITfKeyEventSink::OnSetFocus`(同应用换输入框)与线程焦点走同一条。
     fn focus_changed(&self, focused: bool) {
         if self.secure.get() {
             return;
         }
-        if !focused {
+        if focused {
+            self.advise_layout();
+        } else {
+            self.unadvise_layout();
             crate::ui_element::end(&self.shared, &self.client);
         }
         self.shared.touch();
@@ -423,6 +470,9 @@ impl TextService_Impl {
                 Err(error) => log(&format!("登记 Function Provider 失败: {error}")),
             }
         }
+        // 激活时就把常驻 Server 拉起:词典/重排模型加载不占用首键时间。
+        crate::client::warm_server();
+        self.advise_layout();
         // 激活时 Caps 已经亮着:记下当前模式,灭灯时恢复到它而不是默认中文。
         let caps = keys::caps_on();
         self.caps_seen.set(Some(caps));
@@ -500,7 +550,10 @@ impl TextService_Impl {
                 return Ok(FALSE);
             }
             // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
+            // Caps Lock 是临时的英文覆盖,熄灭前不响应单击切换,避免图标与
+            // 实际上屏语言不一致。
             if self.tap.take_shift_tap(vk)
+                && !keys::caps_on()
                 && let Ok(context) = pic.ok()
                 && !crate::context::keyboard_disabled(context)
                 && let Some(reply) = self.request(Request::Key {
@@ -531,6 +584,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
     fn Deactivate(&self) -> Result<()> {
         let secure = self.secure.replace(false);
+        self.unadvise_layout();
         crate::ui_element::end(&self.shared, &self.client);
         self.shared.ui_mgr.borrow_mut().take();
         self.poll.borrow_mut().take();
@@ -649,6 +703,16 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             let Ok(context) = pic.ok() else {
                 return Ok(FALSE);
             };
+            // 激活时可能还没有焦点;第一个按键到达时补挂当前输入框的布局监听。
+            let stale = self
+                .layout
+                .borrow()
+                .as_ref()
+                .is_none_or(|(ctx, _, _)| ctx.as_raw() != context.as_raw());
+            if stale {
+                self.unadvise_layout();
+                self.advise_layout_context(context);
+            }
             // 密码框/空上下文:键全部放行,不组句。
             if crate::context::keyboard_disabled(context) {
                 return Ok(FALSE);
@@ -777,8 +841,45 @@ impl ITfFunctionProvider_Impl for TextService_Impl {
         Ok(BSTR::from(crate::NAME))
     }
 
-    fn GetFunction(&self, _group: *const GUID, _riid: *const GUID) -> Result<IUnknown> {
-        // 只登记 Provider 本身;具体功能(设置/候选搜索)以后按需实现。
+    fn GetFunction(&self, _group: *const GUID, riid: *const GUID) -> Result<IUnknown> {
+        // 触屏键盘按 IID 查询首选布局;设置/候选搜索等函数按需再加。
+        if !riid.is_null() && unsafe { *riid } == ITfFnGetPreferredTouchKeyboardLayout::IID {
+            let layout: ITfFnGetPreferredTouchKeyboardLayout = crate::touch::TouchLayout.into();
+            return Ok(layout.into());
+        }
         Err(Error::from(E_NOINTERFACE))
+    }
+}
+
+impl ITfTextLayoutSink_Impl for TextService_Impl {
+    fn OnLayoutChange(
+        &self,
+        pic: Ref<ITfContext>,
+        code: TfLayoutCode,
+        _view: Ref<ITfContextView>,
+    ) -> Result<()> {
+        // 宿主滚动/缩放后重新量光标;只在当前输入框仍在组句时做,避免空转。
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let Ok(context) = pic.ok() else {
+                return;
+            };
+            let ours = self
+                .shared
+                .composition_context
+                .borrow()
+                .as_ref()
+                .is_some_and(|owner| owner.as_raw() == context.as_raw());
+            // 宿主自绘候选时服务端窗口已收起,不必再为坐标做编辑会话。
+            if ours && code == TF_LC_CHANGE && !self.shared.ui_host_draws.get() {
+                edit::refresh_caret(
+                    context,
+                    self.client_id.get(),
+                    self.shared.session,
+                    self.shared.clone(),
+                    self.client.clone(),
+                );
+            }
+        }));
+        Ok(())
     }
 }

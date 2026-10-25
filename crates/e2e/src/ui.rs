@@ -112,6 +112,8 @@ pub fn run(report: &mut String) -> usize {
     e.process(Key::Digit(2));
     let saved = e.export_user();
     type_into(&mut e, "shi");
+    // 选过一次就回到首位,与微软拼音、微信一致。
+    let promoted = e.candidates().first() == Some(&second);
     // 学过的词可能已经被排序到首位,也可能仍在原位;先定位再高亮。
     let index = e.candidates().iter().position(|c| c == &second);
     if let Some(index) = index {
@@ -129,6 +131,7 @@ pub fn run(report: &mut String) -> usize {
         "Shift+Delete 删除学习记录",
         !second.is_empty()
             && learned(&saved, &second)
+            && promoted
             && index.is_some()
             && !learned(&after, &second)
             && kept
@@ -137,6 +140,23 @@ pub fn run(report: &mut String) -> usize {
                 .iter()
                 .any(|event| matches!(event, Event::Passthrough(Key::DeleteCandidate))),
         format!("学过 {second:?} → 删除后剩余 {}", after.lines().count()),
+    );
+
+    // 搜索框的 FinalizeExactCompositionString:落定当前显示文本,不补全剩余拼音。
+    let mut e = engine();
+    type_into(&mut e, "nihao");
+    let shown = e.candidates().first().cloned().unwrap_or_default();
+    let finalized = e.finalize_display();
+    let idle = e.finalize_display();
+    push(
+        &mut checks,
+        "宿主原样落定当前显示文本",
+        !shown.is_empty()
+            && finalized.as_deref() == Some(shown.as_str())
+            && e.composition().is_none()
+            && e.candidates().is_empty()
+            && idle.is_none(),
+        format!("显示 {shown:?} → 落定 {finalized:?}"),
     );
 
     // 宿主自绘候选时按全局序号移动高亮(TSF 的 SetSelection):
@@ -330,8 +350,11 @@ pub fn run(report: &mut String) -> usize {
     // 只按一次空格会把剩余拼音永远留在组合里。
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
-    let picked: Vec<String> = e
-        .process(Key::Digit(2))
+    let slot = e.candidates().iter().position(|c| c == "今天");
+    let picked: Vec<String> = slot
+        .and_then(|index| u8::try_from(index + 1).ok())
+        .map(|digit| e.process(Key::Digit(digit)))
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|event| match event {
             Event::Commit(text) => Some(text),
@@ -349,25 +372,29 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "整串落定剩余音节",
-        picked == vec!["今天".to_string()]
+        slot.is_some()
+            && picked == vec!["今天".to_string()]
             && flushed == vec!["天气".to_string()]
             && e.composition().is_none(),
-        format!("先 {picked:?},再 {flushed:?}"),
+        format!("候选位 {slot:?},先 {picked:?},再 {flushed:?}"),
     );
 
     // 部分选词后光标必须留在剩余拼音末尾:下一个字母接在后面,
     // 不能插到最前面把 `tianqi` 变成 `htianqi`。
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
-    e.process(Key::Digit(2));
+    let slot = e.candidates().iter().position(|c| c == "今天");
+    if let Some(digit) = slot.and_then(|index| u8::try_from(index + 1).ok()) {
+        e.process(Key::Digit(digit));
+    }
     let before = e.composition().map(|comp| comp.raw.clone());
     type_into(&mut e, "h");
     let after = e.composition().map(|comp| comp.raw.clone());
     push(
         &mut checks,
         "部分选词后继续输入接在末尾",
-        before.as_deref() == Some("tianqi") && after.as_deref() == Some("tianqih"),
-        format!("选后 {before:?},再输入 h 后 {after:?}"),
+        slot.is_some() && before.as_deref() == Some("tianqi") && after.as_deref() == Some("tianqih"),
+        format!("候选位 {slot:?},选后 {before:?},再输入 h 后 {after:?}"),
     );
 
     report.push_str("\n## 候选窗交互\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

@@ -305,13 +305,12 @@ impl ITfIntegratableCandidateListUIElement_Impl for CandidateElement_Impl {
     }
 
     fn FinalizeExactCompositionString(&self) -> Result<()> {
-        // 搜索框要求把当前组合串原样提交,不选候选:与 Enter 语义一致。
+        // 搜索框要求按当前显示文本原样落定,不补全剩余拼音,也不改选候选。
         if let Some(reply) = request_with(
             &self.client,
             &self.shared,
-            Request::Key {
+            Request::Finalize {
                 session: self.shared.session,
-                key: lueying_protocol::KeyMsg::Enter,
             },
         ) {
             apply_reply(&self.shared, &self.client, &reply);

@@ -332,6 +332,27 @@ impl Engine {
         self.pick(self.page * ps + slot)
     }
 
+    /// 宿主要求原样落定当前显示文本(搜索框按 Enter):上屏内联预览,
+    /// 不补全剩余拼音,也不改选下一条候选。返回上屏文本。
+    pub fn finalize_display(&mut self) -> Option<String> {
+        let comp = self.comp.take()?;
+        let text = if comp.display.is_empty() {
+            comp.raw
+        } else {
+            comp.display
+        };
+        self.comp_committed = false;
+        self.phrase = None;
+        self.cands.clear();
+        self.hl = 0;
+        self.page = 0;
+        self.rev = self.rev.wrapping_add(1);
+        if !text.is_ascii() {
+            self.push_context(&text);
+        }
+        Some(text)
+    }
+
     /// 忘掉高亮候选的学习记录;候选仍可由主词典提供,只是回到原始词频。
     /// 返回是否真的删掉了一条用户词。
     pub fn forget_highlighted(&mut self) -> bool {

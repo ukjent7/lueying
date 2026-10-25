@@ -122,6 +122,12 @@ fn take_line(pending: &mut Vec<u8>) -> Option<String> {
     })
 }
 
+/// 激活输入法时先拉起 Server,让词典与重排模型在用户敲第一键前开始加载。
+/// 只起进程不建连接:真正的 Hello 仍由首键按需完成。
+pub(crate) fn warm_server() {
+    maybe_spawn_server();
+}
+
 /// 每个宿主进程每 10 秒最多拉起一次 Server;正常注入的 DLL 与 Server 同目录。
 fn maybe_spawn_server() {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;

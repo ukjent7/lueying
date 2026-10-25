@@ -12,7 +12,8 @@ use windows::Win32::Foundation::{E_FAIL, RECT};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
     ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
-    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READWRITE, TF_IAS_QUERYONLY,
+    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READ, TF_ES_READWRITE,
+    TF_IAS_QUERYONLY,
     TF_SELECTION, TF_SELECTIONSTYLE,
 };
 use windows::core::{Error, Interface, Ref, Result, implement};
@@ -223,6 +224,7 @@ fn clear_composition(shared: &Shared) {
     shared.composition.borrow_mut().take();
     shared.composition_context.borrow_mut().take();
     shared.preedit.borrow_mut().clear();
+    shared.caret_pending.set(false);
 }
 
 fn update_preedit(
@@ -264,6 +266,7 @@ fn start_composition(
     }
     .into();
     let composition = unsafe { context_composition.StartComposition(ec, &range, &sink)? };
+    shared.caret_pending.set(false);
     *shared.composition.borrow_mut() = Some(composition.clone());
     *shared.composition_context.borrow_mut() = Some(context.clone());
     Ok(composition)
@@ -282,6 +285,48 @@ fn end_composition(shared: &Shared, ec: u32) -> Result<()> {
     }
     clear_composition(shared);
     Ok(())
+}
+
+/// 宿主滚动/改布局后重新量一次组句矩形。只读会话,不改文档。
+#[implement(ITfEditSession)]
+struct CaretSession {
+    context: ITfContext,
+    session: u64,
+    shared: Rc<Shared>,
+    client: SharedClient,
+}
+
+impl ITfEditSession_Impl for CaretSession_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        self.shared.caret_pending.set(false);
+        report_caret(&self.shared, &self.client, self.session, &self.context, ec);
+        Ok(())
+    }
+}
+
+/// 宿主布局变化时由 `ITfTextLayoutSink` 调用;候选窗跟着滚动后的光标走。
+pub(crate) fn refresh_caret(
+    context: &ITfContext,
+    client_id: u32,
+    session: u64,
+    shared: Rc<Shared>,
+    client: SharedClient,
+) {
+    // reflow 会连续触发多次;同一时间只排一个只读会话。
+    if shared.caret_pending.replace(true) {
+        return;
+    }
+    let edit: ITfEditSession = CaretSession {
+        context: context.clone(),
+        session,
+        shared: shared.clone(),
+        client,
+    }
+    .into();
+    if let Err(error) = unsafe { context.RequestEditSession(client_id, &edit, TF_ES_READ) } {
+        shared.caret_pending.set(false);
+        log(&format!("布局变化重报光标失败: {error}"));
+    }
 }
 
 /// 量组句的屏幕矩形,报给 Server 摆候选窗。

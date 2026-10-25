@@ -14,6 +14,7 @@ mod mode;
 mod poll;
 mod registry;
 mod service;
+mod touch;
 mod ui_element;
 
 use core::ffi::c_void;

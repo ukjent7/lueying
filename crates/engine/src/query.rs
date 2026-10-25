@@ -73,8 +73,9 @@ const SCAN_VISIT_CAP: usize = 8000;
 const MAX_WORD_SYL: usize = 8;
 /// 每词固定罚:抵消归一化带来的「分词越少越占优」以外的碎片投机。
 const WORD_PENALTY: f64 = 3.0;
-/// 整句 Viterbi 每档保留几条路径。
-const BEAM: usize = 3;
+/// 整句 Viterbi 每档保留几条路径。3 条时模糊扩写会把正确切分挤出束,
+/// 与 librime/清风同为 7 条,长句仍只保留常数级状态。
+const BEAM: usize = 7;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
 /// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。
@@ -82,8 +83,6 @@ const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
 /// 精确首位保护的最低词频。只要词库给出非零频次,就优先保住用户实际打出的
 /// 全拼整词;零频长尾仍按分数竞争,避免把无意义词条顶到首位。
 const EXACT_PROTECT_MIN_FREQ: u64 = 1;
-/// 同一按键下选过两次的模糊词,允许拿回首选的位次。
-const LEARNED_FUZZY_TOP: u32 = 2;
 /// 整句精确保护允许的落后幅度(对数概率)。整句没有词典频次背书,只有分数
 /// 与首位接近时才说明两种读法都成立;差距过大留给模糊读法。
 const EXACT_SENTENCE_MARGIN: f64 = 3.0;
@@ -829,15 +828,18 @@ fn build_exact(
             .then(a.consume.cmp(&b.consume))
             .then(a.text.cmp(&b.text))
     });
-    // 首选整句置顶;留两个前缀词方便逐段上屏,随后是所有整句备选,
-    // 余下的前缀词再排后面。这样 top-5 仍然覆盖整句备选。
+    // 首选整句置顶;第二位给最高分的前缀词,方便逐段上屏;随后三条整句备选,
+    // 再放第二个前缀词,余下按分数排。默认一页五条里四条是整句,正确读法
+    // 不会被人名/单字挤出前五,同时保留最常用的分段入口。
     let mut cands: Vec<Candidate> = Vec::new();
     let mut rest = full.into_iter();
     if let Some(top) = rest.next() {
         cands.push(top);
     }
     let mut words = words.into_iter();
-    cands.extend(words.by_ref().take(2));
+    cands.extend(words.next());
+    cands.extend(rest.by_ref().take(3));
+    cands.extend(words.next());
     cands.extend(rest);
     cands.extend(words);
     let mut seen: HashSet<(String, usize)> = HashSet::new();
@@ -923,8 +925,9 @@ pub fn build(
 /// 完全按分数排,80 倍词频差又会让高频模糊词压过精确词。这里取中间:
 /// 精确常用词占第 1 位,模糊候选从第 2 位开始按分数竞争。
 ///
-/// 学习覆盖优先于精确保护:同一按键下选过两次的模糊词,说明用户确实
-/// 分不清这个音,允许它拿回首选的位次。
+/// 学习覆盖优先于精确保护:同一按键下选过一次的词直接回到首位,与微软
+/// 拼音、微信一致;选错了可以 Shift+Delete 忘掉。模糊词同样适用,用户
+/// 既然选了它,就说明这个音的分歧对他没有意义。
 ///
 /// 多词整句也保护,但只在分数与首位接近时生效:整句没有单词条频次,
 /// 勉强成立的精确切分(如 `zongguo` 拼出「总过」)不该顶掉真正的模糊词。
@@ -932,10 +935,12 @@ fn protect_exact(cands: &mut [Candidate]) {
     if cands.is_empty() {
         return;
     }
+    // 学过的前缀词不能顶掉整句:回删分段上屏很常见,整句首选仍应由整句候选竞争。
+    let has_full = cands.iter().any(|c| c.full);
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.full && c.edits > 0 && c.user_freq >= LEARNED_FUZZY_TOP)
+        .filter(|(_, c)| c.user_freq > 0 && (c.full || !has_full))
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {

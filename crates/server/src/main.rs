@@ -562,6 +562,31 @@ mod imp {
                 }
                 reply
             }
+            Request::Finalize { session } => {
+                state.active.store(session, Ordering::Relaxed);
+                let Some(s) = sessions.get_mut(&session) else {
+                    return neutral(state);
+                };
+                let carried = s.ui_reply.take();
+                let mut reply = Reply {
+                    chinese: s.engine.mode() == Mode::Chinese,
+                    ..Reply::default()
+                };
+                if let Some(text) = s.engine.finalize_display() {
+                    reply.commits.push(text);
+                }
+                if let Some(carried) = carried {
+                    let mut commits = carried.commits;
+                    commits.extend(reply.commits);
+                    reply.commits = commits;
+                }
+                // 组合已经结束,之前的按键应答不能再写回内联拼音。
+                s.pending = None;
+                refresh_view(s);
+                fill_view(&mut reply, s);
+                crate::settle::schedule(state, session, s);
+                reply
+            }
             Request::SelectIndex { session, index } => {
                 state.active.store(session, Ordering::Relaxed);
                 let mut reply = Reply::default();
@@ -857,7 +882,31 @@ mod imp {
     /// 同步会话视图(候选窗渲染的数据源)。
     pub(super) fn refresh_view(s: &mut Session) {
         if let Some(comp) = s.engine.composition() {
-            s.view.raw = comp.raw.clone();
+            // 光标可在拼音串中移动;编辑时在光标处插入标记,长串只保留光标附近
+            // 一段,确保标记不会被候选窗的 220px 单行截断。光标在末尾时不插
+            // 标记,只显示末尾一段。
+            let cursor = comp.cursor.min(comp.raw.len());
+            let len = comp.raw.len();
+            let mut raw = String::new();
+            if cursor < len {
+                let start = cursor.saturating_sub(12);
+                let end = (cursor + 12).min(len);
+                if start > 0 {
+                    raw.push('…');
+                }
+                raw.push_str(&comp.raw[start..cursor]);
+                raw.push('|');
+                raw.push_str(&comp.raw[cursor..end]);
+                if end < len {
+                    raw.push('…');
+                }
+            } else if len <= 24 {
+                raw.push_str(&comp.raw);
+            } else {
+                raw.push('…');
+                raw.push_str(&comp.raw[len - 24..]);
+            }
+            s.view.raw = raw;
             s.view.preedit = comp.display.clone();
             s.view.segments = comp
                 .seg_spans
