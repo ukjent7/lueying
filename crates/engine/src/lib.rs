@@ -120,6 +120,8 @@ pub struct Engine {
     page: usize,
     dq_open: bool,
     sq_open: bool,
+    /// 刚刚输入/上屏的是 ASCII 数字;中文模式下数字后的 `.` 保持半角。
+    after_digit: bool,
     /// 最近上屏的文本,最多 [`CONTEXT_KEEP`] 字。焦点切换时清空。
     context: String,
     /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
@@ -144,6 +146,7 @@ impl Engine {
             page: 0,
             dq_open: false,
             sq_open: false,
+            after_digit: false,
             context: String::new(),
             rev: 0,
         }
@@ -175,6 +178,8 @@ impl Engine {
 
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
+        // 数字状态跟着文档走,不随中/英切换重置:英文态直通 `3` 后切回中文,
+        // 紧接着的 `.` 仍应按小数点处理。
         if mode == Mode::English {
             self.clear_comp();
         }
@@ -215,11 +220,14 @@ impl Engine {
     pub fn set_context(&mut self, text: &str) {
         self.context.clear();
         self.push_context(text);
+        // 光标左边是数字时,随后的半角句点更像小数点。
+        self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
     }
 
     /// 清空已上屏上下文(焦点切到别处时调用)。
     pub fn clear_context(&mut self) {
         self.context.clear();
+        self.after_digit = false;
     }
 
     fn push_context(&mut self, text: &str) {
@@ -352,6 +360,7 @@ impl Engine {
         if !text.is_ascii() {
             self.push_context(&text);
         }
+        self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
         Some(text)
     }
 
@@ -389,7 +398,7 @@ impl Engine {
             .commit_highlighted()
             .map(|text| vec![Event::Commit(text)])
             .unwrap_or_default();
-        self.note_commits(&events);
+        self.note_events(&events);
         events
     }
 
@@ -443,7 +452,7 @@ impl Engine {
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
         let events = self.process_inner(key);
-        self.note_commits(&events);
+        self.note_events(&events);
         events
     }
 
@@ -451,17 +460,25 @@ impl Engine {
     /// 与空格不同,这里不会只上屏吃前缀的候选而把剩余拼音留在组合里。
     pub fn flush(&mut self) -> Vec<Event> {
         let events = self.commit_all();
-        self.note_commits(&events);
+        self.note_events(&events);
         events
     }
 
-    /// 上屏文本进入左邻上下文(ASCII 直通内容不算)。
-    fn note_commits(&mut self, events: &[Event]) {
+    /// 上屏文本进入左邻上下文(ASCII 直通内容不算),同时记住最后一个字符
+    /// 是不是数字。直通的数字/字母/标点也在这里更新,后续句号才能判断
+    /// 该出半角小数点还是中文句号。
+    fn note_events(&mut self, events: &[Event]) {
         for event in events {
-            if let Event::Commit(text) = event
-                && !text.is_ascii()
-            {
-                self.push_context(text);
+            match event {
+                Event::Commit(text) => {
+                    if !text.is_ascii() {
+                        self.push_context(text);
+                    }
+                    self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
+                }
+                Event::Passthrough(Key::Digit(_)) => self.after_digit = true,
+                Event::Passthrough(_) => self.after_digit = false,
+                Event::Mode(_) => {}
             }
         }
     }
@@ -610,10 +627,12 @@ impl Engine {
                 // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
                 let mut events = self.commit_all();
                 self.phrase = None;
+                // 刚上屏的是中文候选;组句前的数字不再影响这个句号。
+                self.after_digit = false;
                 // 没有中文映射(或关了中文标点)时按 ASCII 上屏;
                 // 直通会让应用在组句未收时插入字符,文档与引擎就错位了。
                 let mapped = if self.cfg.chinese_punct {
-                    punct::map(p, &mut self.dq_open, &mut self.sq_open)
+                    punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit)
                 } else {
                     None
                 };
@@ -640,7 +659,7 @@ impl Engine {
         if !self.cfg.chinese_punct {
             return vec![Event::Passthrough(Key::Punct(p))];
         }
-        match punct::map(p, &mut self.dq_open, &mut self.sq_open) {
+        match punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit) {
             Some(s) => vec![Event::Commit(s.to_string())],
             None => vec![Event::Passthrough(Key::Punct(p))],
         }

@@ -8,16 +8,18 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 use lueying_protocol::Request;
-use windows::Win32::Foundation::{E_FAIL, POINT, RECT};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
-use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo};
+use windows::Win32::Foundation::{E_FAIL, HWND, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, MONITOR_DEFAULTTONULL, MonitorFromPoint};
+use windows::Win32::UI::HiDpi::{
+    GetProcessDpiAwareness, LogicalToPhysicalPointForPerMonitorDPI, PROCESS_PER_MONITOR_DPI_AWARE,
+};
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
     ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
     ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READ, TF_ES_READWRITE,
-    TF_IAS_QUERYONLY,
-    TF_SELECTION, TF_SELECTIONSTYLE,
+    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
+use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo};
 use windows::core::{Error, Interface, Ref, Result, implement};
 
 use crate::attr;
@@ -366,7 +368,10 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
         && rect.right > rect.left
         && rect.bottom > rect.top
     {
-        return Some((rect.left, rect.top, rect.right, rect.bottom));
+        to_physical(&view, &mut rect);
+        if on_screen(&rect) {
+            return Some((rect.left, rect.top, rect.right, rect.bottom));
+        }
     }
     // 有些宿主对折叠到串尾的 range 回退化矩形,但对整个组合串能给出有效行框。
     // 取行框右端作为候选窗锚点,仍贴着光标所在行,比直接退回视图矩形准确。
@@ -376,7 +381,10 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
             && line.right > line.left
             && line.bottom > line.top
         {
-            return Some((line.right, line.top, line.right, line.bottom));
+            to_physical(&view, &mut line);
+            if on_screen(&line) {
+                return Some((line.right, line.top, line.right, line.bottom));
+            }
         }
     }
     // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。系统仍可能知道
@@ -385,13 +393,64 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
         return Some(rect);
     }
     // 最后退回视图矩形,至少让候选窗出现在编辑区底部,而不是完全消失。
-    let view_rect = unsafe { view.GetScreenExt() }.ok()?;
-    (view_rect.right > view_rect.left && view_rect.bottom > view_rect.top).then_some((
+    let mut view_rect = unsafe { view.GetScreenExt() }.ok()?;
+    if view_rect.right <= view_rect.left || view_rect.bottom <= view_rect.top {
+        return None;
+    }
+    to_physical(&view, &mut view_rect);
+    on_screen(&view_rect).then_some((
         view_rect.left,
         view_rect.bottom,
         view_rect.right,
         view_rect.bottom,
     ))
+}
+
+/// 宿主进程不是 Per-Monitor DPI 感知时,TSF 返回的是宿主坐标空间的逻辑像素;
+/// 候选窗进程是 Per-Monitor V2,不换算会在高缩放和副屏上偏移。
+/// 换算失败就保留原值,宁可在老宿主上偏一点,也不能丢掉候选窗。
+fn to_physical(view: &ITfContextView, rect: &mut RECT) {
+    let hwnd = unsafe { view.GetWnd() }.unwrap_or_else(|_| unsafe { GetForegroundWindow() });
+    if !hwnd.is_invalid() {
+        to_physical_hwnd(hwnd, rect);
+    }
+}
+
+fn to_physical_hwnd(hwnd: HWND, rect: &mut RECT) {
+    let per_monitor = unsafe { GetProcessDpiAwareness(None) }
+        .is_ok_and(|awareness| awareness == PROCESS_PER_MONITOR_DPI_AWARE);
+    if per_monitor {
+        return;
+    }
+    let mut top_left = POINT {
+        x: rect.left,
+        y: rect.top,
+    };
+    let mut bottom_right = POINT {
+        x: rect.right,
+        y: rect.bottom,
+    };
+    let converted = unsafe {
+        LogicalToPhysicalPointForPerMonitorDPI(Some(hwnd), &mut top_left).as_bool()
+            && LogicalToPhysicalPointForPerMonitorDPI(Some(hwnd), &mut bottom_right).as_bool()
+    };
+    if converted {
+        rect.left = top_left.x;
+        rect.top = top_left.y;
+        rect.right = bottom_right.x;
+        rect.bottom = bottom_right.y;
+    }
+}
+
+/// 矩形中心是否落在真实显示器上。部分自绘宿主(全屏游戏、假文本 store)会
+/// 成功返回屏幕外的常量矩形;这种坐标不能拿去摆候选窗,否则窗口会钉在
+/// 屏幕角落。多屏副屏的负坐标仍会命中对应显示器。
+fn on_screen(rect: &RECT) -> bool {
+    let center = POINT {
+        x: rect.left + (rect.right - rect.left) / 2,
+        y: rect.top + (rect.bottom - rect.top) / 2,
+    };
+    !unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) }.is_invalid()
 }
 
 /// 前台线程的原生插入符矩形(屏幕坐标)。TSF 的 GetTextExt 在 Java/Swing
@@ -426,12 +485,14 @@ fn gui_caret() -> Option<(i32, i32, i32, i32)> {
             return None;
         }
     }
-    Some((
-        top_left.x,
-        top_left.y,
-        bottom_right.x,
-        bottom_right.y,
-    ))
+    let mut screen = RECT {
+        left: top_left.x,
+        top: top_left.y,
+        right: bottom_right.x,
+        bottom: bottom_right.y,
+    };
+    to_physical_hwnd(info.hwndCaret, &mut screen);
+    on_screen(&screen).then_some((screen.left, screen.top, screen.right, screen.bottom))
 }
 
 fn move_selection_to_end(context: &ITfContext, ec: u32, range: &ITfRange) -> Result<()> {

@@ -5,7 +5,6 @@
 use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
-use std::time::Instant;
 
 use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOINTERFACE, FALSE, LPARAM, WPARAM};
@@ -26,7 +25,7 @@ use windows::core::{
 };
 
 use crate::attr;
-use crate::client::{Client, RETRY_INTERVAL};
+use crate::client::Client;
 use crate::edit;
 use crate::keys::{self, KeyTap};
 use crate::log;
@@ -53,8 +52,6 @@ pub(crate) struct Shared {
     pub context_epoch: Cell<u64>,
     /// 会话号:宿主线程 id。
     pub session: u64,
-    /// 连接退避,语言栏点击与按键路径共用。
-    pub last_connect: Cell<Option<Instant>>,
     /// 当前 TSF client id(编辑会话要用)。
     pub tid: Cell<u32>,
     /// 中文模式;语言栏指示器与 Caps 恢复用它。
@@ -190,7 +187,6 @@ impl TextService {
                 probing: Cell::new(false),
                 context_epoch: Cell::new(0),
                 session,
-                last_connect: Cell::new(None),
                 tid: Cell::new(0),
                 chinese: Cell::new(true),
                 thread_mgr: RefCell::new(None),
@@ -287,6 +283,30 @@ impl TextService {
         }
     }
 
+    /// 聚焦时先读一次左邻文本:首键就是标点(如数字后的 `.`)或需要重排时,
+    /// 上下文不能等到按键处理完才到。
+    fn probe_focus(&self) {
+        if self.client_id.get() == 0 {
+            return;
+        }
+        let Some(thread_mgr) = self.thread_mgr.borrow().clone() else {
+            return;
+        };
+        let Ok(doc) = (unsafe { thread_mgr.GetFocus() }) else {
+            return;
+        };
+        let Ok(context) = (unsafe { doc.GetTop() }) else {
+            return;
+        };
+        crate::context_probe::request(
+            &context,
+            self.client_id.get(),
+            self.shared.session,
+            self.shared.clone(),
+            self.client.clone(),
+        );
+    }
+
     /// 监听当前输入框的布局变化;滚动或改窗口大小时候选窗跟着光标重摆。
     fn advise_layout(&self) {
         self.unadvise_layout();
@@ -351,6 +371,9 @@ impl TextService {
                 self.shared.set_chinese(reply.chinese);
             }
         }
+        if focused {
+            self.probe_focus();
+        }
     }
 }
 
@@ -360,29 +383,22 @@ impl Drop for TextService {
     }
 }
 
-/// 懒连接 + 退避 + Hello;语言栏按钮也走这条路,连接状态与会话号只有一份。
+/// 懒连接 + Hello;语言栏按钮也走这条路,连接状态与会话号只有一份。
 pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request) -> Option<Reply> {
     // Hello 的应答带全局中/英状态;先放开连接锁再写 compartment,
     // 因为 SetValue 可能同步回调 OnChange,回调里还要借同一个客户端。
     let hello_chinese = {
         let mut guard = client.borrow_mut();
         if guard.is_none() {
-            let may_retry = shared
-                .last_connect
-                .get()
-                .is_none_or(|t| t.elapsed() >= RETRY_INTERVAL);
-            if may_retry {
-                shared.last_connect.set(Some(Instant::now()));
-                if let Some(mut new_client) = Client::connect() {
-                    let hello = new_client.round_trip(&Request::Hello {
-                        session: shared.session,
-                        host: host_app_name(),
-                    });
-                    *guard = Some(new_client);
-                    hello.map(|reply| reply.chinese)
-                } else {
-                    None
-                }
+            // 管道打开很快;连不上就直通这一键。拉起进程的节流在 client 内部,
+            // 不能因为“刚试过”就让用户在接下来两秒里一直打不出中文。
+            if let Some(mut new_client) = Client::connect() {
+                let hello = new_client.round_trip(&Request::Hello {
+                    session: shared.session,
+                    host: host_app_name(),
+                });
+                *guard = Some(new_client);
+                hello.map(|reply| reply.chinese)
             } else {
                 None
             }
@@ -398,9 +414,8 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
     let reply = connection.round_trip(&req);
     if reply.is_none() {
         // 断线:丢弃连接,下键重新尝试;已连上过说明 Server 可能刚崩,
-        // 清掉拉起节流与连接退避,让下一次连接立刻重启它。
+        // 清掉拉起节流,让下一次连接立刻重启它。
         *guard = None;
-        shared.last_connect.set(None);
         crate::client::note_disconnect();
     }
     reply
@@ -820,12 +835,14 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         if rguid.is_null() || unsafe { *rguid } != GUID_PRESERVED_PUNCT {
             return Ok(FALSE);
         }
-        let _ = catch_unwind(AssertUnwindSafe(|| {
+        let handled = catch_unwind(AssertUnwindSafe(|| {
             // 开关写回配置并让 Server 立即生效;组件组合不受影响。
             log("保留键 Ctrl+.");
-            let _ = self.request(Request::TogglePunct);
-        }));
-        Ok(true.into())
+            self.request(Request::TogglePunct).is_some()
+        }))
+        .unwrap_or(false);
+        // Server 不在时把键还给应用,不能静默吞掉。
+        Ok(handled.into())
     }
 }
 

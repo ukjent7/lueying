@@ -4,14 +4,14 @@
 
 ## 进程与安装
 
-- `lueying_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。字符键按当前键盘布局经 `ToUnicodeEx` 翻译，支持 AZERTY/QWERTZ/Dvorak 等非 US 布局。组合期间向 TSF 登记 `ITfCandidateListUIElement` 与 `ITfIntegratableCandidateListUIElement`，宿主（Windows 搜索框、UWP、全屏应用）或读屏软件可读取全量候选、分页与当前高亮，并通过序号选中/提交，声明高亮即待上屏项并显示候选编号；宿主在 `BeginUIElement` 回 `FALSE` 接管绘制时，服务端候选窗自动收起；搜索框调用原样落定接口时提交当前显示文本，不补全剩余拼音。激活时向线程管理器登记 `ITfFunctionProvider`，Chromium/QQNT 据此把 Ctrl+数字等组合键完整交给输入法；触屏键盘可经同一 Provider 取得简体拼音优化布局。激活时即拉起常驻服务，词典与重排模型加载不占首键时间；当前输入框挂 `ITfTextLayoutSink`，宿主滚动或改布局后候选窗重新贴住光标。
+- `lueying_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。字符键按当前键盘布局经 `ToUnicodeEx` 翻译，支持 AZERTY/QWERTZ/Dvorak 等非 US 布局。组合期间向 TSF 登记 `ITfCandidateListUIElement` 与 `ITfIntegratableCandidateListUIElement`，宿主（Windows 搜索框、UWP、全屏应用）或读屏软件可读取全量候选、分页与当前高亮，并通过序号选中/提交，声明高亮即待上屏项并显示候选编号；宿主在 `BeginUIElement` 回 `FALSE` 接管绘制时，服务端候选窗自动收起；搜索框调用原样落定接口时提交当前显示文本，不补全剩余拼音。激活时向线程管理器登记 `ITfFunctionProvider`，Chromium/QQNT 据此把 Ctrl+数字等组合键完整交给输入法；触屏键盘可经同一 Provider 取得简体拼音优化布局。激活时即拉起常驻服务，词典与重排模型加载不占首键时间；当前输入框挂 `ITfTextLayoutSink`，宿主滚动或改布局后候选窗重新贴住光标。获得焦点时先异步读一次光标左邻文本，数字后的首键 `.` 和小数、IP 地址不依赖“先随便按一个键”才正确。
 - `lueying-server.exe`：常驻服务。持有词典、引擎、用户词库和重排模型；每个宿主会话一份 `Engine`，通过命名管道响应请求。
 - `lueying-settings.exe`：独立设置窗。写 `config.ini` 后通知服务重载。
 - `lueying-install.exe`：安装到 `%ProgramFiles%\lueying`。复制版本化 x64/x86 DLL（`lueying_tsf-<版本>.dll`、`lueying_tsf32-<版本>.dll`）、注册 TSF、写自启动/卸载项；文件与注册表动作按需提权。
 
 用户数据只落在当前用户目录：配置 `%APPDATA%\lueying\config.ini`，用户词库 `%LOCALAPPDATA%\lueying\user.tsv`。升级安装会一次性接走旧 `pinyin-ime` 目录下的配置与词库，并清理旧自启动项、卸载项和快捷方式。自启动与卸载项写在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Lueying` 与 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying`；开始菜单快捷方式为「掠影设置」与「卸载掠影」。
 
-管道名是 `\\.\pipe\lueying-v1.<用户哈希>.s<登录会话号>`，行 JSON 请求-应答。SDDL 放行当前用户、AppContainer 与低完整性客户端；服务端用 `Local\` 互斥锁保证同一登录会话只有一个实例。DLL 在服务未运行时从同目录拉起 `lueying-server.exe`，服务不可用时按键直通，避免死键盘。宿主崩溃不会发 `Goodbye`，连接断开时服务端按连接号清理会话、重排缓存与停顿任务。TSF 在组合开始时读取 `GUID_PROP_INPUTSCOPE`，私密字段只关闭学习，不影响输入。
+管道名是 `\\.\pipe\lueying-v1.<用户哈希>.s<登录会话号>`，行 JSON 请求-应答。SDDL 放行当前用户、AppContainer 与低完整性客户端；服务端用 `Local\` 互斥锁保证同一登录会话只有一个实例。DLL 在服务未运行时从同目录拉起 `lueying-server.exe`，服务不可用时按键直通，避免死键盘；刚拉起尚未就绪时这一键直通、下一键立即重连，不阻塞宿主 UI。宿主崩溃不会发 `Goodbye`，连接断开时服务端按连接号清理会话、重排缓存与停顿任务。TSF 在组合开始时读取 `GUID_PROP_INPUTSCOPE`，私密字段只关闭学习，不影响输入。
 
 ## Crates
 
@@ -36,8 +36,8 @@
 4. 默认开启核心模糊组：`z/zh`、`c/ch`、`s/sh`、`l/n`、`f/h`、`r/l`、前后鼻音。模糊改动按处数罚分，精确常用词锁首位，与首位接近的精确整句同样保护；用户选过一次的整词直接回到首位，分段上屏学到的前缀词不顶掉整句首选，选错可用 Shift+Delete 忘掉。
 5. 无整句候选时尝试相邻键替换、漏键插入、多键删除；纠正候选按整串上屏，学习键单独记录。
 6. 4M 模型在按键返回前重排可比较候选；25M 模型在静默 120ms 后异步重排，只允许上下文明确的模糊候选越过可信精确首位。
-7. Backspace/Delete 与左右方向键按字符移动，候选窗拼音串在光标位于串中时用 `|` 标出编辑位置；空格/数字选词、Enter 上屏原文、Esc 取消组合，Shift+Delete 忘掉高亮候选的学习记录；对齐微软拼音与微信输入法的编辑习惯。单次组合保留最多 80 个字母，覆盖常见长句；达到上限时先把当前组合按首选落定，再用新按键起组，不静默吞键。
-8. 候选窗是无焦点置顶 GPUI 窗口，支持深浅色、系统高对比度、鼠标点选、翻页、DPI/多屏贴靠与全屏隐藏；宿主不实现 `GetTextExt` 时退回前台线程的原生插入符，再不行才用视图矩形。Server 进程显式声明 Per-Monitor V2 DPI 感知，避免高缩放与副屏下窗口尺寸/位置被系统虚拟化。首次出现做 140ms 淡入，组合结束做 90ms 淡出，系统开启减少动态效果时直接呈现与收起。
+7. Backspace/Delete 与左右方向键按字符移动，候选窗拼音串在光标位于串中时用 `|` 标出编辑位置；空格/数字选词、Enter 上屏原文、Esc 取消组合，Shift+Delete 忘掉高亮候选的学习记录；对齐微软拼音与微信输入法的编辑习惯。单次组合保留最多 80 个字母，覆盖常见长句；达到上限时先把当前组合按首选落定，再用新按键起组，不静默吞键。中文标点按全角映射，数字后的 `.` 保持半角，小数、版本号和 IP 地址不必切英文。
+8. 候选窗是无焦点置顶 GPUI 窗口，支持深浅色、系统高对比度、鼠标点选、翻页、DPI/多屏贴靠与全屏隐藏；宽度随整句候选自适应，到上限后省略，固定窄窗不会裁掉长句；宿主不实现 `GetTextExt` 时退回前台线程的原生插入符，再不行才用视图矩形。Server 进程显式声明 Per-Monitor V2 DPI 感知，避免高缩放与副屏下窗口尺寸/位置被系统虚拟化；宿主进程不是 Per-Monitor 感知时，TSF 先按宿主窗口把光标矩形换算成物理像素再上报；落在所有显示器之外的光标矩形视为假值丢弃，候选窗不会闪到屏幕外。空闲时窗口停靠到虚拟桌面左缘之外，左侧副屏也不会露出空窗。首次出现做 140ms 淡入，组合结束做 90ms 淡出，系统开启减少动态效果时直接呈现与收起。
 
 已上屏文本保留最近 128 字作为上下文；焦点丢失或光标跳转时清空。所有宿主会话共享同一份用户词库，学习结果跨应用立即可见；词库按周衰减、上限 2 万条，词条与模糊组统计一起写入 `%LOCALAPPDATA%\lueying\user.tsv`；设置页可经 Server 导出/合并导入 TSV，写入后立即落盘。
 

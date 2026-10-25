@@ -25,8 +25,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-    IsWindowVisible, IsZoomed, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
+    GWL_EXSTYLE, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+    HWND_TOPMOST, IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
@@ -35,17 +36,23 @@ use crate::imp::State;
 
 /// 逻辑尺寸(乘 scale_factor 得物理像素)。
 const WIDTH: f32 = 340.0;
+/// 整句候选比单词长得多;固定 340 会把十五字以上的句子裁掉。窗口随候选
+/// 变宽,到上限后改用省略号,避免盖满半个屏幕。
+const MAX_WIDTH: f32 = 680.0;
+/// 候选文字在最大窗口宽度下可用的宽度,给序号、注音和内边距留位。
+const MAX_TEXT_WIDTH: f32 = MAX_WIDTH - 170.0;
 const PREEDIT_H: f32 = 30.0;
 const ROW_H: f32 = 36.0;
-/// 空闲停靠位:主屏左侧外。
-const PARK: i32 = -4000;
+/// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
+const PARK_GAP: i32 = 2000;
 /// 组合结束后的淡出时长;期间沿用最后一份内容,结束后再停靠窗口。
 const HIDE_FADE: Duration = Duration::from_millis(90);
 
 pub(super) fn run(state: Arc<State>) {
     application().run(move |cx: &mut App| {
+        let (park_x, park_y) = park_point();
         let bounds = Bounds {
-            origin: Point::new(px(PARK as f32), px(PARK as f32)),
+            origin: Point::new(px(park_x as f32), px(park_y as f32)),
             size: size(px(WIDTH), px(PREEDIT_H + ROW_H)),
         };
         let panel_state = Arc::clone(&state);
@@ -184,17 +191,20 @@ impl CandidatePanel {
             if style != old {
                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize);
             }
+            let (park_x, park_y) = park_point();
+            let width = view.as_ref().map_or(WIDTH, panel_width);
             let (x, y, w, h) = match view.as_ref().and_then(|v| v.caret) {
                 Some((l, t, r, b)) => {
                     let left = l.min(r);
                     // 候选窗通常停在外屏,`window.scale_factor()` 是停靠屏的 DPI;
                     // 必须按光标所在显示器算,否则副屏 150%/200% 下窗口尺寸不匹配。
                     let scale = scale_at(left, b);
-                    let w = (WIDTH * scale) as i32;
-                    let rows = view.as_ref().map_or(1, panel_rows);
+                    let rows = view.as_ref().map_or(1, |v| panel_rows(v, width));
+                    let mut w = (width * scale) as i32;
                     let h = ((PREEDIT_H + ROW_H * rows as f32 + 8.0) * scale) as i32;
                     // 按光标所在屏的工作区夹取。
                     let work = work_area_at(left, b);
+                    w = w.min((work.right - work.left).max(1));
                     let mut x = left;
                     let mut y = b;
                     if y + h > work.bottom {
@@ -208,14 +218,14 @@ impl CandidatePanel {
                     let hidden = foreground_fullscreen_at(left, b);
                     (x, y, if hidden { 0 } else { w }, h)
                 }
-                None => (PARK, PARK, 0, 0),
+                None => (park_x, park_y, 0, 0),
             };
             if w == 0 {
                 let _ = SetWindowPos(
                     hwnd,
                     Some(HWND_TOPMOST),
-                    PARK,
-                    PARK,
+                    park_x,
+                    park_y,
                     0,
                     0,
                     SWP_NOACTIVATE | SWP_NOSIZE,
@@ -227,30 +237,43 @@ impl CandidatePanel {
     }
 }
 
+/// 单条候选的估算宽度(序号、内边距、文字与注音)。
+fn item_width(text: &str, hint: Option<&String>) -> f32 {
+    let hint_width = hint
+        .filter(|hint| !hint.is_empty())
+        .map_or(0.0, |hint| 8.0 + 7.0 * hint.chars().count() as f32)
+        .min(110.0);
+    22.0 + 18.0 * text.chars().count() as f32 + hint_width
+}
+
+/// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
+fn panel_width(view: &SessionView) -> f32 {
+    let widest = view
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(index, text)| item_width(text, view.hints.get(index)))
+        .fold(0.0, f32::max);
+    (widest + 18.0).clamp(WIDTH, MAX_WIDTH)
+}
+
 /// 当前页候选估算占几行(按字数估宽,避免窗口比内容高出几行)。
-fn panel_rows(view: &SessionView) -> usize {
+fn panel_rows(view: &SessionView, width: f32) -> usize {
     let ps = view.page_size.max(1);
     let start = view.page * ps;
     let end = (start + ps).min(view.candidates.len());
     let mut rows = 0usize;
     let mut used = 0.0f32;
     for index in start..end {
-        let text = &view.candidates[index];
-        let hint_width = view
-            .hints
-            .get(index)
-            .filter(|hint| !hint.is_empty())
-            .map_or(0.0, |hint| 8.0 + 7.0 * hint.chars().count() as f32)
-            .min(110.0);
-        let width = 22.0 + 18.0 * text.chars().count() as f32 + hint_width;
+        let item = item_width(&view.candidates[index], view.hints.get(index));
         if rows == 0 {
             rows = 1;
-            used = width;
-        } else if used + width + 4.0 > WIDTH - 16.0 {
+            used = item;
+        } else if used + item + 4.0 > width - 16.0 {
             rows += 1;
-            used = width;
+            used = item;
         } else {
-            used += width + 4.0;
+            used += item + 4.0;
         }
     }
     rows
@@ -276,6 +299,13 @@ fn page_arrow(
             }
         })
         .child(label)
+}
+
+/// 虚拟桌面左缘之外的停靠点。固定负坐标会落在左侧副屏上,露出空白候选窗。
+fn park_point() -> (i32, i32) {
+    let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    (left.saturating_sub(PARK_GAP), top)
 }
 
 fn monitor_at(x: i32, y: i32) -> HMONITOR {
@@ -448,6 +478,7 @@ impl Render for CandidatePanel {
                 WindowAppearance::Dark | WindowAppearance::VibrantDark
             ))
         };
+        let width = panel_width(&view);
         let ps = view.page_size.max(1);
         let start = view.page * ps;
         let pages = view.candidates.len().div_ceil(ps).max(1);
@@ -476,7 +507,7 @@ impl Render for CandidatePanel {
             .font_family("Microsoft YaHei")
             .flex()
             .flex_col()
-            .w(px(WIDTH))
+            .w(px(width))
             .bg(rgb(colors.bg))
             .border_1()
             .border_color(rgb(colors.border))
@@ -577,7 +608,12 @@ impl Render for CandidatePanel {
                                     })
                                     .child(format!("{}.", slot + 1)),
                             )
-                            .child(SharedString::from(text))
+                            .child(
+                                div()
+                                    .max_w(px(MAX_TEXT_WIDTH))
+                                    .truncate()
+                                    .child(SharedString::from(text)),
+                            )
                             .when(!hint.is_empty(), |el| {
                                 el.child(
                                     div()

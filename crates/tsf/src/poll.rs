@@ -93,7 +93,6 @@ fn poll_once(context: &PollContext) {
         Some(reply) => reply,
         None => {
             *guard = None;
-            context.shared.last_connect.set(None);
             crate::client::note_disconnect();
             return;
         }

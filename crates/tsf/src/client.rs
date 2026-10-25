@@ -1,4 +1,4 @@
-//! Server 管道客户端:懒连接 + 失败退避;断线时上层直接放行字母(宁可英文直通也不死键盘)。
+//! Server 管道客户端:懒连接;断线时上层直接放行字母(宁可英文直通也不死键盘)。
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -26,21 +26,19 @@ const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(1500);
 /// 一行协议的上限,防止坏对端把内存撑爆。
 const MAX_LINE: usize = 1024 * 1024;
 
-/// 连不上时两次尝试之间的退避(每次尝试都在应用 UI 线程上)。
-pub(crate) const RETRY_INTERVAL: Duration = Duration::from_secs(2);
-
 impl Client {
     pub(crate) fn connect() -> Option<Self> {
         if let Some(client) = Self::open() {
             return Some(client);
         }
         // Server 没在跑:拉起安装目录里的兄弟进程,等它建好管道。
-        // 同目录没有 Server 时不要白等,键盘立即可用。
-        if !maybe_spawn_server() {
+        // 只有这次真的起了进程才等;刚起过说明它还在加载,让这一键直通,
+        // 下一键再试,不能在 UI 线程上反复睡。
+        if !spawn_server_once() {
             return None;
         }
-        for _ in 0..4 {
-            std::thread::sleep(Duration::from_millis(30));
+        for _ in 0..8 {
+            std::thread::sleep(Duration::from_millis(15));
             if let Some(client) = Self::open() {
                 return Some(client);
             }
@@ -128,7 +126,7 @@ fn take_line(pending: &mut Vec<u8>) -> Option<String> {
 /// 激活输入法时先拉起 Server,让词典与重排模型在用户敲第一键前开始加载。
 /// 只起进程不建连接:真正的 Hello 仍由首键按需完成。
 pub(crate) fn warm_server() {
-    let _ = maybe_spawn_server();
+    let _ = spawn_server_once();
 }
 
 /// 已经连上的 Server 掉线:清掉拉起节流,下一次连接立即尝试重启。
@@ -137,8 +135,9 @@ pub(crate) fn note_disconnect() {
 }
 
 /// 每个宿主进程每 10 秒最多拉起一次 Server;正常注入的 DLL 与 Server 同目录。
-/// 返回同目录是否有 Server(exe 存在)。没装 Server 时调用方不必等待管道。
-fn maybe_spawn_server() -> bool {
+/// 只有本次真的发起了进程才返回 true,调用方据此决定要不要等管道;
+/// 刚起过或同目录没有 Server 都立即返回,键盘不用等。
+fn spawn_server_once() -> bool {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const RETRY_SECS: u64 = 10;
     let Some(dir) =
@@ -159,12 +158,12 @@ fn maybe_spawn_server() -> bool {
             .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
             .is_err()
     {
-        return true;
+        return false;
     }
-    let _ = std::process::Command::new(exe)
+    std::process::Command::new(exe)
         .creation_flags(CREATE_NO_WINDOW)
-        .spawn();
-    true
+        .spawn()
+        .is_ok()
 }
 
 /// 上次尝试拉起 Server 的秒级时间戳。
