@@ -24,8 +24,9 @@ mod imp {
         VIRTUAL_KEY,
     };
     use windows::Win32::UI::TextServices::{
-        CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfInputProcessorProfileMgr,
-        ITfInputProcessorProfiles, ITfThreadMgr, TF_INPUTPROCESSORPROFILE,
+        CLSID_TF_InputProcessorProfiles, CLSID_TF_ThreadMgr, ITfCompositionView,
+        ITfContextComposition, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
+        ITfThreadMgr, TF_INPUTPROCESSORPROFILE,
         TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE, TF_IPPMF_FORPROCESS,
         TF_PROFILETYPE_INPUTPROCESSOR,
     };
@@ -333,7 +334,7 @@ mod imp {
             }
             // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
             // pinyin-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
-            let latency = commit_latency(edit)?;
+            let latency = commit_latency(edit, &thread_mgr)?;
             Ok((text, latency))
         })();
 
@@ -405,9 +406,9 @@ mod imp {
         String::from_utf16_lossy(&buf[..n.max(0) as usize])
     }
 
-    /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到文本落地。
+    /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到组合结束、文本落地。
     /// 只设上限抓卡死/秒级回归,精确引擎耗时由 pinyin-e2e 的分位数门禁负责。
-    fn commit_latency(edit: HWND) -> Result<String, String> {
+    fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
         const ROUNDS: usize = 5;
         let mut samples = Vec::with_capacity(ROUNDS);
         for round in 0..ROUNDS {
@@ -417,14 +418,22 @@ mod imp {
             pump_for(Duration::from_millis(80));
             type_text("nihao")?;
             pump_for(Duration::from_millis(120));
+            if !composing(thread_mgr)? {
+                return Err(format!("第 {} 轮打字后没有组合", round + 1));
+            }
             let start = Instant::now();
             tap(0x20)?;
-            let deadline = Instant::now() + Duration::from_millis(800);
-            while edit_text(edit).is_empty() {
+            let deadline = start + Duration::from_millis(800);
+            // 内联预演在空格前就写进了编辑框,不能等文本变化;等组合结束。
+            while composing(thread_mgr)? {
                 if Instant::now() >= deadline {
                     return Err(format!("第 {} 轮提交超过 800ms", round + 1));
                 }
                 pump_for(Duration::from_millis(5));
+            }
+            let text = edit_text(edit);
+            if !text.contains("你好") {
+                return Err(format!("第 {} 轮上屏 `{text}` 不含 你好", round + 1));
             }
             samples.push(start.elapsed().as_secs_f64() * 1000.0);
         }
@@ -439,6 +448,21 @@ mod imp {
             return Err(format!("{summary}\n\np95 超过 250ms"));
         }
         Ok(summary)
+    }
+
+    /// 当前焦点上下文里是否有 TSF 组合;组合结束即提交落地。
+    fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
+        let doc = unsafe { thread_mgr.GetFocus() }.map_err(|e| format!("GetFocus: {e}"))?;
+        let context = unsafe { doc.GetTop() }.map_err(|e| format!("GetTop: {e}"))?;
+        let composition: ITfContextComposition = context
+            .cast()
+            .map_err(|e| format!("ITfContextComposition: {e}"))?;
+        let list =
+            unsafe { composition.EnumCompositions() }.map_err(|e| format!("枚举组合: {e}"))?;
+        let mut views: [Option<ITfCompositionView>; 1] = [None];
+        let mut fetched = 0u32;
+        unsafe { list.Next(&mut views, &mut fetched) }.map_err(|e| format!("读取组合: {e}"))?;
+        Ok(fetched > 0)
     }
 
     fn create_host_window() -> Result<(HWND, HWND), String> {
