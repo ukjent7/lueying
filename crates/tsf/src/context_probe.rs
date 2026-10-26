@@ -11,12 +11,12 @@ use std::rc::Rc;
 use lueying_protocol::Request;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Variant::{VT_UNKNOWN, VariantClear};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
     GUID_PROP_INPUTSCOPE, IS_ALPHANUMERIC_PIN, IS_NUMERIC_PASSWORD, IS_NUMERIC_PIN, IS_PASSWORD,
     IS_PRIVATE, ITfContext, ITfEditSession, ITfEditSession_Impl, ITfInputScope, ITfRange,
     InputScope, TF_ANCHOR_START, TF_DEFAULT_SELECTION, TF_ES_READ, TF_SELECTION,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::core::{Interface, Result, implement};
 
