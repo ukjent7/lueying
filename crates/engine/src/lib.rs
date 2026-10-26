@@ -381,6 +381,12 @@ impl Engine {
         self.page = 0;
         self.rev = self.rev.wrapping_add(1);
         if !text.is_ascii() {
+            if self.learning {
+                self.user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .learn_context(&self.context, &text);
+            }
             self.push_context(&text);
         }
         self.after_digit = ends_with_digit(&text);
@@ -495,6 +501,12 @@ impl Engine {
             match event {
                 Event::Commit(text) => {
                     if !text.is_ascii() {
+                        if self.learning {
+                            self.user
+                                .write()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .learn_context(&self.context, text);
+                        }
                         self.push_context(text);
                     }
                     self.after_digit = ends_with_digit(text);
@@ -1040,6 +1052,7 @@ impl Engine {
         if self.gram_cache.len() > 4096 {
             self.gram_cache.clear();
         }
+        let context = self.context.clone();
         let user = self.user.read().unwrap_or_else(|p| p.into_inner());
         let built = query::build(
             &self.dict,
@@ -1047,6 +1060,7 @@ impl Engine {
             &self.cfg.fuzzy,
             self.gram.as_deref(),
             &mut self.gram_cache,
+            &context,
             &comp.raw,
         );
         comp.display = built.display;

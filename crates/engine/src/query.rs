@@ -765,6 +765,7 @@ fn build_exact(
     fuzzy: &Fuzzy,
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
+    context: &str,
     raw: &str,
 ) -> Built {
     let total = dict.total_weight() as f64;
@@ -894,6 +895,12 @@ fn build_exact(
             learn_key: None,
         });
     }
+    // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
+    // 进入 beam 的路径,这里再让用户常打的前后搭配在同一批路径里靠前。
+    for cand in &mut full {
+        cand.score += user.context_bonus(context, &cand.text);
+    }
+    full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
     let mut words: Vec<Candidate> = Vec::new();
     for (end, nodes) in by_end.iter().enumerate() {
@@ -969,9 +976,10 @@ pub fn build(
     fuzzy: &Fuzzy,
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
+    context: &str,
     raw: &str,
 ) -> Built {
-    let built = build_exact(dict, user, fuzzy, gram, cache, raw);
+    let built = build_exact(dict, user, fuzzy, gram, cache, context, raw);
     if built.cands.iter().any(|c| c.full)
         || built.safe_extend
         || built.typing_prefix
@@ -987,7 +995,7 @@ pub fn build(
         if !segment::complete(&correction) {
             continue;
         }
-        let mut fixed = build_exact(dict, user, fuzzy, gram, cache, &correction);
+        let mut fixed = build_exact(dict, user, fuzzy, gram, cache, context, &correction);
         let mut kept = Vec::new();
         for mut cand in fixed.cands.drain(..) {
             if !cand.full {

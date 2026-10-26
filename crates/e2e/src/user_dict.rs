@@ -13,9 +13,13 @@
 //!     Shift+Delete 也要按词删掉所有形态的记录。
 //! 11. 用户词库到 2 万条后每个音节组合线性扫全表 → 查询按音节数与首字母收窄,
 //!     既不能漏掉该命中的用户词,也不能随词库增长拖慢首键。
+//! 12. 上屏只学词频、跨词搭配只留在内存 → 前后字搭配必须随词库一起导出/导入,
+//!     新会话能继续用同一份个人上下文。
+//! 13. 上下文搭配只写文件、不参与排序 → 学过「最先」后,输入 `xian` 的首选
+//!     必须从更高频的「现」切到「先」;标点切断相邻关系时必须退回「现」。
 
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
@@ -67,6 +71,77 @@ pub fn run(report: &mut String) -> usize {
         "上屏写入用户词库",
         exported.lines().any(|l| l.starts_with("ni'hao\t你好\t")),
         exported.lines().next().unwrap_or_default().to_string(),
+    );
+    // 上屏还形成「你→好」的字级搭配;它必须和词条一起持久化。
+    let has_context = exported
+        .lines()
+        .any(|l| l.starts_with("@context\t你\t好\t"));
+    push(
+        &mut checks,
+        "上屏写入上下文搭配",
+        has_context,
+        exported
+            .lines()
+            .find(|l| l.starts_with("@context\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let mut roundtrip = Engine::new(Arc::clone(&dict), Config::default());
+    roundtrip.import_user(&exported);
+    let reexported = roundtrip.export_user();
+    push(
+        &mut checks,
+        "上下文搭配导出导入往返",
+        reexported
+            .lines()
+            .any(|l| l.starts_with("@context\t你\t好\t")),
+        reexported
+            .lines()
+            .find(|l| l.starts_with("@context\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+
+    // 字级搭配真正参与排序:导入「最→先」后,输入 `xian` 的首选应从更高频的
+    // 「现」切到「先」。时间戳用当前时间,避免导入的数据被判为过期而衰减掉。
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let context_line = format!("@context\t最\t先\t100\t{now}\n");
+    let mut ranked = Engine::new(Arc::clone(&dict), Config::default());
+    ranked.import_user(&context_line);
+    ranked.set_context("最");
+    for ch in "xian".chars() {
+        ranked.process(Key::Letter(ch));
+    }
+    let biased = ranked.candidates().first().cloned().unwrap_or_default();
+    let mut plain = Engine::new(Arc::clone(&dict), Config::default());
+    plain.set_context("最");
+    for ch in "xian".chars() {
+        plain.process(Key::Letter(ch));
+    }
+    let baseline = plain.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "上下文搭配改变首选",
+        baseline == "现" && biased == "先",
+        format!("无搭配 {baseline} → 有搭配 {biased}"),
+    );
+
+    // 标点把前后字隔开:同样的搭配不能跨过逗号生效。
+    let mut cut = Engine::new(Arc::clone(&dict), Config::default());
+    cut.import_user(&context_line);
+    cut.set_context("最，");
+    for ch in "xian".chars() {
+        cut.process(Key::Letter(ch));
+    }
+    let after_punct = cut.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "标点切断上下文搭配",
+        after_punct == "现" && after_punct == baseline,
+        format!("逗号后首选 {after_punct}"),
     );
 
     // 两个会话共用一份词库:一边导入,另一边立刻用它排序。

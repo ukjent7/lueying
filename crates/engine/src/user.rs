@@ -1,4 +1,4 @@
-//! 用户词典:选词提频与自动造词,带指数衰减,支持导出/导入。
+//! 用户词典:选词提频、自动造词与字级搭配学习,带指数衰减,支持导出/导入。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,6 +9,12 @@ use lueying_dict::syllables::FUZZY_GROUPS;
 const DECAY_SECS: u64 = 7 * 24 * 3600;
 /// 用户词条上限。超过后按频次/时间保留九成,防止长期使用后文件与查询无限膨胀。
 const MAX_ENTRIES: usize = 20_000;
+/// 字级上下文搭配上限。只保留最常见的前后字对,避免长期使用后文件无界增长。
+const MAX_CONTEXT: usize = 50_000;
+/// 上下文搭配的衰减周期与加分权重。它只做同分附近的个人化，不能压过词典证据。
+const CONTEXT_DECAY_SECS: u64 = 7 * 24 * 3600;
+const CONTEXT_BONUS_STEP: f64 = 0.25;
+const CONTEXT_BONUS_MAX: f64 = 1.5;
 /// 组级适应按周减半;用户改口音或换输入习惯后一周内就会自然回退,
 /// 不会因为历史上选过几次就让所有组一起顶到上限、失去区分度。
 const GROUP_DECAY_SECS: u64 = 7 * 24 * 3600;
@@ -39,6 +45,19 @@ struct UserEntry {
     ts: u64,
 }
 
+#[derive(Clone, Copy, Default)]
+struct ContextStat {
+    count: u32,
+    ts: u64,
+}
+
+impl ContextStat {
+    fn effective(self, current: u64) -> u32 {
+        let weeks = current.saturating_sub(self.ts) / CONTEXT_DECAY_SECS;
+        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
+    }
+}
+
 #[derive(Default)]
 pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
@@ -47,6 +66,9 @@ pub struct UserDict {
     by_shape: HashMap<(usize, char), Vec<String>>,
     /// 词条总数,避免每次学习都扫全表。
     count: usize,
+    /// 已上屏汉字的前后搭配。用户在不同词之间形成的固定说法会随使用增强,
+    /// 只用于候选整句重排,不单独产生候选。
+    context: HashMap<(char, char), ContextStat>,
     /// 各模糊组的连续选择次数,与词条一起持久化。
     groups: [GroupStat; GROUP_COUNT],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
@@ -64,6 +86,25 @@ fn shape(key: &str) -> (usize, char) {
     (key.split('\'').count(), key.chars().next().unwrap_or('\0'))
 }
 
+/// 上下文只收汉字;标点、数字和英文不进入搭配统计。
+fn is_hanzi(c: char) -> bool {
+    matches!(c as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+        | 0x20000..=0x2A6DF | 0x2A700..=0x2EBEF | 0x30000..=0x323AF)
+}
+
+/// 只把紧邻的汉字算作搭配:末尾是标点、空格、数字或英文时,后面的字
+/// 不与更早的汉字构成搭配。
+fn tail_hanzi(text: &str) -> Option<char> {
+    text.chars().next_back().filter(|c| is_hanzi(*c))
+}
+
+fn single_char(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    chars.next().is_none().then_some(c)
+}
+
 impl UserDict {
     pub fn new() -> Self {
         Self::default()
@@ -79,6 +120,7 @@ impl UserDict {
         self.map.clear();
         self.by_shape.clear();
         self.count = 0;
+        self.context.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
     }
@@ -138,6 +180,83 @@ impl UserDict {
             .copied()
             .zip(self.groups.iter().map(|stat| stat.effective(current)))
             .collect()
+    }
+
+    /// 记录一段已上屏文本与它左侧上下文的字级搭配。
+    ///
+    /// 一次上屏可能包含整句或多段词;句内相邻字、以及左邻紧挨着的汉字到
+    /// 本次第一个汉字之间的衔接都会被记下来。只收汉字,标点和英文不参与。
+    pub fn learn_context(&mut self, context: &str, text: &str) {
+        let mut prev = tail_hanzi(context);
+        let current = now();
+        let mut changed = false;
+        for ch in text.chars() {
+            if !is_hanzi(ch) {
+                prev = None;
+                continue;
+            }
+            if let Some(left) = prev {
+                let stat = self.context.entry((left, ch)).or_default();
+                stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
+                    stat.count / 2 + 1
+                } else {
+                    stat.count.saturating_add(1)
+                };
+                stat.ts = current;
+                changed = true;
+            }
+            prev = Some(ch);
+        }
+        if !changed {
+            return;
+        }
+        if self.context.len() > MAX_CONTEXT {
+            self.prune_context();
+        }
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 一个词在当前左邻上下文下的个人搭配加分。
+    ///
+    /// 词内相邻字也参与:用户常打的整句或词组会让它的内部搭配变强。加分
+    /// 只做同分附近的个人化,上限低于一个普通词罚分。
+    pub fn context_bonus(&self, context: &str, word: &str) -> f64 {
+        if self.context.is_empty() {
+            return 0.0;
+        }
+        let current = now();
+        let mut prev = tail_hanzi(context);
+        let mut bonus = 0.0;
+        for ch in word.chars() {
+            if !is_hanzi(ch) {
+                prev = None;
+                continue;
+            }
+            if let Some(left) = prev
+                && let Some(stat) = self.context.get(&(left, ch))
+            {
+                let effective = stat.effective(current);
+                if effective > 0 {
+                    bonus += (1.0 + f64::from(effective)).ln() * CONTEXT_BONUS_STEP;
+                }
+            }
+            prev = Some(ch);
+        }
+        bonus.min(CONTEXT_BONUS_MAX)
+    }
+
+    /// 保留最常见的前九成搭配;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune_context(&mut self) {
+        let keep = MAX_CONTEXT * 9 / 10;
+        let mut all: Vec<((char, char), ContextStat)> = self.context.drain().collect();
+        all.sort_by(|a, b| {
+            b.1.count
+                .cmp(&a.1.count)
+                .then(b.1.ts.cmp(&a.1.ts))
+                .then(a.0.cmp(&b.0))
+        });
+        all.truncate(keep);
+        self.context.extend(all);
     }
 
     /// 记录一次「在 key 下选了 word」。
@@ -285,6 +404,19 @@ impl UserDict {
                 out.push_str(&format!("@group\t{name}\t{}:{}\n", stat.count, stat.ts));
             }
         }
+        let mut context: Vec<(char, char)> = self.context.keys().copied().collect();
+        context.sort();
+        for (left, right) in context {
+            let Some(stat) = self.context.get(&(left, right)) else {
+                continue;
+            };
+            if stat.count > 0 {
+                out.push_str(&format!(
+                    "@context\t{left}\t{right}\t{}\t{}\n",
+                    stat.count, stat.ts
+                ));
+            }
+        }
         out
     }
 
@@ -311,6 +443,31 @@ impl UserDict {
                     continue;
                 };
                 let stat = &mut self.groups[index];
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
+            if k == "@context" {
+                let (Some(left), Some(right), Some(count), Some(ts), None) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let (Some(left), Some(right)) = (single_char(left), single_char(right)) else {
+                    continue;
+                };
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                if !is_hanzi(left) || !is_hanzi(right) || count == 0 {
+                    continue;
+                }
+                let stat = self.context.entry((left, right)).or_default();
                 stat.count = stat.count.max(count);
                 stat.ts = stat.ts.max(ts);
                 changed = true;
@@ -352,6 +509,9 @@ impl UserDict {
         }
         if self.count > MAX_ENTRIES {
             self.prune();
+        }
+        if self.context.len() > MAX_CONTEXT {
+            self.prune_context();
         }
         if changed {
             self.rev = self.rev.wrapping_add(1);
