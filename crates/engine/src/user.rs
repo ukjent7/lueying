@@ -292,12 +292,12 @@ impl UserDict {
     }
 
     /// 一个候选词序列在当前前词下的个人语序加分。
-    pub fn transition_bonus(&self, previous: Option<&str>, words: &[String]) -> f64 {
+    pub fn transition_bonus<'a>(&self, previous: Option<&'a str>, words: &'a [String]) -> f64 {
         if self.transitions.is_empty() {
             return 0.0;
         }
         let current = now();
-        let mut prev: Option<&str> = previous;
+        let mut prev: Option<&'a str> = previous;
         let mut bonus = 0.0;
         for word in words {
             if word.is_empty() {
