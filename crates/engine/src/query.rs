@@ -48,6 +48,8 @@ pub struct Candidate {
     pub hint: Option<String>,
     /// 纠正候选的学习键(原串与纠正串不同,不能从 `spans` 反推)。
     pub learn_key: Option<String>,
+    /// 快捷输入(日期/时间/数字金额):不写词库,也不参与词级转移。
+    pub quick: bool,
 }
 
 /// 一次构建的产物。
@@ -897,6 +899,7 @@ fn build_exact(
             groups: st.groups,
             hint: st.hint.clone(),
             learn_key: None,
+            quick: false,
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
@@ -928,6 +931,7 @@ fn build_exact(
                 groups: node.groups,
                 hint: node.hint.clone(),
                 learn_key: None,
+                quick: false,
             });
         }
     }
@@ -995,6 +999,7 @@ pub fn build(
     if built.cands.iter().any(|c| c.full)
         || built.safe_extend
         || built.typing_prefix
+        || crate::quick::is_trigger(raw)
         || !typo::eligible(raw)
     {
         return built;

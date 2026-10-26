@@ -5,6 +5,7 @@
 
 mod punct;
 mod query;
+mod quick;
 mod segment;
 mod typo;
 mod user;
@@ -16,6 +17,7 @@ pub use lueying_dict::Fuzzy;
 use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
+pub use quick::CivilTime;
 pub use user::UserDict;
 
 /// 多个会话共享的用户词库;Server 让所有应用看到同一份学习结果。
@@ -135,10 +137,14 @@ pub struct Engine {
     context: String,
     /// 分段上屏已在重算前写入上下文的提交数;`note_events` 据此跳过重复学习。
     context_handled: usize,
+    /// 快捷候选上屏的条数;`note_events` 据此跳过字级搭配学习,但仍写入左邻文本。
+    quick_handled: usize,
     /// 最近上屏的最后一个词;词级转移加分与学习使用。
     last_word: Option<String>,
     /// 候选提交已在 `apply_consume` 学过词级转移的条数。
     transition_handled: usize,
+    /// 宿主注入的本地时间;快捷输入按它生成日期/时间候选。
+    now: Option<CivilTime>,
     /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
     rev: u64,
 }
@@ -165,8 +171,10 @@ impl Engine {
             after_digit: false,
             context: String::new(),
             context_handled: 0,
+            quick_handled: 0,
             last_word: None,
             transition_handled: 0,
+            now: None,
             rev: 0,
         }
     }
@@ -181,6 +189,11 @@ impl Engine {
     pub fn with_user(mut self, user: SharedUser) -> Self {
         self.user = user;
         self
+    }
+
+    /// 宿主注入当前本地时间;日期/时间/星期候选按它生成,不依赖时区库。
+    pub fn set_now(&mut self, now: CivilTime) {
+        self.now = Some(now);
     }
 
     /// 私密字段里关掉用户词库/自动造词学习。切回普通字段时恢复。
@@ -389,6 +402,7 @@ impl Engine {
     /// 不补全剩余拼音,也不改选下一条候选。返回上屏文本。
     pub fn finalize_display(&mut self) -> Option<String> {
         let comp = self.comp.take()?;
+        let quick = self.cands.get(self.hl).is_some_and(|cand| cand.quick);
         let text = if comp.display.is_empty() {
             comp.raw
         } else {
@@ -401,7 +415,8 @@ impl Engine {
         self.page = 0;
         self.rev = self.rev.wrapping_add(1);
         if !text.is_ascii() {
-            if self.learning {
+            // 快捷文本不学个人搭配,但仍作为后续候选的左邻上下文。
+            if self.learning && !quick {
                 self.user
                     .write()
                     .unwrap_or_else(|p| p.into_inner())
@@ -421,6 +436,10 @@ impl Engine {
         let Some(cand) = self.cands.get(self.hl).cloned() else {
             return false;
         };
+        // 日期/金额不是用户词,没有可忘的学习记录;也不能按同文删到真正的词。
+        if cand.quick {
+            return false;
+        }
         // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录。
         let removed = self
             .user
@@ -525,7 +544,9 @@ impl Engine {
                     if self.context_handled > 0 {
                         self.context_handled -= 1;
                     } else if !text.is_ascii() {
-                        if self.learning {
+                        // 快捷输入是系统生成的数字/日期,不进个人搭配;左邻文本
+                        // 仍要更新,让紧随其后的候选看到正确的上下文。
+                        if self.learning && self.quick_handled == 0 {
                             self.user
                                 .write()
                                 .unwrap_or_else(|p| p.into_inner())
@@ -539,6 +560,9 @@ impl Engine {
                         self.transition_handled -= 1;
                     } else {
                         self.last_word = None;
+                    }
+                    if self.quick_handled > 0 {
+                        self.quick_handled -= 1;
                     }
                     self.after_digit = ends_with_digit(text);
                 }
@@ -732,6 +756,17 @@ impl Engine {
                 self.page_by(if key == Key::PageUp { -1 } else { 1 });
                 Vec::new()
             }
+            // v 模式的第一位小数点属于数字;已有小数点时恢复普通标点。
+            Key::Punct('.') if self.number_dot_mode() => {
+                if self.append_number_dot() {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(".".to_string()));
+                    events
+                }
+            }
             // 微软拼音习惯:组合中 -/= 翻页;只有一页时退回标点。
             Key::Punct('-') if self.has_pages() => {
                 self.page_by(-1);
@@ -741,6 +776,8 @@ impl Engine {
                 self.page_by(1);
                 Vec::new()
             }
+            // v 模式里数字是数字的一部分,不再当候选序号;上屏仍用空格/回车。
+            Key::Digit(d) if self.number_mode() => self.number_digit(d),
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
                 // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
@@ -824,6 +861,60 @@ impl Engine {
         }
     }
 
+    /// 组合是否处于 v 数字模式:字母 v 后只跟数字与至多一个小数点。
+    fn number_mode(&self) -> bool {
+        self.comp.as_ref().is_some_and(|comp| {
+            comp.raw
+                .strip_prefix('v')
+                .is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+        })
+    }
+
+    /// 第一位小数点进入数字;已有小数点或还没有数字时按普通标点走。
+    fn number_dot_mode(&self) -> bool {
+        self.comp.as_ref().is_some_and(|comp| {
+            comp.raw.strip_prefix('v').is_some_and(|rest| {
+                !rest.is_empty() && !rest.contains('.') && rest.bytes().all(|b| b.is_ascii_digit())
+            })
+        })
+    }
+
+    /// v 模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
+    fn number_digit(&mut self, d: u8) -> Vec<Event> {
+        if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
+            return self.select_digit(d);
+        }
+        let Some(c) = char::from_digit(u32::from(d), 10) else {
+            return self.select_digit(d);
+        };
+        if let Some(comp) = self.comp.as_mut() {
+            comp.raw.insert(comp.cursor, c);
+            comp.cursor += 1;
+        }
+        self.recompute();
+        Vec::new()
+    }
+
+    /// 把第一位小数点写进 v 数字;组合已满时返回 `false`,由调用方落定。
+    fn append_number_dot(&mut self) -> bool {
+        let inserted = {
+            let Some(comp) = self.comp.as_mut() else {
+                return false;
+            };
+            if comp.raw.len() >= MAX_RAW {
+                false
+            } else {
+                comp.raw.insert(comp.cursor, '.');
+                comp.cursor += 1;
+                true
+            }
+        };
+        if inserted {
+            self.recompute();
+        }
+        inserted
+    }
+
     /// 逐段落定整个组合;没有候选时上屏原文。返回按序的上屏事件。
     fn commit_all(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
@@ -853,17 +944,27 @@ impl Engine {
         let cand = self.cands.get(idx)?.clone();
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
+        // 快捷候选不是词:不写用户词库、不学组级适应,也不把日期/金额
+        // 当作用词接进词级转移。它们也不参与同一次组合的自动造词。
+        if cand.quick {
+            self.phrase = None;
+            self.quick_handled += 1;
+        }
         // 用户词库的键必须和查询时的音节键一致(ni'hao),不能存原始串(nihao),
         // 否则多音节词学完也匹配不上。
-        let learned = cand.learn_key.clone().unwrap_or_else(|| {
-            cand.spans
-                .iter()
-                .take(cand.consume)
-                .map(|&(s, e)| lueying_dict::syllables::canonical(&raw[s..e]))
-                .collect::<Vec<_>>()
-                .join("'")
-        });
-        if self.learning {
+        let learned = if cand.quick {
+            String::new()
+        } else {
+            cand.learn_key.clone().unwrap_or_else(|| {
+                cand.spans
+                    .iter()
+                    .take(cand.consume)
+                    .map(|&(s, e)| lueying_dict::syllables::canonical(&raw[s..e]))
+                    .collect::<Vec<_>>()
+                    .join("'")
+            })
+        };
+        if self.learning && !cand.quick {
             let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
             user.learn(&learned, &cand.text);
             if cand.groups != 0 {
@@ -871,12 +972,17 @@ impl Engine {
             }
             user.learn_transitions(self.last_word.as_deref(), &cand.words);
         }
-        self.last_word = cand.words.last().cloned();
-        self.transition_handled += 1;
+        if cand.quick {
+            // 让 `note_events` 把上一条词序切断,而不是把日期记成前词。
+            self.last_word = None;
+        } else {
+            self.last_word = cand.words.last().cloned();
+            self.transition_handled += 1;
+        }
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
-        let phrase = if self.learning {
+        let phrase = if self.learning && !cand.quick {
             match self.phrase.take() {
                 Some((mut key, mut text)) => {
                     key.push('\'');
@@ -1102,7 +1208,7 @@ impl Engine {
         }
         let context = self.context.clone();
         let user = self.user.read().unwrap_or_else(|p| p.into_inner());
-        let built = query::build(
+        let mut built = query::build(
             &self.dict,
             &user,
             &self.cfg.fuzzy,
@@ -1112,6 +1218,23 @@ impl Engine {
             self.last_word.as_deref(),
             &comp.raw,
         );
+        // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
+        // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
+        let quick = quick::candidates(&comp.raw, self.now.unwrap_or_else(CivilTime::now_utc));
+        if !quick.is_empty() {
+            built.cands.retain(|cand| !quick.iter().any(|q| q.text == cand.text));
+            let keep_first = built.cands.first().is_some_and(|cand| {
+                cand.full && !cand.sentence && (cand.trusted || cand.user_freq > 0)
+            });
+            let position = if keep_first { 1 } else { 0 };
+            for cand in quick.into_iter().rev() {
+                built.cands.insert(position, cand);
+            }
+            // 去重可能删掉原来的首选;内联显示始终跟随插入后的第一条。
+            if let Some(top) = built.cands.first() {
+                built.display = top.text.clone();
+            }
+        }
         comp.display = built.display;
         comp.seg_spans = built
             .cands

@@ -1,0 +1,401 @@
+//! 快捷输入 E2E:日期、时间、星期与 v 模式数字/金额。
+//!
+//! 先列失败方式:
+//! 1. 宿主没注入本地时间 → 日期/时间用 UTC,跨时区或午夜会错一天。
+//! 2. 触发串不精确 → `rqx` 也出日期,或者长句里的 `rq` 被截出来。
+//! 3. 快捷候选写进用户词库 → 第二天同一触发串返回昨天学到的旧日期。
+//! 4. 快捷候选参与词级转移 → 日期/金额成为下一条候选的前词。
+//! 5. v 模式数字仍当候选序号 → 根本打不出 `v123`。
+//! 6. 小数点被当标点落定 → 打不出金额小数。
+//! 7. 中文数字零/万/亿与开头「一十」读错。
+//! 8. 金额角分/整/零的规则错。
+//! 9. 快捷候选被停顿重排换走 → 空格上屏另一个词(Server 侧检查)。
+//! 10. 回删、回车退路与组合残留坏 → 快捷输入吞键或留下半个数字。
+//! 11. 快捷项抢掉可信整词的首选 → `sj` 应保留「时间」,不能直接跳到时间候选。
+//! 12. 快捷文本写进字级搭配 → 数字/日期会污染后续候选的个人上下文。
+//! 13. 失焦落定或 Shift+Delete 把快捷项当用户词 → 学出搭配或误删同文词。
+
+use std::sync::Arc;
+
+use lueying_dict::Dictionary;
+use lueying_engine::{CivilTime, Config, Engine, Event, Key};
+
+fn push(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    ok: bool,
+    note: String,
+) {
+    checks.push((name, ok, note));
+}
+
+fn engine() -> Engine {
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+}
+
+fn at(now: CivilTime) -> Engine {
+    let mut e = engine();
+    e.set_now(now);
+    e
+}
+
+fn fixed() -> CivilTime {
+    CivilTime {
+        year: 2026,
+        month: 10,
+        day: 26,
+        hour: 14,
+        minute: 5,
+        second: 9,
+        weekday: 1,
+    }
+}
+
+fn letters(e: &mut Engine, text: &str) {
+    for c in text.chars() {
+        e.process(Key::Letter(c));
+    }
+}
+
+/// 先按 v,再按数字与小数点;模拟用户把数字打进组合。
+fn numbers(e: &mut Engine, body: &str) {
+    e.process(Key::Letter('v'));
+    for c in body.chars() {
+        if c == '.' {
+            e.process(Key::Punct('.'));
+        } else if let Some(d) = c.to_digit(10) {
+            e.process(Key::Digit(d as u8));
+        }
+    }
+}
+
+fn cands(body: &str) -> Vec<String> {
+    let mut e = engine();
+    numbers(&mut e, body);
+    e.candidates()
+}
+
+fn top_is(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    body: &str,
+    want: &str,
+) {
+    let top = cands(body).into_iter().next().unwrap_or_default();
+    push(checks, name, top == want, format!("v{body} → {top}"));
+}
+
+fn has(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    body: &str,
+    want: &str,
+) {
+    let list = cands(body);
+    push(
+        checks,
+        name,
+        list.iter().any(|c| c == want),
+        format!("v{body} → {list:?}"),
+    );
+}
+
+pub fn run(report: &mut String) -> usize {
+    let mut checks = Vec::new();
+
+    // 日期:固定本地时间,四种格式;数字选词仍然可用,且不写用户词库。
+    let mut d = at(fixed());
+    letters(&mut d, "rq");
+    let list = d.candidates();
+    push(
+        &mut checks,
+        "日期触发",
+        list.first().map(String::as_str) == Some("2026年10月26日"),
+        format!("{list:?}"),
+    );
+    push(
+        &mut checks,
+        "日期多格式",
+        ["2026-10-26", "2026/10/26", "10月26日"]
+            .iter()
+            .all(|want| list.iter().any(|c| c == want)),
+        format!("{list:?}"),
+    );
+    let events = d.process(Key::Digit(2));
+    push(
+        &mut checks,
+        "日期数字选词",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "2026-10-26")),
+        format!("{events:?}"),
+    );
+    let exported = d.export_user();
+    push(
+        &mut checks,
+        "日期不写词库",
+        !exported.contains("2026年10月26日") && !exported.lines().any(|line| line.starts_with("rq\t")),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+    // 时间前进一天后同一触发必须给出新日期,不能召回上次上屏的旧字串。
+    d.set_now(CivilTime {
+        day: 27,
+        weekday: 2,
+        ..fixed()
+    });
+    letters(&mut d, "rq");
+    push(
+        &mut checks,
+        "日期不记旧值",
+        d.candidates().first().map(String::as_str) == Some("2026年10月27日"),
+        format!("{:?}", d.candidates()),
+    );
+
+    // 时间:有「时间」这个拼音首选时快捷项排在它后面,不抢词库首选。
+    let mut t = at(fixed());
+    letters(&mut t, "sj");
+    let list = t.candidates();
+    let time_at = list.iter().position(|c| c == "14:05");
+    push(
+        &mut checks,
+        "时间触发",
+        time_at.is_some() && time_at != Some(0),
+        format!("{list:?}"),
+    );
+    push(
+        &mut checks,
+        "时间多格式",
+        ["14:05:09", "14点05分", "下午2:05", "20261026140509"]
+            .iter()
+            .all(|want| list.iter().any(|c| c == want)),
+        format!("{list:?}"),
+    );
+    let mut midnight = at(CivilTime {
+        hour: 0,
+        minute: 5,
+        second: 0,
+        ..fixed()
+    });
+    letters(&mut midnight, "sj");
+    push(
+        &mut checks,
+        "凌晨时间",
+        midnight.candidates().iter().any(|c| c == "00:05")
+            && midnight.candidates().iter().any(|c| c == "凌晨0:05"),
+        format!("{:?}", midnight.candidates()),
+    );
+    let mut noon = at(CivilTime {
+        hour: 12,
+        minute: 0,
+        ..fixed()
+    });
+    letters(&mut noon, "sj");
+    push(
+        &mut checks,
+        "中午时间",
+        noon.candidates().iter().any(|c| c == "中午12:00"),
+        format!("{:?}", noon.candidates()),
+    );
+
+    // 星期:固定星期一,同时给「星期一」「周一」。
+    let mut w = at(fixed());
+    letters(&mut w, "xq");
+    push(
+        &mut checks,
+        "星期触发",
+        w.candidates().first().map(String::as_str) == Some("星期一")
+            && w.candidates().iter().any(|c| c == "周一"),
+        format!("{:?}", w.candidates()),
+    );
+
+    // 触发必须精确到整个组合;多一个字母就不再出日期。
+    let mut exact = at(fixed());
+    letters(&mut exact, "rqx");
+    push(
+        &mut checks,
+        "触发串精确",
+        !exact.candidates().iter().any(|c| c == "2026年10月26日"),
+        format!("{:?}", exact.candidates()),
+    );
+
+    // v 模式:数字进入组合,空格上屏;金额与逐位读法同时提供。
+    let mut v = engine();
+    numbers(&mut v, "123");
+    push(
+        &mut checks,
+        "v 模式数字入组合",
+        v.composition().map(|comp| comp.raw.as_str()) == Some("v123"),
+        format!("{:?}", v.composition().map(|comp| comp.raw.clone())),
+    );
+    let list = v.candidates();
+    push(
+        &mut checks,
+        "v 整数读法",
+        list.first().map(String::as_str) == Some("一百二十三"),
+        format!("{list:?}"),
+    );
+    push(
+        &mut checks,
+        "v 金额与逐位",
+        list.iter().any(|c| c == "壹佰贰拾叁")
+            && list.iter().any(|c| c == "壹佰贰拾叁元整")
+            && list.iter().any(|c| c == "一二三"),
+        format!("{list:?}"),
+    );
+    // 数字键继续补数字,而不是选第二条候选。
+    v.process(Key::Digit(2));
+    push(
+        &mut checks,
+        "v 数字不选词",
+        v.composition().map(|comp| comp.raw.as_str()) == Some("v1232")
+            && v.candidates().first().map(String::as_str) == Some("一千二百三十二"),
+        format!("{:?}", v.composition().map(|comp| comp.raw.clone())),
+    );
+    let events = v.process(Key::Space);
+    push(
+        &mut checks,
+        "v 空格上屏",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "一千二百三十二")),
+        format!("{events:?}"),
+    );
+    let exported = v.export_user();
+    push(
+        &mut checks,
+        "v 结果不写词库",
+        !exported.lines().any(|line| {
+            line.starts_with("@context\t")
+                || (!line.starts_with('@') && line.contains("一千二百三十二"))
+        }),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+
+    // 金额:小数两位、角、分、零、整的规则;小写金额与大写数字都要有。
+    has(&mut checks, "金额角分", "100.06", "壹佰元零陆分");
+    has(&mut checks, "金额到角", "100.50", "壹佰元伍角");
+    has(&mut checks, "金额到分", "100.56", "壹佰元伍角陆分");
+    has(&mut checks, "金额整", "100.00", "壹佰元整");
+    has(&mut checks, "金额零元", "0.05", "伍分");
+    has(&mut checks, "金额小写", "123.5", "一百二十三元五角");
+    has(&mut checks, "金额小写十", "10.5", "十元五角");
+
+    // 位值读法:零、万、亿、跨亿组合与前导「一十」。
+    top_is(&mut checks, "十几读法", "12", "十二");
+    top_is(&mut checks, "中间零", "1001", "一千零一");
+    top_is(&mut checks, "千位零", "1010", "一千零一十");
+    top_is(&mut checks, "十万零一", "100001", "十万零一");
+    top_is(&mut checks, "两节连读", "20003000", "二千万三千");
+    top_is(&mut checks, "节间补零", "20000300", "二千万零三百");
+    top_is(&mut checks, "亿零一", "100000001", "一亿零一");
+    top_is(&mut checks, "亿零一万", "100010000", "一亿零一万");
+    top_is(&mut checks, "亿节连读", "120000300", "一亿二千万零三百");
+    top_is(
+        &mut checks,
+        "跨亿组合",
+        "1234567890123",
+        "一万二千三百四十五亿六千七百八十九万零一百二十三",
+    );
+    top_is(&mut checks, "万亿", "1000000000000", "一万亿");
+    has(&mut checks, "大额金额", "100200.3", "壹拾万零贰佰元叁角");
+
+    // 末尾刚敲的点仍按整数出候选,数字进来后再切成小数,候选不闪。
+    let mut dot = engine();
+    numbers(&mut dot, "1.");
+    push(
+        &mut checks,
+        "v 末尾点按整数",
+        dot.composition().map(|comp| comp.raw.as_str()) == Some("v1.")
+            && dot.candidates().first().map(String::as_str) == Some("一"),
+        format!("{:?}", dot.candidates()),
+    );
+    dot.process(Key::Digit(2));
+    push(
+        &mut checks,
+        "v 小数读法",
+        dot.candidates().first().map(String::as_str) == Some("一点二"),
+        format!("{:?}", dot.candidates()),
+    );
+
+    let mut raw = engine();
+    numbers(&mut raw, "123");
+    let events = raw.process(Key::Enter);
+    push(
+        &mut checks,
+        "v 回车原样上屏",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "v123")),
+        format!("{events:?}"),
+    );
+
+    let mut back = engine();
+    numbers(&mut back, "123");
+    back.process(Key::Backspace);
+    push(
+        &mut checks,
+        "v 回删后重算",
+        back.composition().map(|comp| comp.raw.as_str()) == Some("v12")
+            && back.candidates().first().map(String::as_str) == Some("十二"),
+        format!("{:?}", back.candidates()),
+    );
+
+    // 日期上屏后紧接着打拼音,不能把日期写成下一条候选的前词。
+    let mut flow = at(fixed());
+    letters(&mut flow, "rq");
+    flow.process(Key::Space);
+    letters(&mut flow, "xian");
+    flow.process(Key::Space);
+    let exported = flow.export_user();
+    push(
+        &mut checks,
+        "日期不污染词序",
+        !exported
+            .lines()
+            .any(|line| line.starts_with("@transition\t2026年")),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+
+    // 失焦落定也按快捷语义:上屏星期,但「星期一」不写个人搭配。
+    let mut fin = at(fixed());
+    letters(&mut fin, "xq");
+    let text = fin.finalize_display();
+    let exported = fin.export_user();
+    push(
+        &mut checks,
+        "失焦落定快捷",
+        text.as_deref() == Some("星期一"),
+        format!("{text:?}"),
+    );
+    push(
+        &mut checks,
+        "失焦不学搭配",
+        !exported
+            .lines()
+            .any(|line| line.starts_with("@context\t星\t期")),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+
+    // 快捷项没有学习记录,Shift+Delete 不能按同文删掉真正的词。
+    let mut forget = at(fixed());
+    letters(&mut forget, "rq");
+    push(
+        &mut checks,
+        "快捷不可忘",
+        !forget.forget_highlighted(),
+        format!("{:?}", forget.candidates()),
+    );
+
+    report.push_str("\n## 快捷输入\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
+    let mut failures = 0;
+    for (name, ok, note) in &checks {
+        if !ok {
+            failures += 1;
+        }
+        report.push_str(&format!(
+            "| {name} | {} | {note} |\n",
+            if *ok { "PASS" } else { "FAIL" }
+        ));
+    }
+    failures
+}

@@ -69,6 +69,12 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     }
+    // 日期/时间/金额候选必须留在插入位置;停顿重排不能把它们换走,
+    // 否则空格上屏的会是另一个词。
+    if s.engine.candidates_detailed().iter().any(|cand| cand.quick) {
+        let _ = tx.send(SettleMessage::Cancel { session });
+        return;
+    }
     let Some(snap) = snapshot(&s.engine) else {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;

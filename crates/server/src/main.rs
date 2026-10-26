@@ -20,16 +20,32 @@ mod imp {
 
     use lueying_dict::Dictionary;
     use lueying_dict::gram::Gram;
-    use lueying_engine::{Engine, Event, Key, Mode, SharedUser, UserDict};
+    use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
     use lueying_protocol::{Reply, Request, SessionView, pipe_name};
     use lueying_rerank::{Model, Rerank};
     use lueying_server::config::{self, AppConfig};
     use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+    use windows::Win32::System::SystemInformation::GetLocalTime;
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::UI::HiDpi::{
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
     };
     use windows::core::HSTRING;
+
+    /// 当前系统本地时间。日期/时间候选按宿主时区生成,不靠引擎猜 UTC。
+    fn local_time() -> CivilTime {
+        let st = unsafe { GetLocalTime() };
+        CivilTime {
+            year: i32::from(st.wYear),
+            month: u32::from(st.wMonth),
+            day: u32::from(st.wDay),
+            hour: u32::from(st.wHour),
+            minute: u32::from(st.wMinute),
+            second: u32::from(st.wSecond),
+            // SYSTEMTIME.wDayOfWeek: 0 = 星期日 … 6 = 星期六。
+            weekday: (u32::from(st.wDayOfWeek) + 6) % 7 + 1,
+        }
+    }
 
     pub(super) struct Session {
         pub(super) engine: Engine,
@@ -280,6 +296,7 @@ mod imp {
                 }
                 engine.set_mode(current_mode(state));
                 engine.set_fullwidth(state.fullwidth.load(Ordering::Relaxed));
+                engine.set_now(local_time());
                 let chinese = engine.mode() == Mode::Chinese;
                 sessions.insert(
                     session,
@@ -337,6 +354,8 @@ mod imp {
                 }
                 let before_mode = s.engine.mode();
                 let before_rev = s.engine.revision();
+                // 每次按键刷新本地时间,跨午夜/夏令时切换后日期仍然正确。
+                s.engine.set_now(local_time());
                 let events = s.engine.process(engine_key);
                 // 只有候选集合重算过才重排;翻页/移动高亮不能把用户的选择重置。
                 if s.engine.revision() != before_rev {
@@ -984,6 +1003,10 @@ mod imp {
 
     /// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
     fn apply_sync_rerank(s: &mut Session) {
+        // 日期/时间/金额候选固定在本轮插入的位置,4M 模型不能把它们换走。
+        if s.engine.candidates_detailed().iter().any(|cand| cand.quick) {
+            return;
+        }
         let Some(rerank) = s.sync_rerank.as_mut() else {
             return;
         };
