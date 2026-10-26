@@ -57,8 +57,9 @@ mod imp {
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
-    /// 提权子进程最长等待时间。
-    const ELEVATED_TIMEOUT_MS: u32 = 60_000;
+    /// 提权子进程最长等待时间。更新时用户可能先看到 UAC 提示再点确认,
+    /// 60 秒容易在慢机器上误报失败。
+    const ELEVATED_TIMEOUT_MS: u32 = 180_000;
 
     pub(super) fn run() {
         let args: Vec<String> = std::env::args().skip(1).collect();

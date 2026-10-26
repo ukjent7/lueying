@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "lueying-settings"
 path = "src/settings_main.rs"
 
+[[bin]]
+name = "lueying-update"
+path = "src/update_main.rs"
+
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
@@ -29,6 +33,7 @@ windows-core = "0.62.2"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Com",

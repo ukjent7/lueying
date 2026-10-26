@@ -13,6 +13,7 @@ fn main() {
 
 #[cfg(windows)]
 mod imp {
+    use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
 
@@ -69,6 +70,7 @@ mod imp {
             "lueying-install.exe",
             "lueying-server.exe",
             "lueying-settings.exe",
+            "lueying-update.exe",
             "lueying_tsf.dll",
             "lueying_tsf32.dll",
         ] {
@@ -108,6 +110,7 @@ mod imp {
                 "lueying-install.exe",
                 "lueying-server.exe",
                 "lueying-settings.exe",
+                "lueying-update.exe",
                 "version.txt",
                 "licenses/README.md",
             ] {
@@ -172,6 +175,9 @@ mod imp {
             }
             checks.push("已加入当前用户输入法列表".into());
 
+            update_installed(&payload, &target, &root, &local, &appdata)?;
+            checks.push("更新器升级到 9.9.9".into());
+
             let installed = target.join("lueying-install.exe");
             let status = Command::new(&installed)
                 .args(["--uninstall", "--quiet"])
@@ -234,6 +240,130 @@ mod imp {
         }
         let _ = std::fs::remove_dir_all(&root);
         result.map(|checks| format!("- {checks}\n"))
+    }
+
+    /// 用本地 9.9.9 包跑一遍真实更新器:解压、校验、调用新安装器替换版本。
+    fn update_installed(
+        payload: &Path,
+        target: &Path,
+        root: &Path,
+        local: &Path,
+        appdata: &Path,
+    ) -> Result<(), String> {
+        let package = root.join("update-package");
+        std::fs::create_dir_all(&package).map_err(|e| format!("创建更新包: {e}"))?;
+        for name in [
+            "lueying-install.exe",
+            "lueying-server.exe",
+            "lueying-settings.exe",
+            "lueying-update.exe",
+        ] {
+            std::fs::copy(payload.join(name), package.join(name))
+                .map_err(|e| format!("复制更新包 {name}: {e}"))?;
+        }
+        std::fs::copy(
+            payload.join("lueying_tsf.dll"),
+            package.join("lueying_tsf-9.9.9.dll"),
+        )
+        .map_err(|e| format!("复制更新包 x64 DLL: {e}"))?;
+        std::fs::copy(
+            payload.join("lueying_tsf32.dll"),
+            package.join("lueying_tsf32-9.9.9.dll"),
+        )
+        .map_err(|e| format!("复制更新包 x86 DLL: {e}"))?;
+        std::fs::write(package.join("version.txt"), "9.9.9\n")
+            .map_err(|e| format!("写更新包 version.txt: {e}"))?;
+        std::fs::write(
+            package.join("manifest.json"),
+            r#"{"name":"lueying","version":"9.9.9","files":[]}"#,
+        )
+        .map_err(|e| format!("写更新包 manifest: {e}"))?;
+
+        let zip = root.join("lueying-9.9.9.zip");
+        let status = Command::new(system32("tar.exe"))
+            .args(["-a", "-cf"])
+            .arg(&zip)
+            .arg("-C")
+            .arg(&package)
+            .arg(".")
+            .status()
+            .map_err(|e| format!("创建更新 zip: {e}"))?;
+        if !status.success() {
+            return Err(format!("tar 打包更新 zip 退出码 {:?}", status.code()));
+        }
+        let sha = sha256_file(&zip)?;
+
+        // 从安装目录运行会锁住 lueying-update.exe,导致新安装器复制失败;
+        // 正式流程也是先复制到 %TEMP% 再运行。
+        let updater_dir = root.join("updater");
+        std::fs::create_dir_all(&updater_dir).map_err(|e| format!("创建更新器目录: {e}"))?;
+        let updater = updater_dir.join("lueying-update.exe");
+        std::fs::copy(target.join("lueying-update.exe"), &updater)
+            .map_err(|e| format!("复制更新器: {e}"))?;
+
+        let output = Command::new(&updater)
+            .arg("--zip")
+            .arg(&zip)
+            .args(["--sha256", sha.as_str(), "--version", "9.9.9", "--quiet"])
+            .env("LOCALAPPDATA", local)
+            .env("APPDATA", appdata)
+            .env("LUEYING_INSTALL_DIR", target)
+            .env(
+                "LUEYING_PIPE_SUFFIX",
+                format!("install{}", std::process::id()),
+            )
+            .env("LUEYING_SERVER_NO_UI", "1")
+            .output()
+            .map_err(|e| format!("启动更新器: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "更新器退出码 {:?}: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        let version = std::fs::read_to_string(target.join("version.txt")).unwrap_or_default();
+        if version.trim() != "9.9.9" {
+            return Err(format!("更新后版本是 {},期望 9.9.9", version.trim()));
+        }
+        for name in ["lueying_tsf-9.9.9.dll", "lueying_tsf32-9.9.9.dll"] {
+            if !target.join(name).is_file() {
+                return Err(format!("更新后缺少 {name}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// 与更新器相同的 certutil 路径,验证 SHA-256 校验分支。
+    fn sha256_file(path: &Path) -> Result<String, String> {
+        let output = Command::new(system32("certutil.exe"))
+            .arg("-hashfile")
+            .arg(path)
+            .arg("SHA256")
+            .output()
+            .map_err(|e| format!("运行 certutil: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("certutil 退出码 {:?}", output.status.code()));
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        text.lines()
+            .map(|line| {
+                line.chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+            })
+            .find(|line| line.len() == 64 && line.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(|line| line.to_ascii_lowercase())
+            .ok_or_else(|| "certutil 输出里没有 SHA-256".into())
+    }
+
+    fn system32(name: &str) -> std::path::PathBuf {
+        std::env::var_os("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+            .join("System32")
+            .join(name)
     }
 
     /// TSF profile 是否在当前用户的输入法列表里。

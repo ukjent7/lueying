@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -42,7 +43,7 @@ jobs:
       - name: 格式化
         run: cargo fmt --all
       - name: 回推(如有变化)
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           git add -A
           if ! git diff --cached --quiet; then
@@ -124,6 +125,9 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 50
+    # 打 tag 时创建 Release;其他触发只读。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,6 +149,8 @@ jobs:
       - name: Build (release)
         id: build
         run: cargo build --release --workspace --locked
+      - name: Server 单元测试
+        run: cargo test --release -p lueying-server --lib --locked
       - name: Build 32-bit TSF
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
@@ -184,7 +190,8 @@ jobs:
             target/x86-e2e/target/win-e2e-server.log
             target/install-e2e-report.md
       # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
-      # 早期迭代只需要构建与 E2E 信号。这里不签名;签名与自动更新是后续发布工作。
+      # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 zip/sha256 并创建 Release;
+      # 代码签名仍未接,更新包目前是未签名构建。
       - name: 下载白霜词库(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -200,9 +207,23 @@ jobs:
       - name: 生成发布词典
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
+      - name: 读取发布版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "tag 必须是 vX.Y.Z 或 vX.Y.Z-预发布: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: 打包发布目录
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        run: cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying
+        shell: bash
+        run: |
+          version_args=()
+          if [ -n "${VERSION:-}" ]; then version_args=(--version "$VERSION"); fi
+          cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying "${version_args[@]}"
       - name: 校验发布目录
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -210,12 +231,57 @@ jobs:
           test -f dist/lueying/LICENSE
           test -f dist/lueying/licenses/Apache-2.0.txt
           test -f dist/lueying/licenses/CC-BY-4.0.txt
+          test -f dist/lueying/lueying-update.exe
           ls dist/lueying/lueying_tsf-*.dll >/dev/null
           ls dist/lueying/lueying_tsf32-*.dll >/dev/null
           test -f dist/lueying/main.gram
+          if [ -n "${VERSION:-}" ]; then
+            test "$(cat dist/lueying/version.txt)" = "$VERSION"
+          fi
           du -sh dist/lueying
+      - name: 生成更新包与校验文件
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = $env:VERSION
+          if (-not $version) { throw "缺少 VERSION" }
+          $name = "lueying-$version.zip"
+          $zip = Join-Path "dist" $name
+          Remove-Item $zip -ErrorAction SilentlyContinue
+          tar.exe -a -cf $zip -C dist/lueying .
+          if ($LASTEXITCODE -ne 0) { throw "zip 打包失败" }
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Path "$zip.sha256" -Encoding ascii -NoNewline
+          $entries = tar.exe -tf $zip
+          if (-not ($entries -match 'lueying-update\.exe$')) {
+            throw "更新包缺少 lueying-update.exe"
+          }
+          Get-Item $zip | Select-Object Name, Length
+      - name: 发布 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:VERSION
+          $tag = $env:GITHUB_REF_NAME
+          $zip = "dist/lueying-$version.zip"
+          $sha = "$zip.sha256"
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $sha --clobber
+          } elseif ($version.Contains('-')) {
+            # 预发布不能成为 releases/latest,否则稳定版用户会被升级到 beta。
+            gh release create $tag $zip $sha --title "掠影 $version" --generate-notes --prerelease
+          } else {
+            gh release create $tag $zip $sha --title "掠影 $version" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release 发布失败" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         with:
           name: lueying-windows
-          path: dist/lueying
+          path: |
+            dist/lueying
+            dist/lueying-*.zip
+            dist/lueying-*.zip.sha256

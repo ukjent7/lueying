@@ -25,6 +25,7 @@ mod imp {
     use lueying_protocol::{Reply, Request, pipe_name};
     use lueying_server::config::{self, AppConfig};
     use lueying_server::theme;
+    use lueying_server::update::{self, Check, Release};
     use windows::Win32::Graphics::Gdi::{
         COLOR_3DFACE, COLOR_BTNTEXT, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT,
         COLOR_WINDOW, COLOR_WINDOWFRAME, COLOR_WINDOWTEXT,
@@ -36,12 +37,24 @@ mod imp {
     use windows::Win32::UI::HiDpi::{
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, IDOK, MB_DEFBUTTON2, MB_ICONQUESTION, MB_OKCANCEL, MessageBoxW,
+        SM_CXSCREEN, SM_CYSCREEN,
+    };
+    use windows::core::{HSTRING, PCWSTR, PWSTR};
 
     const WIDTH: f32 = 440.0;
-    /// 6 行设置 + 标题/说明/底部按钮;420 逻辑像素在 768p、150% 缩放下也放得下。
-    const HEIGHT: f32 = 420.0;
+    /// 6 行设置 + 标题/说明/更新行/底部按钮;440 逻辑像素在 768p、150% 缩放下也放得下。
+    const HEIGHT: f32 = 440.0;
+
+    #[derive(Clone)]
+    enum UpdateState {
+        Checking,
+        Latest,
+        NoRelease,
+        Available(Release),
+        Failed(String),
+    }
 
     struct SettingsPanel {
         cfg: AppConfig,
@@ -53,6 +66,9 @@ mod imp {
         confirm_clear: bool,
         /// 关闭窗口的回调只登记一次。
         close_hooked: bool,
+        /// 安装目录里的版本,打开设置窗时读一次。
+        current: String,
+        updates: UpdateState,
     }
 
     pub(super) fn run() {
@@ -92,15 +108,21 @@ mod imp {
                     ..Default::default()
                 },
                 move |_, cx| {
-                    cx.new(|_| SettingsPanel {
-                        cfg: cfg.clone(),
-                        path: path.clone(),
-                        groups: call(&Request::FuzzyStats)
-                            .map(|reply| reply.groups)
-                            .unwrap_or_default(),
-                        message: String::new(),
-                        confirm_clear: false,
-                        close_hooked: false,
+                    cx.new(|cx| {
+                        let mut panel = SettingsPanel {
+                            cfg: cfg.clone(),
+                            path: path.clone(),
+                            groups: call(&Request::FuzzyStats)
+                                .map(|reply| reply.groups)
+                                .unwrap_or_default(),
+                            message: String::new(),
+                            confirm_clear: false,
+                            close_hooked: false,
+                            current: update::current_version(),
+                            updates: UpdateState::Checking,
+                        };
+                        panel.check_updates(cx);
+                        panel
                     })
                 },
             );
@@ -156,6 +178,52 @@ mod imp {
                 }
                 None => "输入法服务未运行,启动后再试".into(),
             };
+        }
+
+        /// 后台查 GitHub Release;网络慢不能卡住设置窗。
+        fn check_updates(&mut self, cx: &mut Context<Self>) {
+            self.updates = UpdateState::Checking;
+            let task = cx.background_executor().spawn(async move { update::check() });
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |panel, cx| {
+                    panel.updates = match result {
+                        Ok(Check::Latest) => UpdateState::Latest,
+                        Ok(Check::Available(release)) => UpdateState::Available(release),
+                        Ok(Check::NoRelease) => UpdateState::NoRelease,
+                        Err(error) => UpdateState::Failed(error),
+                    };
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+
+        /// 确认后把更新器复制到临时目录并启动;设置窗退出,更新器接管安装。
+        fn install_update(&mut self, release: Release, cx: &mut Context<Self>) {
+            let text = format!(
+                "安装掠影 {}？\n\n设置窗口会关闭,输入法服务短暂重启。",
+                release.version
+            );
+            let confirmed = unsafe {
+                MessageBoxW(
+                    None,
+                    &HSTRING::from(text),
+                    &HSTRING::from("检查更新"),
+                    MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2,
+                ) == IDOK
+            };
+            if !confirmed {
+                return;
+            }
+            match update::launch_updater(&release, std::process::id()) {
+                Ok(()) => cx.quit(),
+                Err(error) => {
+                    self.message = format!("启动更新失败: {error}");
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -366,6 +434,33 @@ mod imp {
                 ))
             };
             let page = self.cfg.page_size;
+            let (update_text, update_label, update_active) = match &self.updates {
+                UpdateState::Checking => (
+                    "正在检查更新…".to_string(),
+                    "检查中".to_string(),
+                    false,
+                ),
+                UpdateState::Latest => (
+                    format!("版本 {} · 已是最新", self.current),
+                    "检查更新".to_string(),
+                    false,
+                ),
+                UpdateState::NoRelease => (
+                    format!("版本 {} · 暂无发布版本", self.current),
+                    "检查更新".to_string(),
+                    false,
+                ),
+                UpdateState::Available(release) => (
+                    format!("版本 {} → {}", self.current, release.version),
+                    format!("安装 {}", release.version),
+                    true,
+                ),
+                UpdateState::Failed(error) => (
+                    format!("版本 {} · 检查失败: {error}", self.current),
+                    "重试".to_string(),
+                    false,
+                ),
+            };
             let mut card = div()
                 .flex()
                 .flex_col()
@@ -557,9 +652,37 @@ mod imp {
                 )
                 .child(
                     div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(colors.muted))
-                        .child(format!("版本 {}", env!("CARGO_PKG_VERSION"))),
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .max_w(px(300.0))
+                                .truncate()
+                                .text_size(px(12.0))
+                                .text_color(rgb(colors.muted))
+                                .child(update_text),
+                        )
+                        .child(pill(
+                            update_label,
+                            update_active,
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                match this.updates.clone() {
+                                    UpdateState::Available(release) => {
+                                        this.install_update(release, cx);
+                                    }
+                                    UpdateState::Checking => {}
+                                    UpdateState::Latest
+                                    | UpdateState::NoRelease
+                                    | UpdateState::Failed(_) => {
+                                        this.check_updates(cx);
+                                        cx.notify();
+                                    }
+                                }
+                            }),
+                        )),
                 )
                 .child(card)
                 .child(

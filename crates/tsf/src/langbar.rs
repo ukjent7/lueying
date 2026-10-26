@@ -105,7 +105,7 @@ impl ModeButton_Impl {
     fn about() {
         let text = HSTRING::from(format!(
             "掠影 {}\nGPL-3.0-or-later\n\n词典:白霜(rime-frost)",
-            env!("CARGO_PKG_VERSION")
+            installed_version()
         ));
         let caption = HSTRING::from("关于掠影");
         let owner = unsafe { GetForegroundWindow() };
@@ -117,6 +117,16 @@ impl ModeButton_Impl {
                 MB_OK | MB_ICONINFORMATION,
             );
         }
+    }
+
+    /// 发布版本以安装目录的 `version.txt` 为准;tag 构建不要求同步改 Cargo 包版本。
+    fn installed_version() -> String {
+        crate::module_path_file()
+            .and_then(|path| path.parent().map(|dir| dir.join("version.txt")))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
     }
 
     /// 右键自己弹菜单;不依赖语言栏是否转发 `InitMenu`。

@@ -112,6 +112,7 @@ const PACK_BINS: &[&str] = &[
     "lueying-server.exe",
     "lueying-settings.exe",
     "lueying-install.exe",
+    "lueying-update.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
 /// 默认包带精确词典、两档重排模型与精简语法模型。`main.gram` 缺失时引擎
