@@ -141,6 +141,8 @@ pub struct Engine {
     quick_handled: usize,
     /// 最近上屏的最后一个词;词级转移加分与学习使用。
     last_word: Option<String>,
+    /// 最近上屏的倒数第二个词;三词窗口加分与学习使用。
+    second_last_word: Option<String>,
     /// 候选提交已在 `apply_consume` 学过词级转移的条数。
     transition_handled: usize,
     /// 宿主注入的本地时间;快捷输入按它生成日期/时间候选。
@@ -173,6 +175,7 @@ impl Engine {
             context_handled: 0,
             quick_handled: 0,
             last_word: None,
+            second_last_word: None,
             transition_handled: 0,
             now: None,
             rev: 0,
@@ -269,21 +272,37 @@ impl Engine {
         self.dq_open = dq_open;
         self.sq_open = sq_open;
         // 光标跳走后,上一个词可能已经不在左邻;只有文本仍以它结尾才保留转移上下文。
-        if self
-            .last_word
-            .as_deref()
-            .is_some_and(|word| !text.ends_with(word))
-        {
-            self.last_word = None;
-        }
+        self.retain_last_words(text);
         // 光标左边是数字时,随后的半角句点更像小数点。
         self.after_digit = ends_with_digit(text);
+    }
+
+    /// 左邻文本整体替换后,只保留仍在文本末尾的上一个/上上个词。
+    fn retain_last_words(&mut self, text: &str) {
+        let Some(word) = self.last_word.clone() else {
+            self.second_last_word = None;
+            return;
+        };
+        if !text.ends_with(&word) {
+            self.last_word = None;
+            self.second_last_word = None;
+            return;
+        }
+        let before = &text[..text.len() - word.len()];
+        if self
+            .second_last_word
+            .as_deref()
+            .is_some_and(|previous| !before.ends_with(previous))
+        {
+            self.second_last_word = None;
+        }
     }
 
     /// 清空已上屏上下文(焦点切到别处时调用)。
     pub fn clear_context(&mut self) {
         self.context.clear();
         self.last_word = None;
+        self.second_last_word = None;
         self.after_digit = false;
         // 新输入框的引号从开引号重新配对;沿用上一个文档的奇偶会把
         // 句首引号打成闭引号。
@@ -437,6 +456,7 @@ impl Engine {
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
         self.last_word = None;
+        self.second_last_word = None;
         Some(text)
     }
 
@@ -570,6 +590,7 @@ impl Engine {
                         self.transition_handled -= 1;
                     } else {
                         self.last_word = None;
+                        self.second_last_word = None;
                     }
                     if self.quick_handled > 0 {
                         self.quick_handled -= 1;
@@ -580,10 +601,12 @@ impl Engine {
                     self.after_digit = true;
                     // 直通内容由宿主直接写进文档,已经断开中文词序。
                     self.last_word = None;
+                    self.second_last_word = None;
                 }
                 Event::Passthrough(_) => {
                     self.after_digit = false;
                     self.last_word = None;
+                    self.second_last_word = None;
                 }
                 Event::Mode(_) => {}
             }
@@ -1061,11 +1084,22 @@ impl Engine {
                 user.learn_groups(cand.groups);
             }
             user.learn_transitions(self.last_word.as_deref(), &cand.words);
+            user.learn_trigrams(
+                self.second_last_word.as_deref(),
+                self.last_word.as_deref(),
+                &cand.words,
+            );
         }
         if cand.quick {
             // 让 `note_events` 把上一条词序切断,而不是把日期记成前词。
             self.last_word = None;
+            self.second_last_word = None;
+        } else if cand.words.len() >= 2 {
+            self.second_last_word = cand.words.get(cand.words.len() - 2).cloned();
+            self.last_word = cand.words.last().cloned();
+            self.transition_handled += 1;
         } else {
+            self.second_last_word = self.last_word.take();
             self.last_word = cand.words.last().cloned();
             self.transition_handled += 1;
         }
@@ -1305,6 +1339,7 @@ impl Engine {
             self.gram.as_deref(),
             &mut self.gram_cache,
             &context,
+            self.second_last_word.as_deref(),
             self.last_word.as_deref(),
             &comp.raw,
         );

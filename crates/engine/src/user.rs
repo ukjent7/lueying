@@ -1,4 +1,5 @@
-//! 用户词典:选词提频、同键跳过降权、自动造词与字级搭配学习,带指数衰减,支持导出/导入。
+//! 用户词典:选词提频、同键跳过降权、自动造词、字级搭配与词级 n-gram 学习,
+//! 带指数衰减,支持导出/导入。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +21,11 @@ const MAX_TRANSITIONS: usize = 20_000;
 const TRANSITION_DECAY_SECS: u64 = 7 * 24 * 3600;
 const TRANSITION_BONUS_STEP: f64 = 0.2;
 const TRANSITION_BONUS_MAX: f64 = 1.2;
+/// 三词窗口上限与加分。三词比词对少见,只给反复出现的固定说法一点顺序分;
+/// 衰减复用字级搭配的每周减半。
+const MAX_TRIGRAMS: usize = 20_000;
+const TRIGRAM_BONUS_STEP: f64 = 0.12;
+const TRIGRAM_BONUS_MAX: f64 = 0.9;
 /// 同键下被跳过的候选。用户每次选后面的词,前面被越过的候选记一次小负分;
 /// 再选中它时清除。负分只够翻动同分附近,不会把常用词压到长尾后面。
 const MAX_REJECTS: usize = 20_000;
@@ -95,6 +101,8 @@ pub struct UserDict {
     context: HashMap<(char, char), ContextStat>,
     /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
     transitions: HashMap<String, HashMap<String, ContextStat>>,
+    /// 前两词 → 后词 → 次数。三词窗口约束常见句式,权重低于词对。
+    trigrams: HashMap<String, HashMap<String, HashMap<String, ContextStat>>>,
     /// 学习键 → 被跳过的词 → 次数。用户在同键下越过它选了别的词;
     /// 只小幅降权,并让精确首位保护让位。
     rejects: HashMap<String, HashMap<String, RejectStat>>,
@@ -151,6 +159,7 @@ impl UserDict {
         self.count = 0;
         self.context.clear();
         self.transitions.clear();
+        self.trigrams.clear();
         self.rejects.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
@@ -314,6 +323,92 @@ impl UserDict {
         }
     }
 
+    /// 记录一段词序列的三词窗口;`second_previous`/`previous` 是上屏前的最后两个词。
+    pub fn learn_trigrams(
+        &mut self,
+        second_previous: Option<&str>,
+        previous: Option<&str>,
+        words: &[String],
+    ) {
+        if words.is_empty() {
+            return;
+        }
+        let current = now();
+        let mut prev2 = second_previous.map(|text| text.to_owned());
+        let mut prev1 = previous.map(|text| text.to_owned());
+        let mut changed = false;
+        for word in words {
+            if word.is_empty() {
+                prev2 = None;
+                prev1 = None;
+                continue;
+            }
+            if let (Some(left), Some(mid)) = (prev2.as_deref(), prev1.as_deref()) {
+                let stat = self
+                    .trigrams
+                    .entry(left.to_string())
+                    .or_default()
+                    .entry(mid.to_string())
+                    .or_default()
+                    .entry(word.clone())
+                    .or_default();
+                stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
+                    stat.count / 2 + 1
+                } else {
+                    stat.count.saturating_add(1)
+                };
+                stat.ts = current;
+                changed = true;
+            }
+            prev2 = prev1.take();
+            prev1 = Some(word.clone());
+        }
+        if changed {
+            if self.trigram_count() > MAX_TRIGRAMS {
+                self.prune_trigrams();
+            }
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
+    /// 一个候选词序列在当前前两词下的三词窗口加分。
+    pub fn trigram_bonus<'a>(
+        &self,
+        second_previous: Option<&'a str>,
+        previous: Option<&'a str>,
+        words: &'a [String],
+    ) -> f64 {
+        if self.trigrams.is_empty() {
+            return 0.0;
+        }
+        let current = now();
+        let mut prev2 = second_previous;
+        let mut prev1 = previous;
+        let mut bonus = 0.0;
+        for word in words {
+            if word.is_empty() {
+                prev2 = None;
+                prev1 = None;
+                continue;
+            }
+            if let (Some(left), Some(mid)) = (prev2, prev1)
+                && let Some(stat) = self
+                    .trigrams
+                    .get(left)
+                    .and_then(|next| next.get(mid))
+                    .and_then(|next| next.get(word.as_str()))
+            {
+                let effective = stat.effective(current);
+                if effective > 0 {
+                    bonus += (1.0 + f64::from(effective)).ln() * TRIGRAM_BONUS_STEP;
+                }
+            }
+            prev2 = prev1;
+            prev1 = Some(word.as_str());
+        }
+        bonus.min(TRIGRAM_BONUS_MAX)
+    }
+
     /// 一个候选词序列在当前前词下的个人语序加分。
     pub fn transition_bonus<'a>(&self, previous: Option<&'a str>, words: &'a [String]) -> f64 {
         if self.transitions.is_empty() {
@@ -370,6 +465,44 @@ impl UserDict {
         for (left, right, stat) in all {
             self.transitions
                 .entry(left)
+                .or_default()
+                .insert(right, stat);
+        }
+    }
+
+    fn trigram_count(&self) -> usize {
+        self.trigrams
+            .values()
+            .flat_map(|next| next.values())
+            .map(|next| next.len())
+            .sum()
+    }
+
+    /// 保留最常见的前九成三词窗口;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune_trigrams(&mut self) {
+        let keep = MAX_TRIGRAMS * 9 / 10;
+        let mut all: Vec<(String, String, String, ContextStat)> = Vec::new();
+        for (left, mids) in self.trigrams.drain() {
+            for (mid, following) in mids {
+                for (right, stat) in following {
+                    all.push((left.clone(), mid.clone(), right, stat));
+                }
+            }
+        }
+        all.sort_by(|a, b| {
+            b.3.count
+                .cmp(&a.3.count)
+                .then(b.3.ts.cmp(&a.3.ts))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+        });
+        all.truncate(keep);
+        for (left, mid, right, stat) in all {
+            self.trigrams
+                .entry(left)
+                .or_default()
+                .entry(mid)
                 .or_default()
                 .insert(right, stat);
         }
@@ -599,6 +732,7 @@ impl UserDict {
         }
         if removed > 0 {
             self.forget_transitions(word);
+            self.forget_trigrams(word);
             self.rev = self.rev.wrapping_add(1);
         }
         // 负分也是学习记录;Shift+Delete 要能一起忘掉。
@@ -619,6 +753,23 @@ impl UserDict {
         for left in emptied {
             self.transitions.remove(&left);
         }
+    }
+
+    /// 删掉一个词参与的任意位置三词窗口。
+    fn forget_trigrams(&mut self, word: &str) {
+        self.trigrams.retain(|left, mids| {
+            if left.as_str() == word {
+                return false;
+            }
+            mids.retain(|mid, next| {
+                if mid.as_str() == word {
+                    return false;
+                }
+                next.remove(word);
+                !next.is_empty()
+            });
+            !mids.is_empty()
+        });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -648,8 +799,8 @@ impl UserDict {
     }
 
     /// 导出为行文本:词条 `键<TAB>词<TAB>频次<TAB>时间戳`,
-    /// 组级/字级/词级/跳过学习用 `@group`、`@context`、`@transition`、`@reject` 行;
-    /// 按内容排序保证文件稳定。
+    /// 组级/字级/词级/三词/跳过学习用 `@group`、`@context`、`@transition`、
+    /// `@trigram`、`@reject` 行;按内容排序保证文件稳定。
     pub fn export(&self) -> String {
         let mut keys: Vec<_> = self.map.iter().collect();
         keys.sort_by(|a, b| a.0.cmp(b.0));
@@ -696,6 +847,33 @@ impl UserDict {
                         "@transition\t{left}\t{right}\t{}\t{}\n",
                         stat.count, stat.ts
                     ));
+                }
+            }
+        }
+        let mut first: Vec<&String> = self.trigrams.keys().collect();
+        first.sort();
+        for left in first {
+            let Some(mids) = self.trigrams.get(left) else {
+                continue;
+            };
+            let mut second: Vec<&String> = mids.keys().collect();
+            second.sort();
+            for mid in second {
+                let Some(next) = mids.get(mid) else {
+                    continue;
+                };
+                let mut following: Vec<&String> = next.keys().collect();
+                following.sort();
+                for right in following {
+                    let Some(stat) = next.get(right) else {
+                        continue;
+                    };
+                    if stat.count > 0 {
+                        out.push_str(&format!(
+                            "@trigram\t{left}\t{mid}\t{right}\t{}\t{}\n",
+                            stat.count, stat.ts
+                        ));
+                    }
                 }
             }
         }
@@ -802,6 +980,36 @@ impl UserDict {
                 changed = true;
                 continue;
             }
+            if k == "@trigram" {
+                let (Some(left), Some(mid), Some(right), Some(count), Some(ts), None) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                if left.is_empty() || mid.is_empty() || right.is_empty() || count == 0 {
+                    continue;
+                }
+                let stat = self
+                    .trigrams
+                    .entry(left.to_string())
+                    .or_default()
+                    .entry(mid.to_string())
+                    .or_default()
+                    .entry(right.to_string())
+                    .or_default();
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
             if k == "@reject" {
                 let (Some(key), Some(word), Some(count), Some(ts), None) = (
                     parts.next(),
@@ -871,6 +1079,9 @@ impl UserDict {
         }
         if self.transition_count() > MAX_TRANSITIONS {
             self.prune_transitions();
+        }
+        if self.trigram_count() > MAX_TRIGRAMS {
+            self.prune_trigrams();
         }
         if self.reject_count() > MAX_REJECTS {
             self.prune_rejects();

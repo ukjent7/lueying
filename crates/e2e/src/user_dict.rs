@@ -25,6 +25,10 @@
 //! 17. 同键跳过前面的候选不学习 → 再打同一键时它仍排在最前,用户每次都要多按一次。
 //!     被越过的候选要记小负分,并在重新选中它时清除;快捷候选不参与。
 //! 18. 跳过负分只留在内存 → 导出/导入后必须继续生效,Shift+Delete 也要能忘掉。
+//! 19. 三词窗口只留在内存 → 「你」「好」「先」这类三词序列必须随词库导出/导入,
+//!     新会话继续生效。
+//! 20. 三词窗口写了却不参与排序 → 上屏「你」「好」后输入 `xian`,应偏向「先」;
+//!     标点切断词序时必须退回「现」。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -240,6 +244,94 @@ pub fn run(report: &mut String) -> usize {
         "词级转移改变首选",
         flow_base == "现" && flow_top == "先",
         format!("无转移 {flow_base} → 有转移 {flow_top}"),
+    );
+
+    // 三词窗口:分段上屏「你」「好」后选「先」,应记下 你/好→先 并随词库往返。
+    let mut tri_flow = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "nihao".chars() {
+        tri_flow.process(Key::Letter(ch));
+    }
+    tri_flow.process(Key::Down);
+    tri_flow.process(Key::Space);
+    tri_flow.process(Key::Space);
+    for ch in "xian".chars() {
+        tri_flow.process(Key::Letter(ch));
+    }
+    let tri_picked = pick_word(&mut tri_flow, "先");
+    let tri_export = tri_flow.export_user();
+    push(
+        &mut checks,
+        "上屏写入三词窗口",
+        tri_picked
+            && tri_export
+                .lines()
+                .any(|l| l.starts_with("@trigram\t你\t好\t先\t")),
+        tri_export
+            .lines()
+            .find(|l| l.starts_with("@trigram\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let mut tri_restored = Engine::new(Arc::clone(&dict), Config::default());
+    tri_restored.import_user(&tri_export);
+    let tri_reexport = tri_restored.export_user();
+    push(
+        &mut checks,
+        "三词窗口导出导入往返",
+        tri_reexport
+            .lines()
+            .any(|l| l.starts_with("@trigram\t你\t好\t先\t")),
+        tri_reexport
+            .lines()
+            .find(|l| l.starts_with("@trigram\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+
+    // 三词窗口参与排序:先上屏「你」「好」,再输入 xian,应从「现」偏向「先」。
+    let tri_line = format!("@trigram\t你\t好\t先\t100\t{now}\n");
+    let seed = |engine: &mut Engine| {
+        for ch in "nihao".chars() {
+            engine.process(Key::Letter(ch));
+        }
+        engine.process(Key::Down);
+        engine.process(Key::Space);
+        engine.process(Key::Space);
+    };
+    let mut tri_ranked = Engine::new(Arc::clone(&dict), Config::default());
+    tri_ranked.import_user(&tri_line);
+    seed(&mut tri_ranked);
+    for ch in "xian".chars() {
+        tri_ranked.process(Key::Letter(ch));
+    }
+    let tri_top = tri_ranked.candidates().first().cloned().unwrap_or_default();
+    let mut tri_plain = Engine::new(Arc::clone(&dict), Config::default());
+    seed(&mut tri_plain);
+    for ch in "xian".chars() {
+        tri_plain.process(Key::Letter(ch));
+    }
+    let tri_base = tri_plain.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "三词窗口改变首选",
+        tri_base == "现" && tri_top == "先",
+        format!("无三词 {tri_base} → 有三词 {tri_top}"),
+    );
+
+    // 标点切断词序:同样的三词窗口不能跨过逗号生效。
+    let mut tri_cut = Engine::new(Arc::clone(&dict), Config::default());
+    tri_cut.import_user(&tri_line);
+    seed(&mut tri_cut);
+    tri_cut.process(Key::Punct(','));
+    for ch in "xian".chars() {
+        tri_cut.process(Key::Letter(ch));
+    }
+    let tri_after = tri_cut.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "标点切断三词窗口",
+        tri_after == "现" && tri_after == tri_base,
+        format!("逗号后首选 {tri_after}"),
     );
 
     // 两个会话共用一份词库:一边导入,另一边立刻用它排序。

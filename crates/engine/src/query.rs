@@ -772,6 +772,7 @@ fn build_exact(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    previous2: Option<&str>,
     previous: Option<&str>,
     raw: &str,
 ) -> Built {
@@ -911,6 +912,7 @@ fn build_exact(
     for cand in &mut full {
         cand.score += user.context_bonus(context, &cand.text);
         cand.score += user.transition_bonus(previous, &cand.words);
+        cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
@@ -945,6 +947,7 @@ fn build_exact(
     for cand in &mut words {
         cand.score += user.context_bonus(context, &cand.text);
         cand.score += user.transition_bonus(previous, &cand.words);
+        cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
     words.sort_by(|a, b| {
         b.score
@@ -1000,10 +1003,21 @@ pub fn build(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    previous2: Option<&str>,
     previous: Option<&str>,
     raw: &str,
 ) -> Built {
-    let built = build_exact(dict, user, fuzzy, gram, cache, context, previous, raw);
+    let built = build_exact(
+        dict,
+        user,
+        fuzzy,
+        gram,
+        cache,
+        context,
+        previous2,
+        previous,
+        raw,
+    );
     if built.cands.iter().any(|c| c.full)
         || built.safe_extend
         || built.typing_prefix
@@ -1032,6 +1046,7 @@ pub fn build(
             gram,
             cache,
             context,
+            previous2,
             previous,
             &correction,
         );
