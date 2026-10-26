@@ -1003,7 +1003,7 @@ mod imp {
 
     /// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
     fn apply_sync_rerank(s: &mut Session) {
-        // 日期/时间/金额候选固定在本轮插入的位置,4M 模型不能把它们换走。
+        // 快捷候选固定在本轮插入的位置,4M 模型不能把它们换走。
         if s.engine.candidates_detailed().iter().any(|cand| cand.quick) {
             return;
         }

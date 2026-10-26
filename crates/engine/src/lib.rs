@@ -661,6 +661,13 @@ impl Engine {
     fn process_composing(&mut self, key: Key) -> Vec<Event> {
         match key {
             Key::Letter(c) if c.is_ascii_lowercase() => {
+                // v 表达式里 x 是乘号;组合已满时退回普通字母,先落定再起新组合。
+                if c == 'x'
+                    && self.expression_body().is_some()
+                    && self.append_expression_char('x')
+                {
+                    return Vec::new();
+                }
                 if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
                     // 组合到达上限:先把当前输入按首选落定,再用这一键起新组合。
                     // 直接丢弃会让长句末尾的按键无声消失,文档与用户预期错位。
@@ -756,9 +763,20 @@ impl Engine {
                 self.page_by(if key == Key::PageUp { -1 } else { 1 });
                 Vec::new()
             }
-            // v 模式的第一位小数点属于数字;已有小数点时恢复普通标点。
-            Key::Punct('.') if self.number_dot_mode() => {
-                if self.append_number_dot() {
+            // v 表达式里的运算符属于输入;组合已满时落定后再上屏。
+            Key::Punct(p) if self.expression_body().is_some() && quick::is_operator(p) => {
+                if self.append_expression_char(p) {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(p.to_string()));
+                    events
+                }
+            }
+            // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
+            Key::Punct('.') if self.expression_dot_mode() => {
+                if self.append_expression_char('.') {
                     Vec::new()
                 } else {
                     let mut events = self.commit_all();
@@ -777,7 +795,7 @@ impl Engine {
                 Vec::new()
             }
             // v 模式里数字是数字的一部分,不再当候选序号;上屏仍用空格/回车。
-            Key::Digit(d) if self.number_mode() => self.number_digit(d),
+            Key::Digit(d) if self.expression_body().is_some() => self.expression_digit(d),
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
                 // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
@@ -861,42 +879,61 @@ impl Engine {
         }
     }
 
-    /// 组合是否处于 v 数字模式:字母 v 后只跟数字与至多一个小数点。
-    fn number_mode(&self) -> bool {
-        self.comp.as_ref().is_some_and(|comp| {
-            comp.raw
-                .strip_prefix('v')
-                .is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
-        })
+    /// 组合是否处于 v 表达式模式:字母 v 后只跟数字、运算符与小数点。
+    fn expression_body(&self) -> Option<&str> {
+        let raw = self.comp.as_ref()?.raw.as_str();
+        let body = raw.strip_prefix('v')?;
+        body.chars()
+            .all(quick::is_expression_char)
+            .then_some(body)
     }
 
-    /// 第一位小数点进入数字;已有小数点或还没有数字时按普通标点走。
-    fn number_dot_mode(&self) -> bool {
-        self.comp.as_ref().is_some_and(|comp| {
-            comp.raw.strip_prefix('v').is_some_and(|rest| {
-                !rest.is_empty() && !rest.contains('.') && rest.bytes().all(|b| b.is_ascii_digit())
-            })
-        })
+    /// 当前小数点属于表达式里的数字段;这段还没有小数点。
+    ///
+    /// 点分隔的日期例外:`2006.12` 后的点要能补成 `2006.12.25`。普通小数
+    /// 后面再敲点仍恢复标点,避免把句号吞进组合。
+    fn expression_dot_mode(&self) -> bool {
+        let Some(body) = self.expression_body() else {
+            return false;
+        };
+        if body.is_empty() {
+            return false;
+        }
+        let segment = body
+            .rsplit(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .next()
+            .unwrap_or("");
+        if !segment.contains('.') {
+            return true;
+        }
+        let mut parts = body.split('.');
+        let year = parts.next().unwrap_or("");
+        let month = parts.next().unwrap_or("");
+        parts.next().is_none()
+            && year.len() == 4
+            && year.bytes().all(|b| b.is_ascii_digit())
+            && (1..=2).contains(&month.len())
+            && month.bytes().all(|b| b.is_ascii_digit())
+            && month.parse::<u32>().is_ok_and(|month| (1..=12).contains(&month))
     }
 
     /// v 模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
-    fn number_digit(&mut self, d: u8) -> Vec<Event> {
+    fn expression_digit(&mut self, d: u8) -> Vec<Event> {
         if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
             return self.select_digit(d);
         }
         let Some(c) = char::from_digit(u32::from(d), 10) else {
             return self.select_digit(d);
         };
-        if let Some(comp) = self.comp.as_mut() {
-            comp.raw.insert(comp.cursor, c);
-            comp.cursor += 1;
+        if self.append_expression_char(c) {
+            Vec::new()
+        } else {
+            self.select_digit(d)
         }
-        self.recompute();
-        Vec::new()
     }
 
-    /// 把第一位小数点写进 v 数字;组合已满时返回 `false`,由调用方落定。
-    fn append_number_dot(&mut self) -> bool {
+    /// 把表达式字符写进组合;组合已满时返回 `false`,由调用方落定。
+    fn append_expression_char(&mut self, c: char) -> bool {
         let inserted = {
             let Some(comp) = self.comp.as_mut() else {
                 return false;
@@ -904,7 +941,7 @@ impl Engine {
             if comp.raw.len() >= MAX_RAW {
                 false
             } else {
-                comp.raw.insert(comp.cursor, '.');
+                comp.raw.insert(comp.cursor, c);
                 comp.cursor += 1;
                 true
             }

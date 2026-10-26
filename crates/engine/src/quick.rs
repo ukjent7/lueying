@@ -1,4 +1,4 @@
-//! 快捷输入:日期、时间、星期与 v 模式数字/金额候选。
+//! 快捷输入:日期、时间、星期与 v 模式数字/金额/日期/算式候选。
 //!
 //! 这些候选只回答当前原始串,不是词典词:上屏时不写用户词库、不学词级转移,
 //! 也不会被第二天的同一触发串召回成旧日期。
@@ -78,9 +78,19 @@ pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
         "rq" => date_texts(now),
         "sj" => time_texts(now),
         "xq" => weekday_texts(now),
-        _ => number_texts(raw).unwrap_or_default(),
+        _ => expression_texts(raw).unwrap_or_default(),
     };
     wrap(texts, raw)
+}
+
+/// 表达式模式允许的字符:十进制数字、四则运算符、括号、小数点和乘号 `x`。
+pub(crate) fn is_expression_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^' | '.' | 'x')
+}
+
+/// 需要写进组合的运算符;`x` 按字母键处理,小数点单独判断。
+pub(crate) fn is_operator(c: char) -> bool {
+    matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^')
 }
 
 /// 全拼完整打出「日期/时间/星期」时,把对应写法插在这个词后面。
@@ -238,6 +248,198 @@ fn number_body(raw: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((int_part, dec_part))
+}
+
+/// `v` 后面的内容:纯数字出数字读法,四位年份加月日出日期,其余当四则算式。
+fn expression_texts(raw: &str) -> Option<Vec<String>> {
+    if let Some(texts) = number_texts(raw) {
+        return Some(texts);
+    }
+    let body = raw.strip_prefix('v')?;
+    if let Some(texts) = input_date_texts(body) {
+        return Some(texts);
+    }
+    // 没有运算符就不是算式;纯数字超长时宁可不给候选,也不出「数字=数字」。
+    if !body
+        .bytes()
+        .any(|b| matches!(b, b'+' | b'-' | b'*' | b'/' | b'(' | b')' | b'^' | b'x'))
+    {
+        return None;
+    }
+    let result = evaluate(body)?;
+    Some(vec![result.clone(), format!("{body}={result}")])
+}
+
+/// `1998-3-8` / `1998/3/8` / `1998.3.8` → 中文日期、年月日与补零日期。
+fn input_date_texts(body: &str) -> Option<Vec<String>> {
+    let mut parts = body.split(|c| matches!(c, '-' | '/' | '.'));
+    let year = parts.next()?;
+    let month = parse_date_part(parts.next()?)?;
+    let day = parse_date_part(parts.next()?)?;
+    if parts.next().is_some()
+        || year.len() != 4
+        || !year.bytes().all(|b| b.is_ascii_digit())
+        || !(1..=12).contains(&month)
+    {
+        return None;
+    }
+    let year_number: i32 = year.parse().ok()?;
+    if year_number <= 0 || day == 0 || day > days_in_month(year_number, month) {
+        return None;
+    }
+    let year_text: String = year
+        .bytes()
+        .map(|b| CHAR_DIGITS[usize::from(b - b'0')])
+        .collect();
+    Some(vec![
+        format!(
+            "{year_text}年{}月{}日",
+            numeral(&month.to_string(), false),
+            numeral(&day.to_string(), false)
+        ),
+        format!("{year}年{month}月{day}日"),
+        format!("{year}-{month:02}-{day:02}"),
+    ])
+}
+
+/// 月日最多两位数字,不接受符号或前导 `+`。
+fn parse_date_part(text: &str) -> Option<u32> {
+    if text.is_empty() || text.len() > 2 || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+/// 四则算式求值:支持 `+ - * x / ^`、括号、小数与一元正负号。
+///
+/// 语法错、除零或结果溢出都返回 `None`;结果按整数或最多十位小数输出。
+fn evaluate(text: &str) -> Option<String> {
+    let mut evaluator = Evaluator {
+        bytes: text.as_bytes(),
+        position: 0,
+    };
+    let value = evaluator.expression()?;
+    if evaluator.position != evaluator.bytes.len() || !value.is_finite() {
+        return None;
+    }
+    Some(format_number(value))
+}
+
+struct Evaluator<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl Evaluator<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.position).copied()
+    }
+
+    /// 加减。
+    fn expression(&mut self) -> Option<f64> {
+        let mut value = self.term()?;
+        while let Some(op @ (b'+' | b'-')) = self.peek() {
+            self.position += 1;
+            let rhs = self.term()?;
+            value = if op == b'+' { value + rhs } else { value - rhs };
+        }
+        Some(value)
+    }
+
+    /// 乘除;键盘上打 `*` 要按 Shift,所以 `x` 也当乘号。
+    fn term(&mut self) -> Option<f64> {
+        let mut value = self.power()?;
+        while let Some(op @ (b'*' | b'x' | b'/')) = self.peek() {
+            self.position += 1;
+            let rhs = self.power()?;
+            value = if op == b'/' {
+                if rhs == 0.0 {
+                    return None;
+                }
+                value / rhs
+            } else {
+                value * rhs
+            };
+        }
+        Some(value)
+    }
+
+    /// 乘方,右结合。
+    fn power(&mut self) -> Option<f64> {
+        let base = self.unary()?;
+        if self.peek() == Some(b'^') {
+            self.position += 1;
+            let exponent = self.power()?;
+            return Some(base.powf(exponent));
+        }
+        Some(base)
+    }
+
+    /// 一元正负号。
+    fn unary(&mut self) -> Option<f64> {
+        match self.peek() {
+            Some(b'-') => {
+                self.position += 1;
+                self.unary().map(|value| -value)
+            }
+            Some(b'+') => {
+                self.position += 1;
+                self.unary()
+            }
+            _ => self.atom(),
+        }
+    }
+
+    /// 数字或括号。
+    fn atom(&mut self) -> Option<f64> {
+        if self.peek() == Some(b'(') {
+            self.position += 1;
+            let value = self.expression()?;
+            if self.peek() != Some(b')') {
+                return None;
+            }
+            self.position += 1;
+            return Some(value);
+        }
+        let start = self.position;
+        while matches!(self.peek(), Some(b'0'..=b'9' | b'.')) {
+            self.position += 1;
+        }
+        if start == self.position {
+            return None;
+        }
+        std::str::from_utf8(&self.bytes[start..self.position])
+            .ok()?
+            .parse()
+            .ok()
+    }
+}
+
+/// 整数不带小数点;小数最多十位并去掉末尾的零。
+fn format_number(value: f64) -> String {
+    if value.abs() < f64::MIN_POSITIVE {
+        return "0".to_string();
+    }
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        return format!("{value:.0}");
+    }
+    let text = format!("{value:.10}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text.is_empty() || text == "-0" {
+        "0".to_string()
+    } else {
+        text.to_string()
+    }
 }
 
 fn chinese_number(int_part: &str, dec_part: &str, upper: bool) -> String {

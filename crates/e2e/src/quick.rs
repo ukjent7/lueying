@@ -1,4 +1,4 @@
-//! 快捷输入 E2E:日期、时间、星期与 v 模式数字/金额。
+//! 快捷输入 E2E:日期、时间、星期与 v 模式数字/金额/日期/算式。
 //!
 //! 先列失败方式:
 //! 1. 宿主没注入本地时间 → 日期/时间用 UTC,跨时区或午夜会错一天。
@@ -16,6 +16,9 @@
 //! 13. 失焦落定或 Shift+Delete 把快捷项当用户词 → 学出搭配或误删同文词。
 //! 14. 全拼打出「日期/时间/星期」时不跟写法,或写法抢掉词本身的首选。
 //! 15. 显式触发与关键词触发重复插入同一组写法。
+//! 16. v 表达式把运算符当翻页/标点 → 打不出 `v1+2`。
+//! 17. 算式不校验语法、除零与溢出 → 上屏 Infinity、空串或半个式子。
+//! 18. 四位年份日期不校验月日/闰年 → 把非法日期当日期,或漏掉点分隔写法。
 
 use std::sync::{Arc, RwLock};
 
@@ -70,21 +73,33 @@ fn letters(e: &mut Engine, text: &str) {
     }
 }
 
-/// 先按 v,再按数字与小数点;模拟用户把数字打进组合。
-fn numbers(e: &mut Engine, body: &str) {
+/// 先按 v,再把数字、小数点与运算符打进组合;`x` 当乘号。
+fn expression(e: &mut Engine, body: &str) {
     e.process(Key::Letter('v'));
     for c in body.chars() {
-        if c == '.' {
-            e.process(Key::Punct('.'));
-        } else if let Some(d) = c.to_digit(10) {
+        if let Some(d) = c.to_digit(10) {
             e.process(Key::Digit(d as u8));
+        } else if c == 'x' {
+            e.process(Key::Letter('x'));
+        } else {
+            e.process(Key::Punct(c));
         }
     }
+}
+
+fn numbers(e: &mut Engine, body: &str) {
+    expression(e, body);
 }
 
 fn cands(body: &str) -> Vec<String> {
     let mut e = engine();
     numbers(&mut e, body);
+    e.candidates()
+}
+
+fn expr_cands(body: &str) -> Vec<String> {
+    let mut e = engine();
+    expression(&mut e, body);
     e.candidates()
 }
 
@@ -105,6 +120,31 @@ fn has(
     want: &str,
 ) {
     let list = cands(body);
+    push(
+        checks,
+        name,
+        list.iter().any(|c| c == want),
+        format!("v{body} → {list:?}"),
+    );
+}
+
+fn expr_top(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    body: &str,
+    want: &str,
+) {
+    let top = expr_cands(body).into_iter().next().unwrap_or_default();
+    push(checks, name, top == want, format!("v{body} → {top}"));
+}
+
+fn expr_has(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    body: &str,
+    want: &str,
+) {
+    let list = expr_cands(body);
     push(
         checks,
         name,
@@ -371,6 +411,90 @@ pub fn run(report: &mut String) -> usize {
     );
     top_is(&mut checks, "万亿", "1000000000000", "一万亿");
     has(&mut checks, "大额金额", "100200.3", "壹拾万零贰佰元叁角");
+
+    // v 表达式:运算符进组合、按优先级求值,结果不学习。
+    let mut calc = engine();
+    expression(&mut calc, "1+2");
+    push(
+        &mut checks,
+        "表达式进组合",
+        calc.composition().map(|comp| comp.raw.as_str()) == Some("v1+2")
+            && calc.candidates().first().map(String::as_str) == Some("3"),
+        format!("{:?}", calc.candidates()),
+    );
+    let events = calc.process(Key::Space);
+    let exported = calc.export_user();
+    push(
+        &mut checks,
+        "表达式上屏不学习",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "3"))
+            && exported.is_empty(),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+    expr_top(&mut checks, "表达式优先级", "1+2*3", "7");
+    expr_top(&mut checks, "表达式括号", "(1+2)*3", "9");
+    expr_top(&mut checks, "表达式乘号 x", "2x3+4", "10");
+    expr_top(&mut checks, "表达式乘方", "2^3^2", "512");
+    expr_top(&mut checks, "表达式负号", "-3+5", "2");
+    expr_top(&mut checks, "表达式小数", "1.5*2", "3");
+    expr_top(&mut checks, "表达式除法", "1/3", "0.3333333333");
+    expr_has(&mut checks, "表达式带原式", "1+2", "1+2=3");
+    push(
+        &mut checks,
+        "表达式除零无候选",
+        expr_cands("1/0").is_empty(),
+        format!("{:?}", expr_cands("1/0")),
+    );
+    push(
+        &mut checks,
+        "表达式语法错无候选",
+        expr_cands("1+").is_empty() && expr_cands("(1+2").is_empty(),
+        format!("{:?}", expr_cands("1+")),
+    );
+
+    // v 日期:四位年份 + 月日才认,非法日期回落到算式。
+    let mut date = engine();
+    expression(&mut date, "1998-3-8");
+    let list = date.candidates();
+    push(
+        &mut checks,
+        "日期表达式进组合",
+        date.composition().map(|comp| comp.raw.as_str()) == Some("v1998-3-8")
+            && list.first().map(String::as_str) == Some("一九九八年三月八日"),
+        format!("{list:?}"),
+    );
+    push(
+        &mut checks,
+        "日期表达式多格式",
+        ["1998年3月8日", "1998-03-08"]
+            .iter()
+            .all(|want| list.iter().any(|c| c == want)),
+        format!("{list:?}"),
+    );
+    expr_top(&mut checks, "日期表达式斜杠", "1998/3/8", "一九九八年三月八日");
+    expr_top(
+        &mut checks,
+        "日期表达式点分隔",
+        "2006.12.25",
+        "二〇〇六年十二月二十五日",
+    );
+    expr_top(&mut checks, "非法日期回落算式", "1998-2-30", "1966");
+    expr_top(&mut checks, "非四位年份当算式", "98-3-8", "87");
+    expr_top(&mut checks, "日期段数不对当算式", "1998-3-8-1", "1986");
+
+    // 日期上屏同样不写个人搭配:整串都是汉字,漏标 quick 会立刻学出字对。
+    let mut date_flow = engine();
+    expression(&mut date_flow, "1998-3-8");
+    date_flow.process(Key::Space);
+    let exported = date_flow.export_user();
+    push(
+        &mut checks,
+        "日期表达式不学习",
+        exported.is_empty(),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
 
     // 末尾刚敲的点仍按整数出候选,数字进来后再切成小数,候选不闪。
     let mut dot = engine();
