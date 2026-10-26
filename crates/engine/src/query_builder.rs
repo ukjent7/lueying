@@ -253,7 +253,10 @@ pub(crate) fn build_exact(
             }
             let key = spans_key(raw, &node.spans);
             let reject = user.reject_penalty(&key, &node.word);
-            let matched = q.user_cache.get(&key).and_then(|users| users.get(&node.word));
+            let matched = q
+                .user_cache
+                .get(&key)
+                .and_then(|users| users.get(&node.word));
             let learned = matched.is_some_and(|m| m.edits == 0);
             words.push(Candidate {
                 text: node.word.clone(),

@@ -76,9 +76,7 @@ pub fn complete_full(raw: &str) -> bool {
         reach[i] = if raw.as_bytes()[i] == b'\'' {
             reach[i + 1]
         } else {
-            edges[i]
-                .iter()
-                .any(|e| !e.abbrev && reach[e.span.1])
+            edges[i].iter().any(|e| !e.abbrev && reach[e.span.1])
         };
     }
     reach[0]
