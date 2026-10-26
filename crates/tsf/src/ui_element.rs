@@ -12,7 +12,7 @@ use windows::Win32::Foundation::{E_FAIL, LPARAM, WPARAM};
 use windows::Win32::UI::TextServices::{
     ITfCandidateListUIElement, ITfCandidateListUIElement_Impl, ITfCandidateListUIElementBehavior,
     ITfCandidateListUIElementBehavior_Impl, ITfDocumentMgr, ITfIntegratableCandidateListUIElement,
-    ITfIntegratableCandidateListUIElement_Impl, ITfUIElement, ITfUIElement_Impl, ITfUIElementMgr,
+    ITfIntegratableCandidateListUIElement_Impl, ITfUIElement, ITfUIElement_Impl,
     STYLE_ACTIVE_SELECTION, TF_CLUIE_COUNT, TF_CLUIE_CURRENTPAGE, TF_CLUIE_DOCUMENTMGR,
     TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION, TF_CLUIE_STRING,
     TfIntegratableCandidateListSelectionStyle,
