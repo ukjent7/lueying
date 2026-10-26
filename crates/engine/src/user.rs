@@ -15,6 +15,11 @@ const MAX_CONTEXT: usize = 50_000;
 const CONTEXT_DECAY_SECS: u64 = 7 * 24 * 3600;
 const CONTEXT_BONUS_STEP: f64 = 0.25;
 const CONTEXT_BONUS_MAX: f64 = 1.5;
+/// 词级转移上限与加分。词比单字更有区分度，但仍只做同分附近的个人语序。
+const MAX_TRANSITIONS: usize = 20_000;
+const TRANSITION_DECAY_SECS: u64 = 7 * 24 * 3600;
+const TRANSITION_BONUS_STEP: f64 = 0.2;
+const TRANSITION_BONUS_MAX: f64 = 1.2;
 /// 组级适应按周减半;用户改口音或换输入习惯后一周内就会自然回退,
 /// 不会因为历史上选过几次就让所有组一起顶到上限、失去区分度。
 const GROUP_DECAY_SECS: u64 = 7 * 24 * 3600;
@@ -69,6 +74,8 @@ pub struct UserDict {
     /// 已上屏汉字的前后搭配。用户在不同词之间形成的固定说法会随使用增强,
     /// 只用于候选整句重排,不单独产生候选。
     context: HashMap<(char, char), ContextStat>,
+    /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
+    transitions: HashMap<String, HashMap<String, ContextStat>>,
     /// 各模糊组的连续选择次数,与词条一起持久化。
     groups: [GroupStat; GROUP_COUNT],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
@@ -121,6 +128,7 @@ impl UserDict {
         self.by_shape.clear();
         self.count = 0;
         self.context.clear();
+        self.transitions.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
     }
@@ -245,6 +253,105 @@ impl UserDict {
         bonus.min(CONTEXT_BONUS_MAX)
     }
 
+    /// 记录一段已上屏词序列的相邻转移;`previous` 是上一段上屏的最后一个词。
+    pub fn learn_transitions(&mut self, previous: Option<&str>, words: &[String]) {
+        if words.is_empty() {
+            return;
+        }
+        let current = now();
+        let mut prev = previous.map(|text| text.to_owned());
+        let mut changed = false;
+        for word in words {
+            if word.is_empty() {
+                prev = None;
+                continue;
+            }
+            if let Some(left) = prev.as_deref() {
+                let stat = self
+                    .transitions
+                    .entry(left.to_string())
+                    .or_default()
+                    .entry(word.clone())
+                    .or_default();
+                stat.count = if current.saturating_sub(stat.ts) > TRANSITION_DECAY_SECS {
+                    stat.count / 2 + 1
+                } else {
+                    stat.count.saturating_add(1)
+                };
+                stat.ts = current;
+                changed = true;
+            }
+            prev = Some(word.clone());
+        }
+        if changed {
+            if self.transition_count() > MAX_TRANSITIONS {
+                self.prune_transitions();
+            }
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
+    /// 一个候选词序列在当前前词下的个人语序加分。
+    pub fn transition_bonus(&self, previous: Option<&str>, words: &[String]) -> f64 {
+        if self.transitions.is_empty() {
+            return 0.0;
+        }
+        let current = now();
+        let mut prev: Option<&str> = previous;
+        let mut bonus = 0.0;
+        for word in words {
+            if word.is_empty() {
+                prev = None;
+                continue;
+            }
+            if let Some(left) = prev
+                && let Some(stat) = self
+                    .transitions
+                    .get(left)
+                    .and_then(|next| next.get(word.as_str()))
+            {
+                let effective = stat.effective(current);
+                if effective > 0 {
+                    bonus += (1.0 + f64::from(effective)).ln() * TRANSITION_BONUS_STEP;
+                }
+            }
+            prev = Some(word.as_str());
+        }
+        bonus.min(TRANSITION_BONUS_MAX)
+    }
+
+    fn transition_count(&self) -> usize {
+        self.transitions.values().map(|next| next.len()).sum()
+    }
+
+    /// 保留最常见的前九成词对;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune_transitions(&mut self) {
+        let keep = MAX_TRANSITIONS * 9 / 10;
+        let mut all: Vec<(String, String, ContextStat)> = self
+            .transitions
+            .drain()
+            .flat_map(|(left, next)| {
+                next
+                    .into_iter()
+                    .map(move |(right, stat)| (left.clone(), right, stat))
+            })
+            .collect();
+        all.sort_by(|a, b| {
+            b.2.count
+                .cmp(&a.2.count)
+                .then(b.2.ts.cmp(&a.2.ts))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        all.truncate(keep);
+        for (left, right, stat) in all {
+            self.transitions
+                .entry(left)
+                .or_default()
+                .insert(right, stat);
+        }
+    }
+
     /// 保留最常见的前九成搭配;一次性重建,摊到每次学习里的成本可忽略。
     fn prune_context(&mut self) {
         let keep = MAX_CONTEXT * 9 / 10;
@@ -356,9 +463,25 @@ impl UserDict {
             }
         }
         if removed > 0 {
+            self.forget_transitions(word);
             self.rev = self.rev.wrapping_add(1);
         }
         removed > 0
+    }
+
+    /// 删掉一个词参与的相邻词对,避免 Shift+Delete 后旧语序还影响排序。
+    fn forget_transitions(&mut self, word: &str) {
+        self.transitions.remove(word);
+        let mut emptied = Vec::new();
+        for (left, next) in &mut self.transitions {
+            next.remove(word);
+            if next.is_empty() {
+                emptied.push(left.clone());
+            }
+        }
+        for left in emptied {
+            self.transitions.remove(&left);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -387,7 +510,8 @@ impl UserDict {
         }
     }
 
-    /// 导出为行文本(`键<TAB>词<TAB>频次<TAB>时间戳`),按键排序保证文件稳定。
+    /// 导出为行文本:词条 `键<TAB>词<TAB>频次<TAB>时间戳`,
+    /// 组级/字级/词级学习用 `@group`、`@context`、`@transition` 行;按内容排序保证文件稳定。
     pub fn export(&self) -> String {
         let mut keys: Vec<_> = self.map.iter().collect();
         keys.sort_by(|a, b| a.0.cmp(b.0));
@@ -415,6 +539,26 @@ impl UserDict {
                     "@context\t{left}\t{right}\t{}\t{}\n",
                     stat.count, stat.ts
                 ));
+            }
+        }
+        let mut previous: Vec<&String> = self.transitions.keys().collect();
+        previous.sort();
+        for left in previous {
+            let Some(next) = self.transitions.get(left) else {
+                continue;
+            };
+            let mut following: Vec<&String> = next.keys().collect();
+            following.sort();
+            for right in following {
+                let Some(stat) = next.get(right) else {
+                    continue;
+                };
+                if stat.count > 0 {
+                    out.push_str(&format!(
+                        "@transition\t{left}\t{right}\t{}\t{}\n",
+                        stat.count, stat.ts
+                    ));
+                }
             }
         }
         out
@@ -473,6 +617,33 @@ impl UserDict {
                 changed = true;
                 continue;
             }
+            if k == "@transition" {
+                let (Some(left), Some(right), Some(count), Some(ts), None) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                if left.is_empty() || right.is_empty() || count == 0 {
+                    continue;
+                }
+                let stat = self
+                    .transitions
+                    .entry(left.to_string())
+                    .or_default()
+                    .entry(right.to_string())
+                    .or_default();
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
             let (Some(w), Some(f), Some(t), None) =
                 (parts.next(), parts.next(), parts.next(), parts.next())
             else {
@@ -512,6 +683,9 @@ impl UserDict {
         }
         if self.context.len() > MAX_CONTEXT {
             self.prune_context();
+        }
+        if self.transition_count() > MAX_TRANSITIONS {
+            self.prune_transitions();
         }
         if changed {
             self.rev = self.rev.wrapping_add(1);

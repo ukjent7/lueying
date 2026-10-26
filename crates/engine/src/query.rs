@@ -23,6 +23,8 @@ use crate::user::UserDict;
 #[derive(Clone, Debug)]
 pub struct Candidate {
     pub text: String,
+    /// 候选文本的切词结果;单个前缀词就是它本身。
+    pub words: Vec<String>,
     /// 吃掉的音节数。
     pub consume: usize,
     pub score: f64,
@@ -766,6 +768,7 @@ fn build_exact(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    previous: Option<&str>,
     raw: &str,
 ) -> Built {
     let total = dict.total_weight() as f64;
@@ -877,6 +880,7 @@ fn build_exact(
         let key = spans_key(raw, &spans);
         full.push(Candidate {
             text: text.clone(),
+            words: st.path.iter().map(|p| p.0.clone()).collect(),
             consume: spans.len(),
             score: st.score,
             spans,
@@ -896,9 +900,10 @@ fn build_exact(
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
-    // 进入 beam 的路径,这里再让用户常打的前后搭配在同一批路径里靠前。
+    // 进入 beam 的路径,这里再让用户常打的前后搭配与词序在同一批路径里靠前。
     for cand in &mut full {
         cand.score += user.context_bonus(context, &cand.text);
+        cand.score += user.transition_bonus(previous, &cand.words);
     }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
@@ -910,6 +915,7 @@ fn build_exact(
             }
             words.push(Candidate {
                 text: node.word.clone(),
+                words: vec![node.word.clone()],
                 consume: node.spans.len(),
                 score: node.score,
                 spans: node.spans.clone(),
@@ -924,6 +930,11 @@ fn build_exact(
                 learn_key: None,
             });
         }
+    }
+    // 前缀词也吃同一份个人上下文,逐段上屏时第一段就能按习惯排序。
+    for cand in &mut words {
+        cand.score += user.context_bonus(context, &cand.text);
+        cand.score += user.transition_bonus(previous, &cand.words);
     }
     words.sort_by(|a, b| {
         b.score
@@ -977,9 +988,10 @@ pub fn build(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    previous: Option<&str>,
     raw: &str,
 ) -> Built {
-    let built = build_exact(dict, user, fuzzy, gram, cache, context, raw);
+    let built = build_exact(dict, user, fuzzy, gram, cache, context, previous, raw);
     if built.cands.iter().any(|c| c.full)
         || built.safe_extend
         || built.typing_prefix
@@ -995,7 +1007,16 @@ pub fn build(
         if !segment::complete(&correction) {
             continue;
         }
-        let mut fixed = build_exact(dict, user, fuzzy, gram, cache, context, &correction);
+        let mut fixed = build_exact(
+            dict,
+            user,
+            fuzzy,
+            gram,
+            cache,
+            context,
+            previous,
+            &correction,
+        );
         let mut kept = Vec::new();
         for mut cand in fixed.cands.drain(..) {
             if !cand.full {

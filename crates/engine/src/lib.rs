@@ -135,6 +135,10 @@ pub struct Engine {
     context: String,
     /// 分段上屏已在重算前写入上下文的提交数;`note_events` 据此跳过重复学习。
     context_handled: usize,
+    /// 最近上屏的最后一个词;词级转移加分与学习使用。
+    last_word: Option<String>,
+    /// 候选提交已在 `apply_consume` 学过词级转移的条数。
+    transition_handled: usize,
     /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
     rev: u64,
 }
@@ -161,6 +165,8 @@ impl Engine {
             after_digit: false,
             context: String::new(),
             context_handled: 0,
+            last_word: None,
+            transition_handled: 0,
             rev: 0,
         }
     }
@@ -179,10 +185,12 @@ impl Engine {
 
     /// 私密字段里关掉用户词库/自动造词学习。切回普通字段时恢复。
     pub fn set_learning(&mut self, enabled: bool) {
-        self.learning = enabled;
-        if !enabled {
+        if self.learning != enabled {
+            // 私密/普通字段切换:前一段文本、引号配对和词序都不能带进新字段。
+            self.clear_context();
             self.phrase = None;
         }
+        self.learning = enabled;
     }
 
     pub fn mode(&self) -> Mode {
@@ -242,6 +250,14 @@ impl Engine {
     pub fn set_context(&mut self, text: &str) {
         self.context.clear();
         self.push_context(text);
+        // 光标跳走后,上一个词可能已经不在左邻;只有文本仍以它结尾才保留转移上下文。
+        if self
+            .last_word
+            .as_deref()
+            .is_some_and(|word| !text.ends_with(word))
+        {
+            self.last_word = None;
+        }
         // 光标左边是数字时,随后的半角句点更像小数点。
         self.after_digit = ends_with_digit(text);
     }
@@ -249,6 +265,7 @@ impl Engine {
     /// 清空已上屏上下文(焦点切到别处时调用)。
     pub fn clear_context(&mut self) {
         self.context.clear();
+        self.last_word = None;
         self.after_digit = false;
         // 新输入框的引号从开引号重新配对;沿用上一个文档的奇偶会把
         // 句首引号打成闭引号。
@@ -393,6 +410,8 @@ impl Engine {
             self.push_context(&text);
         }
         self.after_digit = ends_with_digit(&text);
+        // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
+        self.last_word = None;
         Some(text)
     }
 
@@ -513,6 +532,13 @@ impl Engine {
                                 .learn_context(&self.context, text);
                         }
                         self.push_context(text);
+                    }
+                    // 候选提交已在 apply_consume 学过词级转移;标点、英文和
+                    // 原样上屏会切断词序,下一条候选不再沿用上一个词。
+                    if self.transition_handled > 0 {
+                        self.transition_handled -= 1;
+                    } else {
+                        self.last_word = None;
                     }
                     self.after_digit = ends_with_digit(text);
                 }
@@ -831,17 +857,15 @@ impl Engine {
                 .join("'")
         });
         if self.learning {
-            self.user
-                .write()
-                .unwrap_or_else(|p| p.into_inner())
-                .learn(&learned, &cand.text);
+            let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
+            user.learn(&learned, &cand.text);
             if cand.groups != 0 {
-                self.user
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .learn_groups(cand.groups);
+                user.learn_groups(cand.groups);
             }
+            user.learn_transitions(self.last_word.as_deref(), &cand.words);
         }
+        self.last_word = cand.words.last().cloned();
+        self.transition_handled += 1;
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
@@ -1078,6 +1102,7 @@ impl Engine {
             self.gram.as_deref(),
             &mut self.gram_cache,
             &context,
+            self.last_word.as_deref(),
             &comp.raw,
         );
         comp.display = built.display;

@@ -19,6 +19,9 @@
 //!     必须从更高频的「现」切到「先」;标点切断相邻关系时必须退回「现」。
 //! 14. 分段上屏后剩余候选在上下文写入前重算 → 下一段必须立刻看到刚上屏的
 //!     左邻字,而不是等下一次按键才生效。
+//! 15. 词级转移只留在内存 → 「你→好」这类相邻词对必须随词库导出/导入,
+//!     新会话继续生效。
+//! 16. 词级转移写了却不参与排序 → 上屏「最」后输入 `xian`,应偏向「先」。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -168,6 +171,72 @@ pub fn run(report: &mut String) -> usize {
         "分段上屏立即使用上下文",
         picked && next_top == "以" && committed == "以",
         format!("前缀 {picked},下一段首选 {next_top},上屏 {committed:?}"),
+    );
+
+    // 词级转移:分段上屏「你」「好」后应记下 你→好,并随词库往返。
+    let mut word_flow = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "nihao".chars() {
+        word_flow.process(Key::Letter(ch));
+    }
+    word_flow.process(Key::Down);
+    word_flow.process(Key::Space);
+    word_flow.process(Key::Space);
+    let flow_export = word_flow.export_user();
+    push(
+        &mut checks,
+        "上屏写入词级转移",
+        flow_export
+            .lines()
+            .any(|l| l.starts_with("@transition\t你\t好\t")),
+        flow_export
+            .lines()
+            .find(|l| l.starts_with("@transition\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let mut flow_restored = Engine::new(Arc::clone(&dict), Config::default());
+    flow_restored.import_user(&flow_export);
+    let flow_reexport = flow_restored.export_user();
+    push(
+        &mut checks,
+        "词级转移导出导入往返",
+        flow_reexport
+            .lines()
+            .any(|l| l.starts_with("@transition\t你\t好\t")),
+        flow_reexport
+            .lines()
+            .find(|l| l.starts_with("@transition\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+
+    // 词级转移参与排序:先上屏「最」,再输入 xian,应从「现」偏向「先」。
+    let flow_line = format!("zui\t最\t100000\t0\n@transition\t最\t先\t100\t{now}\n");
+    let mut flow = Engine::new(Arc::clone(&dict), Config::default());
+    flow.import_user(&flow_line);
+    for ch in "zui".chars() {
+        flow.process(Key::Letter(ch));
+    }
+    flow.process(Key::Space);
+    for ch in "xian".chars() {
+        flow.process(Key::Letter(ch));
+    }
+    let flow_top = flow.candidates().first().cloned().unwrap_or_default();
+    let mut no_flow = Engine::new(Arc::clone(&dict), Config::default());
+    no_flow.import_user("zui\t最\t100000\t0\n");
+    for ch in "zui".chars() {
+        no_flow.process(Key::Letter(ch));
+    }
+    no_flow.process(Key::Space);
+    for ch in "xian".chars() {
+        no_flow.process(Key::Letter(ch));
+    }
+    let flow_base = no_flow.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "词级转移改变首选",
+        flow_base == "现" && flow_top == "先",
+        format!("无转移 {flow_base} → 有转移 {flow_top}"),
     );
 
     // 两个会话共用一份词库:一边导入,另一边立刻用它排序。
