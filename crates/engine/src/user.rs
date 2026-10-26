@@ -1,4 +1,4 @@
-//! 用户词典:选词提频、自动造词与字级搭配学习,带指数衰减,支持导出/导入。
+//! 用户词典:选词提频、同键跳过降权、自动造词与字级搭配学习,带指数衰减,支持导出/导入。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +20,12 @@ const MAX_TRANSITIONS: usize = 20_000;
 const TRANSITION_DECAY_SECS: u64 = 7 * 24 * 3600;
 const TRANSITION_BONUS_STEP: f64 = 0.2;
 const TRANSITION_BONUS_MAX: f64 = 1.2;
+/// 同键下被跳过的候选。用户每次选后面的词,前面被越过的候选记一次小负分;
+/// 再选中它时清除。负分只够翻动同分附近,不会把常用词压到长尾后面。
+const MAX_REJECTS: usize = 20_000;
+const REJECT_DECAY_SECS: u64 = 7 * 24 * 3600;
+const REJECT_BONUS_STEP: f64 = 0.28;
+const REJECT_BONUS_MAX: f64 = 1.4;
 /// 组级适应按周减半;用户改口音或换输入习惯后一周内就会自然回退,
 /// 不会因为历史上选过几次就让所有组一起顶到上限、失去区分度。
 const GROUP_DECAY_SECS: u64 = 7 * 24 * 3600;
@@ -63,6 +69,19 @@ impl ContextStat {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct RejectStat {
+    count: u32,
+    ts: u64,
+}
+
+impl RejectStat {
+    fn effective(self, current: u64) -> u32 {
+        let weeks = current.saturating_sub(self.ts) / REJECT_DECAY_SECS;
+        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
+    }
+}
+
 #[derive(Default)]
 pub struct UserDict {
     map: HashMap<String, Vec<UserEntry>>,
@@ -76,6 +95,9 @@ pub struct UserDict {
     context: HashMap<(char, char), ContextStat>,
     /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
     transitions: HashMap<String, HashMap<String, ContextStat>>,
+    /// 学习键 → 被跳过的词 → 次数。用户在同键下越过它选了别的词;
+    /// 只小幅降权,并让精确首位保护让位。
+    rejects: HashMap<String, HashMap<String, RejectStat>>,
     /// 各模糊组的连续选择次数,与词条一起持久化。
     groups: [GroupStat; GROUP_COUNT],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
@@ -129,6 +151,7 @@ impl UserDict {
         self.count = 0;
         self.context.clear();
         self.transitions.clear();
+        self.rejects.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
     }
@@ -352,6 +375,115 @@ impl UserDict {
         }
     }
 
+    /// 记录一次「在 key 下跳过了 word」。用户选择了同键下更靠后的候选,
+    /// 说明排在前面的词不符合当前意图;下次同键时让它在同分附近后退。
+    pub fn reject(&mut self, key: &str, word: &str) {
+        if key.is_empty() || word.is_empty() {
+            return;
+        }
+        let current = now();
+        let existed = self
+            .rejects
+            .get(key)
+            .is_some_and(|words| words.contains_key(word));
+        let stat = self
+            .rejects
+            .entry(key.to_string())
+            .or_default()
+            .entry(word.to_string())
+            .or_default();
+        stat.count = if current.saturating_sub(stat.ts) > REJECT_DECAY_SECS {
+            stat.count / 2 + 1
+        } else {
+            stat.count.saturating_add(1)
+        };
+        stat.ts = current;
+        // 只有新增键集合才会逼近上限,已有记录更新不必扫全表。
+        if !existed && self.reject_count() > MAX_REJECTS {
+            self.prune_rejects();
+        }
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 同键下的负向加分;次数越多越接近上限,但不超过一个普通词罚分。
+    pub fn reject_penalty(&self, key: &str, word: &str) -> f64 {
+        let Some(stat) = self.rejects.get(key).and_then(|words| words.get(word)) else {
+            return 0.0;
+        };
+        let effective = stat.effective(now());
+        if effective == 0 {
+            return 0.0;
+        }
+        ((1.0 + f64::from(effective)).ln() * REJECT_BONUS_STEP).min(REJECT_BONUS_MAX)
+    }
+
+    /// 用户重新选中该词:清掉它在所有学习键下的跳过记录。
+    /// 返回是否确实清掉了一条记录。
+    pub fn forgive_word(&mut self, word: &str) -> bool {
+        if self.rejects.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        let mut empty = Vec::new();
+        for (key, words) in &mut self.rejects {
+            if words.remove(word).is_some() {
+                changed = true;
+                if words.is_empty() {
+                    empty.push(key.clone());
+                }
+            }
+        }
+        for key in empty {
+            self.rejects.remove(&key);
+        }
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        changed
+    }
+
+    /// 清掉某个学习键下的跳过记录;排名依据已经变了,旧负分不该继续生效。
+    fn forgive(&mut self, key: &str, word: &str) {
+        let empty = if let Some(words) = self.rejects.get_mut(key) {
+            words.remove(word);
+            words.is_empty()
+        } else {
+            false
+        };
+        if empty {
+            self.rejects.remove(key);
+        }
+    }
+
+    fn reject_count(&self) -> usize {
+        self.rejects.values().map(|words| words.len()).sum()
+    }
+
+    /// 保留次数最多的前九成记录;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune_rejects(&mut self) {
+        let keep = MAX_REJECTS * 9 / 10;
+        let mut all: Vec<(String, String, RejectStat)> = self
+            .rejects
+            .drain()
+            .flat_map(|(key, words)| {
+                words
+                    .into_iter()
+                    .map(move |(word, stat)| (key.clone(), word, stat))
+            })
+            .collect();
+        all.sort_by(|a, b| {
+            b.2.count
+                .cmp(&a.2.count)
+                .then(b.2.ts.cmp(&a.2.ts))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        all.truncate(keep);
+        for (key, word, stat) in all {
+            self.rejects.entry(key).or_default().insert(word, stat);
+        }
+    }
+
     /// 保留最常见的前九成搭配;一次性重建,摊到每次学习里的成本可忽略。
     fn prune_context(&mut self) {
         let keep = MAX_CONTEXT * 9 / 10;
@@ -395,6 +527,8 @@ impl UserDict {
                 .or_default()
                 .push(key.to_string());
         }
+        // 刚选过它,同键下的旧负分已经过时。
+        self.forgive(key, word);
         if self.count > MAX_ENTRIES {
             self.prune();
         }
@@ -434,7 +568,8 @@ impl UserDict {
     }
 
     /// 删除该词在所有学习键下的记录。用户可能用全拼学过、现在用简拼忘掉,
-    /// 不能因为当前键不同就留下旧记录。
+    /// 不能因为当前键不同就留下旧记录。返回是否删掉了学习记录
+    /// (词条或跳过负分)。
     pub fn remove_word(&mut self, word: &str) -> bool {
         let mut removed = 0usize;
         let mut empty_keys = Vec::new();
@@ -466,7 +601,9 @@ impl UserDict {
             self.forget_transitions(word);
             self.rev = self.rev.wrapping_add(1);
         }
-        removed > 0
+        // 负分也是学习记录;Shift+Delete 要能一起忘掉。
+        let forgot = self.forgive_word(word);
+        removed > 0 || forgot
     }
 
     /// 删掉一个词参与的相邻词对,避免 Shift+Delete 后旧语序还影响排序。
@@ -511,7 +648,8 @@ impl UserDict {
     }
 
     /// 导出为行文本:词条 `键<TAB>词<TAB>频次<TAB>时间戳`,
-    /// 组级/字级/词级学习用 `@group`、`@context`、`@transition` 行;按内容排序保证文件稳定。
+    /// 组级/字级/词级/跳过学习用 `@group`、`@context`、`@transition`、`@reject` 行;
+    /// 按内容排序保证文件稳定。
     pub fn export(&self) -> String {
         let mut keys: Vec<_> = self.map.iter().collect();
         keys.sort_by(|a, b| a.0.cmp(b.0));
@@ -556,6 +694,26 @@ impl UserDict {
                 if stat.count > 0 {
                     out.push_str(&format!(
                         "@transition\t{left}\t{right}\t{}\t{}\n",
+                        stat.count, stat.ts
+                    ));
+                }
+            }
+        }
+        let mut rejected: Vec<&String> = self.rejects.keys().collect();
+        rejected.sort();
+        for key in rejected {
+            let Some(words) = self.rejects.get(key) else {
+                continue;
+            };
+            let mut keys: Vec<&String> = words.keys().collect();
+            keys.sort();
+            for word in keys {
+                let Some(stat) = words.get(word) else {
+                    continue;
+                };
+                if stat.count > 0 {
+                    out.push_str(&format!(
+                        "@reject\t{key}\t{word}\t{}\t{}\n",
                         stat.count, stat.ts
                     ));
                 }
@@ -644,6 +802,33 @@ impl UserDict {
                 changed = true;
                 continue;
             }
+            if k == "@reject" {
+                let (Some(key), Some(word), Some(count), Some(ts), None) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                if key.is_empty() || word.is_empty() || count == 0 {
+                    continue;
+                }
+                let stat = self
+                    .rejects
+                    .entry(key.to_string())
+                    .or_default()
+                    .entry(word.to_string())
+                    .or_default();
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
             let (Some(w), Some(f), Some(t), None) =
                 (parts.next(), parts.next(), parts.next(), parts.next())
             else {
@@ -686,6 +871,9 @@ impl UserDict {
         }
         if self.transition_count() > MAX_TRANSITIONS {
             self.prune_transitions();
+        }
+        if self.reject_count() > MAX_REJECTS {
+            self.prune_rejects();
         }
         if changed {
             self.rev = self.rev.wrapping_add(1);

@@ -22,6 +22,9 @@
 //! 15. 词级转移只留在内存 → 「你→好」这类相邻词对必须随词库导出/导入,
 //!     新会话继续生效。
 //! 16. 词级转移写了却不参与排序 → 上屏「最」后输入 `xian`,应偏向「先」。
+//! 17. 同键跳过前面的候选不学习 → 再打同一键时它仍排在最前,用户每次都要多按一次。
+//!     被越过的候选要记小负分,并在重新选中它时清除;快捷候选不参与。
+//! 18. 跳过负分只留在内存 → 导出/导入后必须继续生效,Shift+Delete 也要能忘掉。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -486,6 +489,114 @@ pub fn run(report: &mut String) -> usize {
             private_export.lines().count(),
             public_export.lines().count()
         ),
+    );
+
+    // 同键跳过:两条同键用户词,甲甲 频次略高。对照引擎首选甲甲;给甲甲
+    // 导入足够的跳过次数后,首选必须让给乙乙。甲甲学过的词频不低,
+    // 首位的精确/学习保护也必须为负分让位。
+    let pair = "jia'jia\t甲甲\t100000\t0\njia'jia\t乙乙\t99000\t0\n";
+    let mut control = Engine::new(Arc::clone(&dict), Config::default());
+    control.import_user(pair);
+    for ch in "jiajia".chars() {
+        control.process(Key::Letter(ch));
+    }
+    let control_top = control.candidates().first().cloned().unwrap_or_default();
+    let mut disliked = Engine::new(Arc::clone(&dict), Config::default());
+    disliked.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{now}\n"));
+    for ch in "jiajia".chars() {
+        disliked.process(Key::Letter(ch));
+    }
+    let disliked_top = disliked.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "跳过候选改变首选",
+        control_top == "甲甲" && disliked_top == "乙乙",
+        format!("无跳过 {control_top} → 有跳过 {disliked_top}"),
+    );
+
+    // 选择后面的候选时,被越过的同键候选写入 @reject;该记录随词库往返。
+    let mut skipped = Engine::new(Arc::clone(&dict), Config::default());
+    skipped.import_user(pair);
+    for ch in "jiajia".chars() {
+        skipped.process(Key::Letter(ch));
+    }
+    let recorded = pick_word(&mut skipped, "乙乙");
+    let skipped_export = skipped.export_user();
+    let reject_line = skipped_export
+        .lines()
+        .find(|l| l.starts_with("@reject\tjia'jia\t甲甲\t"))
+        .unwrap_or_default()
+        .to_string();
+    let mut restored = Engine::new(Arc::clone(&dict), Config::default());
+    restored.import_user(&skipped_export);
+    let restored_export = restored.export_user();
+    push(
+        &mut checks,
+        "跳过记录导出导入往返",
+        recorded
+            && reject_line.starts_with("@reject\tjia'jia\t甲甲\t1\t")
+            && restored_export.contains(&reject_line),
+        reject_line,
+    );
+
+    // 重新选中被跳过的词:旧负分必须清掉,否则下次同键仍被压在后面。
+    let mut forgive = Engine::new(Arc::clone(&dict), Config::default());
+    forgive.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{now}\n"));
+    for ch in "jiajia".chars() {
+        forgive.process(Key::Letter(ch));
+    }
+    let selected = pick_word(&mut forgive, "甲甲");
+    let forgive_export = forgive.export_user();
+    push(
+        &mut checks,
+        "重新选中清除跳过记录",
+        selected && !forgive_export.contains("@reject\tjia'jia\t甲甲\t"),
+        forgive_export
+            .lines()
+            .find(|l| l.starts_with("@reject\t"))
+            .unwrap_or("无跳过记录")
+            .to_string(),
+    );
+
+    // Shift+Delete 也要忘掉负分:只导入跳过记录,高亮该词删除后导出不再有它。
+    let mut forgotten = Engine::new(Arc::clone(&dict), Config::default());
+    forgotten.import_user(&format!("@reject\tni'hao\t你好\t100\t{now}\n"));
+    for ch in "nihao".chars() {
+        forgotten.process(Key::Letter(ch));
+    }
+    let index = forgotten
+        .candidates()
+        .iter()
+        .position(|c| c == "你好")
+        .unwrap_or(usize::MAX);
+    let highlighted = if index == usize::MAX {
+        false
+    } else {
+        forgotten.set_highlight(index);
+        forgotten.highlight() == index
+    };
+    forgotten.process(Key::DeleteCandidate);
+    let forgotten_export = forgotten.export_user();
+    push(
+        &mut checks,
+        "Shift+Delete 清除跳过记录",
+        highlighted && !forgotten_export.contains("@reject\tni'hao\t你好\t"),
+        format!("高亮 {highlighted},导出 {} 行", forgotten_export.lines().count()),
+    );
+
+    // 快捷候选不是词:选第二个日期格式时,排在前面的日期不能被记成被跳过的词。
+    let mut quick_skip = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "rq".chars() {
+        quick_skip.process(Key::Letter(ch));
+    }
+    let second = quick_skip.candidates().get(1).cloned().unwrap_or_default();
+    let picked_quick = pick_word(&mut quick_skip, &second);
+    let quick_export = quick_skip.export_user();
+    push(
+        &mut checks,
+        "快捷候选不记跳过",
+        picked_quick && !quick_export.contains("@reject\t"),
+        format!("上屏 {second:?},导出 {} 行", quick_export.lines().count()),
     );
 
     // 用户词库上限 2 万条时,按键查询不能退化成每次扫全表。噪声词条刻意避开

@@ -158,6 +158,7 @@ fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
             hint: None,
             learn_key: None,
             quick: true,
+            rejected: false,
         })
         .collect()
 }

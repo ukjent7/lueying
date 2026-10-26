@@ -50,6 +50,8 @@ pub struct Candidate {
     pub learn_key: Option<String>,
     /// 快捷输入(日期/时间/数字金额):不写词库,也不参与词级转移。
     pub quick: bool,
+    /// 用户在同键下跳过过该候选:只小幅降权,精确首位保护也会让位。
+    pub rejected: bool,
 }
 
 /// 一次构建的产物。
@@ -176,7 +178,7 @@ fn typed_key(sylls: &[Syll]) -> String {
 }
 
 /// 候选吃掉的那些原始输入片段拼成用户词典键(`ni'hao`)。
-fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
+pub(crate) fn spans_key(raw: &str, spans: &[(usize, usize)]) -> String {
     spans
         .iter()
         .map(|&(start, end)| syllables::canonical(&raw[start..end]))
@@ -880,11 +882,12 @@ fn build_exact(
         }
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
         let key = spans_key(raw, &spans);
+        let reject = user.reject_penalty(&key, &text);
         full.push(Candidate {
             text: text.clone(),
             words: st.path.iter().map(|p| p.0.clone()).collect(),
             consume: spans.len(),
-            score: st.score,
+            score: st.score - reject,
             spans,
             full: true,
             trusted: st.trusted,
@@ -900,6 +903,7 @@ fn build_exact(
             hint: st.hint.clone(),
             learn_key: None,
             quick: false,
+            rejected: reject > 0.0,
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
@@ -916,11 +920,12 @@ fn build_exact(
             if node.start != 0 {
                 continue;
             }
+            let reject = user.reject_penalty(&spans_key(raw, &node.spans), &node.word);
             words.push(Candidate {
                 text: node.word.clone(),
                 words: vec![node.word.clone()],
                 consume: node.spans.len(),
-                score: node.score,
+                score: node.score - reject,
                 spans: node.spans.clone(),
                 full: end == raw.len(),
                 trusted: node.trusted,
@@ -932,6 +937,7 @@ fn build_exact(
                 hint: node.hint.clone(),
                 learn_key: None,
                 quick: false,
+                rejected: reject > 0.0,
             });
         }
     }
@@ -1068,6 +1074,9 @@ pub fn build(
 /// 拼音、微信一致;选错了可以 Shift+Delete 忘掉。模糊词同样适用,用户
 /// 既然选了它,就说明这个音的分歧对他没有意义。
 ///
+/// 被跳过过的候选不享受这两层保护:负分已经说明它不符合当前意图,
+/// 再按词频或精确命中把它顶回首位会让跳过学习失去作用。
+///
 /// 多词整句也保护,但只在分数与首位接近时生效:整句没有单词条频次,
 /// 勉强成立的精确切分(如 `zongguo` 拼出「总过」)不该顶掉真正的模糊词。
 fn protect_exact(cands: &mut [Candidate]) {
@@ -1079,7 +1088,7 @@ fn protect_exact(cands: &mut [Candidate]) {
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.user_freq > 0 && (c.full || !has_full))
+        .filter(|(_, c)| c.user_freq > 0 && !c.rejected && (c.full || !has_full))
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {
@@ -1091,7 +1100,8 @@ fn protect_exact(cands: &mut [Candidate]) {
         .iter()
         .enumerate()
         .filter(|(_, c)| {
-            c.full
+            !c.rejected
+                && c.full
                 && c.edits == 0
                 && (c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
                     || c.sentence && c.score + EXACT_SENTENCE_MARGIN >= leader)

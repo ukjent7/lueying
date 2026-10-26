@@ -301,9 +301,13 @@ impl Engine {
 
     /// 把第 `index` 条候选移到首位并同步内联显示。
     ///
-    /// 只换顺序,不增删候选;只有覆盖整个按键的候选可以提升。成功返回 `true`。
+    /// 只换顺序,不增删候选;只有覆盖整个按键且没被用户跳过过的候选可以提升,
+    /// 否则模型重排会把刚学到的负分立即抵消。成功返回 `true`。
     pub fn promote(&mut self, index: usize) -> bool {
         if index == 0 || index >= self.cands.len() || !self.cands[index].full {
+            return false;
+        }
+        if self.cands[index].rejected {
             return false;
         }
         let cand = self.cands.remove(index);
@@ -430,8 +434,8 @@ impl Engine {
         Some(text)
     }
 
-    /// 忘掉高亮候选的学习记录;候选仍可由主词典提供,只是回到原始词频。
-    /// 返回是否真的删掉了一条用户词。
+    /// 忘掉高亮候选的学习记录(用户词与跳过负分);候选仍可由主词典提供,
+    /// 只是回到原始词频。返回是否真的删掉了一条记录。
     pub fn forget_highlighted(&mut self) -> bool {
         let Some(cand) = self.cands.get(self.hl).cloned() else {
             return false;
@@ -1032,6 +1036,19 @@ impl Engine {
         };
         if self.learning && !cand.quick {
             let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
+            // 同键下被越过的候选记一次小负分。只统计吃掉同样多音节的候选:
+            // 用户改选前缀词上屏时,不能被当成否定了整句读法。
+            for skipped in self.cands.iter().take(idx) {
+                if skipped.quick || skipped.consume != cand.consume {
+                    continue;
+                }
+                let key = skipped
+                    .learn_key
+                    .clone()
+                    .unwrap_or_else(|| query::spans_key(&raw, &skipped.spans));
+                user.reject(&key, &skipped.text);
+            }
+            user.forgive_word(&cand.text);
             user.learn(&learned, &cand.text);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
