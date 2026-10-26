@@ -126,11 +126,19 @@ pub enum Request {
     Sync { session: u64 },
     /// TSF 读到的光标前文本;组合开始时上报,让重排从第一个候选就有上下文。
     /// `private` 来自输入范围 `IS_PRIVATE`(私密字段),只影响学习,不影响输入。
+    /// `fallback` 表示 TSF 没读到可信文本(Office/自绘宿主),Server 可改用 UIA;
+    /// `hwnd` 是焦点窗口,`epoch` 是焦点代次,异步 UIA 结果回来时据此丢弃过期文本。
     Context {
         session: u64,
         text: String,
         #[serde(default)]
         private: bool,
+        #[serde(default)]
+        fallback: bool,
+        #[serde(default)]
+        hwnd: u64,
+        #[serde(default)]
+        epoch: u64,
     },
     /// DLL 侧直接设置模式(CapsLock 大写锁定、系统转换模式等)。
     SetMode { session: u64, chinese: bool },

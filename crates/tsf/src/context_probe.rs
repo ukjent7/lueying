@@ -16,6 +16,7 @@ use windows::Win32::UI::TextServices::{
     IS_PRIVATE, ITfContext, ITfEditSession, ITfEditSession_Impl, ITfInputScope, ITfRange,
     InputScope, TF_ANCHOR_START, TF_DEFAULT_SELECTION, TF_ES_READ, TF_SELECTION,
 };
+use windows::Win32::UI::WindowsAndMessaging::{GetFocus, GetForegroundWindow};
 use windows::core::{Interface, Result, implement};
 
 use crate::log;
@@ -77,24 +78,28 @@ impl ITfEditSession_Impl for ContextProbe_Impl {
         let text = if private {
             String::new()
         } else {
-            let text = match catch_unwind(AssertUnwindSafe(|| self.read(ec))) {
-                Ok(text) => text,
+            match catch_unwind(AssertUnwindSafe(|| self.read(ec))) {
+                Ok(Some(text)) => text,
+                Ok(None) => String::new(),
                 Err(_) => {
                     log("左邻文本读取 panic(已兜住)");
-                    return Ok(());
+                    String::new()
                 }
-            };
-            let Some(text) = text else {
-                return Ok(());
-            };
-            text
+            }
         };
+        // TSF 读不到文本时交给 Server 的 UIA 线程再试一次。空文本也走这条路:
+        // Office/自绘宿主常返回空串而不是报错,先应用空上下文,结果回来再补。
+        let fallback = !private && text.is_empty();
+        let hwnd = if fallback { self.focus_hwnd() } else { 0 };
         let mut guard = self.client.borrow_mut();
         if let Some(client) = guard.as_mut() {
             let _ = client.round_trip(&Request::Context {
                 session: self.session,
                 text,
                 private,
+                fallback,
+                hwnd,
+                epoch: self.epoch,
             });
         }
         Ok(())
@@ -127,6 +132,28 @@ impl ContextProbe {
             return false;
         };
         input_scope_private(&self.context, ec, &range).unwrap_or(false)
+    }
+
+    /// 焦点窗口句柄。活跃视图拿不到时退回线程焦点,再退回前台窗口;
+    /// Server 端还会按会话进程号与焦点代次过滤,避免读到别的应用。
+    fn focus_hwnd(&self) -> u64 {
+        let hwnd = unsafe { self.context.GetActiveView() }
+            .and_then(|view| unsafe { view.GetWnd() })
+            .ok()
+            .filter(|hwnd| !hwnd.is_invalid())
+            .unwrap_or_else(|| {
+                let focus = unsafe { GetFocus() };
+                if focus.is_invalid() {
+                    unsafe { GetForegroundWindow() }
+                } else {
+                    focus
+                }
+            });
+        if hwnd.is_invalid() {
+            0
+        } else {
+            hwnd.0 as usize as u64
+        }
     }
 
     fn read(&self, ec: u32) -> Option<String> {

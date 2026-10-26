@@ -60,6 +60,10 @@ mod imp {
         pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
         /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
         pub(super) host_draws: bool,
+        /// 最近一次 Context 的焦点代次;异步 UIA 结果据此丢弃过期文本。
+        pub(super) context_epoch: u64,
+        /// 每次 Context 自增;同一代次里连开两次组合也能区分旧查询。
+        pub(super) context_seq: u64,
     }
 
     /// 一次用户主动的模式变化;候选窗同进程的徽标据此短暂显示「中」「英」「全」「半」。
@@ -86,6 +90,8 @@ mod imp {
         pub(super) sync_model: Option<Model>,
         pub(super) settled_model: Option<Model>,
         pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
+        /// TSF 读不到左邻文本时交给 UIA 线程补读;容量 1,忙时丢新任务。
+        pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
         /// 所有会话共用一份学习结果。
         pub(super) user: SharedUser,
         /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
@@ -156,6 +162,7 @@ mod imp {
         }
         let (settle_tx, settle_rx) = mpsc::channel();
         let settle_tx = settled_model.as_ref().map(|_| settle_tx);
+        let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
         let state = Arc::new(State {
             dict: Arc::new(dict),
             gram,
@@ -168,6 +175,7 @@ mod imp {
             sync_model,
             settled_model,
             settle_tx,
+            uia_tx: Some(uia_tx),
             user,
             config: RwLock::new(app_config),
             config_path,
@@ -177,6 +185,7 @@ mod imp {
         if state.settle_tx.is_some() {
             crate::settle::spawn(Arc::clone(&state), settle_rx);
         }
+        crate::uia::spawn(Arc::clone(&state), uia_rx);
         let pipe = pipe_name();
         println!("lueying-server 监听 {pipe}");
         {
@@ -316,6 +325,8 @@ mod imp {
                             .as_ref()
                             .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
                         host_draws: false,
+                        context_epoch: 0,
+                        context_seq: 0,
                     },
                 );
                 state.active.store(session, Ordering::Relaxed);
@@ -423,47 +434,44 @@ mod imp {
                 session,
                 text,
                 private,
+                fallback,
+                hwnd,
+                epoch,
             } => {
+                let mut want_uia = false;
+                let mut uia_context = String::new();
+                let mut uia_seq = 0;
                 if let Some(s) = sessions.get_mut(&session) {
                     // 输入范围每次焦点/组合开始都重报;私密字段不学、不记前文。
                     s.engine.set_learning(!private);
+                    s.context_epoch = epoch;
+                    s.context_seq = s.context_seq.wrapping_add(1);
+                    uia_seq = s.context_seq;
                     if private {
                         s.engine.clear_context();
-                        crate::settle::cancel(state, session);
+                    } else {
+                        apply_context(state, session, s, &text);
+                    }
+                    want_uia = !private && fallback && hwnd != 0;
+                    if want_uia {
+                        // UIA 回来时若这里已经因为上屏而变化,就丢弃旧文本。
+                        uia_context = s.engine.context().to_string();
                     }
                 }
-                if !private
-                    && let Some(s) = sessions.get_mut(&session)
-                    // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
-                    && (s.engine.composition().is_none() || !s.engine.composition_committed())
+                if private {
+                    crate::settle::cancel(state, session);
+                } else if want_uia
+                    && let Some(tx) = state.uia_tx.as_ref()
                 {
-                    s.engine.set_context(&text);
-                    // 组合已建立时,首个按键排的任务可能带的是空上下文;用刚读到的
-                    // 左邻文本重跑同步重排,并把停顿任务也换成新上下文。
-                    if s.engine.composition().is_some() {
-                        // 用户已经翻页/移动高亮时不再改变候选顺序。
-                        if s.engine.page() == 0 && s.engine.highlight() == 0 {
-                            apply_sync_rerank(s);
-                            refresh_view(s);
-                            // 在途的按键应答/点选待写回里还是重排前的内联文本。
-                            if let Some(pending) = s.pending.as_mut() {
-                                pending.preedit = s.view.preedit.clone();
-                                pending.candidates = s.view.candidates.clone();
-                                pending.page = s.view.page;
-                                pending.page_size = s.view.page_size;
-                                pending.highlight = s.view.highlight;
-                            }
-                            if let Some(pending) = s.ui_reply.as_mut() {
-                                pending.preedit = s.view.preedit.clone();
-                                pending.candidates = s.view.candidates.clone();
-                                pending.page = s.view.page;
-                                pending.page_size = s.view.page_size;
-                                pending.highlight = s.view.highlight;
-                            }
-                            state.version.fetch_add(1, Ordering::Relaxed);
-                        }
-                        crate::settle::schedule(state, session, s);
-                    }
+                    // 空上下文已经先应用;UIA 结果回来再按代次/页/高亮决定
+                    // 是否采用。容量 1,前一次查询没回来时直接丢新任务。
+                    let _ = tx.try_send(crate::uia::Job {
+                        session,
+                        hwnd,
+                        epoch,
+                        seq: uia_seq,
+                        context: uia_context,
+                    });
                 }
                 Reply::default()
             }
@@ -532,6 +540,9 @@ mod imp {
                 }
                 let mut reply = neutral(state);
                 if let Some(s) = sessions.get_mut(&session) {
+                    // 失焦/换输入框时作废在途的 UIA 读取;新 Context 会带来新代次。
+                    s.context_epoch = s.context_epoch.wrapping_add(1);
+                    s.context_seq = s.context_seq.wrapping_add(1);
                     s.pending = None;
                     let carried = s.ui_reply.take();
                     if !focused {
@@ -1001,6 +1012,68 @@ mod imp {
         state.version.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// 应用一条左邻文本;组合已建立时按新上下文重跑同步重排。
+    fn apply_context(state: &State, session: u64, s: &mut Session, text: &str) {
+        // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
+        if s.engine.composition().is_some() && s.engine.composition_committed() {
+            return;
+        }
+        // 焦点探测已经应用过空上下文时,UIA 的空结果不再触发一次重排。
+        if text.is_empty() && s.engine.context().is_empty() {
+            return;
+        }
+        s.engine.set_context(text);
+        if s.engine.composition().is_none() {
+            return;
+        }
+        // 用户已经翻页/移动高亮时不再改变候选顺序;仍要撤掉旧停顿任务。
+        if s.engine.page() == 0 && s.engine.highlight() == 0 {
+            apply_sync_rerank(s);
+            refresh_view(s);
+            // 在途的按键应答/点选待写回里还是重排前的内联文本。
+            if let Some(pending) = s.pending.as_mut() {
+                pending.preedit = s.view.preedit.clone();
+                pending.candidates = s.view.candidates.clone();
+                pending.page = s.view.page;
+                pending.page_size = s.view.page_size;
+                pending.highlight = s.view.highlight;
+            }
+            if let Some(pending) = s.ui_reply.as_mut() {
+                pending.preedit = s.view.preedit.clone();
+                pending.candidates = s.view.candidates.clone();
+                pending.page = s.view.page;
+                pending.page_size = s.view.page_size;
+                pending.highlight = s.view.highlight;
+            }
+            state.version.fetch_add(1, Ordering::Relaxed);
+        }
+        crate::settle::schedule(state, session, s);
+    }
+
+    /// UIA 线程读完左邻文本后调用;会话、代次或引擎上下文过期就丢弃。
+    pub(super) fn apply_uia_context(state: &State, job: &crate::uia::Job, text: &str) {
+        if state.active.load(Ordering::Relaxed) != job.session {
+            return;
+        }
+        let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(s) = sessions.get_mut(&job.session) else {
+            return;
+        };
+        if s.context_epoch != job.epoch
+            || s.context_seq != job.seq
+            || s.engine.context() != job.context.as_str()
+        {
+            return;
+        }
+        // UIA 选区可能停在组句文本之后;组句还没上屏,不能混进左邻上下文。
+        let mut text = text.to_string();
+        let preedit = s.view.preedit.as_str();
+        if !preedit.is_empty() && text.ends_with(preedit) {
+            text.truncate(text.len() - preedit.len());
+        }
+        apply_context(state, job.session, s, &text);
+    }
+
     /// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
     fn apply_sync_rerank(s: &mut Session) {
         // 快捷候选固定在本轮插入的位置,4M 模型不能把它们换走。
@@ -1088,6 +1161,9 @@ mod pipe;
 
 #[cfg(windows)]
 mod settle;
+
+#[cfg(windows)]
+mod uia;
 
 #[cfg(windows)]
 mod ui;
