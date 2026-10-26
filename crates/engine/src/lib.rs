@@ -309,10 +309,11 @@ impl Engine {
     /// 只换顺序,不增删候选;只有覆盖整个按键且没被用户跳过过的候选可以提升,
     /// 否则模型重排会把刚学到的负分立即抵消。成功返回 `true`。
     pub fn promote(&mut self, index: usize) -> bool {
-        if index == 0 || index >= self.cands.len() || !self.cands[index].full {
-            return false;
-        }
-        if self.cands[index].rejected {
+        if index == 0
+            || index >= self.cands.len()
+            || !self.cands[index].full
+            || self.cands[index].rejected
+        {
             return false;
         }
         let cand = self.cands.remove(index);
