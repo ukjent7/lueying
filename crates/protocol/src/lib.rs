@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(windows)]
+pub mod spawn;
 pub mod version;
 
 /// 管道名(版本号入名,协议不兼容时换 v2)。

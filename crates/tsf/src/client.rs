@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -141,7 +140,6 @@ pub(crate) fn note_disconnect() {
 /// 只有本次真的发起了进程才返回 true,调用方据此决定要不要等管道;
 /// 刚起过或同目录没有 Server 都立即返回,键盘不用等。
 fn spawn_server_once() -> bool {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const RETRY_SECS: u64 = 10;
     let Some(dir) =
         crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
@@ -163,14 +161,8 @@ fn spawn_server_once() -> bool {
     {
         return false;
     }
-    let started = std::process::Command::new(exe)
-        .creation_flags(CREATE_NO_WINDOW)
-        // 常驻服务不继承宿主进程的标准句柄,否则宿主退出或改用管道时会被服务拖住。
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .is_ok();
+    // 不继承宿主句柄:宿主若用管道读输出,常驻服务会把管道写端一直占住。
+    let started = lueying_protocol::spawn_detached(&exe, None).is_ok();
     if started {
         WARMING.store(true, Ordering::Relaxed);
     }

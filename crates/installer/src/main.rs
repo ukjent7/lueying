@@ -186,15 +186,14 @@ mod imp {
             Err(error) => fail(quiet, &error),
         };
         // 立即拉起常驻服务;单实例互斥保证不会重复。
-        // 服务不能继承安装器的 stdout/stderr:更新器用管道读取安装器输出,
-        // 常驻服务会把管道一直占住,更新器就永远等不到 EOF。
+        // 必须用不继承句柄的方式启动:更新器用管道读安装器输出,
+        // 常驻服务继承管道写端后,更新器就永远等不到 EOF。
         trace("install: spawn server");
-        let _ = std::process::Command::new(target.join("lueying-server.exe"))
-            .current_dir(&target)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        if let Err(error) =
+            lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
+        {
+            trace(&format!("install: spawn server failed: {error}"));
+        }
         trace("install: done");
         if !quiet {
             let hint = if listed {

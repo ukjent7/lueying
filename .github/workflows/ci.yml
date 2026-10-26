@@ -230,6 +230,8 @@ jobs:
             target/install-e2e-report.md
             # 安装冒烟卡死时没有报告,阶段跟踪是唯一线索。
             target/install-e2e-trace.log
+            # 子进程输出走文件,超时/非零退出时看最后一段。
+            target/install-e2e-logs/
       # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
       # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 zip/sha256 并创建 Release;
       # 代码签名仍未接,更新包目前是未签名构建。

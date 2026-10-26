@@ -105,7 +105,34 @@ pub(crate) fn handle(state: &State, req: Request) -> Reply {
     request::dispatch(state, req)
 }
 
+/// 把三个标准句柄接到 NUL。进程被无控制台、无句柄继承的方式拉起时,
+/// `GetStdHandle` 返回空句柄,`println!` 写失败会直接 panic。
+fn attach_null_stdio() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::System::Console::{
+        STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    let Ok(nul) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("NUL")
+    else {
+        return;
+    };
+    let handle = HANDLE(nul.as_raw_handle());
+    unsafe {
+        let _ = SetStdHandle(STD_INPUT_HANDLE, handle);
+        let _ = SetStdHandle(STD_OUTPUT_HANDLE, handle);
+        let _ = SetStdHandle(STD_ERROR_HANDLE, handle);
+    }
+    // 标准句柄要用到进程结束,句柄不能随局部变量关闭。
+    std::mem::forget(nul);
+}
+
 pub(super) fn real_main() {
+    // 安装器/TSF 用「不继承句柄」的方式拉起服务,标准句柄为空;而 println!
+    // 在写失败时会 panic。服务只把标准输出当日志,先统一接到 NUL。
+    attach_null_stdio();
     // 候选窗坐标来自 TSF 的物理像素光标矩形;进程必须 Per-Monitor V2,
     // 否则 SetWindowPos 会被系统按 96 DPI 虚拟化,副屏与高缩放下会偏移。
     unsafe {

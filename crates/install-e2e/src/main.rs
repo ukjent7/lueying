@@ -62,17 +62,29 @@ mod imp {
     }
 
     /// 跑子进程并限时。超时就杀掉并返回错误,避免整步被 CI 的超时静默终结。
+    ///
+    /// 输出写文件而不是管道:Windows 会把调用方所有可继承句柄复制给子进程,
+    /// 被拉起的常驻服务若持有管道写端,父进程就永远读不到 EOF。
     fn run_command(name: &str, command: &mut Command, limit: Duration) -> Result<Output, String> {
         phase(&format!("{name}: 启动"));
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let logs = Path::new("target/install-e2e-logs");
+        let _ = std::fs::create_dir_all(logs);
+        let slug: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+        let out_path = logs.join(format!("{slug}.out"));
+        let err_path = logs.join(format!("{slug}.err"));
+        let out =
+            std::fs::File::create(&out_path).map_err(|e| format!("创建{name}输出文件: {e}"))?;
+        let err =
+            std::fs::File::create(&err_path).map_err(|e| format!("创建{name}错误文件: {e}"))?;
+        command.stdin(Stdio::null()).stdout(out).stderr(err);
         let mut child = command.spawn().map_err(|e| format!("启动{name}: {e}"))?;
         let started = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() < limit => {
                     std::thread::sleep(Duration::from_millis(100));
                 }
@@ -83,12 +95,11 @@ mod imp {
                 }
                 Err(error) => return Err(format!("等待{name}: {error}")),
             }
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("读取{name}输出: {e}"))?;
-        phase(&format!("{name}: 退出 {:?}", output.status.code()));
-        Ok(output)
+        };
+        phase(&format!("{name}: 退出 {:?}", status.code()));
+        let stdout = std::fs::read(&out_path).unwrap_or_default();
+        let stderr = std::fs::read(&err_path).unwrap_or_default();
+        Ok(Output { status, stdout, stderr })
     }
 
     /// 安装器、更新器与卸载器共用的隔离环境。
