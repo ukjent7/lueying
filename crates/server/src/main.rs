@@ -695,12 +695,15 @@ mod imp {
                     cfg.chinese_punct = !cfg.chinese_punct;
                     cfg.clone()
                 };
+                // Ctrl+. 是隐藏快捷键;借模式徽标短暂显示「，。」或「,.」,让用户知道切换结果。
+                let label = if cfg.chinese_punct { "，。" } else { ",." };
                 if let Some(path) = &state.config_path
                     && let Err(e) = config::save(path, &cfg)
                 {
                     println!("保存配置 {} 失败: {e}", path.display());
                 }
                 apply_config(state, &mut sessions, cfg);
+                show_hud(state, &sessions, label, None);
                 neutral(state)
             }
             Request::ExportUser => Reply {

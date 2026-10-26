@@ -109,6 +109,7 @@ pub(super) fn run(state: Arc<State>) {
                         state: hud_state,
                         styled: Cell::new(false),
                         serial: Cell::new(0),
+                        was_composing: Cell::new(false),
                         last: RefCell::new(None),
                     })
                 },
@@ -166,9 +167,20 @@ fn snapshot(state: &State) -> Option<SessionView> {
     (!session.host_draws && session.engine.composition().is_some()).then(|| session.view.clone())
 }
 
-/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。
+/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。宿主接管候选绘制时同样算组合中。
+fn in_composition(state: &State) -> bool {
+    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
+    sessions
+        .get(&state.active.load(Ordering::Relaxed))
+        .is_some_and(|s| s.engine.composition().is_some())
+}
+
+/// 服务端候选窗在显示;宿主接管绘制时让位。
 fn composing(state: &State) -> bool {
-    snapshot(state).is_some()
+    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
+    sessions
+        .get(&state.active.load(Ordering::Relaxed))
+        .is_some_and(|s| !s.host_draws && s.engine.composition().is_some())
 }
 
 /// 从 gpui 窗口取原生 HWND;窗口系统不是 Win32 时返回 None。
@@ -312,6 +324,8 @@ struct ModeHudPanel {
     styled: Cell<bool>,
     /// 已处理的切换序号;同一序号不重复读取状态。
     serial: Cell<u64>,
+    /// 上一帧是否在组合;组合开始/结束时挪开或贴回光标下方。
+    was_composing: Cell<bool>,
     last: RefCell<Option<HudView>>,
 }
 
@@ -319,6 +333,8 @@ impl ModeHudPanel {
     /// 轮询切换序号与显示期限。返回(是否重新摆位, 是否重绘)。
     fn tick(&self) -> (bool, bool) {
         let serial = self.state.hud_serial.load(Ordering::Relaxed);
+        let composing_now = in_composition(&self.state);
+        let moved = self.was_composing.replace(composing_now) != composing_now;
         let mut place = false;
         if serial != self.serial.get() {
             self.serial.set(serial);
@@ -339,11 +355,11 @@ impl ModeHudPanel {
             self.last.borrow_mut().take();
             (true, true)
         } else {
-            (place, true)
+            (place || moved, true)
         }
     }
 
-    /// 贴在光标下方;下方放不下就翻到上方,没有光标时落在主屏下三分之一。
+    /// 平时贴在光标下方;下方放不下就翻到上方,组合中按候选窗翻向选相反的一侧,没有光标时落在主屏下三分之一。
     fn place(&self, window: &Window) {
         let Some(hwnd) = window_hwnd(window) else {
             return;
@@ -378,19 +394,30 @@ impl ModeHudPanel {
         let w = (HUD_W * scale) as i32;
         let h = (HUD_H * scale) as i32;
         let gap = (4.0 * scale) as i32;
-        let mut x = anchor_x - w / 2;
-        let mut y = match caret {
+        // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
+        let in_comp = in_composition(&self.state);
+        let candidate_h = snapshot(&self.state).map_or(0.0, |view| candidate_height(&view)) * scale;
+        let candidate_below = caret
+            .is_some_and(|(_, _, _, b)| b as f32 + candidate_h <= work.bottom as f32);
+        let prefer_below = !in_comp || !candidate_below;
+        let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
+        let y = (match caret {
             Some((_, t, _, b)) => {
-                if b + gap + h <= work.bottom {
+                let below = b + gap + h <= work.bottom;
+                let above = t - h - gap >= work.top;
+                if prefer_below && below {
+                    b + gap
+                } else if !prefer_below && above {
+                    t - h - gap
+                } else if below {
                     b + gap
                 } else {
-                    (t - h - gap).max(work.top)
+                    t - h - gap
                 }
             }
             None => anchor_y - h / 2,
-        };
-        x = x.clamp(work.left, (work.right - w).max(work.left));
-        y = y.clamp(work.top, (work.bottom - h).max(work.top));
+        })
+        .clamp(work.top, (work.bottom - h).max(work.top));
         unsafe { SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE) };
     }
 }
@@ -473,6 +500,11 @@ fn text_units(text: &str) -> f32 {
     text.chars()
         .map(|c| if c.is_ascii() { 0.53 } else { 1.0 })
         .sum()
+}
+
+/// 服务端候选窗的估算高度(逻辑像素):预编辑行 + 当前页候选行 + 底部内边距。
+fn candidate_height(view: &SessionView) -> f32 {
+    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + 8.0
 }
 
 /// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
