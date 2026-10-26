@@ -16,7 +16,8 @@ use windows::Win32::UI::TextServices::{
     IS_PRIVATE, ITfContext, ITfEditSession, ITfEditSession_Impl, ITfInputScope, ITfRange,
     InputScope, TF_ANCHOR_START, TF_DEFAULT_SELECTION, TF_ES_READ, TF_SELECTION,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetFocus, GetForegroundWindow};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::core::{Interface, Result, implement};
 
 use crate::log;

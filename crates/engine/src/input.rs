@@ -183,7 +183,7 @@ impl Engine {
                 {
                     // 组合到达上限:先把当前输入按首选落定,再用这一键起新组合。
                     // 直接丢弃会让长句末尾的按键无声消失,文档与用户预期错位。
-                    let mut events = self.commit_all();
+                    let events = self.commit_all();
                     self.phrase = None;
                     self.begin_composition(c);
                     return events;

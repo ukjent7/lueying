@@ -337,77 +337,6 @@ impl TextService {
             self.client.clone(),
         );
     }
-
-    /// 监听当前输入框的布局变化;滚动或改窗口大小时候选窗跟着光标重摆。
-    fn advise_layout(&self) {
-        self.unadvise_layout();
-        let Some(thread_mgr) = self.thread_mgr.borrow().clone() else {
-            return;
-        };
-        let Ok(doc) = (unsafe { thread_mgr.GetFocus() }) else {
-            return;
-        };
-        let Ok(context) = (unsafe { doc.GetTop() }) else {
-            return;
-        };
-        self.advise_layout_context(&context);
-    }
-
-    fn advise_layout_context(&self, context: &ITfContext) {
-        let Ok(source) = context.cast::<ITfSource>() else {
-            return;
-        };
-        let sink: ITfTextLayoutSink = self.to_interface();
-        let unknown: IUnknown = sink.into();
-        if let Ok(cookie) = unsafe { source.AdviseSink(&ITfTextLayoutSink::IID, &unknown) } {
-            *self.layout.borrow_mut() = Some((context.clone(), source, cookie));
-            log("登记布局监听");
-        }
-    }
-
-    fn unadvise_layout(&self) {
-        if let Some((_, source, cookie)) = self.layout.borrow_mut().take() {
-            unsafe {
-                let _ = source.UnadviseSink(cookie);
-            }
-        }
-    }
-
-    /// 焦点变化:失焦把敲了一半的拼音落定到最近上下文。
-    /// `ITfKeyEventSink::OnSetFocus`(同应用换输入框)与线程焦点走同一条。
-    fn focus_changed(&self, focused: bool) {
-        if self.secure.get() {
-            return;
-        }
-        if focused {
-            self.advise_layout();
-        } else {
-            self.unadvise_layout();
-            crate::ui_element::end(&self.shared, &self.client);
-        }
-        self.shared.touch();
-        self.shared.bump_context_epoch();
-        self.pending.borrow_mut().take();
-        // Caps Lock 可能在别的窗口打开/关闭;拿到焦点时让语言栏重新取图标。
-        self.shared.refresh_langbar();
-        if let Some(reply) = self.request(Request::Focus {
-            session: self.shared.session,
-            focused,
-        }) {
-            if focused {
-                self.shared.set_chinese(reply.chinese);
-                self.shared.set_fullwidth(reply.fullwidth);
-            } else if let Some(context) = self.shared.last_context.borrow().clone() {
-                self.apply_stale(&context, &reply);
-            } else {
-                self.shared.set_chinese(reply.chinese);
-                self.shared.set_fullwidth(reply.fullwidth);
-            }
-        }
-        if focused {
-            self.probe_focus();
-        }
-    }
 }
 
 impl Drop for TextService {
@@ -486,6 +415,77 @@ pub(crate) fn apply_reply(shared: &Rc<Shared>, client: &SharedClient, reply: &Re
 }
 
 impl TextService_Impl {
+    /// 监听当前输入框的布局变化;滚动或改窗口大小时候选窗跟着光标重摆。
+    fn advise_layout(&self) {
+        self.unadvise_layout();
+        let Some(thread_mgr) = self.thread_mgr.borrow().clone() else {
+            return;
+        };
+        let Ok(doc) = (unsafe { thread_mgr.GetFocus() }) else {
+            return;
+        };
+        let Ok(context) = (unsafe { doc.GetTop() }) else {
+            return;
+        };
+        self.advise_layout_context(&context);
+    }
+
+    fn advise_layout_context(&self, context: &ITfContext) {
+        let Ok(source) = context.cast::<ITfSource>() else {
+            return;
+        };
+        let sink: ITfTextLayoutSink = self.to_interface();
+        let unknown: IUnknown = sink.into();
+        if let Ok(cookie) = unsafe { source.AdviseSink(&ITfTextLayoutSink::IID, &unknown) } {
+            *self.layout.borrow_mut() = Some((context.clone(), source, cookie));
+            log("登记布局监听");
+        }
+    }
+
+    fn unadvise_layout(&self) {
+        if let Some((_, source, cookie)) = self.layout.borrow_mut().take() {
+            unsafe {
+                let _ = source.UnadviseSink(cookie);
+            }
+        }
+    }
+
+    /// 焦点变化:失焦把敲了一半的拼音落定到最近上下文。
+    /// `ITfKeyEventSink::OnSetFocus`(同应用换输入框)与线程焦点走同一条。
+    fn focus_changed(&self, focused: bool) {
+        if self.secure.get() {
+            return;
+        }
+        if focused {
+            self.advise_layout();
+        } else {
+            self.unadvise_layout();
+            crate::ui_element::end(&self.shared, &self.client);
+        }
+        self.shared.touch();
+        self.shared.bump_context_epoch();
+        self.pending.borrow_mut().take();
+        // Caps Lock 可能在别的窗口打开/关闭;拿到焦点时让语言栏重新取图标。
+        self.shared.refresh_langbar();
+        if let Some(reply) = self.request(Request::Focus {
+            session: self.shared.session,
+            focused,
+        }) {
+            if focused {
+                self.shared.set_chinese(reply.chinese);
+                self.shared.set_fullwidth(reply.fullwidth);
+            } else if let Some(context) = self.shared.last_context.borrow().clone() {
+                self.apply_stale(&context, &reply);
+            } else {
+                self.shared.set_chinese(reply.chinese);
+                self.shared.set_fullwidth(reply.fullwidth);
+            }
+        }
+        if focused {
+            self.probe_focus();
+        }
+    }
+
     fn activate(&self, ptim: Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
         let thread_mgr = ptim.ok()?.clone();
         let keystroke: ITfKeystrokeMgr = thread_mgr.cast()?;
@@ -784,7 +784,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 self.shared.set_fullwidth(reply.fullwidth);
                 *self.shared.last_context.borrow_mut() = Some(context.clone());
                 *self.pending.borrow_mut() = Some(Pending {
-                    context,
+                    context: context.clone(),
                     reply,
                     vk,
                     consume_only: true,
