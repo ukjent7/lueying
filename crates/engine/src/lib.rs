@@ -1037,9 +1037,10 @@ impl Engine {
         if self.learning && !cand.quick {
             let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
             // 同键下被越过的候选记一次小负分。只统计吃掉同样多音节的候选:
-            // 用户改选前缀词上屏时,不能被当成否定了整句读法。
+            // 用户改选前缀词上屏时,不能被当成否定了整句读法。手误纠正的候选
+            // 是推测出来的键,不拿它给正确输入留下负分。
             for skipped in self.cands.iter().take(idx) {
-                if skipped.quick || skipped.consume != cand.consume {
+                if skipped.quick || skipped.learn_key.is_some() || skipped.consume != cand.consume {
                     continue;
                 }
                 let key = skipped
