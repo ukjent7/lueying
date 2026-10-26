@@ -514,6 +514,21 @@ pub fn run(report: &mut String) -> usize {
         format!("无跳过 {control_top} → 有跳过 {disliked_top}"),
     );
 
+    // 过期负分自然失效:四十周前的跳过记录按周衰减后归零,不能永久压住候选。
+    let stale_ts = now.saturating_sub(40 * 7 * 24 * 3600);
+    let mut stale = Engine::new(Arc::clone(&dict), Config::default());
+    stale.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{stale_ts}\n"));
+    for ch in "jiajia".chars() {
+        stale.process(Key::Letter(ch));
+    }
+    let stale_top = stale.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "过期跳过记录失效",
+        stale_top == "甲甲",
+        format!("四十周后首选 {stale_top}"),
+    );
+
     // 选择后面的候选时,被越过的同键候选写入 @reject;该记录随词库往返。
     let mut skipped = Engine::new(Arc::clone(&dict), Config::default());
     skipped.import_user(pair);
