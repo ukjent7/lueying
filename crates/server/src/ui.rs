@@ -15,20 +15,19 @@ use gpui::{
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
+use lueying_server::theme;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     COLOR_3DFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWFRAME,
-    COLOR_WINDOWTEXT, GetMonitorInfoW, GetSysColor, HMONITOR, MONITOR_DEFAULTTONEAREST,
-    MONITORINFO, MonitorFromPoint, SYS_COLOR_INDEX,
+    COLOR_WINDOWTEXT, GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
+    MONITORINFO, MonitorFromPoint,
 };
-use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
     GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOSIZE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
+    SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
 
@@ -47,6 +46,12 @@ const ROW_H: f32 = 36.0;
 const PARK_GAP: i32 = 2000;
 /// 组合结束后的淡出时长;期间沿用最后一份内容,结束后再停靠窗口。
 const HIDE_FADE: Duration = Duration::from_millis(90);
+/// 中英切换徽标:紧凑圆角卡片,完全显示 600ms,再用 180ms 淡出。
+const HUD_W: f32 = 46.0;
+const HUD_H: f32 = 32.0;
+const HUD_SHOW: Duration = Duration::from_millis(600);
+const HUD_FADE: Duration = Duration::from_millis(180);
+const HUD_TOTAL: Duration = Duration::from_millis(780);
 
 pub(super) fn run(state: Arc<State>) {
     application().run(move |cx: &mut App| {
@@ -83,6 +88,35 @@ pub(super) fn run(state: Arc<State>) {
         let _ = handle.update(cx, |panel: &mut CandidatePanel, window, _| {
             panel.place(window);
         });
+        // 中英切换徽标:独立小窗,同样无焦点、置顶、鼠标穿透。
+        let hud_state = Arc::clone(&state);
+        let hud = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: Point::new(px(park_x as f32), px(park_y as f32)),
+                        size: size(px(HUD_W), px(HUD_H)),
+                    })),
+                    focus: false,
+                    is_movable: false,
+                    is_resizable: false,
+                    is_minimizable: false,
+                    kind: WindowKind::PopUp,
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|_| ModeHudPanel {
+                        state: hud_state,
+                        styled: Cell::new(false),
+                        serial: Cell::new(0),
+                        last: RefCell::new(None),
+                    })
+                },
+            )
+            .expect("模式徽标窗打开失败");
+        let _ = hud.update(cx, |hud: &mut ModeHudPanel, window, _| {
+            hud.place(window);
+        });
         // 轮询版本号,变了才摆位刷新;15ms 对打字反馈无感。
         let poll = Arc::clone(&state);
         cx.spawn(async move |cx| {
@@ -104,6 +138,24 @@ pub(super) fn run(state: Arc<State>) {
             }
         })
         .detach();
+        // 徽标只在切换后短暂显示;淡出期间 15ms 重绘一次透明度。
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(15))
+                    .await;
+                let _ = hud.update(cx, |hud: &mut ModeHudPanel, window, cx| {
+                    let (place, redraw) = hud.tick();
+                    if place {
+                        hud.place(window);
+                    }
+                    if redraw {
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
     });
 }
 
@@ -117,6 +169,35 @@ fn snapshot(state: &State) -> Option<SessionView> {
 /// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。
 fn composing(state: &State) -> bool {
     snapshot(state).is_some()
+}
+
+/// 从 gpui 窗口取原生 HWND;窗口系统不是 Win32 时返回 None。
+fn window_hwnd(window: &Window) -> Option<HWND> {
+    let raw = <Window as HasWindowHandle>::window_handle(window)
+        .ok()?
+        .as_raw();
+    let RawWindowHandle::Win32(handle) = raw else {
+        return None;
+    };
+    Some(HWND(handle.hwnd.get() as *mut c_void))
+}
+
+/// 无焦点置顶工具窗样式;`click_through` 时再让鼠标穿透到宿主。
+fn style_popup(hwnd: HWND, styled: &Cell<bool>, click_through: bool) {
+    let old = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    let mut style = old;
+    if !styled.get() {
+        style |= WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
+        styled.set(true);
+    }
+    if click_through {
+        style |= WS_EX_TRANSPARENT.0;
+    } else {
+        style &= !WS_EX_TRANSPARENT.0;
+    }
+    if style != old {
+        unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize) };
+    }
 }
 
 struct CandidatePanel {
@@ -142,19 +223,9 @@ impl CandidatePanel {
         false
     }
 
-    fn hwnd(window: &Window) -> Option<HWND> {
-        let raw = <Window as HasWindowHandle>::window_handle(window)
-            .ok()?
-            .as_raw();
-        let RawWindowHandle::Win32(handle) = raw else {
-            return None;
-        };
-        Some(HWND(handle.hwnd.get() as *mut c_void))
-    }
-
     /// 按光标矩形摆窗;无内容则挪出屏幕。必须在主线程(gpui update 闭包内)调用。
     fn place(&self, window: &mut Window) {
-        let Some(hwnd) = Self::hwnd(window) else {
+        let Some(hwnd) = window_hwnd(window) else {
             return;
         };
         unsafe {
@@ -177,20 +248,7 @@ impl CandidatePanel {
                 }
             };
             // 淡出期间让点击穿透到下层应用;实时组合才接鼠标。
-            let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-            let mut style = old;
-            if !self.styled.get() {
-                style |= WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0;
-                self.styled.set(true);
-            }
-            if self.fading.get().is_some() {
-                style |= WS_EX_TRANSPARENT.0;
-            } else {
-                style &= !WS_EX_TRANSPARENT.0;
-            }
-            if style != old {
-                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize);
-            }
+            style_popup(hwnd, &self.styled, self.fading.get().is_some());
             let (park_x, park_y) = park_point();
             let width = view.as_ref().map_or(WIDTH, panel_width);
             // 会话号高 32 位是宿主进程号。浏览器 F11、全屏终端这类宿主
@@ -240,13 +298,181 @@ impl CandidatePanel {
     }
 }
 
-/// 单条候选的估算宽度(序号、内边距、文字与注音)。
+/// 当前这份徽标:显示哪个字、贴哪个光标、从何时开始计时。
+#[derive(Clone)]
+struct HudView {
+    label: &'static str,
+    caret: Option<(i32, i32, i32, i32)>,
+    at: Instant,
+}
+
+struct ModeHudPanel {
+    state: Arc<State>,
+    /// HWND 扩展样式只补一次。
+    styled: Cell<bool>,
+    /// 已处理的切换序号;同一序号不重复读取状态。
+    serial: Cell<u64>,
+    last: RefCell<Option<HudView>>,
+}
+
+impl ModeHudPanel {
+    /// 轮询切换序号与显示期限。返回(是否重新摆位, 是否重绘)。
+    fn tick(&self) -> (bool, bool) {
+        let serial = self.state.hud_serial.load(Ordering::Relaxed);
+        let mut place = false;
+        if serial != self.serial.get() {
+            self.serial.set(serial);
+            let source = self.state.mode_hud.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(hud) = source.as_ref() {
+                *self.last.borrow_mut() = Some(HudView {
+                    label: hud.label,
+                    caret: hud.caret,
+                    at: hud.at,
+                });
+            }
+            place = true;
+        }
+        let Some(view) = self.last.borrow().clone() else {
+            return (place, place);
+        };
+        if Instant::now().saturating_duration_since(view.at) >= HUD_TOTAL {
+            self.last.borrow_mut().take();
+            (true, true)
+        } else {
+            (place, true)
+        }
+    }
+
+    /// 贴在光标下方;下方放不下就翻到上方,没有光标时落在主屏下三分之一。
+    fn place(&self, window: &Window) {
+        let Some(hwnd) = window_hwnd(window) else {
+            return;
+        };
+        // 徽标永远鼠标穿透,不挡宿主的选择与点击。
+        style_popup(hwnd, &self.styled, true);
+        let (park_x, park_y) = park_point();
+        let Some(view) = self.last.borrow().clone() else {
+            park(hwnd, park_x, park_y);
+            return;
+        };
+        let caret = view
+            .caret
+            .map(|(l, t, r, b)| (l.min(r), t.min(b), l.max(r), b.max(t)));
+        let host_pid = (self.state.active.load(Ordering::Relaxed) >> 32) as u32;
+        let (anchor_x, anchor_y, work) = match caret {
+            Some((l, _, r, b)) => (l + (r - l) / 2, b, work_area_at(l, b)),
+            None => {
+                let work = primary_work_area();
+                (
+                    work.left + (work.right - work.left) / 2,
+                    work.top + (work.bottom - work.top) * 2 / 3,
+                    work,
+                )
+            }
+        };
+        if foreground_fullscreen_at(anchor_x, anchor_y, host_pid) {
+            park(hwnd, park_x, park_y);
+            return;
+        }
+        let scale = scale_at(anchor_x, anchor_y);
+        let w = (HUD_W * scale) as i32;
+        let h = (HUD_H * scale) as i32;
+        let gap = (4.0 * scale) as i32;
+        let mut x = anchor_x - w / 2;
+        let mut y = match caret {
+            Some((_, t, _, b)) => {
+                if b + gap + h <= work.bottom {
+                    b + gap
+                } else {
+                    (t - h - gap).max(work.top)
+                }
+            }
+            None => anchor_y - h / 2,
+        };
+        x = x.clamp(work.left, (work.right - w).max(work.left));
+        y = y.clamp(work.top, (work.bottom - h).max(work.top));
+        unsafe { SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE) };
+    }
+}
+
+impl Render for ModeHudPanel {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(view) = self.last.borrow().clone() else {
+            return div().into_any_element();
+        };
+        let colors = if theme::high_contrast() {
+            system_palette()
+        } else {
+            palette(matches!(
+                window.appearance(),
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            ))
+        };
+        let opacity = if cx.reduce_motion() {
+            1.0
+        } else {
+            let elapsed = Instant::now().saturating_duration_since(view.at);
+            if elapsed >= HUD_TOTAL {
+                0.0
+            } else if elapsed >= HUD_SHOW {
+                ((HUD_TOTAL - elapsed).as_secs_f32() / HUD_FADE.as_secs_f32()).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        };
+        div()
+            .font_family("Microsoft YaHei")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(HUD_W))
+            .h(px(HUD_H))
+            .bg(rgb(colors.bg))
+            .border_1()
+            .border_color(rgb(colors.border))
+            .rounded_lg()
+            .shadow_lg()
+            .text_size(px(18.0))
+            .text_color(rgb(colors.text))
+            .opacity(opacity)
+            .child(view.label)
+            .into_any_element()
+    }
+}
+
+/// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。
+fn park(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOSIZE,
+        );
+    }
+}
+
+/// 单条候选的估算宽度(内边距、序号、文字与注音)。
+/// 17px 微软雅黑里 CJK/全角约 17px,ASCII 约 9px;按字符类别累加,
+/// 避免整句候选估窄后多折一行、窗口高度不够被裁。
 fn item_width(text: &str, hint: Option<&String>) -> f32 {
     let hint_width = hint
         .filter(|hint| !hint.is_empty())
-        .map_or(0.0, |hint| 8.0 + 7.0 * hint.chars().count() as f32)
+        .map_or(0.0, |hint| 4.0 + 11.0 * text_units(hint))
         .min(110.0);
-    22.0 + 18.0 * text.chars().count() as f32 + hint_width
+    let hint_gap = if hint_width > 0.0 { 4.0 } else { 0.0 };
+    // px_2 + 序号(两位内)+ 序号与候选之间的 gap_1。
+    16.0 + 11.0 + 4.0 + 17.0 * text_units(text) + hint_gap + hint_width
+}
+
+/// 文字宽度折算成字号倍数:ASCII 约半个字宽,其余按全角算。
+fn text_units(text: &str) -> f32 {
+    text.chars()
+        .map(|c| if c.is_ascii() { 0.53 } else { 1.0 })
+        .sum()
 }
 
 /// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
@@ -267,12 +493,14 @@ fn panel_rows(view: &SessionView, width: f32) -> usize {
     let end = (start + ps).min(view.candidates.len());
     let mut rows = 0usize;
     let mut used = 0.0f32;
+    // 面板左右内边距 16 + 边框 2;可用宽度少于估算会让窗口少算一行。
+    let available = width - 18.0;
     for index in start..end {
         let item = item_width(&view.candidates[index], view.hints.get(index));
         if rows == 0 {
             rows = 1;
             used = item;
-        } else if used + item + 4.0 > width - 16.0 {
+        } else if used + item + 4.0 > available {
             rows += 1;
             used = item;
         } else {
@@ -316,7 +544,10 @@ fn monitor_at(x: i32, y: i32) -> HMONITOR {
 }
 
 fn monitor_info_at(x: i32, y: i32) -> Option<MONITORINFO> {
-    let monitor = monitor_at(x, y);
+    monitor_info(monitor_at(x, y))
+}
+
+fn monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
     if monitor.is_invalid() {
         return None;
     }
@@ -327,6 +558,20 @@ fn monitor_info_at(x: i32, y: i32) -> Option<MONITORINFO> {
     unsafe { GetMonitorInfoW(monitor, &mut info) }
         .as_bool()
         .then_some(info)
+}
+
+/// 主屏工作区;没有光标位置时徽标退到这里的下三分之一处。
+fn primary_work_area() -> RECT {
+    let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    monitor_info(monitor).map_or(
+        RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        },
+        |info| info.rcWork,
+    )
 }
 
 /// 光标所在显示器的缩放比例;取不到时按 100%。
@@ -405,42 +650,19 @@ struct Palette {
 }
 
 /// 系统高对比度主题:用用户选定的系统颜色,不覆盖成自定义蓝底。
-fn high_contrast() -> bool {
-    let mut info = HIGHCONTRASTW {
-        cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32,
-        ..Default::default()
-    };
-    unsafe {
-        SystemParametersInfoW(
-            SPI_GETHIGHCONTRAST,
-            info.cbSize,
-            Some((&mut info as *mut HIGHCONTRASTW).cast::<c_void>()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    }
-    .is_ok()
-        && info.dwFlags.contains(HCF_HIGHCONTRASTON)
-}
-
-/// COLORREF(0x00BBGGRR)→ GPUI 的 0xRRGGBB。
-fn system_color(index: SYS_COLOR_INDEX) -> u32 {
-    let color = unsafe { GetSysColor(index) };
-    ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff)
-}
-
 fn system_palette() -> Palette {
-    let text = system_color(COLOR_WINDOWTEXT);
+    let text = theme::system_color(COLOR_WINDOWTEXT);
     Palette {
-        bg: system_color(COLOR_WINDOW),
-        border: system_color(COLOR_WINDOWFRAME),
+        bg: theme::system_color(COLOR_WINDOW),
+        border: theme::system_color(COLOR_WINDOWFRAME),
         preedit: text,
         text,
         // 候选编号是辅助信息,但高对比度下也要清楚可读。
         index: text,
-        hover: system_color(COLOR_3DFACE),
-        selected_bg: system_color(COLOR_HIGHLIGHT),
-        selected_text: system_color(COLOR_HIGHLIGHTTEXT),
-        selected_index: system_color(COLOR_HIGHLIGHTTEXT),
+        hover: theme::system_color(COLOR_3DFACE),
+        selected_bg: theme::system_color(COLOR_HIGHLIGHT),
+        selected_text: theme::system_color(COLOR_HIGHLIGHTTEXT),
+        selected_index: theme::system_color(COLOR_HIGHLIGHTTEXT),
     }
 }
 
@@ -481,7 +703,7 @@ impl Render for CandidatePanel {
         let Some(view) = live.or_else(|| self.last.borrow().clone()) else {
             return div().into_any_element();
         };
-        let colors = if high_contrast() {
+        let colors = if theme::high_contrast() {
             system_palette()
         } else {
             palette(matches!(

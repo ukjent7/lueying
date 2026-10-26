@@ -314,7 +314,52 @@ mod imp {
         if !text.ends_with('你') {
             return Err(format!("Ctrl+Backspace 后文本 `{text}` 不以「你」结尾"));
         }
-        Ok(format!("## 组合按音节删除\n\nPASS,文本 `{text}`"))
+        // Ctrl+Left 把组合光标移到「ni|hao」的音节边界,再按 Ctrl+Backspace
+        // 只删掉前一个音节;若移动没生效会整段删成「你」,文本就不会以「你好」结尾。
+        type_text("nihao")?;
+        pump_for(Duration::from_millis(250));
+        chord(0x11, 0x25)?; // Ctrl+Left
+        pump_for(Duration::from_millis(250));
+        chord(0x11, 0x08)?; // Ctrl+Backspace
+        pump_for(Duration::from_millis(250));
+        tap(0x20)?;
+        pump_for(Duration::from_millis(500));
+        if composing(thread_mgr)? {
+            return Err("Ctrl+Left 后组合没有在空格上屏时结束".into());
+        }
+        let text = edit_text(edit);
+        if !text.ends_with("你好") {
+            return Err(format!("Ctrl+Left 按音节编辑后文本 `{text}` 不以「你好」结尾"));
+        }
+        Ok(format!("## 组合按音节编辑\n\nPASS,文本 `{text}`"))
+    }
+
+    fn check_fullwidth(edit: HWND) -> Result<String, String> {
+        // 中文态空闲字符:全角数字与全角空格,然后关掉。
+        chord(0x10, 0x20)?; // Shift+Space
+        pump_for(Duration::from_millis(250));
+        tap(0x31)?; // 1
+        pump_for(Duration::from_millis(250));
+        tap(0x20)?; // 空格
+        pump_for(Duration::from_millis(250));
+        chord(0x10, 0x20)?; // 关全角
+        pump_for(Duration::from_millis(250));
+        // 英文态全角字母:Shift 单击切英文,再开全角。
+        tap(0x10)?;
+        pump_for(Duration::from_millis(250));
+        chord(0x10, 0x20)?;
+        pump_for(Duration::from_millis(250));
+        type_text("a")?;
+        pump_for(Duration::from_millis(250));
+        chord(0x10, 0x20)?; // 关全角
+        pump_for(Duration::from_millis(250));
+        tap(0x10)?; // 回中文,避免影响后续测试
+        pump_for(Duration::from_millis(300));
+        let text = edit_text(edit);
+        if !text.ends_with("１　ａ") {
+            return Err(format!("全角输入后文本 `{text}` 不以「１　ａ」结尾"));
+        }
+        Ok(format!("## 全角模式\n\nPASS,文本 `{text}`"))
     }
 
     fn real_run() -> Result<(String, String), String> {
@@ -590,11 +635,12 @@ mod imp {
             let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
             // 组合里 Ctrl+Backspace 由输入法按音节删除,不能漏给宿主去改文档。
             let segment_note = check_segment_edit(edit, &thread_mgr)?;
+            let fullwidth_note = check_fullwidth(edit)?;
             let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
             Ok((
                 text,
                 format!(
-                    "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}"
+                    "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}"
                 ),
             ))
         })();

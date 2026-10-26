@@ -351,6 +351,7 @@ fn run_scenario(sc: &Scenario) -> Result<(), String> {
         cfg.fuzzy = Fuzzy::off();
     }
     let mut engine = Engine::new(std::sync::Arc::new(Dictionary::builtin()), cfg);
+    engine.set_fullwidth(sc.fullwidth);
     let mut modes = vec![engine.mode()];
     for (si, stage) in sc.stages.iter().enumerate() {
         let mut commits: Vec<String> = Vec::new();

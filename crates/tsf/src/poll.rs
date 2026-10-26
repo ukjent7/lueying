@@ -99,6 +99,7 @@ fn poll_once(context: &PollContext) {
     };
     drop(guard);
     context.shared.set_chinese(reply.chinese);
+    context.shared.set_fullwidth(reply.fullwidth);
     crate::ui_element::sync(&context.shared, &context.client, &reply);
     let commits = reply.commits;
     if commits.is_empty() && reply.preedit == context.shared.preedit.borrow().as_str() {

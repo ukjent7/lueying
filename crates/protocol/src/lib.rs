@@ -136,6 +136,10 @@ pub enum Request {
     SetMode { session: u64, chinese: bool },
     /// 语言栏/右键菜单切中英;不受「Shift 单击切换」开关限制。
     ToggleMode { session: u64 },
+    /// Shift+Space 切换全角/半角;全局状态,不写配置。
+    ToggleFullwidth { session: u64 },
+    /// 系统「转换模式」compartment 的 FULLSHAPE 位变化。
+    SetFullwidth { session: u64, fullwidth: bool },
     /// 设置窗保存后通知 Server 重新读配置文件。
     ReloadConfig,
     /// 保留键 Ctrl+.：切换中文标点并持久化。
@@ -189,6 +193,9 @@ pub struct Reply {
     pub preedit: String,
     /// 当前是否中文模式(语言栏指示用)。
     pub chinese: bool,
+    /// 当前是否全角模式(语言栏/模式徽标用)。
+    #[serde(default)]
+    pub fullwidth: bool,
     /// 键应直通给应用。
     pub passthrough: bool,
     /// 模糊组统计(仅设置窗的 `FuzzyStats`/`ResetFuzzy` 应答使用)。
@@ -226,6 +233,7 @@ pub struct SessionView {
     pub page_size: usize,
     pub highlight: usize,
     pub chinese: bool,
+    pub fullwidth: bool,
     pub caret: Option<(i32, i32, i32, i32)>,
     pub host: String,
 }

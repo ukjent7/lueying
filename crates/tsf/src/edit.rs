@@ -10,6 +10,7 @@ use std::rc::Rc;
 use lueying_protocol::Request;
 use windows::Win32::Foundation::{E_FAIL, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, MONITOR_DEFAULTTONULL, MonitorFromPoint};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::{
     GetProcessDpiAwareness, LogicalToPhysicalPointForPerMonitorDPI, PROCESS_PER_MONITOR_DPI_AWARE,
 };
@@ -460,14 +461,16 @@ fn on_screen(rect: &RECT) -> bool {
     !unsafe { MonitorFromPoint(center, MONITOR_DEFAULTTONULL) }.is_invalid()
 }
 
-/// 前台线程的原生插入符矩形(屏幕坐标)。TSF 的 GetTextExt 在 Java/Swing
+/// 当前宿主线程的原生插入符矩形(屏幕坐标)。TSF 的 GetTextExt 在 Java/Swing
 /// 和自绘编辑器里常失败,但同一线程的 Win32 插入符仍可能有效。
+/// 取当前线程而非前台线程:焦点切换后前台线程可能已是别的应用。
 fn gui_caret() -> Option<(i32, i32, i32, i32)> {
     let mut info = GUITHREADINFO {
         cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
         ..Default::default()
     };
-    unsafe { GetGUIThreadInfo(0, &mut info) }.ok()?;
+    let tid = unsafe { GetCurrentThreadId() };
+    unsafe { GetGUIThreadInfo(tid, &mut info) }.ok()?;
     if info.hwndCaret.is_invalid() {
         return None;
     }

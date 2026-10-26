@@ -293,8 +293,12 @@ impl Dictionary {
         let (wo, wl, ko, kl) = (u(0), u(1), u(2), u(3));
         // 区间必须落在字符串池内:越界说明文件损坏,返回空串而非静默读到别处。
         let text = |off: usize, len: usize| {
-            let at = self.data.start + off;
-            let end = at + len;
+            let Some(at) = self.data.start.checked_add(off) else {
+                return "";
+            };
+            let Some(end) = at.checked_add(len) else {
+                return "";
+            };
             if end > self.data.end {
                 return "";
             }

@@ -16,6 +16,7 @@ mod imp {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, RwLock, mpsc};
+    use std::time::Instant;
 
     use lueying_dict::Dictionary;
     use lueying_dict::gram::Gram;
@@ -45,6 +46,14 @@ mod imp {
         pub(super) host_draws: bool,
     }
 
+    /// 一次用户主动的模式变化;候选窗同进程的徽标据此短暂显示「中」「英」「全」「半」。
+    pub(super) struct ModeHud {
+        pub(super) label: &'static str,
+        /// 切换时的宿主光标矩形(物理像素);没有可用光标时退到主屏。
+        pub(super) caret: Option<(i32, i32, i32, i32)>,
+        pub(super) at: Instant,
+    }
+
     pub(super) struct State {
         pub(super) dict: Arc<Dictionary>,
         pub(super) gram: Option<Arc<Gram>>,
@@ -53,6 +62,9 @@ mod imp {
         pub(super) conns: Mutex<HashMap<u64, u64>>,
         /// 每次会话变化自增,候选窗轮询它决定刷新。
         pub(super) version: AtomicU64,
+        /// 每次中英切换自增,模式徽标轮询它决定是否重新显示。
+        pub(super) hud_serial: AtomicU64,
+        pub(super) mode_hud: Mutex<Option<ModeHud>>,
         /// 最近收到按键/光标上报的会话,候选窗只跟它。
         pub(super) active: AtomicU64,
         pub(super) sync_model: Option<Model>,
@@ -65,6 +77,8 @@ mod imp {
         pub(super) config_path: Option<PathBuf>,
         /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
         pub(super) chinese: AtomicBool,
+        /// 全局全角/半角:Shift+Space 或系统转换模式切换;新会话上线时跟随。
+        pub(super) fullwidth: AtomicBool,
     }
 
     pub(super) fn real_main() {
@@ -132,6 +146,8 @@ mod imp {
             sessions: Mutex::new(HashMap::new()),
             conns: Mutex::new(HashMap::new()),
             version: AtomicU64::new(0),
+            hud_serial: AtomicU64::new(0),
+            mode_hud: Mutex::new(None),
             active: AtomicU64::new(0),
             sync_model,
             settled_model,
@@ -140,6 +156,7 @@ mod imp {
             config: RwLock::new(app_config),
             config_path,
             chinese: AtomicBool::new(true),
+            fullwidth: AtomicBool::new(false),
         });
         if state.settle_tx.is_some() {
             crate::settle::spawn(Arc::clone(&state), settle_rx);
@@ -262,6 +279,7 @@ mod imp {
                     engine = engine.with_gram(Arc::clone(g));
                 }
                 engine.set_mode(current_mode(state));
+                engine.set_fullwidth(state.fullwidth.load(Ordering::Relaxed));
                 let chinese = engine.mode() == Mode::Chinese;
                 sessions.insert(
                     session,
@@ -270,6 +288,7 @@ mod imp {
                         view: SessionView {
                             host,
                             chinese,
+                            fullwidth: state.fullwidth.load(Ordering::Relaxed),
                             ..SessionView::default()
                         },
                         pending: None,
@@ -293,6 +312,7 @@ mod imp {
                     return Reply {
                         passthrough: true,
                         chinese: state.chinese.load(Ordering::Relaxed),
+                        fullwidth: state.fullwidth.load(Ordering::Relaxed),
                         ..Reply::default()
                     };
                 };
@@ -458,6 +478,29 @@ mod imp {
                     neutral(state)
                 };
                 set_global_mode(state, &mut sessions, chinese);
+                reply
+            }
+            Request::ToggleFullwidth { session } => {
+                state.active.store(session, Ordering::Relaxed);
+                if sessions.contains_key(&session) {
+                    let fullwidth = !state.fullwidth.load(Ordering::Relaxed);
+                    set_global_fullwidth(state, &mut sessions, fullwidth);
+                }
+                neutral(state)
+            }
+            Request::SetFullwidth { session, fullwidth } => {
+                state.active.store(session, Ordering::Relaxed);
+                if !sessions.contains_key(&session) {
+                    return neutral(state);
+                }
+                set_global_fullwidth(state, &mut sessions, fullwidth);
+                // 系统 compartment 的回调可能正组着句;带上当前内联文本,
+                // 让 TSF 的 apply_reply 重写同一份预编辑而不是把它清掉。
+                let mut reply = neutral(state);
+                if let Some(s) = sessions.get(&session) {
+                    reply.preedit = s.view.preedit.clone();
+                    fill_view(&mut reply, s);
+                }
                 reply
             }
             Request::Focus { session, focused } => {
@@ -758,6 +801,7 @@ mod imp {
     pub(super) fn neutral(state: &State) -> Reply {
         Reply {
             chinese: state.chinese.load(Ordering::Relaxed),
+            fullwidth: state.fullwidth.load(Ordering::Relaxed),
             ..Reply::default()
         }
     }
@@ -779,6 +823,7 @@ mod imp {
         reply.page = s.view.page;
         reply.page_size = s.view.page_size;
         reply.highlight = s.view.highlight;
+        reply.fullwidth = s.view.fullwidth;
     }
 
     fn commits_of(events: &[Event]) -> Vec<String> {
@@ -816,7 +861,13 @@ mod imp {
 
     /// 中/英是全局状态:一个应用里切了,所有会话与之后的候选窗都跟着变。
     fn set_global_mode(state: &State, sessions: &mut HashMap<u64, Session>, chinese: bool) {
-        state.chinese.store(chinese, Ordering::Relaxed);
+        let changed = state.chinese.swap(chinese, Ordering::Relaxed) != chinese;
+        let caret = if changed {
+            let active = state.active.load(Ordering::Relaxed);
+            sessions.get(&active).and_then(|s| s.view.caret)
+        } else {
+            None
+        };
         let target = if chinese {
             Mode::Chinese
         } else {
@@ -842,6 +893,48 @@ mod imp {
             } else if s.view.chinese != chinese {
                 s.view.chinese = chinese;
             }
+        }
+        if changed {
+            // 只给用户主动切换做徽标;焦点同步、同值 SetMode 不弹。
+            show_hud(state, sessions, if chinese { "中" } else { "英" }, caret);
+        }
+    }
+
+    /// 让模式徽标在光标旁短暂显示一个标记。`caret` 由调用方在会话表还可用时取好。
+    fn show_hud(
+        state: &State,
+        sessions: &HashMap<u64, Session>,
+        label: &'static str,
+        caret: Option<(i32, i32, i32, i32)>,
+    ) {
+        let caret = caret.or_else(|| {
+            let active = state.active.load(Ordering::Relaxed);
+            sessions.get(&active).and_then(|s| s.view.caret)
+        });
+        *state.mode_hud.lock().unwrap_or_else(|p| p.into_inner()) = Some(ModeHud {
+            label,
+            caret,
+            at: Instant::now(),
+        });
+        state.hud_serial.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 全角/半角是全局状态;只改后续输出,不落定已有组合。
+    fn set_global_fullwidth(state: &State, sessions: &mut HashMap<u64, Session>, fullwidth: bool) {
+        let changed = state.fullwidth.swap(fullwidth, Ordering::Relaxed) != fullwidth;
+        for s in sessions.values_mut() {
+            s.engine.set_fullwidth(fullwidth);
+            s.view.fullwidth = fullwidth;
+            // 预演或排队中的应答带着旧全角位;一并改掉,免得下一次写回拨回指示器。
+            if let Some(reply) = s.pending.as_mut() {
+                reply.fullwidth = fullwidth;
+            }
+            if let Some(reply) = s.ui_reply.as_mut() {
+                reply.fullwidth = fullwidth;
+            }
+        }
+        if changed {
+            show_hud(state, sessions, if fullwidth { "全" } else { "半" }, None);
         }
     }
 

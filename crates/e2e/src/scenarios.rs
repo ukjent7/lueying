@@ -7,6 +7,8 @@ pub struct Scenario {
     pub name: &'static str,
     /// 该场景显式关闭自动模糊音(`config.ini` 的 `fuzzy=off`)。
     pub fuzzy_off: bool,
+    /// 场景开始时打开全角模式。
+    pub fullwidth: bool,
     pub stages: Vec<Stage>,
 }
 
@@ -70,9 +72,14 @@ fn stage(keys: Vec<Key>, checks: Vec<Check>) -> Stage {
 }
 
 fn s(name: &'static str, fuzzy_off: bool, stages: Vec<Stage>) -> Scenario {
+    sf(name, fuzzy_off, false, stages)
+}
+
+fn sf(name: &'static str, fuzzy_off: bool, fullwidth: bool, stages: Vec<Stage>) -> Scenario {
     Scenario {
         name,
         fuzzy_off,
+        fullwidth,
         stages,
     }
 }
@@ -328,20 +335,57 @@ pub fn scenarios() -> Vec<Scenario> {
                     Key::Punct('>'),
                     Key::Punct('['),
                     Key::Punct(']'),
+                    Key::Punct('{'),
+                    Key::Punct('}'),
                     Key::Punct('$'),
                     Key::Punct('^'),
                     Key::Punct('_'),
                     Key::Punct('\\'),
+                    Key::Punct('`'),
+                    Key::Punct('~'),
+                    Key::Punct('|'),
                     Key::Punct('"'),
                     Key::Punct('"'),
                     Key::Punct('\''),
                     Key::Punct('\''),
                 ],
                 vec![commits(&[
-                    "，", "。", "！", "？", "；", "：", "（", "）", "《", "》", "【", "】", "￥",
-                    "……", "——", "、", "“", "”", "‘", "’",
+                    "，", "。", "！", "？", "；", "：", "（", "）", "《", "》", "【", "】", "「", "」",
+                    "￥", "……", "——", "、", "·", "～", "｜", "“", "”", "‘", "’",
                 ])],
             )],
+        ),
+        sf(
+            "全角模式:英文/数字/空格/标点",
+            false,
+            true,
+            vec![
+                stage(
+                    vec![Key::Shift],
+                    vec![Check::ModeSeq(vec![Mode::Chinese, Mode::English])],
+                ),
+                stage(vec![Key::Letter('a')], vec![commits(&["ａ"])]),
+                stage(vec![Key::Digit(3)], vec![commits(&["３"])]),
+                stage(vec![Key::Space], vec![commits(&["　"])]),
+                stage(vec![Key::Punct('.')], vec![commits(&["．"])]),
+                stage(vec![Key::Punct(';')], vec![commits(&["；"])]),
+                stage(vec![Key::Punct('/')], vec![commits(&["／"])]),
+                stage(
+                    vec![Key::Shift],
+                    vec![Check::ModeSeq(vec![
+                        Mode::Chinese,
+                        Mode::English,
+                        Mode::Chinese,
+                    ])],
+                ),
+                stage(vec![Key::Digit(1)], vec![commits(&["１"])]),
+                // 全角数字后仍是小数点形态,不写成中文句号。
+                stage(vec![Key::Punct('.')], vec![commits(&["．"])]),
+                stage(vec![Key::Letter('A')], vec![commits(&["Ａ"])]),
+                stage(vec![Key::Space], vec![commits(&["　"])]),
+                // 中文标点优先于全角 ASCII:句号仍是「。」。
+                stage(vec![Key::Punct('.')], vec![commits(&["。"])]),
+            ],
         ),
         s(
             "数字后的句号保持半角",

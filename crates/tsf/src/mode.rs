@@ -18,6 +18,8 @@ use crate::log;
 use crate::service::{Shared, SharedClient, apply_reply, request_with};
 
 const NATIVE: i32 = TF_CONVERSIONMODE_NATIVE as i32;
+/// TF_CONVERSIONMODE_FULLSHAPE。直接写位值,避免依赖只在部分 SDK 版本声明的常量。
+const FULLSHAPE: i32 = 0x20;
 
 pub(crate) type Advice = Vec<(ITfSource, u32)>;
 
@@ -52,9 +54,9 @@ pub(crate) fn unadvise(advice: Advice) {
     }
 }
 
-/// 写系统状态:中文 = 转换模式 NATIVE 位亮 + 输入法开关打开。
-/// 已经是目标值时不写,避免触发无意义的 OnChange。
-pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool) {
+/// 写系统状态:中文 = 转换模式 NATIVE 位亮 + 输入法开关打开;
+/// 全角 = 转换模式 FULLSHAPE 位亮。已经是目标值时不写,避免触发无意义的 OnChange。
+pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool, fullwidth: bool) {
     let Ok(manager) = thread_mgr.cast::<ITfCompartmentMgr>() else {
         return;
     };
@@ -62,12 +64,17 @@ pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool
         unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION) }
     {
         let current = read_i32(&compartment);
-        let base = current.unwrap_or(NATIVE);
-        let next = if chinese {
-            base | NATIVE
+        let mut next = current.unwrap_or(NATIVE);
+        if chinese {
+            next |= NATIVE;
         } else {
-            base & !NATIVE
-        };
+            next &= !NATIVE;
+        }
+        if fullwidth {
+            next |= FULLSHAPE;
+        } else {
+            next &= !FULLSHAPE;
+        }
         if current != Some(next) {
             let _ = unsafe { compartment.SetValue(tid, &VARIANT::from(next)) };
         }
@@ -100,10 +107,11 @@ fn openclose_compartment(thread_mgr: &ITfThreadMgr) -> Result<ITfCompartment> {
     unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
 }
 
-/// 转换模式里 NATIVE 位 = 中文;读不到返回 None(不凭猜测改模式)。
-fn conversion_chinese(thread_mgr: &ITfThreadMgr) -> Option<bool> {
+/// 转换模式里 NATIVE 位 = 中文,FULLSHAPE 位 = 全角;读不到返回 None。
+fn conversion_mode(thread_mgr: &ITfThreadMgr) -> Option<(bool, bool)> {
     let compartment = conversion_compartment(thread_mgr).ok()?;
-    read_i32(&compartment).map(|value| value & NATIVE != 0)
+    let value = read_i32(&compartment)?;
+    Some((value & NATIVE != 0, value & FULLSHAPE != 0))
 }
 
 /// 「输入法开/关」:开 = 中文。系统 Ctrl+Space 翻的就是它。
@@ -143,29 +151,44 @@ impl ModeSink_Impl {
         if self.shared.mode_writing.get() {
             return;
         }
-        let chinese = if guid == GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION {
-            conversion_chinese(&self.thread_mgr)
+        let (chinese, fullwidth) = if guid == GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION {
+            let Some((chinese, fullwidth)) = conversion_mode(&self.thread_mgr) else {
+                return;
+            };
+            (chinese, Some(fullwidth))
         } else if guid == GUID_COMPARTMENT_KEYBOARD_OPENCLOSE {
-            openclose_chinese(&self.thread_mgr)
+            let Some(chinese) = openclose_chinese(&self.thread_mgr) else {
+                return;
+            };
+            (chinese, None)
         } else {
-            None
-        };
-        let Some(chinese) = chinese else {
             return;
         };
-        if chinese == self.shared.chinese.get() {
-            return;
+        if chinese != self.shared.chinese.get() {
+            let Some(reply) = request_with(
+                &self.client,
+                &self.shared,
+                Request::SetMode {
+                    session: self.shared.session,
+                    chinese,
+                },
+            ) else {
+                return;
+            };
+            apply_reply(&self.shared, &self.client, &reply);
         }
-        let Some(reply) = request_with(
-            &self.client,
-            &self.shared,
-            Request::SetMode {
-                session: self.shared.session,
-                chinese,
-            },
-        ) else {
-            return;
-        };
-        apply_reply(&self.shared, &self.client, &reply);
+        if let Some(fullwidth) = fullwidth
+            && fullwidth != self.shared.fullwidth.get()
+            && let Some(reply) = request_with(
+                &self.client,
+                &self.shared,
+                Request::SetFullwidth {
+                    session: self.shared.session,
+                    fullwidth,
+                },
+            )
+        {
+            apply_reply(&self.shared, &self.client, &reply);
+        }
     }
 }

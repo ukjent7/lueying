@@ -56,6 +56,8 @@ pub(crate) struct Shared {
     pub tid: Cell<u32>,
     /// 中文模式;语言栏指示器与 Caps 恢复用它。
     pub chinese: Cell<bool>,
+    /// 全角模式;与系统「转换模式」compartment 的 FULLSHAPE 位同步。
+    pub fullwidth: Cell<bool>,
     /// 线程管理器:写系统「转换模式」「输入法开/关」compartment 用。
     pub thread_mgr: RefCell<Option<ITfThreadMgr>>,
     /// 正在写 compartment;期间收到的 OnChange 是这次写入的回声,不再上报。
@@ -94,12 +96,30 @@ impl Shared {
         if self.chinese.replace(chinese) == chinese {
             return;
         }
+        self.write_indicator();
+        self.refresh_langbar();
+    }
+
+    /// 记下全角/半角并写系统转换模式;语言栏图标只关心中/英,不必重绘。
+    pub(crate) fn set_fullwidth(&self, fullwidth: bool) {
+        if self.fullwidth.replace(fullwidth) == fullwidth {
+            return;
+        }
+        self.write_indicator();
+    }
+
+    /// 把中/英与全/半写回系统 compartment;写的时候屏蔽自己的 OnChange 回声。
+    fn write_indicator(&self) {
         if let Some(thread_mgr) = self.thread_mgr.borrow().as_ref() {
             let previous = self.mode_writing.replace(true);
-            crate::mode::write_indicator(thread_mgr, self.tid.get(), chinese);
+            crate::mode::write_indicator(
+                thread_mgr,
+                self.tid.get(),
+                self.chinese.get(),
+                self.fullwidth.get(),
+            );
             self.mode_writing.set(previous);
         }
-        self.refresh_langbar();
     }
 
     /// Caps Lock 等外部状态变了、但中/英没变时也要刷新图标。
@@ -121,6 +141,8 @@ struct Pending {
     reply: Reply,
     /// 产生这条应答的虚拟键;OnKeyDown 必须对得上才应用。
     vk: u32,
+    /// 只消费按键,不写文档(Shift+Space 切全角)。
+    consume_only: bool,
 }
 
 #[implement(
@@ -189,6 +211,7 @@ impl TextService {
                 session,
                 tid: Cell::new(0),
                 chinese: Cell::new(true),
+                fullwidth: Cell::new(false),
                 thread_mgr: RefCell::new(None),
                 mode_writing: Cell::new(false),
                 langbar_sink: RefCell::new(None),
@@ -242,6 +265,7 @@ impl TextService {
         // 新按键让任何在途的停顿写回失效。
         self.shared.touch();
         self.shared.set_chinese(reply.chinese);
+        self.shared.set_fullwidth(reply.fullwidth);
         // 没有文档改动且当前没有组句(例如纯模式切换):不要再排一个空编辑会话,
         // 它会与紧接着的组句写回竞争,延迟执行时把新组句结束掉。
         if reply.commits.is_empty() && reply.preedit.is_empty() && !self.shared.composing() {
@@ -268,6 +292,7 @@ impl TextService {
     /// 失焦落定:应答可能在新输入框的按键之后才执行,只上屏、不改新组句。
     fn apply_stale(&self, context: &ITfContext, reply: &Reply) {
         self.shared.set_chinese(reply.chinese);
+        self.shared.set_fullwidth(reply.fullwidth);
         let commit = reply.commits.concat();
         if commit.is_empty() {
             return;
@@ -371,10 +396,12 @@ impl TextService {
         }) {
             if focused {
                 self.shared.set_chinese(reply.chinese);
+                self.shared.set_fullwidth(reply.fullwidth);
             } else if let Some(context) = self.shared.last_context.borrow().clone() {
                 self.apply_stale(&context, &reply);
             } else {
                 self.shared.set_chinese(reply.chinese);
+                self.shared.set_fullwidth(reply.fullwidth);
             }
         }
         if focused {
@@ -404,7 +431,7 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
                     host: host_app_name(),
                 });
                 *guard = Some(new_client);
-                hello.map(|reply| reply.chinese)
+                hello.map(|reply| (reply.chinese, reply.fullwidth))
             } else {
                 None
             }
@@ -412,8 +439,9 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
             None
         }
     };
-    if let Some(chinese) = hello_chinese {
+    if let Some((chinese, fullwidth)) = hello_chinese {
         shared.set_chinese(chinese);
+        shared.set_fullwidth(fullwidth);
     }
     let mut guard = client.borrow_mut();
     let connection = guard.as_mut()?;
@@ -432,6 +460,7 @@ pub(crate) fn apply_reply(shared: &Rc<Shared>, client: &SharedClient, reply: &Re
     crate::ui_element::sync(shared, client, reply);
     shared.touch();
     shared.set_chinese(reply.chinese);
+    shared.set_fullwidth(reply.fullwidth);
     let commit = reply.commits.concat();
     if commit.is_empty() && reply.preedit.is_empty() && !shared.composing() {
         return;
@@ -516,7 +545,12 @@ impl TextService_Impl {
         }
         // 激活时先把系统指示器对齐当前模式;Focus 回调随后再跟 Server 的全局值。
         self.shared.mode_writing.set(true);
-        crate::mode::write_indicator(&thread_mgr, tid, self.shared.chinese.get());
+        crate::mode::write_indicator(
+            &thread_mgr,
+            tid,
+            self.shared.chinese.get(),
+            self.shared.fullwidth.get(),
+        );
         self.shared.mode_writing.set(false);
         *self.poll.borrow_mut() = crate::poll::PollTimer::new(
             self.client.clone(),
@@ -578,6 +612,7 @@ impl TextService_Impl {
                         self.apply(context, &reply);
                     } else {
                         self.shared.set_chinese(reply.chinese);
+                        self.shared.set_fullwidth(reply.fullwidth);
                     }
                 }
                 // 已经是英文时 SetMode 不改变 chinese,但图标要从「英」变成「A」。
@@ -732,6 +767,30 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 // 单击判定与模式同步都在 keyup。
                 return Ok(FALSE);
             }
+            // Shift+Space 切全/半角:与微软拼音、水杉一致,不进入组句。
+            if !self.secure.get() && vk == 0x20 && keys::shift_down() && !keys::command_mods() {
+                let Ok(context) = pic.ok() else {
+                    return Ok(FALSE);
+                };
+                if crate::context::keyboard_disabled(context) {
+                    return Ok(FALSE);
+                }
+                let Some(reply) = self.request(Request::ToggleFullwidth {
+                    session: self.shared.session,
+                }) else {
+                    return Ok(FALSE);
+                };
+                self.shared.set_chinese(reply.chinese);
+                self.shared.set_fullwidth(reply.fullwidth);
+                *self.shared.last_context.borrow_mut() = Some(context.clone());
+                *self.pending.borrow_mut() = Some(Pending {
+                    context,
+                    reply,
+                    vk,
+                    consume_only: true,
+                });
+                return Ok(true.into());
+            }
             let Some(key) = self.mapped_key(vk, scan) else {
                 return Ok(FALSE);
             };
@@ -765,6 +824,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             ));
             // 英文模式下字母会直通,但语言栏仍要跟上全局模式。
             self.shared.set_chinese(reply.chinese);
+            self.shared.set_fullwidth(reply.fullwidth);
             if reply.passthrough {
                 return Ok(FALSE);
             }
@@ -773,6 +833,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 context: context.clone(),
                 reply,
                 vk,
+                consume_only: false,
             });
             crate::context_probe::request(
                 context,
@@ -810,6 +871,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 }
             };
             if let Some(pending) = pending {
+                // 切全角只消费 Shift+Space,不改文档;组句中的内联文本保持原样。
+                if pending.consume_only {
+                    return Ok(true.into());
+                }
                 log(&format!(
                     "应用 vk={vk} 上屏={:?} 内联={:?}",
                     pending.reply.commits, pending.reply.preedit

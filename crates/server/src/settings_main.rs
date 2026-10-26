@@ -24,18 +24,24 @@ mod imp {
     use lueying_engine::Fuzzy;
     use lueying_protocol::{Reply, Request, pipe_name};
     use lueying_server::config::{self, AppConfig};
+    use lueying_server::theme;
+    use windows::Win32::Graphics::Gdi::{
+        COLOR_3DFACE, COLOR_BTNTEXT, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT,
+        COLOR_WINDOW, COLOR_WINDOWFRAME, COLOR_WINDOWTEXT,
+    };
     use windows::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
         OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
     };
     use windows::Win32::UI::HiDpi::{
-        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
     use windows::core::{PCWSTR, PWSTR};
 
     const WIDTH: f32 = 440.0;
-    /// 6 行设置 + 标题/说明/底部按钮;留足行高与间距,避免底部被裁。
-    const HEIGHT: f32 = 600.0;
+    /// 6 行设置 + 标题/说明/底部按钮;420 逻辑像素在 768p、150% 缩放下也放得下。
+    const HEIGHT: f32 = 420.0;
 
     struct SettingsPanel {
         cfg: AppConfig,
@@ -58,8 +64,19 @@ mod imp {
             .as_ref()
             .map_or_else(AppConfig::default, |path| config::load(path));
         application().run(move |cx: &mut App| {
+            // 主屏居中;按系统 DPI 把物理像素换成 GPUI 的逻辑像素。
+            let scale = unsafe { GetDpiForSystem() }.max(96) as f32 / 96.0;
+            let screen = unsafe {
+                (
+                    GetSystemMetrics(SM_CXSCREEN) as f32,
+                    GetSystemMetrics(SM_CYSCREEN) as f32,
+                )
+            };
             let bounds = Bounds {
-                origin: Point::new(px(260.0), px(160.0)),
+                origin: Point::new(
+                    px(((screen.0 / scale - WIDTH) / 2.0).max(0.0)),
+                    px(((screen.1 / scale - HEIGHT) / 2.0).max(0.0)),
+                ),
                 size: size(px(WIDTH), px(HEIGHT)),
             };
             let path = path.clone();
@@ -226,8 +243,24 @@ mod imp {
         text: u32,
         muted: u32,
         accent: u32,
+        /// 选中胶囊上的文字;高对比度下必须跟随系统高亮文字色。
+        on_accent: u32,
         off_bg: u32,
         off_text: u32,
+    }
+
+    fn system_palette() -> Palette {
+        Palette {
+            bg: theme::system_color(COLOR_WINDOW),
+            card: theme::system_color(COLOR_WINDOW),
+            border: theme::system_color(COLOR_WINDOWFRAME),
+            text: theme::system_color(COLOR_WINDOWTEXT),
+            muted: theme::system_color(COLOR_GRAYTEXT),
+            accent: theme::system_color(COLOR_HIGHLIGHT),
+            on_accent: theme::system_color(COLOR_HIGHLIGHTTEXT),
+            off_bg: theme::system_color(COLOR_3DFACE),
+            off_text: theme::system_color(COLOR_BTNTEXT),
+        }
     }
 
     fn palette(dark: bool) -> Palette {
@@ -239,6 +272,7 @@ mod imp {
                 text: 0xe8e8ee,
                 muted: 0xa0a0aa,
                 accent: 0x3b78ff,
+                on_accent: 0xffffff,
                 off_bg: 0x3a3a42,
                 off_text: 0xd0d0d8,
             }
@@ -250,6 +284,7 @@ mod imp {
                 text: 0x20202a,
                 muted: 0x70707a,
                 accent: 0x2f6fed,
+                on_accent: 0xffffff,
                 off_bg: 0xe6e6ec,
                 off_text: 0x50505a,
             }
@@ -301,7 +336,7 @@ mod imp {
             .text_size(px(13.0))
             .text_center()
             .bg(rgb(if on { colors.accent } else { colors.off_bg }))
-            .text_color(rgb(if on { 0xffffff } else { colors.off_text }))
+            .text_color(rgb(if on { colors.on_accent } else { colors.off_text }))
             .on_mouse_down(MouseButton::Left, on_click)
             .child(label.into())
     }
@@ -316,10 +351,14 @@ mod imp {
                     true
                 });
             }
-            let colors = palette(matches!(
-                window.appearance(),
-                WindowAppearance::Dark | WindowAppearance::VibrantDark
-            ));
+            let colors = if theme::high_contrast() {
+                system_palette()
+            } else {
+                palette(matches!(
+                    window.appearance(),
+                    WindowAppearance::Dark | WindowAppearance::VibrantDark
+                ))
+            };
             let page = self.cfg.page_size;
             let mut card = div()
                 .flex()

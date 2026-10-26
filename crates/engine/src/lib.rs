@@ -117,6 +117,8 @@ pub struct Engine {
     learning: bool,
     cfg: Config,
     mode: Mode,
+    /// 全角模式:英文态与中文态的空闲数字/空格/未映射标点按全角上屏。
+    fullwidth: bool,
     comp: Option<Composition>,
     /// 当前组合里已经上屏过分段词(这时左邻文本不含这些词)。
     comp_committed: bool,
@@ -145,6 +147,7 @@ impl Engine {
             learning: true,
             cfg,
             mode: Mode::Chinese,
+            fullwidth: false,
             comp: None,
             comp_committed: false,
             phrase: None,
@@ -192,6 +195,15 @@ impl Engine {
         }
     }
 
+    pub fn fullwidth(&self) -> bool {
+        self.fullwidth
+    }
+
+    /// 全角只改后续按键的输出,不落定或改写已经敲了一半的拼音。
+    pub fn set_fullwidth(&mut self, fullwidth: bool) {
+        self.fullwidth = fullwidth;
+    }
+
     pub fn composition(&self) -> Option<&Composition> {
         self.comp.as_ref()
     }
@@ -228,7 +240,7 @@ impl Engine {
         self.context.clear();
         self.push_context(text);
         // 光标左边是数字时,随后的半角句点更像小数点。
-        self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
+        self.after_digit = ends_with_digit(text);
     }
 
     /// 清空已上屏上下文(焦点切到别处时调用)。
@@ -371,7 +383,7 @@ impl Engine {
         if !text.is_ascii() {
             self.push_context(&text);
         }
-        self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
+        self.after_digit = ends_with_digit(&text);
         Some(text)
     }
 
@@ -485,7 +497,7 @@ impl Engine {
                     if !text.is_ascii() {
                         self.push_context(text);
                     }
-                    self.after_digit = text.chars().last().is_some_and(|c| c.is_ascii_digit());
+                    self.after_digit = ends_with_digit(text);
                 }
                 Event::Passthrough(Key::Digit(_)) => self.after_digit = true,
                 Event::Passthrough(_) => self.after_digit = false,
@@ -511,12 +523,30 @@ impl Engine {
             return events;
         }
         if self.mode == Mode::English {
-            return vec![Event::Passthrough(key)];
+            return self.english_events(key);
         }
         if self.comp.is_some() {
             self.process_composing(key)
         } else {
             self.process_idle(key)
+        }
+    }
+
+    /// 英文态:全角开着时把可打印 ASCII 按键转成全角上屏,其余键照常直通。
+    fn english_events(&mut self, key: Key) -> Vec<Event> {
+        if !self.fullwidth {
+            return vec![Event::Passthrough(key)];
+        }
+        let text = match key {
+            Key::Letter(c) => punct::fullwidth(c),
+            Key::Digit(d) => char::from_digit(u32::from(d), 10).and_then(punct::fullwidth),
+            Key::Punct(p) => punct::fullwidth(p),
+            Key::Space => Some('\u{3000}'),
+            _ => None,
+        };
+        match text {
+            Some(c) => vec![Event::Commit(c.to_string())],
+            None => vec![Event::Passthrough(key)],
         }
     }
 
@@ -526,6 +556,18 @@ impl Engine {
                 self.begin_composition(c);
                 Vec::new()
             }
+            // 全角下中文态直接上大写字母、数字与空格;小写字母仍起拼音。
+            Key::Letter(c) if self.fullwidth => {
+                let text = punct::fullwidth(c).map_or_else(|| c.to_string(), String::from);
+                vec![Event::Commit(text)]
+            }
+            Key::Digit(d) if self.fullwidth => {
+                let text = char::from_digit(u32::from(d), 10)
+                    .and_then(punct::fullwidth)
+                    .map_or_else(|| d.to_string(), String::from);
+                vec![Event::Commit(text)]
+            }
+            Key::Space if self.fullwidth => vec![Event::Commit('\u{3000}'.to_string())],
             Key::Punct(p) => self.punct_events(p),
             _ => vec![Event::Passthrough(key)],
         }
@@ -663,9 +705,18 @@ impl Engine {
                 } else {
                     None
                 };
-                events.push(Event::Commit(
-                    mapped.map_or_else(|| p.to_string(), |s| s.to_string()),
-                ));
+                let text = mapped.map_or_else(
+                    || {
+                        if self.fullwidth {
+                            punct::fullwidth(p)
+                                .map_or_else(|| p.to_string(), String::from)
+                        } else {
+                            p.to_string()
+                        }
+                    },
+                    |s| s.to_string(),
+                );
+                events.push(Event::Commit(text));
                 events
             }
             // 大写字母(Shift+字母)在这里落定整串组合,再由调用方写进文档;
@@ -673,7 +724,12 @@ impl Engine {
             Key::Letter(c) => {
                 let mut events = self.commit_all();
                 self.phrase = None;
-                events.push(Event::Commit(c.to_string()));
+                let text = if self.fullwidth {
+                    punct::fullwidth(c).map_or_else(|| c.to_string(), String::from)
+                } else {
+                    c.to_string()
+                };
+                events.push(Event::Commit(text));
                 events
             }
             // Shift 在 process 入口已处理,组合态里不会再遇到。
@@ -681,15 +737,21 @@ impl Engine {
         }
     }
 
-    /// 标点:开中文标点则上屏全角,否则直通。
+    /// 标点:开中文标点则上屏全角,否则全角模式下上屏全角 ASCII,再否则直通。
     fn punct_events(&mut self, p: char) -> Vec<Event> {
-        if !self.cfg.chinese_punct {
-            return vec![Event::Passthrough(Key::Punct(p))];
+        if self.cfg.chinese_punct {
+            if let Some(s) =
+                punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit)
+            {
+                return vec![Event::Commit(s.to_string())];
+            }
         }
-        match punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit) {
-            Some(s) => vec![Event::Commit(s.to_string())],
-            None => vec![Event::Passthrough(Key::Punct(p))],
+        if self.fullwidth
+            && let Some(c) = punct::fullwidth(p)
+        {
+            return vec![Event::Commit(c.to_string())];
         }
+        vec![Event::Passthrough(Key::Punct(p))]
     }
 
     fn select_digit(&mut self, d: u8) -> Vec<Event> {
@@ -995,4 +1057,11 @@ impl Engine {
             .unwrap_or_else(|| segment::first_path(&comp.raw));
         self.cands = built.cands;
     }
+}
+
+/// 文本末尾是不是数字;全角数字也按数字处理,小数点和 IP 地址不必切半角。
+fn ends_with_digit(text: &str) -> bool {
+    text.chars()
+        .last()
+        .is_some_and(|c| c.is_ascii_digit() || matches!(c, '０'..='９'))
 }
