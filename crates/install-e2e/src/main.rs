@@ -477,7 +477,7 @@ mod imp {
             }
         }
         let old = format!("lueying_tsf-{}.dll", safe_version(version));
-        if target.join(old).exists() {
+        if target.join(&old).exists() {
             return Err(format!("更新后仍留着旧 DLL {old}"));
         }
         Ok(())
