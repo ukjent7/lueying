@@ -367,6 +367,24 @@ pub fn run(report: &mut String) -> usize {
         format!("先 {first:?},换框后 {second:?}"),
     );
 
+    // 焦点切回时从左邻文本恢复引号配对:已有未闭合开引号,下一引号必须是闭引号。
+    let mut e = engine();
+    e.set_context("他说：“你好");
+    let close = e.process(Key::Punct('"'));
+    let reopen = e.process(Key::Punct('"'));
+    e.set_context("他说：‘你好");
+    let single_close = e.process(Key::Punct('\''));
+    let single_open = e.process(Key::Punct('\''));
+    push(
+        &mut checks,
+        "左邻引号恢复配对",
+        close == vec![Event::Commit("”".into())]
+            && reopen == vec![Event::Commit("“".into())]
+            && single_close == vec![Event::Commit("’".into())]
+            && single_open == vec![Event::Commit("‘".into())],
+        format!("双引号 {close:?}/{reopen:?},单引号 {single_close:?}/{single_open:?}"),
+    );
+
     // 关闭中文标点后,逗号同样按 ASCII 上屏并结束组句。
     let mut e = Engine::new(
         Arc::new(Dictionary::builtin()),

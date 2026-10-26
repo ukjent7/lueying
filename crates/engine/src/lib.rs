@@ -263,6 +263,11 @@ impl Engine {
     pub fn set_context(&mut self, text: &str) {
         self.context.clear();
         self.push_context(text);
+        // 焦点切回后引号奇偶不能沿用上个文档;从左邻文本里未闭合的引号恢复,
+        // 已有开引号时下一对才按闭引号输出。
+        let (dq_open, sq_open) = quote_state(&self.context);
+        self.dq_open = dq_open;
+        self.sq_open = sq_open;
         // 光标跳走后,上一个词可能已经不在左邻;只有文本仍以它结尾才保留转移上下文。
         if self
             .last_word
@@ -1344,4 +1349,23 @@ fn ends_with_digit(text: &str) -> bool {
     text.chars()
         .last()
         .is_some_and(|c| c.is_ascii_digit() || matches!(c, '０'..='９'))
+}
+
+/// 左邻文本里中文双引号、单引号是否还处在未闭合状态。
+///
+/// 只看最近 [`CONTEXT_KEEP`] 字;更早的开引号已经滚出上下文,这里无法判断,
+/// 会按已闭合处理。正常的引号配对都在窗口内;跨过 128 字的长引文才会退化。
+fn quote_state(text: &str) -> (bool, bool) {
+    let mut dq_open = false;
+    let mut sq_open = false;
+    for c in text.chars() {
+        match c {
+            '“' => dq_open = true,
+            '”' => dq_open = false,
+            '‘' => sq_open = true,
+            '’' => sq_open = false,
+            _ => {}
+        }
+    }
+    (dq_open, sq_open)
 }
