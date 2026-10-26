@@ -15,6 +15,9 @@ pub struct Scenario {
 pub struct Stage {
     pub keys: Vec<Key>,
     pub checks: Vec<Check>,
+    /// 按文本把高亮移到该候选后再按 `keys`。场景 DSL 写不出动态下标,
+    /// 首页候选数变化时用文本定位比硬编码第几位稳。
+    pub select: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,7 +71,20 @@ fn l(s: &str) -> Vec<Key> {
 }
 
 fn stage(keys: Vec<Key>, checks: Vec<Check>) -> Stage {
-    Stage { keys, checks }
+    Stage {
+        keys,
+        checks,
+        select: None,
+    }
+}
+
+/// 先按文本选中候选,再按 `keys`(通常是空格);用于首页位置会变化的入口。
+fn pick(text: &'static str, keys: Vec<Key>, checks: Vec<Check>) -> Stage {
+    Stage {
+        keys,
+        checks,
+        select: Some(text),
+    }
 }
 
 fn s(name: &'static str, fuzzy_off: bool, stages: Vec<Stage>) -> Scenario {
@@ -432,9 +448,11 @@ pub fn scenarios() -> Vec<Scenario> {
             false,
             vec![
                 stage(l("jintiantianqi"), vec![Check::Top("今天天气".into())]),
-                // 迷你词库只有四条整句,最高分前缀词「今天」排在首页第 5 位。
-                stage(
-                    vec![Key::Digit(5)],
+                // 整句备选先占首页,前缀词「今天」排在它们之后;按文本定位,
+                // 不绑定首页候选数。
+                pick(
+                    "今天",
+                    vec![Key::Space],
                     vec![commits(&["今天"]), Check::Raw("tianqi".into())],
                 ),
                 stage(vec![Key::Space], vec![commits(&["天气"]), Check::NoComp]),

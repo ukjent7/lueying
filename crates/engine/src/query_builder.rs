@@ -244,6 +244,24 @@ pub(crate) fn build_exact(
         cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
+    // 同一句话可能由多种切分拼出,上屏文本完全相同;先按文本去重再占首页
+    // 名额,否则重复整句会把前缀词挤进第一页,逐段上屏入口的位置忽前忽后。
+    // 文本相同即用户可见结果相同,信任与学习标记取并集,别让去重丢掉整词证据。
+    let mut at: HashMap<String, usize> = HashMap::new();
+    let mut unique: Vec<Candidate> = Vec::with_capacity(full.len());
+    for cand in full {
+        if let Some(&index) = at.get(&cand.text) {
+            let kept = &mut unique[index];
+            kept.trusted |= cand.trusted;
+            kept.learned |= cand.learned;
+            kept.freq = kept.freq.max(cand.freq);
+            kept.user_freq = kept.user_freq.max(cand.user_freq);
+            continue;
+        }
+        at.insert(cand.text.clone(), unique.len());
+        unique.push(cand);
+    }
+    full = unique;
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
     let mut words: Vec<Candidate> = Vec::new();
     for (end, nodes) in by_end.iter().enumerate() {
@@ -313,8 +331,14 @@ pub(crate) fn build_exact(
     }
     cands.extend(rest);
     cands.extend(words);
+    // 同一文本、同样吃完当前输入的候选对用户完全等价:上屏文字与剩余输入
+    // 都相同,只是切分方式不同。保留分数最高的一条;吃完长度不同的前缀词
+    // 仍然各自保留(例如「今天」既可能是整句也可能只吃掉前半段)。
     let mut seen: HashSet<(String, usize)> = HashSet::new();
-    cands.retain(|c| seen.insert((c.text.clone(), c.consume)));
+    cands.retain(|c| {
+        let cut = c.spans.last().map_or(0, |s| s.1);
+        seen.insert((c.text.clone(), cut))
+    });
     protect_exact(&mut cands);
     cands.truncate(MAX_CANDS);
     Built {

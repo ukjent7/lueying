@@ -401,6 +401,15 @@ fn run_scenario(sc: &Scenario) -> Result<(), String> {
     for (si, stage) in sc.stages.iter().enumerate() {
         let mut commits: Vec<String> = Vec::new();
         let mut passed = false;
+        // 场景写不出动态下标:先按文本把高亮移到目标候选,再按后续按键。
+        if let Some(text) = stage.select {
+            let index = engine
+                .candidates()
+                .iter()
+                .position(|c| c == text)
+                .ok_or_else(|| format!("阶段{}:候选里没有 {text:?}", si + 1))?;
+            engine.set_highlight(index);
+        }
         for key in &stage.keys {
             for ev in engine.process(*key) {
                 match ev {
