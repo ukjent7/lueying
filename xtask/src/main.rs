@@ -224,6 +224,7 @@ fn pack(args: PackArgs) -> Result<(), String> {
 commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
 - 万象拼音语法模型子集:CC-BY-4.0,作者 amzxyz,\
 https://github.com/amzxyz/rime-wanxiang-data (LTS);\
+许可 https://creativecommons.org/licenses/by/4.0/;\
 完整模型 sha256 9eedac1d836f3fdafb61b162035c8937253aedc106be40b2b957d9ab64e9ed89。\
 随包的 main.gram 是 WindInput(https://github.com/huanfeng/WindInput,\
 commit a99a7ad35701ff87dac6bd2057b0f594cd004d81)按真实输入语料裁剪出的 5.3MB 子集,\
