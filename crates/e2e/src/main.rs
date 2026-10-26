@@ -251,7 +251,7 @@ fn main() {
         // 整句评测:真实输入语料上量 top-1/top-5,防止解码器改动只对个别例子有效。
         let (total, top1, top5, missed) = sentence_eval(&mut engine);
         let rate = |n: usize| n as f64 * 100.0 / total.max(1) as f64;
-        // 默认包不带语法模型;92% 是带语法模型时的门限,无模型按实测基线 90%。
+        // 默认包带精简语法模型;92% 是带模型时的门限,无模型按实测基线 90%。
         let top1_gate = if gram.is_some() { 92.0 } else { 90.0 };
         report.push_str(&format!(
             "\n## 整句评测(主词典,{} 条)\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| top-1 | {top1}/{total} = {:.1}% | ≥ {top1_gate:.0}% |\n| top-5 | {top5}/{total} = {:.1}% | ≥ 95% |\n",

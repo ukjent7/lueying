@@ -6,9 +6,11 @@
 //! `ln(频次) × 10000`。查询只做 `traverse` + `commonPrefixSearch`,所以文件可以
 //! 直接映射、不反序列化。
 //!
-//! 打分复刻 librime-octagram 的 `Query`:命中搭配的值加上搭配罚,未命中给未搭配
-//! 罚,句末再查一次 `$`。默认参数与 librime-octagram/万象方案一致;模型是可选
-//! 数据,默认包不附带,由用户自行放到安装目录。
+//! 查询复刻 librime-octagram 的 `Query`:取前文尾部与当前词首部,逐级缩短前文,
+//! 命中搭配取最高分,句末再查一次 `$`。打分不直接照搬 librime 的固定罚,而是
+//! 用 `weight × (命中值 - baseline)` 做量纲标定:未命中恰好是 `-weight × baseline`,
+//! 命中项围绕零点上下浮动。librime 的 `-12` 同时充当「每转移固定罚」,而我们的
+//! 词节点分里已经有 `WORD_PENALTY`,再叠一份会把长句按词数压垮。
 //!
 //! 模型的键空间是**字**而不是词:调用方传入前文尾部与当前词,本模块按 librime
 //! 的规则截取前文尾部与词首部再查表。词级模型(`bgw`)与字级模型(`bgc`)共用这一
@@ -28,16 +30,27 @@ const OFFSET_PTR_AT: usize = 40;
 const UNIT: usize = 4;
 /// 一次编码最多几个 Unicode 字符。
 const MAX_CHARS: usize = 8;
-/// 查搭配时前文与词各取几个字(librime 的 `collocation_max_length - 1`)。
+/// 查搭配时前文与词各取几个字。前文由调用方限制在 [`CONTEXT_CHARS`] 字;
+/// 词首取 5 字能多覆盖一部分四字词/短语,实测比 3 字略好。
 const QUERY_CHARS: usize = 5;
-/// 调用方提供的前文尾长。模型键是「前文尾 3 字 + 词首 3 字」,取 3 字最贴合。
+/// 调用方提供的前文尾长。模型键以字为单位,3 字上下文已覆盖绝大多数搭配。
 pub const CONTEXT_CHARS: usize = 3;
-/// librime-octagram 的搭配打分参数(与万象方案一致)。
+/// 搭配总长不足此值且非整串匹配时,额外扣弱搭配罚。
 const MIN_COLLOCATION_CHARS: usize = 2;
-const COLLOCATION_PENALTY: f64 = -14.0;
-const NON_COLLOCATION_PENALTY: f64 = -6.0;
-const WEAK_COLLOCATION_PENALTY: f64 = -100.0;
-const REAR_PENALTY: f64 = -8.0;
+/// 弱搭配额外罚,相对命中零点。
+const WEAK_COLLOCATION_PENALTY: f64 = -12.0;
+/// 句末搭配额外罚,相对命中零点。
+const REAR_PENALTY: f64 = -6.0;
+/// 整体权重。0 会退回纯词频;这里取句级语料网格搜索的中间档。
+///
+/// 权重同时决定未命中的代价(`-weight × baseline`)与命中的增益幅度。
+/// 0.3~0.4 在 clean/extra/frost/neutral 四份语料上的总准确率只差 1~3 条,
+/// 取 0.35 避免把单份语料的波动当成普遍规律。
+const WEIGHT: f64 = 0.35;
+/// 命中零点。8.34 是同类字级 `.gram` 的标定值;本模型的值域更高(中位约 17),
+/// 若直接用 17 做零点,高频与低频搭配会被压成同一档,实测整句准确率反而低。
+/// 未命中时命中项按 0 计,于是恰好落在 `-WEIGHT × BASELINE`。
+const BASELINE: f64 = 8.34;
 /// 值 = `ln(频次) × 10000`。
 const VALUE_SCALE: f64 = 10_000.0;
 const FORMAT_PREFIX: &str = "Rime::Grammar/";
@@ -108,20 +121,22 @@ impl Gram {
     }
 
     /// 从节点出发,沿 `key` 扫过每个成词节点:命中搭配时直接算好带罚的分数,
-    /// 只保留最高分,不分配临时 Vec。
+    /// 只保留最高分,不分配临时 Vec。没有命中返回 0,方便调用方与句末分取 max。
     fn best_collocation(
         &self,
         key: &[u8],
         node: usize,
         context_chars: usize,
         whole_prefix: bool,
-    ) -> Option<f64> {
+    ) -> f64 {
         if node >= self.units {
-            return None;
+            return 0.0;
         }
-        let mut best: Option<f64> = None;
+        let mut best = 0.0f64;
         let mut id = node as u32;
-        let mut u = self.unit(node)?;
+        let Some(mut u) = self.unit(node) else {
+            return 0.0;
+        };
         let mut used = 0;
         for &b in key {
             used += 1;
@@ -139,17 +154,16 @@ impl Gram {
             if has_leaf(u) {
                 let leaf = id ^ offset_of(u);
                 if let Some(v) = self.unit(leaf as usize)
-                    && let Some(score) = value(v)
+                    && let Some(value) = value(v)
                 {
                     let match_chars = encoded_chars_prefix(key, used);
                     let whole = whole_prefix && used == key.len();
                     let penalty = if context_chars + match_chars >= MIN_COLLOCATION_CHARS || whole {
-                        COLLOCATION_PENALTY
+                        0.0
                     } else {
                         WEAK_COLLOCATION_PENALTY
                     };
-                    let score = score + penalty;
-                    best = Some(best.map_or(score, |current| current.max(score)));
+                    best = best.max(value + penalty);
                 }
             }
         }
@@ -189,36 +203,35 @@ impl Gram {
 
     /// 给「`context` 之后接 `word`」打分,复刻 librime-octagram 的 `Query`:
     /// 取所有前文后缀与词前缀组合里的最高分,命中的值加上搭配罚;
-    /// 词尾再查一次 `$` 的句末搭配。无命中返回未搭配罚。
+    /// 词尾再查一次 `$` 的句末搭配。没有命中时命中项为 0,最终得到
+    /// `-WEIGHT × BASELINE`,让「完全没有搭配记录」稳定地差于有中等频次记录的词。
     ///
-    /// 这个分数直接加在词的对数权重上;首次调用(前文为空)返回 0,
-    /// 让调用方把「句首」当常数省掉。
+    /// 首次调用(前文为空)返回 0,让调用方把「句首」当常数省掉。
     pub fn score(&self, context: &str, word: &str, is_rear: bool) -> f64 {
         if context.is_empty() {
             return 0.0;
         }
-        let ctx = encode_tail(context, QUERY_CHARS.min(MAX_CHARS));
-        let word_key = encode_head(word, QUERY_CHARS.min(MAX_CHARS));
-        let mut result = NON_COLLOCATION_PENALTY;
+        let query_chars = QUERY_CHARS.min(MAX_CHARS);
+        let ctx = encode_tail(context, query_chars);
+        let word_key = encode_head(word, query_chars);
+        let mut hit = 0.0f64;
         let mut context_chars = encoded_chars(&ctx);
         let mut at = 0;
         while at < ctx.len() {
-            if let Some(node) = self.traverse(&ctx[at..])
-                && let Some(score) = self.best_collocation(&word_key, node, context_chars, at == 0)
-            {
-                result = result.max(score);
+            if let Some(node) = self.traverse(&ctx[at..]) {
+                hit = hit.max(self.best_collocation(&word_key, node, context_chars, at == 0));
             }
             context_chars = context_chars.saturating_sub(1);
             at += char_len(ctx[at]);
         }
         if is_rear
-            && word.chars().count() <= QUERY_CHARS
+            && word.chars().count() <= query_chars
             && let Some(node) = self.traverse(&word_key)
             && let Some(score) = self.first_common_prefix(b"$", node)
         {
-            result = result.max(score + REAR_PENALTY);
+            hit = hit.max(score + REAR_PENALTY);
         }
-        result
+        WEIGHT * (hit - BASELINE)
     }
 }
 
@@ -238,9 +251,10 @@ fn offset_of(u: u32) -> u32 {
     (u >> 10) << ((u & 0x200) >> 6)
 }
 
-/// 叶子值:低 31 位是定点对数;最高位为 1 表示无效(librime 用 -1 表示未命中)。
+/// 叶子值:低 31 位是定点对数;最高位只是 darts 单元标志,不是无效位。
 fn value(u: u32) -> Option<f64> {
-    (u & 0x8000_0000 == 0).then(|| f64::from(u) / VALUE_SCALE)
+    let value = u & 0x7fff_ffff;
+    (value != 0).then(|| f64::from(value) / VALUE_SCALE)
 }
 
 /// 复刻 `gram_encoding.cc` 的变长编码:CJK 主区压成 2 字节,ASCII 原样,

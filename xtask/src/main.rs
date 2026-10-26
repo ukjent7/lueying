@@ -114,10 +114,12 @@ const PACK_BINS: &[&str] = &[
     "lueying-install.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包只带精确词典与两档重排模型。`.gram` 是可选增强,由用户自行放到
-/// 安装目录;默认包不下载、不打包,避免把 380MB 级的语法模型带进安装器。
+/// 默认包带精确词典、两档重排模型与精简语法模型。`main.gram` 缺失时引擎
+/// 退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
+/// 让 Server 无需配置就能发现它。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
+    "main.gram",
     "rerank-4m.safetensors",
     "rerank-25m.safetensors",
 ];
@@ -208,11 +210,25 @@ fn pack(args: PackArgs) -> Result<(), String> {
             &mut files,
         )?;
     }
+    let cc_license = root.join("licenses/CC-BY-4.0.txt");
+    copy_file(
+        &cc_license,
+        &args.out,
+        "licenses/CC-BY-4.0.txt",
+        &mut files,
+    )?;
     let notice = "\
 # 随包第三方许可与署名
 
 - 白霜拼音词库:GPL-3.0,https://github.com/gaboolic/rime-frost,\
 commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
+- 万象拼音语法模型子集:CC-BY-4.0,作者 amzxyz,\
+https://github.com/amzxyz/rime-wanxiang-data (LTS);\
+完整模型 sha256 9eedac1d836f3fdafb61b162035c8937253aedc106be40b2b957d9ab64e9ed89。\
+随包的 main.gram 是 WindInput(https://github.com/huanfeng/WindInput,\
+commit a99a7ad35701ff87dac6bd2057b0f594cd004d81)按真实输入语料裁剪出的 5.3MB 子集,\
+未再修改;sha256 c85801930ab5703d28472f86153f37a367287156ef70a523c5a4fb07f6a95147。\
+许可全文见 CC-BY-4.0.txt。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
 commit b97e99cbaa4a1a358158d717ffd434c472d5d5ca;全文见 Apache-2.0.txt。
 - pinyin-ime-reranker-4M:Apache-2.0,\
