@@ -74,13 +74,19 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
 
 /// 当前原始串对应的快捷候选;没有触发时返回空。
 pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
+    if let Some((text, value)) = unicode_texts(raw) {
+        let mut cands = wrap(vec![text], raw);
+        if let Some(top) = cands.first_mut() {
+            // 问字候选带码点提示,打字时能确认取的是哪个字符。
+            top.hint = Some(format!("U+{value:04X}"));
+        }
+        return cands;
+    }
     let texts = match raw {
         "rq" => date_texts(now),
         "sj" => time_texts(now),
         "xq" => weekday_texts(now),
-        _ => unicode_texts(raw)
-            .or_else(|| expression_texts(raw))
-            .unwrap_or_default(),
+        _ => expression_texts(raw).unwrap_or_default(),
     };
     wrap(texts, raw)
 }
@@ -189,7 +195,13 @@ fn time_texts(now: CivilTime) -> Vec<String> {
 fn weekday_texts(now: CivilTime) -> Vec<String> {
     const NAMES: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
     let index = (now.weekday.clamp(1, 7) - 1) as usize;
-    vec![format!("星期{}", NAMES[index]), format!("周{}", NAMES[index])]
+    let mut out = vec![format!("星期{}", NAMES[index]), format!("周{}", NAMES[index])];
+    // 口语里星期日、周日也常说星期天、周天。
+    if index == 6 {
+        out.push("星期天".to_string());
+        out.push("周天".to_string());
+    }
+    out
 }
 
 /// 当前串会不会产生快捷候选。查询层用它跳过错音纠正,保证触发键秒出。
@@ -259,8 +271,8 @@ pub(crate) fn unicode_body(raw: &str) -> Option<&str> {
     (hex.len() <= 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(body)
 }
 
-/// `u4e00` / `u+1f600` → 码点对应字符;纯字母不带 `+` 仍留给拼音。
-fn unicode_texts(raw: &str) -> Option<Vec<String>> {
+/// `u4e00` / `u+1f600` → 字符与码点;纯字母不带 `+` 仍留给拼音。
+fn unicode_texts(raw: &str) -> Option<(String, u32)> {
     let body = unicode_body(raw)?;
     let (explicit, hex) = match body.strip_prefix('+') {
         Some(rest) => (true, rest),
@@ -274,7 +286,7 @@ fn unicode_texts(raw: &str) -> Option<Vec<String>> {
     }
     let value = u32::from_str_radix(hex, 16).ok()?;
     let c = char::from_u32(value)?;
-    (!c.is_control()).then(|| vec![c.to_string()])
+    (!c.is_control()).then(|| (c.to_string(), value))
 }
 
 /// `v` 后面的内容:纯数字出数字读法,四位年份加月日出日期,其余当四则算式。

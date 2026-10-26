@@ -283,6 +283,21 @@ pub fn run(report: &mut String) -> usize {
         format!("{:?}", w.candidates()),
     );
 
+    let mut sunday = at(CivilTime {
+        weekday: 7,
+        ..fixed()
+    });
+    letters(&mut sunday, "xq");
+    let list = sunday.candidates();
+    push(
+        &mut checks,
+        "星期日口语写法",
+        list.first().map(String::as_str) == Some("星期日")
+            && list.iter().any(|c| c == "星期天")
+            && list.iter().any(|c| c == "周天"),
+        format!("{list:?}"),
+    );
+
     // 全拼打出词本身时,对应写法紧跟在这个词后面,不抢它的首选。
     let mut kd = with_word("日期", "ri'qi", fixed());
     letters(&mut kd, "riqi");
@@ -509,12 +524,17 @@ pub fn run(report: &mut String) -> usize {
     // u 问字:十六进制码点直接出字符,数字不能当候选序号。
     let mut uni = engine();
     unicode(&mut uni, "4e00");
+    let hint = uni
+        .candidates_detailed()
+        .first()
+        .and_then(|cand| cand.hint.as_deref());
     push(
         &mut checks,
         "u 问字入组合",
         uni.composition().map(|comp| comp.raw.as_str()) == Some("u4e00")
-            && uni.candidates().first().map(String::as_str) == Some("一"),
-        format!("{:?}", uni.candidates()),
+            && uni.candidates().first().map(String::as_str) == Some("一")
+            && hint == Some("U+4E00"),
+        format!("{:?} 提示 {hint:?}", uni.candidates()),
     );
     let events = uni.process(Key::Space);
     let exported = uni.export_user();
@@ -533,11 +553,41 @@ pub fn run(report: &mut String) -> usize {
         unicode_cands("+1f600").first().map(String::as_str) == Some("😀"),
         format!("{:?}", unicode_cands("+1f600")),
     );
+    let mut emoji = engine();
+    unicode(&mut emoji, "+1f600");
+    let emoji_hint = emoji
+        .candidates_detailed()
+        .first()
+        .and_then(|cand| cand.hint.as_deref());
+    push(
+        &mut checks,
+        "u 问字提示补足四位",
+        emoji.candidates().first().map(String::as_str) == Some("😀")
+            && emoji_hint == Some("U+1F600"),
+        format!("{:?} 提示 {emoji_hint:?}", emoji.candidates()),
+    );
     push(
         &mut checks,
         "u 问字基本平面",
         unicode_cands("41").first().map(String::as_str) == Some("A"),
         format!("{:?}", unicode_cands("41")),
+    );
+    let mut upper = engine();
+    for key in [
+        Key::Letter('u'),
+        Key::Digit(4),
+        Key::Letter('E'),
+        Key::Digit(0),
+        Key::Digit(0),
+    ] {
+        upper.process(key);
+    }
+    push(
+        &mut checks,
+        "u 问字接受大写十六进制",
+        upper.composition().map(|comp| comp.raw.as_str()) == Some("u4e00")
+            && upper.candidates().first().map(String::as_str) == Some("一"),
+        format!("{:?}", upper.candidates()),
     );
     push(
         &mut checks,

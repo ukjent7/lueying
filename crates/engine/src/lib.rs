@@ -687,6 +687,17 @@ impl Engine {
                 self.try_insert_apostrophe();
                 Vec::new()
             }
+            // 问字的十六进制常写成大写;Shift+字母仍属于码点,不落定组合。
+            Key::Letter(c) if self.unicode_body().is_some() && c.is_ascii_hexdigit() => {
+                if self.compose_char(c.to_ascii_lowercase()) {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(c.to_string()));
+                    events
+                }
+            }
             Key::Space => self
                 .commit_highlighted()
                 .map(|t| vec![Event::Commit(t)])
