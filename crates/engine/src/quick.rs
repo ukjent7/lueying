@@ -316,7 +316,7 @@ fn expression_texts(raw: &str) -> Option<Vec<String>> {
 
 /// `1998-3-8` / `1998/3/8` / `1998.3.8` → 中文日期、年月日与补零日期。
 fn input_date_texts(body: &str) -> Option<Vec<String>> {
-    let mut parts = body.split(|c| matches!(c, '-' | '/' | '.'));
+    let mut parts = body.split(['-', '/', '.']);
     let year = parts.next()?;
     let month = parse_date_part(parts.next()?)?;
     let day = parse_date_part(parts.next()?)?;

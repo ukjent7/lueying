@@ -437,27 +437,52 @@ struct State {
 /// 就能命中,正常输入完全不受影响。
 const TYPO_BUDGET: Duration = Duration::from_millis(6);
 
+/// 一次候选构建的全部输入。字段数超过 Clippy 阈值,打包成一个结构;
+/// 错音纠正只替换 `raw`,其余输入复用。
+pub(crate) struct BuildArgs<'a> {
+    pub dict: &'a Dictionary,
+    pub user: &'a UserDict,
+    pub fuzzy: &'a Fuzzy,
+    pub gram: Option<&'a Gram>,
+    pub cache: &'a mut HashMap<(String, String, bool), f64>,
+    pub context: &'a str,
+    pub host: &'a str,
+    pub previous2: Option<&'a str>,
+    pub previous: Option<&'a str>,
+    pub raw: &'a str,
+}
+
 /// 候选生成入口:正常解码没有整句候选时,尝试一次相邻键/漏键纠正。
 ///
 /// 纠正只在精确与模糊都出不了整句时发生,避免影响正常输入。同一手误可能对应
 /// 多条可切分的纠正串(`hoa` 既能补成 `oha` 也能调换成 `hao`),这里取候选
 /// 打分最高的一条,不先到先得。纠正串可能与原串长度不同,候选按整串上屏,
 /// 学习键单独记录纠正后的音节串。
-pub fn build(
-    dict: &Dictionary,
-    user: &UserDict,
-    fuzzy: &Fuzzy,
-    gram: Option<&Gram>,
-    cache: &mut HashMap<(String, String, bool), f64>,
-    context: &str,
-    host: &str,
-    previous2: Option<&str>,
-    previous: Option<&str>,
-    raw: &str,
-) -> Built {
-    let built = builder::build_exact(
-        dict, user, fuzzy, gram, cache, context, host, previous2, previous, raw,
-    );
+pub(crate) fn build(args: BuildArgs<'_>) -> Built {
+    let BuildArgs {
+        dict,
+        user,
+        fuzzy,
+        gram,
+        cache,
+        context,
+        host,
+        previous2,
+        previous,
+        raw,
+    } = args;
+    let built = builder::build_exact(BuildArgs {
+        dict,
+        user,
+        fuzzy,
+        gram,
+        cache: &mut *cache,
+        context,
+        host,
+        previous2,
+        previous,
+        raw,
+    });
     // 整句候选只有拆成多个词时才可能是「每个字母都当简拼」拼出来的假整句
     // (如 `hoa` → 好哦啊);完整拼音的整句和单词命中都按正常输入处理。
     let solid = built.cands.iter().any(|c| c.full && !c.sentence);
@@ -484,18 +509,18 @@ pub fn build(
         if !segment::complete(&correction) {
             continue;
         }
-        let mut fixed = builder::build_exact(
+        let mut fixed = builder::build_exact(BuildArgs {
             dict,
             user,
             fuzzy,
             gram,
-            cache,
+            cache: &mut *cache,
             context,
             host,
             previous2,
             previous,
-            &correction,
-        );
+            raw: &correction,
+        });
         let mut kept = Vec::new();
         for mut cand in fixed.cands.drain(..) {
             if !cand.full {

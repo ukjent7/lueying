@@ -823,18 +823,18 @@ impl Engine {
         }
         let context = self.context.clone();
         let user = self.user.read().unwrap_or_else(|p| p.into_inner());
-        let mut built = query::build(
-            &self.dict,
-            &user,
-            &self.cfg.fuzzy,
-            self.gram.as_deref(),
-            &mut self.gram_cache,
-            &context,
-            &self.host,
-            self.second_last_word.as_deref(),
-            self.last_word.as_deref(),
-            &comp.raw,
-        );
+        let mut built = query::build(query::BuildArgs {
+            dict: &self.dict,
+            user: &user,
+            fuzzy: &self.cfg.fuzzy,
+            gram: self.gram.as_deref(),
+            cache: &mut self.gram_cache,
+            context: &context,
+            host: &self.host,
+            previous2: self.second_last_word.as_deref(),
+            previous: self.last_word.as_deref(),
+            raw: &comp.raw,
+        });
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
         // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
         // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。

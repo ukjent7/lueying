@@ -91,18 +91,19 @@ impl Builder<'_, '_> {
     }
 }
 
-pub(crate) fn build_exact(
-    dict: &Dictionary,
-    user: &UserDict,
-    fuzzy: &Fuzzy,
-    gram: Option<&Gram>,
-    cache: &mut HashMap<(String, String, bool), f64>,
-    context: &str,
-    host: &str,
-    previous2: Option<&str>,
-    previous: Option<&str>,
-    raw: &str,
-) -> Built {
+pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
+    let BuildArgs {
+        dict,
+        user,
+        fuzzy,
+        gram,
+        cache,
+        context,
+        host,
+        previous2,
+        previous,
+        raw,
+    } = args;
     let total = dict.total_weight() as f64;
     let mut q = Querier {
         dict,
