@@ -480,11 +480,7 @@ mod imp {
             command.arg("/u");
         }
         command.arg(dll);
-        let status = run_status(
-            command,
-            &format!("regsvr32 {}", dll.display()),
-            30,
-        )?;
+        let status = run_status(command, &format!("regsvr32 {}", dll.display()), 30)?;
         if status.success() {
             Ok(())
         } else {

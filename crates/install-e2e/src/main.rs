@@ -92,13 +92,7 @@ mod imp {
     }
 
     /// 安装器、更新器与卸载器共用的隔离环境。
-    fn apply_env(
-        command: &mut Command,
-        local: &Path,
-        appdata: &Path,
-        target: &Path,
-        trace: &Path,
-    ) {
+    fn apply_env(command: &mut Command, local: &Path, appdata: &Path, target: &Path, trace: &Path) {
         command
             .env("LOCALAPPDATA", local)
             .env("APPDATA", appdata)
@@ -368,10 +362,13 @@ mod imp {
             .map_err(|e| format!("复制更新器: {e}"))?;
 
         let mut command = Command::new(&updater);
-        command
-            .arg("--zip")
-            .arg(&zip)
-            .args(["--sha256", sha.as_str(), "--version", "9.9.9", "--quiet"]);
+        command.arg("--zip").arg(&zip).args([
+            "--sha256",
+            sha.as_str(),
+            "--version",
+            "9.9.9",
+            "--quiet",
+        ]);
         apply_env(&mut command, local, appdata, target, trace);
         let output = run_command("更新器", &mut command, Duration::from_secs(120))?;
         if !output.status.success() {
@@ -469,8 +466,7 @@ mod imp {
             }
             None => {}
         }
-        let output =
-            run_command("reg query", &mut command, Duration::from_secs(15)).ok()?;
+        let output = run_command("reg query", &mut command, Duration::from_secs(15)).ok()?;
         output
             .status
             .success()
