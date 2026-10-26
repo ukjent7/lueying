@@ -542,8 +542,15 @@ impl Engine {
                     }
                     self.after_digit = ends_with_digit(text);
                 }
-                Event::Passthrough(Key::Digit(_)) => self.after_digit = true,
-                Event::Passthrough(_) => self.after_digit = false,
+                Event::Passthrough(Key::Digit(_)) => {
+                    self.after_digit = true;
+                    // 直通内容由宿主直接写进文档,已经断开中文词序。
+                    self.last_word = None;
+                }
+                Event::Passthrough(_) => {
+                    self.after_digit = false;
+                    self.last_word = None;
+                }
                 Event::Mode(_) => {}
             }
         }
