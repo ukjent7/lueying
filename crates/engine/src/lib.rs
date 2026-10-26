@@ -133,6 +133,8 @@ pub struct Engine {
     after_digit: bool,
     /// 最近上屏的文本,最多 [`CONTEXT_KEEP`] 字。焦点切换时清空。
     context: String,
+    /// 分段上屏已在重算前写入上下文的提交数;`note_events` 据此跳过重复学习。
+    context_handled: usize,
     /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
     rev: u64,
 }
@@ -158,6 +160,7 @@ impl Engine {
             sq_open: false,
             after_digit: false,
             context: String::new(),
+            context_handled: 0,
             rev: 0,
         }
     }
@@ -500,7 +503,9 @@ impl Engine {
         for event in events {
             match event {
                 Event::Commit(text) => {
-                    if !text.is_ascii() {
+                    if self.context_handled > 0 {
+                        self.context_handled -= 1;
+                    } else if !text.is_ascii() {
                         if self.learning {
                             self.user
                                 .write()
@@ -874,6 +879,18 @@ impl Engine {
             self.page = 0;
             self.rev = self.rev.wrapping_add(1);
         } else {
+            // 剩余拼音马上要重算:先把刚上屏的片段并入左邻上下文,下一段的
+            // 候选才能看到刚形成的搭配。`note_events` 会跳过这次重复处理。
+            if !cand.text.is_ascii() {
+                if self.learning {
+                    self.user
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .learn_context(&self.context, &cand.text);
+                }
+                self.push_context(&cand.text);
+            }
+            self.context_handled += 1;
             let comp = self.comp.as_mut()?;
             comp.raw = rest;
             // 选掉前缀后光标仍在剩余拼音末尾,继续按键才会接在后面;

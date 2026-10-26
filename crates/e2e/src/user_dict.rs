@@ -17,6 +17,8 @@
 //!     新会话能继续用同一份个人上下文。
 //! 13. 上下文搭配只写文件、不参与排序 → 学过「最先」后,输入 `xian` 的首选
 //!     必须从更高频的「现」切到「先」;标点切断相邻关系时必须退回「现」。
+//! 14. 分段上屏后剩余候选在上下文写入前重算 → 下一段必须立刻看到刚上屏的
+//!     左邻字,而不是等下一次按键才生效。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -142,6 +144,30 @@ pub fn run(report: &mut String) -> usize {
         "标点切断上下文搭配",
         after_punct == "现" && after_punct == baseline,
         format!("逗号后首选 {after_punct}"),
+    );
+
+    // 分段上屏后剩余拼音立即重算:刚上屏的「好」必须参与下一段排序。
+    let segmented_line = format!("@context\t好\t以\t100\t{now}\n");
+    let mut segmented = Engine::new(Arc::clone(&dict), Config::default());
+    segmented.import_user(&segmented_line);
+    for ch in "haoyi".chars() {
+        segmented.process(Key::Letter(ch));
+    }
+    let picked = pick_word(&mut segmented, "好");
+    let next_top = segmented.candidates().first().cloned().unwrap_or_default();
+    let committed: String = segmented
+        .process(Key::Space)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Commit(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    push(
+        &mut checks,
+        "分段上屏立即使用上下文",
+        picked && next_top == "以" && committed == "以",
+        format!("前缀 {picked},下一段首选 {next_top},上屏 {committed:?}"),
     );
 
     // 两个会话共用一份词库:一边导入,另一边立刻用它排序。
