@@ -211,12 +211,7 @@ fn pack(args: PackArgs) -> Result<(), String> {
         )?;
     }
     let cc_license = root.join("licenses/CC-BY-4.0.txt");
-    copy_file(
-        &cc_license,
-        &args.out,
-        "licenses/CC-BY-4.0.txt",
-        &mut files,
-    )?;
+    copy_file(&cc_license, &args.out, "licenses/CC-BY-4.0.txt", &mut files)?;
     let notice = "\
 # 随包第三方许可与署名
 
