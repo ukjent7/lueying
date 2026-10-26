@@ -43,6 +43,7 @@ fn push(
 fn learned(export: &str, word: &str) -> bool {
     export
         .lines()
+        .filter(|line| !line.starts_with('@'))
         .any(|line| line.split('\t').nth(1) == Some(word))
 }
 
