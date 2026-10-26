@@ -29,9 +29,7 @@ mod imp {
         CoTaskMemFree, CoUninitialize,
     };
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
-    use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_TERMINATE, TerminateProcess,
-    };
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
     use windows::Win32::UI::Shell::{FOLDERID_Programs, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
     use windows::Win32::UI::TextServices::{
@@ -101,10 +99,9 @@ mod imp {
         remove_old_uninstall_key();
         remove_legacy_registry();
         remove_shortcuts();
-        if let Err(error) = lueying_protocol::spawn_detached(
-            &target.join("lueying-server.exe"),
-            Some(&target),
-        ) {
+        if let Err(error) =
+            lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
+        {
             trace(&format!("install: spawn server failed: {error}"));
         }
         trace("install: done");

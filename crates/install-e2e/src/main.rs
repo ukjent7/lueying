@@ -34,8 +34,7 @@ mod imp {
     const LANGID_ZH_CN: u16 = 0x0804;
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     /// Inno 的卸载项;AppId 与 installer/lueying.iss 必须一致。
-    const INNO_UNINSTALL_KEY: &str =
-        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{5F0C8C3E-9B7A-4E2D-9A6B-2C1D8E4F7A10}_is1";
+    const INNO_UNINSTALL_KEY: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{5F0C8C3E-9B7A-4E2D-9A6B-2C1D8E4F7A10}_is1";
 
     pub(super) fn run() {
         let _ = std::fs::create_dir_all("target");
@@ -227,7 +226,9 @@ mod imp {
             checks.push("已加入当前用户输入法列表".into());
 
             phase("更新器升级");
-            update_installed(&payload, version, &target, &root, &dist, &local, &appdata, &trace)?;
+            update_installed(
+                &payload, version, &target, &root, &dist, &local, &appdata, &trace,
+            )?;
             checks.push("更新器升级到 9.9.9".into());
 
             phase("卸载");
@@ -449,10 +450,13 @@ mod imp {
             .map_err(|e| format!("复制更新器: {e}"))?;
 
         let mut command = Command::new(&updater);
-        command
-            .arg("--installer")
-            .arg(&setup)
-            .args(["--sha256", sha.as_str(), "--version", "9.9.9", "--quiet"]);
+        command.arg("--installer").arg(&setup).args([
+            "--sha256",
+            sha.as_str(),
+            "--version",
+            "9.9.9",
+            "--quiet",
+        ]);
         apply_env(&mut command, local, appdata, target, trace);
         let output = run_command("更新器", &mut command, Duration::from_secs(180))?;
         if !output.status.success() {
@@ -505,10 +509,7 @@ mod imp {
             let detail = std::fs::read(&log)
                 .map(|bytes| tail(&bytes))
                 .unwrap_or_default();
-            Err(format!(
-                "卸载器退出码 {:?}: {detail}",
-                output.status.code()
-            ))
+            Err(format!("卸载器退出码 {:?}: {detail}", output.status.code()))
         }
     }
 

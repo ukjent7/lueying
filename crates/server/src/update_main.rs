@@ -311,8 +311,7 @@ mod imp {
                     "--check" => options.check = true,
                     "--quiet" => options.quiet = true,
                     "--installer" => {
-                        options.installer =
-                            Some(PathBuf::from(value(&mut args, "--installer")?));
+                        options.installer = Some(PathBuf::from(value(&mut args, "--installer")?));
                     }
                     "--install-dir" => {
                         options.install_dir =
