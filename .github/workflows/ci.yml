@@ -35,11 +35,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 判断本次提交是否动了清单需要父提交;浅克隆里 HEAD^ 不存在。
+          fetch-depth: 2
+      # 依赖解析要拉 zed 的 git 仓库,冷启动约 3 分钟。只有这次 push 动了清单/锁
+      # 才需要重新解析;其余情况直接跳过,避免把 fmt 这个本该几秒的 job 拖成门禁。
       - name: 维护 Cargo.lock
-        run: cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo generate-lockfile
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base=$(git rev-parse HEAD^ 2>/dev/null || true)
+          fi
+          if [ -n "$base" ] && ! git diff --name-only "$base" HEAD | grep -Eq '(^|/)Cargo\.(toml|lock)$'; then
+            echo "清单与锁未变化,跳过依赖解析"
+            exit 0
+          fi
+          cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo generate-lockfile
       - name: 格式化
         run: cargo fmt --all
       - name: 回推(如有变化)
@@ -56,15 +72,14 @@ jobs:
         run: cargo fmt --all --check
 
   engine:
-    needs: fmt
+    # 不等 fmt:格式化/lock 回推只影响下一轮,构建与测试没必要空等几分钟。
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # push 到 main 时检出 fmt/lock 回推后的最新头(锁与代码同进,不靠事件重放);PR 检出合并引用
+      # 按事件 SHA 检出,不与同一轮 fmt-bot 的回推抢 main;push 的 SHA 已包含上一轮的回推。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
       - name: Clippy(观察期,不阻断)
         continue-on-error: true
@@ -74,6 +89,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --locked
+      # 版本比较/SHA 解析在 protocol crate,纯逻辑在 Linux 上测,
+      # 不必为此在 Windows 上编译整棵 GPUI 依赖树。
+      - name: Protocol 单元测试
+        run: cargo test -p lueying-protocol --lib --locked
       - name: 引擎 E2E(内置词库)
         run: cargo run -p lueying-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -83,24 +102,35 @@ jobs:
           path: target/e2e-report.md
 
   dict:
-    needs: fmt
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # 与 engine 一致按事件 SHA 检出:同一轮 fmt-bot 回推不参与本次验证。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
+      # 词库/模型都由钉死 commit 的脚本生成,词典转换又是纯函数;按脚本与解析
+      # 源码做键缓存 data/,大多数 push 可以直接跳过下载与 90 秒转换。
+      - name: 缓存词典与模型
+        id: dict-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: data
+          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'crates/dict/src/**', 'Cargo.lock') }}
       - name: 下载白霜词库
+        if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_frost.sh data/frost
       - name: 下载神经重排模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_rerank.sh data/rerank
       - name: 下载精简语法模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_gram.sh data
       - name: 转换词典
+        if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      # push/PR 只跑确定的等距子集(约 1 分钟);全量语料放夜间与手动触发。
+      # push/PR 只跑确定性等距子集;全量语料放夜间与手动触发。
       - name: 主词典 E2E + 候选准确率基准(快速/夜间全量)
         shell: bash
         run: |
@@ -109,8 +139,19 @@ jobs:
             mode=--bench
           fi
           cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank "$mode"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: 上传 E2E/基准报告
         if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dict-report
+          path: |
+            target/e2e-report.md
+            target/bench-report.md
+      # 90MB 词典只在夜间/手动/发版时留档:日常 push 看报告与缓存即可,
+      # 每次都传会拖慢收尾并长期占满 artifact 配额。
+      - name: 上传词典(夜间/手动/发版)
+        if: always() && (github.event_name == 'schedule' || github.event.inputs.full_bench == 'true' || startsWith(github.ref, 'refs/tags/'))
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dict-pipeline
           path: |
@@ -121,36 +162,33 @@ jobs:
             target/bench-report.md
 
   windows:
-    needs: fmt
     if: ${{ !cancelled() }}
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 35
     # 打 tag 时创建 Release;其他触发只读。
     permissions:
       contents: write
     steps:
+      # 与 engine 一致按事件 SHA 检出;tag 构建检出的就是打 tag 的那个提交。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.ref }}
           persist-credentials: false
       # 缓存只留 windows job(gpui/zed 树是编译大头,ubuntu 两个 job 全量也只要几分钟);
       # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
-      - name: 32 位 / ARM64 TSF 编译检查
+      # ARM64 没有别的构建步骤;32 位 TSF 下面的 Build 32-bit TSF 已经覆盖。
+      - name: ARM64 TSF 编译检查
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
-          cargo check -p lueying-tsf --target i686-pc-windows-msvc --locked
           cargo check -p lueying-tsf --target aarch64-pc-windows-msvc --locked
-      - name: Clippy(观察期,不阻断)
-        continue-on-error: true
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
-        run: cargo build --release --workspace --locked
-      - name: Server 单元测试
-        run: cargo test --release -p lueying-server --lib --locked
+        # 只编 Windows 验证与发版真正用到的包;e2e/xtask 等按需再编,
+        # 避免每次 push 都为不参与 Windows 测试的二进制付链接时间。
+        run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
       - name: Build 32-bit TSF
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
@@ -176,6 +214,7 @@ jobs:
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-install.exe,这条只会在日志里添一条假失败。
         if: always() && steps.build.outcome == 'success'
+        timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

@@ -165,6 +165,10 @@ fn spawn_server_once() -> bool {
     }
     let started = std::process::Command::new(exe)
         .creation_flags(CREATE_NO_WINDOW)
+        // 常驻服务不继承宿主进程的标准句柄,否则宿主退出或改用管道时会被服务拖住。
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .is_ok();
     if started {

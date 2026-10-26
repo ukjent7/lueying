@@ -1,7 +1,6 @@
 //! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验、
 //! 解压并校验发布包。更新器进程用这些函数完成实际安装。
 
-use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
@@ -9,6 +8,8 @@ use std::mem::size_of;
 use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+
+use lueying_protocol::version::{is_newer, parse_sha256};
 
 use windows::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0};
 use windows::Win32::Networking::WinHttp::{
@@ -259,7 +260,7 @@ pub fn fetch_sha256(url: &str) -> Result<String, String> {
         return Err(format!("下载 SHA-256 返回 HTTP {status}"));
     }
     let text = String::from_utf8_lossy(&body);
-    parse_sha(&text).ok_or_else(|| "SHA-256 文件格式不对".into())
+    parse_sha256(&text).ok_or_else(|| "SHA-256 文件格式不对".into())
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
@@ -278,7 +279,7 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
         ));
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    parse_sha(&text).ok_or_else(|| "certutil 输出里没有 SHA-256".into())
+    parse_sha256(&text).ok_or_else(|| "certutil 输出里没有 SHA-256".into())
 }
 
 /// 解压 zip。优先用系统自带的 bsdtar(Windows 10 1803+),失败再退回 PowerShell。
@@ -385,76 +386,6 @@ pub fn validate_package(dir: &Path, version: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 版本比较(core 数字段 + 预发布标识),供检查更新与单元测试使用。
-pub fn is_newer(candidate: &str, current: &str) -> bool {
-    compare_versions(candidate, current) == Ordering::Greater
-}
-
-fn compare_versions(a: &str, b: &str) -> Ordering {
-    let (a_core, a_pre) = split_version(a);
-    let (b_core, b_pre) = split_version(b);
-    let core = compare_core(a_core, b_core);
-    if core != Ordering::Equal {
-        return core;
-    }
-    match (a_pre, b_pre) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Greater,
-        (Some(_), None) => Ordering::Less,
-        (Some(a), Some(b)) => compare_pre(a, b),
-    }
-}
-
-fn split_version(version: &str) -> (&str, Option<&str>) {
-    let version = version.trim();
-    let version = version.strip_prefix('v').unwrap_or(version);
-    match version.split_once('-') {
-        Some((core, pre)) => (core, Some(pre)),
-        None => (version, None),
-    }
-}
-
-fn compare_core(a: &str, b: &str) -> Ordering {
-    let mut a = a.split('.');
-    let mut b = b.split('.');
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return Ordering::Equal,
-            (x, y) => {
-                let x = x.and_then(|part| part.parse::<u64>().ok()).unwrap_or(0);
-                let y = y.and_then(|part| part.parse::<u64>().ok()).unwrap_or(0);
-                match x.cmp(&y) {
-                    Ordering::Equal => {}
-                    other => return other,
-                }
-            }
-        }
-    }
-}
-
-fn compare_pre(a: &str, b: &str) -> Ordering {
-    let mut a = a.split('.');
-    let mut b = b.split('.');
-    loop {
-        match (a.next(), b.next()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(x), Some(y)) => {
-                let order = match (x.parse::<u64>(), y.parse::<u64>()) {
-                    (Ok(x), Ok(y)) => x.cmp(&y),
-                    (Ok(_), Err(_)) => Ordering::Less,
-                    (Err(_), Ok(_)) => Ordering::Greater,
-                    (Err(_), Err(_)) => x.cmp(y),
-                };
-                if order != Ordering::Equal {
-                    return order;
-                }
-            }
-        }
-    }
-}
-
 fn normalize_version(tag: &str) -> String {
     let tag = tag.trim();
     tag.strip_prefix('v').unwrap_or(tag).to_string()
@@ -471,21 +402,6 @@ fn safe_version(version: &str) -> String {
             }
         })
         .collect()
-}
-
-fn parse_sha(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        // sha256sum 格式是 `<hash>  <file>`;certutil 有的版本把摘要按 2 位一组
-        // 用空格分开,行上只有摘要。两种都接受。
-        if let Some(token) = line.split_whitespace().next() {
-            if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Some(token.to_ascii_lowercase());
-            }
-        }
-        let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-        (compact.len() == 64 && compact.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .then(|| compact.to_ascii_lowercase())
-    })
 }
 
 fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
@@ -671,30 +587,4 @@ fn split_https(url: &str) -> Result<(&str, &str), String> {
         return Err(format!("地址缺少主机名: {url}"));
     }
     Ok((host, path))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn orders_release_versions() {
-        assert!(is_newer("0.2.0", "0.1.9"));
-        assert!(is_newer("0.2.0", "0.2.0-beta.1"));
-        assert!(is_newer("0.2.0-beta.2", "0.2.0-beta.1"));
-        assert!(is_newer("v1.0.0", "0.9.9"));
-        assert!(!is_newer("0.2.0", "0.2.0"));
-        assert!(!is_newer("0.1.0", "0.1.0"));
-    }
-
-    #[test]
-    fn reads_sha256_from_certutil_output() {
-        let text = "SHA256 hash of file C:\\tmp\\lueying.zip:\n\
-                    d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592\n\
-                    CertUtil: -hashfile command completed successfully.\n";
-        assert_eq!(
-            parse_sha(text).as_deref(),
-            Some("d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592")
-        );
-    }
 }

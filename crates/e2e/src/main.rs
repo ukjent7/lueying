@@ -316,7 +316,12 @@ fn main() {
             let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
             match rerank::load(dir) {
                 Ok(models) => {
+                    let started = Instant::now();
                     failures += rerank::run(dict, gram, &models, &mut report);
+                    report.push_str(&format!(
+                        "\n> 神经重排耗时 {:.1}s\n",
+                        started.elapsed().as_secs_f64()
+                    ));
                 }
                 Err(e) => {
                     failures += 1;
@@ -328,7 +333,12 @@ fn main() {
         // 候选准确率基准:模糊音、语法模型、长期学习在同一份报告里对比。
         if let Some(mode) = bench {
             let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
+            let started = Instant::now();
             failures += bench::run(dict, gram, &mut report, mode);
+            report.push_str(&format!(
+                "\n> 候选基准耗时 {:.1}s\n",
+                started.elapsed().as_secs_f64()
+            ));
         }
     }
 

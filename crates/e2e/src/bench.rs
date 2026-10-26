@@ -373,11 +373,13 @@ pub enum Mode {
     Full,
 }
 
-const FAST_WORDS: usize = 300;
-const FAST_EXTRA: usize = 100;
-const FAST_FROST: usize = 50;
-const FAST_NEUTRAL: usize = 150;
-const FAST_ACCENT_SENTENCES: usize = 100;
+// 快速档每次 push 只取能稳定暴露系统性退步的样本量;全量语料留给夜间与手动。
+// 项目内 80 句是绝对准确率门限,不参与裁剪。
+const FAST_WORDS: usize = 120;
+const FAST_EXTRA: usize = 60;
+const FAST_FROST: usize = 40;
+const FAST_NEUTRAL: usize = 80;
+const FAST_ACCENT_SENTENCES: usize = 60;
 
 impl Mode {
     fn cap(self, rows: Vec<(String, String)>, fast: usize) -> Vec<(String, String)> {
