@@ -16,9 +16,19 @@ mod imp {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    };
     use windows::Win32::UI::Shell::IsUserAnAdmin;
+    use windows::Win32::UI::TextServices::{
+        CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfiles,
+    };
+    use windows::core::GUID;
 
     const CLSID: &str = "{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}";
+    const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
+    const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
+    const LANGID_ZH_CN: u16 = 0x0804;
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
 
@@ -39,6 +49,8 @@ mod imp {
         if !unsafe { IsUserAnAdmin() }.as_bool() {
             return Ok("SKIP: 当前进程不是管理员,无法注册 TSF;CI 应使用管理员 runner。".into());
         }
+        // 输入法列表查询走 TSF profile 管理器;已是别的套间模式时也能继续查。
+        let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         let bin = std::env::current_exe()
             .map_err(|e| e.to_string())?
             .parent()
@@ -145,6 +157,20 @@ mod imp {
                 }
             }
             checks.push("x64/x86 TSF 注册指向安装目录".into());
+            // 注册 profile 不等于进入用户输入法列表;安装器必须显式启用,
+            // 否则装完按 Win+空格 找不到「掠影」。profile 管理器有缓存,短暂重试。
+            let mut enabled = false;
+            for _ in 0..10 {
+                enabled = profile_enabled()?;
+                if enabled {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if !enabled {
+                return Err("安装后「掠影」未加入当前用户输入法列表".into());
+            }
+            checks.push("已加入当前用户输入法列表".into());
 
             let installed = target.join("lueying-install.exe");
             let status = Command::new(&installed)
@@ -179,7 +205,11 @@ mod imp {
             if reg_query(&inproc64, Some("")) || reg_query(&inproc32, Some("")) {
                 return Err("卸载后 TSF CLSID 仍在".into());
             }
-            checks.push("注册项已清理".into());
+            // profile 已注销时查询本身可能失败;只有明确仍启用才算清理失败。
+            if profile_enabled().unwrap_or(false) {
+                return Err("卸载后「掠影」仍在当前用户输入法列表".into());
+            }
+            checks.push("注册项与输入法列表已清理".into());
             Ok(checks.join("\n- "))
         })();
 
@@ -204,6 +234,18 @@ mod imp {
         }
         let _ = std::fs::remove_dir_all(&root);
         result.map(|checks| format!("- {checks}\n"))
+    }
+
+    /// TSF profile 是否在当前用户的输入法列表里。
+    fn profile_enabled() -> Result<bool, String> {
+        let profiles: ITfInputProcessorProfiles = unsafe {
+            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
+        }
+        .map_err(|e| format!("打开 TSF profile 管理器: {e}"))?;
+        let enabled =
+            unsafe { profiles.IsEnabledLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE) }
+                .map_err(|e| format!("查询当前用户输入法列表: {e}"))?;
+        Ok(enabled.as_bool())
     }
 
     /// `reg query` 是否成功;空值名用 `/ve` 查默认值。

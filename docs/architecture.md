@@ -7,7 +7,7 @@
 - `lueying_tsf.dll`：TSF COM 薄壳。负责注册、按键预演/应用、异步编辑会话、光标前文本探测、语言栏与模式同步；保留 Ctrl+. 切换中文标点，安全桌面激活时全部按键直通。字符键按当前键盘布局经 `ToUnicodeEx` 翻译，支持 AZERTY/QWERTZ/Dvorak 等非 US 布局。组合期间向 TSF 登记 `ITfCandidateListUIElement` 与 `ITfIntegratableCandidateListUIElement`，宿主（Windows 搜索框、UWP、全屏应用）或读屏软件可读取全量候选、分页与当前高亮，并通过序号选中/提交，声明高亮即待上屏项并显示候选编号；宿主在 `BeginUIElement` 回 `FALSE` 接管绘制时，服务端候选窗自动收起，宿主改选高亮时内联预显示同步跟随；搜索框调用原样落定接口时提交当前显示文本，不补全剩余拼音。激活时向线程管理器登记 `ITfFunctionProvider`，Chromium/QQNT 据此把 Ctrl+数字等组合键完整交给输入法；触屏键盘可经同一 Provider 取得简体拼音优化布局。激活时即拉起常驻服务，词典与重排模型加载不占首键时间；当前输入框挂 `ITfTextLayoutSink`，宿主滚动或改布局后候选窗重新贴住光标。获得焦点时先异步读一次光标左邻文本，数字后的首键 `.` 和小数、IP 地址不依赖“先随便按一个键”才正确。
 - `lueying-server.exe`：常驻服务。持有词典、引擎、用户词库和重排模型；每个宿主会话一份 `Engine`，通过命名管道响应请求。
 - `lueying-settings.exe`：独立设置窗，跟随深浅色与系统高对比度，按主屏 DPI 居中；写 `config.ini` 后通知服务重载。
-- `lueying-install.exe`：安装到 `%ProgramFiles%\lueying`。复制版本化 x64/x86 DLL（`lueying_tsf-<版本>.dll`、`lueying_tsf32-<版本>.dll`）与 `licenses/` 许可目录、注册 TSF、写自启动/卸载项；文件与注册表动作按需提权。
+- `lueying-install.exe`：安装到 `%ProgramFiles%\lueying`。复制版本化 x64/x86 DLL（`lueying_tsf-<版本>.dll`、`lueying_tsf32-<版本>.dll`）与 `licenses/` 许可目录、注册 TSF、写自启动/卸载项；文件与注册表动作按需提权。TSF profile 注册后还在当前用户进程里调用 `EnableLanguageProfile`，装完按 Win+空格 就能在输入法列表里看到「掠影」；系统缺少中文语言时安装仍完成，并提示先添加「中文(简体)」。卸载时先以 `DeactivateProfile` 移出列表再删文件，不留失效条目。
 
 用户数据只落在当前用户目录：配置 `%APPDATA%\lueying\config.ini`，用户词库 `%LOCALAPPDATA%\lueying\user.tsv`。升级安装会一次性接走旧 `pinyin-ime` 目录下的配置与词库，并清理旧自启动项、卸载项和快捷方式。自启动与卸载项写在 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Lueying` 与 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying`；开始菜单快捷方式为「掠影设置」与「卸载掠影」。
 
@@ -53,7 +53,7 @@
 
 - `lueying-e2e`：内置词库场景、二进制词典往返、候选窗引擎契约、用户词库、Shift+Delete 学习记录删除、宿主原样落定显示文本、主词典探针、性能分位数、整句准确率、神经重排与候选准确率基准。`--bench-fast` 跑确定性等距子集并并行各语料，`--bench` 跑全量。产物 `target/e2e-report.md` 与 `target/bench-report.md`。
 - `lueying-win-e2e`：进程内注册 TSF、激活、注入“nihao+空格”、读回编辑框并验证 Shift 中英切换与 Ctrl+. 中文标点落盘，并校验当前输入框已挂布局监听；同时挂 `ITfUIElementSink`，确认候选 UI 元素登记、更新、结束且能读回首条候选，校验集成候选接口声明高亮即待上屏项，多页时读回页起点并用 `SetSelection` 切页，校验 `GetCurrentPage` 与 `GetSelection` 跟随，再调用 `FinalizeExactCompositionString` 验证宿主原样落定，随后验证组合内 Ctrl+Backspace 与 Ctrl+Left 的按音节编辑、Shift+Space 全角数字/空格/字母，最后量 5 轮空格到文本落地的全链路延迟（p95 ≤ 250ms）。产物 `target/win-e2e-report.md`；失败时附 TSF 与 Server 日志末尾。CI 另用 i686 构建运行同一套宿主，验证 x86 TSF 的真实加载与输入链路，而不只检查注册表。
-- `lueying-install-e2e`：把真实安装器指向隔离的 `LUEYING_INSTALL_DIR`，检查 x64/x86 文件、`licenses/` 子目录、自启动/卸载项与两套 TSF CLSID，再执行真实卸载并确认清理。产物 `target/install-e2e-report.md`。
+- `lueying-install-e2e`：把真实安装器指向隔离的 `LUEYING_INSTALL_DIR`，检查 x64/x86 文件、`licenses/` 子目录、自启动/卸载项、两套 TSF CLSID 与当前用户输入法列表里的 profile，再执行真实卸载并确认注册项、列表条目与文件都已清理。产物 `target/install-e2e-report.md`。
 - CI：`fmt`、`engine`、`dict`、`windows` 四个 job；windows job 构建 i686 TSF 并做 ARM64 编译检查，x64/x86 全链路与安装/卸载冒烟为阻断项；push 跑快速基准，夜间或手动触发跑全量基准；发布目录只在手动触发或打 tag 时生成。
 
 ## 许可

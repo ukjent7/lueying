@@ -29,9 +29,14 @@ mod imp {
     use windows::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
+    use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
     use windows::Win32::UI::Shell::{
         FOLDERID_Programs, IShellLinkW, IsUserAnAdmin, KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS,
         SHELLEXECUTEINFOW, SHGetKnownFolderPath, ShellExecuteExW,
+    };
+    use windows::Win32::UI::TextServices::{
+        CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
+        TF_IPPMF_DISABLEPROFILE, TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW, SW_SHOWNORMAL,
@@ -47,6 +52,11 @@ mod imp {
     const LEGACY_UNINSTALL_KEY: &str =
         r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
     const CLSID_SHELL_LINK: GUID = GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
+    /// 与 `crates/tsf/src/lib.rs` 的三处身份一致;安装器只负责把已注册的 profile
+    /// 加进当前用户的输入法列表。
+    const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
+    const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
+    const LANGID_ZH_CN: u16 = 0x0804;
     /// 提权子进程最长等待时间。
     const ELEVATED_TIMEOUT_MS: u32 = 60_000;
 
@@ -120,20 +130,24 @@ mod imp {
         ) {
             fail(quiet, "安装文件失败,请重试或查看是否拒绝了管理员提示");
         }
-        if let Err(error) = install_user_state(&target) {
-            fail(quiet, &error);
-        }
+        let listed = match install_user_state(&target) {
+            Ok(listed) => listed,
+            Err(error) => fail(quiet, &error),
+        };
         // 立即拉起常驻服务;单实例互斥保证不会重复。
         let _ = std::process::Command::new(target.join("lueying-server.exe"))
             .current_dir(&target)
             .spawn();
         if !quiet {
+            let hint = if listed {
+                "按 Win+空格 切换到「掠影」。"
+            } else {
+                "未能加入输入法列表。请先在 设置 → 时间和语言 → 语言和区域\n\
+                 添加「中文(简体)」，再运行安装器。"
+            };
             message(
                 APP,
-                &format!(
-                    "已安装到:\n{}\n\n按 Win+空格 切换到「掠影」。",
-                    target.display()
-                ),
+                &format!("已安装到:\n{}\n\n{hint}", target.display()),
                 false,
             );
         }
@@ -165,8 +179,14 @@ mod imp {
         register(target)
     }
 
-    /// 当前用户部分:自启动、卸载项、快捷方式。
-    fn install_user_state(target: &Path) -> Result<(), String> {
+    /// 当前用户部分:输入法列表、自启动、卸载项、快捷方式。
+    /// 返回 profile 是否已加入输入法列表。
+    fn install_user_state(target: &Path) -> Result<bool, String> {
+        // DllRegisterServer 已按默认启用注册 profile;这里再显式启用一次,
+        // 覆盖旧版注册或用户曾关闭后升级的状态,装完 Win+空格 就能看到「掠影」。
+        // 必须在当前用户进程里调用,不能放进提权子进程。加入失败(例如系统
+        // 还没装中文语言)不中止安装,由调用方提示下一步。
+        let listed = set_profile_enabled(true).is_ok();
         set_run_key(&target.join("lueying-server.exe"))?;
         register_uninstall(target)?;
         let settings = target.join("lueying-settings.exe");
@@ -187,15 +207,65 @@ mod imp {
             let _ = std::fs::remove_file(start_menu().join(name));
         }
         remove_legacy_registry();
-        Ok(())
+        Ok(listed)
     }
 
     fn uninstall_user_state() -> Result<(), String> {
         stop_server();
+        // 先把 profile 从当前用户的输入法列表移除,再提权删除文件;否则列表里
+        // 会留下一个指向已删 DLL 的「掠影」。
+        let _ = set_profile_enabled(false);
         remove_registry();
         remove_shortcuts();
         // 文件可能已被用户手工删除;注册项仍要清干净,不能因此中止卸载。
         Ok(())
+    }
+
+    /// 把已注册的 TSF profile 加进/移出当前用户的输入法列表。
+    fn set_profile_enabled(enabled: bool) -> Result<(), String> {
+        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let result = (|| -> windows::core::Result<()> {
+            let profiles: ITfInputProcessorProfiles = unsafe {
+                CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?
+            };
+            if enabled {
+                return unsafe {
+                    profiles.EnableLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE, true)
+                };
+            }
+            // Win10/11 上 DeactivateProfile 比 EnableLanguageProfile(false) 可靠,
+            // 老接口作兜底。
+            let deactivated = match profiles.cast::<ITfInputProcessorProfileMgr>() {
+                Ok(manager) => unsafe {
+                    manager.DeactivateProfile(
+                        TF_PROFILETYPE_INPUTPROCESSOR,
+                        LANGID_ZH_CN,
+                        &CLSID_IME,
+                        &GUID_PROFILE,
+                        HKL::default(),
+                        TF_IPPMF_FORSESSION | TF_IPPMF_DISABLEPROFILE,
+                    )
+                }
+                .is_ok(),
+                Err(_) => false,
+            };
+            if deactivated {
+                Ok(())
+            } else {
+                unsafe {
+                    profiles.EnableLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE, false)
+                }
+            }
+        })();
+        if initialized {
+            unsafe { CoUninitialize() };
+        }
+        result.map_err(|e| {
+            format!(
+                "{}输入法列表失败: {e}",
+                if enabled { "加入" } else { "移出" }
+            )
+        })
     }
 
     fn register(target: &Path) -> Result<(), String> {
