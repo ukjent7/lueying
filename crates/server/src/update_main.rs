@@ -72,7 +72,12 @@ mod imp {
         match install(&options, &version, &temp, &mut log) {
             Ok(()) => {
                 log_line(&mut log, "完成");
-                message(APP, &format!("掠影已更新到 {version}。"), false, options.quiet);
+                message(
+                    APP,
+                    &format!("掠影已更新到 {version}。"),
+                    false,
+                    options.quiet,
+                );
                 // 日志文件开着时 Windows 删不掉所在目录。
                 drop(log);
                 let _ = std::fs::remove_dir_all(&temp);
@@ -180,10 +185,7 @@ mod imp {
         let target = update::install_target();
         let installed = std::fs::read_to_string(target.join("version.txt")).unwrap_or_default();
         if installed.trim() != version {
-            return Err(format!(
-                "安装后版本为 {},期望 {version}",
-                installed.trim()
-            ));
+            return Err(format!("安装后版本为 {},期望 {version}", installed.trim()));
         }
         if !target.join("lueying-update.exe").is_file() {
             return Err("安装目录缺少更新后的 lueying-update.exe".into());

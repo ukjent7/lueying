@@ -31,7 +31,7 @@ use std::sync::{Arc, OnceLock};
 
 use weights::Tensor;
 
-pub use rerank::{Reranker, should_rerank};
+pub use rerank::{should_rerank, Reranker};
 
 /// A weight matrix, kept in whatever precision the file stored it in.
 ///

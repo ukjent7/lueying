@@ -70,10 +70,10 @@ fn pick_word(engine: &mut Engine, word: &str) -> bool {
 
 #[path = "user_dict_context.rs"]
 mod context;
-#[path = "user_dict_wordbook.rs"]
-mod wordbook;
 #[path = "user_dict_reject.rs"]
 mod reject;
+#[path = "user_dict_wordbook.rs"]
+mod wordbook;
 
 pub fn run(report: &mut String) -> usize {
     let dict = Arc::new(Dictionary::builtin());

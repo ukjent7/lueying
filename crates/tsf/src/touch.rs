@@ -5,7 +5,7 @@
 use windows::Win32::Foundation::E_INVALIDARG;
 use windows::Win32::UI::TextServices::{
     ITfFnGetPreferredTouchKeyboardLayout, ITfFnGetPreferredTouchKeyboardLayout_Impl, ITfFunction,
-    ITfFunction_Impl, TKBLT_OPTIMIZED, TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN, TKBLayoutType,
+    ITfFunction_Impl, TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN, TKBLT_OPTIMIZED, TKBLayoutType,
 };
 use windows::core::{BSTR, Error, Result, implement};
 

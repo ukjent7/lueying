@@ -196,7 +196,10 @@ fn time_texts(now: CivilTime) -> Vec<String> {
 fn weekday_texts(now: CivilTime) -> Vec<String> {
     const NAMES: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
     let index = (now.weekday.clamp(1, 7) - 1) as usize;
-    let mut out = vec![format!("星期{}", NAMES[index]), format!("周{}", NAMES[index])];
+    let mut out = vec![
+        format!("星期{}", NAMES[index]),
+        format!("周{}", NAMES[index]),
+    ];
     // 口语里星期日、周日也常说星期天、周天。
     if index == 6 {
         out.push("星期天".to_string());
@@ -511,8 +514,14 @@ fn numeral(int_part: &str, upper: bool) -> String {
 /// 金额:元后无角分写「整」;有分无角补「零」;不足一元不写元。
 fn amount_text(int_part: &str, dec_part: &str, upper: bool) -> String {
     let digits = if upper { &UPPER_DIGITS } else { &LOWER_DIGITS };
-    let jiao = dec_part.as_bytes().first().map_or(0, |b| usize::from(b - b'0'));
-    let fen = dec_part.as_bytes().get(1).map_or(0, |b| usize::from(b - b'0'));
+    let jiao = dec_part
+        .as_bytes()
+        .first()
+        .map_or(0, |b| usize::from(b - b'0'));
+    let fen = dec_part
+        .as_bytes()
+        .get(1)
+        .map_or(0, |b| usize::from(b - b'0'));
     let yuan = int_part.trim_start_matches('0');
     let mut text = String::new();
     if !yuan.is_empty() || (jiao == 0 && fen == 0) {

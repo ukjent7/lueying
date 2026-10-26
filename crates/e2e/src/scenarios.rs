@@ -350,8 +350,8 @@ pub fn scenarios() -> Vec<Scenario> {
                     Key::Punct('\''),
                 ],
                 vec![commits(&[
-                    "，", "。", "！", "？", "；", "：", "（", "）", "《", "》", "【", "】", "「", "」",
-                    "￥", "……", "——", "、", "·", "～", "｜", "“", "”", "‘", "’",
+                    "，", "。", "！", "？", "；", "：", "（", "）", "《", "》", "【", "】", "「",
+                    "」", "￥", "……", "——", "、", "·", "～", "｜", "“", "”", "‘", "’",
                 ])],
             )],
         ),
@@ -391,9 +391,15 @@ pub fn scenarios() -> Vec<Scenario> {
             "数字后的句号保持半角",
             false,
             vec![
-                stage(vec![Key::Digit(3)], vec![Check::Passthrough, Check::NoCommits]),
+                stage(
+                    vec![Key::Digit(3)],
+                    vec![Check::Passthrough, Check::NoCommits],
+                ),
                 // 数字后的第一个句点按小数点直通;之后的句点恢复中文句号。
-                stage(vec![Key::Punct('.')], vec![Check::Passthrough, Check::NoCommits]),
+                stage(
+                    vec![Key::Punct('.')],
+                    vec![Check::Passthrough, Check::NoCommits],
+                ),
                 stage(vec![Key::Punct('.')], vec![commits(&["。"])]),
             ],
         ),

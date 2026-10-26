@@ -118,7 +118,10 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
         checks,
         "Shift+Delete 清除跳过记录",
         highlighted && !forgotten_export.contains("@reject\tni'hao\t你好\t"),
-        format!("高亮 {highlighted},导出 {} 行", forgotten_export.lines().count()),
+        format!(
+            "高亮 {highlighted},导出 {} 行",
+            forgotten_export.lines().count()
+        ),
     );
 
     // 快捷候选不是词:选第二个日期格式时,排在前面的日期不能被记成被跳过的词。

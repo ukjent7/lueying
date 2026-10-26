@@ -42,7 +42,11 @@ impl ModeHudPanel {
         let mut place = false;
         if serial != self.serial.get() {
             self.serial.set(serial);
-            let source = self.state.mode_hud.lock().unwrap_or_else(|p| p.into_inner());
+            let source = self
+                .state
+                .mode_hud
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             if let Some(hud) = source.as_ref() {
                 *self.last.borrow_mut() = Some(HudView {
                     label: hud.label,
@@ -101,8 +105,8 @@ impl ModeHudPanel {
         // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
         let in_comp = in_composition(&self.state);
         let candidate_h = snapshot(&self.state).map_or(0.0, |view| candidate_height(&view)) * scale;
-        let candidate_below = caret
-            .is_some_and(|(_, _, _, b)| b as f32 + candidate_h <= work.bottom as f32);
+        let candidate_below =
+            caret.is_some_and(|(_, _, _, b)| b as f32 + candidate_h <= work.bottom as f32);
         let prefer_below = !in_comp || !candidate_below;
         let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
         let y = (match caret {

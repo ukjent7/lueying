@@ -84,8 +84,7 @@ pub(super) fn run() {
             format!("# Windows E2E\n\nPASS\n\nEDIT 文本:`{text}`\n\n{extra}\n")
         }
         Err(e) => {
-            let tsf =
-                tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
+            let tsf = tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
             let server = tail_of(Some(server_log()));
             format!(
                 "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
@@ -186,8 +185,7 @@ fn real_run() -> Result<(String, String), String> {
     }
     let server_out = server_log();
     let _ = std::fs::remove_file(&server_out);
-    let out =
-        std::fs::File::create(&server_out).map_err(|e| format!("创建 Server 日志: {e}"))?;
+    let out = std::fs::File::create(&server_out).map_err(|e| format!("创建 Server 日志: {e}"))?;
     let err = out
         .try_clone()
         .map_err(|e| format!("复制 Server 日志句柄: {e}"))?;
@@ -325,15 +323,11 @@ fn real_run() -> Result<(String, String), String> {
         let mut active_lang = 0u16;
         let mut active_guid = GUID::default();
         match unsafe {
-            profiles_api.GetActiveLanguageProfile(
-                &CLSID_IME,
-                &mut active_lang,
-                &mut active_guid,
-            )
+            profiles_api.GetActiveLanguageProfile(&CLSID_IME, &mut active_lang, &mut active_guid)
         } {
-            Ok(()) => println!(
-                "GetActiveLanguageProfile: lang=0x{active_lang:04x} guid={active_guid:?}"
-            ),
+            Ok(()) => {
+                println!("GetActiveLanguageProfile: lang=0x{active_lang:04x} guid={active_guid:?}")
+            }
             Err(e) => println!("GetActiveLanguageProfile: {e}"),
         }
         // 激活 profile 到服务实例挂上焦点是异步的;给 TSF 一点消息泵时间。
@@ -537,8 +531,7 @@ fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
     let composition: ITfContextComposition = context
         .cast()
         .map_err(|e| format!("ITfContextComposition: {e}"))?;
-    let list =
-        unsafe { composition.EnumCompositions() }.map_err(|e| format!("枚举组合: {e}"))?;
+    let list = unsafe { composition.EnumCompositions() }.map_err(|e| format!("枚举组合: {e}"))?;
     let mut views: [Option<ITfCompositionView>; 1] = [None];
     let mut fetched = 0u32;
     unsafe { list.Next(&mut views, &mut fetched) }.map_err(|e| format!("读取组合: {e}"))?;

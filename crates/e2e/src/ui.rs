@@ -363,8 +363,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "失焦后引号重新配对",
-        first == vec![Event::Commit("“".into())]
-            && second == vec![Event::Commit("“".into())],
+        first == vec![Event::Commit("“".into())] && second == vec![Event::Commit("“".into())],
         format!("先 {first:?},换框后 {second:?}"),
     );
 
@@ -496,7 +495,9 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "部分选词后继续输入接在末尾",
-        slot.is_some() && before.as_deref() == Some("tianqi") && after.as_deref() == Some("tianqih"),
+        slot.is_some()
+            && before.as_deref() == Some("tianqi")
+            && after.as_deref() == Some("tianqih"),
         format!("候选位 {slot:?},选后 {before:?},再输入 h 后 {after:?}"),
     );
 
@@ -505,7 +506,10 @@ pub fn run(report: &mut String) -> usize {
     let mut e = engine();
     let long = "gaodewohaihuaiyishibushizijidacuoguanjiancile";
     type_into(&mut e, long);
-    let kept = e.composition().map(|comp| comp.raw.clone()).unwrap_or_default();
+    let kept = e
+        .composition()
+        .map(|comp| comp.raw.clone())
+        .unwrap_or_default();
     push(
         &mut checks,
         "长句完整保留在组合中",
@@ -530,7 +534,9 @@ pub fn run(report: &mut String) -> usize {
         at_limit == MAX_RAW
             && committed
             && restart == ("a", 1)
-            && !events.iter().any(|event| matches!(event, Event::Passthrough(_))),
+            && !events
+                .iter()
+                .any(|event| matches!(event, Event::Passthrough(_))),
         format!("上限 {at_limit},上屏 {committed},新组合 {restart:?}"),
     );
 

@@ -64,10 +64,9 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
         let _ = unsafe { automation2.SetTransactionTimeout(1000) };
     }
     while let Ok(job) = rx.recv() {
-        let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            read(&automation, &job)
-        }))
-        .unwrap_or(None);
+        let text =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&automation, &job)))
+                .unwrap_or(None);
         if let Some(text) = text {
             crate::imp::apply_uia_context(state, &job, &text);
         }
@@ -135,7 +134,9 @@ fn read(automation: &IUIAutomation, job: &Job) -> Option<String> {
 }
 
 fn pid(element: &IUIAutomationElement) -> Option<u32> {
-    unsafe { element.CurrentProcessId() }.ok().map(|pid| pid as u32)
+    unsafe { element.CurrentProcessId() }
+        .ok()
+        .map(|pid| pid as u32)
 }
 
 /// IsPassword 读不到时按私密处理;宁可少读一次上下文。

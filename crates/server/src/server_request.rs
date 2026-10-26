@@ -186,9 +186,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             }
             if private {
                 crate::settle::cancel(state, session);
-            } else if want_uia
-                && let Some(tx) = state.uia_tx.as_ref()
-            {
+            } else if want_uia && let Some(tx) = state.uia_tx.as_ref() {
                 // 空上下文已经先应用;UIA 结果回来再按代次/页/高亮决定
                 // 是否采用。容量 1,前一次查询没回来时直接丢新任务。
                 let _ = tx.try_send(crate::uia::Job {

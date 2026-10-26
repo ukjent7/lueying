@@ -230,14 +230,12 @@ pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
         return Err(format!("下载更新包返回 HTTP {status}"));
     }
     let written = (|| -> Result<u64, String> {
-        let mut file =
-            File::create(dest).map_err(|e| format!("创建 {}: {e}", dest.display()))?;
+        let mut file = File::create(dest).map_err(|e| format!("创建 {}: {e}", dest.display()))?;
         let written = response.read_chunks(|chunk| {
             file.write_all(chunk)
                 .map_err(|e| format!("写入更新包: {e}"))
         })?;
-        file.flush()
-            .map_err(|e| format!("写入更新包: {e}"))?;
+        file.flush().map_err(|e| format!("写入更新包: {e}"))?;
         Ok(written)
     })();
     match written {
@@ -634,10 +632,8 @@ impl Response {
         loop {
             let mut read = 0u32;
             let pointer: *mut c_void = buffer.as_mut_ptr().cast();
-            unsafe {
-                WinHttpReadData(self.request, pointer, buffer.len() as u32, &mut read)
-            }
-            .map_err(|e| format!("读取下载数据: {e}"))?;
+            unsafe { WinHttpReadData(self.request, pointer, buffer.len() as u32, &mut read) }
+                .map_err(|e| format!("读取下载数据: {e}"))?;
             if read == 0 {
                 return Ok(total);
             }

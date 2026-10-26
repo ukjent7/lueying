@@ -40,8 +40,7 @@ impl Module for Demo {
 }
 
 fn engine(modules: Modules) -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_modules(Arc::new(modules))
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(modules))
 }
 
 fn type_hao(engine: &mut Engine) {
@@ -69,11 +68,7 @@ pub fn run(report: &mut String) -> usize {
     let transformed = commits
         .iter()
         .any(|event| matches!(event, Event::Commit(text) if text.as_str() == "好！"));
-    checks.push((
-        "模块上屏转换",
-        transformed,
-        format!("{commits:?}"),
-    ));
+    checks.push(("模块上屏转换", transformed, format!("{commits:?}")));
 
     // 空注册表:核心行为与未接入模块时一致。
     let mut plain = engine(Modules::new());

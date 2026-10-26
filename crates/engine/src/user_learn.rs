@@ -368,8 +368,7 @@ impl UserDict {
             .transitions
             .drain()
             .flat_map(|(left, next)| {
-                next
-                    .into_iter()
+                next.into_iter()
                     .map(move |(right, stat)| (left.clone(), right, stat))
             })
             .collect();

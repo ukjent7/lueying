@@ -135,12 +135,7 @@ fn top_is(
     push(checks, name, top == want, format!("v{body} → {top}"));
 }
 
-fn has(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    body: &str,
-    want: &str,
-) {
+fn has(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, body: &str, want: &str) {
     let list = cands(body);
     push(
         checks,
@@ -209,7 +204,8 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "日期不写词库",
-        !exported.contains("2026年10月26日") && !exported.lines().any(|line| line.starts_with("rq\t")),
+        !exported.contains("2026年10月26日")
+            && !exported.lines().any(|line| line.starts_with("rq\t")),
         exported.lines().next().unwrap_or_default().to_string(),
     );
     // 时间前进一天后同一触发必须给出新日期,不能召回上次上屏的旧字串。
@@ -350,7 +346,10 @@ pub fn run(report: &mut String) -> usize {
     let mut dup = with_word("日期", "ri'qi", fixed());
     letters(&mut dup, "rq");
     let list = dup.candidates();
-    let dates = list.iter().filter(|text| text.as_str() == "2026年10月26日").count();
+    let dates = list
+        .iter()
+        .filter(|text| text.as_str() == "2026年10月26日")
+        .count();
     push(
         &mut checks,
         "显式触发不重复",
@@ -510,7 +509,12 @@ pub fn run(report: &mut String) -> usize {
             .all(|want| list.iter().any(|c| c == want)),
         format!("{list:?}"),
     );
-    expr_top(&mut checks, "日期表达式斜杠", "1998/3/8", "一九九八年三月八日");
+    expr_top(
+        &mut checks,
+        "日期表达式斜杠",
+        "1998/3/8",
+        "一九九八年三月八日",
+    );
     expr_top(
         &mut checks,
         "日期表达式点分隔",
@@ -592,9 +596,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "u 问字纯字母不加号",
-        !unicode_cands("fade")
-            .iter()
-            .any(|text| text == "\u{fade}"),
+        !unicode_cands("fade").iter().any(|text| text == "\u{fade}"),
         format!("{:?}", unicode_cands("fade")),
     );
     push(

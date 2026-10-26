@@ -183,7 +183,9 @@ mod imp {
         /// 后台查 GitHub Release;网络慢不能卡住设置窗。
         fn check_updates(&mut self, cx: &mut Context<Self>) {
             self.updates = UpdateState::Checking;
-            let task = cx.background_executor().spawn(async move { update::check() });
+            let task = cx
+                .background_executor()
+                .spawn(async move { update::check() });
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 this.update(cx, |panel, cx| {
@@ -407,7 +409,11 @@ mod imp {
             .text_center()
             .cursor_pointer()
             .bg(rgb(if on { colors.accent } else { colors.off_bg }))
-            .text_color(rgb(if on { colors.on_accent } else { colors.off_text }))
+            .text_color(rgb(if on {
+                colors.on_accent
+            } else {
+                colors.off_text
+            }))
             .hover(|style| style.opacity(0.9))
             .active(|style| style.opacity(0.78))
             // 按钮在鼠标松开时触发,按下后移出可以取消,和系统按钮一致。
@@ -435,11 +441,7 @@ mod imp {
             };
             let page = self.cfg.page_size;
             let (update_text, update_label, update_active) = match &self.updates {
-                UpdateState::Checking => (
-                    "正在检查更新…".to_string(),
-                    "检查中".to_string(),
-                    false,
-                ),
+                UpdateState::Checking => ("正在检查更新…".to_string(), "检查中".to_string(), false),
                 UpdateState::Latest => (
                     format!("版本 {} · 已是最新", self.current),
                     "检查更新".to_string(),
@@ -668,18 +670,16 @@ mod imp {
                             update_label,
                             update_active,
                             colors,
-                            cx.listener(|this, _, _, cx| {
-                                match this.updates.clone() {
-                                    UpdateState::Available(release) => {
-                                        this.install_update(release, cx);
-                                    }
-                                    UpdateState::Checking => {}
-                                    UpdateState::Latest
-                                    | UpdateState::NoRelease
-                                    | UpdateState::Failed(_) => {
-                                        this.check_updates(cx);
-                                        cx.notify();
-                                    }
+                            cx.listener(|this, _, _, cx| match this.updates.clone() {
+                                UpdateState::Available(release) => {
+                                    this.install_update(release, cx);
+                                }
+                                UpdateState::Checking => {}
+                                UpdateState::Latest
+                                | UpdateState::NoRelease
+                                | UpdateState::Failed(_) => {
+                                    this.check_updates(cx);
+                                    cx.notify();
                                 }
                             }),
                         )),

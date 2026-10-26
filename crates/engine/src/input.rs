@@ -173,13 +173,14 @@ impl Engine {
         match key {
             Key::Letter(c) if c.is_ascii_lowercase() => {
                 // v 表达式里 x 是乘号;组合已满时退回普通字母,先落定再起新组合。
-                if c == 'x'
-                    && self.expression_body().is_some()
-                    && self.compose_char('x')
-                {
+                if c == 'x' && self.expression_body().is_some() && self.compose_char('x') {
                     return Vec::new();
                 }
-                if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
+                if self
+                    .comp
+                    .as_ref()
+                    .is_some_and(|comp| comp.raw.len() >= MAX_RAW)
+                {
                     // 组合到达上限:先把当前输入按首选落定,再用这一键起新组合。
                     // 直接丢弃会让长句末尾的按键无声消失,文档与用户预期错位。
                     let mut events = self.commit_all();
@@ -340,15 +341,19 @@ impl Engine {
                 // 没有中文映射(或关了中文标点)时按 ASCII 上屏;
                 // 直通会让应用在组句未收时插入字符,文档与引擎就错位了。
                 let mapped = if self.cfg.chinese_punct {
-                    punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit)
+                    punct::map(
+                        p,
+                        &mut self.dq_open,
+                        &mut self.sq_open,
+                        &mut self.after_digit,
+                    )
                 } else {
                     None
                 };
                 let text = mapped.map_or_else(
                     || {
                         if self.fullwidth {
-                            punct::fullwidth(p)
-                                .map_or_else(|| p.to_string(), String::from)
+                            punct::fullwidth(p).map_or_else(|| p.to_string(), String::from)
                         } else {
                             p.to_string()
                         }
@@ -379,8 +384,12 @@ impl Engine {
     /// 标点:开中文标点则上屏全角,否则全角模式下上屏全角 ASCII,再否则直通。
     pub(crate) fn punct_events(&mut self, p: char) -> Vec<Event> {
         if self.cfg.chinese_punct
-            && let Some(s) =
-                punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit)
+            && let Some(s) = punct::map(
+                p,
+                &mut self.dq_open,
+                &mut self.sq_open,
+                &mut self.after_digit,
+            )
         {
             return vec![Event::Commit(s.to_string())];
         }
@@ -416,9 +425,7 @@ impl Engine {
     pub(crate) fn expression_body(&self) -> Option<&str> {
         let raw = self.comp.as_ref()?.raw.as_str();
         let body = raw.strip_prefix('v')?;
-        body.chars()
-            .all(quick::is_expression_char)
-            .then_some(body)
+        body.chars().all(quick::is_expression_char).then_some(body)
     }
 
     /// 组合是否处于 u 问字模式:字母 u 后是至多六位十六进制,可带前导 `+`。
@@ -453,12 +460,18 @@ impl Engine {
             && year.bytes().all(|b| b.is_ascii_digit())
             && (1..=2).contains(&month.len())
             && month.bytes().all(|b| b.is_ascii_digit())
-            && month.parse::<u32>().is_ok_and(|month| (1..=12).contains(&month))
+            && month
+                .parse::<u32>()
+                .is_ok_and(|month| (1..=12).contains(&month))
     }
 
     /// 快捷模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
     pub(crate) fn compose_digit(&mut self, d: u8) -> Vec<Event> {
-        if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
+        if self
+            .comp
+            .as_ref()
+            .is_some_and(|comp| comp.raw.len() >= MAX_RAW)
+        {
             return self.select_digit(d);
         }
         let Some(c) = char::from_digit(u32::from(d), 10) else {
@@ -827,7 +840,9 @@ impl Engine {
         // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
         let quick = quick::candidates(&comp.raw, now);
         if !quick.is_empty() {
-            built.cands.retain(|cand| !quick.iter().any(|q| q.text == cand.text));
+            built
+                .cands
+                .retain(|cand| !quick.iter().any(|q| q.text == cand.text));
             let keep_first = built.cands.first().is_some_and(|cand| {
                 cand.full && !cand.sentence && (cand.trusted || cand.user_freq > 0)
             });

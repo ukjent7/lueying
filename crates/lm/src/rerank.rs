@@ -3,7 +3,7 @@
 //! `SentenceModel` 留在 crate 根,这里只放重排状态机;字段对测试保持
 //! crate 内可见,因为 `bounded_encoding_tests` 会用同一结构对照旧实现。
 
-use super::{CandidateFacts, DICTIONARY_SOURCES, Prefix, SentenceModel, TailRun, comparable};
+use super::{comparable, CandidateFacts, Prefix, SentenceModel, TailRun, DICTIONARY_SOURCES};
 use std::sync::Arc;
 
 /// A model plus the prefix it last ran, so that typing does not re-run the committed text.

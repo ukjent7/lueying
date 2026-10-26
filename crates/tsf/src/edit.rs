@@ -444,9 +444,7 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
     // 后 AWT 才会刷新这个点;只在已证实的宿主上采信,并校验落点仍在
     // 宿主自己声明的显示区内,挡住上一次组合留下的陈旧坐标。
     if host_default
-        && let Some(hwnd) = view
-            .as_ref()
-            .and_then(|view| unsafe { view.GetWnd() }.ok())
+        && let Some(hwnd) = view.as_ref().and_then(|view| unsafe { view.GetWnd() }.ok())
         && let Some(rect) = imm_candidate_rect(hwnd, screen_ext)
     {
         return Some(rect);
@@ -511,11 +509,7 @@ fn valid_rect(rect: &RECT) -> bool {
 
 /// 选区、组句起点、组句整体三次查询是否给了同一个高度为零的矩形。
 /// 缺任何一维都无法判断,按「不是」处理。
-fn is_host_default_position(
-    caret: Option<RECT>,
-    start: Option<RECT>,
-    comp: Option<RECT>,
-) -> bool {
+fn is_host_default_position(caret: Option<RECT>, start: Option<RECT>, comp: Option<RECT>) -> bool {
     let (Some(caret), Some(start), Some(comp)) = (caret, start, comp) else {
         return false;
     };
@@ -621,9 +615,7 @@ fn imm_candidate_rect(hwnd: HWND, screen_ext: Option<RECT>) -> Option<(i32, i32,
         return None;
     }
     // CFS_DEFAULT 表示宿主没表态,ptCurrentPos 无意义。
-    if form.dwStyle != CFS_POINT
-        && form.dwStyle != CFS_CANDIDATEPOS
-        && form.dwStyle != CFS_EXCLUDE
+    if form.dwStyle != CFS_POINT && form.dwStyle != CFS_CANDIDATEPOS && form.dwStyle != CFS_EXCLUDE
     {
         return None;
     }

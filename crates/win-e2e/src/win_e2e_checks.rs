@@ -5,7 +5,7 @@
 use windows::Win32::UI::TextServices::{
     ITfCandidateListUIElement, ITfCandidateListUIElementBehavior,
     ITfFnGetPreferredTouchKeyboardLayout, ITfIntegratableCandidateListUIElement, ITfUIElementMgr,
-    STYLE_ACTIVE_SELECTION, TKBLT_OPTIMIZED, TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN, TKBLayoutType,
+    STYLE_ACTIVE_SELECTION, TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN, TKBLT_OPTIMIZED, TKBLayoutType,
 };
 
 use super::*;
@@ -52,8 +52,8 @@ pub(super) fn check_candidate_ui(
     let integrated: ITfIntegratableCandidateListUIElement = element
         .cast()
         .map_err(|e| format!("cast ITfIntegratableCandidateListUIElement: {e}"))?;
-    let style = unsafe { integrated.GetSelectionStyle() }
-        .map_err(|e| format!("GetSelectionStyle: {e}"))?;
+    let style =
+        unsafe { integrated.GetSelectionStyle() }.map_err(|e| format!("GetSelectionStyle: {e}"))?;
     let numbers = unsafe { integrated.ShowCandidateNumbers() }
         .map_err(|e| format!("ShowCandidateNumbers: {e}"))?;
     if style != STYLE_ACTIVE_SELECTION || !numbers.as_bool() {
@@ -75,18 +75,16 @@ pub(super) fn check_candidate_ui(
             .map_err(|e| format!("SetSelection(第二页): {e}"))?;
         let current =
             unsafe { list.GetCurrentPage() }.map_err(|e| format!("GetCurrentPage: {e}"))?;
-        let selection =
-            unsafe { list.GetSelection() }.map_err(|e| format!("GetSelection: {e}"))?;
+        let selection = unsafe { list.GetSelection() }.map_err(|e| format!("GetSelection: {e}"))?;
         if current != 1 || selection != page_starts[1] {
             return Err(format!(
                 "宿主选中第二页首项后 current={current} selection={selection},应为 1/{}",
                 page_starts[1]
             ));
         }
-        unsafe { behavior.SetSelection(0) }
-            .map_err(|e| format!("SetSelection(复位): {e}"))?;
-        let current = unsafe { list.GetCurrentPage() }
-            .map_err(|e| format!("GetCurrentPage(复位): {e}"))?;
+        unsafe { behavior.SetSelection(0) }.map_err(|e| format!("SetSelection(复位): {e}"))?;
+        let current =
+            unsafe { list.GetCurrentPage() }.map_err(|e| format!("GetCurrentPage(复位): {e}"))?;
         if current != 0 {
             return Err(format!("复位后当前页是 {current},应为 0"));
         }
@@ -100,10 +98,7 @@ pub(super) fn check_touch_layout(thread_mgr: &ITfThreadMgr) -> Result<String, St
     let provider = unsafe { thread_mgr.GetFunctionProvider(&CLSID_IME) }
         .map_err(|e| format!("GetFunctionProvider: {e}"))?;
     let unknown = unsafe {
-        provider.GetFunction(
-            std::ptr::null(),
-            &ITfFnGetPreferredTouchKeyboardLayout::IID,
-        )
+        provider.GetFunction(std::ptr::null(), &ITfFnGetPreferredTouchKeyboardLayout::IID)
     }
     .map_err(|e| format!("GetFunction(触屏布局): {e}"))?;
     let layout: ITfFnGetPreferredTouchKeyboardLayout = unknown
@@ -114,7 +109,9 @@ pub(super) fn check_touch_layout(thread_mgr: &ITfThreadMgr) -> Result<String, St
     unsafe { layout.GetLayout(&mut kind, (&mut id) as *mut u16 as *const u16) }
         .map_err(|e| format!("GetLayout: {e}"))?;
     if kind != TKBLT_OPTIMIZED || id != TKBL_OPT_SIMPLIFIED_CHINESE_PINYIN as u16 {
-        return Err(format!("触屏布局 kind={kind:?} id={id},应为简体拼音优化布局"));
+        return Err(format!(
+            "触屏布局 kind={kind:?} id={id},应为简体拼音优化布局"
+        ));
     }
     Ok(format!("## 触屏键盘\n\nPASS,layout={id}"))
 }
@@ -193,7 +190,9 @@ pub(super) fn check_segment_edit(edit: HWND, thread_mgr: &ITfThreadMgr) -> Resul
     }
     let text = edit_text(edit);
     if !text.ends_with("你好") {
-        return Err(format!("Ctrl+Left 按音节编辑后文本 `{text}` 不以「你好」结尾"));
+        return Err(format!(
+            "Ctrl+Left 按音节编辑后文本 `{text}` 不以「你好」结尾"
+        ));
     }
     Ok(format!("## 组合按音节编辑\n\nPASS,文本 `{text}`"))
 }

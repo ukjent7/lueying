@@ -13,9 +13,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use lueying_dict::Dictionary;
 use lueying_dict::gram::{CONTEXT_CHARS, Gram};
 use lueying_dict::syllables::{self, Fuzzy};
-use lueying_dict::Dictionary;
 
 use crate::segment::{self, Syll};
 use crate::typo;
@@ -449,16 +449,7 @@ pub fn build(
     raw: &str,
 ) -> Built {
     let built = builder::build_exact(
-        dict,
-        user,
-        fuzzy,
-        gram,
-        cache,
-        context,
-        host,
-        previous2,
-        previous,
-        raw,
+        dict, user, fuzzy, gram, cache, context, host, previous2, previous, raw,
     );
     if built.cands.iter().any(|c| c.full)
         || built.safe_extend
