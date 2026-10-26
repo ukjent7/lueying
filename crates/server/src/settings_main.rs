@@ -17,8 +17,8 @@ mod imp {
     use std::path::PathBuf;
 
     use gpui::{
-        App, Bounds, Context, MouseButton, MouseDownEvent, Point, SharedString, TitlebarOptions,
-        Window, WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+        App, Bounds, ClickEvent, Context, Point, SharedString, TitlebarOptions, Window,
+        WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     };
     use gpui_platform::application;
     use lueying_engine::Fuzzy;
@@ -271,7 +271,8 @@ mod imp {
                 border: 0x44444d,
                 text: 0xe8e8ee,
                 muted: 0xa0a0aa,
-                accent: 0x3b78ff,
+                // 深色主题里白字在 0x3b78ff 上只有 3.95:1,压到 0x2f6fed 才到 4.5:1。
+                accent: 0x2f6fed,
                 on_accent: 0xffffff,
                 off_bg: 0x3a3a42,
                 off_text: 0xd0d0d8,
@@ -282,7 +283,8 @@ mod imp {
                 card: 0xffffff,
                 border: 0xd9d9e0,
                 text: 0x20202a,
-                muted: 0x70707a,
+                // 旧值 0x70707a 在浅色底上只有 4.38:1,略低于小字下限。
+                muted: 0x686872,
                 accent: 0x2f6fed,
                 on_accent: 0xffffff,
                 off_bg: 0xe6e6ec,
@@ -326,7 +328,7 @@ mod imp {
         label: impl Into<SharedString>,
         on: bool,
         colors: Palette,
-        on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         div()
             .min_w(px(42.0))
@@ -335,9 +337,13 @@ mod imp {
             .rounded_md()
             .text_size(px(13.0))
             .text_center()
+            .cursor_pointer()
             .bg(rgb(if on { colors.accent } else { colors.off_bg }))
             .text_color(rgb(if on { colors.on_accent } else { colors.off_text }))
-            .on_mouse_down(MouseButton::Left, on_click)
+            .hover(|style| style.opacity(0.9))
+            .active(|style| style.opacity(0.78))
+            // 按钮在鼠标松开时触发,按下后移出可以取消,和系统按钮一致。
+            .on_click(on_click)
             .child(label.into())
     }
 
@@ -551,7 +557,7 @@ mod imp {
                 )
                 .child(
                     div()
-                        .text_size(px(11.0))
+                        .text_size(px(12.0))
                         .text_color(rgb(colors.muted))
                         .child(format!("版本 {}", env!("CARGO_PKG_VERSION"))),
                 )
