@@ -1,27 +1,38 @@
 //! 编辑会话与组句写操作。TSF 不允许直接改文档,必须经 RequestEditSession;
 //! 只用异步会话(不带 TF_ES_SYNC):沉浸式应用的文本存区跨进程,同步会话会崩宿主。
 //! 会话末尾量组句/光标屏幕矩形报给 Server(候选窗定位)。
+//! 只经 IMM32 `CANDIDATEFORM` 报位置的宿主(Java AWT/Swing 一类 CUAS 应用),
+//! 由本模块补发 `IMN_OPENCANDIDATE` 并采信那个落点。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 use lueying_protocol::Request;
-use windows::Win32::Foundation::{E_FAIL, HWND, POINT, RECT};
+use windows::Win32::Foundation::{E_FAIL, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, MONITOR_DEFAULTTONULL, MonitorFromPoint};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::{
-    GetProcessDpiAwareness, LogicalToPhysicalPointForPerMonitorDPI, PROCESS_PER_MONITOR_DPI_AWARE,
+    GetDpiForSystem, GetDpiForWindow, GetProcessDpiAwareness,
+    LogicalToPhysicalPointForPerMonitorDPI, PROCESS_PER_MONITOR_DPI_AWARE,
 };
+use windows::Win32::UI::Input::Ime::{
+    CANDIDATEFORM, CFS_CANDIDATEPOS, CFS_EXCLUDE, CFS_POINT, IMN_CLOSECANDIDATE, IMN_OPENCANDIDATE,
+    ImmGetCandidateWindow, ImmGetContext, ImmReleaseContext,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
     INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink, ITfCompositionSink_Impl,
     ITfContext, ITfContextComposition, ITfContextView, ITfEditSession, ITfEditSession_Impl,
-    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ES_READ, TF_ES_READWRITE,
-    TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
+    ITfInsertAtSelection, ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ANCHOR_START, TF_ES_READ,
+    TF_ES_READWRITE, TF_IAS_QUERYONLY, TF_SELECTION, TF_SELECTIONSTYLE,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo};
-use windows::core::{Error, Interface, Ref, Result, implement};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GA_ROOT, GUITHREADINFO, GetAncestor, GetForegroundWindow, GetGUIThreadInfo, PostMessageW,
+    WM_IME_NOTIFY,
+};
+use windows::core::{BOOL, Error, Interface, Ref, Result, implement};
 
 use crate::attr;
 use crate::client::Client;
@@ -172,6 +183,11 @@ fn commit_text(
             // 不能复用这个已结束的对象。
             clear_composition(shared);
             ended?;
+            // 让宿主按上屏后的光标刷新 CANDIDATEFORM,下一次组合才有新位置。
+            // 失焦落定时焦点可能已在别处,不能再往新窗口补发候选通知。
+            if !stale {
+                post_imm_candidate(true);
+            }
         }
         None => {
             let insert: ITfInsertAtSelection = context.cast()?;
@@ -274,6 +290,8 @@ fn start_composition(
     shared.caret_pending.set(false);
     *shared.composition.borrow_mut() = Some(composition.clone());
     *shared.composition_context.borrow_mut() = Some(context.clone());
+    // 已确认只经 IMM32 报位置的宿主,每次组合开始都要请它刷新候选窗落点。
+    post_imm_candidate(false);
     Ok(composition)
 }
 
@@ -286,7 +304,13 @@ fn end_composition(shared: &Shared, ec: u32) -> Result<()> {
         if let Ok(range) = unsafe { composition.GetRange() } {
             let _ = unsafe { range.SetText(ec, 0, &[]) };
         }
-        let _ = unsafe { composition.EndComposition(ec) };
+        let ended = unsafe { composition.EndComposition(ec) };
+        // 收组句后补发一次 OPEN+CLOSE:Java AWT 收到 OPEN 才按当前光标
+        // 重写 CANDIDATEFORM,CLOSE 让消息流与系统输入法成对。
+        // 组句没真正结束时不通知宿主,免得它顺手关掉别的候选框。
+        if ended.is_ok() {
+            post_imm_candidate(true);
+        }
     }
     clear_composition(shared);
     Ok(())
@@ -365,43 +389,79 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
     let caret = unsafe { range.Clone().ok()? };
     // 量光标所在的串尾,而不是整段组句的左端:长拼音时候选窗要跟着光标走。
     unsafe { caret.Collapse(ec, TF_ANCHOR_END).ok()? };
+    // 组句起点只用于识别「宿主其实没在报位置」的退化指纹,不直接当锚点。
+    let start = unsafe { range.Clone().ok()? };
+    unsafe { start.Collapse(ec, TF_ANCHOR_START).ok()? };
     // 少数宿主不实现 GetActiveView;取不到视图仍可退回原生插入符。
     let view = unsafe { context.GetActiveView().ok() };
+    let mut caret_rect = None;
+    let mut start_rect = None;
+    let mut comp_rect = None;
+    let mut screen_ext = None;
     if let Some(view) = view.as_ref() {
-        let mut rect = RECT::default();
-        let mut clipped = windows::core::BOOL::default();
-        if unsafe { view.GetTextExt(ec, &caret, &mut rect, &mut clipped) }.is_ok()
-            && rect.right > rect.left
-            && rect.bottom > rect.top
+        caret_rect = text_ext(view, ec, &caret);
+        // 正常宿主的光标矩形已经可用,不必每键再量组句起点和整体;
+        // 只有光标退化、落到屏幕外或本线程曾被判为 IMM 宿主时才继续。
+        if !imm_candidate_host()
+            && let Some(rect) = caret_rect.filter(valid_rect)
+            && let Some(rect) = screen_rect(view, rect)
         {
-            to_physical(view, &mut rect);
-            if on_screen(&rect) {
-                return Some((rect.left, rect.top, rect.right, rect.bottom));
-            }
+            return Some(rect);
+        }
+        start_rect = text_ext(view, ec, &start);
+        comp_rect = text_ext(view, ec, &range);
+        screen_ext = unsafe { view.GetScreenExt() }.ok();
+    }
+    // Java AWT/Swing 这类走 CUAS 的宿主,对选区、组句起点、组句整体三次
+    // 查询给出同一个退化角点(通常是工作区右下角)。单次退化可能只是还没
+    // 排完版,三者全同才是「本 context 没有插入点可报」的证据。
+    let host_default = is_host_default_position(caret_rect, start_rect, comp_rect);
+    if host_default {
+        note_host_default_position();
+    } else if shows_laid_out_composition(caret_rect, comp_rect) {
+        // 同一线程上的别的输入框确实在排版时解除判定,例如 Edge 的地址栏
+        // 与网页输入框共用 UI 线程;Java 每帧都命中指纹,下次组合会重新置位。
+        note_laid_out_composition();
+    }
+    if let Some(view) = view.as_ref() {
+        if let Some(rect) = caret_rect.filter(valid_rect)
+            && let Some(rect) = screen_rect(view, rect)
+        {
+            return Some(rect);
         }
         // 有些宿主对折叠到串尾的 range 回退化矩形,但对整个组合串能给出有效行框。
         // 取行框右端作为候选窗锚点,仍贴着光标所在行,比直接退回视图矩形准确。
-        if let Ok(full) = unsafe { composition.GetRange() } {
-            let mut line = RECT::default();
-            if unsafe { view.GetTextExt(ec, &full, &mut line, &mut clipped) }.is_ok()
-                && line.right > line.left
-                && line.bottom > line.top
-            {
-                to_physical(view, &mut line);
-                if on_screen(&line) {
-                    return Some((line.right, line.top, line.right, line.bottom));
-                }
-            }
+        // 宿主明说没有插入点时不采信:那个「行框」只是工作区角点。
+        if !host_default
+            && let Some(line) = comp_rect.filter(valid_rect)
+            && let Some(rect) = screen_rect(view, line)
+        {
+            return Some((rect.2, rect.1, rect.2, rect.3));
         }
     }
+    // 走 IMM32→TSF 兼容层的宿主不实现可用的 GetTextExt,位置只经
+    // `ImmSetCandidateWindow` 写进 CANDIDATEFORM。补发 IMN_OPENCANDIDATE
+    // 后 AWT 才会刷新这个点;只在已证实的宿主上采信,并校验落点仍在
+    // 宿主自己声明的显示区内,挡住上一次组合留下的陈旧坐标。
+    if host_default
+        && let Some(hwnd) = view
+            .as_ref()
+            .and_then(|view| unsafe { view.GetWnd() }.ok())
+        && let Some(rect) = imm_candidate_rect(hwnd, screen_ext)
+    {
+        return Some(rect);
+    }
     // 部分宿主(Java/Swing、自绘编辑器)不实现 GetTextExt。系统仍可能知道
-    // 前台线程的原生插入符位置;它比整个视图矩形更贴近用户正在看的地方。
-    if let Some(rect) = gui_caret() {
+    // 前台线程的原生插入符位置;但命中过默认位置指纹的线程里,Java 的光标
+    // 恒在客户区原点,采信它会把候选窗甩到窗口左上角。
+    if !gui_caret_unreliable()
+        && let Some(rect) = gui_caret()
+    {
         return Some(rect);
     }
     // 最后退回视图矩形,至少让候选窗出现在编辑区底部,而不是完全消失。
     let view = view.as_ref()?;
-    let mut view_rect = unsafe { view.GetScreenExt() }.ok()?;
+    let mut view_rect = screen_ext?;
     if view_rect.right <= view_rect.left || view_rect.bottom <= view_rect.top {
         return None;
     }
@@ -414,6 +474,201 @@ fn caret_rect(shared: &Shared, context: &ITfContext, ec: u32) -> Option<(i32, i3
     ))
 }
 
+thread_local! {
+    /// 本线程已确认是「TSF 三次查询给同一个退化矩形、只经 IMM32 报位置」的宿主。
+    /// 典型是 CUAS 下的 Java AWT/Swing。
+    static IMM_CANDIDATE_HOST: Cell<bool> = const { Cell::new(false) };
+    /// 本线程的原生插入符不可信(Java 恒在客户区原点)。只置不清。
+    static GUI_CARET_UNRELIABLE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn imm_candidate_host() -> bool {
+    IMM_CANDIDATE_HOST.with(Cell::get)
+}
+
+fn gui_caret_unreliable() -> bool {
+    GUI_CARET_UNRELIABLE.with(Cell::get)
+}
+
+/// 量一个 range 的屏幕矩形;宿主不实现 `GetTextExt` 时返回 `None`。
+/// 退化矩形也原样返回,指纹判据需要看它是否三次完全一致。
+fn text_ext(view: &ITfContextView, ec: u32, range: &ITfRange) -> Option<RECT> {
+    let mut rect = RECT::default();
+    let mut clipped = BOOL::default();
+    unsafe { view.GetTextExt(ec, range, &mut rect, &mut clipped) }.ok()?;
+    Some(rect)
+}
+
+/// 把宿主坐标矩形换成物理屏幕坐标;中心不在显示器上时返回 `None`。
+fn screen_rect(view: &ITfContextView, mut rect: RECT) -> Option<(i32, i32, i32, i32)> {
+    to_physical(view, &mut rect);
+    on_screen(&rect).then_some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
+fn valid_rect(rect: &RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
+}
+
+/// 选区、组句起点、组句整体三次查询是否给了同一个高度为零的矩形。
+/// 缺任何一维都无法判断,按「不是」处理。
+fn is_host_default_position(
+    caret: Option<RECT>,
+    start: Option<RECT>,
+    comp: Option<RECT>,
+) -> bool {
+    let (Some(caret), Some(start), Some(comp)) = (caret, start, comp) else {
+        return false;
+    };
+    caret.bottom <= caret.top && caret == start && caret == comp
+}
+
+/// 这一帧是不是宿主「确实在排版」的证据:选区有高度,组合矩形有宽有高,
+/// 两者不同且水平、垂直都相交。用来解除 IMM32 宿主判定。
+fn shows_laid_out_composition(caret: Option<RECT>, comp: Option<RECT>) -> bool {
+    let (Some(caret), Some(comp)) = (caret, comp) else {
+        return false;
+    };
+    caret.bottom > caret.top
+        && comp.right > comp.left
+        && comp.bottom > comp.top
+        && caret != comp
+        && caret.left >= comp.left
+        && caret.left <= comp.right
+        && caret.top < comp.bottom
+        && caret.bottom > comp.top
+}
+
+/// 首次命中宿主默认位置:记住本线程并立即补发一次 OPEN,让当前这次组合
+/// 也能拿到位置。系统光标同样标记为不可信。
+fn note_host_default_position() {
+    GUI_CARET_UNRELIABLE.with(|flag| flag.set(true));
+    if IMM_CANDIDATE_HOST.with(|flag| !flag.replace(true)) {
+        log("宿主未报插入点,补发 IMN_OPENCANDIDATE");
+        post_imm_candidate(false);
+    }
+}
+
+fn note_laid_out_composition() {
+    if IMM_CANDIDATE_HOST.with(|flag| flag.replace(false)) {
+        log("宿主恢复报位置,停止补发 IMN_OPENCANDIDATE");
+        post_imm_close();
+    }
+}
+
+/// 向本线程焦点窗口补发 IMN_OPENCANDIDATE;`then_close` 时紧跟一条关闭通知。
+/// 用 Post 而非 Send:调用点在编辑会话内,同步送进宿主窗口过程有重入风险。
+fn post_imm_candidate(then_close: bool) {
+    if !imm_candidate_host() {
+        return;
+    }
+    let hwnd = unsafe { GetFocus() };
+    if hwnd.is_invalid() {
+        return;
+    }
+    unsafe {
+        let _ = PostMessageW(
+            Some(hwnd),
+            WM_IME_NOTIFY,
+            WPARAM(IMN_OPENCANDIDATE as usize),
+            LPARAM(1),
+        );
+        if then_close {
+            let _ = PostMessageW(
+                Some(hwnd),
+                WM_IME_NOTIFY,
+                WPARAM(IMN_CLOSECANDIDATE as usize),
+                LPARAM(1),
+            );
+        }
+    }
+}
+
+fn post_imm_close() {
+    let hwnd = unsafe { GetFocus() };
+    if hwnd.is_invalid() {
+        return;
+    }
+    unsafe {
+        let _ = PostMessageW(
+            Some(hwnd),
+            WM_IME_NOTIFY,
+            WPARAM(IMN_CLOSECANDIDATE as usize),
+            LPARAM(1),
+        );
+    }
+}
+
+/// 宿主经 `ImmSetCandidateWindow` 声明的候选窗落点。
+///
+/// 只认 CANDIDATEFORM:COMPOSITIONFORM 答的是组合窗位置,不少宿主给的是
+/// 输入框左上角。`ptCurrentPos` 是客户区坐标,`GetWnd` 在 CUAS 下就是 IMC
+/// 所属窗口。落点校验失败就返回 `None`,退回视图矩形,不用陈旧坐标。
+///
+/// 已知缺口:纯 AWT 重量级控件按顶层窗口客户区原点换算,而 IMC 可能属于
+/// 子窗口,结果会整体偏一个子窗口偏移;Swing 的焦点代理窗口在 (0,0),两者等价。
+fn imm_candidate_rect(hwnd: HWND, screen_ext: Option<RECT>) -> Option<(i32, i32, i32, i32)> {
+    if hwnd.is_invalid() {
+        return None;
+    }
+    let himc = unsafe { ImmGetContext(hwnd) };
+    if himc.is_invalid() {
+        return None;
+    }
+    let mut form = CANDIDATEFORM::default();
+    let got = unsafe { ImmGetCandidateWindow(himc, 0, &mut form) }.as_bool();
+    let _ = unsafe { ImmReleaseContext(hwnd, himc) };
+    if !got {
+        return None;
+    }
+    // CFS_DEFAULT 表示宿主没表态,ptCurrentPos 无意义。
+    if form.dwStyle != CFS_POINT
+        && form.dwStyle != CFS_CANDIDATEPOS
+        && form.dwStyle != CFS_EXCLUDE
+    {
+        return None;
+    }
+    let ext = screen_ext?;
+    if ext.right <= ext.left || ext.bottom <= ext.top {
+        return None;
+    }
+    // CANDIDATEFORM 给的是客户区坐标,先换成屏幕坐标再和显示区比较。
+    let mut pt = form.ptCurrentPos;
+    if !unsafe { ClientToScreen(hwnd, &mut pt) }.as_bool() {
+        return None;
+    }
+    if pt.x < ext.left || pt.x > ext.right || pt.y < ext.top || pt.y > ext.bottom {
+        return None;
+    }
+    // 落点是文本行下沿:角点换到物理坐标后,再按宿主 DPI 补一个默认行高。
+    let mut rect = RECT {
+        left: pt.x,
+        top: pt.y,
+        right: pt.x.saturating_add(1),
+        bottom: pt.y,
+    };
+    to_physical_hwnd(hwnd, &mut rect);
+    // 先按落点本身判断是否在显示器上。补行高后矩形中心可能越过屏幕上沿,
+    // 但那是合法的顶部位置,交给 Server 摆到光标下方。
+    if !on_screen(&rect) {
+        return None;
+    }
+    // 宿主的 DPI:Per-Monitor 进程按窗口取,未感知的进程按系统取,
+    // 补出来的行高才能和换算后的物理坐标同一尺度。
+    let dpi = if per_monitor_aware() {
+        unsafe { GetDpiForWindow(hwnd) }
+    } else {
+        unsafe { GetDpiForSystem() }
+    };
+    let dpi = if dpi == 0 { 96 } else { dpi };
+    let height = (20 * dpi as i32 / 96).max(1);
+    rect.top = rect.bottom - height;
+    log(&format!(
+        "采信 IMM32 CANDIDATEFORM ({}, {}),行高 {height}",
+        pt.x, pt.y
+    ));
+    Some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
 /// 宿主进程不是 Per-Monitor DPI 感知时,TSF 返回的是宿主坐标空间的逻辑像素;
 /// 候选窗进程是 Per-Monitor V2,不换算会在高缩放和副屏上偏移。
 /// 换算失败就保留原值,宁可在老宿主上偏一点,也不能丢掉候选窗。
@@ -424,10 +679,13 @@ fn to_physical(view: &ITfContextView, rect: &mut RECT) {
     }
 }
 
+fn per_monitor_aware() -> bool {
+    unsafe { GetProcessDpiAwareness(None) }
+        .is_ok_and(|awareness| awareness == PROCESS_PER_MONITOR_DPI_AWARE)
+}
+
 fn to_physical_hwnd(hwnd: HWND, rect: &mut RECT) {
-    let per_monitor = unsafe { GetProcessDpiAwareness(None) }
-        .is_ok_and(|awareness| awareness == PROCESS_PER_MONITOR_DPI_AWARE);
-    if per_monitor {
+    if per_monitor_aware() {
         return;
     }
     let mut top_left = POINT {
@@ -464,6 +722,9 @@ fn on_screen(rect: &RECT) -> bool {
 /// 当前宿主线程的原生插入符矩形(屏幕坐标)。TSF 的 GetTextExt 在 Java/Swing
 /// 和自绘编辑器里常失败,但同一线程的 Win32 插入符仍可能有效。
 /// 取当前线程而非前台线程:焦点切换后前台线程可能已是别的应用。
+///
+/// 同一线程上也可能有别的窗口(工具栏、任务栏残留)持有光标;顶层的根窗口
+/// 和焦点窗口不一致时不能采信,否则候选窗会跑到另一个窗口上。
 fn gui_caret() -> Option<(i32, i32, i32, i32)> {
     let mut info = GUITHREADINFO {
         cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
@@ -473,6 +734,14 @@ fn gui_caret() -> Option<(i32, i32, i32, i32)> {
     unsafe { GetGUIThreadInfo(tid, &mut info) }.ok()?;
     if info.hwndCaret.is_invalid() {
         return None;
+    }
+    let focus = unsafe { GetFocus() };
+    if !focus.is_invalid() {
+        let caret_root = unsafe { GetAncestor(info.hwndCaret, GA_ROOT) };
+        let focus_root = unsafe { GetAncestor(focus, GA_ROOT) };
+        if !caret_root.is_invalid() && !focus_root.is_invalid() && caret_root != focus_root {
+            return None;
+        }
     }
     let rect = info.rcCaret;
     if rect.right <= rect.left || rect.bottom <= rect.top {
