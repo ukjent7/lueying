@@ -635,6 +635,16 @@ pub fn run(
         + (frost_default.top1_rate() - frost_fuzzy.top1_rate())
         + (neutral_default.top1_rate() - neutral_fuzzy.top1_rate());
     let gram_gain_ok = gram.is_none() || !matches!(mode, Mode::Full) || gram_gain >= 1.0;
+    // 外部门限只防“整条链路一起退步”:项目内 80 句过了,外部也可能整体掉下去。
+    // 数值按当前实测留出余量,低于它说明词典/解码/模型至少有一环出了系统性问题。
+    let external_floor_ok = gram.is_none()
+        || !matches!(mode, Mode::Full)
+        || (extra_default.top1_rate() >= 85.0
+            && extra_default.top5_rate() >= 90.0
+            && frost_default.top1_rate() >= 65.0
+            && frost_default.top5_rate() >= 80.0
+            && neutral_default.top1_rate() >= 50.0
+            && neutral_default.top5_rate() >= 75.0);
     let first = rounds.first().copied().unwrap_or_default();
     let last = rounds.last().copied().unwrap_or_default();
     let learning_ok = long_corpus.len() >= 10 && last.top1_rate() >= first.top1_rate() + 5.0;
@@ -645,6 +655,7 @@ pub fn run(
     let checks = [
         ("项目内句级绝对准确率达标", quality_ok),
         ("语法模型在全量外部语料上有增益", gram_gain_ok),
+        ("全量外部语料绝对下限", external_floor_ok),
         ("长期学习有提升", learning_ok),
         ("重启后学习保留", restart_ok),
     ];
