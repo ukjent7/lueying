@@ -400,7 +400,10 @@ mod imp {
         colors: Palette,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
+        let label: SharedString = label.into();
         div()
+            // `active` 只挂在有状态元素上;标签在同类按钮里唯一。
+            .id(label.clone())
             .min_w(px(42.0))
             .px_2()
             .py_1()
@@ -418,7 +421,7 @@ mod imp {
             .active(|style| style.opacity(0.78))
             // 按钮在鼠标松开时触发,按下后移出可以取消,和系统按钮一致。
             .on_click(on_click)
-            .child(label.into())
+            .child(label)
     }
 
     impl Render for SettingsPanel {

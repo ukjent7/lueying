@@ -415,6 +415,8 @@ fn page_arrow(
     colors: Palette,
 ) -> impl IntoElement {
     div()
+        // `active` 只挂在有状态元素上;两个翻页键用不同 id。
+        .id(if delta < 0 { "page-prev" } else { "page-next" })
         .flex()
         .items_center()
         .justify_center()
@@ -718,6 +720,8 @@ impl Render for CandidatePanel {
                     .children(items.into_iter().map(|(slot, text, hint, hl)| {
                         let state = Arc::clone(&state);
                         div()
+                            // `active` 只挂在有状态元素上;槽位在页内唯一。
+                            .id(("cand", slot))
                             .flex()
                             .items_baseline()
                             .gap_1()
