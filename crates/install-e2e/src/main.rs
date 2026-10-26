@@ -13,12 +13,14 @@ fn main() {
 
 #[cfg(windows)]
 mod imp {
+    use std::io::Write;
     use std::path::Path;
-    use std::process::Command;
+    use std::process::{Command, Output, Stdio};
     use std::time::{Duration, Instant};
 
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
     };
     use windows::Win32::UI::Shell::IsUserAnAdmin;
     use windows::Win32::UI::TextServices::{
@@ -34,22 +36,90 @@ mod imp {
     const UNINSTALL_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
 
     pub(super) fn run() {
+        let _ = std::fs::create_dir_all("target");
         let report = real_run().map_or_else(
             |e| format!("# 安装/卸载 E2E\n\nFAIL\n\n{e}\n"),
             |body| format!("# 安装/卸载 E2E\n\nPASS\n\n{body}\n"),
         );
         println!("{report}");
-        let _ = std::fs::create_dir_all("target");
         let _ = std::fs::write("target/install-e2e-report.md", &report);
         if !report.contains("PASS") {
             std::process::exit(1);
         }
     }
 
+    /// 阶段标记:CI 卡住时日志里最后一行就是卡住的位置。
+    fn phase(text: &str) {
+        println!("[install-e2e] {text}");
+        let _ = std::io::stdout().flush();
+    }
+
+    /// 安装器与更新器共用的阶段跟踪文件;随 artifact 上传,卡死时也能看到。
+    fn trace_path() -> std::path::PathBuf {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("target/install-e2e-trace.log")
+    }
+
+    /// 跑子进程并限时。超时就杀掉并返回错误,避免整步被 CI 的超时静默终结。
+    fn run_command(name: &str, command: &mut Command, limit: Duration) -> Result<Output, String> {
+        phase(&format!("{name}: 启动"));
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|e| format!("启动{name}: {e}"))?;
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() < limit => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("{name} 超过 {} 秒未退出", limit.as_secs()));
+                }
+                Err(error) => return Err(format!("等待{name}: {error}")),
+            }
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("读取{name}输出: {e}"))?;
+        phase(&format!("{name}: 退出 {:?}", output.status.code()));
+        Ok(output)
+    }
+
+    /// 安装器、更新器与卸载器共用的隔离环境。
+    fn apply_env(
+        command: &mut Command,
+        local: &Path,
+        appdata: &Path,
+        target: &Path,
+        trace: &Path,
+    ) {
+        command
+            .env("LOCALAPPDATA", local)
+            .env("APPDATA", appdata)
+            .env("LUEYING_INSTALL_DIR", target)
+            // 与真实安装/其他 E2E 的常驻服务隔离。
+            .env(
+                "LUEYING_PIPE_SUFFIX",
+                format!("install{}", std::process::id()),
+            )
+            // 测试只验证安装/注册/卸载;候选窗在无桌面 CI 上不启动。
+            .env("LUEYING_SERVER_NO_UI", "1")
+            .env("LUEYING_INSTALL_TRACE", trace);
+    }
+
     fn real_run() -> Result<String, String> {
         if !unsafe { IsUserAnAdmin() }.as_bool() {
             return Ok("SKIP: 当前进程不是管理员,无法注册 TSF;CI 应使用管理员 runner。".into());
         }
+        let trace = trace_path();
+        let _ = std::fs::remove_file(&trace);
+        phase(&format!("trace={}", trace.display()));
         // 输入法列表查询走 TSF profile 管理器;已是别的套间模式时也能继续查。
         let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
         let bin = std::env::current_exe()
@@ -87,23 +157,20 @@ mod imp {
 
         let target = program.join("lueying");
         let result = (|| -> Result<String, String> {
-            let status = Command::new(payload.join("lueying-install.exe"))
-                .arg("--quiet")
-                .env("LOCALAPPDATA", &local)
-                .env("APPDATA", &appdata)
-                .env("LUEYING_INSTALL_DIR", &target)
-                // 与真实安装/其他 E2E 的常驻服务隔离。
-                .env(
-                    "LUEYING_PIPE_SUFFIX",
-                    format!("install{}", std::process::id()),
-                )
-                // 测试只验证安装/注册/卸载;候选窗在无桌面 CI 上不启动。
-                .env("LUEYING_SERVER_NO_UI", "1")
-                .status()
-                .map_err(|e| format!("启动安装器: {e}"))?;
-            if !status.success() {
-                return Err(format!("安装器退出码 {:?}", status.code()));
+            phase("首次安装");
+            let mut command = Command::new(payload.join("lueying-install.exe"));
+            command.arg("--quiet");
+            apply_env(&mut command, &local, &appdata, &target, &trace);
+            let output = run_command("首次安装", &mut command, Duration::from_secs(90))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "安装器退出码 {:?}: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
             }
+            phase("首次安装: 完成");
+            phase("检查安装结果");
 
             let mut checks = Vec::new();
             for name in [
@@ -175,24 +242,24 @@ mod imp {
             }
             checks.push("已加入当前用户输入法列表".into());
 
-            update_installed(&payload, &target, &root, &local, &appdata)?;
+            phase("更新器升级");
+            update_installed(&payload, &target, &root, &local, &appdata, &trace)?;
             checks.push("更新器升级到 9.9.9".into());
 
+            phase("卸载");
             let installed = target.join("lueying-install.exe");
-            let status = Command::new(&installed)
-                .args(["--uninstall", "--quiet"])
-                .env("LOCALAPPDATA", &local)
-                .env("APPDATA", &appdata)
-                .env("LUEYING_INSTALL_DIR", &target)
-                .env(
-                    "LUEYING_PIPE_SUFFIX",
-                    format!("install{}", std::process::id()),
-                )
-                .status()
-                .map_err(|e| format!("启动卸载器: {e}"))?;
-            if !status.success() {
-                return Err(format!("卸载器退出码 {:?}", status.code()));
+            let mut command = Command::new(&installed);
+            command.args(["--uninstall", "--quiet"]);
+            apply_env(&mut command, &local, &appdata, &target, &trace);
+            let output = run_command("卸载器", &mut command, Duration::from_secs(90))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "卸载器退出码 {:?}: {}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
             }
+            phase("等待卸载清理");
             // 安装器自身占着目录时会把删除交给后台 cmd;等它收尾。
             let deadline = Instant::now() + Duration::from_secs(20);
             while target.exists() && Instant::now() < deadline {
@@ -227,16 +294,11 @@ mod imp {
             } else {
                 payload.join("lueying-install.exe")
             };
-            let _ = Command::new(installer)
-                .args(["--uninstall", "--quiet"])
-                .env("LOCALAPPDATA", &local)
-                .env("APPDATA", &appdata)
-                .env("LUEYING_INSTALL_DIR", &target)
-                .env(
-                    "LUEYING_PIPE_SUFFIX",
-                    format!("install{}", std::process::id()),
-                )
-                .status();
+            phase("清理: 尝试卸载");
+            let mut command = Command::new(installer);
+            command.args(["--uninstall", "--quiet"]);
+            apply_env(&mut command, &local, &appdata, &target, &trace);
+            let _ = run_command("清理卸载", &mut command, Duration::from_secs(60));
         }
         let _ = std::fs::remove_dir_all(&root);
         result.map(|checks| format!("- {checks}\n"))
@@ -249,6 +311,7 @@ mod imp {
         root: &Path,
         local: &Path,
         appdata: &Path,
+        trace: &Path,
     ) -> Result<(), String> {
         let package = root.join("update-package");
         std::fs::create_dir_all(&package).map_err(|e| format!("创建更新包: {e}"))?;
@@ -280,16 +343,19 @@ mod imp {
         .map_err(|e| format!("写更新包 manifest: {e}"))?;
 
         let zip = root.join("lueying-9.9.9.zip");
-        let status = Command::new(system32("tar.exe"))
-            .args(["-a", "-cf"])
+        let mut tar = Command::new(system32("tar.exe"));
+        tar.args(["-a", "-cf"])
             .arg(&zip)
             .arg("-C")
             .arg(&package)
-            .arg(".")
-            .status()
-            .map_err(|e| format!("创建更新 zip: {e}"))?;
-        if !status.success() {
-            return Err(format!("tar 打包更新 zip 退出码 {:?}", status.code()));
+            .arg(".");
+        let output = run_command("tar 打包更新包", &mut tar, Duration::from_secs(30))?;
+        if !output.status.success() {
+            return Err(format!(
+                "tar 打包更新 zip 退出码 {:?}: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
         }
         let sha = sha256_file(&zip)?;
 
@@ -301,20 +367,13 @@ mod imp {
         std::fs::copy(target.join("lueying-update.exe"), &updater)
             .map_err(|e| format!("复制更新器: {e}"))?;
 
-        let output = Command::new(&updater)
+        let mut command = Command::new(&updater);
+        command
             .arg("--zip")
             .arg(&zip)
-            .args(["--sha256", sha.as_str(), "--version", "9.9.9", "--quiet"])
-            .env("LOCALAPPDATA", local)
-            .env("APPDATA", appdata)
-            .env("LUEYING_INSTALL_DIR", target)
-            .env(
-                "LUEYING_PIPE_SUFFIX",
-                format!("install{}", std::process::id()),
-            )
-            .env("LUEYING_SERVER_NO_UI", "1")
-            .output()
-            .map_err(|e| format!("启动更新器: {e}"))?;
+            .args(["--sha256", sha.as_str(), "--version", "9.9.9", "--quiet"]);
+        apply_env(&mut command, local, appdata, target, trace);
+        let output = run_command("更新器", &mut command, Duration::from_secs(120))?;
         if !output.status.success() {
             return Err(format!(
                 "更新器退出码 {:?}: {}",
@@ -337,12 +396,9 @@ mod imp {
 
     /// 与更新器相同的 certutil 路径,验证 SHA-256 校验分支。
     fn sha256_file(path: &Path) -> Result<String, String> {
-        let output = Command::new(system32("certutil.exe"))
-            .arg("-hashfile")
-            .arg(path)
-            .arg("SHA256")
-            .output()
-            .map_err(|e| format!("运行 certutil: {e}"))?;
+        let mut command = Command::new(system32("certutil.exe"));
+        command.arg("-hashfile").arg(path).arg("SHA256");
+        let output = run_command("certutil", &mut command, Duration::from_secs(30))?;
         if !output.status.success() {
             return Err(format!("certutil 退出码 {:?}", output.status.code()));
         }
@@ -366,16 +422,34 @@ mod imp {
             .join(name)
     }
 
-    /// TSF profile 是否在当前用户的输入法列表里。
+    /// TSF profile 是否在当前用户的输入法列表里。profile 管理器在 CI 会话里
+    /// 可能一直不返回,限时查询,别把 E2E 拖住。
     fn profile_enabled() -> Result<bool, String> {
-        let profiles: ITfInputProcessorProfiles = unsafe {
-            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(profile_enabled_blocking());
+        });
+        rx.recv_timeout(Duration::from_secs(3))
+            .map_err(|_| "查询输入法列表超过 3 秒".to_string())?
+    }
+
+    fn profile_enabled_blocking() -> Result<bool, String> {
+        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let result = (|| -> Result<bool, String> {
+            let profiles: ITfInputProcessorProfiles = unsafe {
+                CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
+            }
+            .map_err(|e| format!("打开 TSF profile 管理器: {e}"))?;
+            let enabled = unsafe {
+                profiles.IsEnabledLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
+            }
+            .map_err(|e| format!("查询当前用户输入法列表: {e}"))?;
+            Ok(enabled.as_bool())
+        })();
+        if initialized {
+            unsafe { CoUninitialize() };
         }
-        .map_err(|e| format!("打开 TSF profile 管理器: {e}"))?;
-        let enabled =
-            unsafe { profiles.IsEnabledLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE) }
-                .map_err(|e| format!("查询当前用户输入法列表: {e}"))?;
-        Ok(enabled.as_bool())
+        result
     }
 
     /// `reg query` 是否成功;空值名用 `/ve` 查默认值。
@@ -395,7 +469,8 @@ mod imp {
             }
             None => {}
         }
-        let output = command.output().ok()?;
+        let output =
+            run_command("reg query", &mut command, Duration::from_secs(15)).ok()?;
         output
             .status
             .success()

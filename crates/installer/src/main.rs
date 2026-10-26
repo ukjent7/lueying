@@ -25,7 +25,7 @@ mod imp {
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoTaskMemFree, CoUninitialize, IPersistFile,
     };
-    use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+    use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
@@ -61,10 +61,56 @@ mod imp {
     /// 60 秒容易在慢机器上误报失败。
     const ELEVATED_TIMEOUT_MS: u32 = 180_000;
 
+    /// CI 与更新器都用管道跑安装器,卡住时看不到任何输出;设置
+    /// `LUEYING_INSTALL_TRACE` 后把阶段追加到该文件,便于定位。
+    fn trace(text: &str) {
+        use std::io::Write;
+        let Some(path) = std::env::var_os("LUEYING_INSTALL_TRACE") else {
+            return;
+        };
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "{text}");
+        }
+    }
+
+    /// 跑子进程并限时。regsvr32 在异常注册表状态下可能卡住,超时就杀掉,
+    /// 让安装器带着错误退出而不是一直挂着。
+    fn run_status(
+        mut command: Command,
+        name: &str,
+        seconds: u64,
+    ) -> Result<std::process::ExitStatus, String> {
+        trace(&format!("{name}: start"));
+        let mut child = command.spawn().map_err(|e| format!("启动{name}: {e}"))?;
+        let started = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    trace(&format!("{name}: exit {:?}", status.code()));
+                    return Ok(status);
+                }
+                Ok(None) if started.elapsed() < std::time::Duration::from_secs(seconds) => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("{name} 超过 {seconds} 秒未退出"));
+                }
+                Err(error) => return Err(format!("等待{name}: {error}")),
+            }
+        }
+    }
+
     pub(super) fn run() {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let quiet = args.iter().any(|a| a == "--quiet");
         let admin = unsafe { IsUserAnAdmin() }.as_bool();
+        trace(&format!("run args={args:?} admin={admin} quiet={quiet}"));
 
         // 提权子进程只做文件与注册表动作,不碰 HKCU。
         if let Some(at) = args.iter().position(|a| a == "--install-files") {
@@ -91,9 +137,11 @@ mod imp {
 
         let target = install_dir();
         if args.iter().any(|a| a == "--uninstall") {
+            trace("uninstall: user_state");
             if let Err(error) = uninstall_user_state() {
                 fail(quiet, &error);
             }
+            trace("uninstall: files");
             let ok = if admin {
                 unregister(&target);
                 cleanup_files(&target);
@@ -118,6 +166,7 @@ mod imp {
             Err(error) => fail(quiet, &error),
         };
         if admin {
+            trace("install: files");
             if let Err(error) = install_files(&source, &target) {
                 fail(quiet, &error);
             }
@@ -131,6 +180,7 @@ mod imp {
         ) {
             fail(quiet, "安装文件失败,请重试或查看是否拒绝了管理员提示");
         }
+        trace("install: user_state");
         let listed = match install_user_state(&target) {
             Ok(listed) => listed,
             Err(error) => fail(quiet, &error),
@@ -138,12 +188,14 @@ mod imp {
         // 立即拉起常驻服务;单实例互斥保证不会重复。
         // 服务不能继承安装器的 stdout/stderr:更新器用管道读取安装器输出,
         // 常驻服务会把管道一直占住,更新器就永远等不到 EOF。
+        trace("install: spawn server");
         let _ = std::process::Command::new(target.join("lueying-server.exe"))
             .current_dir(&target)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
+        trace("install: done");
         if !quiet {
             let hint = if listed {
                 "按 Win+空格 切换到「掠影」。"
@@ -175,13 +227,17 @@ mod imp {
 
     /// 提权部分:停服务、复制文件、注册 x64/x86 TSF。
     fn install_files(source: &Path, target: &Path) -> Result<(), String> {
+        trace("install_files: stop_server");
         stop_server();
+        trace("install_files: copy_payload");
         let version = version(source);
         copy_payload(source, target)?;
+        trace("install_files: copy_dll");
         copy_dll(source, target, false, &dll_name(&version))?;
         // 32 位 DLL 是可选文件:旧发布目录没有时仍能安装 x64。
         copy_dll(source, target, true, &dll_name32(&version))?;
         prune_old_dlls(target, &dll_name(&version), &dll_name32(&version));
+        trace("install_files: register");
         register(target)
     }
 
@@ -192,9 +248,13 @@ mod imp {
         // 覆盖旧版注册或用户曾关闭后升级的状态,装完 Win+空格 就能看到「掠影」。
         // 必须在当前用户进程里调用,不能放进提权子进程。加入失败(例如系统
         // 还没装中文语言)不中止安装,由调用方提示下一步。
+        trace("user_state: profile");
         let listed = set_profile_enabled(true).is_ok();
+        trace("user_state: run_key");
         set_run_key(&target.join("lueying-server.exe"))?;
+        trace("user_state: uninstall_key");
         register_uninstall(target)?;
+        trace("user_state: shortcuts");
         let settings = target.join("lueying-settings.exe");
         let _ = shortcut(
             &start_menu().join("掠影设置.lnk"),
@@ -212,23 +272,41 @@ mod imp {
         for name in ["拼音输入法设置.lnk", "卸载拼音输入法.lnk"] {
             let _ = std::fs::remove_file(start_menu().join(name));
         }
+        trace("user_state: legacy_registry");
         remove_legacy_registry();
+        trace("user_state: done");
         Ok(listed)
     }
 
     fn uninstall_user_state() -> Result<(), String> {
+        trace("uninstall_user_state: stop_server");
         stop_server();
         // 先把 profile 从当前用户的输入法列表移除,再提权删除文件;否则列表里
         // 会留下一个指向已删 DLL 的「掠影」。
+        trace("uninstall_user_state: profile");
         let _ = set_profile_enabled(false);
+        trace("uninstall_user_state: registry");
         remove_registry();
+        trace("uninstall_user_state: shortcuts");
         remove_shortcuts();
         // 文件可能已被用户手工删除;注册项仍要清干净,不能因此中止卸载。
         Ok(())
     }
 
     /// 把已注册的 TSF profile 加进/移出当前用户的输入法列表。
+    ///
+    /// TSF profile 管理器在无桌面/CI 会话里可能一直不返回;这不是安装的硬前提,
+    /// 放到独立线程里限时等待,超时就当失败继续,别把整个安装器拖住。
     fn set_profile_enabled(enabled: bool) -> Result<(), String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(set_profile_enabled_blocking(enabled));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|_| "输入法列表操作超过 3 秒".to_string())?
+    }
+
+    fn set_profile_enabled_blocking(enabled: bool) -> Result<(), String> {
         let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
         let result = (|| -> windows::core::Result<()> {
             let profiles: ITfInputProcessorProfiles = unsafe {
@@ -402,9 +480,11 @@ mod imp {
             command.arg("/u");
         }
         command.arg(dll);
-        let status = command
-            .status()
-            .map_err(|e| format!("启动 regsvr32: {e}"))?;
+        let status = run_status(
+            command,
+            &format!("regsvr32 {}", dll.display()),
+            30,
+        )?;
         if status.success() {
             Ok(())
         } else {
@@ -418,6 +498,7 @@ mod imp {
 
     /// 用 runas 拉起本程序并等待退出;返回子进程是否成功。
     fn elevate(args: &[String], quiet: bool) -> bool {
+        trace("elevate: start");
         let Ok(exe) = std::env::current_exe() else {
             return false;
         };
@@ -440,14 +521,20 @@ mod imp {
             ..Default::default()
         };
         if unsafe { ShellExecuteExW(&mut info) }.is_err() || info.hProcess.is_invalid() {
+            trace("elevate: ShellExecuteEx failed");
             return false;
         }
+        trace("elevate: wait");
         let waited = unsafe { WaitForSingleObject(info.hProcess, ELEVATED_TIMEOUT_MS) };
         let mut code = 1u32;
         let _ = unsafe { GetExitCodeProcess(info.hProcess, &mut code) };
         unsafe {
             let _ = CloseHandle(info.hProcess);
         }
+        trace(&format!(
+            "elevate: done={} code={code}",
+            waited == WAIT_OBJECT_0
+        ));
         waited == WAIT_OBJECT_0 && code == 0
     }
 
@@ -542,12 +629,21 @@ mod imp {
     }
 
     fn stop_server() {
+        // 服务卡死时 CreateFile 会在没有可用实例上一直等;先短等实例,
+        // 拿不到就当作没有服务,别让卸载/升级跟着挂住。
+        trace("stop_server: wait pipe");
+        let name = HSTRING::from(pipe_name());
+        if !unsafe { WaitNamedPipeW(&name, 200) }.as_bool() {
+            trace("stop_server: no server");
+            return;
+        }
         let mut pid = 0u32;
         let Ok(file) = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(pipe_name())
         else {
+            trace("stop_server: open failed");
             return;
         };
         unsafe {
@@ -560,6 +656,7 @@ mod imp {
             let _ = writer.write_all(line.as_bytes());
             let _ = writer.flush();
         }
+        trace("stop_server: terminate");
         std::thread::sleep(std::time::Duration::from_millis(800));
         if pid != 0 {
             unsafe {
@@ -661,17 +758,22 @@ mod imp {
     }
 
     fn cleanup_files(target: &Path) {
+        trace("cleanup_files: start");
         if !target.exists() {
+            trace("cleanup_files: missing");
             return;
         }
         let self_inside = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .is_some_and(|dir| dir == target);
+        trace("cleanup_files: remove_dir_all");
         if !self_inside && std::fs::remove_dir_all(target).is_ok() {
+            trace("cleanup_files: removed");
             return;
         }
         // 安装器自己或已加载的 DLL 占用文件;退出后由 cmd 再删。
+        trace("cleanup_files: deferred cmd");
         let _ = std::process::Command::new("cmd")
             .args([
                 "/C",
