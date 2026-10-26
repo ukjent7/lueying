@@ -664,7 +664,7 @@ impl Engine {
                 // v 表达式里 x 是乘号;组合已满时退回普通字母,先落定再起新组合。
                 if c == 'x'
                     && self.expression_body().is_some()
-                    && self.append_expression_char('x')
+                    && self.compose_char('x')
                 {
                     return Vec::new();
                 }
@@ -765,7 +765,7 @@ impl Engine {
             }
             // v 表达式里的运算符属于输入;组合已满时落定后再上屏。
             Key::Punct(p) if self.expression_body().is_some() && quick::is_operator(p) => {
-                if self.append_expression_char(p) {
+                if self.compose_char(p) {
                     Vec::new()
                 } else {
                     let mut events = self.commit_all();
@@ -774,9 +774,20 @@ impl Engine {
                     events
                 }
             }
+            // u 问字:第一个 + 表示显式码点;之后的 + 恢复普通标点。
+            Key::Punct('+') if self.unicode_body().is_some_and(|body| body.is_empty()) => {
+                if self.compose_char('+') {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit("+".to_string()));
+                    events
+                }
+            }
             // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
             Key::Punct('.') if self.expression_dot_mode() => {
-                if self.append_expression_char('.') {
+                if self.compose_char('.') {
                     Vec::new()
                 } else {
                     let mut events = self.commit_all();
@@ -794,8 +805,9 @@ impl Engine {
                 self.page_by(1);
                 Vec::new()
             }
-            // v 模式里数字是数字的一部分,不再当候选序号;上屏仍用空格/回车。
-            Key::Digit(d) if self.expression_body().is_some() => self.expression_digit(d),
+            // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号。
+            Key::Digit(d) if self.expression_body().is_some() => self.compose_digit(d),
+            Key::Digit(d) if self.unicode_body().is_some() => self.compose_digit(d),
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
                 // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
@@ -888,6 +900,12 @@ impl Engine {
             .then_some(body)
     }
 
+    /// 组合是否处于 u 问字模式:字母 u 后是至多六位十六进制,可带前导 `+`。
+    fn unicode_body(&self) -> Option<&str> {
+        let raw = self.comp.as_ref()?.raw.as_str();
+        quick::unicode_body(raw)
+    }
+
     /// 当前小数点属于表达式里的数字段;这段还没有小数点。
     ///
     /// 点分隔的日期例外:`2006.12` 后的点要能补成 `2006.12.25`。普通小数
@@ -917,23 +935,23 @@ impl Engine {
             && month.parse::<u32>().is_ok_and(|month| (1..=12).contains(&month))
     }
 
-    /// v 模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
-    fn expression_digit(&mut self, d: u8) -> Vec<Event> {
+    /// 快捷模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
+    fn compose_digit(&mut self, d: u8) -> Vec<Event> {
         if self.comp.as_ref().is_some_and(|comp| comp.raw.len() >= MAX_RAW) {
             return self.select_digit(d);
         }
         let Some(c) = char::from_digit(u32::from(d), 10) else {
             return self.select_digit(d);
         };
-        if self.append_expression_char(c) {
+        if self.compose_char(c) {
             Vec::new()
         } else {
             self.select_digit(d)
         }
     }
 
-    /// 把表达式字符写进组合;组合已满时返回 `false`,由调用方落定。
-    fn append_expression_char(&mut self, c: char) -> bool {
+    /// 把快捷/表达式字符写进组合;组合已满时返回 `false`,由调用方落定。
+    fn compose_char(&mut self, c: char) -> bool {
         let inserted = {
             let Some(comp) = self.comp.as_mut() else {
                 return false;

@@ -1,4 +1,4 @@
-//! 快捷输入 E2E:日期、时间、星期与 v 模式数字/金额/日期/算式。
+//! 快捷输入 E2E:日期、时间、星期、v 模式数字/金额/日期/算式与 u 问字。
 //!
 //! 先列失败方式:
 //! 1. 宿主没注入本地时间 → 日期/时间用 UTC,跨时区或午夜会错一天。
@@ -19,6 +19,8 @@
 //! 16. v 表达式把运算符当翻页/标点 → 打不出 `v1+2`。
 //! 17. 算式不校验语法、除零与溢出 → 上屏 Infinity、空串或半个式子。
 //! 18. 四位年份日期不校验月日/闰年 → 把非法日期当日期,或漏掉点分隔写法。
+//! 19. u 问字把数字当候选序号,或纯字母被误判成码点 → 打不出 `u4e00` 或抢掉拼音。
+//! 20. 码点不校验代理区、控制字符与上限 → 上屏乱码或控制字符。
 
 use std::sync::{Arc, RwLock};
 
@@ -100,6 +102,26 @@ fn cands(body: &str) -> Vec<String> {
 fn expr_cands(body: &str) -> Vec<String> {
     let mut e = engine();
     expression(&mut e, body);
+    e.candidates()
+}
+
+/// 先按 u,再按可选的 `+` 与十六进制码点。
+fn unicode(e: &mut Engine, body: &str) {
+    e.process(Key::Letter('u'));
+    for c in body.chars() {
+        if let Some(d) = c.to_digit(10) {
+            e.process(Key::Digit(d as u8));
+        } else if c == '+' {
+            e.process(Key::Punct('+'));
+        } else {
+            e.process(Key::Letter(c));
+        }
+    }
+}
+
+fn unicode_cands(body: &str) -> Vec<String> {
+    let mut e = engine();
+    unicode(&mut e, body);
     e.candidates()
 }
 
@@ -483,6 +505,60 @@ pub fn run(report: &mut String) -> usize {
     expr_top(&mut checks, "非法日期回落算式", "1998-2-30", "1966");
     expr_top(&mut checks, "非四位年份当算式", "98-3-8", "87");
     expr_top(&mut checks, "日期段数不对当算式", "1998-3-8-1", "1986");
+
+    // u 问字:十六进制码点直接出字符,数字不能当候选序号。
+    let mut uni = engine();
+    unicode(&mut uni, "4e00");
+    push(
+        &mut checks,
+        "u 问字入组合",
+        uni.composition().map(|comp| comp.raw.as_str()) == Some("u4e00")
+            && uni.candidates().first().map(String::as_str) == Some("一"),
+        format!("{:?}", uni.candidates()),
+    );
+    let events = uni.process(Key::Space);
+    let exported = uni.export_user();
+    push(
+        &mut checks,
+        "u 问字上屏不学习",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "一"))
+            && exported.is_empty(),
+        exported.lines().next().unwrap_or_default().to_string(),
+    );
+    push(
+        &mut checks,
+        "u 问字加号显式",
+        unicode_cands("+1f600").first().map(String::as_str) == Some("😀"),
+        format!("{:?}", unicode_cands("+1f600")),
+    );
+    push(
+        &mut checks,
+        "u 问字基本平面",
+        unicode_cands("41").first().map(String::as_str) == Some("A"),
+        format!("{:?}", unicode_cands("41")),
+    );
+    push(
+        &mut checks,
+        "u 问字纯字母不加号",
+        !unicode_cands("fade")
+            .iter()
+            .any(|text| text == "\u{fade}"),
+        format!("{:?}", unicode_cands("fade")),
+    );
+    push(
+        &mut checks,
+        "u 问字拒绝控制符",
+        unicode_cands("07").is_empty() && unicode_cands("d800").is_empty(),
+        format!("{:?}", unicode_cands("07")),
+    );
+    push(
+        &mut checks,
+        "u 问字拒绝超范围",
+        unicode_cands("110000").is_empty(),
+        format!("{:?}", unicode_cands("110000")),
+    );
 
     // 日期上屏同样不写个人搭配:整串都是汉字,漏标 quick 会立刻学出字对。
     let mut date_flow = engine();
