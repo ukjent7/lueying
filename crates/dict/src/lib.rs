@@ -186,13 +186,14 @@ impl Dictionary {
         let mut magic = [0u8; MAGIC.len()];
         let mut probe = &file;
         let count = probe.read(&mut magic)?;
-        if count == MAGIC.len() && magic == *MAGIC {
-            if let Ok(mapped) = unsafe { Mmap::map(&file) } {
-                return Self::from_bytes(Backing::Mapped(mapped))
-                    .map(|d| (d, 0))
-                    .ok_or_else(|| std::io::Error::other("二进制词典损坏"));
-            }
-            // 映射失败(空文件、权限等)再退回读入内存。
+        // 映射失败(空文件、权限等)时走下面的整份读入。
+        if count == MAGIC.len()
+            && magic == *MAGIC
+            && let Ok(mapped) = unsafe { Mmap::map(&file) }
+        {
+            return Self::from_bytes(Backing::Mapped(mapped))
+                .map(|d| (d, 0))
+                .ok_or_else(|| std::io::Error::other("二进制词典损坏"));
         }
         let bytes = std::fs::read(path)?;
         if bytes.len() >= MAGIC.len() && &bytes[..MAGIC.len()] == MAGIC {

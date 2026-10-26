@@ -378,12 +378,11 @@ impl Engine {
 
     /// 标点:开中文标点则上屏全角,否则全角模式下上屏全角 ASCII,再否则直通。
     pub(crate) fn punct_events(&mut self, p: char) -> Vec<Event> {
-        if self.cfg.chinese_punct {
-            if let Some(s) =
+        if self.cfg.chinese_punct
+            && let Some(s) =
                 punct::map(p, &mut self.dq_open, &mut self.sq_open, &mut self.after_digit)
-            {
-                return vec![Event::Commit(s.to_string())];
-            }
+        {
+            return vec![Event::Commit(s.to_string())];
         }
         if self.fullwidth
             && let Some(c) = punct::fullwidth(p)
