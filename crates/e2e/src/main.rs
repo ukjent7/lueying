@@ -235,6 +235,27 @@ fn main() {
                 ));
             }
         }
+        // 手误纠正探针:同一个手误可能有多条可切分的纠正串(`hoa` 既能补成
+        // `oha` 也能调换成 `hao`);必须取打分更高的整句,不能先到先得。
+        engine.process(Key::Esc);
+        for c in "hoa".chars() {
+            engine.process(Key::Letter(c));
+        }
+        let typo_top = engine.candidates().first().cloned().unwrap_or_default();
+        let typo_hint = engine
+            .candidates_detailed()
+            .first()
+            .and_then(|c| c.hint.clone())
+            .unwrap_or_default();
+        let typo_ok = typo_top == "好" && typo_hint == "纠正 hao";
+        if !typo_ok {
+            failures += 1;
+        }
+        report.push_str(&format!(
+            "\n## 手误纠正探针\n\n| 输入 | 期望首选 | 实际首选 | 提示 | 结果 |\n|---|---|---|---|---|\n| hoa | 好 | {typo_top} | {typo_hint} | {} |\n",
+            if typo_ok { "PASS" } else { "FAIL" }
+        ));
+        engine.process(Key::Esc);
         let count = samples.len();
         samples.sort_by(f64::total_cmp);
         let pct = |p: f64| {

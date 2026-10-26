@@ -562,6 +562,32 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
+            "相邻字母调换纠正:hoa→好",
+            false,
+            vec![
+                stage(
+                    l("hoa"),
+                    vec![
+                        Check::Top("好".into()),
+                        Check::Hint {
+                            text: "好".into(),
+                            hint: "纠正 hao".into(),
+                        },
+                    ],
+                ),
+                stage(
+                    vec![Key::Space],
+                    vec![
+                        commits(&["好"]),
+                        Check::UserHas {
+                            key: "hao",
+                            word: "好",
+                        },
+                    ],
+                ),
+            ],
+        ),
+        s(
             "组级学习:同一模糊组连续选择计数",
             false,
             vec![

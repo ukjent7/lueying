@@ -989,8 +989,10 @@ const TYPO_BUDGET: Duration = Duration::from_millis(6);
 
 /// 候选生成入口:正常解码没有整句候选时,尝试一次相邻键/漏键纠正。
 ///
-/// 纠正只在精确与模糊都出不了整句时发生,避免影响正常输入。纠正串可能与
-/// 原串长度不同,候选按整串上屏,学习键单独记录纠正后的音节串。
+/// 纠正只在精确与模糊都出不了整句时发生,避免影响正常输入。同一手误可能对应
+/// 多条可切分的纠正串(`hoa` 既能补成 `oha` 也能调换成 `hao`),这里取候选
+/// 打分最高的一条,不先到先得。纠正串可能与原串长度不同,候选按整串上屏,
+/// 学习键单独记录纠正后的音节串。
 pub fn build(
     dict: &Dictionary,
     user: &UserDict,
@@ -1011,6 +1013,11 @@ pub fn build(
         return built;
     }
     let deadline = Instant::now() + TYPO_BUDGET;
+    // 同一手误可能对应多条可切分纠正串;保留打分最高的一条,先到先得会把
+    // `hoa` 补成「哦哈」而不是「好」。分数已含词频、每词罚分与搭配分,
+    // 不同纠正串之间可以直接比较。
+    let mut best: Option<Built> = None;
+    let mut best_score = f64::NEG_INFINITY;
     for correction in typo::variants(raw) {
         if Instant::now() >= deadline {
             break;
@@ -1050,6 +1057,7 @@ pub fn build(
             continue;
         }
         kept.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let score = kept[0].score;
         let mut seen = HashSet::new();
         kept.retain(|c| seen.insert((c.text.clone(), c.consume)));
         kept.truncate(MAX_CANDS);
@@ -1059,9 +1067,12 @@ pub fn build(
             .first()
             .map(|c| c.text.clone())
             .unwrap_or_default();
-        return fixed;
+        if score > best_score {
+            best_score = score;
+            best = Some(fixed);
+        }
     }
-    built
+    best.unwrap_or(built)
 }
 
 /// 排序后的最后一道闸:没打错音时,常用精确整词固定首位。

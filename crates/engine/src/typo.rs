@@ -1,8 +1,8 @@
 //! 错音纠正:整串输入没有任何整句候选时,按一次编辑距离找最像的按键串。
 //!
-//! 只处理全小写字母串,顺序是相邻键替换、漏键插入、多余键删除;找到第一条
-//! 能出整句候选的纠正就停,避免把正常输入带偏。纠正候选按整串上屏,学习键
-//! 由纠正后的音节串单独保存,不能从原串的字节区间反推。
+//! 只处理全小写字母串,顺序是相邻字母调换、相邻键替换、漏键插入、多余键删除;
+//! 多条纠正串都能出整句时,由调用方取打分最高的一条,不先到先得。纠正候选按
+//! 整串上屏,学习键由纠正后的音节串单独保存,不能从原串的字节区间反推。
 
 /// 纠正只在这段长度内尝试,过长的串通常不是手误。
 const MAX_RAW: usize = 24;
@@ -16,11 +16,27 @@ pub(super) fn eligible(raw: &str) -> bool {
     (2..=MAX_RAW).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_lowercase())
 }
 
-/// 按「相邻键替换 → 漏键插入 → 多余键删除」生成纠正串。
+/// 按「相邻字母调换 → 相邻键替换 → 漏键插入 → 多余键删除」生成纠正串。
 pub(super) fn variants(raw: &str) -> Vec<String> {
     let bytes = raw.as_bytes();
     let len = bytes.len();
     let mut out = Vec::new();
+
+    // 调换相邻字母:快速连打时常见,只改一个位置,精度高于补键/删键。
+    for i in 0..len.saturating_sub(1) {
+        if bytes[i] == bytes[i + 1] {
+            continue;
+        }
+        let mut text = String::with_capacity(len);
+        text.push_str(&raw[..i]);
+        text.push(bytes[i + 1] as char);
+        text.push(bytes[i] as char);
+        text.push_str(&raw[i + 2..]);
+        out.push(text);
+        if out.len() == MAX_CORRECTIONS {
+            return out;
+        }
+    }
 
     for (i, &byte) in bytes.iter().enumerate() {
         for replacement in neighbors(byte as char) {
