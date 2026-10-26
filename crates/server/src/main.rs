@@ -587,10 +587,17 @@ mod imp {
                         })
                         .collect();
                     if !commits.is_empty() {
-                        let pending = s.ui_reply.get_or_insert_with(Reply::default);
+                        let chinese = s.view.chinese;
+                        let fullwidth = s.view.fullwidth;
+                        let pending = s.ui_reply.get_or_insert_with(|| Reply {
+                            chinese,
+                            fullwidth,
+                            ..Reply::default()
+                        });
                         pending.commits.extend(commits);
                         pending.preedit = s.view.preedit.clone();
-                        pending.chinese = s.view.chinese;
+                        pending.chinese = chinese;
+                        pending.fullwidth = fullwidth;
                     }
                     crate::settle::schedule(state, session, s);
                 }
@@ -892,6 +899,7 @@ mod imp {
                 if let Some(pending) = s.ui_reply.as_mut() {
                     pending.preedit = s.view.preedit.clone();
                     pending.chinese = chinese;
+                    pending.fullwidth = s.view.fullwidth;
                 }
             } else if s.view.chinese != chinese {
                 s.view.chinese = chinese;
@@ -968,6 +976,7 @@ mod imp {
             if let Some(pending) = s.ui_reply.as_mut() {
                 pending.preedit = s.view.preedit.clone();
                 pending.chinese = s.view.chinese;
+                pending.fullwidth = s.view.fullwidth;
             }
         }
         state.version.fetch_add(1, Ordering::Relaxed);
@@ -993,6 +1002,7 @@ mod imp {
         if let Some(pending) = s.ui_reply.as_mut() {
             pending.preedit = s.view.preedit.clone();
             pending.chinese = s.view.chinese;
+            pending.fullwidth = s.view.fullwidth;
         }
     }
 
