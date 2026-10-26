@@ -173,6 +173,14 @@ impl Querier<'_> {
     /// 还能不能接更长的词:用键/签名前缀判断,避免无意义的组合爆炸。
     /// 模糊等价音会改变键面,所以逐一检查等价键前缀。
     pub(crate) fn may_extend(&mut self, sylls: &[Syll]) -> bool {
+        // 用户词可能不在主词典的前缀索引里。只查主词典会在用户独有词的
+        // 首个音节之后剪枝,整串查询永远命中不了(如「日期」的 `ri'qi`)。
+        if let Some(first) = sylls.first().and_then(|s| s.text.chars().next()) {
+            let initials = syllables::initial_alternatives(first, &self.fuzzy);
+            if self.user.may_extend(sylls.len(), &initials) {
+                return true;
+            }
+        }
         if sylls.iter().any(|s| s.abbrev) {
             let key = typed_key(sylls);
             return self

@@ -154,6 +154,7 @@ fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
             edits: 0,
             freq: 0,
             user_freq: 0,
+            learned: false,
             groups: 0,
             hint: None,
             learn_key: None,

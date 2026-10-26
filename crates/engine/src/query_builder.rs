@@ -18,6 +18,9 @@ struct Builder<'a, 'd> {
     visits: usize,
     safe_extend: bool,
     typing: bool,
+    /// 整串能只用全拼音节读完。此时混入的简拼单元只可能是切分副作用,
+    /// 按单元数扣分,让完整拼音读法优先。
+    full_pinyin: bool,
 }
 
 impl Builder<'_, '_> {
@@ -28,11 +31,17 @@ impl Builder<'_, '_> {
                 return;
             }
             let hits = self.q.lookup(&self.units);
+            let abbrev = if self.full_pinyin {
+                self.units.iter().filter(|s| s.abbrev).count()
+            } else {
+                0
+            };
+            let penalty = ABBREV_PENALTY * abbrev as f64;
             for h in hits.iter() {
                 self.by_end[pos].push(Node {
                     start: root,
                     word: h.word.clone(),
-                    score: h.score(),
+                    score: h.score() - penalty,
                     spans: self.spans.clone(),
                     trusted: h.trusted,
                     edits: h.edits,
@@ -43,14 +52,17 @@ impl Builder<'_, '_> {
                 });
             }
             self.visits += 1;
-            if pos == self.raw.len() && self.q.is_typing_prefix(&self.units) {
+            // 只有从输入开头起的路径才算「还在打这个词」;后段的合法前缀
+            // (如 hoa 末尾的 a)不能挡住整串的手误纠正。
+            if root == 0 && pos == self.raw.len() && self.q.is_typing_prefix(&self.units) {
                 self.typing = true;
             }
             if self.units.len() >= MAX_WORD_SYL || self.visits > NODE_BUDGET {
                 return;
             }
             if self.q.may_extend(&self.units) {
-                if pos == self.raw.len()
+                if root == 0
+                    && pos == self.raw.len()
                     && (self.units.last().is_some_and(|s| !s.abbrev)
                         || self.units.iter().all(|s| s.abbrev))
                 {
@@ -129,6 +141,7 @@ pub(crate) fn build_exact(
             visits: 0,
             safe_extend: false,
             typing: false,
+            full_pinyin: segment::complete_full(raw),
         };
         for (i, &ok) in finish.iter().take(raw.len()).enumerate() {
             if raw.as_bytes()[i] == b'\'' || !ok {
@@ -199,6 +212,9 @@ pub(crate) fn build_exact(
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
         let key = spans_key(raw, &spans);
         let reject = user.reject_penalty(&key, &text);
+        let matched = q.user_cache.get(&key).and_then(|users| users.get(&text));
+        let user_freq = matched.map_or(0, |m| m.freq);
+        let learned = matched.is_some_and(|m| m.edits == 0);
         full.push(Candidate {
             text: text.clone(),
             words: st.path.iter().map(|p| p.0.clone()).collect(),
@@ -210,11 +226,8 @@ pub(crate) fn build_exact(
             sentence: st.sentence,
             edits: st.edits,
             freq: st.freq,
-            user_freq: q
-                .user_cache
-                .get(&key)
-                .and_then(|users| users.get(&text))
-                .map_or(0, |m| m.freq),
+            user_freq,
+            learned,
             groups: st.groups,
             hint: st.hint.clone(),
             learn_key: None,
@@ -238,7 +251,10 @@ pub(crate) fn build_exact(
             if node.start != 0 {
                 continue;
             }
-            let reject = user.reject_penalty(&spans_key(raw, &node.spans), &node.word);
+            let key = spans_key(raw, &node.spans);
+            let reject = user.reject_penalty(&key, &node.word);
+            let matched = q.user_cache.get(&key).and_then(|users| users.get(&node.word));
+            let learned = matched.is_some_and(|m| m.edits == 0);
             words.push(Candidate {
                 text: node.word.clone(),
                 words: vec![node.word.clone()],
@@ -251,6 +267,7 @@ pub(crate) fn build_exact(
                 edits: node.edits,
                 freq: node.freq,
                 user_freq: node.user_freq,
+                learned,
                 groups: node.groups,
                 hint: node.hint.clone(),
                 learn_key: None,
@@ -269,7 +286,14 @@ pub(crate) fn build_exact(
     words.sort_by(|a, b| {
         b.score
             .total_cmp(&a.score)
-            .then(a.consume.cmp(&b.consume))
+            // 同一个词既能按完整音节也能按简拼命中时,优先吃满音节:
+            // `haoyi` 里的「好」应上屏 hao,不能只吃掉 h 留下 aoyi。
+            .then(
+                b.spans
+                    .last()
+                    .map_or(0, |s| s.1)
+                    .cmp(&a.spans.last().map_or(0, |s| s.1)),
+            )
             .then(a.text.cmp(&b.text))
     });
     // 首页优先放满整句备选:长句的正确读法常排在第 6-8 条,第二位的分段

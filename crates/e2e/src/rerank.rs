@@ -414,7 +414,11 @@ pub fn run(
     for c in "nihaoma".chars() {
         engine.process(Key::Letter(c));
     }
-    engine.process(Key::Down);
+    // 首页优先放整句,前缀词「你好」不一定在前两条;按文本找到它再上屏。
+    let slot = engine.candidates().iter().position(|c| c == "你好");
+    if let Some(index) = slot {
+        engine.set_highlight(index);
+    }
     let partial: String = engine
         .process(Key::Space)
         .into_iter()
@@ -426,7 +430,10 @@ pub fn run(
     push(
         &mut checks,
         "分段上屏标记组合已提交",
-        !partial.is_empty() && engine.composition().is_some() && engine.composition_committed(),
+        slot.is_some()
+            && partial == "你好"
+            && engine.composition().is_some()
+            && engine.composition_committed(),
         format!("上屏 {partial:?}"),
     );
     engine.process(Key::Esc);

@@ -115,6 +115,14 @@ impl UserDict {
         }
     }
 
+    /// 当前输入是否还可能接成某个更长的用户词。只按音节数与首字母做保守判断:
+    /// 命中形状里存在不短于当前单元数的键即可,允许误报,不允许漏掉用户词。
+    pub fn may_extend(&self, syllables: usize, initials: &[char]) -> bool {
+        self.by_shape.iter().any(|(&(count, first), keys)| {
+            count >= syllables && initials.contains(&first) && !keys.is_empty()
+        })
+    }
+
     /// 导出为行文本:词条 `键<TAB>词<TAB>频次<TAB>时间戳`,
     /// 组级/字级/词级/三词/应用/跳过学习用 `@group`、`@context`、`@transition`、
     /// `@trigram`、`@app`、`@reject` 行;按内容排序保证文件稳定。

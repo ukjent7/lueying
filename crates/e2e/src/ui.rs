@@ -191,19 +191,20 @@ pub fn run(report: &mut String) -> usize {
         format!("显示 {shown:?} → 落定 {finalized:?}"),
     );
 
-    // 长句候选:默认一页五条全部给整句,最高分前缀词顺延到第 6 位;
-    // 正确读法不会被人名/单字的分段入口挤出首页,逐段上屏下移一格即可。
+    // 长句候选:整句备选先占满一页(最多五条),最高分前缀词紧跟其后;
+    // 整句不足五条时由前缀词补齐,不能为了凑数把逐段入口排到第二页。
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
     let detailed = e.candidates_detailed();
     let available = detailed.iter().filter(|c| c.full).count();
-    let first_page = detailed.iter().take(5).filter(|c| c.full).count();
-    let prefix_sixth = detailed.get(5).is_some_and(|c| !c.full);
+    let page = available.min(5);
+    let first_page = detailed.iter().take(page).filter(|c| c.full).count();
+    let prefix_next = detailed.get(page).is_some_and(|c| !c.full);
     push(
         &mut checks,
         "整句备选占满候选首页",
-        available >= 5 && first_page == 5 && prefix_sixth,
-        format!("整句 {available} 条,首页 {first_page} 条,第六位前缀词={prefix_sixth}"),
+        available >= 3 && first_page == page && prefix_next,
+        format!("整句 {available} 条,首页整句 {first_page} 条,下一位前缀词={prefix_next}"),
     );
 
     // 分段上屏学到的前缀词不能顶掉整句首选:选过一次「今天」后重打整句,

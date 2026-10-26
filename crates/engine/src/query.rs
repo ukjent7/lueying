@@ -49,6 +49,8 @@ pub struct Candidate {
     pub freq: u64,
     /// 同一按键下用户选过该词的次数。
     pub user_freq: u32,
+    /// 用户词库在该键下精确学过这个词(全拼与简拼互认),可作为首位覆盖的依据。
+    pub learned: bool,
     /// 命中的模糊组位掩码(0 表示精确)。
     pub groups: u8,
     /// 模糊候选的注音提示(如 `shi`);精确候选为空。
@@ -78,6 +80,7 @@ impl Candidate {
             edits: 0,
             freq: 0,
             user_freq: 0,
+            learned: false,
             groups: 0,
             hint: None,
             learn_key: None,
@@ -112,6 +115,10 @@ const MAX_WORD_SYL: usize = 8;
 /// 每词固定罚:抵消归一化带来的「分词越少越占优」以外的碎片投机。
 /// 2.2 在项目、外部手写、白霜脚本和中立难例上同时不退步。
 const WORD_PENALTY: f64 = 2.2;
+/// 完整拼音输入里混入简拼单元的额外罚分。`hen` 切成 `he` + `n` 能把「很亮」
+/// 读成「和能量」,这类切分在用户打全拼时不是本意;每个简拼单元扣 8 分,
+/// 足以让完整音节读法胜出,同时不影响真正的简拼输入(整串无法按全拼切完)。
+const ABBREV_PENALTY: f64 = 8.0;
 /// 整句 Viterbi 每档保留几条路径。3 条时模糊扩写会把正确切分挤出束,
 /// 与 librime/清风同为 7 条,长句仍只保留常数级状态。
 const BEAM: usize = 7;
@@ -451,7 +458,12 @@ pub fn build(
     let built = builder::build_exact(
         dict, user, fuzzy, gram, cache, context, host, previous2, previous, raw,
     );
-    if built.cands.iter().any(|c| c.full)
+    // 整句候选只有拆成多个词时才可能是「每个字母都当简拼」拼出来的假整句
+    // (如 `hoa` → 好哦啊);完整拼音的整句和单词命中都按正常输入处理。
+    let solid = built.cands.iter().any(|c| c.full && !c.sentence);
+    let full_pinyin = segment::complete_full(raw);
+    if solid
+        || (full_pinyin && built.cands.iter().any(|c| c.full))
         || built.safe_extend
         || built.typing_prefix
         || crate::quick::is_trigger(raw)
@@ -543,7 +555,7 @@ fn protect_exact(cands: &mut [Candidate]) {
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.user_freq > 0 && !c.rejected && (c.full || !has_full))
+        .filter(|(_, c)| c.learned && !c.rejected && (c.full || !has_full))
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {

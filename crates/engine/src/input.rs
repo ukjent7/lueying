@@ -843,9 +843,10 @@ impl Engine {
             built
                 .cands
                 .retain(|cand| !quick.iter().any(|q| q.text == cand.text));
-            let keep_first = built.cands.first().is_some_and(|cand| {
-                cand.full && !cand.sentence && (cand.trusted || cand.user_freq > 0)
-            });
+            let keep_first = built
+                .cands
+                .first()
+                .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
             let position = if keep_first { 1 } else { 0 };
             for cand in quick.into_iter().rev() {
                 built.cands.insert(position, cand);

@@ -66,6 +66,24 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
     out
 }
 
+/// 整串能否只用全拼音节切完(不借助简拼)。用于判断用户是否完整打出了拼音:
+/// 完整拼音串里不该让「半个音节当简拼」的读法抢占正常分词。
+pub fn complete_full(raw: &str) -> bool {
+    let edges = edges(raw);
+    let mut reach = vec![false; raw.len() + 1];
+    reach[raw.len()] = true;
+    for i in (0..raw.len()).rev() {
+        reach[i] = if raw.as_bytes()[i] == b'\'' {
+            reach[i + 1]
+        } else {
+            edges[i]
+                .iter()
+                .any(|e| !e.abbrev && reach[e.span.1])
+        };
+    }
+    reach[0]
+}
+
 /// 整串能否被音节图切完。错音纠正在建词典图前先用它过滤明显不合法的串。
 pub fn complete(raw: &str) -> bool {
     let edges = edges(raw);

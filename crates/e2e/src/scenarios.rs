@@ -432,10 +432,9 @@ pub fn scenarios() -> Vec<Scenario> {
             false,
             vec![
                 stage(l("jintiantianqi"), vec![Check::Top("今天天气".into())]),
-                // 首页五条全是整句,最高分前缀词「今天」在第 6 位(第二页首条)。
-                stage(vec![Key::PageDown], vec![]),
+                // 迷你词库只有四条整句,最高分前缀词「今天」排在首页第 5 位。
                 stage(
-                    vec![Key::Digit(1)],
+                    vec![Key::Digit(5)],
                     vec![commits(&["今天"]), Check::Raw("tianqi".into())],
                 ),
                 stage(vec![Key::Space], vec![commits(&["天气"]), Check::NoComp]),
@@ -495,7 +494,7 @@ pub fn scenarios() -> Vec<Scenario> {
             )],
         ),
         s(
-            "学习覆盖:si选是两次后首选是",
+            "学习覆盖:si选是后首选是",
             false,
             vec![
                 stage(
@@ -503,11 +502,9 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("四".into()), Check::Contains("是".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
-                stage(
-                    l("si"),
-                    vec![Check::Top("四".into()), Check::Contains("是".into())],
-                ),
-                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
+                // 同键选过一次的词直接回到首位,与微软/微信一致。
+                stage(l("si"), vec![Check::Top("是".into())]),
+                stage(vec![Key::Space], vec![commits(&["是"])]),
                 stage(l("si"), vec![Check::Top("是".into())]),
             ],
         ),
