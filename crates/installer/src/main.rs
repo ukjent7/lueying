@@ -505,7 +505,7 @@ mod imp {
         if source == target {
             return Ok(());
         }
-        Self::copy_tree(source, target, true)
+        copy_tree(source, target, true)
     }
 
     /// 递归复制发布目录。`licenses/` 这类子目录要随二进制一起进安装目录,
@@ -518,7 +518,7 @@ mod imp {
             let entry = entry.map_err(|e| format!("读取安装包文件: {e}"))?;
             let path = entry.path();
             if path.is_dir() {
-                Self::copy_tree(&path, &target.join(entry.file_name()), false)?;
+                copy_tree(&path, &target.join(entry.file_name()), false)?;
                 continue;
             }
             if !path.is_file() {
