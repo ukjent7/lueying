@@ -93,6 +93,32 @@ pub fn run(report: &mut String) -> usize {
         );
     }
 
+    // 翻页/移动高亮后继续打字:候选已经换了一批,页号和高亮必须回到第一条,
+    // 否则旧页号越界时候选窗会空着,页码还会显示成 3/1。
+    let mut e = engine();
+    type_into(&mut e, "shi");
+    let ps = e.page_size();
+    if e.candidates().len() > ps {
+        let _ = e.page_by(1);
+        e.process(Key::Down);
+        let before = (e.page(), e.highlight());
+        e.process(Key::Letter('j'));
+        let after = (e.page(), e.highlight());
+        push(
+            &mut checks,
+            "继续打字后候选回到第一条",
+            before.0 > 0 && before.1 > 0 && after == (0, 0),
+            format!("{before:?} → {after:?}"),
+        );
+    } else {
+        push(
+            &mut checks,
+            "继续打字后候选回到第一条",
+            false,
+            "内置词库 shi 候选不足一页".into(),
+        );
+    }
+
     // 高亮换候选时内联文本必须一起变;否则空格上屏的内容与眼前看到的不一致。
     let mut e = engine();
     type_into(&mut e, "shi");

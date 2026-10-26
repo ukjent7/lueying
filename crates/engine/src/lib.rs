@@ -1314,6 +1314,10 @@ impl Engine {
             .map(|c| c.spans.clone())
             .unwrap_or_else(|| segment::first_path(&comp.raw));
         self.cands = built.cands;
+        // 候选换了一批:页号与高亮回到第一条。翻到第二页再继续打字时
+        // 旧页号可能已经越界,候选窗会空着并显示 3/1 这样的页码。
+        self.hl = 0;
+        self.page = 0;
     }
 }
 
