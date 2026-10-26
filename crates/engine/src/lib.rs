@@ -1218,9 +1218,10 @@ impl Engine {
             self.last_word.as_deref(),
             &comp.raw,
         );
+        let now = self.now.unwrap_or_else(CivilTime::now_utc);
         // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
         // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
-        let quick = quick::candidates(&comp.raw, self.now.unwrap_or_else(CivilTime::now_utc));
+        let quick = quick::candidates(&comp.raw, now);
         if !quick.is_empty() {
             built.cands.retain(|cand| !quick.iter().any(|q| q.text == cand.text));
             let keep_first = built.cands.first().is_some_and(|cand| {
@@ -1233,6 +1234,11 @@ impl Engine {
             // 去重可能删掉原来的首选;内联显示始终跟随插入后的第一条。
             if let Some(top) = built.cands.first() {
                 built.display = top.text.clone();
+            }
+        } else if let Some((at, quick)) = quick::keyword(&built.cands, &comp.raw, now) {
+            // 全拼打出了「日期/时间/星期」:写法紧跟这个词,不抢它的首选。
+            for cand in quick.into_iter().rev() {
+                built.cands.insert(at + 1, cand);
             }
         }
         comp.display = built.display;

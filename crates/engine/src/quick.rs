@@ -80,6 +80,45 @@ pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
         "xq" => weekday_texts(now),
         _ => number_texts(raw).unwrap_or_default(),
     };
+    wrap(texts, raw)
+}
+
+/// 全拼完整打出「日期/时间/星期」时,把对应写法插在这个词后面。
+///
+/// 只认整串候选(`full`),并且只扫前五条;匹配词本身仍按正常候选学习。
+pub(crate) fn keyword(
+    cands: &[Candidate],
+    raw: &str,
+    now: CivilTime,
+) -> Option<(usize, Vec<Candidate>)> {
+    const SCAN: usize = 5;
+    let (index, texts) = cands
+        .iter()
+        .take(SCAN)
+        .enumerate()
+        .find_map(|(index, cand)| {
+            if !cand.full {
+                return None;
+            }
+            let texts = match cand.text.as_str() {
+                "日期" => date_texts(now),
+                "时间" => time_texts(now),
+                "星期" => weekday_texts(now),
+                _ => return None,
+            };
+            Some((index, texts))
+        })?;
+    let texts: Vec<String> = texts
+        .into_iter()
+        .filter(|text| !cands.iter().any(|cand| cand.text.as_str() == text.as_str()))
+        .collect();
+    if texts.is_empty() {
+        return None;
+    }
+    Some((index, wrap(texts, raw)))
+}
+
+fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
     texts
         .into_iter()
         .enumerate()

@@ -14,11 +14,13 @@
 //! 11. 快捷项抢掉可信整词的首选 → `sj` 应保留「时间」,不能直接跳到时间候选。
 //! 12. 快捷文本写进字级搭配 → 数字/日期会污染后续候选的个人上下文。
 //! 13. 失焦落定或 Shift+Delete 把快捷项当用户词 → 学出搭配或误删同文词。
+//! 14. 全拼打出「日期/时间/星期」时不跟写法,或写法抢掉词本身的首选。
+//! 15. 显式触发与关键词触发重复插入同一组写法。
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use lueying_dict::Dictionary;
-use lueying_engine::{CivilTime, Config, Engine, Event, Key};
+use lueying_engine::{CivilTime, Config, Engine, Event, Key, SharedUser, UserDict};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -35,6 +37,17 @@ fn engine() -> Engine {
 
 fn at(now: CivilTime) -> Engine {
     let mut e = engine();
+    e.set_now(now);
+    e
+}
+
+/// 预先学一个词,模拟全拼命中「日期/时间/星期」时的用户词库。
+fn with_word(word: &str, key: &str, now: CivilTime) -> Engine {
+    let user: SharedUser = Arc::new(RwLock::new(UserDict::new()));
+    user.write()
+        .unwrap_or_else(|p| p.into_inner())
+        .learn(key, word);
+    let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_user(user);
     e.set_now(now);
     e
 }
@@ -206,6 +219,66 @@ pub fn run(report: &mut String) -> usize {
         w.candidates().first().map(String::as_str) == Some("星期一")
             && w.candidates().iter().any(|c| c == "周一"),
         format!("{:?}", w.candidates()),
+    );
+
+    // 全拼打出词本身时,对应写法紧跟在这个词后面,不抢它的首选。
+    let mut kd = with_word("日期", "ri'qi", fixed());
+    letters(&mut kd, "riqi");
+    let list = kd.candidates();
+    push(
+        &mut checks,
+        "全拼日期关键词",
+        list.first().map(String::as_str) == Some("日期")
+            && list.get(1).map(String::as_str) == Some("2026年10月26日"),
+        format!("{list:?}"),
+    );
+
+    let mut kt = at(fixed());
+    letters(&mut kt, "shijian");
+    let list = kt.candidates();
+    push(
+        &mut checks,
+        "全拼时间关键词",
+        list.first().map(String::as_str) == Some("时间")
+            && list.get(1).map(String::as_str) == Some("14:05"),
+        format!("{list:?}"),
+    );
+
+    let mut kx = with_word("星期", "xing'qi", fixed());
+    letters(&mut kx, "xingqi");
+    let list = kx.candidates();
+    push(
+        &mut checks,
+        "全拼星期关键词",
+        list.first().map(String::as_str) == Some("星期")
+            && list.get(1).map(String::as_str) == Some("星期一"),
+        format!("{list:?}"),
+    );
+
+    // 关键词候选同样不学习;词库在选快捷项前后必须一模一样。
+    let before = kd.export_user();
+    let events = kd.process(Key::Digit(2));
+    let after = kd.export_user();
+    push(
+        &mut checks,
+        "关键词不重复学习",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "2026年10月26日"))
+            && before == after,
+        format!("{events:?}"),
+    );
+
+    // 关键词与显式触发只出一份,不能把同一日期插两遍;可信用户词仍保留首选。
+    let mut dup = with_word("日期", "ri'qi", fixed());
+    letters(&mut dup, "rq");
+    let list = dup.candidates();
+    let dates = list.iter().filter(|text| text.as_str() == "2026年10月26日").count();
+    push(
+        &mut checks,
+        "显式触发不重复",
+        list.first().map(String::as_str) == Some("日期") && dates == 1,
+        format!("{list:?}"),
     );
 
     // 触发必须精确到整个组合;多一个字母就不再出日期。
