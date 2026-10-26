@@ -4,7 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(windows)]
-pub mod spawn;
+mod spawn;
+#[cfg(windows)]
+pub use spawn::spawn_detached;
 pub mod version;
 
 /// 管道名(版本号入名,协议不兼容时换 v2)。

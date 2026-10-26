@@ -33,7 +33,7 @@ pub fn spawn_detached(exe: &Path, dir: Option<&Path>) -> Result<(), String> {
             .as_ref()
             .map_or(std::ptr::null(), |dir| dir.as_ptr()),
     );
-    let mut startup = STARTUPINFOW {
+    let startup = STARTUPINFOW {
         cb: size_of::<STARTUPINFOW>() as u32,
         ..Default::default()
     };
