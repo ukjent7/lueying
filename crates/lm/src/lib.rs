@@ -1428,13 +1428,10 @@ fn erf(x: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    mod bounded_encoding;
-    mod project_rows;
-
     use super::{comparable, erf, gelu, should_rerank, CandidateFacts, Compared};
 
     // 一层小模型只使用合成权重，缓存测试不读取外部模型文件。
-    fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
+    pub(crate) fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
         use super::{Block, Config, Matrix, SentenceModel};
         let matrix = |size| Matrix {
             inner: super::Tensor::Float(
@@ -2013,3 +2010,9 @@ mod terminal_prefix_tests;
 
 #[cfg(test)]
 mod embedding_tests;
+
+#[cfg(test)]
+mod bounded_encoding_tests;
+
+#[cfg(test)]
+mod project_rows_tests;

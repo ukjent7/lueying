@@ -54,7 +54,7 @@ fn current_session() -> u32 {
     }
 }
 
-/// 线上的按键(引擎 `Key` 的可序列化镜像,引擎 crate 保持零依赖)。
+/// 线上的按键。协议 crate 只描述管道格式,不依赖引擎;转换在 Server 边界做。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum KeyMsg {
     Letter(char),
@@ -79,36 +79,6 @@ pub enum KeyMsg {
     DeleteCandidate,
     Punct(char),
     Shift,
-}
-
-impl From<KeyMsg> for lueying_engine::Key {
-    fn from(k: KeyMsg) -> Self {
-        use lueying_engine::Key;
-        match k {
-            KeyMsg::Letter(c) => Key::Letter(c),
-            KeyMsg::Digit(d) => Key::Digit(d),
-            KeyMsg::Space => Key::Space,
-            KeyMsg::Enter => Key::Enter,
-            KeyMsg::Esc => Key::Esc,
-            KeyMsg::Backspace => Key::Backspace,
-            KeyMsg::Delete => Key::Delete,
-            KeyMsg::SegmentBackspace => Key::SegmentBackspace,
-            KeyMsg::SegmentDelete => Key::SegmentDelete,
-            KeyMsg::Left => Key::Left,
-            KeyMsg::Right => Key::Right,
-            KeyMsg::SegmentLeft => Key::SegmentLeft,
-            KeyMsg::SegmentRight => Key::SegmentRight,
-            KeyMsg::Up => Key::Up,
-            KeyMsg::Down => Key::Down,
-            KeyMsg::Home => Key::Home,
-            KeyMsg::End => Key::End,
-            KeyMsg::PageUp => Key::PageUp,
-            KeyMsg::PageDown => Key::PageDown,
-            KeyMsg::DeleteCandidate => Key::DeleteCandidate,
-            KeyMsg::Punct(c) => Key::Punct(c),
-            KeyMsg::Shift => Key::Shift,
-        }
-    }
 }
 
 /// DLL → Server。

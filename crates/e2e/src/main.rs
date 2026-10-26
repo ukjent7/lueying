@@ -2,6 +2,7 @@
 //! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast]`
 
 mod bench;
+mod modules;
 mod quick;
 mod rerank;
 mod scenarios;
@@ -148,6 +149,9 @@ fn main() {
 
     // 快捷输入:日期/时间/星期与 v 模式数字金额。
     failures += quick::run(&mut report);
+
+    // 可选功能模块:契约注册、候选注入与上屏转换。
+    failures += modules::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

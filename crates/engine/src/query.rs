@@ -54,11 +54,35 @@ pub struct Candidate {
     pub rejected: bool,
 }
 
+impl Candidate {
+    /// 功能模块添加“整串上屏”候选的最小构造:一个区间覆盖整个原始输入,
+    /// 上屏后组合结束。`quick` 保持 false,由模块按需改写。
+    pub fn whole(raw_len: usize, text: impl Into<String>, score: f64) -> Self {
+        let text = text.into();
+        Self {
+            words: vec![text.clone()],
+            text,
+            consume: 1,
+            score,
+            spans: vec![(0, raw_len)],
+            full: true,
+            trusted: false,
+            sentence: false,
+            edits: 0,
+            freq: 0,
+            user_freq: 0,
+            groups: 0,
+            hint: None,
+            learn_key: None,
+            quick: false,
+            rejected: false,
+        }
+    }
+}
+
 /// 一次构建的产物。
 pub struct Built {
     pub cands: Vec<Candidate>,
-    /// 内联显示文本:首选候选文本,无候选时原文。
-    pub display: String,
     /// 能接长,且不是「全拼音节后面又接简拼」的伪前缀。
     ///
     /// 签名只取首字母:`nihap` 会撞上「你害怕」的 `nhp`,但 `ha` 后面已经
@@ -976,13 +1000,8 @@ fn build_exact(
     cands.retain(|c| seen.insert((c.text.clone(), c.consume)));
     protect_exact(&mut cands);
     cands.truncate(MAX_CANDS);
-    let display = cands
-        .first()
-        .map(|c| c.text.clone())
-        .unwrap_or_else(|| raw.to_string());
     Built {
         cands,
-        display,
         safe_extend,
         typing_prefix: typing,
     }
@@ -1083,11 +1102,6 @@ pub fn build(
         kept.retain(|c| seen.insert((c.text.clone(), c.consume)));
         kept.truncate(MAX_CANDS);
         fixed.cands = kept;
-        fixed.display = fixed
-            .cands
-            .first()
-            .map(|c| c.text.clone())
-            .unwrap_or_default();
         if score > best_score {
             best_score = score;
             best = Some(fixed);

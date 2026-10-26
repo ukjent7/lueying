@@ -80,7 +80,7 @@ impl Reranker {
 
 #[test]
 fn bounded_encoding_preserves_each_rounds_score_bits_and_cache_order() {
-    let model = super::cache_test_model();
+    let model = crate::tests::cache_test_model();
     let mut old = Reranker::new(model.clone());
     let mut new = Reranker::new(model.clone());
     for context in ["", "我", "很", "你好我很好我", "🙂你好我很好我"] {
@@ -121,7 +121,7 @@ fn bounded_encoding_preserves_each_rounds_score_bits_and_cache_order() {
 
 #[test]
 fn limited_encoding_is_the_original_unicode_token_prefix() {
-    let model: std::sync::Arc<SentenceModel> = super::cache_test_model();
+    let model: std::sync::Arc<SentenceModel> = crate::tests::cache_test_model();
     for text in [
         "",
         "你好",

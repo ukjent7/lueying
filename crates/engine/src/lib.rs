@@ -2,11 +2,17 @@
 //!
 //! 默认行为对齐微软拼音习惯:空格上屏首选、数字选词、Enter 上屏原文、
 //! Backspace 逐字母回删、Shift 切中英(组合中先上屏再切)、中文态标点转全角。
+//!
+//! 结构分三层: [`types`] 是宿主与模块共享的输入 DTO,[`module`] 是可选功能
+//! 模块的契约与注册表,其余模块是默认全拼/简拼实现。高级能力不往核心路径里
+//! 堆条件分支,而是作为模块由宿主组合进来。
 
+pub mod module;
 mod punct;
 mod query;
 mod quick;
 mod segment;
+pub mod types;
 mod typo;
 mod user;
 
@@ -18,7 +24,16 @@ use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
 pub use quick::CivilTime;
+pub use types::{Composition, Config, Event, Key, Mode};
 pub use user::UserDict;
+
+/// 功能模块作者常用的公开类型。
+pub mod prelude {
+    pub use crate::module::{
+        CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
+    };
+    pub use crate::{Candidate, Config, Engine, Event, Key, Mode};
+}
 
 /// 多个会话共享的用户词库;Server 让所有应用看到同一份学习结果。
 pub type SharedUser = Arc<RwLock<UserDict>>;
@@ -29,83 +44,6 @@ pub type SharedUser = Arc<RwLock<UserDict>>;
 pub const MAX_RAW: usize = 80;
 /// 已上屏文本保留的字符数(重排与后续上下文模型使用)。
 pub const CONTEXT_KEEP: usize = 128;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Chinese,
-    English,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Key {
-    Letter(char),
-    Digit(u8),
-    Space,
-    Enter,
-    Esc,
-    Backspace,
-    Delete,
-    /// Ctrl+Backspace:删除光标前一个音节。
-    SegmentBackspace,
-    /// Ctrl+Delete:删除光标后一个音节。
-    SegmentDelete,
-    Left,
-    Right,
-    /// Ctrl+Left/Ctrl+Right:按音节移动组合光标。
-    SegmentLeft,
-    SegmentRight,
-    Up,
-    Down,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    /// 删除当前高亮候选的学习记录(Shift+Delete);词典词条本身不受影响。
-    DeleteCandidate,
-    Punct(char),
-    Shift,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Event {
-    /// 上屏一段文本。
-    Commit(String),
-    /// 模式切换。
-    Mode(Mode),
-    /// 键不被输入法处理,交还宿主直通。
-    Passthrough(Key),
-}
-
-#[derive(Clone, Debug)]
-pub struct Config {
-    pub fuzzy: Fuzzy,
-    pub chinese_punct: bool,
-    pub page_size: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            // 零配置:核心模糊组默认参与召回,排序由处数罚分与学习覆盖负责。
-            fuzzy: Fuzzy::auto(),
-            chinese_punct: true,
-            page_size: 5,
-        }
-    }
-}
-
-/// 组合态快照(UI 用)。
-#[derive(Clone, Debug)]
-pub struct Composition {
-    /// 原始输入(小写字母与隔音符)。
-    pub raw: String,
-    /// 光标(原始串内字节偏移,内容全 ASCII)。
-    pub cursor: usize,
-    /// 内联显示文本:首选转换,无候选时原文。
-    pub display: String,
-    /// 当前切分各音节的原始区间。
-    pub seg_spans: Vec<(usize, usize)>,
-}
 
 pub struct Engine {
     /// 词典跨会话共享(Server 进程里多个宿主会话共用一份)。
@@ -151,6 +89,8 @@ pub struct Engine {
     now: Option<CivilTime>,
     /// 候选集合每次变化自增;异步重排据此丢弃过期结果。
     rev: u64,
+    /// 可选功能模块;所有会话共享同一组注册表,默认空。
+    modules: Arc<module::Modules>,
 }
 
 impl Engine {
@@ -182,7 +122,14 @@ impl Engine {
             transition_handled: 0,
             now: None,
             rev: 0,
+            modules: Arc::new(module::Modules::new()),
         }
+    }
+
+    /// 挂上宿主组合好的功能模块(链式构造)。
+    pub fn with_modules(mut self, modules: Arc<module::Modules>) -> Self {
+        self.modules = modules;
+        self
     }
 
     /// 挂上语言模型(链式构造;Server 启动时按文件是否存在决定)。
@@ -440,11 +387,18 @@ impl Engine {
     pub fn finalize_display(&mut self) -> Option<String> {
         let comp = self.comp.take()?;
         let quick = self.cands.get(self.hl).is_some_and(|cand| cand.quick);
-        let text = if comp.display.is_empty() {
+        let mut text = if comp.display.is_empty() {
             comp.raw
         } else {
             comp.display
         };
+        if !self.modules.is_empty() {
+            let ctx = module::CommitContext {
+                host: &self.host,
+                mode: self.mode,
+            };
+            self.modules.commit(&ctx, &mut text);
+        }
         self.comp_committed = false;
         self.phrase = None;
         self.cands.clear();
@@ -502,10 +456,11 @@ impl Engine {
             return Vec::new();
         }
         self.hl = index;
-        let events = self
+        let mut events = self
             .commit_highlighted()
             .map(|text| vec![Event::Commit(text)])
             .unwrap_or_default();
+        self.apply_output(self.mode, &mut events);
         self.note_events(&events);
         events
     }
@@ -559,7 +514,10 @@ impl Engine {
 
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
-        let events = self.process_inner(key);
+        // Shift 会先落定中文组合再切模式;上屏文本仍属于切换前的模式。
+        let mode = self.mode;
+        let mut events = self.process_inner(key);
+        self.apply_output(mode, &mut events);
         self.note_events(&events);
         events
     }
@@ -567,9 +525,27 @@ impl Engine {
     /// 把整个组合按当前切分逐段落定(失焦、别的窗口切全局模式)。
     /// 与空格不同,这里不会只上屏吃前缀的候选而把剩余拼音留在组合里。
     pub fn flush(&mut self) -> Vec<Event> {
-        let events = self.commit_all();
+        let mut events = self.commit_all();
+        self.apply_output(self.mode, &mut events);
         self.note_events(&events);
         events
+    }
+
+    /// 上屏事件离开引擎前应用模块转换。默认注册表为空,不进入循环。
+    /// `mode` 取事件产生时的模式,Shift 切换前落定的中文不会被当成英文。
+    fn apply_output(&self, mode: Mode, events: &mut [Event]) {
+        if self.modules.is_empty() {
+            return;
+        }
+        let ctx = module::CommitContext {
+            host: &self.host,
+            mode,
+        };
+        for event in events {
+            if let Event::Commit(text) = event {
+                self.modules.commit(&ctx, text);
+            }
+        }
     }
 
     /// 上屏文本进入左邻上下文(ASCII 直通内容不算),同时记住最后一个字符
@@ -1366,17 +1342,27 @@ impl Engine {
             for cand in quick.into_iter().rev() {
                 built.cands.insert(position, cand);
             }
-            // 去重可能删掉原来的首选;内联显示始终跟随插入后的第一条。
-            if let Some(top) = built.cands.first() {
-                built.display = top.text.clone();
-            }
         } else if let Some((at, quick)) = quick::keyword(&built.cands, &comp.raw, now) {
             // 全拼打出了「日期/时间/星期」:写法紧跟这个词,不抢它的首选。
             for cand in quick.into_iter().rev() {
                 built.cands.insert(at + 1, cand);
             }
         }
-        comp.display = built.display;
+        // 可选模块在核心候选与快捷输入之后运行;默认空注册表不进入这个分支。
+        if !self.modules.is_empty() {
+            let module_ctx = module::CandidateContext {
+                raw: &comp.raw,
+                context: &context,
+                host: &self.host,
+                now,
+            };
+            self.modules.candidates(&module_ctx, &mut built.cands);
+        }
+        comp.display = built
+            .cands
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_else(|| comp.raw.clone());
         comp.seg_spans = built
             .cands
             .first()

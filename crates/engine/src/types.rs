@@ -1,0 +1,83 @@
+//! 引擎与宿主、功能模块共享的输入 DTO。
+//!
+//! 这些类型不依赖窗口系统或平台 API;TSF/Server、E2E 与后续功能模块都通过
+//! 它们交换按键、事件、配置与组合快照。
+
+use lueying_dict::Fuzzy;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Chinese,
+    English,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Letter(char),
+    Digit(u8),
+    Space,
+    Enter,
+    Esc,
+    Backspace,
+    Delete,
+    /// Ctrl+Backspace:删除光标前一个音节。
+    SegmentBackspace,
+    /// Ctrl+Delete:删除光标后一个音节。
+    SegmentDelete,
+    Left,
+    Right,
+    /// Ctrl+Left/Ctrl+Right:按音节移动组合光标。
+    SegmentLeft,
+    SegmentRight,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    /// 删除当前高亮候选的学习记录(Shift+Delete);词典词条本身不受影响。
+    DeleteCandidate,
+    Punct(char),
+    Shift,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    /// 上屏一段文本。
+    Commit(String),
+    /// 模式切换。
+    Mode(Mode),
+    /// 键不被输入法处理,交还宿主直通。
+    Passthrough(Key),
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub fuzzy: Fuzzy,
+    pub chinese_punct: bool,
+    pub page_size: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            // 零配置:核心模糊组默认参与召回,排序由处数罚分与学习覆盖负责。
+            fuzzy: Fuzzy::auto(),
+            chinese_punct: true,
+            page_size: 5,
+        }
+    }
+}
+
+/// 组合态快照(UI 用)。
+#[derive(Clone, Debug)]
+pub struct Composition {
+    /// 原始输入(小写字母与隔音符)。
+    pub raw: String,
+    /// 光标(原始串内字节偏移,内容全 ASCII)。
+    pub cursor: usize,
+    /// 内联显示文本:首选转换,无候选时原文。
+    pub display: String,
+    /// 当前切分各音节的原始区间。
+    pub seg_spans: Vec<(usize, usize)>,
+}

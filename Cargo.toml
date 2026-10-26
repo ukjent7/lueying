@@ -1,17 +1,20 @@
 [workspace]
 resolver = "3"
 members = [
+    # 核心:平台无关的词典、引擎、模型与协议
     "crates/dict",
     "crates/engine",
-    "crates/e2e",
-    "crates/install-e2e",
-    "crates/installer",
     "crates/lm",
-    "crates/protocol",
     "crates/rerank",
+    "crates/protocol",
+    # Windows 宿主与安装
     "crates/server",
     "crates/tsf",
+    "crates/installer",
+    # 验证与工具
+    "crates/e2e",
     "crates/win-e2e",
+    "crates/install-e2e",
     "xtask",
 ]
 

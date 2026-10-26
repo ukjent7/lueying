@@ -20,8 +20,9 @@ mod imp {
 
     use lueying_dict::Dictionary;
     use lueying_dict::gram::Gram;
+    use lueying_engine::module::Modules;
     use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
-    use lueying_protocol::{Reply, Request, SessionView, pipe_name};
+    use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
     use lueying_rerank::{Model, Rerank};
     use lueying_server::config::{self, AppConfig};
     use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
@@ -94,6 +95,8 @@ mod imp {
         pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
         /// 所有会话共用一份学习结果。
         pub(super) user: SharedUser,
+        /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
+        pub(super) modules: Arc<Modules>,
         /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
         pub(super) config: RwLock<AppConfig>,
         pub(super) config_path: Option<PathBuf>,
@@ -177,6 +180,7 @@ mod imp {
             settle_tx,
             uia_tx: Some(uia_tx),
             user,
+            modules: crate::modules::registry(),
             config: RwLock::new(app_config),
             config_path,
             chinese: AtomicBool::new(true),
@@ -298,7 +302,9 @@ mod imp {
                         .read()
                         .unwrap_or_else(|p| p.into_inner())
                         .engine();
-                    Engine::new(Arc::clone(&state.dict), cfg).with_user(Arc::clone(&state.user))
+                    Engine::new(Arc::clone(&state.dict), cfg)
+                        .with_user(Arc::clone(&state.user))
+                        .with_modules(Arc::clone(&state.modules))
                 };
                 if let Some(g) = &state.gram {
                     engine = engine.with_gram(Arc::clone(g));
@@ -348,7 +354,7 @@ mod imp {
                 // 鼠标点选可能还没被 TSF 的 Sync 取走;先记下,和本次按键的
                 // 结果一起写,避免快速连打把点选上屏吞掉。
                 let carried = s.ui_reply.take();
-                let engine_key: Key = key.into();
+                let engine_key = engine_key(key);
                 let shift_toggle = state
                     .config
                     .read()
@@ -830,6 +836,35 @@ mod imp {
         }
     }
 
+    /// 协议按键转换成引擎按键。转换放在 Server 边界,协议 crate 不依赖引擎,
+    /// TSF DLL 也就不会因此链接进整个引擎。
+    fn engine_key(key: KeyMsg) -> Key {
+        match key {
+            KeyMsg::Letter(c) => Key::Letter(c),
+            KeyMsg::Digit(d) => Key::Digit(d),
+            KeyMsg::Space => Key::Space,
+            KeyMsg::Enter => Key::Enter,
+            KeyMsg::Esc => Key::Esc,
+            KeyMsg::Backspace => Key::Backspace,
+            KeyMsg::Delete => Key::Delete,
+            KeyMsg::SegmentBackspace => Key::SegmentBackspace,
+            KeyMsg::SegmentDelete => Key::SegmentDelete,
+            KeyMsg::Left => Key::Left,
+            KeyMsg::Right => Key::Right,
+            KeyMsg::SegmentLeft => Key::SegmentLeft,
+            KeyMsg::SegmentRight => Key::SegmentRight,
+            KeyMsg::Up => Key::Up,
+            KeyMsg::Down => Key::Down,
+            KeyMsg::Home => Key::Home,
+            KeyMsg::End => Key::End,
+            KeyMsg::PageUp => Key::PageUp,
+            KeyMsg::PageDown => Key::PageDown,
+            KeyMsg::DeleteCandidate => Key::DeleteCandidate,
+            KeyMsg::Punct(c) => Key::Punct(c),
+            KeyMsg::Shift => Key::Shift,
+        }
+    }
+
     fn current_mode(state: &State) -> Mode {
         if state.chinese.load(Ordering::Relaxed) {
             Mode::Chinese
@@ -1156,6 +1191,9 @@ mod imp {
         s.view.chinese = s.engine.mode() == Mode::Chinese;
     }
 }
+
+#[cfg(windows)]
+mod modules;
 
 #[cfg(windows)]
 mod pipe;
