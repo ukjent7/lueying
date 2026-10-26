@@ -28,7 +28,11 @@ pub fn spawn_detached(exe: &Path, dir: Option<&Path>) -> Result<(), String> {
 
     let exe_wide = wide(exe);
     let dir_wide = dir.map(wide);
-    let dir_ptr = PCWSTR(dir_wide.as_ref().map_or(std::ptr::null(), |dir| dir.as_ptr()));
+    let dir_ptr = PCWSTR(
+        dir_wide
+            .as_ref()
+            .map_or(std::ptr::null(), |dir| dir.as_ptr()),
+    );
     let mut startup = STARTUPINFOW {
         cb: size_of::<STARTUPINFOW>() as u32,
         ..Default::default()

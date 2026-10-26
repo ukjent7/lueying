@@ -99,7 +99,11 @@ mod imp {
         phase(&format!("{name}: 退出 {:?}", status.code()));
         let stdout = std::fs::read(&out_path).unwrap_or_default();
         let stderr = std::fs::read(&err_path).unwrap_or_default();
-        Ok(Output { status, stdout, stderr })
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
     }
 
     /// 安装器、更新器与卸载器共用的隔离环境。
