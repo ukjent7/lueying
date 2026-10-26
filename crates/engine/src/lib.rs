@@ -143,6 +143,8 @@ pub struct Engine {
     last_word: Option<String>,
     /// 最近上屏的倒数第二个词;三词窗口加分与学习使用。
     second_last_word: Option<String>,
+    /// 宿主 exe 名(小写,不含路径);按应用学习使用,空表示未知宿主。
+    host: String,
     /// 候选提交已在 `apply_consume` 学过词级转移的条数。
     transition_handled: usize,
     /// 宿主注入的本地时间;快捷输入按它生成日期/时间候选。
@@ -176,6 +178,7 @@ impl Engine {
             quick_handled: 0,
             last_word: None,
             second_last_word: None,
+            host: String::new(),
             transition_handled: 0,
             now: None,
             rev: 0,
@@ -207,6 +210,11 @@ impl Engine {
             self.phrase = None;
         }
         self.learning = enabled;
+    }
+
+    /// 记录宿主 exe 名,用于按应用学习;空名(未知宿主)不产生应用偏好。
+    pub fn set_host(&mut self, host: &str) {
+        self.host = host.trim().to_ascii_lowercase();
     }
 
     pub fn mode(&self) -> Mode {
@@ -1089,6 +1097,7 @@ impl Engine {
                 self.last_word.as_deref(),
                 &cand.words,
             );
+            user.learn_app(&self.host, &cand.words);
         }
         if cand.quick {
             // 让 `note_events` 把上一条词序切断,而不是把日期记成前词。
@@ -1339,6 +1348,7 @@ impl Engine {
             self.gram.as_deref(),
             &mut self.gram_cache,
             &context,
+            &self.host,
             self.second_last_word.as_deref(),
             self.last_word.as_deref(),
             &comp.raw,

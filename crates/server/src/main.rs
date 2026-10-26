@@ -306,6 +306,7 @@ mod imp {
                 engine.set_mode(current_mode(state));
                 engine.set_fullwidth(state.fullwidth.load(Ordering::Relaxed));
                 engine.set_now(local_time());
+                engine.set_host(&host);
                 let chinese = engine.mode() == Mode::Chinese;
                 sessions.insert(
                     session,

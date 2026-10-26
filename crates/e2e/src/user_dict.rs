@@ -29,6 +29,10 @@
 //!     新会话继续生效。
 //! 20. 三词窗口写了却不参与排序 → 上屏「你」「好」后输入 `xian`,应偏向「先」;
 //!     标点切断词序时必须退回「现」。
+//! 21. 按应用偏好只留在内存 → Code.exe 里常选的词必须随词库导出/导入,
+//!     应用名大小写不同也要归并成一份记录。
+//! 22. 按应用偏好写了却不参与排序 → Code.exe 下输入 `xian` 应偏向「先」,
+//!     换到 chrome.exe 或无宿主时仍以全局词频为准。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -332,6 +336,73 @@ pub fn run(report: &mut String) -> usize {
         "标点切断三词窗口",
         tri_after == "现" && tri_after == tri_base,
         format!("逗号后首选 {tri_after}"),
+    );
+
+    // 按应用偏好:Code.exe 里选「先」后应记下宿主(小写),并随词库往返。
+    let mut app_flow = Engine::new(Arc::clone(&dict), Config::default());
+    app_flow.set_host("Code.exe");
+    for ch in "xian".chars() {
+        app_flow.process(Key::Letter(ch));
+    }
+    let app_picked = pick_word(&mut app_flow, "先");
+    let app_export = app_flow.export_user();
+    push(
+        &mut checks,
+        "上屏写入应用偏好",
+        app_picked
+            && app_export
+                .lines()
+                .any(|l| l.starts_with("@app\tcode.exe\t先\t")),
+        app_export
+            .lines()
+            .find(|l| l.starts_with("@app\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let mut app_restored = Engine::new(Arc::clone(&dict), Config::default());
+    app_restored.import_user(&app_export);
+    let app_reexport = app_restored.export_user();
+    push(
+        &mut checks,
+        "应用偏好导出导入往返",
+        app_reexport
+            .lines()
+            .any(|l| l.starts_with("@app\tcode.exe\t先\t")),
+        app_reexport
+            .lines()
+            .find(|l| l.starts_with("@app\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+
+    // 应用偏好参与排序:同一份词库在 Code.exe 下偏向「先」,换宿主或无宿主回到「现」。
+    // 导入行故意用大写宿主名,验证导入与查询都会归一到小写。
+    let app_line = format!("@app\tCODE.EXE\t先\t100\t{now}\n");
+    let mut app_code = Engine::new(Arc::clone(&dict), Config::default());
+    app_code.import_user(&app_line);
+    app_code.set_host("Code.exe");
+    for ch in "xian".chars() {
+        app_code.process(Key::Letter(ch));
+    }
+    let app_top = app_code.candidates().first().cloned().unwrap_or_default();
+    let mut app_chrome = Engine::new(Arc::clone(&dict), Config::default());
+    app_chrome.import_user(&app_line);
+    app_chrome.set_host("chrome.exe");
+    for ch in "xian".chars() {
+        app_chrome.process(Key::Letter(ch));
+    }
+    let app_other = app_chrome.candidates().first().cloned().unwrap_or_default();
+    let mut app_none = Engine::new(Arc::clone(&dict), Config::default());
+    app_none.import_user(&app_line);
+    for ch in "xian".chars() {
+        app_none.process(Key::Letter(ch));
+    }
+    let app_plain = app_none.candidates().first().cloned().unwrap_or_default();
+    push(
+        &mut checks,
+        "应用偏好改变首选",
+        app_top == "先" && app_other == "现" && app_plain == "现",
+        format!("Code {app_top} / chrome {app_other} / 无宿主 {app_plain}"),
     );
 
     // 两个会话共用一份词库:一边导入,另一边立刻用它排序。

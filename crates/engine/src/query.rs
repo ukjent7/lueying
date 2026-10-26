@@ -772,6 +772,7 @@ fn build_exact(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    host: &str,
     previous2: Option<&str>,
     previous: Option<&str>,
     raw: &str,
@@ -911,6 +912,7 @@ fn build_exact(
     // 进入 beam 的路径,这里再让用户常打的前后搭配与词序在同一批路径里靠前。
     for cand in &mut full {
         cand.score += user.context_bonus(context, &cand.text);
+        cand.score += user.app_bonus(host, &cand.words);
         cand.score += user.transition_bonus(previous, &cand.words);
         cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
@@ -946,6 +948,7 @@ fn build_exact(
     // 前缀词也吃同一份个人上下文,逐段上屏时第一段就能按习惯排序。
     for cand in &mut words {
         cand.score += user.context_bonus(context, &cand.text);
+        cand.score += user.app_bonus(host, &cand.words);
         cand.score += user.transition_bonus(previous, &cand.words);
         cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
@@ -1003,6 +1006,7 @@ pub fn build(
     gram: Option<&Gram>,
     cache: &mut HashMap<(String, String, bool), f64>,
     context: &str,
+    host: &str,
     previous2: Option<&str>,
     previous: Option<&str>,
     raw: &str,
@@ -1014,6 +1018,7 @@ pub fn build(
         gram,
         cache,
         context,
+        host,
         previous2,
         previous,
         raw,
@@ -1046,6 +1051,7 @@ pub fn build(
             gram,
             cache,
             context,
+            host,
             previous2,
             previous,
             &correction,

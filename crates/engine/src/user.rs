@@ -1,5 +1,5 @@
-//! 用户词典:选词提频、同键跳过降权、自动造词、字级搭配与词级 n-gram 学习,
-//! 带指数衰减,支持导出/导入。
+//! 用户词典:选词提频、同键跳过降权、自动造词、字级搭配、词级/三词 n-gram
+//! 与按应用偏好学习,带指数衰减,支持导出/导入。
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,6 +26,11 @@ const TRANSITION_BONUS_MAX: f64 = 1.2;
 const MAX_TRIGRAMS: usize = 20_000;
 const TRIGRAM_BONUS_STEP: f64 = 0.12;
 const TRIGRAM_BONUS_MAX: f64 = 0.9;
+/// 按应用的词偏好上限与加分。应用内常用词只做同分附近的个人化,
+/// 全局词频仍是主依据。
+const MAX_APP_WORDS: usize = 20_000;
+const APP_BONUS_STEP: f64 = 0.15;
+const APP_BONUS_MAX: f64 = 0.9;
 /// 同键下被跳过的候选。用户每次选后面的词,前面被越过的候选记一次小负分;
 /// 再选中它时清除。负分只够翻动同分附近,不会把常用词压到长尾后面。
 const MAX_REJECTS: usize = 20_000;
@@ -103,6 +108,8 @@ pub struct UserDict {
     transitions: HashMap<String, HashMap<String, ContextStat>>,
     /// 前两词 → 后词 → 次数。三词窗口约束常见句式,权重低于词对。
     trigrams: HashMap<String, HashMap<String, HashMap<String, ContextStat>>>,
+    /// 宿主 exe(小写) → 词 → 次数。应用内常用词只加小分,不改全局词频。
+    apps: HashMap<String, HashMap<String, ContextStat>>,
     /// 学习键 → 被跳过的词 → 次数。用户在同键下越过它选了别的词;
     /// 只小幅降权,并让精确首位保护让位。
     rejects: HashMap<String, HashMap<String, RejectStat>>,
@@ -160,6 +167,7 @@ impl UserDict {
         self.context.clear();
         self.transitions.clear();
         self.trigrams.clear();
+        self.apps.clear();
         self.rejects.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
@@ -409,6 +417,62 @@ impl UserDict {
         bonus.min(TRIGRAM_BONUS_MAX)
     }
 
+    /// 记录一段已上屏词在宿主应用内的使用。只影响该应用下的排序,
+    /// 不改全局词频;宿主名统一小写,空名(未知宿主)不学习。
+    pub fn learn_app(&mut self, host: &str, words: &[String]) {
+        let host = host.trim().to_ascii_lowercase();
+        if host.is_empty() || words.iter().all(|word| word.is_empty()) {
+            return;
+        }
+        let current = now();
+        let app = self.apps.entry(host).or_default();
+        let mut changed = false;
+        for word in words {
+            if word.is_empty() {
+                continue;
+            }
+            let stat = app.entry(word.clone()).or_default();
+            stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
+                stat.count / 2 + 1
+            } else {
+                stat.count.saturating_add(1)
+            };
+            stat.ts = current;
+            changed = true;
+        }
+        if changed {
+            if self.app_count() > MAX_APP_WORDS {
+                self.prune_apps();
+            }
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
+    /// 一个候选词序列在指定应用内的个人偏好加分。`host` 需已是小写;
+    /// 应用内常用词只做同分附近的个人化。
+    pub fn app_bonus(&self, host: &str, words: &[String]) -> f64 {
+        if host.is_empty() || self.apps.is_empty() {
+            return 0.0;
+        }
+        let Some(app) = self.apps.get(host) else {
+            return 0.0;
+        };
+        let current = now();
+        let mut bonus = 0.0;
+        for word in words {
+            if word.is_empty() {
+                continue;
+            }
+            if let Some(stat) = app.get(word.as_str()) {
+                let effective = stat.effective(current);
+                if effective > 0 {
+                    bonus += (1.0 + f64::from(effective)).ln() * APP_BONUS_STEP;
+                }
+            }
+        }
+        bonus.min(APP_BONUS_MAX)
+    }
+
     /// 一个候选词序列在当前前词下的个人语序加分。
     pub fn transition_bonus<'a>(&self, previous: Option<&'a str>, words: &'a [String]) -> f64 {
         if self.transitions.is_empty() {
@@ -505,6 +569,32 @@ impl UserDict {
                 .entry(mid)
                 .or_default()
                 .insert(right, stat);
+        }
+    }
+
+    fn app_count(&self) -> usize {
+        self.apps.values().map(|words| words.len()).sum()
+    }
+
+    /// 保留最常见的前九成应用词;一次性重建,摊到每次学习里的成本可忽略。
+    fn prune_apps(&mut self) {
+        let keep = MAX_APP_WORDS * 9 / 10;
+        let mut all: Vec<(String, String, ContextStat)> = Vec::new();
+        for (host, words) in self.apps.drain() {
+            for (word, stat) in words {
+                all.push((host.clone(), word, stat));
+            }
+        }
+        all.sort_by(|a, b| {
+            b.2.count
+                .cmp(&a.2.count)
+                .then(b.2.ts.cmp(&a.2.ts))
+                .then(a.0.cmp(&b.0))
+                .then(a.1.cmp(&b.1))
+        });
+        all.truncate(keep);
+        for (host, word, stat) in all {
+            self.apps.entry(host).or_default().insert(word, stat);
         }
     }
 
@@ -735,9 +825,10 @@ impl UserDict {
             self.forget_trigrams(word);
             self.rev = self.rev.wrapping_add(1);
         }
-        // 负分也是学习记录;Shift+Delete 要能一起忘掉。
+        // 负分和应用偏好也是学习记录;Shift+Delete 要能一起忘掉。
         let forgot = self.forgive_word(word);
-        removed > 0 || forgot
+        let forgot_apps = self.forget_apps(word);
+        removed > 0 || forgot || forgot_apps
     }
 
     /// 删掉一个词参与的相邻词对,避免 Shift+Delete 后旧语序还影响排序。
@@ -772,6 +863,21 @@ impl UserDict {
         });
     }
 
+    /// 删掉一个词在所有应用里的偏好记录。返回是否确实删掉了记录。
+    fn forget_apps(&mut self, word: &str) -> bool {
+        let mut changed = false;
+        self.apps.retain(|_, words| {
+            if words.remove(word).is_some() {
+                changed = true;
+            }
+            !words.is_empty()
+        });
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        changed
+    }
+
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -799,8 +905,8 @@ impl UserDict {
     }
 
     /// 导出为行文本:词条 `键<TAB>词<TAB>频次<TAB>时间戳`,
-    /// 组级/字级/词级/三词/跳过学习用 `@group`、`@context`、`@transition`、
-    /// `@trigram`、`@reject` 行;按内容排序保证文件稳定。
+    /// 组级/字级/词级/三词/应用/跳过学习用 `@group`、`@context`、`@transition`、
+    /// `@trigram`、`@app`、`@reject` 行;按内容排序保证文件稳定。
     pub fn export(&self) -> String {
         let mut keys: Vec<_> = self.map.iter().collect();
         keys.sort_by(|a, b| a.0.cmp(b.0));
@@ -874,6 +980,26 @@ impl UserDict {
                             stat.count, stat.ts
                         ));
                     }
+                }
+            }
+        }
+        let mut apps: Vec<&String> = self.apps.keys().collect();
+        apps.sort();
+        for host in apps {
+            let Some(words) = self.apps.get(host) else {
+                continue;
+            };
+            let mut used: Vec<&String> = words.keys().collect();
+            used.sort();
+            for word in used {
+                let Some(stat) = words.get(word) else {
+                    continue;
+                };
+                if stat.count > 0 {
+                    out.push_str(&format!(
+                        "@app\t{host}\t{word}\t{}\t{}\n",
+                        stat.count, stat.ts
+                    ));
                 }
             }
         }
@@ -1010,6 +1136,34 @@ impl UserDict {
                 changed = true;
                 continue;
             }
+            if k == "@app" {
+                let (Some(host), Some(word), Some(count), Some(ts), None) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let host = host.trim().to_ascii_lowercase();
+                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
+                    continue;
+                };
+                if host.is_empty() || word.is_empty() || count == 0 {
+                    continue;
+                }
+                let stat = self
+                    .apps
+                    .entry(host)
+                    .or_default()
+                    .entry(word.to_string())
+                    .or_default();
+                stat.count = stat.count.max(count);
+                stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
             if k == "@reject" {
                 let (Some(key), Some(word), Some(count), Some(ts), None) = (
                     parts.next(),
@@ -1082,6 +1236,9 @@ impl UserDict {
         }
         if self.trigram_count() > MAX_TRIGRAMS {
             self.prune_trigrams();
+        }
+        if self.app_count() > MAX_APP_WORDS {
+            self.prune_apps();
         }
         if self.reject_count() > MAX_REJECTS {
             self.prune_rejects();
