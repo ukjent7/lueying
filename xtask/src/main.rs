@@ -1,12 +1,13 @@
 //! 仓库任务:
 //! - `dict`:把白霜拼音(Rime dict.yaml)转成本项目的 TSV/二进制词典。
-//! - `pack`:把可执行文件与数据装进发布目录,生成清单与版本号。
+//! - `pack`:把可执行文件与数据装进发布目录,生成清单、版本号与 Inno 安装包。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
 //! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying`
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use lueying_dict::syllables::is_syllable;
 
@@ -111,7 +112,7 @@ fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
 const PACK_BINS: &[&str] = &[
     "lueying-server.exe",
     "lueying-settings.exe",
-    "lueying-install.exe",
+    "lueying-user.exe",
     "lueying-update.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
@@ -149,17 +150,16 @@ fn pack(args: PackArgs) -> Result<(), String> {
         .map(|name| args.bin.join(name))
         .find(|path| path.exists())
         .ok_or_else(|| format!("{} 里缺少 lueying_tsf.dll", args.bin.display()))?;
-    // 版本号入 DLL 文件名:升级时新文件不被正在运行的旧 DLL 锁住。
-    let dll_name = format!("lueying_tsf-{}.dll", safe_version(&args.version));
-    copy_file(&dll, &args.out, &dll_name, &mut files)?;
+    // 版本号由 Inno 在安装时写进目标文件名(见 installer/lueying.iss),
+    // 发布目录保持构建产物的原名,便于 E2E 直接复用。
+    copy_file(&dll, &args.out, "lueying_tsf.dll", &mut files)?;
     if let Some(bin32) = &args.bin32 {
         let dll32 = PACK_DLLS
             .iter()
             .map(|name| bin32.join(name))
             .find(|path| path.exists())
             .ok_or_else(|| format!("{} 里缺少 32 位 lueying_tsf.dll", bin32.display()))?;
-        let dll32_name = format!("lueying_tsf32-{}.dll", safe_version(&args.version));
-        copy_file(&dll32, &args.out, &dll32_name, &mut files)?;
+        copy_file(&dll32, &args.out, "lueying_tsf32.dll", &mut files)?;
     } else {
         println!("警告: 未提供 --bin32,发布包只含 x64 TSF DLL");
     }
@@ -261,7 +261,80 @@ revision 75295b373a7ef0d14e9bebd32c1625c9cfcfea49。
         files.len() + 2,
         total as f64 / (1024.0 * 1024.0)
     );
+    compile_setup(&args, &root)?;
     Ok(())
+}
+
+/// 调 ISCC 把发布目录打成 Inno Setup 安装包。输出在发布目录的父目录,
+/// 文件名与 CI 的发版资产一致:`lueying-<version>-setup.exe`。
+fn compile_setup(args: &PackArgs, root: &Path) -> Result<PathBuf, String> {
+    let iscc = iscc_path()?;
+    let script = root.join("installer/lueying.iss");
+    let payload = std::path::absolute(&args.out)
+        .map_err(|e| format!("解析发布目录 {}: {e}", args.out.display()))?;
+    let out_dir = payload
+        .parent()
+        .ok_or_else(|| "发布目录没有父目录".to_string())?
+        .to_path_buf();
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("创建 {}: {e}", out_dir.display()))?;
+    let setup = out_dir.join(format!("lueying-{}-setup.exe", args.version));
+    let _ = std::fs::remove_file(&setup);
+
+    let mut command = Command::new(&iscc);
+    command
+        .arg(format!("/DPayloadDir={}", payload.display()))
+        .arg(format!("/DOutDir={}", out_dir.display()))
+        .arg(format!("/DVersion={}", args.version))
+        .arg(format!("/DVersionSafe={}", safe_version(&args.version)))
+        .arg(format!("/DVersionInfo={}", version_info(&args.version)));
+    command.arg(&script);
+    let output = command
+        .output()
+        .map_err(|e| format!("运行 ISCC({}): {e}", iscc.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ISCC 编译失败:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let bytes = std::fs::metadata(&setup)
+        .map_err(|e| format!("读取安装包 {}: {e}", setup.display()))?
+        .len();
+    println!(
+        "安装包 {}: {:.1} MiB",
+        setup.display(),
+        bytes as f64 / (1024.0 * 1024.0)
+    );
+    Ok(setup)
+}
+
+/// CI 通过 `LUEYING_ISCC` 指定;本地默认 Inno Setup 6 的安装位置。
+fn iscc_path() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("LUEYING_ISCC").map(PathBuf::from) {
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(format!("LUEYING_ISCC 指向的 {} 不存在", path.display()));
+    }
+    [
+        PathBuf::from(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+        PathBuf::from(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or_else(|| "找不到 ISCC.exe;安装 Inno Setup 6 或设置 LUEYING_ISCC".to_string())
+}
+
+/// Inno 的 VersionInfoVersion 只接受最多四段数字;预发布后缀不进资源版本。
+fn version_info(version: &str) -> String {
+    let core = version.split('-').next().unwrap_or(version);
+    let mut parts = core
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .collect::<Vec<_>>();
+    parts.resize(4, 0);
+    format!("{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3])
 }
 
 /// 文件名安全的版本号(与安装器 `dll_name` 同一规则)。

@@ -1,5 +1,6 @@
-//! 独立更新器:等待设置窗退出,下载并校验 GitHub Release,解压后运行包里的
-//! 新安装器。更新器自身从临时副本运行,安装目录里的 exe 才不会被自己锁住。
+//! 独立更新器:等待设置窗退出,下载并校验 GitHub Release 里的 Inno 安装包,
+//! 再静默运行它完成替换。更新器自身从临时副本运行,安装目录里的 exe 才不会被
+//! 自己锁住。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -29,7 +30,8 @@ mod imp {
 
     #[derive(Default)]
     struct Options {
-        zip: Option<PathBuf>,
+        installer: Option<PathBuf>,
+        install_dir: Option<PathBuf>,
         url: Option<String>,
         sha_url: Option<String>,
         sha256: Option<String>,
@@ -135,7 +137,7 @@ mod imp {
             log_line(log, &format!("等待设置窗口 {pid} 退出"));
             update::wait_for_process(pid, 30_000)?;
         }
-        let zip = match &options.zip {
+        let installer = match &options.installer {
             Some(path) => {
                 if let Some(expected) = &options.sha256 {
                     verify_sha(path, expected)?;
@@ -143,8 +145,8 @@ mod imp {
                 path.clone()
             }
             None => {
-                let url = options.url.as_deref().ok_or("缺少 --url 或 --zip")?;
-                let dest = temp.join(format!("lueying-{}.zip", safe_name(version)));
+                let url = options.url.as_deref().ok_or("缺少 --url 或 --installer")?;
+                let dest = temp.join(format!("lueying-{}-setup.exe", safe_name(version)));
                 log_line(log, &format!("下载 {url}"));
                 update::download(url, &dest, options.size)?;
                 log_line(log, "校验 SHA-256");
@@ -162,27 +164,31 @@ mod imp {
                 dest
             }
         };
-        let staging = temp.join("package");
-        log_line(log, "解压更新包");
-        update::extract_zip(&zip, &staging)?;
-        log_line(log, "校验更新包");
-        update::validate_package(&staging, version)?;
-        let installer = staging.join("lueying-install.exe");
-        log_line(log, "运行新安装器");
-        let output = Command::new(&installer)
-            .arg("--quiet")
-            .current_dir(&staging)
-            .output()
-            .map_err(|e| format!("启动新安装器: {e}"))?;
+        let target = options
+            .install_dir
+            .clone()
+            .unwrap_or_else(update::install_target);
+        let setup_log = temp.join("setup.log");
+        log_line(log, &format!("运行安装包 {}", installer.display()));
+        let mut command = Command::new(&installer);
+        command.current_dir(temp).args([
+            "/VERYSILENT".to_string(),
+            "/SUPPRESSMSGBOXES".to_string(),
+            "/NORESTART".to_string(),
+            format!("/DIR=\"{}\"", target.display()),
+            format!("/LOG=\"{}\"", setup_log.display()),
+        ]);
+        let output = command.output().map_err(|e| format!("启动安装包: {e}"))?;
         if !output.status.success() {
-            let detail = tail(&output.stderr);
+            let detail = std::fs::read(&setup_log)
+                .map(|bytes| tail(&bytes))
+                .unwrap_or_default();
             return Err(if detail.is_empty() {
-                format!("新安装器退出码 {:?}", output.status.code())
+                format!("安装包退出码 {:?}", output.status.code())
             } else {
-                format!("新安装器退出码 {:?}: {detail}", output.status.code())
+                format!("安装包退出码 {:?}: {detail}", output.status.code())
             });
         }
-        let target = update::install_target();
         let installed = std::fs::read_to_string(target.join("version.txt")).unwrap_or_default();
         if installed.trim() != version {
             return Err(format!("安装后版本为 {},期望 {version}", installed.trim()));
@@ -246,7 +252,7 @@ mod imp {
             .join(name)
     }
 
-    /// 安装器失败时只把 stderr 尾部写进日志,避免把整段输出塞进弹窗。
+    /// 安装包失败时只把日志尾部写进错误信息,避免把整段输出塞进弹窗。
     fn tail(bytes: &[u8]) -> String {
         let start = bytes.len().saturating_sub(400);
         String::from_utf8_lossy(&bytes[start..]).trim().to_string()
@@ -304,7 +310,14 @@ mod imp {
                 match arg.as_str() {
                     "--check" => options.check = true,
                     "--quiet" => options.quiet = true,
-                    "--zip" => options.zip = Some(PathBuf::from(value(&mut args, "--zip")?)),
+                    "--installer" => {
+                        options.installer =
+                            Some(PathBuf::from(value(&mut args, "--installer")?));
+                    }
+                    "--install-dir" => {
+                        options.install_dir =
+                            Some(PathBuf::from(value(&mut args, "--install-dir")?));
+                    }
                     "--url" => options.url = Some(value(&mut args, "--url")?),
                     "--sha-url" => options.sha_url = Some(value(&mut args, "--sha-url")?),
                     "--sha256" => options.sha256 = Some(value(&mut args, "--sha256")?),

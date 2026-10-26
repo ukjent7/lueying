@@ -1,12 +1,12 @@
-//! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验、
-//! 解压并校验发布包。更新器进程用这些函数完成实际安装。
+//! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验。
+//! 更新器进程下载 Inno Setup 安装包并静默运行,由安装包完成替换。
 
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
 use std::mem::size_of;
 use std::os::windows::process::CommandExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
@@ -23,7 +23,7 @@ use windows::Win32::Networking::WinHttp::{
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
 use windows::core::{HSTRING, PWSTR};
 
-/// 更新来源;发布工作流把 `lueying-<version>.zip` 与 `.sha256` 传到这个仓库的 Release。
+/// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
 const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/latest";
 const API_LIMIT: u64 = 2 * 1024 * 1024;
 const SHA_LIMIT: u64 = 8 * 1024;
@@ -34,7 +34,7 @@ pub struct Release {
     pub version: String,
     pub tag: String,
     pub notes: String,
-    pub zip_url: String,
+    pub installer_url: String,
     pub sha_url: String,
     /// GitHub 记录的资源字节数;0 表示不校验大小。
     pub size: u64,
@@ -65,7 +65,8 @@ pub fn install_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// 安装目标目录,与安装器 `install_dir()` 使用同一套回退规则。
+/// 安装目标目录,与 Inno 安装包的默认目录 `{autopf}\lueying` 一致;
+/// `LUEYING_INSTALL_DIR` 只给自动化测试隔离用。
 pub fn install_target() -> PathBuf {
     if let Some(dir) = std::env::var_os("LUEYING_INSTALL_DIR") {
         return PathBuf::from(dir);
@@ -115,30 +116,30 @@ fn latest_release() -> Result<Option<Release>, String> {
         return Err("GitHub Release 的 tag 为空".into());
     }
     let assets = json["assets"].as_array().cloned().unwrap_or_default();
-    let zip_name = format!("lueying-{version}.zip");
-    let zip = assets
+    let setup_name = format!("lueying-{version}-setup.exe");
+    let installer = assets
         .iter()
         .find(|asset| {
             asset
                 .get("name")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|name| name.eq_ignore_ascii_case(&zip_name))
+                .is_some_and(|name| name.eq_ignore_ascii_case(&setup_name))
         })
         .or_else(|| {
             assets.iter().find(|asset| {
                 asset
                     .get("name")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(|name| name.to_ascii_lowercase().ends_with(".zip"))
+                    .is_some_and(|name| name.to_ascii_lowercase().ends_with("-setup.exe"))
             })
         })
-        .ok_or_else(|| format!("Release {tag} 没有 zip 更新包"))?;
-    let zip_url = zip["browser_download_url"]
+        .ok_or_else(|| format!("Release {tag} 没有 setup.exe 安装包"))?;
+    let installer_url = installer["browser_download_url"]
         .as_str()
-        .ok_or("zip 更新包缺少下载地址")?
+        .ok_or("安装包缺少下载地址")?
         .to_string();
-    let zip_asset_name = zip["name"].as_str().unwrap_or(&zip_name);
-    let sha_name = format!("{zip_asset_name}.sha256");
+    let installer_name = installer["name"].as_str().unwrap_or(&setup_name);
+    let sha_name = format!("{installer_name}.sha256");
     let sha = assets
         .iter()
         .find(|asset| {
@@ -160,12 +161,12 @@ fn latest_release() -> Result<Option<Release>, String> {
         version,
         tag,
         notes: json["body"].as_str().unwrap_or("").to_string(),
-        zip_url,
+        installer_url,
         sha_url: sha["browser_download_url"]
             .as_str()
             .ok_or("校验文件缺少下载地址")?
             .to_string(),
-        size: zip["size"].as_u64().unwrap_or(0),
+        size: installer["size"].as_u64().unwrap_or(0),
     }))
 }
 
@@ -185,11 +186,16 @@ pub fn launch_updater(release: &Release, settings_pid: u32) -> Result<(), String
     }
     let size = release.size.to_string();
     let pid = settings_pid.to_string();
+    // 更新器从临时目录运行,不能靠 current_exe 找安装目录;把设置窗所在
+    // 目录显式传过去,自定义安装位置也能正确校验。
+    let target = install_dir();
     let spawned = Command::new(&exe)
         .current_dir(&dir)
+        .arg("--install-dir")
+        .arg(&target)
         .args([
             "--url",
-            release.zip_url.as_str(),
+            release.installer_url.as_str(),
             "--sha-url",
             release.sha_url.as_str(),
             "--version",
@@ -282,126 +288,9 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
     parse_sha256(&text).ok_or_else(|| "certutil 输出里没有 SHA-256".into())
 }
 
-/// 解压 zip。优先用系统自带的 bsdtar(Windows 10 1803+),失败再退回 PowerShell。
-pub fn extract_zip(zip: &Path, dest: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dest).map_err(|e| format!("创建解压目录: {e}"))?;
-    let tar = system32("tar.exe");
-    let tar_detail = match Command::new(&tar)
-        .arg("-xf")
-        .arg(zip)
-        .arg("-C")
-        .arg(dest)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        Ok(output) if output.status.success() => return Ok(()),
-        Ok(output) => format!("tar: {}", tail(&output.stderr)),
-        Err(error) => format!("tar: {error}"),
-    };
-    let powershell = system32(r"WindowsPowerShell\v1.0\powershell.exe");
-    let script = format!(
-        "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath {} -DestinationPath {} -Force",
-        ps_quote(zip),
-        ps_quote(dest)
-    );
-    let detail = match Command::new(&powershell)
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script.as_str(),
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        Ok(output) if output.status.success() => return Ok(()),
-        Ok(output) => format!("PowerShell: {}", tail(&output.stderr)),
-        Err(error) => format!("PowerShell: {error}"),
-    };
-    Err(format!("解压更新包失败({tar_detail}; {detail})"))
-}
-
-/// 校验解压后的发布包:版本、必需二进制、版本化 TSF DLL 与清单文件大小。
-pub fn validate_package(dir: &Path, version: &str) -> Result<(), String> {
-    let text = std::fs::read_to_string(dir.join("version.txt"))
-        .map_err(|e| format!("更新包缺少 version.txt: {e}"))?;
-    if text.trim() != version {
-        return Err(format!(
-            "更新包版本 {} 与期望 {version} 不一致",
-            text.trim()
-        ));
-    }
-    for name in [
-        "lueying-install.exe",
-        "lueying-server.exe",
-        "lueying-settings.exe",
-        "lueying-update.exe",
-    ] {
-        if !dir.join(name).is_file() {
-            return Err(format!("更新包缺少 {name}"));
-        }
-    }
-    let dll = format!("lueying_tsf-{}.dll", safe_version(version));
-    if !dir.join(&dll).is_file() {
-        return Err(format!("更新包缺少 {dll}"));
-    }
-    let manifest = std::fs::read(dir.join("manifest.json"))
-        .map_err(|e| format!("更新包缺少 manifest.json: {e}"))?;
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&manifest).map_err(|e| format!("更新包 manifest 无效: {e}"))?;
-    if manifest["version"].as_str() != Some(version) {
-        return Err("更新包 manifest 版本与目录不一致".into());
-    }
-    let files = manifest["files"]
-        .as_array()
-        .ok_or("更新包 manifest 缺少 files")?;
-    for entry in files {
-        let name = entry["path"]
-            .as_str()
-            .ok_or("更新包 manifest 文件项缺少 path")?;
-        let path = Path::new(name);
-        let unsafe_path = path.is_absolute()
-            || path.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            });
-        if unsafe_path {
-            return Err(format!("更新包 manifest 含不安全路径 {name}"));
-        }
-        let metadata =
-            std::fs::metadata(dir.join(path)).map_err(|e| format!("更新包缺少 {name}: {e}"))?;
-        if let Some(bytes) = entry["bytes"].as_u64() {
-            if metadata.len() != bytes {
-                return Err(format!(
-                    "更新包 {name} 大小不符: {} != {bytes}",
-                    metadata.len()
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn normalize_version(tag: &str) -> String {
     let tag = tag.trim();
     tag.strip_prefix('v').unwrap_or(tag).to_string()
-}
-
-fn safe_version(version: &str) -> String {
-    version
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
@@ -417,10 +306,6 @@ fn system32(name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
         .join("System32")
         .join(name)
-}
-
-fn ps_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 
 fn tail(bytes: &[u8]) -> String {

@@ -178,6 +178,17 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
+      # 安装冒烟每次都用 ISCC 编译真实安装包;发版打包也复用同一份脚本。
+      # 直接下载固定版本,避免 choco 包版本漂移。
+      - name: 安装 Inno Setup
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $setup
+          Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 安装失败" }
+          "LUEYING_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # ARM64 没有别的构建步骤;32 位 TSF 下面的 Build 32-bit TSF 已经覆盖。
       - name: ARM64 TSF 编译检查
         run: |
@@ -212,7 +223,7 @@ jobs:
           Pop-Location
           exit $code
       - name: 安装/卸载冒烟
-        # 构建失败时没有 lueying-install.exe,这条只会在日志里添一条假失败。
+        # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
         if: always() && steps.build.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
@@ -233,8 +244,8 @@ jobs:
             # 子进程输出走文件,超时/非零退出时看最后一段。
             target/install-e2e-logs/
       # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
-      # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 zip/sha256 并创建 Release;
-      # 代码签名仍未接,更新包目前是未签名构建。
+      # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 setup.exe/sha256 并创建 Release;
+      # 代码签名仍未接,安装包目前是未签名构建。
       - name: 下载白霜词库(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -274,32 +285,29 @@ jobs:
           test -f dist/lueying/LICENSE
           test -f dist/lueying/licenses/Apache-2.0.txt
           test -f dist/lueying/licenses/CC-BY-4.0.txt
+          test -f dist/lueying/lueying-user.exe
           test -f dist/lueying/lueying-update.exe
-          ls dist/lueying/lueying_tsf-*.dll >/dev/null
-          ls dist/lueying/lueying_tsf32-*.dll >/dev/null
+          test -f dist/lueying/lueying_tsf.dll
+          test -f dist/lueying/lueying_tsf32.dll
           test -f dist/lueying/main.gram
+          ls dist/lueying-*-setup.exe >/dev/null
           if [ -n "${VERSION:-}" ]; then
             test "$(cat dist/lueying/version.txt)" = "$VERSION"
+            test -f "dist/lueying-$VERSION-setup.exe"
           fi
           du -sh dist/lueying
-      - name: 生成更新包与校验文件
+          ls -lh dist/lueying-*-setup.exe
+      - name: 生成安装包校验文件
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $version = $env:VERSION
           if (-not $version) { throw "缺少 VERSION" }
-          $name = "lueying-$version.zip"
-          $zip = Join-Path "dist" $name
-          Remove-Item $zip -ErrorAction SilentlyContinue
-          tar.exe -a -cf $zip -C dist/lueying .
-          if ($LASTEXITCODE -ne 0) { throw "zip 打包失败" }
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $name" | Set-Content -Path "$zip.sha256" -Encoding ascii -NoNewline
-          $entries = tar.exe -tf $zip
-          if (-not ($entries -match 'lueying-update\.exe$')) {
-            throw "更新包缺少 lueying-update.exe"
-          }
-          Get-Item $zip | Select-Object Name, Length
+          $setup = "dist/lueying-$version-setup.exe"
+          if (-not (Test-Path $setup)) { throw "缺少 $setup" }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  lueying-$version-setup.exe" | Set-Content -Path "$setup.sha256" -Encoding ascii -NoNewline
+          Get-Item $setup | Select-Object Name, Length
       - name: 发布 GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -308,16 +316,16 @@ jobs:
         run: |
           $version = $env:VERSION
           $tag = $env:GITHUB_REF_NAME
-          $zip = "dist/lueying-$version.zip"
-          $sha = "$zip.sha256"
+          $setup = "dist/lueying-$version-setup.exe"
+          $sha = "$setup.sha256"
           gh release view $tag 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $zip $sha --clobber
+            gh release upload $tag $setup $sha --clobber
           } elseif ($version.Contains('-')) {
             # 预发布不能成为 releases/latest,否则稳定版用户会被升级到 beta。
-            gh release create $tag $zip $sha --title "掠影 $version" --generate-notes --prerelease
+            gh release create $tag $setup $sha --title "掠影 $version" --generate-notes --prerelease
           } else {
-            gh release create $tag $zip $sha --title "掠影 $version" --generate-notes
+            gh release create $tag $setup $sha --title "掠影 $version" --generate-notes
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release 发布失败" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -326,5 +334,5 @@ jobs:
           name: lueying-windows
           path: |
             dist/lueying
-            dist/lueying-*.zip
-            dist/lueying-*.zip.sha256
+            dist/lueying-*-setup.exe
+            dist/lueying-*-setup.exe.sha256
