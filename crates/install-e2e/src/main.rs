@@ -226,9 +226,7 @@ mod imp {
             checks.push("已加入当前用户输入法列表".into());
 
             phase("更新器升级");
-            update_installed(
-                &payload, version, &target, &root, &dist, &local, &appdata, &trace,
-            )?;
+            update_installed(&payload, &target, &root, &dist, &local, &appdata, &trace)?;
             checks.push("更新器升级到 9.9.9".into());
 
             phase("卸载");
@@ -405,7 +403,6 @@ mod imp {
     #[allow(clippy::too_many_arguments)]
     fn update_installed(
         payload: &Path,
-        version: &str,
         target: &Path,
         root: &Path,
         dist: &Path,
@@ -436,6 +433,13 @@ mod imp {
         .map_err(|e| format!("复制更新包许可证: {e}"))?;
         std::fs::write(package.join("version.txt"), "9.9.9\n")
             .map_err(|e| format!("写更新包 version.txt: {e}"))?;
+
+        // 被宿主加载的旧 DLL 允许留到下次,所以用未注册的合成文件验证 --prune。
+        let stale = ["lueying_tsf-0.0.1.dll", "lueying_tsf32-0.0.1.dll"];
+        for name in stale {
+            std::fs::write(target.join(name), b"stale")
+                .map_err(|e| format!("写旧 DLL {name}: {e}"))?;
+        }
 
         phase("编译 9.9.9 安装包");
         let setup = compile_setup(&package, "9.9.9", dist)?;
@@ -476,9 +480,10 @@ mod imp {
                 return Err(format!("更新后缺少 {name}"));
             }
         }
-        let old = format!("lueying_tsf-{}.dll", safe_version(version));
-        if target.join(&old).exists() {
-            return Err(format!("更新后仍留着旧 DLL {old}"));
+        for name in stale {
+            if target.join(name).exists() {
+                return Err(format!("更新后仍留着旧 DLL {name}"));
+            }
         }
         Ok(())
     }

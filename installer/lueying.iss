@@ -100,9 +100,10 @@ Name: "{group}\卸载掠影"; Filename: "{uninstallexe}"
 Filename: "{app}\lueying-user.exe"; Parameters: "--install"; \
     StatusMsg: "正在完成当前用户设置..."; \
     Flags: runasoriginaluser runhidden waituntilterminated
-; 旧版本 DLL 可能仍被宿主加载,删不掉的留给下次;失败不影响安装。
+; 旧版本 DLL 可能仍被宿主加载,删不掉的留给下次。Inno 不检查 [Run]
+; 进程退出码,所以 prune 失败不会中断安装。
 Filename: "{app}\lueying-user.exe"; Parameters: "--prune --keep {#VersionSafe}"; \
-    Flags: runhidden waituntilterminated ignoreerrors
+    Flags: runhidden waituntilterminated
 
 [UninstallRun]
 Filename: "{app}\lueying-user.exe"; Parameters: "--uninstall"; \
