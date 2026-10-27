@@ -105,6 +105,8 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         raw,
     } = args;
     let total = dict.total_weight() as f64;
+    // 短串的候选空间小,放宽束宽多留同音词;长句的每档组合多,保持窄束。
+    let beam = if raw.len() <= SHORT_RAW { BEAM_SHORT } else { BEAM };
     let mut q = Querier {
         dict,
         user,
@@ -200,7 +202,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             }
         }
         cands.sort_by(|a, b| b.score.total_cmp(&a.score));
-        cands.truncate(BEAM);
+        cands.truncate(beam);
         best[j] = cands;
     }
 
@@ -249,10 +251,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     }
     // 整串没有精确词典词时,尝试把末音节补成更长的音节。像 `bulianhougu`
     // 这种少打末尾字母的输入,精确图只能给出碎词;补全让整词也有机会进首页。
-    if !full
-        .iter()
-        .any(|c| c.trusted && c.freq >= COMPLETION_EXACT_MIN_FREQ)
-    {
+    if !full.iter().any(|c| exact_full_word(raw, c)) {
         let completed = completion_candidates(raw, dict, total);
         full.extend(completed);
     }
@@ -363,6 +362,17 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         safe_extend,
         typing_prefix: typing,
     }
+}
+
+/// 整串精确整词:每个音节都必须是完整拼音,不能靠把半个音节当简拼凑出来。
+/// `niha` 的「你好啊」来自 `ni h a`(`h` 当 `hao` 的简拼),这不是用户少打一个
+/// 字母的证据;它不该挡住补全出的「你好」。
+fn exact_full_word(raw: &str, cand: &Candidate) -> bool {
+    cand.trusted
+        && cand.freq >= COMPLETION_EXACT_MIN_FREQ
+        && cand.spans.iter().all(|&(start, end)| {
+            syllables::is_syllable(syllables::canonical(&raw[start..end]))
+        })
 }
 
 /// 末音节补全:把最后一个音节换成词典里更长的音节,只保留音节数不变、

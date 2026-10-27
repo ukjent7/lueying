@@ -314,6 +314,19 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?} 词库 {} 行", exported.lines().count()),
     );
 
+    // 「你好啊」也能用 ni h a 吃完 niha,但那是把 h 当 hao 的简拼;不能
+    // 因此挡掉用户少打末字母时补出的「你好」。
+    let (dict, bad) = Dictionary::from_text("你好\t5328\tni'hao\n你好啊\t89\tni'hao'a\n");
+    assert_eq!(bad, 0, "简拼撞车测试词库不应有坏行");
+    let mut shortened = Engine::new(Arc::new(dict), Config::default());
+    letters(&mut shortened, "niha");
+    push(
+        &mut checks,
+        "简拼整词不挡补全",
+        top(&shortened) == "你好",
+        format!("{:?}", shortened.candidates()),
+    );
+
     let mut exact = mini();
     letters(&mut exact, "nihao");
     push(
