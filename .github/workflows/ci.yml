@@ -1,3 +1,5 @@
+# push/PR 只做构建与静态检查;E2E 与准确率基准在 quality.yml,
+# 每 30 分钟检查一次,同一提交成功跑过就跳过。
 name: ci
 
 on:
@@ -6,14 +8,6 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
-    inputs:
-      full_bench:
-        description: 跑全量候选准确率基准(约 20 分钟)
-        type: boolean
-        default: false
-  schedule:
-    # 每天 UTC 18:00(北京时间 02:00)跑一次全量基准,避免每次 push 都等全语料。
-    - cron: "0 18 * * *"
 
 permissions:
   contents: read
@@ -93,73 +87,6 @@ jobs:
       # 不必为此在 Windows 上编译整棵 GPUI 依赖树。
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
-      - name: 引擎 E2E(内置词库)
-        run: cargo run -p lueying-e2e --release --locked
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: e2e-report-mini
-          path: target/e2e-report.md
-
-  dict:
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      # 与 engine 一致按事件 SHA 检出:同一轮 fmt-bot 回推不参与本次验证。
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # 词库/模型都由钉死 commit 的脚本生成,词典转换又是纯函数;按脚本与解析
-      # 源码做键缓存 data/,大多数 push 可以直接跳过下载与 90 秒转换。
-      - name: 缓存词典与模型
-        id: dict-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'crates/dict/src/**', 'Cargo.lock') }}
-      - name: 下载白霜词库
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_frost.sh data/frost
-      - name: 下载神经重排模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载精简语法模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_gram.sh data
-      - name: 转换词典
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      # push/PR 只跑确定性等距子集;全量语料放夜间与手动触发。
-      - name: 主词典 E2E + 候选准确率基准(快速/夜间全量)
-        shell: bash
-        run: |
-          mode=--bench-fast
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.full_bench }}" = "true" ]; then
-            mode=--bench
-          fi
-          cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank "$mode"
-      - name: 上传 E2E/基准报告
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dict-report
-          path: |
-            target/e2e-report.md
-            target/bench-report.md
-      # 90MB 词典只在夜间/手动/发版时留档:日常 push 看报告与缓存即可,
-      # 每次都传会拖慢收尾并长期占满 artifact 配额。
-      - name: 上传词典(夜间/手动/发版)
-        if: always() && (github.event_name == 'schedule' || github.event.inputs.full_bench == 'true' || startsWith(github.ref, 'refs/tags/'))
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dict-pipeline
-          path: |
-            data/main.tsv
-            data/main.pyd
-            data/main.gram
-            target/e2e-report.md
-            target/bench-report.md
 
   windows:
     if: ${{ !cancelled() }}
@@ -178,9 +105,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
-      # 安装冒烟每次都用 ISCC 编译真实安装包;发版打包也复用同一份脚本。
+      # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。
       - name: 安装 Inno Setup
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $setup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
@@ -197,21 +125,28 @@ jobs:
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
-        # 只编 Windows 验证与发版真正用到的包;e2e/xtask 等按需再编,
-        # 避免每次 push 都为不参与 Windows 测试的二进制付链接时间。
-        run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+        # 只编发版真正用到的包;E2E 宿主只在手动/tag 验证时再编。
+        # 日常 E2E 已移到 quality.yml,每 30 分钟跑一次。
+        run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer
+      - name: Build E2E harness
+        id: build_e2e
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        run: cargo build --release --locked -p lueying-win-e2e -p lueying-install-e2e
       - name: Build 32-bit TSF
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: Copy-Item target/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
       - name: Build 32-bit E2E host
         id: build32
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
       - name: Windows 全链路 E2E
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
       - name: 32 位 TSF 全链路 E2E
-        if: always() && steps.build.outcome == 'success' && steps.build32.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build32.outcome == 'success'
         shell: pwsh
         run: |
           $dir = "target/i686-pc-windows-msvc/release"
@@ -224,11 +159,11 @@ jobs:
           exit $code
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
-        if: always() && steps.build.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
+        if: always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
         with:
           name: win-e2e-report
           path: |
