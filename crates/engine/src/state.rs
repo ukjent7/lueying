@@ -296,6 +296,68 @@ impl Engine {
         self.pick(self.page * ps + slot)
     }
 
+    /// 置顶当前页第 `slot` 条:整个组合键下记住该词,此后直接放首位。
+    /// 只收覆盖整串的普通候选;返回是否置顶成功。
+    pub fn pin_in_page(&mut self, slot: usize) -> bool {
+        let ps = self.cfg.page_size.max(1);
+        self.pin(self.page * ps + slot)
+    }
+
+    pub fn pin(&mut self, index: usize) -> bool {
+        let Some(cand) = self.cands.get(index).cloned() else {
+            return false;
+        };
+        if cand.quick || cand.no_learn || !cand.full {
+            return false;
+        }
+        let Some(comp) = self.comp.as_ref() else {
+            return false;
+        };
+        // 键用组合原文:recompute 按 raw 直查,简拼/全拼各自成键。
+        let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .pin(&comp.raw, &text);
+        self.recompute();
+        // 置顶词保持高亮,后续按键接着补全。
+        if let Some(pos) = self.cands.iter().position(|cand| cand.pinned) {
+            self.hl = pos;
+            self.page = pos / self.cfg.page_size.max(1);
+            self.sync_display();
+        }
+        true
+    }
+
+    /// 降权当前页第 `slot` 条:同键记一次跳过负分,让位给相邻候选。
+    pub fn demote_in_page(&mut self, slot: usize) -> bool {
+        let ps = self.cfg.page_size.max(1);
+        self.demote(self.page * ps + slot)
+    }
+
+    pub fn demote(&mut self, index: usize) -> bool {
+        let Some(cand) = self.cands.get(index).cloned() else {
+            return false;
+        };
+        if cand.quick || cand.no_learn {
+            return false;
+        }
+        let Some(comp) = self.comp.as_ref() else {
+            return false;
+        };
+        let key = cand
+            .learn_key
+            .clone()
+            .unwrap_or_else(|| query::spans_key(&comp.raw, &cand.spans));
+        let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
+        self.user
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .reject(&key, &text);
+        self.recompute();
+        true
+    }
+
     /// 宿主要求原样落定当前显示文本(搜索框按 Enter):上屏内联预览,
     /// 不补全剩余拼音,也不改选下一条候选。返回上屏文本。
     pub fn finalize_display(&mut self) -> Option<String> {
@@ -356,12 +418,12 @@ impl Engine {
             return false;
         }
         let learn_text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
-        // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录。
-        let removed = self
-            .user
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove_word(&learn_text);
+        // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录;
+        // 置顶记录跨键一并取消。
+        let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
+        let unpinned = user.unpin_word(&learn_text);
+        let removed = user.remove_word(&learn_text) || unpinned;
+        drop(user);
         if removed {
             self.recompute();
             // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。

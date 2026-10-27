@@ -357,6 +357,24 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             }
             Reply::default()
         }
+        Request::Pin { session, slot } => {
+            state.active.store(session, Ordering::Relaxed);
+            if let Some(s) = sessions.get_mut(&session) {
+                s.engine.pin_in_page(slot);
+                refresh_view(s);
+                crate::settle::schedule(state, session, s);
+            }
+            Reply::default()
+        }
+        Request::Demote { session, slot } => {
+            state.active.store(session, Ordering::Relaxed);
+            if let Some(s) = sessions.get_mut(&session) {
+                s.engine.demote_in_page(slot);
+                refresh_view(s);
+                crate::settle::schedule(state, session, s);
+            }
+            Reply::default()
+        }
         Request::PickIndex { session, index } => {
             state.active.store(session, Ordering::Relaxed);
             let mut reply = Reply::default();

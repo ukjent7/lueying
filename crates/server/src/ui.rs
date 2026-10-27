@@ -51,6 +51,8 @@ const CARET_GAP: f32 = 4.0;
 const PANEL_PAD_B: f32 = 6.0;
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
+/// 右键菜单高度:两项各 26px 加内边距,翻转判断用。
+const MENU_H: f32 = 64.0;
 /// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
 const PARK_GAP: i32 = 2000;
 /// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
@@ -97,6 +99,8 @@ pub(super) fn run(state: Arc<State>) {
                         slide: Cell::new(None),
                         slide_serial: Cell::new(0),
                         reduce: Cell::new(false),
+                        menu: Cell::new(None),
+                        panel_h: Cell::new(0.0),
                     })
                 },
             )
@@ -240,6 +244,11 @@ struct CandidatePanel {
     slide_serial: Cell<u64>,
     /// 上一帧读到的系统「减少动态效果」设置。
     reduce: Cell<bool>,
+    /// 打开的右键菜单:(槽位, 菜单顶部 y, 行文本)。行文本变了菜单自动失效,
+    /// 翻页或继续打字都不用额外清理。
+    menu: Cell<Option<(usize, f32, String)>>,
+    /// 本帧面板高度(逻辑像素),菜单上下翻转的判断用。
+    panel_h: Cell<f32>,
 }
 
 impl CandidatePanel {
@@ -424,6 +433,73 @@ fn panel_rows(view: &SessionView, width: f32) -> usize {
     rows
 }
 
+/// 右键菜单:两项动作与点选同一条请求通道;引擎重算后行文本对不上,
+/// 菜单自动收起。
+fn menu_panel(
+    slot: usize,
+    top: f32,
+    colors: theme::Colors,
+    state: &Arc<State>,
+) -> impl IntoElement {
+    let pin_state = Arc::clone(state);
+    let demote_state = Arc::clone(state);
+    div()
+        .absolute()
+        .left(px(8.0))
+        .top(px(top))
+        .w(px(116.0))
+        .flex()
+        .flex_col()
+        .p(px(4.0))
+        .gap(px(2.0))
+        .bg(rgb(colors.surface))
+        .border_1()
+        .border_color(rgb(colors.border))
+        .rounded_md()
+        .shadow_md()
+        .child(
+            div()
+                .id(("menu-item", 0usize))
+                .flex()
+                .items_center()
+                .h(px(26.0))
+                .px(px(8.0))
+                .rounded_sm()
+                .text_size(px(12.0))
+                .cursor_pointer()
+                .text_color(rgb(colors.text_secondary))
+                .hover(|style| style.bg(rgb(colors.hover)).text_color(rgb(colors.text)))
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    let session = pin_state.active.load(Ordering::Relaxed);
+                    if session != 0 && composing(&pin_state) {
+                        let _ = crate::imp::handle(&pin_state, Request::Pin { session, slot });
+                    }
+                })
+                .child("置顶"),
+        )
+        .child(
+            div()
+                .id(("menu-item", 1usize))
+                .flex()
+                .items_center()
+                .h(px(26.0))
+                .px(px(8.0))
+                .rounded_sm()
+                .text_size(px(12.0))
+                .cursor_pointer()
+                .text_color(rgb(colors.text_secondary))
+                .hover(|style| style.bg(rgb(colors.hover)).text_color(rgb(colors.text)))
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    let session = demote_state.active.load(Ordering::Relaxed);
+                    if session != 0 && composing(&demote_state) {
+                        let _ =
+                            crate::imp::handle(&demote_state, Request::Demote { session, slot });
+                    }
+                })
+                .child("降权"),
+        )
+}
+
 /// 候选窗里的翻页箭头;滚轮之外再给鼠标一个明确入口。
 fn page_arrow(
     label: &'static str,
@@ -569,6 +645,10 @@ impl Render for CandidatePanel {
         };
         let appearance = theme::Appearance::of(window);
         let colors = theme::colors(appearance);
+        // 组合结束进入淡出:右键菜单随之收起,别让它挂在旧内容上。
+        if fading {
+            self.menu.set(None);
+        }
         let width = panel_width(&view);
         let ps = view.page_size.max(1);
         let start = view.page * ps;
@@ -607,6 +687,16 @@ impl Render for CandidatePanel {
             })
             .collect();
         let has_items = !items.is_empty();
+        // 菜单的上下翻转按本帧面板高度判断;面板含底边距。
+        let panel_h = PREEDIT_H + 4.0 + items.len() as f32 * ROW_H + PANEL_PAD_B;
+        self.panel_h.set(panel_h);
+        // 菜单只挂在内容未变的行上;翻页或继续打字后行文本对不上,菜单
+        // 自动失效,不需要专门的清理时机。行数据随后被移进列表,先校验。
+        let menu_open = self.menu.get().filter(|(slot, _, text)| {
+            items
+                .iter()
+                .any(|(s, t, _, _)| s == slot && t == text)
+        });
         let state = Arc::clone(&self.state);
         let scroll_state = Arc::clone(&self.state);
         let previous = Arc::clone(&self.state);
@@ -615,6 +705,7 @@ impl Render for CandidatePanel {
         let panel =
             div()
                 .font_family("Microsoft YaHei UI")
+                .relative()
                 .flex()
                 .flex_col()
                 .w(px(width))
@@ -688,6 +779,7 @@ impl Render for CandidatePanel {
                     let list = div().flex().flex_wrap().px_2().py_1().gap_1().children(
                         items.into_iter().map(|(slot, text, hint, hl)| {
                             let state = Arc::clone(&state);
+                            let menu_text = text.clone();
                             div()
                                 // `active` 只挂在有状态元素上;槽位在页内唯一。
                                 .id(("cand", slot))
@@ -716,6 +808,20 @@ impl Render for CandidatePanel {
                                         );
                                     }
                                 })
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, _, _, cx| {
+                                        // 菜单锚在行下缘;贴近面板底部时翻到行上方。
+                                        let y = PREEDIT_H + 4.0 + slot as f32 * ROW_H;
+                                        let top = if y + ROW_H + MENU_H <= this.panel_h.get() {
+                                            y + ROW_H
+                                        } else {
+                                            (y - MENU_H).max(PREEDIT_H)
+                                        };
+                                        this.menu.set(Some((slot, top, menu_text)));
+                                        cx.notify();
+                                    }),
+                                )
                                 .child(
                                     div()
                                         .w(px(2.0))
@@ -773,7 +879,8 @@ impl Render for CandidatePanel {
                     } else {
                         list.into_any_element()
                     }
-                }));
+                }))
+                .children(menu_open.map(|(slot, top, _)| menu_panel(slot, top, colors, &state)));
         // 首次出现 140ms 淡入(首帧 45% 不透明度,候选立即可读),组合结束
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
         // `composing` 拦掉。

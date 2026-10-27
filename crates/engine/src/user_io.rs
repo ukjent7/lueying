@@ -242,6 +242,11 @@ impl UserDict {
                 }
             }
         }
+        let mut pins: Vec<(&String, &String)> = self.pinned.iter().collect();
+        pins.sort();
+        for (key, word) in pins {
+            out.push_str(&format!("@pin\t{key}\t{word}\n"));
+        }
         out
     }
 
@@ -407,6 +412,18 @@ impl UserDict {
                     .or_default();
                 stat.count = stat.count.max(count);
                 stat.ts = stat.ts.max(ts);
+                changed = true;
+                continue;
+            }
+            if k == "@pin" {
+                let (Some(key), Some(word), None) = (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                if key.is_empty() || word.is_empty() {
+                    continue;
+                }
+                self.pinned.insert(key.to_string(), word.to_string());
                 changed = true;
                 continue;
             }

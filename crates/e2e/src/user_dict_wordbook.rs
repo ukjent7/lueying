@@ -8,6 +8,103 @@ use lueying_engine::{Key, UserDict};
 
 use super::*;
 
+/// E2E:候选窗右键的置顶与降权(引擎语义;菜单 UI 走同一请求通道)。
+pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
+    let dict = Arc::clone(shared);
+
+    // 置顶:把页内第二条钉到首位;导出往返与新会话都要保住。
+    let mut e = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "tianqi".chars() {
+        e.process(Key::Letter(ch));
+    }
+    let list = e.candidates();
+    let Some(second) = list.get(1).cloned() else {
+        push(checks, "置顶候选充足", false, format!("{list:?}"));
+        return;
+    };
+    push(
+        checks,
+        "置顶候选充足",
+        !second.is_empty() && list.first().map(String::as_str) != Some(second.as_str()),
+        format!("{list:?}"),
+    );
+    e.pin_in_page(1);
+    push(
+        checks,
+        "置顶立即首位",
+        e.candidates().first().map(String::as_str) == Some(second.as_str()),
+        format!("{:?}", e.candidates()),
+    );
+    let exported = e.export_user();
+    push(
+        checks,
+        "置顶写进词库",
+        exported.lines().any(|l| l.starts_with("@pin\t")),
+        exported
+            .lines()
+            .find(|l| l.starts_with("@pin\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let mut restored = Engine::new(Arc::clone(&dict), Config::default());
+    restored.import_user(&exported);
+    for ch in "tianqi".chars() {
+        restored.process(Key::Letter(ch));
+    }
+    push(
+        checks,
+        "置顶跨会话首位",
+        restored.candidates().first().map(String::as_str) == Some(second.as_str()),
+        format!("{:?}", restored.candidates()),
+    );
+
+    // Shift+Delete:置顶连同学习记录一起取消,回到词典顺序。
+    let mut f = Engine::new(Arc::clone(&dict), Config::default());
+    f.import_user(&exported);
+    for ch in "tianqi".chars() {
+        f.process(Key::Letter(ch));
+    }
+    f.process(Key::DeleteCandidate);
+    let cleared = f.export_user();
+    push(
+        checks,
+        "删除取消置顶",
+        !cleared.lines().any(|l| l.starts_with("@pin\t"))
+            && f.candidates().first().map(String::as_str) == list.first().map(String::as_str),
+        format!(
+            "{:?} 原首位 {:?}",
+            f.candidates().first(),
+            list.first()
+        ),
+    );
+
+    // 降权:第一条记一次跳过负分,词库出现 @reject 行。
+    let mut d = Engine::new(Arc::clone(&dict), Config::default());
+    for ch in "tianqi".chars() {
+        d.process(Key::Letter(ch));
+    }
+    let first = d.candidates().first().cloned().unwrap_or_default();
+    d.demote_in_page(0);
+    let exported = d.export_user();
+    push(
+        checks,
+        "降权记负分",
+        exported.lines().any(|l| l.starts_with("@reject\t")),
+        exported
+            .lines()
+            .find(|l| l.starts_with("@reject\t"))
+            .unwrap_or_default()
+            .to_string(),
+    );
+    let after = d.candidates();
+    push(
+        checks,
+        "降权后首选变化",
+        after.first().map(String::as_str) != Some(first.as_str()),
+        format!("{first} → {after:?}"),
+    );
+}
+
 /// E2E:按应用偏好、跨会话共享、导入合并与往返。
 pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now: u64) {
     let dict = Arc::clone(shared);

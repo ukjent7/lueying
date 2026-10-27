@@ -154,6 +154,10 @@ pub enum Request {
     },
     /// 候选窗鼠标点选:当前页内 0 基序号。
     Pick { session: u64, slot: usize },
+    /// 候选窗右键置顶:当前页内 0 基序号,该键下此后直接放首位。
+    Pin { session: u64, slot: usize },
+    /// 候选窗右键降权:当前页内 0 基序号,同键记一次跳过负分。
+    Demote { session: u64, slot: usize },
     /// 宿主自绘候选时按全局候选序号点选。
     PickIndex { session: u64, index: usize },
     /// 宿主要求原样落定当前显示文本(`FinalizeExactCompositionString`)。

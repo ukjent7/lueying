@@ -67,6 +67,8 @@ pub struct Candidate {
     pub no_learn: bool,
     /// 末音节补全候选:吃掉整串输入,学习键是补全后的音节串。
     pub completion: bool,
+    /// 用户在当前键下置顶的词:直接放首位,重排与快捷项都让位。
+    pub pinned: bool,
 }
 
 impl Candidate {
@@ -95,6 +97,7 @@ impl Candidate {
             learn_text: None,
             no_learn: false,
             completion: false,
+            pinned: false,
         }
     }
 

@@ -950,6 +950,13 @@ impl Engine {
                 built.cands.insert(at + 1, cand);
             }
         }
+        // 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都让位。
+        if let Some(word) = user.pinned(&comp.raw) {
+            built.cands.retain(|cand| cand.text != word);
+            let mut cand = Candidate::whole(comp.raw.len(), word.to_string(), 1.0e12);
+            cand.pinned = true;
+            built.cands.insert(0, cand);
+        }
         // 可选模块在核心候选与快捷输入之后运行;默认空注册表不进入这个分支。
         if !self.modules.is_empty() {
             let module_ctx = module::CandidateContext {

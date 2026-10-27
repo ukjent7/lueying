@@ -115,6 +115,9 @@ pub struct UserDict {
     /// 学习键 → 被跳过的词 → 次数。用户在同键下越过它选了别的词;
     /// 只小幅降权,并让精确首位保护让位。
     rejects: HashMap<String, HashMap<String, RejectStat>>,
+    /// 学习键 → 置顶词。右键「置顶」写入,该键下直接放首位;一键一词,
+    /// 重新置顶覆盖旧值。键是完整读音串,简拼与全拼各自成键。
+    pinned: HashMap<String, String>,
     /// 各模糊组的连续选择次数,与词条一起持久化。
     groups: [GroupStat; GROUP_COUNT],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。

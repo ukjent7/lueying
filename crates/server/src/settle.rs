@@ -70,8 +70,12 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
         return;
     }
     // 快捷候选必须留在插入位置;停顿重排不能把它们换走,
-    // 否则空格上屏的会是另一个词。
-    if s.engine.candidates_detailed().iter().any(|cand| cand.quick) {
+    // 否则空格上屏的会是另一个词。置顶词同理。
+    if s.engine
+        .candidates_detailed()
+        .iter()
+        .any(|cand| cand.quick || cand.pinned)
+    {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     }

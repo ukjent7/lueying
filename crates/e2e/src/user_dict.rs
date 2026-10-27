@@ -87,6 +87,7 @@ pub fn run(report: &mut String) -> usize {
     context::commit_and_context(&dict, &mut checks, now);
     context::word_sequences(&dict, &mut checks, now);
     wordbook::app_and_shared(&dict, &mut checks, now);
+    wordbook::pin_and_demote(&dict, &mut checks);
     wordbook::learning_keys(&dict, &mut checks);
     reject::rejection_and_scale(&dict, &mut checks, now);
 

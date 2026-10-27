@@ -24,6 +24,7 @@ impl UserDict {
         self.trigrams.clear();
         self.apps.clear();
         self.rejects.clear();
+        self.pinned.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
         self.rev = self.rev.wrapping_add(1);
     }
@@ -573,6 +574,32 @@ impl UserDict {
         });
         all.truncate(keep);
         self.context.extend(all);
+    }
+
+    /// 置顶一个词在 `key` 下;同一键重复置顶覆盖旧值。
+    pub fn pin(&mut self, key: &str, word: &str) {
+        if key.is_empty() || word.is_empty() || self.pinned.get(key).is_some_and(|old| old == word)
+        {
+            return;
+        }
+        self.pinned.insert(key.to_string(), word.to_string());
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// `key` 下的置顶词。
+    pub fn pinned(&self, key: &str) -> Option<&str> {
+        self.pinned.get(key).map(String::as_str)
+    }
+
+    /// 取消一个词的所有置顶(跨学习键);返回是否有变化。
+    pub fn unpin_word(&mut self, word: &str) -> bool {
+        let before = self.pinned.len();
+        self.pinned.retain(|_, old| old != word);
+        let changed = self.pinned.len() != before;
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        changed
     }
 
     /// 记录一次「在 key 下选了 word」。
