@@ -3397,6 +3397,7 @@ dependencies = [
  "lueying-dict",
  "lueying-engine",
  "lueying-rerank",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,11 +1,11 @@
-# E2E 与候选准确率基准的常态化检查,从 push 门禁中剥离。
-# 每 30 分钟看一次默认分支;同一提交成功跑过就跳过,避免空转。
-# 需要立刻验证时手动 workflow_dispatch。
+# 全量语料、x86 与安装冒烟的定时检查。每次 push/PR 的快速门禁在 ci.yml;
+# 这里保留成本更高的全量基准与安装链路,每小时看一次默认分支。
+# 同一提交成功跑过就跳过;需要立刻验证时手动 workflow_dispatch。
 name: quality
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -74,9 +74,9 @@ jobs:
       - name: 转换词典
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      # 全量语料 + 神经重排 + 长期学习,一次拿到完整报告。
+      # 全量语料 + 神经重排 + 长期学习 + 共享语料,一次拿到完整报告。
       - name: 主词典 E2E + 全量候选准确率基准
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench
+        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench --bench-shared
       - name: 报告摘要
         if: always()
         shell: bash
@@ -92,6 +92,8 @@ jobs:
           path: |
             target/e2e-report.md
             target/bench-report.md
+            target/bench-shared.json
+            target/bench-shared.tsv
 
   windows:
     needs: preflight

@@ -1,5 +1,5 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
-//! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast]`
+//! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast] [--bench-shared]`
 
 mod bench;
 mod features;
@@ -7,6 +7,7 @@ mod modules;
 mod quick;
 mod rerank;
 mod scenarios;
+mod shared;
 mod ui;
 mod user_dict;
 
@@ -114,14 +115,16 @@ fn main() {
     } else {
         None
     };
+    let bench_shared = args.iter().any(|a| a == "--bench-shared");
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
     let mut failures = 0usize;
 
-    // 场景:内置迷你词库
+    // 场景:内置迷你词库。词库只解析一次,37 个场景共用同一份只读数据。
     report.push_str("## 场景(内置迷你词库)\n\n| 场景 | 结果 | 说明 |\n|---|---|---|\n");
+    let scenario_dict = Arc::new(Dictionary::builtin());
     for sc in scenarios() {
-        match run_scenario(&sc) {
+        match run_scenario(&sc, &scenario_dict) {
             Ok(()) => report.push_str(&format!("| {} | PASS | |\n", sc.name)),
             Err(e) => {
                 failures += 1;
@@ -344,6 +347,17 @@ fn main() {
                 started.elapsed().as_secs_f64()
             ));
         }
+
+        // 跨引擎共享语料:固定外部句子与归一化,结果可直接与青简/清风并排比较。
+        if bench_shared {
+            let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
+            let started = Instant::now();
+            failures += shared::run(dict, gram, &mut report);
+            report.push_str(&format!(
+                "\n> 共享语料基准耗时 {:.1}s\n",
+                started.elapsed().as_secs_f64()
+            ));
+        }
     }
 
     if rerank_dir.is_some() && rerank_inputs.is_none() {
@@ -352,6 +366,10 @@ fn main() {
     }
     if bench.is_some() && rerank_inputs.is_none() {
         eprintln!("--bench / --bench-fast 需要同时提供 --dict 主词典");
+        std::process::exit(2);
+    }
+    if bench_shared && rerank_inputs.is_none() {
+        eprintln!("--bench-shared 需要同时提供 --dict 主词典");
         std::process::exit(2);
     }
 
@@ -413,12 +431,12 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
     (total, top1, top5, missed)
 }
 
-fn run_scenario(sc: &Scenario) -> Result<(), String> {
+fn run_scenario(sc: &Scenario, dict: &Arc<Dictionary>) -> Result<(), String> {
     let mut cfg = Config::default();
     if sc.fuzzy_off {
         cfg.fuzzy = Fuzzy::off();
     }
-    let mut engine = Engine::new(std::sync::Arc::new(Dictionary::builtin()), cfg);
+    let mut engine = Engine::new(Arc::clone(dict), cfg);
     engine.set_fullwidth(sc.fullwidth);
     let mut modes = vec![engine.mode()];
     for (si, stage) in sc.stages.iter().enumerate() {

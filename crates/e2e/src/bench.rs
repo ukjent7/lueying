@@ -67,15 +67,21 @@ struct Miss {
 }
 
 /// 与 rime-schema-compare 对齐的同义写法归一化。
-fn normalize(text: &str) -> String {
-    text.replace("其它", "其他")
-        .chars()
-        .map(|c| match c {
-            '她' | '它' => '他',
-            '地' | '得' => '的',
-            _ => c,
-        })
-        .collect()
+fn normalize_char(c: char) -> char {
+    match c {
+        '她' | '它' => '他',
+        '地' | '得' => '的',
+        _ => c,
+    }
+}
+
+pub(crate) fn normalize(text: &str) -> String {
+    text.chars().map(normalize_char).collect()
+}
+
+/// 期望已归一化时逐字比较,避免给每条候选分配一个 String。
+pub(crate) fn matches_normalized(candidate: &str, expected: &str) -> bool {
+    candidate.chars().map(normalize_char).eq(expected.chars())
 }
 
 /// 两列 `输入<TAB>期望`,跳过注释与空行。
@@ -201,7 +207,11 @@ fn replace_suffix(syllable: &str, from: &str, to: &str) -> Option<String> {
     is_syllable(&candidate).then_some(candidate)
 }
 
-fn make_engine(dict: &Arc<Dictionary>, gram: &Option<Arc<Gram>>, fuzzy: Fuzzy) -> Engine {
+pub(crate) fn make_engine(
+    dict: &Arc<Dictionary>,
+    gram: &Option<Arc<Gram>>,
+    fuzzy: Fuzzy,
+) -> Engine {
     let mut engine = Engine::new(
         Arc::clone(dict),
         Config {
@@ -233,28 +243,29 @@ fn run_suite(
         }
         let cands = eval_texts(&engine);
         let want_norm = normalize(want);
-        let rank = cands.iter().position(|c| normalize(c) == want_norm);
+        let rank = cands
+            .iter()
+            .position(|c| matches_normalized(*c, &want_norm));
         score.add(rank);
         if rank != Some(0) && misses.len() < 5 {
             misses.push(Miss {
                 typed: typed.clone(),
                 want: want.clone(),
-                got: cands.first().cloned().unwrap_or_default(),
-                alternatives: cands.iter().take(8).cloned().collect(),
+                got: cands.first().copied().unwrap_or_default().to_string(),
+                alternatives: cands.iter().take(8).copied().map(str::to_string).collect(),
             });
         }
-        engine.process(Key::Esc);
     }
     (score, misses)
 }
 
 /// 准确率只统计中文候选:表情、符号与英文直通项不占前五名额。
-fn eval_texts(engine: &Engine) -> Vec<String> {
+pub(crate) fn eval_texts(engine: &Engine) -> Vec<&str> {
     engine
         .candidates_detailed()
         .iter()
         .filter(|cand| !cand.no_learn && !cand.quick)
-        .map(|cand| cand.text.clone())
+        .map(|cand| cand.text.as_str())
         .collect()
 }
 
@@ -300,14 +311,14 @@ fn long_term(
                 engine.process(Key::Letter(c));
             }
             let cands = eval_texts(&engine);
-            let rank = cands.iter().position(|c| c == want);
+            let rank = cands.iter().position(|c| *c == want.as_str());
             score.add(rank);
             if round == 1 && rank != Some(0) {
                 stuck.push(Miss {
                     typed: typed.clone(),
                     want: want.clone(),
-                    got: cands.first().cloned().unwrap_or_default(),
-                    alternatives: cands.into_iter().take(8).collect(),
+                    got: cands.first().copied().unwrap_or_default().to_string(),
+                    alternatives: cands.into_iter().take(8).map(str::to_string).collect(),
                 });
             }
             if !pick(&mut engine, want) {
@@ -333,14 +344,15 @@ fn ambiguous_corpus(
         for c in typed.chars() {
             engine.process(Key::Letter(c));
         }
-        let rank = eval_texts(&engine).iter().position(|c| c == want);
+        let rank = eval_texts(&engine)
+            .iter()
+            .position(|c| *c == want.as_str());
         if rank.is_some_and(|i| i > 0 && i < 40) {
             out.push((typed.clone(), want.clone()));
         }
         if out.len() >= LONG_TERM_WORDS {
             break;
         }
-        engine.process(Key::Esc);
     }
     out
 }
