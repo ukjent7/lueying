@@ -175,8 +175,8 @@ mod imp {
             "/VERYSILENT".to_string(),
             "/SUPPRESSMSGBOXES".to_string(),
             "/NORESTART".to_string(),
-            format!("/DIR=\"{}\"", target.display()),
-            format!("/LOG=\"{}\"", setup_log.display()),
+            format!("/DIR={}", target.display()),
+            format!("/LOG={}", setup_log.display()),
         ]);
         let output = command.output().map_err(|e| format!("启动安装包: {e}"))?;
         if !output.status.success() {

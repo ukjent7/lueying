@@ -376,27 +376,33 @@ mod imp {
         appdata: &Path,
         trace: &Path,
     ) -> Result<(), String> {
-        let mut command = Command::new(setup);
-        command
-            .arg("/VERYSILENT")
-            .arg("/SUPPRESSMSGBOXES")
-            .arg("/NORESTART")
-            .arg("/LANG=chinesesimplified")
-            .arg(format!("/DIR=\"{}\"", target.display()))
-            .arg(format!("/LOG=\"{}\"", log.display()));
-        apply_env(&mut command, local, appdata, target, trace);
-        let output = run_command(name, &mut command, Duration::from_secs(150))?;
-        if output.status.success() {
-            Ok(())
-        } else {
+        // 中文语言文件在部分 runner 上初始化失败会让 Setup 直接以 1 退出,
+        // 且不写 /LOG。英文是 Inno 自带语言,拿它再试一次;两次都失败才报错。
+        let mut failures = Vec::new();
+        for lang in ["chinesesimplified", "english"] {
+            let label = format!("{name}({lang})");
+            let mut command = Command::new(setup);
+            command
+                .arg("/VERYSILENT")
+                .arg("/SUPPRESSMSGBOXES")
+                .arg("/NORESTART")
+                .arg(format!("/LANG={lang}"))
+                .arg(format!("/DIR={}", target.display()))
+                .arg(format!("/LOG={}", log.display()));
+            apply_env(&mut command, local, appdata, target, trace);
+            let output = run_command(&label, &mut command, Duration::from_secs(150))?;
+            if output.status.success() {
+                return Ok(());
+            }
             let detail = std::fs::read(log)
                 .map(|bytes| tail(&bytes))
                 .unwrap_or_default();
-            Err(format!(
-                "{name} 退出码 {:?}: {detail}",
+            failures.push(format!(
+                "{label} 退出码 {:?}: {detail}",
                 output.status.code()
-            ))
+            ));
         }
+        Err(failures.join("\n"))
     }
 
     /// 用本地 9.9.9 安装包跑一遍真实更新器:校验、静默运行 Inno 安装包替换版本。
@@ -505,7 +511,7 @@ mod imp {
             .arg("/VERYSILENT")
             .arg("/SUPPRESSMSGBOXES")
             .arg("/NORESTART")
-            .arg(format!("/LOG=\"{}\"", log.display()));
+            .arg(format!("/LOG={}", log.display()));
         apply_env(&mut command, local, appdata, target, trace);
         let output = run_command("卸载器", &mut command, Duration::from_secs(120))?;
         if output.status.success() {

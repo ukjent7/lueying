@@ -147,6 +147,22 @@ jobs:
         if: always() && steps.build.outcome == 'success' && steps.build32tsf.outcome == 'success' && steps.stage32.outcome == 'success' && steps.build32.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
+      # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
+      # 失败时把两份都收进 artifact,否则只剩一个退出码。
+      - name: 收集安装日志
+        if: always()
+        shell: pwsh
+        run: |
+          $dst = "target/install-e2e-logs"
+          New-Item -ItemType Directory -Force $dst | Out-Null
+          Get-ChildItem $env:TEMP -Filter "Setup Log*.txt" -File -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $dst -ErrorAction SilentlyContinue
+          Get-ChildItem $env:TEMP -Directory -Filter "lueying-install-e2e-*" -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem $_.FullName -Filter "*.log" -File -ErrorAction SilentlyContinue | ForEach-Object {
+              $dir = Split-Path $_.DirectoryName -Leaf
+              Copy-Item $_.FullName (Join-Path $dst "$dir-$($_.Name)") -ErrorAction SilentlyContinue
+            }
+          }
       - name: 报告摘要
         if: always()
         shell: pwsh
