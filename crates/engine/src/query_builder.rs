@@ -383,7 +383,10 @@ fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candid
         .collect();
     // 只补完整拼音。用户用简拼(`nih`)时补全会把 `h` 展开成几百个音节,
     // 首页灌满同前缀的猜测;简拼继续走原有整词路径。
-    if !typed.iter().all(|syllable| syllables::is_syllable(syllable)) {
+    if !typed
+        .iter()
+        .all(|syllable| syllables::is_syllable(syllable))
+    {
         return Vec::new();
     }
     let Some(last) = typed.last().copied() else {
