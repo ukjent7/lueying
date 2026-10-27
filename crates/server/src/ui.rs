@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use crate::imp::State;
 use gpui::{
     Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
     Window, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint, prelude::*, px, rgb,
@@ -29,7 +30,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
-use crate::imp::State;
 
 #[path = "ui_hud.rs"]
 mod hud;
@@ -778,21 +778,23 @@ impl Render for CandidatePanel {
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
         // `composing` 拦掉。
         if fading {
-            panel.with_animation(
-                "candidate-hide",
-                Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
-                |panel, delta| panel.opacity(1.0 - delta),
-            )
-            .into_any_element()
+            panel
+                .with_animation(
+                    "candidate-hide",
+                    Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
+                    |panel, delta| panel.opacity(1.0 - delta),
+                )
+                .into_any_element()
         } else {
-            panel.with_animation(
-                "candidate-show",
-                Animation::new(SHOW_FADE).with_easing(ease_out_quint()),
-                |panel, delta| {
-                    panel.opacity(SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * delta)
-                },
-            )
-            .into_any_element()
+            panel
+                .with_animation(
+                    "candidate-show",
+                    Animation::new(SHOW_FADE).with_easing(ease_out_quint()),
+                    |panel, delta| {
+                        panel.opacity(SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * delta)
+                    },
+                )
+                .into_any_element()
         }
     }
 }
