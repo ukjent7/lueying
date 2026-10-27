@@ -119,9 +119,7 @@ fn cases() -> (Vec<Case<'static>>, usize) {
 }
 
 fn escape(text: &str) -> String {
-    text.replace('\t', " ")
-        .replace('\n', " ")
-        .replace('\r', " ")
+    text.replace(['\t', '\n', '\r'], " ")
 }
 
 fn metric_json(metric: &Metric) -> serde_json::Value {
@@ -172,7 +170,7 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
         let expected = bench::normalize(case.expected);
         let rank = candidates
             .iter()
-            .position(|text| bench::matches_normalized(*text, &expected));
+            .position(|text| bench::matches_normalized(text, &expected));
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
         if case.category != "hard" {
