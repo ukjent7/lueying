@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationExt, App, Bounds, BoxShadow, Context, MouseButton, Point, ScrollDelta,
-    SharedString, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
-    div, ease_out_quint, hsla, prelude::*, px, rgb, size,
+    SharedString, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div,
+    ease_out_quint, hsla, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
@@ -576,8 +576,7 @@ fn panel_shadow(dark: bool) -> Vec<BoxShadow> {
     let alpha = if dark { 0.5 } else { 0.18 };
     vec![
         BoxShadow::new(px(0.0), px(4.0), hsla(0.0, 0.0, 0.0, alpha)).blur_radius(px(12.0)),
-        BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 0.0, alpha * 0.5))
-            .blur_radius(px(3.0)),
+        BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 0.0, alpha * 0.5)).blur_radius(px(3.0)),
     ]
 }
 
@@ -637,170 +636,169 @@ impl Render for CandidatePanel {
         let previous = Arc::clone(&self.state);
         let next = Arc::clone(&self.state);
         let preedit = SharedString::from(view.raw.clone());
-        let panel = div()
-            .font_family("Microsoft YaHei UI")
-            .flex()
-            .flex_col()
-            .w(px(width))
-            .bg(rgb(colors.surface))
-            .border_1()
-            .border_color(rgb(colors.border))
-            .rounded_lg()
-            .when(!high_contrast, |el| el.shadow(panel_shadow(dark)))
-            .overflow_hidden()
-            .on_scroll(move |event, _, _| {
-                let dir = match event.delta {
-                    ScrollDelta::Lines(p) => p.y.signum(),
-                    ScrollDelta::Pixels(p) => (p.y / px(1.0)).signum(),
-                };
-                if dir == 0.0 {
-                    return;
-                }
-                let session = scroll_state.active.load(Ordering::Relaxed);
-                if session != 0 && composing(&scroll_state) {
-                    let _ = crate::imp::handle(
-                        &scroll_state,
-                        Request::Page {
-                            session,
-                            delta: if dir > 0.0 { -1 } else { 1 },
-                        },
-                    );
-                }
-            })
-            .child(
-                div()
-                    .flex()
-                    .h(px(PREEDIT_H))
-                    .px_3()
-                    .gap_2()
-                    .items_center()
-                    .justify_between()
-                    .bg(rgb(colors.surface_alt))
-                    // 只有当前页有候选时才分隔拼音与候选,空页不留一条孤线。
-                    .when(has_items, |el| {
-                        el.border_b_1().border_color(rgb(colors.border))
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .text_size(px(13.0))
-                            .text_color(rgb(colors.text_secondary))
-                            .child(preedit),
-                    )
-                    .child(if pages > 1 {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(page_arrow("‹", -1, previous, colors))
-                            .child(
-                                div()
-                                    .min_w(px(28.0))
-                                    .text_center()
-                                    .text_size(px(11.0))
-                                    .text_color(rgb(colors.text_tertiary))
-                                    .child(format!("{page_no}/{pages}")),
-                            )
-                            .child(page_arrow("›", 1, next, colors))
-                            .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }),
-            )
-            .children(has_items.then(|| {
-                let list = div()
-                    .flex()
-                    .flex_wrap()
-                    .px_2()
-                    .py_1()
-                    .gap_1()
-                    .children(items.into_iter().map(|(slot, text, hint, hl)| {
-                        let state = Arc::clone(&state);
-                        div()
-                            // `active` 只挂在有状态元素上;槽位在页内唯一。
-                            .id(("cand", slot))
-                            .flex()
-                            .items_center()
-                            .h(px(30.0))
-                            .px_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .active(|el| el.opacity(0.82))
-                            .text_size(px(17.0))
-                            .when(hl, |el| {
-                                el.bg(rgb(colors.selected_bg))
-                                    .text_color(rgb(colors.selected_text))
-                            })
-                            .when(!hl, |el| {
-                                el.text_color(rgb(colors.text))
-                                    .hover(|s| s.bg(rgb(colors.hover)))
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                                let session = state.active.load(Ordering::Relaxed);
-                                if session != 0 && composing(&state) {
-                                    let _ =
-                                        crate::imp::handle(&state, Request::Pick { session, slot });
-                                }
-                            })
-                            .child(
-                                div()
-                                    .w(px(2.0))
-                                    .h(px(14.0))
-                                    .rounded_full()
-                                    .when(hl, |el| el.bg(rgb(colors.accent_text))),
-                            )
-                            .child(
-                                div()
-                                    .w(px(12.0))
-                                    .ml(px(4.0))
-                                    .text_size(px(11.0))
-                                    .text_color(if hl {
-                                        rgb(colors.accent_text)
-                                    } else {
-                                        rgb(colors.text_tertiary)
-                                    })
-                                    .child(format!("{}", slot + 1)),
-                            )
-                            .child(
-                                div()
-                                    .ml(px(4.0))
-                                    .max_w(px(MAX_TEXT_WIDTH))
-                                    .truncate()
-                                    .child(SharedString::from(text)),
-                            )
-                            .when(!hint.is_empty(), |el| {
-                                el.child(
+        let panel =
+            div()
+                .font_family("Microsoft YaHei UI")
+                .flex()
+                .flex_col()
+                .w(px(width))
+                .bg(rgb(colors.surface))
+                .border_1()
+                .border_color(rgb(colors.border))
+                .rounded_lg()
+                .when(!high_contrast, |el| el.shadow(panel_shadow(dark)))
+                .overflow_hidden()
+                .on_scroll(move |event, _, _| {
+                    let dir = match event.delta {
+                        ScrollDelta::Lines(p) => p.y.signum(),
+                        ScrollDelta::Pixels(p) => (p.y / px(1.0)).signum(),
+                    };
+                    if dir == 0.0 {
+                        return;
+                    }
+                    let session = scroll_state.active.load(Ordering::Relaxed);
+                    if session != 0 && composing(&scroll_state) {
+                        let _ = crate::imp::handle(
+                            &scroll_state,
+                            Request::Page {
+                                session,
+                                delta: if dir > 0.0 { -1 } else { 1 },
+                            },
+                        );
+                    }
+                })
+                .child(
+                    div()
+                        .flex()
+                        .h(px(PREEDIT_H))
+                        .px_3()
+                        .gap_2()
+                        .items_center()
+                        .justify_between()
+                        .bg(rgb(colors.surface_alt))
+                        // 只有当前页有候选时才分隔拼音与候选,空页不留一条孤线。
+                        .when(has_items, |el| {
+                            el.border_b_1().border_color(rgb(colors.border))
+                        })
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .truncate()
+                                .text_size(px(13.0))
+                                .text_color(rgb(colors.text_secondary))
+                                .child(preedit),
+                        )
+                        .child(if pages > 1 {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(page_arrow("‹", -1, previous, colors))
+                                .child(
                                     div()
+                                        .min_w(px(28.0))
+                                        .text_center()
+                                        .text_size(px(11.0))
+                                        .text_color(rgb(colors.text_tertiary))
+                                        .child(format!("{page_no}/{pages}")),
+                                )
+                                .child(page_arrow("›", 1, next, colors))
+                                .into_any_element()
+                        } else {
+                            div().into_any_element()
+                        }),
+                )
+                .children(has_items.then(|| {
+                    let list = div().flex().flex_wrap().px_2().py_1().gap_1().children(
+                        items.into_iter().map(|(slot, text, hint, hl)| {
+                            let state = Arc::clone(&state);
+                            div()
+                                // `active` 只挂在有状态元素上;槽位在页内唯一。
+                                .id(("cand", slot))
+                                .flex()
+                                .items_center()
+                                .h(px(30.0))
+                                .px_2()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .active(|el| el.opacity(0.82))
+                                .text_size(px(17.0))
+                                .when(hl, |el| {
+                                    el.bg(rgb(colors.selected_bg))
+                                        .text_color(rgb(colors.selected_text))
+                                })
+                                .when(!hl, |el| {
+                                    el.text_color(rgb(colors.text))
+                                        .hover(|s| s.bg(rgb(colors.hover)))
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                    let session = state.active.load(Ordering::Relaxed);
+                                    if session != 0 && composing(&state) {
+                                        let _ = crate::imp::handle(
+                                            &state,
+                                            Request::Pick { session, slot },
+                                        );
+                                    }
+                                })
+                                .child(
+                                    div()
+                                        .w(px(2.0))
+                                        .h(px(14.0))
+                                        .rounded_full()
+                                        .when(hl, |el| el.bg(rgb(colors.accent_text))),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(12.0))
                                         .ml(px(4.0))
-                                        .max_w(px(100.0))
-                                        .truncate()
                                         .text_size(px(11.0))
                                         .text_color(if hl {
                                             rgb(colors.accent_text)
                                         } else {
                                             rgb(colors.text_tertiary)
                                         })
-                                        .child(SharedString::from(hint)),
+                                        .child(format!("{}", slot + 1)),
                                 )
-                            })
-                    }));
-                if let Some((direction, _)) = sliding {
-                    list.with_animation(
-                        ("page-slide", slide_serial),
-                        Animation::new(PAGE_SLIDE).with_easing(ease_out_quint()),
-                        move |list, delta| {
-                            list.relative()
-                                .left(px(direction * 10.0 * (1.0 - delta)))
-                                .opacity(0.55 + 0.45 * delta)
-                        },
-                    )
-                    .into_any_element()
-                } else {
-                    list.into_any_element()
-                }
-            }));
+                                .child(
+                                    div()
+                                        .ml(px(4.0))
+                                        .max_w(px(MAX_TEXT_WIDTH))
+                                        .truncate()
+                                        .child(SharedString::from(text)),
+                                )
+                                .when(!hint.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .ml(px(4.0))
+                                            .max_w(px(100.0))
+                                            .truncate()
+                                            .text_size(px(11.0))
+                                            .text_color(if hl {
+                                                rgb(colors.accent_text)
+                                            } else {
+                                                rgb(colors.text_tertiary)
+                                            })
+                                            .child(SharedString::from(hint)),
+                                    )
+                                })
+                        }),
+                    );
+                    if let Some((direction, _)) = sliding {
+                        list.with_animation(
+                            ("page-slide", slide_serial),
+                            Animation::new(PAGE_SLIDE).with_easing(ease_out_quint()),
+                            move |list, delta| {
+                                list.relative()
+                                    .left(px(direction * 10.0 * (1.0 - delta)))
+                                    .opacity(0.55 + 0.45 * delta)
+                            },
+                        )
+                        .into_any_element()
+                    } else {
+                        list.into_any_element()
+                    }
+                }));
         // 首次出现 140ms 淡入(首帧 45% 不透明度,候选立即可读),组合结束
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
         // `composing` 拦掉。外层留白让投影落在窗口内,不被裁掉。

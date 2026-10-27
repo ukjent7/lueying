@@ -428,7 +428,11 @@ mod imp {
                     .w(px(16.0))
                     .h(px(16.0))
                     .rounded_full()
-                    .bg(rgb(if on { colors.on_accent } else { colors.knob_off }))
+                    .bg(rgb(if on {
+                        colors.on_accent
+                    } else {
+                        colors.knob_off
+                    }))
                     .shadow_xs(),
             )
     }
@@ -702,8 +706,7 @@ mod imp {
                                         this.groups = reply.groups;
                                         this.say(Notice::Success, "已重置模糊音组统计");
                                     }
-                                    None => this
-                                        .say(Notice::Error, "输入法服务未运行,启动后再试"),
+                                    None => this.say(Notice::Error, "输入法服务未运行,启动后再试"),
                                 }
                                 cx.notify();
                             }),
