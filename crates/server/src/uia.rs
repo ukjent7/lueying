@@ -31,11 +31,20 @@ pub(super) struct Job {
     pub(super) context: String,
 }
 
-/// 进程是 GUI 子系统,stdout 重定向到文件时是块缓冲;不 flush 的话
-/// E2E 在进程被杀前永远读不到这些行。
-fn say(message: &str) {
+/// 进程是 GUI 子系统,生产环境的 stdout 没人收;调试与 E2E 统一写临时
+/// 目录里的追加日志——runner 与 TSF 懒拉起的实例共享同一个 TEMP,stdout
+/// 重定向只覆盖 runner 亲手拉起的那一份。
+pub(crate) fn say(message: &str) {
     println!("{message}");
-    let _ = std::io::stdout().flush();
+    if std::env::var_os("LUEYING_DEBUG_UIA").is_some() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::env::temp_dir().join("lueying-uia.log"))
+        {
+            let _ = writeln!(file, "{message}");
+        }
+    }
 }
 
 pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Job>) {
@@ -72,9 +81,18 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
         let _ = unsafe { automation2.SetTransactionTimeout(1000) };
     }
     while let Ok(job) = rx.recv() {
+        say(&format!("UIA: 收到任务 hwnd={:x}", job.hwnd));
         let text =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&automation, &job)))
-                .unwrap_or(None);
+                .unwrap_or_else(|error| {
+                    let message = error
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| error.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                        .unwrap_or_else(|| "非字符串 panic".into());
+                    say(&format!("UIA 读取 panic: {message}"));
+                    None
+                });
         if let Some(text) = text {
             crate::imp::apply_uia_context(state, &job, &text);
         }
@@ -85,6 +103,7 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
 fn read(automation: &IUIAutomation, job: &Job) -> Option<String> {
     let host_pid = (job.session >> 32) as u32;
     let hwnd = HWND(job.hwnd as usize as *mut c_void);
+    debug(&format!("读取开始 host_pid={host_pid} hwnd={:x}", job.hwnd));
     // 先看真正的焦点元素,自绘宿主常把 TextPattern 挂在它上面。
     let focused = unsafe { automation.GetFocusedElement() }.ok();
     if let Some(element) = focused.as_ref()
@@ -92,6 +111,7 @@ fn read(automation: &IUIAutomation, job: &Job) -> Option<String> {
         && password(element)
     {
         // 焦点本身就是密码框,不再从窗口层找文本。
+        debug("焦点是密码框,跳过");
         return None;
     }
     let mut pattern = focused

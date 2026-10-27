@@ -108,6 +108,12 @@ fn server_log() -> std::path::PathBuf {
         .join("win-e2e-server.log")
 }
 
+/// UIA 回退的调试痕迹;server 是 GUI 子系统进程,stdout 重定向靠不住,
+/// 统一写共享 TEMP 下的追加日志。
+fn uia_log() -> std::path::PathBuf {
+    std::env::temp_dir().join("lueying-uia.log")
+}
+
 fn tail_of(path: Option<std::path::PathBuf>) -> String {
     let Some(path) = path else {
         return String::new();
@@ -187,6 +193,7 @@ fn real_run() -> Result<(String, String), String> {
     }
     let server_out = server_log();
     let _ = std::fs::remove_file(&server_out);
+    let _ = std::fs::remove_file(uia_log());
     let out = std::fs::File::create(&server_out).map_err(|e| format!("创建 Server 日志: {e}"))?;
     let err = out
         .try_clone()
@@ -382,13 +389,13 @@ fn real_run() -> Result<(String, String), String> {
         }
         let ui_note = check_candidate_ui(&thread_mgr, &ui_events)?;
         // UIA 左邻文本回退:开头打字时左邻为空,TSF 读不到文本必然触发
-        // 回退查询。线程活着并完成 COM/automation 初始化,日志里才会出现
-        // "UIA:" 痕迹(读到 0 字,或宿主没有 TextPattern)。3 秒内没痕迹
-        // 说明回退链路断了;线程级失败标记(创建/初始化失败)直接判失败。
+        // 回退查询。Server 受理、任务入队、读取结果都写进共享 TEMP 的追加
+        // 日志(server 是 GUI 子系统进程,stdout 重定向靠不住);3 秒内没
+        // 痕迹说明回退链路断了,线程级失败标记直接判失败。
         let mut uia_seen = false;
         let uia_deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < uia_deadline {
-            if std::fs::read_to_string(server_log())
+            if std::fs::read_to_string(uia_log())
                 .unwrap_or_default()
                 .contains("UIA:")
             {
@@ -398,15 +405,17 @@ fn real_run() -> Result<(String, String), String> {
             pump_for(Duration::from_millis(100));
         }
         if !uia_seen {
-            return Err("3 秒内 Server 日志没有 UIA 回退痕迹".into());
+            let tail = std::fs::read_to_string(uia_log()).unwrap_or_default();
+            return Err(format!("3 秒内没有 UIA 回退痕迹,临时日志尾:\n{tail}"));
         }
-        let uia_log = std::fs::read_to_string(server_log()).unwrap_or_default();
+        let uia_log_text = std::fs::read_to_string(uia_log()).unwrap_or_default();
         for marker in [
             "UIA 创建失败",
             "UIA 线程启动失败",
             "UIA 线程 COM 初始化失败",
+            "UIA 读取 panic",
         ] {
-            if uia_log.contains(marker) {
+            if uia_log_text.contains(marker) {
                 return Err(format!("{marker}"));
             }
         }
