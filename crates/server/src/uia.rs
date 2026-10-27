@@ -3,6 +3,7 @@
 //! UIA 自身带连接/事务超时,失败只丢本次上下文。
 
 use std::ffi::c_void;
+use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::mpsc;
 
@@ -30,18 +31,25 @@ pub(super) struct Job {
     pub(super) context: String,
 }
 
+/// 进程是 GUI 子系统,stdout 重定向到文件时是块缓冲;不 flush 的话
+/// E2E 在进程被杀前永远读不到这些行。
+fn say(message: &str) {
+    println!("{message}");
+    let _ = std::io::stdout().flush();
+}
+
 pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Job>) {
     let spawned = std::thread::Builder::new()
         .name("lueying-uia".into())
         .spawn(move || worker(&state, &rx));
     if spawned.is_err() {
-        println!("UIA 线程启动失败,左邻文本回退停用");
+        say("UIA 线程启动失败,左邻文本回退停用");
     }
 }
 
 fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
     if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
-        println!("UIA 线程 COM 初始化失败");
+        say("UIA 线程 COM 初始化失败");
         return;
     }
     let automation: IUIAutomation = match unsafe {
@@ -53,7 +61,7 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
     } {
         Ok(automation) => automation,
         Err(error) => {
-            println!("UIA 创建失败: {error}");
+            say(&format!("UIA 创建失败: {error}"));
             unsafe { CoUninitialize() };
             return;
         }
@@ -171,6 +179,6 @@ fn sanitize(text: &str) -> String {
 
 fn debug(message: &str) {
     if std::env::var_os("LUEYING_DEBUG_UIA").is_some() {
-        println!("UIA: {message}");
+        say(&format!("UIA: {message}"));
     }
 }
