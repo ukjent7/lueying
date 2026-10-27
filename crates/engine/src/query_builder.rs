@@ -106,7 +106,11 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     } = args;
     let total = dict.total_weight() as f64;
     // 短串的候选空间小,放宽束宽多留同音词;长句的每档组合多,保持窄束。
-    let beam = if raw.len() <= SHORT_RAW { BEAM_SHORT } else { BEAM };
+    let beam = if raw.len() <= SHORT_RAW {
+        BEAM_SHORT
+    } else {
+        BEAM
+    };
     let mut q = Querier {
         dict,
         user,
@@ -370,9 +374,10 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
 fn exact_full_word(raw: &str, cand: &Candidate) -> bool {
     cand.trusted
         && cand.freq >= COMPLETION_EXACT_MIN_FREQ
-        && cand.spans.iter().all(|&(start, end)| {
-            syllables::is_syllable(syllables::canonical(&raw[start..end]))
-        })
+        && cand
+            .spans
+            .iter()
+            .all(|&(start, end)| syllables::is_syllable(syllables::canonical(&raw[start..end])))
 }
 
 /// 末音节补全:把最后一个音节换成词典里更长的音节,只保留音节数不变、

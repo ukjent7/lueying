@@ -259,10 +259,7 @@ mod imp {
                         continue;
                     }
                     if !pending_delete(&file, &root.join("uninstall.log")) {
-                        return Err(format!(
-                            "卸载后 {} 仍在,且没有安排重启删除",
-                            file.display()
-                        ));
+                        return Err(format!("卸载后 {} 仍在,且没有安排重启删除", file.display()));
                     }
                     reboot_pending.push(name);
                 }
@@ -651,9 +648,12 @@ mod imp {
     /// 「Will delete on restart」是同一动作的兜底证据。
     fn pending_delete(path: &Path, uninstall_log: &Path) -> bool {
         let needle = path.to_string_lossy().to_ascii_lowercase();
-        ["PendingFileRenameOperations", "PendingFileRenameOperations2"]
-            .iter()
-            .any(|value| registry_value_contains(value, &needle))
+        [
+            "PendingFileRenameOperations",
+            "PendingFileRenameOperations2",
+        ]
+        .iter()
+        .any(|value| registry_value_contains(value, &needle))
             || log_schedules_delete(uninstall_log, &needle)
     }
 
