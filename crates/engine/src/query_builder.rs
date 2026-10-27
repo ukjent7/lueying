@@ -253,7 +253,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         .iter()
         .any(|c| c.trusted && c.freq >= COMPLETION_EXACT_MIN_FREQ)
     {
-        let completed = completion_candidates(raw, dict, total, &full);
+        let completed = completion_candidates(raw, dict, total);
         full.extend(completed);
     }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -368,35 +368,27 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
 /// 末音节补全:把最后一个音节换成词典里更长的音节,只保留音节数不变、
 /// 整词长度对得上的词条。没有精确整词时才调用,避免 `ni` 被补成 `nin/ning`
 /// 这类无关候选挤进首页。
-fn completion_candidates(
-    raw: &str,
-    dict: &Dictionary,
-    total: f64,
-    full: &[Candidate],
-) -> Vec<Candidate> {
-    let spans: Vec<(usize, usize)> = match full
-        .iter()
-        .find(|c| c.full && c.spans.last().is_some_and(|span| span.1 == raw.len()))
-    {
-        Some(cand) => cand.spans.clone(),
-        None => segment::first_path(raw),
-    };
+fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candidate> {
+    // 按最长音节切分输入,得到用户实际打出的音节序列。候选图里的切分可能
+    // 来自模糊纠正,不能拿来当补全的基准。
+    let spans = segment::first_path(raw);
     // 单音节输入不补全:用户可能只是打了一个完整的单字,`ni` 不该冒出 `nin/ning`。
-    if spans.len() < 2 {
+    // 四音节以上按整句处理,补全会和整句候选抢首页,也拖慢每次按键。
+    if spans.len() < 2 || spans.len() > COMPLETION_MAX_SYLLABLES {
         return Vec::new();
     }
     let typed: Vec<&str> = spans
         .iter()
         .map(|&(start, end)| syllables::canonical(&raw[start..end]))
         .collect();
+    // 只补完整拼音。用户用简拼(`nih`)时补全会把 `h` 展开成几百个音节,
+    // 首页灌满同前缀的猜测;简拼继续走原有整词路径。
+    if !typed.iter().all(|syllable| syllables::is_syllable(syllable)) {
+        return Vec::new();
+    }
     let Some(last) = typed.last().copied() else {
         return Vec::new();
     };
-    // 末单元必须是完整音节。用户用简拼(`nih`)时补全会把 `h` 展开成几百个
-    // 音节,首页灌满同前缀的猜测;简拼继续走原有整词路径。
-    if !syllables::is_syllable(last) {
-        return Vec::new();
-    }
     let prefix = typed[..typed.len() - 1].join("'");
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -411,11 +403,7 @@ fn completion_candidates(
         if completed == last {
             continue;
         }
-        let key = if prefix.is_empty() {
-            completed.to_string()
-        } else {
-            format!("{prefix}'{completed}")
-        };
+        let key = format!("{prefix}'{completed}");
         for entry in dict.lookup_exact(&key) {
             if entry.word.chars().count() != typed.len() || !seen.insert(entry.word.to_string()) {
                 continue;

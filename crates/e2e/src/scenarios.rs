@@ -670,6 +670,8 @@ pub fn scenarios() -> Vec<Scenario> {
 pub fn probes() -> Vec<(&'static str, &'static str)> {
     vec![
         ("nihao", "你好"),
+        // 少打末音节最后一个字母:没有精确整词时补全,主词典也要能首选整词。
+        ("niha", "你好"),
         ("xiexie", "谢谢"),
         ("zhongguo", "中国"),
         ("women", "我们"),

@@ -155,6 +155,9 @@ const MAX_SIG_VARIANTS: usize = 32;
 const MAX_FUZZY_KEYS: usize = 64;
 /// 精确整词达到这个频次就不补全;1 表示只要词典里有整词就不猜用户少打了字母。
 const COMPLETION_EXACT_MIN_FREQ: u64 = 1;
+/// 补全只面向词,不面向整句。四音节以上的输入按句子处理,避免长句每次
+/// 按键都去枚举末音节,把整句候选挤出首页。
+const COMPLETION_MAX_SYLLABLES: usize = 4;
 
 #[derive(Clone)]
 struct Hit {

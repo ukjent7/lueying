@@ -13,6 +13,7 @@
 //! 10. 繁体候选写进词库,切回简体后仍召回繁体词。
 //! 11. 组合中切换简繁不重算,内联显示与候选仍是旧字形。
 //! 12. 繁体模式误转英文、拼音原文或快捷输入的 ASCII 部分。
+//! 13. 少打末音节最后一个字母时没有整词候选;完整拼音、单音节或简拼被误补全。
 
 use std::sync::Arc;
 
@@ -174,6 +175,20 @@ pub fn run(report: &mut String) -> usize {
         top(&emoji) == "微笑" && emoji_at == Some(1) && emoji_hint == Some("表情"),
         format!("{list:?} 提示 {emoji_hint:?}"),
     );
+    // 表情不能挡分段入口:「你好」后的 👋 必须排在「你」之后,下移一格
+    // 仍然是选前缀词。
+    let mut follow = mini();
+    letters(&mut follow, "nihao");
+    let list = follow.candidates();
+    let prefix_at = list.iter().position(|text| text == "你");
+    let emoji_at = list.iter().position(|text| text == "👋");
+    push(
+        &mut checks,
+        "表情不挡分段入口",
+        prefix_at.is_some_and(|prefix| emoji_at.is_some_and(|at| at > prefix)),
+        format!("{list:?} 前缀 {prefix_at:?} 表情 {emoji_at:?}"),
+    );
+
     let events = emoji.process(Key::Digit(2));
     let exported = emoji.export_user();
     push(
