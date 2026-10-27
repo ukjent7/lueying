@@ -580,7 +580,7 @@ fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize
     // 「X的」提频时,同音键的「X得」不提会把 `nishuodeyoudaoli` 推向
     // 「你说的有道理」。两者只靠语法模型分,词频比例保持白霜原样。
     let mut siblings: HashSet<String> = HashSet::new();
-    for ((word, key), _) in best.iter() {
+    for (word, key) in best.keys() {
         if !common_freq.contains_key(word.as_str()) {
             continue;
         }

@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, App, Bounds, BoxShadow, Context, MouseButton, Point, ScrollDelta,
-    SharedString, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div,
-    ease_out_quint, hsla, prelude::*, px, rgb, size,
+    Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
+    Window, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint, prelude::*, px, rgb,
+    size,
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
@@ -29,7 +29,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
 };
-
 use crate::imp::State;
 
 #[path = "ui_hud.rs"]
@@ -48,8 +47,8 @@ const PREEDIT_H: f32 = 32.0;
 const ROW_H: f32 = 34.0;
 /// 候选窗与光标之间留一点呼吸,不贴着字形下缘。
 const CARET_GAP: f32 = 4.0;
-/// 窗口四周留给投影的透明边距;窗口底色透明,只有面板本身可见。
-const SHADOW_PAD: f32 = 10.0;
+/// 面板底部的内边距。
+const PANEL_PAD_B: f32 = 6.0;
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
 /// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
@@ -73,10 +72,7 @@ pub(super) fn run(state: Arc<State>) {
         let (park_x, park_y) = park_point();
         let bounds = Bounds {
             origin: Point::new(px(park_x as f32), px(park_y as f32)),
-            size: size(
-                px(WIDTH + SHADOW_PAD * 2.0),
-                px(PREEDIT_H + ROW_H + 6.0 + SHADOW_PAD * 2.0),
-            ),
+            size: size(px(WIDTH), px(PREEDIT_H + ROW_H + PANEL_PAD_B)),
         };
         let panel_state = Arc::clone(&state);
         let handle = cx
@@ -88,7 +84,6 @@ pub(super) fn run(state: Arc<State>) {
                     is_resizable: false,
                     is_minimizable: false,
                     kind: WindowKind::PopUp,
-                    window_background: WindowBackgroundAppearance::Transparent,
                     ..Default::default()
                 },
                 |_, cx| {
@@ -118,14 +113,13 @@ pub(super) fn run(state: Arc<State>) {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds {
                         origin: Point::new(px(park_x as f32), px(park_y as f32)),
-                        size: size(px(HUD_W + SHADOW_PAD * 2.0), px(HUD_H + SHADOW_PAD * 2.0)),
+                        size: size(px(HUD_W), px(HUD_H)),
                     })),
                     focus: false,
                     is_movable: false,
                     is_resizable: false,
                     is_minimizable: false,
                     kind: WindowKind::PopUp,
-                    window_background: WindowBackgroundAppearance::Transparent,
                     ..Default::default()
                 },
                 |_, cx| cx.new(|_| ModeHudPanel::new(hud_state)),
@@ -307,18 +301,16 @@ impl CandidatePanel {
                     // 必须按光标所在显示器算,否则副屏 150%/200% 下窗口尺寸不匹配。
                     let scale = scale_at(left, b);
                     let rows = view.as_ref().map_or(1, |v| panel_rows(v, width));
-                    let content_h = ((PREEDIT_H + ROW_H * rows as f32 + 6.0) * scale) as i32;
-                    let pad = (SHADOW_PAD * scale) as i32;
-                    let mut w = (width * scale) as i32 + pad * 2;
-                    let h = content_h + pad * 2;
+                    let h = ((PREEDIT_H + ROW_H * rows as f32 + PANEL_PAD_B) * scale) as i32;
+                    let mut w = (width * scale) as i32;
                     // 按光标所在屏的工作区夹取。
                     let work = work_area_at(left, b);
                     w = w.min((work.right - work.left).max(1));
                     // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
                     // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
                     let gap = (CARET_GAP * scale) as i32;
-                    let below = b + gap - pad;
-                    let above = t - content_h - gap - pad;
+                    let below = b + gap;
+                    let above = t - h - gap;
                     let fits_below = below + h <= work.bottom;
                     let fits_above = above >= work.top;
                     let prefer_above = match self.above.get() {
@@ -329,7 +321,7 @@ impl CandidatePanel {
                     self.above.set(Some(prefer_above));
                     let y = (if prefer_above { above } else { below })
                         .clamp(work.top, (work.bottom - h).max(work.top));
-                    let x = (left - pad).clamp(work.left, (work.right - w).max(work.left));
+                    let x = left.clamp(work.left, (work.right - w).max(work.left));
                     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
                     // 最大化窗口保留候选窗(它的矩形通常只到工作区)。
                     let hidden = foreground_fullscreen_at(left, b, host_pid);
@@ -392,14 +384,9 @@ fn text_units(text: &str) -> f32 {
         .sum()
 }
 
-/// 面板本身的高度(逻辑像素),含列表内边距与面板边框,不含投影留白。
-fn panel_height(view: &SessionView) -> f32 {
-    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + 6.0
-}
-
-/// 候选窗的估算高度(逻辑像素),含投影留白。
+/// 候选窗的估算高度(逻辑像素):预编辑行 + 当前页候选行 + 底部内边距。
 fn candidate_height(view: &SessionView) -> f32 {
-    panel_height(view) + SHADOW_PAD * 2.0
+    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + PANEL_PAD_B
 }
 
 /// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
@@ -571,15 +558,6 @@ fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
         && rect.bottom >= screen.bottom
 }
 
-/// 候选窗浮起时的柔和投影;深色底需要更重的黑,高对比度只用描边。
-fn panel_shadow(dark: bool) -> Vec<BoxShadow> {
-    let alpha = if dark { 0.5 } else { 0.18 };
-    vec![
-        BoxShadow::new(px(0.0), px(4.0), hsla(0.0, 0.0, 0.0, alpha)).blur_radius(px(12.0)),
-        BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 0.0, alpha * 0.5)).blur_radius(px(3.0)),
-    ]
-}
-
 impl Render for CandidatePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.reduce.set(cx.reduce_motion());
@@ -591,8 +569,6 @@ impl Render for CandidatePanel {
         };
         let appearance = theme::Appearance::of(window);
         let colors = theme::colors(appearance);
-        let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
-        let dark = matches!(appearance, theme::Appearance::Dark);
         let width = panel_width(&view);
         let ps = view.page_size.max(1);
         let start = view.page * ps;
@@ -646,7 +622,6 @@ impl Render for CandidatePanel {
                 .border_1()
                 .border_color(rgb(colors.border))
                 .rounded_lg()
-                .when(!high_contrast, |el| el.shadow(panel_shadow(dark)))
                 .overflow_hidden()
                 .on_scroll(move |event, _, _| {
                     let dir = match event.delta {
@@ -801,17 +776,16 @@ impl Render for CandidatePanel {
                 }));
         // 首次出现 140ms 淡入(首帧 45% 不透明度,候选立即可读),组合结束
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
-        // `composing` 拦掉。外层留白让投影落在窗口内,不被裁掉。
-        let root = div().p(px(SHADOW_PAD)).child(panel);
+        // `composing` 拦掉。
         if fading {
-            root.with_animation(
+            panel.with_animation(
                 "candidate-hide",
                 Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
                 |panel, delta| panel.opacity(1.0 - delta),
             )
             .into_any_element()
         } else {
-            root.with_animation(
+            panel.with_animation(
                 "candidate-show",
                 Animation::new(SHOW_FADE).with_easing(ease_out_quint()),
                 |panel, delta| {

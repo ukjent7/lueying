@@ -350,8 +350,8 @@ mod imp {
     fn section_label(title: &'static str, colors: theme::Colors, first: bool) -> impl IntoElement {
         div()
             .px(px(14.0))
-            .pt(px(10.0))
-            .pb(px(4.0))
+            .pt(px(8.0))
+            .pb(px(3.0))
             .when(!first, |el| {
                 el.border_t_1().border_color(rgb(colors.border))
             })
@@ -906,7 +906,7 @@ mod imp {
                 .font_family("Microsoft YaHei UI")
                 .flex()
                 .flex_col()
-                .gap(px(12.0))
+                .gap(px(10.0))
                 .p(px(18.0))
                 .w(px(WIDTH))
                 .h(px(HEIGHT))

@@ -99,9 +99,8 @@ impl ModeHudPanel {
             return;
         }
         let scale = scale_at(anchor_x, anchor_y);
-        let pad = (SHADOW_PAD * scale) as i32;
-        let w = ((HUD_W + SHADOW_PAD * 2.0) * scale) as i32;
-        let h = ((HUD_H + SHADOW_PAD * 2.0) * scale) as i32;
+        let w = (HUD_W * scale) as i32;
+        let h = (HUD_H * scale) as i32;
         let gap = (4.0 * scale) as i32;
         // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
         let in_comp = in_composition(&self.state);
@@ -112,8 +111,8 @@ impl ModeHudPanel {
         let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
         let y = (match caret {
             Some((_, t, _, b)) => {
-                let below = b + gap - pad;
-                let above = t - h - gap + pad;
+                let below = b + gap;
+                let above = t - h - gap;
                 if prefer_below && below + h <= work.bottom {
                     below
                 } else if !prefer_below && above >= work.top {
@@ -168,10 +167,7 @@ impl Render for ModeHudPanel {
             .when(!high_contrast, |el| el.shadow_md())
             .text_size(px(17.0))
             .text_color(rgb(colors.text))
-            .child(view.label);
-        div()
-            .p(px(SHADOW_PAD))
-            .child(panel)
+            .child(view.label)
             .opacity(opacity)
             .into_any_element()
     }
