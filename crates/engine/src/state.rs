@@ -355,10 +355,7 @@ impl Engine {
         if cand.quick || cand.no_learn {
             return false;
         }
-        let learn_text = cand
-            .learn_text
-            .clone()
-            .unwrap_or_else(|| cand.text.clone());
+        let learn_text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
         // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录。
         let removed = self
             .user
@@ -368,13 +365,9 @@ impl Engine {
         if removed {
             self.recompute();
             // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。
-            if let Some(index) = self
-                .cands
-                .iter()
-                .position(|c| {
-                    c.learn_text.as_deref().unwrap_or(c.text.as_str()) == learn_text.as_str()
-                })
-            {
+            if let Some(index) = self.cands.iter().position(|c| {
+                c.learn_text.as_deref().unwrap_or(c.text.as_str()) == learn_text.as_str()
+            }) {
                 self.hl = index;
                 self.page = index / self.cfg.page_size.max(1);
                 self.sync_display();

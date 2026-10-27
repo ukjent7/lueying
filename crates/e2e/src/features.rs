@@ -104,9 +104,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "v/符号代码",
-        top(&slash) == "↑"
-            && list.iter().any(|text| text == "→")
-            && hint == Some("箭头"),
+        top(&slash) == "↑" && list.iter().any(|text| text == "→") && hint == Some("箭头"),
         format!("{list:?} 提示 {hint:?}"),
     );
 
@@ -190,10 +188,7 @@ pub fn run(report: &mut String) -> usize {
 
     let mut promoted = custom(false);
     letters(&mut promoted, "weixiao");
-    let emoji_at = promoted
-        .candidates()
-        .iter()
-        .position(|text| text == "😊");
+    let emoji_at = promoted.candidates().iter().position(|text| text == "😊");
     push(
         &mut checks,
         "表情不参与重排",
@@ -318,8 +313,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "切回简体不召回繁体",
-        !canonical.candidates().iter().any(|text| text == "頭髮")
-            && top(&canonical) == "头发",
+        !canonical.candidates().iter().any(|text| text == "頭髮") && top(&canonical) == "头发",
         format!("{:?}", canonical.candidates()),
     );
 

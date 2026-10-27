@@ -400,7 +400,10 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
             missed.push((
                 raw.to_string(),
                 want.to_string(),
-                cands.first().map(|text| (*text).to_string()).unwrap_or_default(),
+                cands
+                    .first()
+                    .map(|text| (*text).to_string())
+                    .unwrap_or_default(),
             ));
         }
         if cands.iter().take(5).any(|text| *text == want) {
