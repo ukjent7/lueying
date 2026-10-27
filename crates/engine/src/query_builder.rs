@@ -43,7 +43,9 @@ impl Builder<'_, '_> {
                     word: h.word.clone(),
                     score: h.score() - penalty,
                     spans: self.spans.clone(),
-                    trusted: h.trusted,
+                    // 全拼串里靠简拼凑出的整词不是「精确命中」,
+                    // 否则 `niha` 的「你好啊」会挡住补全/手误纠正。
+                    trusted: h.trusted && abbrev == 0,
                     edits: h.edits,
                     freq: h.freq,
                     user_freq: h.user_freq,
