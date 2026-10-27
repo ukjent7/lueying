@@ -107,12 +107,6 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         raw,
     } = args;
     let total = dict.total_weight() as f64;
-    // 短串的候选空间小,放宽束宽多留同音词;长句的每档组合多,保持窄束。
-    let beam = if raw.len() <= SHORT_RAW {
-        BEAM_SHORT
-    } else {
-        BEAM
-    };
     let mut q = Querier {
         dict,
         user,
@@ -208,7 +202,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             }
         }
         cands.sort_by(|a, b| b.score.total_cmp(&a.score));
-        cands.truncate(beam);
+        cands.truncate(BEAM);
         best[j] = cands;
     }
 

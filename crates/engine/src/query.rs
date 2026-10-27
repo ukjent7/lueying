@@ -139,10 +139,6 @@ const ABBREV_PENALTY: f64 = 8.0;
 /// 整句 Viterbi 每档保留几条路径。3 条时模糊扩写会把正确切分挤出束,
 /// 与 librime/清风同为 7 条,长句仍只保留常数级状态。
 const BEAM: usize = 7;
-/// 短输入的状态空间小,放宽束宽多留同音词;词级 top-5 常被模糊扩写挤出
-/// 末位,长句仍用 7 条控制延迟。12 与每节点上限一致。
-const BEAM_SHORT: usize = 12;
-const SHORT_RAW: usize = 12;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
 /// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。
