@@ -1140,7 +1140,11 @@ mod imp {
                             cx.notify();
                         }
                         "tab" => {
-                            this.kbd_step(if event.keystroke.modifiers.shift { -1 } else { 1 });
+                            this.kbd_step(if event.keystroke.modifiers.shift {
+                                -1
+                            } else {
+                                1
+                            });
                             cx.notify();
                         }
                         "enter" | "space" => {
