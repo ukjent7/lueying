@@ -168,11 +168,13 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup 安装失败" }
           "LUEYING_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      # ARM64 没有别的构建步骤;32 位 TSF 下面的 Build 32-bit TSF 已经覆盖。
-      - name: ARM64 TSF 编译检查
+      # ARM64 安装被 lueying.iss 明确拒绝:ARM64 与 x64 共用同一份 64 位注册表
+      # 视图,原生宿主能加载的 TSF 得做成 ARM64X DLL,目前没有。这里仍做真实
+      # 链接而不只是 check,保证该目标随时可产出可用的原生 DLL。
+      - name: ARM64 TSF 构建
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
-          cargo check -p lueying-tsf --target aarch64-pc-windows-msvc --locked
+          cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
