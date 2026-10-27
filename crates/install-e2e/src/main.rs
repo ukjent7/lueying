@@ -232,20 +232,52 @@ mod imp {
             phase("卸载");
             uninstall(&target, &root, &local, &appdata, &trace)?;
             phase("等待卸载清理");
-            let deadline = Instant::now() + Duration::from_secs(90);
-            loop {
-                let cleaned = !target.exists()
-                    && !reg_query(INNO_UNINSTALL_KEY, None)
-                    && !reg_query(RUN_KEY, Some("Lueying"))
-                    && !reg_query(&inproc64, Some(""))
-                    && !reg_query(&inproc32, Some(""));
-                if cleaned || Instant::now() >= deadline {
-                    break;
-                }
+            // 卸载器逐文件删除后删目录。TSF DLL 常被 ctfmon 等宿主加载,
+            // Inno 的 uninsrestartdelete 会把它排进重启删除队列,目录只能
+            // 留到重启;其它任何残留都说明卸载不完整。
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while target.exists() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(200));
             }
+            let mut reboot_pending = Vec::new();
             if target.exists() {
-                return Err(format!("卸载后目录仍在: {}", target.display()));
+                let mut leftovers = Vec::new();
+                collect_files(&target, &mut leftovers)?;
+                let mut unexpected = Vec::new();
+                for file in leftovers {
+                    let name = file
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !is_versioned_tsf_dll(&name) {
+                        unexpected.push(file.display().to_string());
+                        continue;
+                    }
+                    // 宿主已经放开的文件直接删掉;仍被占用的必须确认
+                    // Inno 已安排重启删除,否则就是卸载器漏删。
+                    if std::fs::remove_file(&file).is_ok() {
+                        continue;
+                    }
+                    if !pending_delete(&file) {
+                        return Err(format!(
+                            "卸载后 {} 仍在,且没有安排重启删除",
+                            file.display()
+                        ));
+                    }
+                    reboot_pending.push(name);
+                }
+                if !unexpected.is_empty() {
+                    return Err(format!(
+                        "卸载后目录仍有非 TSF-DLL 残留: {}",
+                        unexpected.join(", ")
+                    ));
+                }
+                if reboot_pending.is_empty() {
+                    let _ = std::fs::remove_dir_all(&target);
+                    if target.exists() {
+                        return Err(format!("卸载后目录仍在: {}", target.display()));
+                    }
+                }
             }
             if reg_query(INNO_UNINSTALL_KEY, None) {
                 return Err("卸载后卸载项仍在".into());
@@ -261,6 +293,12 @@ mod imp {
                 return Err("卸载后「掠影」仍在当前用户输入法列表".into());
             }
             checks.push("注册项与输入法列表已清理".into());
+            if !reboot_pending.is_empty() {
+                checks.push(format!(
+                    "TSF DLL 被宿主加载,已安排重启删除: {}",
+                    reboot_pending.join(", ")
+                ));
+            }
             Ok(checks.join("\n- "))
         })();
 
@@ -580,6 +618,52 @@ mod imp {
     fn tail(bytes: &[u8]) -> String {
         let start = bytes.len().saturating_sub(800);
         String::from_utf8_lossy(&bytes[start..]).trim().to_string()
+    }
+
+    /// 递归列出目录下的文件;目录本身不作为残留,空目录可以整体删除。
+    fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+        let entries = std::fs::read_dir(dir).map_err(|e| format!("读取 {}: {e}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取 {}: {e}", dir.display()))?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .map_err(|e| format!("查看 {}: {e}", path.display()))?;
+            if kind.is_dir() {
+                collect_files(&path, out)?;
+            } else {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    /// 卸载时允许因宿主仍加载而留到重启的只有版本化 TSF DLL。
+    fn is_versioned_tsf_dll(name: &str) -> bool {
+        let lower = name.to_ascii_lowercase();
+        (lower.starts_with("lueying_tsf-") || lower.starts_with("lueying_tsf32-"))
+            && lower.ends_with(".dll")
+    }
+
+    /// 文件是否已排进 Windows 的重启删除队列。Inno 对 uninsrestartdelete
+    /// 文件调用 MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT),记录在这里。
+    fn pending_delete(path: &Path) -> bool {
+        let mut command = Command::new("reg");
+        command.args([
+            "query",
+            r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager",
+            "/v",
+            "PendingFileRenameOperations",
+        ]);
+        let Ok(output) = command.output() else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+        let needle = path.to_string_lossy().to_ascii_lowercase();
+        text.contains(&needle)
     }
 
     fn system32(name: &str) -> PathBuf {
