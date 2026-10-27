@@ -277,13 +277,15 @@ fn pick(engine: &mut Engine, word: &str) -> bool {
 
 /// 长期学习:每轮逐条查询,用户从候选里选中期望词,学习结果累积。
 /// 第 3 轮结束后导出并重新导入用户词库,模拟一次进程重启。
+/// 返回每轮成绩与「学了一轮仍未到首选」的样本,便于定位学不会的词。
 fn long_term(
     dict: &Arc<Dictionary>,
     gram: &Option<Arc<Gram>>,
     corpus: &[(String, String)],
-) -> Vec<Score> {
+) -> (Vec<Score>, Vec<Miss>) {
     let mut engine = make_engine(dict, gram, Fuzzy::auto());
     let mut rounds = Vec::with_capacity(LONG_TERM_ROUNDS);
+    let mut stuck = Vec::new();
     for round in 0..LONG_TERM_ROUNDS {
         if round == 3 {
             let saved = engine.export_user();
@@ -300,13 +302,21 @@ fn long_term(
             let cands = eval_texts(&engine);
             let rank = cands.iter().position(|c| c == want);
             score.add(rank);
+            if round == 1 && rank != Some(0) {
+                stuck.push(Miss {
+                    typed: typed.clone(),
+                    want: want.clone(),
+                    got: cands.first().cloned().unwrap_or_default(),
+                    alternatives: cands.into_iter().take(8).collect(),
+                });
+            }
             if !pick(&mut engine, want) {
                 engine.process(Key::Esc);
             }
         }
         rounds.push(score);
     }
-    rounds
+    (rounds, stuck)
 }
 
 /// 从口音语料里挑出「当前不在首选、但能翻到」的词,学习才有可量化空间。
@@ -350,12 +360,17 @@ fn row(text: &mut String, label: &str, score: Score) {
 }
 
 fn misses(text: &mut String, misses: &[Miss]) {
+    misses_titled(text, "未命中示例", misses);
+}
+
+fn misses_titled(text: &mut String, title: &str, misses: &[Miss]) {
     if misses.is_empty() {
         return;
     }
-    text.push_str(
-        "\n未命中示例(附前 8 条候选,便于判断是分词、词频还是模糊扩展导致):\n\n\
-         | 输入 | 期望 | 首选 | 候选 |\n|---|---|---|---|\n",
+    let _ = write!(
+        text,
+        "\n{title}(附前 8 条候选,便于判断是分词、词频还是模糊扩展导致):\n\n\
+         | 输入 | 期望 | 首选 | 候选 |\n|---|---|---|---|\n"
     );
     for miss in misses {
         let _ = writeln!(
@@ -499,7 +514,7 @@ pub fn run(
 
     let learn_words = learn_pool(&dict, LEARN_WORD_LIMIT);
     let long_corpus = ambiguous_corpus(&dict, &gram, &learn_words);
-    let rounds = long_term(&dict, &gram, &long_corpus);
+    let (rounds, long_stuck) = long_term(&dict, &gram, &long_corpus);
 
     let mut text = String::from("# 候选准确率基准\n\n");
     if matches!(mode, Mode::Fast) {
@@ -616,6 +631,7 @@ pub fn run(
             *score,
         );
     }
+    misses_titled(&mut text, "长期学习仍未命中(第 2 轮起)", &long_stuck);
 
     let stable = |base: Score, current: Score| current.top1_rate() + 1.0 >= base.top1_rate();
     let word_ok = stable(word_base, word_default);
