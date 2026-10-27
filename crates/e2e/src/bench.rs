@@ -231,7 +231,7 @@ fn run_suite(
         for c in typed.chars() {
             engine.process(Key::Letter(c));
         }
-        let cands = engine.candidates();
+        let cands = eval_texts(&engine);
         let want_norm = normalize(want);
         let rank = cands.iter().position(|c| normalize(c) == want_norm);
         score.add(rank);
@@ -246,6 +246,16 @@ fn run_suite(
         engine.process(Key::Esc);
     }
     (score, misses)
+}
+
+/// 准确率只统计中文候选:表情、符号与英文直通项不占前五名额。
+fn eval_texts(engine: &Engine) -> Vec<String> {
+    engine
+        .candidates_detailed()
+        .iter()
+        .filter(|cand| !cand.no_learn && !cand.quick)
+        .map(|cand| cand.text.clone())
+        .collect()
 }
 
 /// 翻到候选所在页并点选;用于模拟用户纠正。
@@ -287,7 +297,7 @@ fn long_term(
             for c in typed.chars() {
                 engine.process(Key::Letter(c));
             }
-            let cands = engine.candidates();
+            let cands = eval_texts(&engine);
             let rank = cands.iter().position(|c| c == want);
             score.add(rank);
             if !pick(&mut engine, want) {
@@ -313,7 +323,7 @@ fn ambiguous_corpus(
         for c in typed.chars() {
             engine.process(Key::Letter(c));
         }
-        let rank = engine.candidates().iter().position(|c| c == want);
+        let rank = eval_texts(&engine).iter().position(|c| c == want);
         if rank.is_some_and(|i| i > 0 && i < 40) {
             out.push((typed.clone(), want.clone()));
         }

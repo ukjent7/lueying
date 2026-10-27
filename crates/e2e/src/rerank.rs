@@ -87,10 +87,19 @@ fn signature(cands: &[Candidate]) -> Vec<(String, usize)> {
 }
 
 fn hit(cands: &[Candidate], gold: &str) -> (bool, bool) {
-    (
-        cands.first().is_some_and(|c| c.text == gold),
-        cands.iter().take(5).any(|c| c.text == gold),
-    )
+    // 表情/英文固定项不是中文候选,不占 top-1/top-5 名额。
+    let (mut top1, mut top5) = (false, false);
+    for (index, cand) in cands
+        .iter()
+        .filter(|cand| !cand.no_learn && !cand.quick)
+        .enumerate()
+    {
+        if cand.text == gold {
+            top1 |= index == 0;
+            top5 |= index < 5;
+        }
+    }
+    (top1, top5)
 }
 
 fn argmax(scores: &[f32]) -> usize {

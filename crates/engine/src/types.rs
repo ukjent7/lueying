@@ -56,6 +56,8 @@ pub struct Config {
     pub fuzzy: Fuzzy,
     pub chinese_punct: bool,
     pub page_size: usize,
+    /// 候选与上屏输出繁体;学习仍用简体规范形式。
+    pub traditional: bool,
 }
 
 impl Default for Config {
@@ -65,6 +67,7 @@ impl Default for Config {
             fuzzy: Fuzzy::auto(),
             chinese_punct: true,
             page_size: 5,
+            traditional: false,
         }
     }
 }

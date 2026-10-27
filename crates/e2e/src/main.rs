@@ -2,6 +2,7 @@
 //! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast]`
 
 mod bench;
+mod features;
 mod modules;
 mod quick;
 mod rerank;
@@ -149,6 +150,9 @@ fn main() {
 
     // 快捷输入:日期/时间/星期与 v 模式数字金额。
     failures += quick::run(&mut report);
+
+    // 核心输入补齐:符号、emoji、简繁与英文混输。
+    failures += features::run(&mut report);
 
     // 可选功能模块:契约注册、候选注入与上屏转换。
     failures += modules::run(&mut report);
@@ -366,6 +370,7 @@ fn main() {
 }
 
 /// 整句评测:逐条打进引擎,取候选首位与 top-5。
+/// 表情/符号/英文直通项不占中文准确率的前五名额。
 fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, String, String)>) {
     let (mut total, mut top1, mut top5) = (0usize, 0usize, 0usize);
     let mut missed = Vec::new();
@@ -382,18 +387,23 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
         for c in raw.chars() {
             engine.process(Key::Letter(c));
         }
-        let cands = engine.candidates();
+        let cands: Vec<&str> = engine
+            .candidates_detailed()
+            .iter()
+            .filter(|cand| !cand.no_learn && !cand.quick)
+            .map(|cand| cand.text.as_str())
+            .collect();
         total += 1;
-        if cands.first().is_some_and(|s| s.as_str() == want) {
+        if cands.first().is_some_and(|text| *text == want) {
             top1 += 1;
         } else {
             missed.push((
                 raw.to_string(),
                 want.to_string(),
-                cands.first().cloned().unwrap_or_default(),
+                cands.first().map(|text| (*text).to_string()).unwrap_or_default(),
             ));
         }
-        if cands.iter().take(5).any(|s| s.as_str() == want) {
+        if cands.iter().take(5).any(|text| *text == want) {
             top5 += 1;
         }
     }

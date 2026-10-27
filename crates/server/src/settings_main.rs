@@ -1,4 +1,4 @@
-//! 设置窗独立进程:候选数、中文标点、Shift 切中英。
+//! 设置窗独立进程:候选数、中文标点、简繁输出、Shift 切中英。
 //! 模糊音按输入习惯自动召回,保留一个总开关用于排障或个人偏好。
 //! 保存写 `config.ini`,再经命名管道让常驻 Server 立即重载。
 
@@ -44,8 +44,8 @@ mod imp {
     use windows::core::{HSTRING, PCWSTR, PWSTR};
 
     const WIDTH: f32 = 440.0;
-    /// 6 行设置 + 标题/说明/更新行/底部按钮;440 逻辑像素在 768p、150% 缩放下也放得下。
-    const HEIGHT: f32 = 440.0;
+    /// 7 行设置 + 标题/说明/更新行/底部按钮;480 逻辑像素在 768p、150% 缩放下也放得下。
+    const HEIGHT: f32 = 480.0;
 
     #[derive(Clone)]
     enum UpdateState {
@@ -501,6 +501,20 @@ mod imp {
                         colors,
                         cx.listener(|this, _, _, cx| {
                             this.cfg.chinese_punct = !this.cfg.chinese_punct;
+                            this.message.clear();
+                            cx.notify();
+                        }),
+                    ),
+                    colors,
+                ))
+                .child(row(
+                    "输出繁体",
+                    pill(
+                        if self.cfg.traditional { "开" } else { "关" },
+                        self.cfg.traditional,
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.cfg.traditional = !this.cfg.traditional;
                             this.message.clear();
                             cx.notify();
                         }),

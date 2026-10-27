@@ -6,13 +6,14 @@ use std::path::{Path, PathBuf};
 
 use lueying_engine::{Config, Fuzzy};
 
-/// 运行时配置。引擎只关心其中三项,`shift_toggle` 由 Server 处理。
+/// 运行时配置。引擎只关心其中五项,`shift_toggle` 由 Server 处理。
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppConfig {
     pub page_size: usize,
     pub chinese_punct: bool,
     pub fuzzy: Fuzzy,
     pub shift_toggle: bool,
+    pub traditional: bool,
 }
 
 impl Default for AppConfig {
@@ -23,6 +24,7 @@ impl Default for AppConfig {
             // 零配置:模糊音默认自动召回,设置页不再逐项开关。
             fuzzy: Fuzzy::auto(),
             shift_toggle: true,
+            traditional: false,
         }
     }
 }
@@ -34,6 +36,7 @@ impl AppConfig {
             fuzzy: self.fuzzy,
             chinese_punct: self.chinese_punct,
             page_size: self.page_size,
+            traditional: self.traditional,
         }
     }
 }
@@ -86,6 +89,11 @@ pub fn load(path: &Path) -> AppConfig {
                     cfg.shift_toggle = on;
                 }
             }
+            "traditional" => {
+                if let Some(on) = flag(value) {
+                    cfg.traditional = on;
+                }
+            }
             // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
             // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
             "fuzzy" => match value {
@@ -108,10 +116,12 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         "page_size={}\n\
          chinese_punct={}\n\
          shift_toggle={}\n\
+         traditional={}\n\
          fuzzy={}\n",
         cfg.page_size,
         cfg.chinese_punct,
         cfg.shift_toggle,
+        cfg.traditional,
         if cfg.fuzzy.is_off() { "off" } else { "auto" },
     );
     let tmp = path.with_extension("ini.tmp");

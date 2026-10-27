@@ -199,6 +199,8 @@ impl Engine {
             || index >= self.cands.len()
             || !self.cands[index].full
             || self.cands[index].rejected
+            || self.cands[index].quick
+            || self.cands[index].no_learn
         {
             return false;
         }
@@ -298,7 +300,11 @@ impl Engine {
     /// 不补全剩余拼音,也不改选下一条候选。返回上屏文本。
     pub fn finalize_display(&mut self) -> Option<String> {
         let comp = self.comp.take()?;
-        let quick = self.cands.get(self.hl).is_some_and(|cand| cand.quick);
+        let cand = self.cands.get(self.hl);
+        let fixed = cand.is_some_and(|cand| cand.quick || cand.no_learn);
+        let learn_text = cand
+            .and_then(|cand| cand.learn_text.clone())
+            .unwrap_or_else(|| comp.display.clone());
         let mut text = if comp.display.is_empty() {
             comp.raw
         } else {
@@ -318,14 +324,19 @@ impl Engine {
         self.page = 0;
         self.rev = self.rev.wrapping_add(1);
         if !text.is_ascii() {
-            // 快捷文本不学个人搭配,但仍作为后续候选的左邻上下文。
-            if self.learning && !quick {
+            let context_text = if learn_text.is_empty() {
+                text.as_str()
+            } else {
+                learn_text.as_str()
+            };
+            // 快捷/表情/英文文本不学个人搭配,但仍作为后续候选的左邻上下文。
+            if self.learning && !fixed {
                 self.user
                     .write()
                     .unwrap_or_else(|p| p.into_inner())
-                    .learn_context(&self.context, &text);
+                    .learn_context(&self.context, context_text);
             }
-            self.push_context(&text);
+            self.push_context(context_text);
         }
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
@@ -340,20 +351,30 @@ impl Engine {
         let Some(cand) = self.cands.get(self.hl).cloned() else {
             return false;
         };
-        // 日期/金额不是用户词,没有可忘的学习记录;也不能按同文删到真正的词。
-        if cand.quick {
+        // 日期/金额/表情/英文不是用户词,没有可忘的学习记录;也不能按同文删到真正的词。
+        if cand.quick || cand.no_learn {
             return false;
         }
+        let learn_text = cand
+            .learn_text
+            .clone()
+            .unwrap_or_else(|| cand.text.clone());
         // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录。
         let removed = self
             .user
             .write()
             .unwrap_or_else(|p| p.into_inner())
-            .remove_word(&cand.text);
+            .remove_word(&learn_text);
         if removed {
             self.recompute();
             // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。
-            if let Some(index) = self.cands.iter().position(|c| c.text == cand.text) {
+            if let Some(index) = self
+                .cands
+                .iter()
+                .position(|c| {
+                    c.learn_text.as_deref().unwrap_or(c.text.as_str()) == learn_text.as_str()
+                })
+            {
                 self.hl = index;
                 self.page = index / self.cfg.page_size.max(1);
                 self.sync_display();

@@ -57,10 +57,14 @@ pub struct Candidate {
     pub hint: Option<String>,
     /// 纠正候选的学习键(原串与纠正串不同,不能从 `spans` 反推)。
     pub learn_key: Option<String>,
-    /// 快捷输入(日期/时间/数字金额):不写词库,也不参与词级转移。
+    /// 快捷输入(日期/时间/数字金额/符号):不写词库,也不参与词级转移。
     pub quick: bool,
     /// 用户在同键下跳过过该候选:只小幅降权,精确首位保护也会让位。
     pub rejected: bool,
+    /// 显示文本是繁体时的简体规范形式。学习与左邻上下文用它,避免简繁分裂词库。
+    pub learn_text: Option<String>,
+    /// 表情、英文直通等固定候选:不学习、不造词,也不参与模型重排。
+    pub no_learn: bool,
 }
 
 impl Candidate {
@@ -86,7 +90,17 @@ impl Candidate {
             learn_key: None,
             quick: false,
             rejected: false,
+            learn_text: None,
+            no_learn: false,
         }
+    }
+
+    /// 覆盖整个输入的固定快捷候选:不学习、不参与重排,顺序由插入位置决定。
+    pub fn quick(raw_len: usize, text: impl Into<String>, score: f64) -> Self {
+        let mut cand = Self::whole(raw_len, text, score);
+        cand.words.clear();
+        cand.quick = true;
+        cand
     }
 }
 

@@ -1,4 +1,4 @@
-//! 快捷输入:日期、时间、星期、v 模式数字/金额/日期/算式与 u 问字。
+//! 快捷输入:日期、时间、星期、v 模式符号/数字/金额/日期/算式与 u 问字。
 //!
 //! 这些候选只回答当前原始串,不是词典词:上屏时不写用户词库、不学词级转移,
 //! 也不会被第二天的同一触发串召回成旧日期。
@@ -6,6 +6,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::query::Candidate;
+use crate::symbols;
 
 const LOWER_DIGITS: [&str; 10] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
 /// 逐位读法专用:阿拉伯数字的 0 读「〇」,位值读法的空缺才用「零」。
@@ -74,6 +75,9 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
 
 /// 当前原始串对应的快捷候选;没有触发时返回空。
 pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
+    if let Some(cands) = symbols::candidates(raw) {
+        return cands;
+    }
     if let Some((text, value)) = unicode_texts(raw) {
         let mut cands = wrap(vec![text], raw);
         if let Some(top) = cands.first_mut() {
@@ -140,27 +144,8 @@ fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
     texts
         .into_iter()
         .enumerate()
-        .map(|(index, text)| Candidate {
-            text,
-            // 快捷候选不是词:词级转移与自动造词都跳过。
-            words: Vec::new(),
-            consume: 1,
-            // 注入后不再排序;递减分只用于稳定顺序与诊断。
-            score: 1.0e9 - index as f64,
-            spans: vec![(0, raw.len())],
-            full: true,
-            trusted: false,
-            sentence: false,
-            edits: 0,
-            freq: 0,
-            user_freq: 0,
-            learned: false,
-            groups: 0,
-            hint: None,
-            learn_key: None,
-            quick: true,
-            rejected: false,
-        })
+        // 注入后不再排序;递减分只用于稳定顺序与诊断。
+        .map(|(index, text)| Candidate::quick(raw.len(), text, 1.0e9 - index as f64))
         .collect()
 }
 
@@ -211,7 +196,10 @@ fn weekday_texts(now: CivilTime) -> Vec<String> {
 
 /// 当前串会不会产生快捷候选。查询层用它跳过错音纠正,保证触发键秒出。
 pub(crate) fn is_trigger(raw: &str) -> bool {
-    matches!(raw, "rq" | "sj" | "xq") || unicode_body(raw).is_some() || number_body(raw).is_some()
+    matches!(raw, "rq" | "sj" | "xq")
+        || symbols::is_trigger(raw)
+        || unicode_body(raw).is_some()
+        || number_body(raw).is_some()
 }
 
 /// `v` + 十进制数 → 小写/大写读法、金额与逐位读法。

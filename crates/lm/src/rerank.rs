@@ -28,10 +28,10 @@ pub struct Reranker {
     pub(crate) resume: Vec<(Vec<u32>, Arc<TailRun>)>,
     /// A spare vector whose allocation is reused while the previous decision remains available
     /// for prefix matching.
-    resume_scratch: Vec<(Vec<u32>, Arc<TailRun>)>,
+    pub(crate) resume_scratch: Vec<(Vec<u32>, Arc<TailRun>)>,
     /// `best_where` only needs scores until it has chosen an index; keep that short result buffer
     /// between keystrokes instead of allocating it for every decision.
-    scores_scratch: Vec<f32>,
+    pub(crate) scores_scratch: Vec<f32>,
 }
 
 impl Reranker {

@@ -80,10 +80,11 @@ pub fn parse_sha256(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
         // sha256sum 格式是 `<hash>  <file>`;certutil 有的版本把摘要按 2 位一组
         // 用空格分开,行上只有摘要。两种都接受。
-        if let Some(token) = line.split_whitespace().next() {
-            if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Some(token.to_ascii_lowercase());
-            }
+        if let Some(token) = line.split_whitespace().next()
+            && token.len() == 64
+            && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Some(token.to_ascii_lowercase());
         }
         let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
         (compact.len() == 64 && compact.bytes().all(|byte| byte.is_ascii_hexdigit()))

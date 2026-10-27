@@ -533,15 +533,24 @@ impl Engine {
         let cand = self.cands.get(idx)?.clone();
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
-        // 快捷候选不是词:不写用户词库、不学组级适应,也不把日期/金额
+        // 学习与上下文用规范字形:繁体显示时仍写简体,切回简体不召回繁体词。
+        let learn_text = cand
+            .learn_text
+            .as_deref()
+            .unwrap_or(cand.text.as_str())
+            .to_string();
+        let fixed = cand.quick || cand.no_learn;
+        // 快捷/固定候选不是词:不写用户词库、不学组级适应,也不把日期/金额
         // 当作用词接进词级转移。它们也不参与同一次组合的自动造词。
         if cand.quick {
-            self.phrase = None;
             self.quick_handled += 1;
+        }
+        if fixed {
+            self.phrase = None;
         }
         // 用户词库的键必须和查询时的音节键一致(ni'hao),不能存原始串(nihao),
         // 否则多音节词学完也匹配不上。
-        let learned = if cand.quick {
+        let learned = if fixed {
             String::new()
         } else {
             cand.learn_key.clone().unwrap_or_else(|| {
@@ -553,23 +562,30 @@ impl Engine {
                     .join("'")
             })
         };
-        if self.learning && !cand.quick {
+        if self.learning && !fixed {
             let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
             // 同键下被越过的候选记一次小负分。只统计吃掉同样多音节的候选:
             // 用户改选前缀词上屏时,不能被当成否定了整句读法。手误纠正的候选
             // 是推测出来的键,不拿它给正确输入留下负分。
             for skipped in self.cands.iter().take(idx) {
-                if skipped.quick || skipped.learn_key.is_some() || skipped.consume != cand.consume {
+                if skipped.quick || skipped.no_learn || skipped.learn_key.is_some() {
+                    continue;
+                }
+                if skipped.consume != cand.consume {
                     continue;
                 }
                 let key = skipped
                     .learn_key
                     .clone()
                     .unwrap_or_else(|| query::spans_key(&raw, &skipped.spans));
-                user.reject(&key, &skipped.text);
+                let text = skipped
+                    .learn_text
+                    .as_deref()
+                    .unwrap_or(skipped.text.as_str());
+                user.reject(&key, text);
             }
-            user.forgive_word(&cand.text);
-            user.learn(&learned, &cand.text);
+            user.forgive_word(&learn_text);
+            user.learn(&learned, &learn_text);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
             }
@@ -581,8 +597,8 @@ impl Engine {
             );
             user.learn_app(&self.host, &cand.words);
         }
-        if cand.quick {
-            // 让 `note_events` 把上一条词序切断,而不是把日期记成前词。
+        if fixed {
+            // 让 `note_events` 把上一条词序切断,而不是把日期/表情记成前词。
             self.last_word = None;
             self.second_last_word = None;
         } else if cand.words.len() >= 2 {
@@ -597,15 +613,15 @@ impl Engine {
         let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
-        let phrase = if self.learning && !cand.quick {
+        let phrase = if self.learning && !fixed {
             match self.phrase.take() {
                 Some((mut key, mut text)) => {
                     key.push('\'');
                     key.push_str(&learned);
-                    text.push_str(&cand.text);
+                    text.push_str(&learn_text);
                     Some((key, text))
                 }
-                None if !rest.is_empty() => Some((learned, cand.text.clone())),
+                None if !rest.is_empty() => Some((learned, learn_text.clone())),
                 None => None,
             }
         } else {
@@ -624,6 +640,19 @@ impl Engine {
             self.phrase = phrase;
         }
         if rest.is_empty() {
+            // 规范字形的上下文在这里写入;`note_events` 据此跳过这条提交,
+            // 繁体显示也就不会把繁体字带进左邻文本。
+            if !learn_text.is_ascii() {
+                if self.learning && !fixed {
+                    self.user
+                        .write()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .learn_context(&self.context, &learn_text);
+                }
+                self.push_context(&learn_text);
+                // `note_events` 据此跳过这条提交,不再把繁体显示写进上下文。
+                self.context_handled += 1;
+            }
             self.comp = None;
             self.comp_committed = false;
             self.cands.clear();
@@ -633,14 +662,14 @@ impl Engine {
         } else {
             // 剩余拼音马上要重算:先把刚上屏的片段并入左邻上下文,下一段的
             // 候选才能看到刚形成的搭配。`note_events` 会跳过这次重复处理。
-            if !cand.text.is_ascii() {
-                if self.learning {
+            if !learn_text.is_ascii() {
+                if self.learning && !fixed {
                     self.user
                         .write()
                         .unwrap_or_else(|p| p.into_inner())
-                        .learn_context(&self.context, &cand.text);
+                        .learn_context(&self.context, &learn_text);
                 }
-                self.push_context(&cand.text);
+                self.push_context(&learn_text);
             }
             self.context_handled += 1;
             let comp = self.comp.as_mut()?;
@@ -866,6 +895,33 @@ impl Engine {
                 now,
             };
             self.modules.candidates(&module_ctx, &mut built.cands);
+        }
+        // 表情跟随词候选;英文只在非快速触发串上补一条。两者都不改中文排序。
+        emoji::inject(&mut built.cands);
+        if !quick::is_trigger(&comp.raw) {
+            let has_full = built
+                .cands
+                .iter()
+                .any(|cand| cand.full && !cand.quick && !cand.no_learn);
+            if let Some(cand) = english::candidate(&comp.raw, has_full, !built.cands.is_empty()) {
+                if has_full {
+                    built.cands.push(cand);
+                } else {
+                    built.cands.insert(0, cand);
+                }
+            }
+        }
+        // 显示与上屏用繁体时,候选文本整体换形;学习仍按 learn_text 的简体。
+        if self.cfg.traditional {
+            for cand in &mut built.cands {
+                let converted = script::to_traditional(&cand.text);
+                if converted != cand.text {
+                    let original = std::mem::replace(&mut cand.text, converted);
+                    if cand.learn_text.is_none() {
+                        cand.learn_text = Some(original);
+                    }
+                }
+            }
         }
         comp.display = built
             .cands

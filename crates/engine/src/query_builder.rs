@@ -234,6 +234,8 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             learn_key: None,
             quick: false,
             rejected: reject > 0.0,
+            learn_text: None,
+            no_learn: false,
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
@@ -295,6 +297,8 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                 learn_key: None,
                 quick: false,
                 rejected: reject > 0.0,
+                learn_text: None,
+                no_learn: false,
             });
         }
     }

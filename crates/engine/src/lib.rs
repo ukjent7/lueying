@@ -9,13 +9,17 @@
 //!
 //! 文件布局:`state` 放会话、配置与候选选择,`input` 放按键状态机与上屏。
 
+mod emoji;
+mod english;
 mod input;
 pub mod module;
 mod punct;
 mod query;
 mod quick;
+mod script;
 mod segment;
 mod state;
+mod symbols;
 pub mod types;
 mod typo;
 mod user;
