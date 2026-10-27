@@ -243,9 +243,7 @@ fn run_suite(
         }
         let cands = eval_texts(&engine);
         let want_norm = normalize(want);
-        let rank = cands
-            .iter()
-            .position(|c| matches_normalized(c, &want_norm));
+        let rank = cands.iter().position(|c| matches_normalized(c, &want_norm));
         score.add(rank);
         if rank != Some(0) && misses.len() < 5 {
             misses.push(Miss {
