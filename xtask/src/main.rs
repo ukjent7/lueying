@@ -519,10 +519,7 @@ fn parse_frost(
 
 /// 合并青简常用词表:多字词已收录则提频,未收录则补入;单字整行跳过。
 /// 只认仓库内快照,CI 不依赖 work/ 下的参考项目。
-fn parse_common(
-    text: &str,
-    best: &mut HashMap<(String, String), u64>,
-) -> (usize, usize, usize) {
+fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize, usize, usize) {
     let existing: HashSet<String> = best.keys().map(|(word, _)| word.clone()).collect();
     let mut entries: Vec<(String, String, u64)> = Vec::new();
     let mut bad = 0usize;

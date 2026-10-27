@@ -44,9 +44,7 @@ pub(crate) fn inject(cands: &mut Vec<Candidate>) {
     let last_barrier = cands
         .iter()
         .enumerate()
-        .filter(|(_, cand)| {
-            cand.quick || cand.spans.last().map_or(0, |span| span.1) < top_cut
-        })
+        .filter(|(_, cand)| cand.quick || cand.spans.last().map_or(0, |span| span.1) < top_cut)
         .map(|(index, _)| index)
         .max();
     for (index, cand) in std::mem::take(cands).into_iter().enumerate() {
