@@ -818,7 +818,8 @@ impl Render for CandidatePanel {
                                         } else {
                                             (y - MENU_H).max(PREEDIT_H)
                                         };
-                                        *this.menu.borrow_mut() = Some((slot, top, menu_text));
+                                        *this.menu.borrow_mut() =
+                                            Some((slot, top, menu_text.clone()));
                                         cx.notify();
                                     }),
                                 )

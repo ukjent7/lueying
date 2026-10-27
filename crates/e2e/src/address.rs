@@ -169,14 +169,14 @@ pub fn run(report: &mut String) -> usize {
             .any(|event| matches!(event, Event::Commit(text) if text == "。")),
         format!("{events:?}"),
     );
-    // 空 raw 与非用户名字符后的 @ 按普通标点上屏。
+    // 空 raw 的 @ 按普通标点走:未映射标点直通给宿主,让应用自己插字符。
     let events = engine().process(Key::Punct('@'));
     push(
         &mut checks,
         "空组合的 @ 直通",
         events
             .iter()
-            .any(|event| matches!(event, Event::Commit(text) if text == "@")),
+            .any(|event| matches!(event, Event::Passthrough(Key::Punct('@')))),
         format!("{events:?}"),
     );
 
