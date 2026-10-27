@@ -33,7 +33,7 @@ use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
 pub use quick::CivilTime;
-pub use types::{Composition, Config, Event, Key, Mode};
+pub use types::{Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;
 
 /// 功能模块作者常用的公开类型。

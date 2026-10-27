@@ -15,11 +15,12 @@
 //! 12. 繁体模式误转英文、拼音原文或快捷输入的 ASCII 部分。
 //! 13. 少打末音节最后一个字母时没有整词候选;完整拼音、单音节或简拼被误补全。
 //! 14. 口语读音 zhei/nei 没有整词,`zheige` 被拆成「贼个」。
+//! 15. 地区字形做词汇替换或方向反了:台湾 麪→麵、香港 臺→台,互相对照。
 
 use std::sync::Arc;
 
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Event, Key};
+use lueying_engine::{Config, Engine, Event, Key, Script};
 
 const TEST_DICT: &str = "\
 微笑\t1000000\twei'xiao
@@ -59,13 +60,13 @@ fn push(
     checks.push((name, ok, note));
 }
 
-fn custom(traditional: bool) -> Engine {
+fn custom(script: Script) -> Engine {
     let (dict, bad) = Dictionary::from_text(TEST_DICT);
     assert_eq!(bad, 0, "测试词库不应有坏行");
     Engine::new(
         Arc::new(dict),
         Config {
-            traditional,
+            script,
             ..Config::default()
         },
     )
@@ -174,7 +175,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 表情:词候选后紧跟表情,不抢词本身的首选;选中表情不写词库。
-    let mut emoji = custom(false);
+    let mut emoji = custom(Script::Simplified);
     letters(&mut emoji, "weixiao");
     let list = emoji.candidates();
     let emoji_at = list.iter().position(|text| text == "😊");
@@ -213,7 +214,7 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?} 词库 {} 行", exported.lines().count()),
     );
 
-    let mut promoted = custom(false);
+    let mut promoted = custom(Script::Simplified);
     letters(&mut promoted, "weixiao");
     let emoji_at = promoted.candidates().iter().position(|text| text == "😊");
     push(
@@ -399,7 +400,7 @@ pub fn run(report: &mut String) -> usize {
         ("miantiao", "麪條"),
     ];
     for (raw, want) in cases {
-        let mut engine = custom(true);
+        let mut engine = custom(Script::Traditional);
         letters(&mut engine, raw);
         let actual = top(&engine);
         push(
@@ -410,8 +411,28 @@ pub fn run(report: &mut String) -> usize {
         );
     }
 
+    // 地区字形:在通用转换之上二次映射,只换异体字。台湾把 麪 換成 麵,
+    // 香港把 臺 写作 台;互相对照,通用层都保持原样。
+    let variants: [(&str, Script, &str); 4] = [
+        ("miantiao", Script::Taiwan, "麵條"),
+        ("miantiao", Script::HongKong, "麪條"),
+        ("houtai", Script::Taiwan, "後臺"),
+        ("houtai", Script::HongKong, "後台"),
+    ];
+    for (raw, script, want) in variants {
+        let mut engine = custom(script);
+        letters(&mut engine, raw);
+        let actual = top(&engine);
+        push(
+            &mut checks,
+            "地区字形",
+            actual == want && display(&engine) == want,
+            format!("{raw} {script:?} → {actual}"),
+        );
+    }
+
     // 繁体显示、简体学习:词库保持简体,切回简体不召回繁体词。
-    let mut canonical = custom(true);
+    let mut canonical = custom(Script::Traditional);
     letters(&mut canonical, "toufa");
     let events = canonical.process(Key::Space);
     let exported = canonical.export_user();
@@ -438,11 +459,11 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 组合中切换:候选与内联显示同时换字形。
-    let mut switch = custom(false);
+    let mut switch = custom(Script::Simplified);
     letters(&mut switch, "toufa");
     let simplified = top(&switch) == "头发";
     switch.set_config(Config {
-        traditional: true,
+        script: Script::Traditional,
         ..Config::default()
     });
     let traditional = top(&switch) == "頭髮" && display(&switch) == "頭髮";
@@ -455,7 +476,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 繁体模式不碰 ASCII:英文候选与回车原样上屏都保持原样。
-    let mut ascii = custom(true);
+    let mut ascii = custom(Script::Traditional);
     letters(&mut ascii, "hello");
     let ascii_top = top(&ascii);
     let events = ascii.process(Key::Space);
@@ -469,7 +490,7 @@ pub fn run(report: &mut String) -> usize {
         format!("{ascii_top:?} {events:?}"),
     );
 
-    let mut raw = custom(true);
+    let mut raw = custom(Script::Traditional);
     letters(&mut raw, "toufa");
     let events = raw.process(Key::Enter);
     push(

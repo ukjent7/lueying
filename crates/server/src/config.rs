@@ -4,7 +4,45 @@
 
 use std::path::{Path, PathBuf};
 
-use lueying_engine::{Config, Fuzzy};
+use lueying_engine::{Config, Fuzzy, Script};
+
+/// 繁体字形地区;`traditional` 开着时生效。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Region {
+    #[default]
+    General,
+    Taiwan,
+    HongKong,
+}
+
+impl Region {
+    pub const NAMES: [&'static str; 3] = ["通用", "台湾", "香港"];
+
+    /// 设置页分段控件的选项下标转枚举;越界回通用。
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Taiwan,
+            2 => Self::HongKong,
+            _ => Self::General,
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "tw" | "taiwan" => Self::Taiwan,
+            "hk" | "hongkong" => Self::HongKong,
+            _ => Self::General,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Taiwan => "tw",
+            Self::HongKong => "hk",
+        }
+    }
+}
 
 /// 运行时配置。引擎只关心其中五项,`shift_toggle` 由 Server 处理。
 #[derive(Clone, Debug, PartialEq)]
@@ -14,6 +52,7 @@ pub struct AppConfig {
     pub fuzzy: Fuzzy,
     pub shift_toggle: bool,
     pub traditional: bool,
+    pub region: Region,
 }
 
 impl Default for AppConfig {
@@ -25,6 +64,7 @@ impl Default for AppConfig {
             fuzzy: Fuzzy::auto(),
             shift_toggle: true,
             traditional: false,
+            region: Region::General,
         }
     }
 }
@@ -32,11 +72,20 @@ impl Default for AppConfig {
 impl AppConfig {
     /// 转成引擎配置。
     pub fn engine(&self) -> Config {
+        let script = match self.region {
+            Region::General => Script::Traditional,
+            Region::Taiwan => Script::Taiwan,
+            Region::HongKong => Script::HongKong,
+        };
         Config {
             fuzzy: self.fuzzy,
             chinese_punct: self.chinese_punct,
             page_size: self.page_size,
-            traditional: self.traditional,
+            script: if self.traditional {
+                script
+            } else {
+                Script::Simplified
+            },
         }
     }
 }
@@ -94,6 +143,9 @@ pub fn load(path: &Path) -> AppConfig {
                     cfg.traditional = on;
                 }
             }
+            "traditional_region" => {
+                cfg.region = Region::from_str(value);
+            }
             // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
             // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
             "fuzzy" => match value {
@@ -117,11 +169,13 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          chinese_punct={}\n\
          shift_toggle={}\n\
          traditional={}\n\
+         traditional_region={}\n\
          fuzzy={}\n",
         cfg.page_size,
         cfg.chinese_punct,
         cfg.shift_toggle,
         cfg.traditional,
+        cfg.region.as_str(),
         if cfg.fuzzy.is_off() { "off" } else { "auto" },
     );
     let tmp = path.with_extension("ini.tmp");

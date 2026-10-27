@@ -24,7 +24,7 @@ mod imp {
     use gpui_platform::application;
     use lueying_engine::Fuzzy;
     use lueying_protocol::{Reply, Request, pipe_name};
-    use lueying_server::config::{self, AppConfig};
+    use lueying_server::config::{self, AppConfig, Region};
     use lueying_server::theme;
     use lueying_server::update::{self, Check, Release};
     use windows::Win32::UI::Controls::Dialogs::{
@@ -42,7 +42,7 @@ mod imp {
 
     const WIDTH: f32 = 460.0;
     /// 三组设置 + 页脚;480 逻辑像素在 768p、150% 缩放下也放得下。
-    const HEIGHT: f32 = 480.0;
+    const HEIGHT: f32 = 530.0;
 
     #[derive(Clone)]
     enum UpdateState {
@@ -438,23 +438,27 @@ mod imp {
     }
 
     fn segment(
+        id_base: &'static str,
         value: usize,
+        label: impl Into<SharedString>,
+        width: f32,
         selected: bool,
         high_contrast: bool,
         colors: theme::Colors,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
+        let label: SharedString = label.into();
         let (selected_bg, selected_text) = if high_contrast {
             (colors.accent, colors.on_accent)
         } else {
             (colors.segment, colors.text)
         };
         div()
-            .id(("page-size", value))
+            .id((id_base, value))
             .flex()
             .items_center()
             .justify_center()
-            .w(px(34.0))
+            .w(px(width))
             .h(px(26.0))
             .rounded_md()
             .text_size(px(12.0))
@@ -470,7 +474,7 @@ mod imp {
             })
             .active(|style| style.opacity(0.8))
             .on_click(on_click)
-            .child(value.to_string())
+            .child(label)
     }
 
     fn button(
@@ -609,12 +613,46 @@ mod imp {
                 .border_color(rgb(colors.border))
                 .children([3usize, 5, 9].into_iter().map(|n| {
                     segment(
+                        "page-size",
                         n,
+                        n.to_string(),
+                        34.0,
                         page == n,
                         high_contrast,
                         colors,
                         cx.listener(move |this, _, _, cx| {
                             this.cfg.page_size = n;
+                            this.clear_notice();
+                            cx.notify();
+                        }),
+                    )
+                }));
+
+            // 繁体字形地区;只在开着繁体时出现,值为 region 在选项表里的下标。
+            let region_control = div()
+                .flex()
+                .items_center()
+                .gap(px(2.0))
+                .p(px(2.0))
+                .rounded_md()
+                .bg(rgb(if high_contrast {
+                    colors.surface
+                } else {
+                    colors.surface_alt
+                }))
+                .border_1()
+                .border_color(rgb(colors.border))
+                .children(Region::NAMES.into_iter().enumerate().map(|(index, name)| {
+                    segment(
+                        "region",
+                        index,
+                        name,
+                        44.0,
+                        self.cfg.region as usize == index,
+                        high_contrast,
+                        colors,
+                        cx.listener(move |this, _, _, cx| {
+                            this.cfg.region = Region::from_index(index);
                             this.clear_notice();
                             cx.notify();
                         }),
@@ -678,6 +716,16 @@ mod imp {
                     ),
                     colors,
                     true,
+                ))
+                // 字形地区常驻显示:关着繁体时是下次开启的预选项,
+                // 免得窗口高度随开关跳动。通用是 OpenCC 标准,台湾/香港
+                // 在其上换异体字,不做词汇替换。
+                .child(setting_row(
+                    "字形地区",
+                    "台湾、香港按当地常用字形",
+                    region_control,
+                    colors,
+                    false,
                 ))
                 .child(section_label("候选", colors, false))
                 .child(setting_row(

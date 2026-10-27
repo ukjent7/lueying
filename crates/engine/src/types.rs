@@ -51,13 +51,24 @@ pub enum Event {
     Passthrough(Key),
 }
 
+/// 繁体输出字形:通用 OpenCC 标准,或台湾/香港常用字形。地区字形在通用
+/// 转换之上二次映射,只改异体字,不做词汇替换。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Script {
+    #[default]
+    Simplified,
+    Traditional,
+    Taiwan,
+    HongKong,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub fuzzy: Fuzzy,
     pub chinese_punct: bool,
     pub page_size: usize,
-    /// 候选与上屏输出繁体;学习仍用简体规范形式。
-    pub traditional: bool,
+    /// 候选与上屏的字形;学习仍用简体规范形式。
+    pub script: Script,
 }
 
 impl Default for Config {
@@ -67,7 +78,7 @@ impl Default for Config {
             fuzzy: Fuzzy::auto(),
             chinese_punct: true,
             page_size: 5,
-            traditional: false,
+            script: Script::Simplified,
         }
     }
 }

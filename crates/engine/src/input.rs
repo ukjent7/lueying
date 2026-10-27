@@ -982,9 +982,9 @@ impl Engine {
             }
         }
         // 显示与上屏用繁体时,候选文本整体换形;学习仍按 learn_text 的简体。
-        if self.cfg.traditional {
+        if self.cfg.script != Script::Simplified {
             for cand in &mut built.cands {
-                let converted = script::to_traditional(&cand.text);
+                let converted = script::convert(&cand.text, self.cfg.script);
                 if converted != cand.text {
                     let original = std::mem::replace(&mut cand.text, converted);
                     if cand.learn_text.is_none() {
