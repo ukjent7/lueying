@@ -71,11 +71,7 @@ pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
         "删除取消置顶",
         !cleared.lines().any(|l| l.starts_with("@pin\t"))
             && f.candidates().first().map(String::as_str) == list.first().map(String::as_str),
-        format!(
-            "{:?} 原首位 {:?}",
-            f.candidates().first(),
-            list.first()
-        ),
+        format!("{:?} 原首位 {:?}", f.candidates().first(), list.first()),
     );
 
     // 降权:第一条记一次跳过负分,词库出现 @reject 行。

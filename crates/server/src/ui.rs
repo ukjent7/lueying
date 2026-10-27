@@ -692,11 +692,10 @@ impl Render for CandidatePanel {
         self.panel_h.set(panel_h);
         // 菜单只挂在内容未变的行上;翻页或继续打字后行文本对不上,菜单
         // 自动失效,不需要专门的清理时机。行数据随后被移进列表,先校验。
-        let menu_open = self.menu.get().filter(|(slot, _, text)| {
-            items
-                .iter()
-                .any(|(s, t, _, _)| s == slot && t == text)
-        });
+        let menu_open = self
+            .menu
+            .get()
+            .filter(|(slot, _, text)| items.iter().any(|(s, t, _, _)| s == slot && t == text));
         let state = Arc::clone(&self.state);
         let scroll_state = Arc::clone(&self.state);
         let previous = Arc::clone(&self.state);
