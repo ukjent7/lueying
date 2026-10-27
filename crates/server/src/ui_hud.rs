@@ -153,7 +153,7 @@ impl Render for ModeHudPanel {
                 1.0
             }
         };
-        let panel = div()
+        div()
             .font_family("Microsoft YaHei UI")
             .flex()
             .items_center()
