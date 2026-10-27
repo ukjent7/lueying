@@ -69,6 +69,41 @@ mod imp {
         Danger,
     }
 
+    /// 设置窗里可用键盘操作的控件;KBD_ORDER 的顺序就是 Tab 遍历顺序。
+    /// 分段组(字形地区、每页候选数)整组算一个控件,用左右键改值。
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kbd {
+        Update,
+        ChinesePunct,
+        ShiftToggle,
+        Traditional,
+        Region,
+        PageSize,
+        ResetFuzzy,
+        Fuzzy,
+        ImportUser,
+        ExportUser,
+        ClearUser,
+        Close,
+        Save,
+    }
+
+    const KBD_ORDER: [Kbd; 13] = [
+        Kbd::Update,
+        Kbd::ChinesePunct,
+        Kbd::ShiftToggle,
+        Kbd::Traditional,
+        Kbd::Region,
+        Kbd::PageSize,
+        Kbd::ResetFuzzy,
+        Kbd::Fuzzy,
+        Kbd::ImportUser,
+        Kbd::ExportUser,
+        Kbd::ClearUser,
+        Kbd::Close,
+        Kbd::Save,
+    ];
+
     struct SettingsPanel {
         cfg: AppConfig,
         path: Option<PathBuf>,
@@ -85,6 +120,8 @@ mod imp {
         updates: UpdateState,
         /// 让 Esc / Ctrl+S 在设置窗任意位置都能用。
         focus: FocusHandle,
+        /// 键盘焦点在 KBD_ORDER 里的下标;None 表示没有键盘焦点。
+        kbd: Option<usize>,
     }
 
     pub(super) fn run() {
@@ -138,6 +175,7 @@ mod imp {
                             current: update::current_version(),
                             updates: UpdateState::Checking,
                             focus: cx.focus_handle(),
+                            kbd: None,
                         };
                         panel.check_updates(cx);
                         panel
@@ -168,6 +206,106 @@ mod imp {
             }
             self.notice = notice;
             self.message = message.into();
+        }
+
+        /// 当前键盘焦点是否落在某个控件上。
+        fn kbd_is(&self, k: Kbd) -> bool {
+            self.kbd.map_or(false, |i| KBD_ORDER[i] == k)
+        }
+
+        /// Tab / Shift+Tab 循环移动键盘焦点。
+        fn kbd_step(&mut self, delta: isize) {
+            let n = KBD_ORDER.len() as isize;
+            let next = match self.kbd {
+                Some(i) => (i as isize + delta).rem_euclid(n),
+                None if delta > 0 => 0,
+                None => n - 1,
+            };
+            self.kbd = Some(next as usize);
+        }
+
+        /// 字形地区分段组:左右键在选项间循环。
+        fn region_shift(&mut self, delta: isize) {
+            let n = Region::NAMES.len() as isize;
+            let next = (self.cfg.region as isize + delta).rem_euclid(n) as usize;
+            self.cfg.region = Region::from_index(next);
+            self.clear_notice();
+        }
+
+        /// 每页候选数分段组:左右键在 3/5/9 之间循环。
+        fn page_shift(&mut self, delta: isize) {
+            const OPTIONS: [usize; 3] = [3, 5, 9];
+            let current = OPTIONS
+                .iter()
+                .position(|&n| n == self.cfg.page_size)
+                .unwrap_or(1);
+            let next = (current as isize + delta).rem_euclid(OPTIONS.len() as isize) as usize;
+            self.cfg.page_size = OPTIONS[next];
+            self.clear_notice();
+        }
+
+        /// Enter / Space 激活键盘焦点控件;与对应鼠标点击走同一套动作。
+        /// 段落组用左右键改值,这里不响应。
+        fn activate(&mut self, k: Kbd, cx: &mut Context<Self>) {
+            match k {
+                Kbd::Update => match self.updates.clone() {
+                    UpdateState::Available(release) => self.install_update(release, cx),
+                    UpdateState::Checking => {}
+                    UpdateState::Latest | UpdateState::NoRelease | UpdateState::Failed(_) => {
+                        self.check_updates(cx);
+                    }
+                },
+                Kbd::ChinesePunct => {
+                    self.cfg.chinese_punct = !self.cfg.chinese_punct;
+                    self.clear_notice();
+                }
+                Kbd::ShiftToggle => {
+                    self.cfg.shift_toggle = !self.cfg.shift_toggle;
+                    self.clear_notice();
+                }
+                Kbd::Traditional => {
+                    self.cfg.traditional = !self.cfg.traditional;
+                    self.clear_notice();
+                }
+                Kbd::Region | Kbd::PageSize => {}
+                Kbd::ResetFuzzy => {
+                    if self.groups.iter().any(|(_, count)| *count > 0) {
+                        match call(&Request::ResetFuzzy) {
+                            Some(reply) => {
+                                self.groups = reply.groups;
+                                self.say(Notice::Success, "已重置模糊音组统计");
+                            }
+                            None => self.say(Notice::Error, "输入法服务未运行,启动后再试"),
+                        }
+                    }
+                }
+                Kbd::Fuzzy => {
+                    self.cfg.fuzzy = if self.cfg.fuzzy.is_off() {
+                        Fuzzy::auto()
+                    } else {
+                        Fuzzy::off()
+                    };
+                    self.clear_notice();
+                }
+                Kbd::ImportUser => self.import_user(),
+                Kbd::ExportUser => self.export_user(),
+                Kbd::ClearUser => {
+                    if self.confirm_clear {
+                        self.confirm_clear = false;
+                        if send(&Request::ClearUser) {
+                            self.say(Notice::Success, "已清空用户词库");
+                        } else {
+                            self.say(Notice::Error, "输入法服务未运行,启动后再试");
+                        }
+                    } else {
+                        self.confirm_clear = true;
+                        self.say(Notice::Info, "再点一次确认清空");
+                    }
+                }
+                Kbd::Close => cx.quit(),
+                Kbd::Save => self.save(),
+            }
+            cx.notify();
         }
 
         fn save(&mut self) {
@@ -405,6 +543,7 @@ mod imp {
     fn toggle(
         id: &'static str,
         on: bool,
+        focused: bool,
         colors: theme::Colors,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
@@ -418,6 +557,7 @@ mod imp {
             .rounded_full()
             .cursor_pointer()
             .bg(rgb(if on { colors.accent } else { colors.off_bg }))
+            .when(focused, |el| el.border_2().border_color(rgb(colors.text)))
             .when(on, |el| el.justify_end())
             .when(!on, |el| el.justify_start())
             .hover(|style| style.opacity(0.9))
@@ -482,6 +622,7 @@ mod imp {
         label: impl Into<SharedString>,
         kind: ButtonKind,
         enabled: bool,
+        focused: bool,
         colors: theme::Colors,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
@@ -499,6 +640,16 @@ mod imp {
             ButtonKind::Ghost => colors.border,
             ButtonKind::Danger => colors.danger_soft,
         };
+        // 焦点环:主色按钮底色就是 accent,环用反色才看得见;其余用 accent。
+        let ring = if focused {
+            if matches!(kind, ButtonKind::Primary) {
+                colors.on_accent
+            } else {
+                colors.accent
+            }
+        } else {
+            colors.border
+        };
         div()
             .id(id)
             .flex()
@@ -511,7 +662,8 @@ mod imp {
             .font_weight(FontWeight::MEDIUM)
             .when(!matches!(kind, ButtonKind::Ghost), |el| el.bg(rgb(bg)))
             .text_color(rgb(if enabled { text } else { colors.text_tertiary }))
-            .when(matches!(kind, ButtonKind::Secondary), |el| {
+            .when(focused, |el| el.border_2().border_color(rgb(ring)))
+            .when(matches!(kind, ButtonKind::Secondary) && !focused, |el| {
                 el.border_1().border_color(rgb(colors.border_strong))
             })
             .when(enabled, |el| {
@@ -611,6 +763,10 @@ mod imp {
                 }))
                 .border_1()
                 .border_color(rgb(colors.border))
+                // 键盘焦点落在分段组时高亮外框,左右键改值。
+                .when(self.kbd_is(Kbd::PageSize), |el| {
+                    el.border_2().border_color(rgb(colors.accent))
+                })
                 .children([3usize, 5, 9].into_iter().map(|n| {
                     segment(
                         "page-size",
@@ -642,6 +798,9 @@ mod imp {
                 }))
                 .border_1()
                 .border_color(rgb(colors.border))
+                .when(self.kbd_is(Kbd::Region), |el| {
+                    el.border_2().border_color(rgb(colors.accent))
+                })
                 .children(Region::NAMES.into_iter().enumerate().map(|(index, name)| {
                     segment(
                         "region",
@@ -675,6 +834,7 @@ mod imp {
                     toggle(
                         "chinese-punct",
                         self.cfg.chinese_punct,
+                        self.kbd_is(Kbd::ChinesePunct),
                         colors,
                         cx.listener(|this, _, _, cx| {
                             this.cfg.chinese_punct = !this.cfg.chinese_punct;
@@ -691,6 +851,7 @@ mod imp {
                     toggle(
                         "shift-toggle",
                         self.cfg.shift_toggle,
+                        self.kbd_is(Kbd::ShiftToggle),
                         colors,
                         cx.listener(|this, _, _, cx| {
                             this.cfg.shift_toggle = !this.cfg.shift_toggle;
@@ -707,6 +868,7 @@ mod imp {
                     toggle(
                         "traditional",
                         self.cfg.traditional,
+                        self.kbd_is(Kbd::Traditional),
                         colors,
                         cx.listener(|this, _, _, cx| {
                             this.cfg.traditional = !this.cfg.traditional;
@@ -747,6 +909,7 @@ mod imp {
                             "重置",
                             ButtonKind::Ghost,
                             reset_enabled,
+                            self.kbd_is(Kbd::ResetFuzzy),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 match call(&Request::ResetFuzzy) {
@@ -762,6 +925,7 @@ mod imp {
                         .child(toggle(
                             "fuzzy",
                             !self.cfg.fuzzy.is_off(),
+                            self.kbd_is(Kbd::Fuzzy),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 this.cfg.fuzzy = if this.cfg.fuzzy.is_off() {
@@ -789,6 +953,7 @@ mod imp {
                             "导入",
                             ButtonKind::Secondary,
                             true,
+                            self.kbd_is(Kbd::ImportUser),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 this.import_user();
@@ -800,6 +965,7 @@ mod imp {
                             "导出",
                             ButtonKind::Secondary,
                             true,
+                            self.kbd_is(Kbd::ExportUser),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 this.export_user();
@@ -819,6 +985,7 @@ mod imp {
                                 ButtonKind::Ghost
                             },
                             true,
+                            self.kbd_is(Kbd::ClearUser),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 if this.confirm_clear {
@@ -885,6 +1052,7 @@ mod imp {
                     update_label,
                     update_kind,
                     update_enabled,
+                    self.kbd_is(Kbd::Update),
                     colors,
                     cx.listener(|this, _, _, cx| match this.updates.clone() {
                         UpdateState::Available(release) => this.install_update(release, cx),
@@ -933,6 +1101,7 @@ mod imp {
                             "关闭",
                             ButtonKind::Secondary,
                             true,
+                            self.kbd_is(Kbd::Close),
                             colors,
                             cx.listener(|_, _, _, cx| cx.quit()),
                         ))
@@ -941,6 +1110,7 @@ mod imp {
                             "保存",
                             ButtonKind::Primary,
                             true,
+                            self.kbd_is(Kbd::Save),
                             colors,
                             cx.listener(|this, _, _, cx| {
                                 this.save();
@@ -962,11 +1132,37 @@ mod imp {
                 .text_color(rgb(colors.text))
                 .track_focus(&self.focus)
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                    if event.keystroke.key == "escape" {
-                        cx.quit();
-                    } else if event.keystroke.modifiers.control && event.keystroke.key == "s" {
-                        this.save();
-                        cx.notify();
+                    let key = event.keystroke.key.as_str();
+                    match key {
+                        "escape" => cx.quit(),
+                        "s" if event.keystroke.modifiers.control => {
+                            this.save();
+                            cx.notify();
+                        }
+                        "tab" => {
+                            this.kbd_step(if event.keystroke.modifiers.shift { -1 } else { 1 });
+                            cx.notify();
+                        }
+                        "enter" | "space" => {
+                            if let Some(i) = this.kbd {
+                                this.activate(KBD_ORDER[i], cx);
+                            }
+                        }
+                        "left" | "right" => {
+                            let delta = if key == "left" { -1 } else { 1 };
+                            match this.kbd.map(|i| KBD_ORDER[i]) {
+                                Some(Kbd::Region) => {
+                                    this.region_shift(delta);
+                                    cx.notify();
+                                }
+                                Some(Kbd::PageSize) => {
+                                    this.page_shift(delta);
+                                    cx.notify();
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
                     }
                 }))
                 .child(header)
