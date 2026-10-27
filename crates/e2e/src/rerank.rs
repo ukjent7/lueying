@@ -89,12 +89,13 @@ fn signature(cands: &[Candidate]) -> Vec<(String, usize)> {
 fn hit(cands: &[Candidate], gold: &str) -> (bool, bool) {
     // 表情/英文固定项不是中文候选,不占 top-1/top-5 名额。
     let (mut top1, mut top5) = (false, false);
+    let gold = crate::bench::normalize(gold);
     for (index, cand) in cands
         .iter()
         .filter(|cand| !cand.no_learn && !cand.quick)
         .enumerate()
     {
-        if cand.text == gold {
+        if crate::bench::matches_normalized(&cand.text, &gold) {
             top1 |= index == 0;
             top5 |= index < 5;
         }

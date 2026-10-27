@@ -411,8 +411,12 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
             .filter(|cand| !cand.no_learn && !cand.quick)
             .map(|cand| cand.text.as_str())
             .collect();
+        let want_norm = bench::normalize(want);
         total += 1;
-        if cands.first().is_some_and(|text| *text == want) {
+        if cands
+            .first()
+            .is_some_and(|text| bench::matches_normalized(text, &want_norm))
+        {
             top1 += 1;
         } else {
             missed.push((
@@ -424,7 +428,11 @@ fn sentence_eval(engine: &mut Engine) -> (usize, usize, usize, Vec<(String, Stri
                     .unwrap_or_default(),
             ));
         }
-        if cands.iter().take(5).any(|text| *text == want) {
+        if cands
+            .iter()
+            .take(5)
+            .any(|text| bench::matches_normalized(text, &want_norm))
+        {
             top5 += 1;
         }
     }
