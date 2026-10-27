@@ -32,8 +32,27 @@ pub(crate) fn inject(cands: &mut Vec<Candidate>) {
     }
     let table = table();
     let mut out = Vec::with_capacity(cands.len() + MAX_TOTAL);
+    let mut pending: Vec<Candidate> = Vec::new();
     let mut added = 0;
+    // 打断块:快捷写法(日期/时间)和吃不满输入的分段入口。表情要排在这些
+    // 候选之后,否则「你好」的表情会占住下移一格的位置,「时间」的 14:05
+    // 也会被表情顶到第三位。
+    let top_cut = cands
+        .first()
+        .and_then(|cand| cand.spans.last())
+        .map_or(0, |span| span.1);
+    let last_barrier = cands
+        .iter()
+        .enumerate()
+        .filter(|(_, cand)| {
+            cand.quick || cand.spans.last().map_or(0, |span| span.1) < top_cut
+        })
+        .map(|(index, _)| index)
+        .max();
     for (index, cand) in std::mem::take(cands).into_iter().enumerate() {
+        if last_barrier.is_none_or(|barrier| index > barrier) && !pending.is_empty() {
+            out.append(&mut pending);
+        }
         let emojis = if index < SCAN
             && added < MAX_TOTAL
             && !cand.quick
@@ -44,11 +63,9 @@ pub(crate) fn inject(cands: &mut Vec<Candidate>) {
         } else {
             None
         };
+        let base = cand.clone();
         out.push(cand);
         let Some(emojis) = emojis else {
-            continue;
-        };
-        let Some(base) = out.last().cloned() else {
             continue;
         };
         for (offset, emoji) in emojis.split_whitespace().take(MAX_PER_WORD).enumerate() {
@@ -72,11 +89,13 @@ pub(crate) fn inject(cands: &mut Vec<Candidate>) {
             extra.rejected = false;
             extra.learn_text = None;
             extra.no_learn = true;
+            extra.completion = false;
             extra.score = base.score - (offset as f64 + 1.0) * 1.0e-6;
-            out.push(extra);
+            pending.push(extra);
             added += 1;
         }
     }
+    out.append(&mut pending);
     *cands = out;
 }
 

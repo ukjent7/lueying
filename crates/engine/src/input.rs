@@ -903,8 +903,14 @@ impl Engine {
                 .cands
                 .iter()
                 .any(|cand| cand.full && !cand.quick && !cand.no_learn);
+            // 模糊纠正出的整句也算 full,但它不是用户要打中文的证据。`hello`
+            // 这种完整英文词只在有可信整词时才让位,否则会被「和你你」压到页尾。
+            let trusted_full = built
+                .cands
+                .iter()
+                .any(|cand| cand.full && cand.trusted && !cand.quick && !cand.no_learn);
             if let Some(cand) = english::candidate(&comp.raw, has_full, !built.cands.is_empty()) {
-                if has_full {
+                if trusted_full {
                     built.cands.push(cand);
                 } else {
                     built.cands.insert(0, cand);

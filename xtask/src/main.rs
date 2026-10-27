@@ -5,7 +5,7 @@
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
 //! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -218,6 +218,10 @@ fn pack(args: PackArgs) -> Result<(), String> {
 
 - 白霜拼音词库:GPL-3.0,https://github.com/gaboolic/rime-frost,\
 commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
+- 青简常用词表与词频:GPL-3.0-or-later,https://github.com/qingjian-team/qingjian,\
+版本 0.1.1;随包词典用这份常用词表补入白霜未收录的词,并给多字常用词提频。\
+词频语料来源包括中文维基百科(CC BY-SA 4.0)、LCCC(MIT)与 THUOCL(MIT),\
+详见青简词库头部说明。
 - 万象拼音语法模型子集:CC-BY-4.0,作者 amzxyz,\
 https://github.com/amzxyz/rime-wanxiang-data (LTS);\
 许可 https://creativecommons.org/licenses/by/4.0/;\
@@ -374,6 +378,13 @@ const FILES: &[&str] = &[
     "tencent.dict.yaml",
 ];
 
+/// 青简常用词表快照:补入白霜缺失的常用词,并给已收录的多字常用词提频。
+/// 单字不参与提频,避免把「的/是/在」这类高频字继续放大成碎切激励。
+const COMMON: &str = include_str!("../data/common.tsv");
+/// 常用词先验倍数。青简常用词表是独立语料,给多字常用词一个温和的先验;
+/// 先按 5 倍验证,句级/难例回归时再回调。
+const COMMON_MULT: u64 = 5;
+
 fn run(args: Args) -> Result<(), String> {
     let mut best: HashMap<(String, String), u64> = HashMap::new();
     let mut unknown: HashMap<String, usize> = HashMap::new();
@@ -389,6 +400,16 @@ fn run(args: Args) -> Result<(), String> {
         total += n;
         skipped += bad;
         println!("{name}: {n} 行,坏 {bad} 行");
+    }
+    let (added, boosted, common_bad) = parse_common(COMMON, &mut best);
+    println!("common.tsv: 补入 {added} 条,提频 {boosted} 条,坏 {common_bad} 行");
+    if common_bad > 0 {
+        return Err(format!(
+            "common.tsv 有 {common_bad} 行无法解析;补词表坏了会让常用词静默消失"
+        ));
+    }
+    if added + boosted == 0 {
+        return Err("common.tsv 没有可用词条;检查 include_str 与文件格式".into());
     }
     // 音节表漏一个常用音,词条会被静默地当坏行丢掉(例如 `di` 曾漏掉 2.5 万词条,
     // 用户也打不出该音),所以这里把「未识别音节」显式暴露并在量级异常时中断。
@@ -494,4 +515,58 @@ fn parse_frost(
         n += 1;
     }
     (n, bad)
+}
+
+/// 合并青简常用词表:多字词已收录则提频,未收录则补入;单字整行跳过。
+/// 只认仓库内快照,CI 不依赖 work/ 下的参考项目。
+fn parse_common(
+    text: &str,
+    best: &mut HashMap<(String, String), u64>,
+) -> (usize, usize, usize) {
+    let existing: HashSet<String> = best.keys().map(|(word, _)| word.clone()).collect();
+    let mut entries: Vec<(String, String, u64)> = Vec::new();
+    let mut bad = 0usize;
+    for line in text.lines() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let (Some(word), Some(freq), Some(key)) = (parts.next(), parts.next(), parts.next()) else {
+            bad += 1;
+            continue;
+        };
+        let chars = word.chars().count();
+        // 单字不提频,避免把「的/是/在」这类高频字继续放大成碎切激励。
+        if chars < 2 || !word.chars().all(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+            continue;
+        }
+        let Ok(freq) = freq.parse::<u64>() else {
+            bad += 1;
+            continue;
+        };
+        let sylls: Vec<&str> = key.split('\'').collect();
+        if sylls.len() != chars || !sylls.iter().all(|s| is_syllable(s)) {
+            bad += 1;
+            continue;
+        }
+        entries.push((word.to_string(), key.to_string(), freq));
+    }
+    let common: HashSet<&str> = entries.iter().map(|(word, _, _)| word.as_str()).collect();
+    let mut boosted = 0usize;
+    for ((word, _), freq) in best.iter_mut() {
+        if word.chars().count() >= 2 && common.contains(word.as_str()) {
+            *freq = freq.saturating_mul(COMMON_MULT);
+            boosted += 1;
+        }
+    }
+    drop(common);
+    // 白霜已有这个词时只提频,不把青简的另一种读音追加进来;缺词才补一个最高频读音。
+    let mut added = 0usize;
+    for (word, key, freq) in entries {
+        if !existing.contains(&word) {
+            best.insert((word, key), freq);
+            added += 1;
+        }
+    }
+    (added, boosted, bad)
 }

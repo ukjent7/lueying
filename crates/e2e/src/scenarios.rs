@@ -687,5 +687,7 @@ pub fn probes() -> Vec<(&'static str, &'static str)> {
         ("yue", "月"),
         ("deng", "等"),
         ("rui", "瑞"),
+        // 白霜五表没有「中和」,青简常用词快照补入后必须能压过「中+和」碎切。
+        ("zhonghe", "中和"),
     ]
 }

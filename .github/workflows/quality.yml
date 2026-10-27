@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'crates/dict/src/**', 'Cargo.lock') }}
+          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
       - name: 下载白霜词库
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_frost.sh data/frost
@@ -116,9 +116,14 @@ jobs:
       - name: Build (release)
         id: build
         run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+      # 定时任务不经过 ci.yml 的 ARM64 检查,这里要自己补 i686 target。
+      - name: 安装 i686 target
+        run: rustup target add i686-pc-windows-msvc
       - name: Build 32-bit TSF
+        id: build32tsf
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
+        id: stage32
         shell: pwsh
         run: Copy-Item target/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
       - name: Build 32-bit E2E host
@@ -139,7 +144,7 @@ jobs:
           Pop-Location
           exit $code
       - name: 安装/卸载冒烟
-        if: always() && steps.build.outcome == 'success'
+        if: always() && steps.build.outcome == 'success' && steps.build32tsf.outcome == 'success' && steps.stage32.outcome == 'success' && steps.build32.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
       - name: 报告摘要

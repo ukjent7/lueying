@@ -236,6 +236,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             rejected: reject > 0.0,
             learn_text: None,
             no_learn: false,
+            completion: false,
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
@@ -245,6 +246,15 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         cand.score += user.app_bonus(host, &cand.words);
         cand.score += user.transition_bonus(previous, &cand.words);
         cand.score += user.trigram_bonus(previous2, previous, &cand.words);
+    }
+    // 整串没有精确词典词时,尝试把末音节补成更长的音节。像 `bulianhougu`
+    // 这种少打末尾字母的输入,精确图只能给出碎词;补全让整词也有机会进首页。
+    if !full
+        .iter()
+        .any(|c| c.trusted && c.freq >= COMPLETION_EXACT_MIN_FREQ)
+    {
+        let completed = completion_candidates(raw, dict, total, &full);
+        full.extend(completed);
     }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 同一句话可能由多种切分拼出,上屏文本完全相同;先按文本去重再占首页
@@ -257,6 +267,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             let kept = &mut unique[index];
             kept.trusted |= cand.trusted;
             kept.learned |= cand.learned;
+            kept.completion &= cand.completion;
             kept.freq = kept.freq.max(cand.freq);
             kept.user_freq = kept.user_freq.max(cand.user_freq);
             continue;
@@ -299,6 +310,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                 rejected: reject > 0.0,
                 learn_text: None,
                 no_learn: false,
+                completion: false,
             });
         }
     }
@@ -351,4 +363,94 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         safe_extend,
         typing_prefix: typing,
     }
+}
+
+/// 末音节补全:把最后一个音节换成词典里更长的音节,只保留音节数不变、
+/// 整词长度对得上的词条。没有精确整词时才调用,避免 `ni` 被补成 `nin/ning`
+/// 这类无关候选挤进首页。
+fn completion_candidates(
+    raw: &str,
+    dict: &Dictionary,
+    total: f64,
+    full: &[Candidate],
+) -> Vec<Candidate> {
+    let spans: Vec<(usize, usize)> = match full
+        .iter()
+        .find(|c| c.full && c.spans.last().is_some_and(|span| span.1 == raw.len()))
+    {
+        Some(cand) => cand.spans.clone(),
+        None => segment::first_path(raw),
+    };
+    // 单音节输入不补全:用户可能只是打了一个完整的单字,`ni` 不该冒出 `nin/ning`。
+    if spans.len() < 2 {
+        return Vec::new();
+    }
+    let typed: Vec<&str> = spans
+        .iter()
+        .map(|&(start, end)| syllables::canonical(&raw[start..end]))
+        .collect();
+    let Some(last) = typed.last().copied() else {
+        return Vec::new();
+    };
+    // 末单元必须是完整音节。用户用简拼(`nih`)时补全会把 `h` 展开成几百个
+    // 音节,首页灌满同前缀的猜测;简拼继续走原有整词路径。
+    if !syllables::is_syllable(last) {
+        return Vec::new();
+    }
+    let prefix = typed[..typed.len() - 1].join("'");
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    // 直接枚举以末音节为前缀的合法音节,再按精确键取词。比扫整段前缀索引
+    // 更稳:`ni'h` 的 64 条扫描很可能还没走到 `ni'hao`。
+    for syllable in syllables::SYLLABLES {
+        let syllable = *syllable;
+        if syllable.len() <= last.len() || !syllable.starts_with(last) {
+            continue;
+        }
+        let completed = syllables::canonical(syllable);
+        if completed == last {
+            continue;
+        }
+        let key = if prefix.is_empty() {
+            completed.to_string()
+        } else {
+            format!("{prefix}'{completed}")
+        };
+        for entry in dict.lookup_exact(&key) {
+            if entry.word.chars().count() != typed.len() || !seen.insert(entry.word.to_string()) {
+                continue;
+            }
+            // 少打的字母按一次模糊改动计罚,补全词仍能压过频次更低的碎词。
+            let missing = completed.len() - last.len();
+            let score = (entry.freq.max(1) as f64 / total).ln()
+                + CHAR_BONUS * entry.word.chars().count() as f64
+                - WORD_PENALTY
+                - FUZZY_PENALTY * missing as f64;
+            out.push(Candidate {
+                text: entry.word.to_string(),
+                words: vec![entry.word.to_string()],
+                consume: 1,
+                score,
+                spans: vec![(0, raw.len())],
+                full: true,
+                trusted: false,
+                sentence: false,
+                edits: 0,
+                freq: entry.freq,
+                user_freq: 0,
+                learned: false,
+                groups: 0,
+                hint: Some(format!("补全 {}", entry.key.replace('\'', " "))),
+                learn_key: Some(entry.key.to_string()),
+                quick: false,
+                rejected: false,
+                learn_text: None,
+                no_learn: false,
+                completion: true,
+            });
+        }
+    }
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
+    out.truncate(MAX_CANDS);
+    out
 }

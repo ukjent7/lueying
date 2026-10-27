@@ -65,6 +65,8 @@ pub struct Candidate {
     pub learn_text: Option<String>,
     /// 表情、英文直通等固定候选:不学习、不造词,也不参与模型重排。
     pub no_learn: bool,
+    /// 末音节补全候选:吃掉整串输入,学习键是补全后的音节串。
+    pub completion: bool,
 }
 
 impl Candidate {
@@ -92,6 +94,7 @@ impl Candidate {
             rejected: false,
             learn_text: None,
             no_learn: false,
+            completion: false,
         }
     }
 
@@ -150,6 +153,8 @@ const EXACT_SENTENCE_MARGIN: f64 = 3.0;
 const MAX_SIG_VARIANTS: usize = 32;
 /// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
 const MAX_FUZZY_KEYS: usize = 64;
+/// 精确整词达到这个频次就不补全;1 表示只要词典里有整词就不猜用户少打了字母。
+const COMPLETION_EXACT_MIN_FREQ: u64 = 1;
 
 #[derive(Clone)]
 struct Hit {
@@ -602,6 +607,7 @@ fn protect_exact(cands: &mut [Candidate]) {
         return;
     }
     let leader = cands[0].score;
+    let leader_is_completion = cands[0].completion;
     if let Some(index) = cands
         .iter()
         .enumerate()
@@ -610,7 +616,9 @@ fn protect_exact(cands: &mut [Candidate]) {
                 && c.full
                 && c.edits == 0
                 && (c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
-                    || c.sentence && c.score + EXACT_SENTENCE_MARGIN >= leader)
+                    || c.sentence
+                        && !leader_is_completion
+                        && c.score + EXACT_SENTENCE_MARGIN >= leader)
         })
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)

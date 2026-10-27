@@ -232,6 +232,16 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
+    // 英文词与中文整词同形时,中文整词仍占首选:`he` 不能顶掉「和」。
+    let mut shared = mini();
+    letters(&mut shared, "he");
+    push(
+        &mut checks,
+        "英文不抢中文整词",
+        top(&shared) != "he",
+        format!("{:?}", shared.candidates()),
+    );
+
     let mut casing = mini();
     letters(&mut casing, "iphone");
     push(
@@ -259,6 +269,58 @@ pub fn run(report: &mut String) -> usize {
         "英文不打断拼音前缀",
         !prefix.candidates().iter().any(|text| text == "nih") && top(&prefix) != "nih",
         format!("{:?}", prefix.candidates()),
+    );
+
+    // 末音节补全:少打最后一个字母时,用词典里更长的音节补出整词。
+    let mut completion = mini();
+    letters(&mut completion, "niha");
+    let completion_hint = completion
+        .candidates_detailed()
+        .iter()
+        .find(|cand| cand.text == "你好")
+        .and_then(|cand| cand.hint.as_deref());
+    push(
+        &mut checks,
+        "末音节补全",
+        top(&completion) == "你好" && completion_hint == Some("补全 ni hao"),
+        format!("{:?}", completion.candidates()),
+    );
+    let events = completion.process(Key::Space);
+    let exported = completion.export_user();
+    push(
+        &mut checks,
+        "补全上屏学补全键",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "你好"))
+            && exported
+                .lines()
+                .any(|line| line.starts_with("ni'hao\t你好\t")),
+        format!("{events:?} 词库 {} 行", exported.lines().count()),
+    );
+
+    let mut exact = mini();
+    letters(&mut exact, "nihao");
+    push(
+        &mut checks,
+        "完整拼音不补全",
+        !exact
+            .candidates_detailed()
+            .iter()
+            .any(|cand| cand.hint.as_deref().is_some_and(|h| h.starts_with("补全"))),
+        format!("{:?}", exact.candidates()),
+    );
+
+    let mut single = mini();
+    letters(&mut single, "ni");
+    push(
+        &mut checks,
+        "单音节不补全",
+        !single
+            .candidates_detailed()
+            .iter()
+            .any(|cand| cand.hint.as_deref().is_some_and(|h| h.starts_with("补全"))),
+        format!("{:?}", single.candidates()),
     );
 
     // 简繁:歧义短语、单字换形与繁体一字多形。
