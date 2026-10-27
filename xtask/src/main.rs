@@ -384,6 +384,10 @@ const COMMON: &str = include_str!("../data/common.tsv");
 /// 常用词先验倍数。青简常用词表是独立语料,给多字常用词一个温和的先验;
 /// 先按 5 倍验证,句级/难例回归时再回调。
 const COMMON_MULT: u64 = 5;
+/// 口语异读:同一个词的另一读音,例如「这个」的 `zhei'ge`。白霜只收标准
+/// 读音,`zheige` 会被拆成「贼+个」;这里只补 (词,音) 缺失的组合,词频沿用
+/// 该词最高频读音,保证两种读法排序一致。
+const READINGS: &str = include_str!("../data/readings.tsv");
 
 fn run(args: Args) -> Result<(), String> {
     let mut best: HashMap<(String, String), u64> = HashMap::new();
@@ -410,6 +414,16 @@ fn run(args: Args) -> Result<(), String> {
     }
     if added + boosted == 0 {
         return Err("common.tsv 没有可用词条;检查 include_str 与文件格式".into());
+    }
+    let (readings, readings_bad) = parse_readings(READINGS, &mut best);
+    println!("readings.tsv: 补入 {readings} 条异读,坏 {readings_bad} 行");
+    if readings_bad > 0 {
+        return Err(format!(
+            "readings.tsv 有 {readings_bad} 行无法解析;异读表坏了会让口语输入静默退化"
+        ));
+    }
+    if readings == 0 {
+        return Err("readings.tsv 没有可用异读;检查 include_str 与文件格式".into());
     }
     // 音节表漏一个常用音,词条会被静默地当坏行丢掉(例如 `di` 曾漏掉 2.5 万词条,
     // 用户也打不出该音),所以这里把「未识别音节」显式暴露并在量级异常时中断。
@@ -566,4 +580,47 @@ fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize
         }
     }
     (added, boosted, bad)
+}
+
+/// 合并口语异读表。格式 `词<TAB>音节`,两列;词频从该词已有的读音继承,
+/// 因此异读与主读音同权。词或音节表里没有的词直接算坏行:异读表是手写的,
+/// 静默跳过会让「zheige 打不出这个」这类退化难以发现。
+fn parse_readings(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize, usize) {
+    let mut added = 0usize;
+    let mut bad = 0usize;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let (Some(word), Some(key)) = (parts.next(), parts.next()) else {
+            bad += 1;
+            continue;
+        };
+        let sylls: Vec<&str> = key.split('\'').collect();
+        if !word.chars().all(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+            || sylls.len() != word.chars().count()
+            || !sylls.iter().all(|s| is_syllable(s))
+        {
+            bad += 1;
+            continue;
+        }
+        let ident = (word.to_string(), key.to_string());
+        if best.contains_key(&ident) {
+            continue;
+        }
+        let Some(freq) = best
+            .iter()
+            .filter(|((w, _), _)| w.as_str() == word)
+            .map(|(_, freq)| *freq)
+            .max()
+        else {
+            bad += 1;
+            continue;
+        };
+        best.insert(ident, freq);
+        added += 1;
+    }
+    (added, bad)
 }

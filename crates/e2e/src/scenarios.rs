@@ -683,6 +683,10 @@ pub fn probes() -> Vec<(&'static str, &'static str)> {
         ("xuexi", "学习"),
         ("jintian", "今天"),
         ("tianqi", "天气"),
+        // 口语读音 zhei/nei:白霜只有标准读音,缺异读会落到「贼个」等碎切。
+        ("zheige", "这个"),
+        ("neige", "那个"),
+        ("zheixie", "这些"),
         // 青简补录的日常词:缺了会让单字拼或同音词占首选。
         ("shide", "是的"),
         ("shima", "是吗"),

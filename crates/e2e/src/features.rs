@@ -14,6 +14,7 @@
 //! 11. 组合中切换简繁不重算,内联显示与候选仍是旧字形。
 //! 12. 繁体模式误转英文、拼音原文或快捷输入的 ASCII 部分。
 //! 13. 少打末音节最后一个字母时没有整词候选;完整拼音、单音节或简拼被误补全。
+//! 14. 口语读音 zhei/nei 没有整词,`zheige` 被拆成「贼个」。
 
 use std::sync::Arc;
 
@@ -36,6 +37,17 @@ const TEST_DICT: &str = "\
 发展\t1000000\tfa'zhan
 后台\t1000000\thou'tai
 面条\t1000000\tmian'tiao
+";
+
+/// 口语异读:同一个词同时有标准读音与 zhei/nei 读音。
+const READINGS_DICT: &str = "\
+这个\t300000\tzhe'ge
+这个\t300000\tzhei'ge
+那个\t200000\tna'ge
+那个\t200000\tnei'ge
+贼\t15000\tzei
+内\t40000\tnei
+个\t800000\tge
 ";
 
 fn push(
@@ -349,6 +361,24 @@ pub fn run(report: &mut String) -> usize {
             .iter()
             .any(|cand| cand.hint.as_deref().is_some_and(|h| h.starts_with("补全"))),
         format!("{:?}", single.candidates()),
+    );
+
+    // 口语异读:同一个词同时有标准读音与 zhei/nei 读音,两种键都要直接命中
+    // 整词;否则会落到「贼+个」「内+个」的碎切。
+    let (readings, bad) = Dictionary::from_text(READINGS_DICT);
+    assert_eq!(bad, 0, "异读测试词库不应有坏行");
+    let readings = Arc::new(readings);
+    let mut zhei = Engine::new(readings.clone(), Config::default());
+    letters(&mut zhei, "zheige");
+    let zhei_top = top(&zhei);
+    let mut nei = Engine::new(readings, Config::default());
+    letters(&mut nei, "neige");
+    let nei_top = top(&nei);
+    push(
+        &mut checks,
+        "口语异读 zhei/nei",
+        zhei_top == "这个" && nei_top == "那个",
+        format!("zheige→{zhei_top} neige→{nei_top}"),
     );
 
     // 简繁:歧义短语、单字换形与繁体一字多形。
