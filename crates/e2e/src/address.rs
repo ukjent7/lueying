@@ -91,7 +91,8 @@ pub fn run(report: &mut String) -> usize {
     );
     // 空格上屏完整地址,且不写用户词库、不学搭配。
     let user: SharedUser = Arc::new(RwLock::new(UserDict::new()));
-    let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_user(Arc::clone(&user));
+    let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_user(Arc::clone(&user));
     for c in "zhangsan@q".chars() {
         if let Some(d) = c.to_digit(10) {
             e.process(Key::Digit(d as u8));
@@ -122,9 +123,11 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "www 起头并点",
-        events.is_empty()
-            && w.composition().map(|comp| comp.raw.as_str()) == Some("www."),
-        format!("events {events:?} raw {:?}", w.composition().map(|comp| comp.raw.clone())),
+        events.is_empty() && w.composition().map(|comp| comp.raw.as_str()) == Some("www."),
+        format!(
+            "events {events:?} raw {:?}",
+            w.composition().map(|comp| comp.raw.clone())
+        ),
     );
     let list = cands("www.example.com/train");
     push(

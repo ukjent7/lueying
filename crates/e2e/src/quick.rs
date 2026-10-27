@@ -490,7 +490,9 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "圆圈超二十不出",
-        !yuanquan("yuanquanersan").iter().any(|c| c == "㉑" || c == "㉓"),
+        !yuanquan("yuanquanersan")
+            .iter()
+            .any(|c| c == "㉑" || c == "㉓"),
         format!("{:?}", yuanquan("yuanquanersan")),
     );
 

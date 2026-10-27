@@ -240,8 +240,8 @@ fn circle_number(n: u32) -> String {
 /// 「圆圈」不受影响。
 pub(crate) fn circle_texts(raw: &str) -> Option<Vec<String>> {
     const PINYINS: [&str; 20] = [
-        "yi", "er", "san", "si", "wu", "liu", "qi", "ba", "jiu", "shi", "shiyi", "shier",
-        "shisan", "shisi", "shiwu", "shiliu", "shiqi", "shiba", "shijiu", "ershi",
+        "yi", "er", "san", "si", "wu", "liu", "qi", "ba", "jiu", "shi", "shiyi", "shier", "shisan",
+        "shisi", "shiwu", "shiliu", "shiqi", "shiba", "shijiu", "ershi",
     ];
     let rest = raw.strip_prefix("yuanquan")?;
     let index = PINYINS.iter().position(|p| *p == rest)?;

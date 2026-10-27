@@ -310,7 +310,10 @@ impl Engine {
             }
             // 邮箱:用户名后接 @,此后字母数字与点继续筛常见域。
             Key::Punct('@')
-                if self.comp.as_ref().is_some_and(|c| address::email_at_ok(&c.raw)) =>
+                if self
+                    .comp
+                    .as_ref()
+                    .is_some_and(|c| address::email_at_ok(&c.raw)) =>
             {
                 if self.compose_char('@') {
                     Vec::new()
@@ -322,9 +325,7 @@ impl Engine {
                 }
             }
             // 邮箱域名与网址里的小数点属于地址;地址之外仍恢复普通标点。
-            Key::Punct('.')
-                if self.comp.as_ref().is_some_and(|c| address::dot_ok(&c.raw)) =>
-            {
+            Key::Punct('.') if self.comp.as_ref().is_some_and(|c| address::dot_ok(&c.raw)) => {
                 if self.compose_char('.') {
                     Vec::new()
                 } else {
