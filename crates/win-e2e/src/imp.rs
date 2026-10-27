@@ -196,6 +196,8 @@ fn real_run() -> Result<(String, String), String> {
         .env("APPDATA", &data)
         // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
         .env("LUEYING_SERVER_NO_UI", "1")
+        // UIA 回退的运行痕迹默认静默;E2E 要断言这条链路真的在跑。
+        .env("LUEYING_DEBUG_UIA", "1")
         .stdout(std::process::Stdio::from(out))
         .stderr(std::process::Stdio::from(err))
         .spawn()
@@ -379,6 +381,31 @@ fn real_run() -> Result<(String, String), String> {
             return Err("TSF 日志里没有布局监听登记".into());
         }
         let ui_note = check_candidate_ui(&thread_mgr, &ui_events)?;
+        // UIA 左邻文本回退:开头打字时左邻为空,TSF 读不到文本必然触发
+        // 回退查询。线程活着并完成 COM/automation 初始化,日志里才会出现
+        // "UIA:" 痕迹(读到 0 字,或宿主没有 TextPattern)。3 秒内没痕迹
+        // 说明回退链路断了;线程级失败标记(创建/初始化失败)直接判失败。
+        let mut uia_seen = false;
+        let uia_deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < uia_deadline {
+            if std::fs::read_to_string(server_log())
+                .unwrap_or_default()
+                .contains("UIA:")
+            {
+                uia_seen = true;
+                break;
+            }
+            pump_for(Duration::from_millis(100));
+        }
+        if !uia_seen {
+            return Err("3 秒内 Server 日志没有 UIA 回退痕迹".into());
+        }
+        let uia_log = std::fs::read_to_string(server_log()).unwrap_or_default();
+        for marker in ["UIA 创建失败", "UIA 线程启动失败", "UIA 线程 COM 初始化失败"] {
+            if uia_log.contains(marker) {
+                return Err(format!("{marker}"));
+            }
+        }
         tap(0x20)?; // 空格
         pump_for(Duration::from_millis(600));
         if !ui_events.borrow().ended {
