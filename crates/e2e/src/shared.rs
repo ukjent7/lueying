@@ -103,12 +103,9 @@ fn cases() -> (Vec<Case<'static>>, usize) {
             continue;
         }
         let mut fields = line.split('\t');
-        let (Some(category), Some(_source), Some(input), Some(expected)) = (
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-        ) else {
+        let (Some(category), Some(_source), Some(input), Some(expected)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
             malformed += 1;
             continue;
         };
@@ -209,9 +206,12 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
     for (category, min_top1, min_top5) in GATES {
         let (ok, note) = match by_category.get(*category) {
             Some(metric) => {
-                let ok = metric.rate(metric.top1) >= *min_top1
-                    && metric.rate(metric.top5) >= *min_top5;
-                (ok, format!("top-1 ≥ {min_top1:.0}%, top-5 ≥ {min_top5:.0}%"))
+                let ok =
+                    metric.rate(metric.top1) >= *min_top1 && metric.rate(metric.top5) >= *min_top5;
+                (
+                    ok,
+                    format!("top-1 ≥ {min_top1:.0}%, top-5 ≥ {min_top5:.0}%"),
+                )
             }
             None => (false, "语料缺这一类".to_string()),
         };
@@ -221,7 +221,11 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
         let _ = writeln!(
             text,
             "| {category}:{note}{} | {} |",
-            if gram_on { "" } else { "(无语法模型,仅诊断)" },
+            if gram_on {
+                ""
+            } else {
+                "(无语法模型,仅诊断)"
+            },
             if ok { "PASS" } else { "FAIL" }
         );
     }

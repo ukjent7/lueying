@@ -344,9 +344,7 @@ fn ambiguous_corpus(
         for c in typed.chars() {
             engine.process(Key::Letter(c));
         }
-        let rank = eval_texts(&engine)
-            .iter()
-            .position(|c| *c == want.as_str());
+        let rank = eval_texts(&engine).iter().position(|c| *c == want.as_str());
         if rank.is_some_and(|i| i > 0 && i < 40) {
             out.push((typed.clone(), want.clone()));
         }
