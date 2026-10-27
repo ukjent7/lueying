@@ -99,7 +99,7 @@ pub(super) fn run(state: Arc<State>) {
                         slide: Cell::new(None),
                         slide_serial: Cell::new(0),
                         reduce: Cell::new(false),
-                        menu: Cell::new(None),
+                        menu: RefCell::new(None),
                         panel_h: Cell::new(0.0),
                     })
                 },
@@ -246,7 +246,7 @@ struct CandidatePanel {
     reduce: Cell<bool>,
     /// 打开的右键菜单:(槽位, 菜单顶部 y, 行文本)。行文本变了菜单自动失效,
     /// 翻页或继续打字都不用额外清理。
-    menu: Cell<Option<(usize, f32, String)>>,
+    menu: RefCell<Option<(usize, f32, String)>>,
     /// 本帧面板高度(逻辑像素),菜单上下翻转的判断用。
     panel_h: Cell<f32>,
 }
@@ -647,7 +647,7 @@ impl Render for CandidatePanel {
         let colors = theme::colors(appearance);
         // 组合结束进入淡出:右键菜单随之收起,别让它挂在旧内容上。
         if fading {
-            self.menu.set(None);
+            *self.menu.borrow_mut() = None;
         }
         let width = panel_width(&view);
         let ps = view.page_size.max(1);
@@ -694,7 +694,8 @@ impl Render for CandidatePanel {
         // 自动失效,不需要专门的清理时机。行数据随后被移进列表,先校验。
         let menu_open = self
             .menu
-            .get()
+            .borrow()
+            .clone()
             .filter(|(slot, _, text)| items.iter().any(|(s, t, _, _)| s == slot && t == text));
         let state = Arc::clone(&self.state);
         let scroll_state = Arc::clone(&self.state);
@@ -817,7 +818,7 @@ impl Render for CandidatePanel {
                                         } else {
                                             (y - MENU_H).max(PREEDIT_H)
                                         };
-                                        this.menu.set(Some((slot, top, menu_text)));
+                                        *this.menu.borrow_mut() = Some((slot, top, menu_text));
                                         cx.notify();
                                     }),
                                 )
