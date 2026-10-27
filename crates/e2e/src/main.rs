@@ -1,6 +1,7 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
 //! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast] [--bench-shared]`
 
+mod address;
 mod bench;
 mod features;
 mod modules;
@@ -153,6 +154,9 @@ fn main() {
 
     // 快捷输入:日期/时间/星期与 v 模式数字金额。
     failures += quick::run(&mut report);
+
+    // 邮箱与网址:用户名@ 出常见邮箱,www. 网址直通。
+    failures += address::run(&mut report);
 
     // 核心输入补齐:符号、emoji、简繁与英文混输。
     failures += features::run(&mut report);

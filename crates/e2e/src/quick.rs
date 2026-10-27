@@ -448,6 +448,52 @@ pub fn run(report: &mut String) -> usize {
     top_is(&mut checks, "万亿", "1000000000000", "一万亿");
     has(&mut checks, "大额金额", "100200.3", "壹拾万零贰佰元叁角");
 
+    // 圆圈数字:1–20 追加在数字读法后;零、小数与超出范围不出。
+    has(&mut checks, "圆圈一", "1", "①");
+    has(&mut checks, "圆圈二十", "20", "⑳");
+    push(
+        &mut checks,
+        "零无圆圈",
+        !cands("0").contains(&"⓪".to_string()),
+        format!("{:?}", cands("0")),
+    );
+    push(
+        &mut checks,
+        "小数无圆圈",
+        !cands("1.5").contains(&"①".to_string()),
+        format!("{:?}", cands("1.5")),
+    );
+    // 全拼 yuanquan + 数字拼音同样出圆圈数字;词典里的「圆圈」不受影响。
+    let yuanquan = |word: &str| {
+        let mut e = engine();
+        letters(&mut e, word);
+        e.candidates()
+    };
+    push(
+        &mut checks,
+        "全拼圆圈一",
+        yuanquan("yuanquanyi").iter().any(|c| c == "①"),
+        format!("{:?}", yuanquan("yuanquanyi")),
+    );
+    push(
+        &mut checks,
+        "全拼圆圈二十",
+        yuanquan("yuanquanershi").iter().any(|c| c == "⑳"),
+        format!("{:?}", yuanquan("yuanquanershi")),
+    );
+    push(
+        &mut checks,
+        "圆圈词不受影响",
+        !yuanquan("yuanquan").contains(&"①".to_string()),
+        format!("{:?}", yuanquan("yuanquan")),
+    );
+    push(
+        &mut checks,
+        "圆圈超二十不出",
+        !yuanquan("yuanquanersan").iter().any(|c| c == "㉑" || c == "㉓"),
+        format!("{:?}", yuanquan("yuanquanersan")),
+    );
+
     // v 表达式:运算符进组合、按优先级求值,结果不学习。
     let mut calc = engine();
     expression(&mut calc, "1+2");

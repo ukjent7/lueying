@@ -308,6 +308,45 @@ impl Engine {
                     events
                 }
             }
+            // 邮箱:用户名后接 @,此后字母数字与点继续筛常见域。
+            Key::Punct('@')
+                if self.comp.as_ref().is_some_and(|c| address::email_at_ok(&c.raw)) =>
+            {
+                if self.compose_char('@') {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit("@".to_string()));
+                    events
+                }
+            }
+            // 邮箱域名与网址里的小数点属于地址;地址之外仍恢复普通标点。
+            Key::Punct('.')
+                if self.comp.as_ref().is_some_and(|c| address::dot_ok(&c.raw)) =>
+            {
+                if self.compose_char('.') {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(".".to_string()));
+                    events
+                }
+            }
+            // 网址里的路径斜杠与连字符并入组合;邮箱域不收,筛域用不到。
+            Key::Punct(p @ ('/' | '-'))
+                if self.comp.as_ref().is_some_and(|c| address::in_url(&c.raw)) =>
+            {
+                if self.compose_char(p) {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(p.to_string()));
+                    events
+                }
+            }
             // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
             Key::Punct('.') if self.expression_dot_mode() => {
                 if self.compose_char('.') {
@@ -328,9 +367,11 @@ impl Engine {
                 self.page_by(1);
                 Vec::new()
             }
-            // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号。
+            // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号;
+            // 地址形态下数字继续筛域名。
             Key::Digit(d) if self.expression_body().is_some() => self.compose_digit(d),
             Key::Digit(d) if self.unicode_body().is_some() => self.compose_digit(d),
+            Key::Digit(d) if self.address_mode() => self.compose_digit(d),
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
                 // 标点把句子切开了,整串落定后再上屏标点;已选片段不再拼成整句词条。
@@ -432,6 +473,14 @@ impl Engine {
     pub(crate) fn unicode_body(&self) -> Option<&str> {
         let raw = self.comp.as_ref()?.raw.as_str();
         quick::unicode_body(raw)
+    }
+
+    /// 组合是否处于地址形态:邮箱(含 @)或网址(www. 开头)。
+    pub(crate) fn address_mode(&self) -> bool {
+        let Some(comp) = self.comp.as_ref() else {
+            return false;
+        };
+        address::in_email(&comp.raw) || address::in_url(&comp.raw)
     }
 
     /// 当前小数点属于表达式里的数字段;这段还没有小数点。
@@ -868,6 +917,7 @@ impl Engine {
         // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
         // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
         let quick = quick::candidates(&comp.raw, now);
+        let address = address::candidates(&comp.raw);
         if !quick.is_empty() {
             built
                 .cands
@@ -878,6 +928,19 @@ impl Engine {
                 .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
             let position = if keep_first { 1 } else { 0 };
             for cand in quick.into_iter().rev() {
+                built.cands.insert(position, cand);
+            }
+        } else if !address.is_empty() {
+            // 邮箱/网址候选同样不抢可信整词的首位;表外域名的原文在末尾。
+            built
+                .cands
+                .retain(|cand| !address.iter().any(|a| a.text == cand.text));
+            let keep_first = built
+                .cands
+                .first()
+                .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
+            let position = if keep_first { 1 } else { 0 };
+            for cand in address.into_iter().rev() {
                 built.cands.insert(position, cand);
             }
         } else if let Some((at, quick)) = quick::keyword(&built.cands, &comp.raw, now) {

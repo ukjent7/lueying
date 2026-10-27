@@ -90,7 +90,9 @@ pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
         "rq" => date_texts(now),
         "sj" => time_texts(now),
         "xq" => weekday_texts(now),
-        _ => expression_texts(raw).unwrap_or_default(),
+        _ => expression_texts(raw)
+            .or_else(|| circle_texts(raw))
+            .unwrap_or_default(),
     };
     wrap(texts, raw)
 }
@@ -216,7 +218,34 @@ fn number_texts(raw: &str) -> Option<Vec<String>> {
     if dec_part.is_empty() {
         push_unique(&mut texts, digits_text(int_part));
     }
+    // 1–20 追加圆圈数字;带小数与超长整数不出。
+    if dec_part.is_empty()
+        && int_part.len() <= 3
+        && let Ok(n) = int_part.parse::<u32>()
+        && (1..=20).contains(&n)
+    {
+        push_unique(&mut texts, circle_number(n));
+    }
     Some(texts)
+}
+
+/// 圆圈数字 ①–⑳。
+fn circle_number(n: u32) -> String {
+    char::from_u32(0x2460 + n - 1)
+        .unwrap_or('\u{2460}')
+        .to_string()
+}
+
+/// `yuanquan` + 数字拼音 → 圆圈数字 ①–⑳;只认完整匹配,留给词典的
+/// 「圆圈」不受影响。
+pub(crate) fn circle_texts(raw: &str) -> Option<Vec<String>> {
+    const PINYINS: [&str; 20] = [
+        "yi", "er", "san", "si", "wu", "liu", "qi", "ba", "jiu", "shi", "shiyi", "shier",
+        "shisan", "shisi", "shiwu", "shiliu", "shiqi", "shiba", "shijiu", "ershi",
+    ];
+    let rest = raw.strip_prefix("yuanquan")?;
+    let index = PINYINS.iter().position(|p| *p == rest)?;
+    Some(vec![circle_number(index as u32 + 1)])
 }
 
 fn push_unique(texts: &mut Vec<String>, text: String) {
