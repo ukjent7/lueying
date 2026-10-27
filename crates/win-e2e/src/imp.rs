@@ -449,7 +449,7 @@ fn real_run() -> Result<(String, String), String> {
         // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
         // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
         let latency = commit_latency(edit, &thread_mgr)?;
-        let keys = key_latency(edit, &ui_events)?;
+        let keys = key_latency(edit, &log)?;
         let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
         //    拼音,也不改选候选;组合与 UI 元素都必须结束。
@@ -578,11 +578,19 @@ fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, Strin
     Ok(summary)
 }
 
-/// 每键延迟:逐键等候选 UI 元素更新计数前进。引擎门限在 lueying-e2e 卡,
-/// 这里只抓组合通道整体停摆或秒级回归。
-fn key_latency(edit: HWND, ui_events: &Rc<RefCell<UiEvents>>) -> Result<String, String> {
+/// 每键延迟:逐键等 TSF 日志里的「应用 vk=」行前进(每键恰好一行,
+/// 键事件已被 DLL 交给 Server 并把组句写回)。BeginUIElement 与首次
+/// 候选更新不保证触发 UpdateUIElement,不能拿 UI 元素更新当观测点。
+/// 引擎门限在 lueying-e2e 卡,这里只抓组合通道整体停摆或秒级回归。
+fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> {
     const ROUNDS: usize = 3;
     const KEYS: [char; 5] = ['w', 'o', 'a', 'i', 'n'];
+    let applied = || {
+        std::fs::read_to_string(tsf_log)
+            .unwrap_or_default()
+            .matches("应用 vk=")
+            .count()
+    };
     let mut samples = Vec::with_capacity(ROUNDS * KEYS.len());
     for round in 0..ROUNDS {
         unsafe {
@@ -590,14 +598,14 @@ fn key_latency(edit: HWND, ui_events: &Rc<RefCell<UiEvents>>) -> Result<String, 
         }
         pump_for(Duration::from_millis(80));
         for (i, ch) in KEYS.iter().enumerate() {
-            let before = ui_events.borrow().updates;
+            let before = applied();
             let start = Instant::now();
             tap(vk_of(*ch))?;
             let deadline = start + Duration::from_millis(800);
-            while ui_events.borrow().updates == before {
+            while applied() == before {
                 if Instant::now() >= deadline {
                     return Err(format!(
-                        "第 {} 轮第 {} 键 `{}` 后 800ms 候选 UI 无更新",
+                        "第 {} 轮第 {} 键 `{}` 后 800ms 组合通道无响应",
                         round + 1,
                         i + 1,
                         ch
@@ -618,7 +626,7 @@ fn key_latency(edit: HWND, ui_events: &Rc<RefCell<UiEvents>>) -> Result<String, 
     let (p50, p95) = (pick(0.5), pick(0.95));
     let slowest = samples.last().copied().unwrap_or(0.0);
     let summary = format!(
-        "## 每键延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 1000 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
+        "## 每键往返延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 1000 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
     );
     if p95 > 1000.0 {
         return Err(format!("{summary}\n\np95 超过 1000ms"));
