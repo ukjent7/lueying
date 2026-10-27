@@ -303,12 +303,14 @@ jobs:
       # WINDOWS_PFX_PASSWORD 两个 secret 后,tag 构建自动签 setup.exe 并加
       # RFC3161 时间戳;没配 secret 时跳过,发布物与现状一致。
       - name: 代码签名(有证书才执行)
-        if: startsWith(github.ref, 'refs/tags/') && secrets.WINDOWS_PFX_BASE64 != ''
+        # if 里不能用 secrets 上下文,判空放进脚本。
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         shell: pwsh
         run: |
+          if (-not $env:WINDOWS_PFX_BASE64) { "未配置证书,跳过签名"; exit 0 }
           $pfx = Join-Path $env:RUNNER_TEMP "lueying.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Filter signtool.exe -Recurse -File |
