@@ -258,7 +258,7 @@ mod imp {
                     if std::fs::remove_file(&file).is_ok() {
                         continue;
                     }
-                    if !pending_delete(&file) {
+                    if !pending_delete(&file, &root.join("uninstall.log")) {
                         return Err(format!(
                             "卸载后 {} 仍在,且没有安排重启删除",
                             file.display()
@@ -645,15 +645,25 @@ mod imp {
             && lower.ends_with(".dll")
     }
 
-    /// 文件是否已排进 Windows 的重启删除队列。Inno 对 uninsrestartdelete
-    /// 文件调用 MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT),记录在这里。
-    fn pending_delete(path: &Path) -> bool {
+    /// 文件是否已排进 Windows 的重启删除队列。Inno 对 `uninsrestartdelete`
+    /// 文件调用 MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT);队列过长时系统会
+    /// 溢出到 `PendingFileRenameOperations2`,两处都要查。卸载日志里的
+    /// 「Will delete on restart」是同一动作的兜底证据。
+    fn pending_delete(path: &Path, uninstall_log: &Path) -> bool {
+        let needle = path.to_string_lossy().to_ascii_lowercase();
+        ["PendingFileRenameOperations", "PendingFileRenameOperations2"]
+            .iter()
+            .any(|value| registry_value_contains(value, &needle))
+            || log_schedules_delete(uninstall_log, &needle)
+    }
+
+    fn registry_value_contains(value: &str, needle: &str) -> bool {
         let mut command = Command::new("reg");
         command.args([
             "query",
             r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager",
             "/v",
-            "PendingFileRenameOperations",
+            value,
         ]);
         let Ok(output) = command.output() else {
             return false;
@@ -661,9 +671,31 @@ mod imp {
         if !output.status.success() {
             return false;
         }
-        let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-        let needle = path.to_string_lossy().to_ascii_lowercase();
-        text.contains(&needle)
+        String::from_utf8_lossy(&output.stdout)
+            .to_ascii_lowercase()
+            .contains(needle)
+    }
+
+    fn log_schedules_delete(log: &Path, needle: &str) -> bool {
+        let Ok(text) = std::fs::read_to_string(log) else {
+            return false;
+        };
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            let Some((_, rest)) = line.split_once("Deleting file: ") else {
+                continue;
+            };
+            if rest.trim().to_ascii_lowercase() != needle {
+                continue;
+            }
+            if lines
+                .next()
+                .is_some_and(|next| next.contains("Will delete on restart"))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn system32(name: &str) -> PathBuf {
