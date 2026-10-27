@@ -572,12 +572,16 @@ fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize
         }
         entries.push((word.to_string(), key.to_string(), freq));
     }
-    let common: HashSet<&str> = entries.iter().map(|(word, _, _)| word.as_str()).collect();
+    let mut common_freq: HashMap<&str, u64> = HashMap::new();
+    for (word, _, freq) in &entries {
+        let slot = common_freq.entry(word.as_str()).or_insert(0);
+        *slot = (*slot).max(*freq);
+    }
     // 「X的」提频时,同音键的「X得」不提会把 `nishuodeyoudaoli` 推向
     // 「你说的有道理」。两者只靠语法模型分,词频比例保持白霜原样。
     let mut siblings: HashSet<String> = HashSet::new();
     for ((word, key), _) in best.iter() {
-        if !common.contains(word.as_str()) {
+        if !common_freq.contains_key(word.as_str()) {
             continue;
         }
         let Some(twin) = de_twin(word) else {
@@ -589,14 +593,23 @@ fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize
     }
     let mut boosted = 0usize;
     for ((word, _), freq) in best.iter_mut() {
-        if word.chars().count() >= 2
-            && (common.contains(word.as_str()) || siblings.contains(word.as_str()))
-        {
+        if word.chars().count() < 2 {
+            continue;
+        }
+        if let Some(&base) = common_freq.get(word.as_str()) {
+            // 白霜里 0 频等同禁用;常用词表给了正频就把词启用,否则照常提频。
+            *freq = if *freq == 0 {
+                base
+            } else {
+                freq.saturating_mul(COMMON_MULT)
+            };
+            boosted += 1;
+        } else if siblings.contains(word.as_str()) {
             *freq = freq.saturating_mul(COMMON_MULT);
             boosted += 1;
         }
     }
-    drop(common);
+    drop(common_freq);
     drop(siblings);
     // 白霜已有这个词时只提频,不把青简的另一种读音追加进来;缺词才补一个最高频读音。
     let mut added = 0usize;
