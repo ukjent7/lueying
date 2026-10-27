@@ -32,12 +32,16 @@ impl Client {
             return Some(client);
         }
         // Server 没在跑:拉起安装目录里的兄弟进程,等它建好管道。
-        if !spawn_server_once() && !WARMING.load(Ordering::Relaxed) {
+        // 冷启动可能超过一轮等待,3 秒内继续等;超过后回到每 10 秒一次的
+        // 拉起节流,避免每个按键都陪等服务启动。
+        let warming = WARMING.load(Ordering::Relaxed);
+        let started = if warming { false } else { spawn_server_once() };
+        let recent = now_ms().saturating_sub(LAST_SPAWN.load(Ordering::Relaxed)) < STARTUP_GRACE_MS;
+        if !warming && !started && !recent {
             return None;
         }
-        // 刚拉起(含激活时预热)说明服务正在加载词典/模型。只等这一次:
-        // 首键直接放行会少一个字母,后续键还会把拼音接错;等不到就清标记,
-        // 服务真起不来时后面的按键不再陪等。
+        // 刚拉起(含激活时预热)说明服务正在加载词典/模型。首键直接放行会
+        // 少一个字母,后续键还会把拼音接错;等不到就清标记。
         WARMING.store(false, Ordering::Relaxed);
         for _ in 0..16 {
             std::thread::sleep(Duration::from_millis(15));
@@ -140,7 +144,7 @@ pub(crate) fn note_disconnect() {
 /// 只有本次真的发起了进程才返回 true,调用方据此决定要不要等管道;
 /// 刚起过或同目录没有 Server 都立即返回,键盘不用等。
 fn spawn_server_once() -> bool {
-    const RETRY_SECS: u64 = 10;
+    const RETRY_MS: u64 = 10_000;
     let Some(dir) =
         crate::module_path_file().and_then(|p| p.parent().map(std::path::Path::to_path_buf))
     else {
@@ -150,11 +154,9 @@ fn spawn_server_once() -> bool {
     if !exe.exists() {
         return false;
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+    let now = now_ms();
     let last = LAST_SPAWN.load(Ordering::Relaxed);
-    if now.saturating_sub(last) < RETRY_SECS
+    if now.saturating_sub(last) < RETRY_MS
         || LAST_SPAWN
             .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
             .is_err()
@@ -169,7 +171,17 @@ fn spawn_server_once() -> bool {
     started
 }
 
-/// 上次尝试拉起 Server 的秒级时间戳。
+/// 发起进程后继续等管道的窗口。冷启动加载词典/模型可能超过单轮 240ms,
+/// 这段时间内的按键都要继续尝试连接,不能立刻放行成英文。
+const STARTUP_GRACE_MS: u64 = 3_000;
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}
+
+/// 上次尝试拉起 Server 的毫秒时间戳。
 static LAST_SPAWN: AtomicU64 = AtomicU64::new(0);
 /// 刚发起过 Server 进程、还没确认管道就绪;下一次连接最多等一轮。
 static WARMING: AtomicBool = AtomicBool::new(false);
