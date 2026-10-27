@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
@@ -407,6 +407,8 @@ fn real_run() -> Result<(String, String), String> {
         // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
         // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
         let latency = commit_latency(edit, &thread_mgr)?;
+        let keys = key_latency(edit, &ui_events)?;
+        let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
         //    拼音,也不改选候选;组合与 UI 元素都必须结束。
         let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
@@ -417,7 +419,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}"
+                "{latency}\n\n{keys}\n\n{memory}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}"
             ),
         ))
     })();
@@ -530,6 +532,120 @@ fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, Strin
     );
     if p95 > 250.0 {
         return Err(format!("{summary}\n\np95 超过 250ms"));
+    }
+    Ok(summary)
+}
+
+/// 每键延迟:逐键等候选 UI 元素更新计数前进。引擎门限在 lueying-e2e 卡,
+/// 这里只抓组合通道整体停摆或秒级回归。
+fn key_latency(edit: HWND, ui_events: &Rc<RefCell<UiEvents>>) -> Result<String, String> {
+    const ROUNDS: usize = 3;
+    const KEYS: [char; 5] = ['w', 'o', 'a', 'i', 'n'];
+    let mut samples = Vec::with_capacity(ROUNDS * KEYS.len());
+    for round in 0..ROUNDS {
+        unsafe {
+            let _ = SetWindowTextW(edit, &HSTRING::from(""));
+        }
+        pump_for(Duration::from_millis(80));
+        for (i, ch) in KEYS.iter().enumerate() {
+            let before = ui_events.borrow().updates;
+            let start = Instant::now();
+            tap(vk_of(*ch))?;
+            let deadline = start + Duration::from_millis(800);
+            while ui_events.borrow().updates == before {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "第 {} 轮第 {} 键 `{}` 后 800ms 候选 UI 无更新",
+                        round + 1,
+                        i + 1,
+                        ch
+                    ));
+                }
+                pump_for(Duration::from_millis(2));
+            }
+            samples.push(start.elapsed().as_secs_f64() * 1000.0);
+            pump_for(Duration::from_millis(40));
+        }
+        tap(0x20)?; // 空格上屏,结束组合,下一轮从头开始
+        pump_for(Duration::from_millis(300));
+    }
+    samples.sort_by(f64::total_cmp);
+    let pick = |p: f64| {
+        samples[((p * (samples.len() - 1) as f64).round() as usize).min(samples.len() - 1)]
+    };
+    let (p50, p95) = (pick(0.5), pick(0.95));
+    let slowest = samples.last().copied().unwrap_or(0.0);
+    let summary = format!(
+        "## 每键延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 1000 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
+    );
+    if p95 > 1000.0 {
+        return Err(format!("{summary}\n\np95 超过 1000ms"));
+    }
+    Ok(summary)
+}
+
+/// Server 工作集基线:优先测 runner 自己拉起的进程,不在了再按 exe 名找
+/// (TSF 断线后会懒拉起新实例)。只抓失控级增长,细粒度波动仅记录。
+fn server_memory(server_pid: u32) -> Result<String, String> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    let peak = |pid: u32| -> Result<u64, String> {
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+            .map_err(|e| format!("OpenProcess({pid}): {e}"))?;
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let result = unsafe { GetProcessMemoryInfo(process, &mut counters, counters.cb) }
+            .map(|_| counters.PeakWorkingSetSize as u64)
+            .map_err(|e| format!("GetProcessMemoryInfo({pid}): {e}"));
+        let _ = unsafe { CloseHandle(process) };
+        result
+    };
+    let pid_by_name = |name: &str| -> Result<u32, String> {
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+            .map_err(|e| format!("CreateToolhelp32Snapshot: {e}"))?;
+        let target: Vec<u16> = format!("{name}\0").encode_utf16().collect();
+        let mut entry = PROCESSENTRY32W::default();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = 0u32;
+        let mut walking = unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok();
+        while walking {
+            if entry.szExeFile[..target.len()] == target[..] {
+                found = entry.th32ProcessID;
+                break;
+            }
+            walking = unsafe { Process32NextW(snapshot, &mut entry) }.is_ok();
+        }
+        let _ = unsafe { CloseHandle(snapshot) };
+        if found == 0 {
+            return Err(format!("进程表里找不到 {name}"));
+        }
+        Ok(found)
+    };
+
+    let (pid, peak) = if server_pid != 0 {
+        match peak(server_pid) {
+            Ok(bytes) => (server_pid, bytes),
+            Err(e) => {
+                println!("按子进程 PID 测内存失败,按 exe 名重找: {e}");
+                let pid = pid_by_name("lueying-server.exe")?;
+                (pid, peak(pid)?)
+            }
+        }
+    } else {
+        let pid = pid_by_name("lueying-server.exe")?;
+        (pid, peak(pid)?)
+    };
+    let mb = peak as f64 / 1024.0 / 1024.0;
+    let summary = format!(
+        "## Server 内存基线\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 峰值工作集(PID {pid}) | {mb:.1} MB | ≤ 512 |"
+    );
+    if peak > 512 * 1024 * 1024 {
+        return Err(format!("{summary}\n\n峰值工作集超过 512MB"));
     }
     Ok(summary)
 }
