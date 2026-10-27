@@ -531,6 +531,16 @@ fn parse_frost(
     (n, bad)
 }
 
+/// `X的` ↔ `X得`:同音异形的孪生词。补词表给前者提频时,后者要同步提,
+/// 否则「你说得有道理」会被「你说的有道理」顶掉。
+fn de_twin(word: &str) -> Option<String> {
+    if let Some(base) = word.strip_suffix('的') {
+        Some(format!("{base}得"))
+    } else {
+        word.strip_suffix('得').map(|base| format!("{base}的"))
+    }
+}
+
 /// 合并青简常用词表:多字词已收录则提频,未收录则补入;单字整行跳过。
 /// 只认仓库内快照,CI 不依赖 work/ 下的参考项目。
 fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize, usize, usize) {
@@ -563,14 +573,31 @@ fn parse_common(text: &str, best: &mut HashMap<(String, String), u64>) -> (usize
         entries.push((word.to_string(), key.to_string(), freq));
     }
     let common: HashSet<&str> = entries.iter().map(|(word, _, _)| word.as_str()).collect();
+    // 「X的」提频时,同音键的「X得」不提会把 `nishuodeyoudaoli` 推向
+    // 「你说的有道理」。两者只靠语法模型分,词频比例保持白霜原样。
+    let mut siblings: HashSet<String> = HashSet::new();
+    for ((word, key), _) in best.iter() {
+        if !common.contains(word.as_str()) {
+            continue;
+        }
+        let Some(twin) = de_twin(word) else {
+            continue;
+        };
+        if best.contains_key(&(twin.clone(), key.clone())) {
+            siblings.insert(twin);
+        }
+    }
     let mut boosted = 0usize;
     for ((word, _), freq) in best.iter_mut() {
-        if word.chars().count() >= 2 && common.contains(word.as_str()) {
+        if word.chars().count() >= 2
+            && (common.contains(word.as_str()) || siblings.contains(word.as_str()))
+        {
             *freq = freq.saturating_mul(COMMON_MULT);
             boosted += 1;
         }
     }
     drop(common);
+    drop(siblings);
     // 白霜已有这个词时只提频,不把青简的另一种读音追加进来;缺词才补一个最高频读音。
     let mut added = 0usize;
     for (word, key, freq) in entries {
