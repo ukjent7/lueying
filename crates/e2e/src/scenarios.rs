@@ -683,6 +683,11 @@ pub fn probes() -> Vec<(&'static str, &'static str)> {
         ("xuexi", "学习"),
         ("jintian", "今天"),
         ("tianqi", "天气"),
+        // 青简补录的日常词:缺了会让单字拼或同音词占首选。
+        ("shide", "是的"),
+        ("shima", "是吗"),
+        ("nanshen", "男神"),
+        ("wasai", "哇塞"),
         // 音节表曾漏掉 di/neng/yue/deng/rui,这几条锁死补全后的行为。
         ("di", "地"),
         ("neng", "能"),
