@@ -401,7 +401,11 @@ fn real_run() -> Result<(String, String), String> {
             return Err("3 秒内 Server 日志没有 UIA 回退痕迹".into());
         }
         let uia_log = std::fs::read_to_string(server_log()).unwrap_or_default();
-        for marker in ["UIA 创建失败", "UIA 线程启动失败", "UIA 线程 COM 初始化失败"] {
+        for marker in [
+            "UIA 创建失败",
+            "UIA 线程启动失败",
+            "UIA 线程 COM 初始化失败",
+        ] {
             if uia_log.contains(marker) {
                 return Err(format!("{marker}"));
             }
