@@ -99,8 +99,9 @@ impl ModeHudPanel {
             return;
         }
         let scale = scale_at(anchor_x, anchor_y);
-        let w = (HUD_W * scale) as i32;
-        let h = (HUD_H * scale) as i32;
+        let pad = (SHADOW_PAD * scale) as i32;
+        let w = ((HUD_W + SHADOW_PAD * 2.0) * scale) as i32;
+        let h = ((HUD_H + SHADOW_PAD * 2.0) * scale) as i32;
         let gap = (4.0 * scale) as i32;
         // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
         let in_comp = in_composition(&self.state);
@@ -111,16 +112,16 @@ impl ModeHudPanel {
         let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
         let y = (match caret {
             Some((_, t, _, b)) => {
-                let below = b + gap + h <= work.bottom;
-                let above = t - h - gap >= work.top;
-                if prefer_below && below {
-                    b + gap
-                } else if !prefer_below && above {
-                    t - h - gap
-                } else if below {
-                    b + gap
+                let below = b + gap - pad;
+                let above = t - h - gap + pad;
+                if prefer_below && below + h <= work.bottom {
+                    below
+                } else if !prefer_below && above >= work.top {
+                    above
+                } else if below + h <= work.bottom {
+                    below
                 } else {
-                    t - h - gap
+                    above
                 }
             }
             None => anchor_y - h / 2,
@@ -135,14 +136,9 @@ impl Render for ModeHudPanel {
         let Some(view) = self.last.borrow().clone() else {
             return div().into_any_element();
         };
-        let colors = if theme::high_contrast() {
-            system_palette()
-        } else {
-            palette(matches!(
-                window.appearance(),
-                WindowAppearance::Dark | WindowAppearance::VibrantDark
-            ))
-        };
+        let appearance = theme::Appearance::of(window);
+        let colors = theme::colors(appearance);
+        let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
         let opacity = if cx.reduce_motion() {
             1.0
         } else {
@@ -158,22 +154,25 @@ impl Render for ModeHudPanel {
                 1.0
             }
         };
-        div()
-            .font_family("Microsoft YaHei")
+        let panel = div()
+            .font_family("Microsoft YaHei UI")
             .flex()
             .items_center()
             .justify_center()
             .w(px(HUD_W))
             .h(px(HUD_H))
-            .bg(rgb(colors.bg))
+            .bg(rgb(colors.surface))
             .border_1()
             .border_color(rgb(colors.border))
             .rounded_lg()
-            .shadow_lg()
-            .text_size(px(18.0))
+            .when(!high_contrast, |el| el.shadow_md())
+            .text_size(px(17.0))
             .text_color(rgb(colors.text))
+            .child(view.label);
+        div()
+            .p(px(SHADOW_PAD))
+            .child(panel)
             .opacity(opacity)
-            .child(view.label)
             .into_any_element()
     }
 }

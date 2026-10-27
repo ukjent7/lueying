@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
-    Window, WindowAppearance, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint,
-    prelude::*, px, rgb, size,
+    Animation, AnimationExt, App, Bounds, BoxShadow, Context, MouseButton, Point, ScrollDelta,
+    SharedString, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
+    div, ease_out_quint, hsla, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
@@ -19,9 +19,8 @@ use lueying_server::theme;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    COLOR_3DFACE, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWFRAME,
-    COLOR_WINDOWTEXT, GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST,
-    MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    MonitorFromPoint,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -39,14 +38,20 @@ mod hud;
 use hud::ModeHudPanel;
 
 /// 逻辑尺寸(乘 scale_factor 得物理像素)。
-const WIDTH: f32 = 340.0;
-/// 整句候选比单词长得多;固定 340 会把十五字以上的句子裁掉。窗口随候选
+const WIDTH: f32 = 360.0;
+/// 整句候选比单词长得多;固定 360 会把十五字以上的句子裁掉。窗口随候选
 /// 变宽,到上限后改用省略号,避免盖满半个屏幕。
 const MAX_WIDTH: f32 = 680.0;
 /// 候选文字在最大窗口宽度下可用的宽度,给序号、注音和内边距留位。
-const MAX_TEXT_WIDTH: f32 = MAX_WIDTH - 170.0;
-const PREEDIT_H: f32 = 30.0;
-const ROW_H: f32 = 36.0;
+const MAX_TEXT_WIDTH: f32 = MAX_WIDTH - 190.0;
+const PREEDIT_H: f32 = 32.0;
+const ROW_H: f32 = 34.0;
+/// 候选窗与光标之间留一点呼吸,不贴着字形下缘。
+const CARET_GAP: f32 = 4.0;
+/// 窗口四周留给投影的透明边距;窗口底色透明,只有面板本身可见。
+const SHADOW_PAD: f32 = 10.0;
+/// 翻页时候选内容横向滑入,90ms 内归位。
+const PAGE_SLIDE: Duration = Duration::from_millis(90);
 /// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
 const PARK_GAP: i32 = 2000;
 /// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
@@ -68,7 +73,10 @@ pub(super) fn run(state: Arc<State>) {
         let (park_x, park_y) = park_point();
         let bounds = Bounds {
             origin: Point::new(px(park_x as f32), px(park_y as f32)),
-            size: size(px(WIDTH), px(PREEDIT_H + ROW_H)),
+            size: size(
+                px(WIDTH + SHADOW_PAD * 2.0),
+                px(PREEDIT_H + ROW_H + 6.0 + SHADOW_PAD * 2.0),
+            ),
         };
         let panel_state = Arc::clone(&state);
         let handle = cx
@@ -80,6 +88,7 @@ pub(super) fn run(state: Arc<State>) {
                     is_resizable: false,
                     is_minimizable: false,
                     kind: WindowKind::PopUp,
+                    window_background: WindowBackgroundAppearance::Transparent,
                     ..Default::default()
                 },
                 |_, cx| {
@@ -89,6 +98,9 @@ pub(super) fn run(state: Arc<State>) {
                         last: RefCell::new(None),
                         fading: Cell::new(None),
                         above: Cell::new(None),
+                        page: Cell::new(None),
+                        slide: Cell::new(None),
+                        slide_serial: Cell::new(0),
                         reduce: Cell::new(false),
                     })
                 },
@@ -106,13 +118,14 @@ pub(super) fn run(state: Arc<State>) {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds {
                         origin: Point::new(px(park_x as f32), px(park_y as f32)),
-                        size: size(px(HUD_W), px(HUD_H)),
+                        size: size(px(HUD_W + SHADOW_PAD * 2.0), px(HUD_H + SHADOW_PAD * 2.0)),
                     })),
                     focus: false,
                     is_movable: false,
                     is_resizable: false,
                     is_minimizable: false,
                     kind: WindowKind::PopUp,
+                    window_background: WindowBackgroundAppearance::Transparent,
                     ..Default::default()
                 },
                 |_, cx| cx.new(|_| ModeHudPanel::new(hud_state)),
@@ -225,6 +238,12 @@ struct CandidatePanel {
     fading: Cell<Option<Instant>>,
     /// 本次组合里候选窗在光标上方还是下方;同一次组合内保持不变。
     above: Cell<Option<bool>>,
+    /// 上一帧的页码,用来判断翻页方向。
+    page: Cell<Option<usize>>,
+    /// 正在进行的翻页滑动:方向与结束时刻。
+    slide: Cell<Option<(f32, Instant)>>,
+    /// 翻页动画 id;单调递增,避免复用已结束的动画状态。
+    slide_serial: Cell<u64>,
     /// 上一帧读到的系统「减少动态效果」设置。
     reduce: Cell<bool>,
 }
@@ -236,6 +255,8 @@ impl CandidatePanel {
             self.fading.set(None);
             self.last.borrow_mut().take();
             self.above.set(None);
+            self.page.set(None);
+            self.slide.set(None);
             return true;
         }
         false
@@ -251,8 +272,10 @@ impl CandidatePanel {
                 Some(view) => {
                     // 新一次组合重新判断候选窗朝向;同一次组合内沿用,
                     // 候选行数变化时不会在光标上下反复翻跳。
-                    if self.last.borrow().is_none() {
+                    if self.last.borrow().is_none() || self.fading.get().is_some() {
                         self.above.set(None);
+                        self.page.set(None);
+                        self.slide.set(None);
                     }
                     *self.last.borrow_mut() = Some(view.clone());
                     self.fading.set(None);
@@ -284,16 +307,18 @@ impl CandidatePanel {
                     // 必须按光标所在显示器算,否则副屏 150%/200% 下窗口尺寸不匹配。
                     let scale = scale_at(left, b);
                     let rows = view.as_ref().map_or(1, |v| panel_rows(v, width));
-                    let mut w = (width * scale) as i32;
-                    let h = ((PREEDIT_H + ROW_H * rows as f32 + 8.0) * scale) as i32;
+                    let content_h = ((PREEDIT_H + ROW_H * rows as f32 + 6.0) * scale) as i32;
+                    let pad = (SHADOW_PAD * scale) as i32;
+                    let mut w = (width * scale) as i32 + pad * 2;
+                    let h = content_h + pad * 2;
                     // 按光标所在屏的工作区夹取。
                     let work = work_area_at(left, b);
                     w = w.min((work.right - work.left).max(1));
-                    let mut x = left;
                     // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
                     // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
-                    let below = b;
-                    let above = t - h;
+                    let gap = (CARET_GAP * scale) as i32;
+                    let below = b + gap - pad;
+                    let above = t - content_h - gap - pad;
                     let fits_below = below + h <= work.bottom;
                     let fits_above = above >= work.top;
                     let prefer_above = match self.above.get() {
@@ -304,7 +329,7 @@ impl CandidatePanel {
                     self.above.set(Some(prefer_above));
                     let y = (if prefer_above { above } else { below })
                         .clamp(work.top, (work.bottom - h).max(work.top));
-                    x = x.clamp(work.left, (work.right - w).max(work.left));
+                    let x = (left - pad).clamp(work.left, (work.right - w).max(work.left));
                     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
                     // 最大化窗口保留候选窗(它的矩形通常只到工作区)。
                     let hidden = foreground_fullscreen_at(left, b, host_pid);
@@ -353,11 +378,11 @@ fn park(hwnd: HWND, x: i32, y: i32) {
 fn item_width(text: &str, hint: Option<&String>) -> f32 {
     let hint_width = hint
         .filter(|hint| !hint.is_empty())
-        .map_or(0.0, |hint| 4.0 + 12.0 * text_units(hint))
-        .min(110.0);
+        .map_or(0.0, |hint| 4.0 + 11.0 * text_units(hint))
+        .min(100.0);
     let hint_gap = if hint_width > 0.0 { 4.0 } else { 0.0 };
-    // px_2 + 序号(两位内)+ 序号与候选之间的 gap_1。
-    16.0 + 11.0 + 4.0 + 17.0 * text_units(text) + hint_gap + hint_width
+    // px_2(16)+强调条(2)+间距(4)+序号(12)+间距(4)+候选文字+注音。
+    16.0 + 2.0 + 4.0 + 12.0 + 4.0 + 17.0 * text_units(text) + hint_gap + hint_width
 }
 
 /// 文字宽度折算成字号倍数:ASCII 约半个字宽,其余按全角算。
@@ -367,9 +392,14 @@ fn text_units(text: &str) -> f32 {
         .sum()
 }
 
-/// 服务端候选窗的估算高度(逻辑像素):预编辑行 + 当前页候选行 + 底部内边距。
+/// 面板本身的高度(逻辑像素),含列表内边距与面板边框,不含投影留白。
+fn panel_height(view: &SessionView) -> f32 {
+    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + 6.0
+}
+
+/// 候选窗的估算高度(逻辑像素),含投影留白。
 fn candidate_height(view: &SessionView) -> f32 {
-    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + 8.0
+    panel_height(view) + SHADOW_PAD * 2.0
 }
 
 /// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
@@ -412,7 +442,7 @@ fn page_arrow(
     label: &'static str,
     delta: i32,
     state: Arc<State>,
-    colors: Palette,
+    colors: theme::Colors,
 ) -> impl IntoElement {
     div()
         // `active` 只挂在有状态元素上;两个翻页键用不同 id。
@@ -420,13 +450,13 @@ fn page_arrow(
         .flex()
         .items_center()
         .justify_center()
-        .w(px(24.0))
-        .h(px(24.0))
+        .w(px(22.0))
+        .h(px(22.0))
         .rounded_md()
-        .text_size(px(14.0))
-        .text_color(rgb(colors.index))
+        .text_size(px(15.0))
+        .text_color(rgb(colors.text_secondary))
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(colors.hover)))
+        .hover(|style| style.bg(rgb(colors.border)))
         .active(|style| style.opacity(0.75))
         .on_mouse_down(MouseButton::Left, move |_, _, _| {
             let session = state.active.load(Ordering::Relaxed);
@@ -541,64 +571,14 @@ fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
         && rect.bottom >= screen.bottom
 }
 
-#[derive(Clone, Copy)]
-struct Palette {
-    bg: u32,
-    border: u32,
-    preedit: u32,
-    text: u32,
-    index: u32,
-    hover: u32,
-    selected_bg: u32,
-    selected_text: u32,
-    selected_index: u32,
-}
-
-/// 系统高对比度主题:用用户选定的系统颜色,不覆盖成自定义蓝底。
-fn system_palette() -> Palette {
-    let text = theme::system_color(COLOR_WINDOWTEXT);
-    Palette {
-        bg: theme::system_color(COLOR_WINDOW),
-        border: theme::system_color(COLOR_WINDOWFRAME),
-        preedit: text,
-        text,
-        // 候选编号是辅助信息,但高对比度下也要清楚可读。
-        index: text,
-        hover: theme::system_color(COLOR_3DFACE),
-        selected_bg: theme::system_color(COLOR_HIGHLIGHT),
-        selected_text: theme::system_color(COLOR_HIGHLIGHTTEXT),
-        selected_index: theme::system_color(COLOR_HIGHLIGHTTEXT),
-    }
-}
-
-fn palette(dark: bool) -> Palette {
-    if dark {
-        Palette {
-            bg: 0x2b2b31,
-            border: 0x44444d,
-            preedit: 0xb0b0ba,
-            text: 0xe8e8ee,
-            // 12px 序号/注音在深色底上也要达到 4.5:1;旧值 0x8a8a96 只有 4.12。
-            index: 0x9a9aa6,
-            hover: 0x3a3a42,
-            selected_bg: 0x2f6fed,
-            selected_text: 0xffffff,
-            selected_index: 0xffffff,
-        }
-    } else {
-        Palette {
-            bg: 0xf7f7f9,
-            border: 0xd9d9e0,
-            preedit: 0x50505a,
-            text: 0x20202a,
-            // 旧值 0x90909a 在浅色底上只有 2.96:1,小字读起来发虚。
-            index: 0x666672,
-            hover: 0xe9e9f0,
-            selected_bg: 0x2f6fed,
-            selected_text: 0xffffff,
-            selected_index: 0xffffff,
-        }
-    }
+/// 候选窗浮起时的柔和投影;深色底需要更重的黑,高对比度只用描边。
+fn panel_shadow(dark: bool) -> Vec<BoxShadow> {
+    let alpha = if dark { 0.5 } else { 0.18 };
+    vec![
+        BoxShadow::new(px(0.0), px(4.0), hsla(0.0, 0.0, 0.0, alpha)).blur_radius(px(12.0)),
+        BoxShadow::new(px(0.0), px(1.0), hsla(0.0, 0.0, 0.0, alpha * 0.5))
+            .blur_radius(px(3.0)),
+    ]
 }
 
 impl Render for CandidatePanel {
@@ -610,19 +590,32 @@ impl Render for CandidatePanel {
         let Some(view) = live.or_else(|| self.last.borrow().clone()) else {
             return div().into_any_element();
         };
-        let colors = if theme::high_contrast() {
-            system_palette()
-        } else {
-            palette(matches!(
-                window.appearance(),
-                WindowAppearance::Dark | WindowAppearance::VibrantDark
-            ))
-        };
+        let appearance = theme::Appearance::of(window);
+        let colors = theme::colors(appearance);
+        let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+        let dark = matches!(appearance, theme::Appearance::Dark);
         let width = panel_width(&view);
         let ps = view.page_size.max(1);
         let start = view.page * ps;
         let pages = view.candidates.len().div_ceil(ps).max(1);
         let page_no = view.page + 1;
+        // 只有翻页才滑动;首次展开和继续打字不横向跳。
+        if self.page.get().is_some_and(|page| page != view.page) {
+            let previous = self.page.get().unwrap_or(view.page);
+            let direction = if view.page > previous { 1.0 } else { -1.0 };
+            self.slide
+                .set(Some((direction, Instant::now() + PAGE_SLIDE)));
+            self.slide_serial.set(self.slide_serial.get() + 1);
+        }
+        self.page.set(Some(view.page));
+        let sliding = self
+            .slide
+            .get()
+            .filter(|(_, until)| Instant::now() < *until);
+        if sliding.is_none() {
+            self.slide.set(None);
+        }
+        let slide_serial = self.slide_serial.get();
         let items: Vec<(usize, String, String, bool)> = view
             .candidates
             .iter()
@@ -638,21 +631,22 @@ impl Render for CandidatePanel {
                 )
             })
             .collect();
+        let has_items = !items.is_empty();
         let state = Arc::clone(&self.state);
         let scroll_state = Arc::clone(&self.state);
         let previous = Arc::clone(&self.state);
         let next = Arc::clone(&self.state);
         let preedit = SharedString::from(view.raw.clone());
         let panel = div()
-            .font_family("Microsoft YaHei")
+            .font_family("Microsoft YaHei UI")
             .flex()
             .flex_col()
             .w(px(width))
-            .bg(rgb(colors.bg))
+            .bg(rgb(colors.surface))
             .border_1()
             .border_color(rgb(colors.border))
             .rounded_lg()
-            .shadow_lg()
+            .when(!high_contrast, |el| el.shadow(panel_shadow(dark)))
             .overflow_hidden()
             .on_scroll(move |event, _, _| {
                 let dir = match event.delta {
@@ -678,18 +672,21 @@ impl Render for CandidatePanel {
                     .flex()
                     .h(px(PREEDIT_H))
                     .px_3()
+                    .gap_2()
                     .items_center()
                     .justify_between()
+                    .bg(rgb(colors.surface_alt))
                     // 只有当前页有候选时才分隔拼音与候选,空页不留一条孤线。
-                    .when(!items.is_empty(), |el| {
+                    .when(has_items, |el| {
                         el.border_b_1().border_color(rgb(colors.border))
                     })
                     .child(
                         div()
-                            .max_w(px(220.0))
+                            .flex_1()
+                            .min_w(px(0.0))
                             .truncate()
-                            .text_size(px(14.0))
-                            .text_color(rgb(colors.preedit))
+                            .text_size(px(13.0))
+                            .text_color(rgb(colors.text_secondary))
                             .child(preedit),
                     )
                     .child(if pages > 1 {
@@ -700,8 +697,10 @@ impl Render for CandidatePanel {
                             .child(page_arrow("‹", -1, previous, colors))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
-                                    .text_color(rgb(colors.index))
+                                    .min_w(px(28.0))
+                                    .text_center()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(colors.text_tertiary))
                                     .child(format!("{page_no}/{pages}")),
                             )
                             .child(page_arrow("›", 1, next, colors))
@@ -710,12 +709,12 @@ impl Render for CandidatePanel {
                         div().into_any_element()
                     }),
             )
-            .children((!items.is_empty()).then(|| {
-                div()
+            .children(has_items.then(|| {
+                let list = div()
                     .flex()
                     .flex_wrap()
                     .px_2()
-                    .pb_2()
+                    .py_1()
                     .gap_1()
                     .children(items.into_iter().map(|(slot, text, hint, hl)| {
                         let state = Arc::clone(&state);
@@ -723,10 +722,9 @@ impl Render for CandidatePanel {
                             // `active` 只挂在有状态元素上;槽位在页内唯一。
                             .id(("cand", slot))
                             .flex()
-                            .items_baseline()
-                            .gap_1()
+                            .items_center()
+                            .h(px(30.0))
                             .px_2()
-                            .py_1()
                             .rounded_md()
                             .cursor_pointer()
                             .active(|el| el.opacity(0.82))
@@ -748,16 +746,26 @@ impl Render for CandidatePanel {
                             })
                             .child(
                                 div()
-                                    .text_size(px(12.0))
-                                    .text_color(if hl {
-                                        rgb(colors.selected_index)
-                                    } else {
-                                        rgb(colors.index)
-                                    })
-                                    .child(format!("{}.", slot + 1)),
+                                    .w(px(2.0))
+                                    .h(px(14.0))
+                                    .rounded_full()
+                                    .when(hl, |el| el.bg(rgb(colors.accent_text))),
                             )
                             .child(
                                 div()
+                                    .w(px(12.0))
+                                    .ml(px(4.0))
+                                    .text_size(px(11.0))
+                                    .text_color(if hl {
+                                        rgb(colors.accent_text)
+                                    } else {
+                                        rgb(colors.text_tertiary)
+                                    })
+                                    .child(format!("{}", slot + 1)),
+                            )
+                            .child(
+                                div()
+                                    .ml(px(4.0))
                                     .max_w(px(MAX_TEXT_WIDTH))
                                     .truncate()
                                     .child(SharedString::from(text)),
@@ -765,40 +773,54 @@ impl Render for CandidatePanel {
                             .when(!hint.is_empty(), |el| {
                                 el.child(
                                     div()
-                                        .max_w(px(110.0))
+                                        .ml(px(4.0))
+                                        .max_w(px(100.0))
                                         .truncate()
-                                        .text_size(px(12.0))
+                                        .text_size(px(11.0))
                                         .text_color(if hl {
-                                            rgb(colors.selected_index)
+                                            rgb(colors.accent_text)
                                         } else {
-                                            rgb(colors.index)
+                                            rgb(colors.text_tertiary)
                                         })
                                         .child(SharedString::from(hint)),
                                 )
                             })
-                    }))
+                    }));
+                if let Some((direction, _)) = sliding {
+                    list.with_animation(
+                        ("page-slide", slide_serial),
+                        Animation::new(PAGE_SLIDE).with_easing(ease_out_quint()),
+                        move |list, delta| {
+                            list.relative()
+                                .left(px(direction * 10.0 * (1.0 - delta)))
+                                .opacity(0.55 + 0.45 * delta)
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    list.into_any_element()
+                }
             }));
         // 首次出现 140ms 淡入(首帧 45% 不透明度,候选立即可读),组合结束
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
-        // `composing` 拦掉。
+        // `composing` 拦掉。外层留白让投影落在窗口内,不被裁掉。
+        let root = div().p(px(SHADOW_PAD)).child(panel);
         if fading {
-            panel
-                .with_animation(
-                    "candidate-hide",
-                    Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
-                    |panel, delta| panel.opacity(1.0 - delta),
-                )
-                .into_any_element()
+            root.with_animation(
+                "candidate-hide",
+                Animation::new(HIDE_FADE).with_easing(ease_out_quint()),
+                |panel, delta| panel.opacity(1.0 - delta),
+            )
+            .into_any_element()
         } else {
-            panel
-                .with_animation(
-                    "candidate-show",
-                    Animation::new(SHOW_FADE).with_easing(ease_out_quint()),
-                    |panel, delta| {
-                        panel.opacity(SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * delta)
-                    },
-                )
-                .into_any_element()
+            root.with_animation(
+                "candidate-show",
+                Animation::new(SHOW_FADE).with_easing(ease_out_quint()),
+                |panel, delta| {
+                    panel.opacity(SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * delta)
+                },
+            )
+            .into_any_element()
         }
     }
 }
