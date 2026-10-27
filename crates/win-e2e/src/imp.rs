@@ -7,7 +7,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{CloseHandle, FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, FreeLibrary, HINSTANCE, HWND, LPARAM, LRESULT, TRUE, WPARAM,
+};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
@@ -588,7 +590,7 @@ fn key_latency(edit: HWND, ui_events: &Rc<RefCell<UiEvents>>) -> Result<String, 
 /// (TSF 断线后会懒拉起新实例)。只抓失控级增长,细粒度波动仅记录。
 fn server_memory(server_pid: u32) -> Result<String, String> {
     use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
