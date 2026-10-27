@@ -189,7 +189,7 @@ fn real_run() -> Result<(String, String), String> {
     let err = out
         .try_clone()
         .map_err(|e| format!("复制 Server 日志句柄: {e}"))?;
-    let mut server = std::process::Command::new(dir.join("lueying-server.exe"))
+    let mut server = match std::process::Command::new(dir.join("lueying-server.exe"))
         .env("LOCALAPPDATA", &data)
         .env("APPDATA", &data)
         // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
@@ -197,9 +197,19 @@ fn real_run() -> Result<(String, String), String> {
         .stdout(std::process::Stdio::from(out))
         .stderr(std::process::Stdio::from(err))
         .spawn()
-        .ok();
-    // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。
+    {
+        Ok(child) => Some(child),
+        Err(error) => return Err(format!("启动 Server {}: {error}", dir.display())),
+    };
+    // 给管道建立一点时间,TSF 侧自身还有懒重试兜底。Server 缺 DLL 时
+    // spawn 可能成功但进程立刻退出,先把退出码和日志留下来。
     std::thread::sleep(Duration::from_millis(600));
+    if let Some(child) = server.as_mut()
+        && let Ok(Some(status)) = child.try_wait()
+    {
+        let detail = tail_of(Some(server_out));
+        return Err(format!("Server 提前退出 {status}: {detail}"));
+    }
 
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
         .ok()
