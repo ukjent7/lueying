@@ -52789,3 +52789,11 @@
 坐姿	497	zuo'zi
 座子	46	zuo'zi
 做作	1922	zuo'zuo
+# 人工补充:官方常用词表未收的日常高频词,读音/词频取自青简 lexicon/dict.tsv。
+# 这些词是口语高频词,漏收会让 5 倍常用词先验反而放大低频同音词(如 niha→历法)。
+你好	71960	ni'hao
+您好	5940	nin'hao
+早上好	17839	zao'shang'hao
+晚上好	15326	wan'shang'hao
+生日快乐	74786	sheng'ri'kuai'le
+辛苦了	13511	xin'ku'le
