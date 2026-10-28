@@ -20,6 +20,7 @@ path = "src/update_main.rs"
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
+lueying-features.workspace = true
 lueying-rerank.workspace = true
 lueying-protocol = { path = "../protocol" }
 serde_json = "1"

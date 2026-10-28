@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use lueying_engine::{Config, Fuzzy, Script};
+use lueying_features::SchemeId;
 
 /// 繁体字形地区;`traditional` 开着时生效。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,6 +54,10 @@ pub struct AppConfig {
     pub shift_toggle: bool,
     pub traditional: bool,
     pub region: Region,
+    /// 输入方案:全拼或双拼。
+    pub scheme: SchemeId,
+    /// 在拼音后按 `` ` `` 打 1–2 位五笔辅码。
+    pub aux: bool,
 }
 
 impl Default for AppConfig {
@@ -65,6 +70,8 @@ impl Default for AppConfig {
             shift_toggle: true,
             traditional: false,
             region: Region::General,
+            scheme: SchemeId::Full,
+            aux: false,
         }
     }
 }
@@ -107,6 +114,13 @@ pub fn path() -> Option<PathBuf> {
     Some(path)
 }
 
+/// 自定义短语文件路径(`%APPDATA%\lueying\phrases.txt`)。
+pub fn phrases_path() -> Option<PathBuf> {
+    let base =
+        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
+    Some(base.join("lueying").join("phrases.txt"))
+}
+
 /// 读配置;文件缺失或坏行都退回默认值。
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
@@ -146,6 +160,14 @@ pub fn load(path: &Path) -> AppConfig {
             "traditional_region" => {
                 cfg.region = Region::from_str(value);
             }
+            "scheme" => {
+                cfg.scheme = SchemeId::from_str(value);
+            }
+            "aux_code" | "aux" => {
+                if let Some(on) = flag(value) {
+                    cfg.aux = on;
+                }
+            }
             // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
             // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
             "fuzzy" => match value {
@@ -170,12 +192,16 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          shift_toggle={}\n\
          traditional={}\n\
          traditional_region={}\n\
+         scheme={}\n\
+         aux_code={}\n\
          fuzzy={}\n",
         cfg.page_size,
         cfg.chinese_punct,
         cfg.shift_toggle,
         cfg.traditional,
         cfg.region.as_str(),
+        cfg.scheme.as_str(),
+        cfg.aux,
         if cfg.fuzzy.is_off() { "off" } else { "auto" },
     );
     let tmp = path.with_extension("ini.tmp");

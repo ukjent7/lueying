@@ -108,6 +108,9 @@ pub struct UserDict {
     context: HashMap<(char, char), ContextStat>,
     /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
     transitions: HashMap<String, HashMap<String, ContextStat>>,
+    /// 词 → 最完整的拼音学习键。下一词联想用它把已学词还原成可匹配的拼音;
+    /// 同一个词用简拼和全拼都学过时保留更长的键。
+    word_keys: HashMap<String, String>,
     /// 前两词 → 后词 → 次数。三词窗口约束常见句式,权重低于词对。
     trigrams: HashMap<String, HashMap<String, HashMap<String, ContextStat>>>,
     /// 宿主 exe(小写) → 词 → 次数。应用内常用词只加小分,不改全局词频。

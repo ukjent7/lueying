@@ -23,6 +23,7 @@ mod imp {
     };
     use gpui_platform::application;
     use lueying_engine::Fuzzy;
+    use lueying_features::SchemeId;
     use lueying_protocol::{Reply, Request, pipe_name};
     use lueying_server::config::{self, AppConfig, Region};
     use lueying_server::theme;
@@ -41,8 +42,8 @@ mod imp {
     use windows::core::{HSTRING, PCWSTR, PWSTR};
 
     const WIDTH: f32 = 460.0;
-    /// 三组设置 + 页脚;480 逻辑像素在 768p、150% 缩放下也放得下。
-    const HEIGHT: f32 = 530.0;
+    /// 四组设置 + 页脚;650 逻辑像素在 768p、150% 缩放下也放得下。
+    const HEIGHT: f32 = 650.0;
 
     #[derive(Clone)]
     enum UpdateState {
@@ -74,6 +75,8 @@ mod imp {
     #[derive(Clone, Copy, PartialEq)]
     enum Kbd {
         Update,
+        Scheme,
+        Aux,
         ChinesePunct,
         ShiftToggle,
         Traditional,
@@ -83,13 +86,16 @@ mod imp {
         Fuzzy,
         ImportUser,
         ExportUser,
+        Phrases,
         ClearUser,
         Close,
         Save,
     }
 
-    const KBD_ORDER: [Kbd; 13] = [
+    const KBD_ORDER: [Kbd; 16] = [
         Kbd::Update,
+        Kbd::Scheme,
+        Kbd::Aux,
         Kbd::ChinesePunct,
         Kbd::ShiftToggle,
         Kbd::Traditional,
@@ -99,6 +105,7 @@ mod imp {
         Kbd::Fuzzy,
         Kbd::ImportUser,
         Kbd::ExportUser,
+        Kbd::Phrases,
         Kbd::ClearUser,
         Kbd::Close,
         Kbd::Save,
@@ -232,6 +239,17 @@ mod imp {
             self.clear_notice();
         }
 
+        /// 输入方案分段组:左右键在全拼/小鹤/自然码/微软/搜狗之间循环。
+        fn scheme_shift(&mut self, delta: isize) {
+            let current = SchemeId::ALL
+                .iter()
+                .position(|&id| id == self.cfg.scheme)
+                .unwrap_or(0);
+            let next = (current as isize + delta).rem_euclid(SchemeId::ALL.len() as isize) as usize;
+            self.cfg.scheme = SchemeId::ALL[next];
+            self.clear_notice();
+        }
+
         /// 每页候选数分段组:左右键在 3/5/9 之间循环。
         fn page_shift(&mut self, delta: isize) {
             const OPTIONS: [usize; 3] = [3, 5, 9];
@@ -255,6 +273,11 @@ mod imp {
                         self.check_updates(cx);
                     }
                 },
+                Kbd::Scheme => {}
+                Kbd::Aux => {
+                    self.cfg.aux = !self.cfg.aux;
+                    self.clear_notice();
+                }
                 Kbd::ChinesePunct => {
                     self.cfg.chinese_punct = !self.cfg.chinese_punct;
                     self.clear_notice();
@@ -289,6 +312,7 @@ mod imp {
                 }
                 Kbd::ImportUser => self.import_user(),
                 Kbd::ExportUser => self.export_user(),
+                Kbd::Phrases => self.open_phrases(),
                 Kbd::ClearUser => {
                     if self.confirm_clear {
                         self.confirm_clear = false;
@@ -334,6 +358,24 @@ mod imp {
                     Err(e) => self.say(Notice::Error, format!("导出失败: {e}")),
                 },
                 None => self.say(Notice::Error, "输入法服务未运行,启动后再试"),
+            }
+        }
+
+        fn open_phrases(&mut self) {
+            self.confirm_clear = false;
+            let Some(path) = config::phrases_path() else {
+                self.say(Notice::Error, "没有可写的短语文件路径");
+                return;
+            };
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if !path.exists() {
+                let _ = std::fs::write(&path, lueying_features::phrases::TEMPLATE);
+            }
+            match std::process::Command::new("notepad.exe").arg(&path).spawn() {
+                Ok(_) => self.say(Notice::Info, format!("已打开 {}", path.display())),
+                Err(e) => self.say(Notice::Error, format!("打开失败: {e}")),
             }
         }
 
@@ -750,6 +792,39 @@ mod imp {
             let notice_tint = notice_color(notice_kind, colors);
             let version = format!("拼音输入法 · v{}", self.current);
 
+            let scheme_control = div()
+                .flex()
+                .items_center()
+                .gap(px(2.0))
+                .p(px(2.0))
+                .rounded_md()
+                .bg(rgb(if high_contrast {
+                    colors.surface
+                } else {
+                    colors.surface_alt
+                }))
+                .border_1()
+                .border_color(rgb(colors.border))
+                .when(self.kbd_is(Kbd::Scheme), |el| {
+                    el.border_2().border_color(rgb(colors.accent))
+                })
+                .children(SchemeId::ALL.into_iter().enumerate().map(|(index, id)| {
+                    segment(
+                        "scheme",
+                        index,
+                        id.name(),
+                        44.0,
+                        self.cfg.scheme == id,
+                        high_contrast,
+                        colors,
+                        cx.listener(move |this, _, _, cx| {
+                            this.cfg.scheme = id;
+                            this.clear_notice();
+                            cx.notify();
+                        }),
+                    )
+                }));
+
             let page_control = div()
                 .flex()
                 .items_center()
@@ -828,6 +903,30 @@ mod imp {
                 .overflow_hidden()
                 .when(!high_contrast, |el| el.shadow_xs())
                 .child(section_label("输入", colors, true))
+                .child(setting_row(
+                    "输入方案",
+                    "全拼或双拼,共享学习词库",
+                    scheme_control,
+                    colors,
+                    false,
+                ))
+                .child(setting_row(
+                    "辅助码",
+                    "拼音后按 ` 再打 1–2 位五笔码",
+                    toggle(
+                        "aux-code",
+                        self.cfg.aux,
+                        self.kbd_is(Kbd::Aux),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.cfg.aux = !this.cfg.aux;
+                            this.clear_notice();
+                            cx.notify();
+                        }),
+                    ),
+                    colors,
+                    false,
+                ))
                 .child(setting_row(
                     "中文标点",
                     "按中文习惯输出 ，。；：“”",
@@ -941,6 +1040,24 @@ mod imp {
                     true,
                 ))
                 .child(section_label("词库", colors, false))
+                .child(setting_row(
+                    "自定义短语",
+                    "编辑 phrases.txt，保存后重载",
+                    button(
+                        "open-phrases",
+                        "编辑",
+                        ButtonKind::Secondary,
+                        true,
+                        self.kbd_is(Kbd::Phrases),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.open_phrases();
+                            cx.notify();
+                        }),
+                    ),
+                    colors,
+                    false,
+                ))
                 .child(setting_row(
                     "用户词库",
                     "导入、导出或清空本机学习记录",
@@ -1155,6 +1272,10 @@ mod imp {
                         "left" | "right" => {
                             let delta = if key == "left" { -1 } else { 1 };
                             match this.kbd.map(|i| KBD_ORDER[i]) {
+                                Some(Kbd::Scheme) => {
+                                    this.scheme_shift(delta);
+                                    cx.notify();
+                                }
                                 Some(Kbd::Region) => {
                                     this.region_shift(delta);
                                     cx.notify();

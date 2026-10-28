@@ -23,6 +23,7 @@ impl UserDict {
             }
         });
         self.count = self.count.saturating_sub(removed);
+        self.word_keys.remove(word);
         for key in &empty_keys {
             let key_shape = shape(key);
             let empty = if let Some(keys) = self.by_shape.get_mut(&key_shape) {
@@ -457,6 +458,13 @@ impl UserDict {
                         .entry(shape(k))
                         .or_default()
                         .push(k.to_string());
+                }
+                if self
+                    .word_keys
+                    .get(w)
+                    .is_none_or(|old| old.len() < k.len())
+                {
+                    self.word_keys.insert(w.to_string(), k.to_string());
                 }
                 changed = true;
             }

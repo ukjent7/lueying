@@ -21,9 +21,14 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     .read()
                     .unwrap_or_else(|p| p.into_inner())
                     .engine();
+                let scheme = {
+                    let guard = state.scheme.read().unwrap_or_else(|p| p.into_inner());
+                    Arc::clone(&*guard)
+                };
                 Engine::new(Arc::clone(&state.dict), cfg)
                     .with_user(Arc::clone(&state.user))
                     .with_modules(Arc::clone(&state.modules))
+                    .with_scheme(scheme)
             };
             if let Some(g) = &state.gram {
                 engine = engine.with_gram(Arc::clone(g));

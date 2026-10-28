@@ -39,14 +39,24 @@ pub enum Capability {
 
 /// 候选阶段的只读上下文。
 pub struct CandidateContext<'a> {
-    /// 当前组合的原始输入(小写字母与隔音符)。
+    /// 当前组合的原始输入(小写字母、隔音符与方案符号键)。
     pub raw: &'a str,
+    /// 方案展开后的规范全拼;全拼方案与 `raw` 相同,双拼为展开结果。
+    pub query: &'a str,
+    /// 当前方案 id(如 `full`、`xiaohe`)。
+    pub scheme: &'a str,
     /// 左邻文本,最多 [`crate::CONTEXT_KEEP`] 字。
     pub context: &'a str,
     /// 宿主 exe 名(小写);空表示未知。
     pub host: &'a str,
     /// 宿主注入的本地时间。
     pub now: CivilTime,
+    /// 上一个上屏词;用于下一词联想。
+    pub previous: Option<&'a str>,
+    /// 上上个上屏词;用于三词窗口。
+    pub previous2: Option<&'a str>,
+    /// 当前用户词库只读视图;模块可据此学习、联想或做个性化排序。
+    pub user: &'a crate::UserDict,
 }
 
 /// 上屏阶段的只读上下文。

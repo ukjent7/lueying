@@ -4,6 +4,8 @@ members = [
     # 核心:平台无关的词典、引擎、模型与协议
     "crates/dict",
     "crates/engine",
+    "crates/ext",
+    "crates/features",
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
@@ -25,6 +27,8 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
+lueying-ext = { path = "crates/ext" }
+lueying-features = { path = "crates/features" }
 lueying-rerank = { path = "crates/rerank" }
 
 [profile.release]

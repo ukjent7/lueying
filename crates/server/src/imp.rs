@@ -15,7 +15,9 @@ use std::time::Instant;
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
+use lueying_engine::scheme::Scheme;
 use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
+use lueying_features::CustomPhrases;
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{Model, Rerank};
 use lueying_server::config::{self, AppConfig};
@@ -91,6 +93,10 @@ pub(super) struct State {
     pub(super) user: SharedUser,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
     pub(super) modules: Arc<Modules>,
+    /// 自定义短语模块;设置重载时重新读文件。
+    pub(super) phrases: Option<Arc<CustomPhrases>>,
+    /// 当前输入方案;设置切换后新会话与现有会话都跟着换。
+    pub(super) scheme: RwLock<Arc<dyn Scheme>>,
     /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
     pub(super) config: RwLock<AppConfig>,
     pub(super) config_path: Option<PathBuf>,
@@ -189,6 +195,17 @@ pub(super) fn real_main() {
     if let Some(path) = &config_path {
         println!("配置 ← {}", path.display());
     }
+    // 自定义短语是可选用户数据:缺失时写一份带注释的模板,读不到就空表。
+    let phrases = config::phrases_path().map(|path| {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if !path.exists() {
+            let _ = std::fs::write(&path, lueying_features::phrases::TEMPLATE);
+        }
+        Arc::new(CustomPhrases::load(path))
+    });
+    let scheme = lueying_features::scheme(app_config.scheme, app_config.aux);
     let (settle_tx, settle_rx) = mpsc::channel();
     let settle_tx = settled_model.as_ref().map(|_| settle_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
@@ -206,7 +223,9 @@ pub(super) fn real_main() {
         settle_tx,
         uia_tx: Some(uia_tx),
         user,
-        modules: crate::modules::registry(),
+        modules: crate::modules::registry(phrases.clone()),
+        phrases,
+        scheme: RwLock::new(scheme),
         config: RwLock::new(app_config),
         config_path,
         chinese: AtomicBool::new(true),
@@ -506,8 +525,24 @@ fn group_reply(user: &SharedUser) -> Reply {
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
 fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppConfig) {
     let engine_cfg = cfg.engine();
+    let old = state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let scheme = (old.scheme != cfg.scheme || old.aux != cfg.aux)
+        .then(|| lueying_features::scheme(cfg.scheme, cfg.aux));
+    if let Some(scheme) = &scheme {
+        *state.scheme.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(scheme);
+    }
     *state.config.write().unwrap_or_else(|p| p.into_inner()) = cfg;
+    if let Some(phrases) = &state.phrases {
+        phrases.reload();
+    }
     for s in sessions.values_mut() {
+        if let Some(scheme) = &scheme {
+            s.engine.set_scheme(Arc::clone(scheme));
+        }
         s.engine.set_config(engine_cfg.clone());
         // 候选重算后旧按键应答的内联文本/候选都不再有效。
         s.pending = None;

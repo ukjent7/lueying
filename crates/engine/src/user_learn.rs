@@ -18,6 +18,7 @@ impl UserDict {
     pub fn clear(&mut self) {
         self.map.clear();
         self.by_shape.clear();
+        self.word_keys.clear();
         self.count = 0;
         self.context.clear();
         self.transitions.clear();
@@ -358,6 +359,63 @@ impl UserDict {
         bonus.min(TRANSITION_BONUS_MAX)
     }
 
+    /// 上一词之后用户实际接过的词,按衰减后的次数排序。下一词联想在
+    /// 冷启动阶段没有云端语料,只使用本机已经形成的词序。
+    pub fn predict_next(&self, previous: Option<&str>, limit: usize) -> Vec<(String, u32)> {
+        let Some(previous) = previous else {
+            return Vec::new();
+        };
+        let Some(next) = self.transitions.get(previous) else {
+            return Vec::new();
+        };
+        let current = now();
+        let mut out: Vec<(String, u32)> = next
+            .iter()
+            .filter_map(|(word, stat)| {
+                let count = stat.effective(current);
+                (count > 0).then(|| (word.clone(), count))
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out.truncate(limit);
+        out
+    }
+
+    /// 三词窗口里的下一词;前两词都匹配时才返回。
+    pub fn predict_after(
+        &self,
+        second_previous: Option<&str>,
+        previous: Option<&str>,
+        limit: usize,
+    ) -> Vec<(String, u32)> {
+        let (Some(second), Some(previous)) = (second_previous, previous) else {
+            return Vec::new();
+        };
+        let Some(next) = self
+            .trigrams
+            .get(second)
+            .and_then(|mids| mids.get(previous))
+        else {
+            return Vec::new();
+        };
+        let current = now();
+        let mut out: Vec<(String, u32)> = next
+            .iter()
+            .filter_map(|(word, stat)| {
+                let count = stat.effective(current);
+                (count > 0).then(|| (word.clone(), count))
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        out.truncate(limit);
+        out
+    }
+
+    /// 词对应的最完整拼音键;联想据此判断用户当前输入是否在打这个词。
+    pub fn key_for_word(&self, word: &str) -> Option<&str> {
+        self.word_keys.get(word).map(String::as_str)
+    }
+
     pub(crate) fn transition_count(&self) -> usize {
         self.transitions.values().map(|next| next.len()).sum()
     }
@@ -631,6 +689,14 @@ impl UserDict {
                 .or_default()
                 .push(key.to_string());
         }
+        // 同一个词可能用简拼和全拼各学过一次;联想取更完整的那条键。
+        if self
+            .word_keys
+            .get(word)
+            .is_none_or(|old| old.len() < key.len())
+        {
+            self.word_keys.insert(word.to_string(), key.to_string());
+        }
         // 刚选过它,同键下的旧负分已经过时。
         self.forgive(key, word);
         if self.count > MAX_ENTRIES {
@@ -669,5 +735,17 @@ impl UserDict {
             keys.dedup();
         }
         self.count = self.map.values().map(Vec::len).sum();
+        let mut word_keys = std::collections::HashMap::new();
+        for (key, entries) in &self.map {
+            for entry in entries {
+                let slot = word_keys
+                    .entry(entry.word.clone())
+                    .or_insert_with(|| key.clone());
+                if slot.len() < key.len() {
+                    *slot = key.clone();
+                }
+            }
+        }
+        self.word_keys = word_keys;
     }
 }

@@ -17,6 +17,7 @@ pub mod module;
 mod punct;
 mod query;
 mod quick;
+pub mod scheme;
 mod script;
 mod segment;
 mod state;
@@ -36,12 +37,15 @@ pub use quick::CivilTime;
 pub use types::{Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;
 
-/// 功能模块作者常用的公开类型。
+/// 功能模块与输入方案作者常用的公开类型。
 pub mod prelude {
     pub use crate::module::{
         CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
     };
-    pub use crate::{Candidate, Config, Engine, Event, Key, Mode};
+    pub use crate::scheme::{
+        CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest,
+    };
+    pub use crate::{Candidate, Config, Engine, Event, Key, Mode, UserDict};
 }
 
 /// 多个会话共享的用户词库;Server 让所有应用看到同一份学习结果。
@@ -100,6 +104,8 @@ pub struct Engine {
     rev: u64,
     /// 可选功能模块;所有会话共享同一组注册表,默认空。
     modules: Arc<module::Modules>,
+    /// 输入方案;默认全拼。所有会话共享同一个不可变方案对象。
+    scheme: Arc<dyn scheme::Scheme>,
 }
 
 /// 文本末尾是不是数字;全角数字也按数字处理,小数点和 IP 地址不必切半角。

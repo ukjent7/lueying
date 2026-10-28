@@ -3,6 +3,7 @@
 
 mod address;
 mod bench;
+mod extensions;
 mod features;
 mod modules;
 mod quick;
@@ -163,6 +164,9 @@ fn main() {
 
     // 可选功能模块:契约注册、候选注入与上屏转换。
     failures += modules::run(&mut report);
+
+    // 第一批内置扩展:双拼、自定义短语、辅助码、下一词联想。
+    failures += extensions::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

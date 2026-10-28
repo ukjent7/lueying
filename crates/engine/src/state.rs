@@ -35,6 +35,7 @@ impl Engine {
             now: None,
             rev: 0,
             modules: Arc::new(module::Modules::new()),
+            scheme: Arc::new(scheme::FullPinyin),
         }
     }
 
@@ -42,6 +43,28 @@ impl Engine {
     pub fn with_modules(mut self, modules: Arc<module::Modules>) -> Self {
         self.modules = modules;
         self
+    }
+
+    /// 挂上输入方案(链式构造)。默认全拼。
+    pub fn with_scheme(mut self, scheme: Arc<dyn scheme::Scheme>) -> Self {
+        self.scheme = scheme;
+        self
+    }
+
+    /// 当前方案声明。
+    pub fn scheme_manifest(&self) -> scheme::SchemeManifest {
+        self.scheme.manifest()
+    }
+
+    /// 运行中切换方案。组合尚未落定时直接清掉,避免旧击键按新规则误读。
+    pub fn set_scheme(&mut self, scheme: Arc<dyn scheme::Scheme>) {
+        if self.scheme.manifest().id == scheme.manifest().id {
+            return;
+        }
+        self.scheme = scheme;
+        if self.comp.is_some() {
+            self.clear_comp();
+        }
     }
 
     /// 挂上语言模型(链式构造;Server 启动时按文件是否存在决定)。
@@ -313,12 +336,14 @@ impl Engine {
         let Some(comp) = self.comp.as_ref() else {
             return false;
         };
-        // 键用组合原文:recompute 按 raw 直查,简拼/全拼各自成键。
+        // 键用方案展开后的规范串,并去掉隔音符:同一串字母的不同切分
+        // (xian / xi'an)以及双拼与全拼都落到同一个置顶槽。
+        let key = self.scheme.expand(&comp.raw).key.replace('\'', "");
         let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
         self.user
             .write()
             .unwrap_or_else(|p| p.into_inner())
-            .pin(&comp.raw, &text);
+            .pin(&key, &text);
         self.recompute();
         // 置顶词保持高亮,后续按键接着补全。
         if let Some(pos) = self.cands.iter().position(|cand| cand.pinned) {
@@ -348,7 +373,7 @@ impl Engine {
         let key = cand
             .learn_key
             .clone()
-            .unwrap_or_else(|| query::spans_key(&comp.raw, &cand.spans));
+            .unwrap_or_else(|| self.scheme.key_for_spans(&comp.raw, &cand.spans));
         let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
         self.user
             .write()

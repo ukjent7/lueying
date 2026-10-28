@@ -3396,6 +3396,7 @@ version = "0.1.0"
 dependencies = [
  "lueying-dict",
  "lueying-engine",
+ "lueying-features",
  "lueying-rerank",
  "serde_json",
 ]
@@ -3405,6 +3406,21 @@ name = "lueying-engine"
 version = "0.1.0"
 dependencies = [
  "lueying-dict",
+]
+
+[[package]]
+name = "lueying-ext"
+version = "0.1.0"
+dependencies = [
+ "lueying-engine",
+]
+
+[[package]]
+name = "lueying-features"
+version = "0.1.0"
+dependencies = [
+ "lueying-dict",
+ "lueying-ext",
 ]
 
 [[package]]
@@ -3448,6 +3464,7 @@ dependencies = [
  "gpui_platform",
  "lueying-dict",
  "lueying-engine",
+ "lueying-features",
  "lueying-protocol",
  "lueying-rerank",
  "raw-window-handle",

@@ -199,6 +199,18 @@ impl Engine {
                 self.try_insert_apostrophe();
                 Vec::new()
             }
+            // 方案自己的符号键:微软/搜狗双拼的 `;` 是 ing,辅助码的 `` ` ``
+            // 进入辅码段。只在组合中生效,空闲时仍是普通标点。
+            Key::Punct(p) if self.scheme.accepts_char(p) => {
+                if self.compose_char(p) {
+                    Vec::new()
+                } else {
+                    let mut events = self.commit_all();
+                    self.phrase = None;
+                    events.push(Event::Commit(p.to_string()));
+                    events
+                }
+            }
             // 问字的十六进制常写成大写;Shift+字母仍属于码点,不落定组合。
             Key::Letter(c) if self.unicode_body().is_some() && c.is_ascii_hexdigit() => {
                 if self.compose_char(c.to_ascii_lowercase()) {
@@ -604,12 +616,8 @@ impl Engine {
             String::new()
         } else {
             cand.learn_key.clone().unwrap_or_else(|| {
-                cand.spans
-                    .iter()
-                    .take(cand.consume)
-                    .map(|&(s, e)| lueying_dict::syllables::canonical(&raw[s..e]))
-                    .collect::<Vec<_>>()
-                    .join("'")
+                self.scheme
+                    .key_for_spans(&raw, &cand.spans[..cand.consume.min(cand.spans.len())])
             })
         };
         if self.learning && !fixed {
@@ -618,16 +626,23 @@ impl Engine {
             // 用户改选前缀词上屏时,不能被当成否定了整句读法。手误纠正的候选
             // 是推测出来的键,不拿它给正确输入留下负分。
             for skipped in self.cands.iter().take(idx) {
-                if skipped.quick || skipped.no_learn || skipped.learn_key.is_some() {
+                if skipped.quick || skipped.no_learn {
                     continue;
                 }
                 if skipped.consume != cand.consume {
                     continue;
                 }
-                let key = skipped
+                let scheme_key = self.scheme.key_for_spans(&raw, &skipped.spans);
+                // 纠正/补全候选的学习键是推测出来的,和原始击键的规范键不同;
+                // 它们被越过不代表用户否定了正确输入,不记负分。
+                if skipped
                     .learn_key
-                    .clone()
-                    .unwrap_or_else(|| query::spans_key(&raw, &skipped.spans));
+                    .as_deref()
+                    .is_some_and(|stored| stored != scheme_key.as_str())
+                {
+                    continue;
+                }
+                let key = skipped.learn_key.clone().unwrap_or(scheme_key);
                 let text = skipped
                     .learn_text
                     .as_deref()
@@ -800,7 +815,7 @@ impl Engine {
         let Some(comp) = self.comp.as_ref() else {
             return;
         };
-        let spans = segment::first_path(&comp.raw);
+        let spans = self.scheme.segments(&comp.raw);
         let bytes = comp.raw.as_bytes();
         let cursor = comp.cursor;
         let next = if dir < 0 {
@@ -835,7 +850,7 @@ impl Engine {
         };
         let mut raw = comp.raw.clone();
         let cursor = comp.cursor;
-        let spans = segment::first_path(&raw);
+        let spans = self.scheme.segments(&raw);
         let bytes = raw.as_bytes();
         let (mut start, mut end) = if left {
             let mut at = cursor;
@@ -901,6 +916,10 @@ impl Engine {
             self.gram_cache.clear();
         }
         let context = self.context.clone();
+        let raw = comp.raw.clone();
+        // 方案把击键展开成规范全拼;词图只认展开后的串,候选区间再映射回击键。
+        let expansion = self.scheme.expand(&raw);
+        let base_len = expansion.aux_start.unwrap_or(raw.len());
         let user = self.user.read().unwrap_or_else(|p| p.into_inner());
         let mut built = query::build(query::BuildArgs {
             dict: &self.dict,
@@ -912,13 +931,46 @@ impl Engine {
             host: &self.host,
             previous2: self.second_last_word.as_deref(),
             previous: self.last_word.as_deref(),
-            raw: &comp.raw,
+            raw: &expansion.query,
         });
+        // 候选的 spans 目前指向查询串;先换回用户实际敲的击键。
+        for cand in &mut built.cands {
+            for span in &mut cand.spans {
+                *span = (
+                    expansion.raw_at.get(span.0).copied().unwrap_or(base_len),
+                    expansion.raw_at.get(span.1).copied().unwrap_or(base_len),
+                );
+            }
+        }
+        // 辅助码只对覆盖整个基础输入的候选生效:辅码段要随候选一起上屏。
+        // `full` 是核心对「吃完整串」的判定,比按区间末尾比较更稳:
+        // 末尾带隔音符或双拼末键不完整时,原始字节长度并不等于音节边界。
+        if let Some(filter) = &expansion.filter {
+            let mut fallback = built.cands.clone();
+            fallback.retain(|cand| cand.full);
+            built.cands.retain(|cand| cand.full && filter.matches(&cand.text));
+            if built.cands.is_empty() {
+                built.cands = fallback;
+            }
+            for cand in &mut built.cands {
+                if let Some(span) = cand.spans.last_mut() {
+                    span.1 = raw.len();
+                }
+            }
+        } else if expansion.aux_start.is_some() {
+            // 只敲了分隔符还没敲辅码:保留完整候选,别把 `` ` `` 留在组合里。
+            built.cands.retain(|cand| cand.full);
+            for cand in &mut built.cands {
+                if let Some(span) = cand.spans.last_mut() {
+                    span.1 = raw.len();
+                }
+            }
+        }
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
         // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
         // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
-        let quick = quick::candidates(&comp.raw, now);
-        let address = address::candidates(&comp.raw);
+        let quick = quick::candidates(&raw, now);
+        let address = address::candidates(&raw);
         if !quick.is_empty() {
             built
                 .cands
@@ -944,32 +996,43 @@ impl Engine {
             for cand in address.into_iter().rev() {
                 built.cands.insert(position, cand);
             }
-        } else if let Some((at, quick)) = quick::keyword(&built.cands, &comp.raw, now) {
+        } else if let Some((at, quick)) = quick::keyword(&built.cands, &raw, now) {
             // 全拼打出了「日期/时间/星期」:写法紧跟这个词,不抢它的首选。
             for cand in quick.into_iter().rev() {
                 built.cands.insert(at + 1, cand);
             }
         }
         // 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都让位。
-        if let Some(word) = user.pinned(&comp.raw) {
+        // 置顶槽按去掉隔音符的字母串索引;旧版本按原始击键存键,再查两次兼容。
+        let pin_key = expansion.key.replace('\'', "");
+        if let Some(word) = user
+            .pinned(&pin_key)
+            .or_else(|| user.pinned(&expansion.key))
+            .or_else(|| user.pinned(&raw))
+        {
             built.cands.retain(|cand| cand.text != word);
-            let mut cand = Candidate::whole(comp.raw.len(), word.to_string(), 1.0e12);
+            let mut cand = Candidate::whole(raw.len(), word.to_string(), 1.0e12);
             cand.pinned = true;
             built.cands.insert(0, cand);
         }
         // 可选模块在核心候选与快捷输入之后运行;默认空注册表不进入这个分支。
         if !self.modules.is_empty() {
             let module_ctx = module::CandidateContext {
-                raw: &comp.raw,
+                raw: &raw,
+                query: &expansion.query,
+                scheme: self.scheme.manifest().id,
                 context: &context,
                 host: &self.host,
                 now,
+                previous: self.last_word.as_deref(),
+                previous2: self.second_last_word.as_deref(),
+                user: &user,
             };
             self.modules.candidates(&module_ctx, &mut built.cands);
         }
         // 表情跟随词候选;英文只在非快速触发串上补一条。两者都不改中文排序。
         emoji::inject(&mut built.cands);
-        if !quick::is_trigger(&comp.raw) {
+        if !quick::is_trigger(&raw) {
             let has_full = built
                 .cands
                 .iter()
@@ -980,7 +1043,7 @@ impl Engine {
                 .cands
                 .iter()
                 .any(|cand| cand.full && cand.trusted && !cand.quick && !cand.no_learn);
-            if let Some(cand) = english::candidate(&comp.raw, has_full, !built.cands.is_empty()) {
+            if let Some(cand) = english::candidate(&raw, has_full, !built.cands.is_empty()) {
                 if trusted_full {
                     built.cands.push(cand);
                 } else {
@@ -1004,12 +1067,12 @@ impl Engine {
             .cands
             .first()
             .map(|c| c.text.clone())
-            .unwrap_or_else(|| comp.raw.clone());
+            .unwrap_or_else(|| raw.clone());
         comp.seg_spans = built
             .cands
             .first()
             .map(|c| c.spans.clone())
-            .unwrap_or_else(|| segment::first_path(&comp.raw));
+            .unwrap_or_else(|| expansion.segments.clone());
         self.cands = built.cands;
         // 候选换了一批:页号与高亮回到第一条。翻到第二页再继续打字时
         // 旧页号可能已经越界,候选窗会空着并显示 3/1 这样的页码。
