@@ -7,6 +7,7 @@ mod extensions;
 mod features;
 mod modules;
 mod quick;
+mod render;
 mod rerank;
 mod scenarios;
 mod shared;
@@ -167,6 +168,9 @@ fn main() {
 
     // 第一批内置扩展:双拼、自定义短语、辅助码、下一词联想。
     failures += extensions::run(&mut report);
+
+    // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
+    failures += render::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

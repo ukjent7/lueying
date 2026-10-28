@@ -9,6 +9,8 @@ members = [
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
+    # 渲染核心:候选窗 Skia 出帧,平台无关
+    "crates/render",
     # Windows 宿主与安装
     "crates/server",
     "crates/tsf",
@@ -29,7 +31,14 @@ lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }
 lueying-features = { path = "crates/features" }
+lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
+# 候选窗 Skia 渲染:默认光栅(E2E/无头),Windows 叠加 d3d。
+skia-safe = { version = "0.156", default-features = false, features = [
+    "binary-cache",
+    "embed-icudtl",
+    "textlayout",
+] }
 
 [profile.release]
 lto = "thin"
