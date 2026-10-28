@@ -84,6 +84,8 @@ pub(super) struct State {
     pub(super) mode_hud: Mutex<Option<ModeHud>>,
     /// 最近收到按键/光标上报的会话,候选窗只跟它。
     pub(super) active: AtomicU64,
+    /// 三档降级后实际生效的主词典来源:`pyd`、`tsv` 或 `builtin`。
+    pub(super) dict_source: &'static str,
     pub(super) sync_model: Option<Model>,
     pub(super) settled_model: Option<Model>,
     pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
@@ -218,13 +220,19 @@ pub(super) fn real_main() {
     };
     // 三档降级:二进制(mmap 零解析) → 文本(兼容旧数据) → 内置迷你词库。
     // 对应 WeType 的 "safe mode, just load buildin dict":词典坏了输入法仍可用。
-    let dict = ["main.pyd", "main.tsv"]
+    let loaded = ["main.pyd", "main.tsv"]
         .iter()
-        .find_map(|name| dict_path(name).and_then(load_dict))
-        .unwrap_or_else(|| {
+        .find_map(|name| dict_path(name).and_then(load_dict).map(|dict| (dict, *name)));
+    let (dict, dict_source) = match loaded {
+        Some((dict, name)) => (
+            dict,
+            if name == "main.pyd" { "pyd" } else { "tsv" },
+        ),
+        None => {
             println!("主词典缺失或损坏,退回内置迷你词库");
-            Dictionary::builtin()
-        });
+            (Dictionary::builtin(), "builtin")
+        }
+    };
     // 语言模型是可选数据:缺失或格式不符就退化为纯词频,不影响输入。
     let gram = dict_path("main.gram").and_then(|p| match Gram::open(&p) {
         Ok(g) => {
@@ -278,6 +286,7 @@ pub(super) fn real_main() {
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
     let state = Arc::new(State {
         dict: Arc::new(dict),
+        dict_source,
         gram,
         sessions: Mutex::new(HashMap::new()),
         conns: Mutex::new(HashMap::new()),

@@ -136,6 +136,8 @@ pub enum Request {
     ImportUser { text: String },
     /// 设置窗读取模糊组学习统计。
     FuzzyStats,
+    /// 设置窗读取引擎资源状态(词典与模型的加载情况)。
+    Status,
     /// 设置窗只重置组级适应,保留词条。
     ResetFuzzy,
     /// 安装器卸载前让常驻服务干净退出。
@@ -192,6 +194,9 @@ pub struct Reply {
     /// 用户词库文本(仅 `ExportUser` 应答使用)。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
+    /// 引擎资源状态(仅 `Status` 应答使用)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<EngineStatus>,
     /// 全部候选(按页切片由 `page`/`page_size` 决定),供 TSF 的
     /// `ITfCandidateListUIElement` 回答宿主与读屏软件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -204,6 +209,23 @@ pub struct Reply {
     /// 全局候选序号中的高亮项。
     #[serde(default)]
     pub highlight: usize,
+}
+
+/// 引擎资源加载状态;设置窗展示与诊断导出用。
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct EngineStatus {
+    /// 主词典词条数;`builtin` 来源时是内置迷你词库的词条数。
+    pub dict_words: usize,
+    /// 主词典来源:`pyd`、`tsv` 或 `builtin`。
+    pub dict_source: String,
+    /// 语法模型(`main.gram`)是否已加载。
+    pub gram: bool,
+    /// 4M 每键同步重排是否已加载。
+    pub rerank4m: bool,
+    /// 25M 停顿重排是否已加载。
+    pub rerank25m: bool,
+    /// 常驻服务版本。
+    pub server_version: String,
 }
 
 /// 会话快照(Server 内部与候选窗渲染共用)。

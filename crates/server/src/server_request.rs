@@ -1,5 +1,7 @@
 //! 管道请求分发。
 
+use lueying_protocol::EngineStatus;
+
 use super::*;
 
 pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
@@ -536,6 +538,17 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             Reply::default()
         }
         Request::FuzzyStats => group_reply(&state.user),
+        Request::Status => Reply {
+            status: Some(EngineStatus {
+                dict_words: state.dict.len(),
+                dict_source: state.dict_source.to_string(),
+                gram: state.gram.is_some(),
+                rerank4m: state.sync_model.is_some(),
+                rerank25m: state.settled_model.is_some(),
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+            }),
+            ..Reply::default()
+        },
         Request::ResetFuzzy => {
             state
                 .user

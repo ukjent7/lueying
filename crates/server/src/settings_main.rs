@@ -24,7 +24,7 @@ mod imp {
     use gpui_platform::application;
     use lueying_engine::Fuzzy;
     use lueying_features::SchemeId;
-    use lueying_protocol::{Reply, Request, pipe_name};
+    use lueying_protocol::{EngineStatus, Reply, Request, pipe_name};
     use lueying_server::config::{self, AppConfig, Region};
     use lueying_server::theme;
     use lueying_server::update::{self, Check, Release};
@@ -121,6 +121,8 @@ mod imp {
         path: Option<PathBuf>,
         /// 模糊组当前适应次数,来自常驻 Server。
         groups: Vec<(String, u32)>,
+        /// 引擎资源状态(词典与模型加载情况);服务未运行时为 None。
+        status: Option<EngineStatus>,
         message: String,
         notice: Notice,
         /// 清空词库需要点两次,防误触。
@@ -184,6 +186,7 @@ mod imp {
                             groups: call(&Request::FuzzyStats)
                                 .map(|reply| reply.groups)
                                 .unwrap_or_default(),
+                            status: call(&Request::Status).and_then(|reply| reply.status),
                             message: String::new(),
                             notice: Notice::None,
                             confirm_clear: false,
@@ -393,11 +396,17 @@ mod imp {
                 .filter(|(_, count)| *count > 0)
                 .map(|(name, count)| format!("{name} {count}"))
                 .collect::<Vec<_>>();
+            let status = call(&Request::Status).and_then(|reply| reply.status);
+            let server_version = status
+                .as_ref()
+                .map(|s| s.server_version.clone())
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
             let report = format!(
                 "掠影诊断报告\n\
                  生成时间: {}\n\
                  设置窗版本: {}\n\
                  服务版本: {}\n\
+                 资源: {}\n\
                  系统: {} / {}\n\
                  模糊组: {}\n\
                  配置: {:?}\n\n\
@@ -405,7 +414,8 @@ mod imp {
                  {note}{tail}\n",
                 local_stamp(),
                 self.current,
-                env!("CARGO_PKG_VERSION"),
+                server_version,
+                status_detail(&status),
                 std::env::consts::OS,
                 std::env::consts::ARCH,
                 if groups.is_empty() {
@@ -620,6 +630,39 @@ mod imp {
     fn tail_text(bytes: &[u8], limit: usize) -> String {
         let start = bytes.len().saturating_sub(limit);
         String::from_utf8_lossy(&bytes[start..]).into_owned()
+    }
+
+    /// 「关于」页的状态行:词典来源与规模、模型是否加载。
+    fn status_detail(status: &Option<EngineStatus>) -> String {
+        match status {
+            Some(s) => format!(
+                "词典 {}({}) · 语法模型{} · 重排 4M{} / 25M{}",
+                word_count(s.dict_words),
+                s.dict_source,
+                mark(s.gram),
+                mark(s.rerank4m),
+                mark(s.rerank25m),
+            ),
+            None => "服务未运行,按任意键后再看".to_string(),
+        }
+    }
+
+    /// 词条数的人类读法:上万用「万」,否则原样。
+    fn word_count(words: usize) -> String {
+        if words >= 10_000 {
+            let w = words as f32 / 10_000.0;
+            if (w * 10.0).round() as i32 % 10 == 0 {
+                format!("{w:.0} 万")
+            } else {
+                format!("{w:.1} 万")
+            }
+        } else {
+            format!("{words} 词条")
+        }
+    }
+
+    fn mark(on: bool) -> &'static str {
+        if on { "✓" } else { "✗" }
     }
 
     fn section_label(title: &'static str, colors: theme::Colors, first: bool) -> impl IntoElement {
@@ -1235,6 +1278,13 @@ mod imp {
                     true,
                 ))
                 .child(section_label("关于", colors, false))
+                .child(setting_row(
+                    "引擎状态",
+                    status_detail(&self.status),
+                    div(),
+                    colors,
+                    false,
+                ))
                 .child(setting_row(
                     "诊断信息",
                     "版本、配置与服务日志导出成一份文本",
