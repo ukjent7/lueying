@@ -29,6 +29,9 @@ const BUFFER_SIZE: u32 = 64 * 1024;
 /// 一条请求行的上限。DLL 的一行远小于这个数;不发换行的坏对端不能把
 /// 内存撑爆,超限直接断线。
 const MAX_LINE: u64 = 1024 * 1024;
+/// 处理耗时超过这个值的请求记进服务日志。键入路径的常态是 10 ms 上下;
+/// 超过通常是 4M/25M 推理或词典冷页,排障时拿它对齐宿主卡顿。
+const SLOW_REQUEST_MS: u128 = 100;
 /// 连接号只增不减;用于区分同一会话的重连与旧连接断开。
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 
@@ -163,6 +166,7 @@ fn serve(file: File, state: Arc<State>) {
                 conns.remove(gone_session);
             }
         }
+        let started = std::time::Instant::now();
         let reply = request
             .map(|req| {
                 // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
@@ -180,6 +184,21 @@ fn serve(file: File, state: Arc<State>) {
                 )
             })
             .unwrap_or_else(|| crate::imp::neutral(&state));
+        let elapsed = started.elapsed().as_millis();
+        if elapsed >= SLOW_REQUEST_MS {
+            // 行 JSON 的行首就是变体名;只留名字,别把整条按键灌进日志。
+            let kind = std::str::from_utf8(&line)
+                .map(|text| {
+                    text.trim_start_matches('{')
+                        .split(':')
+                        .next()
+                        .unwrap_or("?")
+                        .trim_matches('"')
+                        .to_string()
+                })
+                .unwrap_or_else(|_| "?".to_string());
+            println!("慢请求 {kind} 用了 {elapsed} ms");
+        }
         let mut out = match serde_json::to_string(&reply) {
             Ok(s) => s,
             Err(_) => break,
