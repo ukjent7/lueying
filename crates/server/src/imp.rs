@@ -641,6 +641,12 @@ fn apply_sync_rerank(s: &mut Session) {
     let Some(snap) = crate::settle::snapshot(&s.engine) else {
         return;
     };
+    // 没有左邻上下文时,4M 只能按句子自身打分:共享语料上它的排序比引擎
+    // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 4M 完全相同。这段
+    // 同步推理(实测 p95 50–70 ms)只剩延迟,直接跳过,让引擎顺序先上屏。
+    if snap.context.is_empty() {
+        return;
+    }
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     if let Some(index) = rerank.decide(&snap.context, &texts, &snap.facts) {
         s.engine.promote(index);
