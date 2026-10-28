@@ -142,7 +142,8 @@ fn attach_null_stdio() {
 /// 标准输出已经被调用方重定向(E2E 把 stdout 收进自己的日志)时不再接管。
 fn output_redirected() -> bool {
     use windows::Win32::System::Console::{GetStdHandle, STD_OUTPUT_HANDLE};
-    let Ok(handle) = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } else {
+    // let-else 的判定式不能以块结尾,括号是语法需要的。
+    let Ok(handle) = (unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }) else {
         return false;
     };
     !handle.is_invalid() && !handle.0.is_null()
