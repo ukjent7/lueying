@@ -226,7 +226,12 @@ fn apply_rerank(
     let snap_after = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap_after.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    let promote = five.decide_settled(&snap_after.context, &texts, &snap_after.facts, &snap_after.fuzzy);
+    let promote = five.decide_settled(
+        &snap_after.context,
+        &texts,
+        &snap_after.facts,
+        &snap_after.fuzzy,
+    );
     five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
     if let Some(index) = promote {
         engine.promote(index);
@@ -348,21 +353,18 @@ pub fn run(
     row(&mut text, "核心(daily+frost)", &core);
     row(&mut text, "全量", &overall);
     if models.is_some() {
-        let line = |text: &mut String,
-                    label: &str,
-                    four: &Metric,
-                    five: &Metric,
-                    direct: &Metric| {
-            let _ = writeln!(
-                text,
-                "| {label} | {} | {:.1}% | {:.1}% | {:.1}% | {:.1}% |",
-                five.n,
-                four.rate(four.top1),
-                five.rate(five.top1),
-                five.rate(five.top5),
-                direct.rate(direct.top1),
-            );
-        };
+        let line =
+            |text: &mut String, label: &str, four: &Metric, five: &Metric, direct: &Metric| {
+                let _ = writeln!(
+                    text,
+                    "| {label} | {} | {:.1}% | {:.1}% | {:.1}% | {:.1}% |",
+                    five.n,
+                    four.rate(four.top1),
+                    five.rate(five.top1),
+                    five.rate(five.top5),
+                    direct.rate(direct.top1),
+                );
+            };
         text.push_str(
             "\n### 神经重排(产品链路)\n\n\
              4M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\
@@ -380,8 +382,20 @@ pub fn run(
             };
             line(&mut text, *category, four, five, direct);
         }
-        line(&mut text, "核心(daily+frost)", &four_core, &five_core, &direct_core);
-        line(&mut text, "全量", &four_overall, &five_overall, &direct_overall);
+        line(
+            &mut text,
+            "核心(daily+frost)",
+            &four_core,
+            &five_core,
+            &direct_core,
+        );
+        line(
+            &mut text,
+            "全量",
+            &four_overall,
+            &five_overall,
+            &direct_overall,
+        );
         let four_p95 = pct(&mut four_ms.clone(), 95.0);
         let five_p95 = pct(&mut five_ms.clone(), 95.0);
         let _ = writeln!(
