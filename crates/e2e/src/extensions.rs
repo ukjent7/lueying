@@ -10,7 +10,6 @@ use std::sync::{Arc, RwLock};
 
 use lueying_dict::Dictionary;
 use lueying_engine::module::Modules;
-use lueying_engine::scheme::Scheme;
 use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_features::{AuxCode, CustomPhrases, SchemeId};
 

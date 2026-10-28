@@ -380,7 +380,7 @@ pub fn run(
             ) else {
                 continue;
             };
-            line(&mut text, *category, four, five, direct);
+            line(&mut text, category, four, five, direct);
         }
         line(
             &mut text,

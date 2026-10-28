@@ -75,6 +75,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # 先把全量告警打完整(不阻断),下一遍才用 -D warnings 卡住:
+      # 一次日志就能看全所有 crate 的 lint,不必按依赖顺序逐层修。
+      - name: Clippy 全量告警
+        run: cargo clippy --workspace --all-targets --locked --message-format=short
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
