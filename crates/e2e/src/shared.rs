@@ -318,9 +318,10 @@ pub fn run(
              |---|---:|---:|---:|---:|\n",
         );
         for category in four_by_category.keys() {
-            let (Some(four), Some(five)) =
-                (four_by_category.get(*category), five_by_category.get(*category))
-            else {
+            let (Some(four), Some(five)) = (
+                four_by_category.get(*category),
+                five_by_category.get(*category),
+            ) else {
                 continue;
             };
             line(&mut text, *category, four, five);
