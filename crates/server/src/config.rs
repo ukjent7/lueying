@@ -164,7 +164,7 @@ pub fn load(path: &Path) -> AppConfig {
                 cfg.region = Region::from_str(value);
             }
             "scheme" => {
-                cfg.scheme = SchemeId::from_str(value);
+                cfg.scheme = SchemeId::parse(value);
             }
             "aux_code" | "aux" => {
                 if let Some(on) = flag(value) {

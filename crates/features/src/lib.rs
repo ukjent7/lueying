@@ -57,7 +57,8 @@ impl SchemeId {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    /// 配置里的方案名;无法识别的值退回全拼。
+    pub fn parse(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "xiaohe" | "flypy" => Self::Xiaohe,
             "ziranma" | "zrm" => Self::Ziranma,
