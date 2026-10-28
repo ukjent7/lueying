@@ -221,14 +221,13 @@ pub(super) fn real_main() {
     };
     // 三档降级:二进制(mmap 零解析) → 文本(兼容旧数据) → 内置迷你词库。
     // 对应 WeType 的 "safe mode, just load buildin dict":词典坏了输入法仍可用。
-    let loaded = ["main.pyd", "main.tsv"]
-        .iter()
-        .find_map(|name| dict_path(name).and_then(load_dict).map(|dict| (dict, *name)));
+    let loaded = ["main.pyd", "main.tsv"].iter().find_map(|name| {
+        dict_path(name)
+            .and_then(load_dict)
+            .map(|dict| (dict, *name))
+    });
     let (dict, dict_source) = match loaded {
-        Some((dict, name)) => (
-            dict,
-            if name == "main.pyd" { "pyd" } else { "tsv" },
-        ),
+        Some((dict, name)) => (dict, if name == "main.pyd" { "pyd" } else { "tsv" }),
         None => {
             println!("主词典缺失或损坏,退回内置迷你词库");
             (Dictionary::builtin(), "builtin")

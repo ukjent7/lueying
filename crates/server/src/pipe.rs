@@ -132,11 +132,7 @@ fn serve(file: File, state: Arc<State>) {
         line.clear();
         // 单行上限:对端不发换行也不能把内存撑爆;`take` 读满仍没有换行,
         // 剩下的半行不能当成下一条请求,直接断线。
-        match reader
-            .by_ref()
-            .take(MAX_LINE)
-            .read_until(b'\n', &mut line)
-        {
+        match reader.by_ref().take(MAX_LINE).read_until(b'\n', &mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) if !line.ends_with(b"\n") => break,
             Ok(_) => {}
