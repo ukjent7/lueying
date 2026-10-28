@@ -1,5 +1,7 @@
 //! 中文标点映射。成对引号按「下次输入交替开/闭」处理。
 
+use std::collections::BTreeMap;
+
 /// 可打印 ASCII 的全角形式:空格是 U+3000,其余落在 U+FF01–U+FF5E。
 pub fn fullwidth(c: char) -> Option<char> {
     match c {
@@ -56,4 +58,21 @@ pub fn map(
         }
         _ => return None,
     })
+}
+
+/// 先查用户自定义表,再走默认映射;查不到返回 `None`(按键直通)。
+/// 自定义项固定输出:引号交替与「数字后 `.` 保持半角」只属于默认映射,
+/// 用户显式写了映射就按映射来,行为可预期。
+pub fn map_with(
+    custom: &BTreeMap<char, String>,
+    c: char,
+    dq_open: &mut bool,
+    sq_open: &mut bool,
+    after_digit: &mut bool,
+) -> Option<String> {
+    if let Some(text) = custom.get(&c) {
+        std::mem::replace(after_digit, false);
+        return Some(text.clone());
+    }
+    map(c, dq_open, sq_open, after_digit).map(str::to_string)
 }

@@ -10,6 +10,7 @@
 ## 开发
 
 - [路线图](roadmap.md)
+- [架构](architecture.md)
 - [扩展 SDK](extensions/README.md)
   - [双拼](extensions/shuangpin.md)
   - [自定义短语](extensions/custom-phrases.md)

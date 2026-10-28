@@ -1,0 +1,25 @@
+# 每周一次依赖安全审计:RustSec 数据库里记录的漏洞与不再维护的 crate。
+# 只读 Cargo.lock,不需要编译;发现告警即红,补丁升级后转绿。
+name: audit
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 安装 cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: 审计依赖
+        run: cargo audit

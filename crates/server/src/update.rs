@@ -25,6 +25,8 @@ use windows::core::{HSTRING, PWSTR};
 
 /// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
 const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/latest";
+/// 测试渠道要看到预发布,latest 接口只回正式版,这里取最近 20 条。
+const API_RELEASES: &str = "https://api.github.com/repos/ukjent7/lueying/releases?per_page=20";
 const API_LIMIT: u64 = 2 * 1024 * 1024;
 const SHA_LIMIT: u64 = 8 * 1024;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -81,11 +83,33 @@ pub fn install_target() -> PathBuf {
         .join("lueying")
 }
 
-/// 查询 GitHub 最新 Release 并与本地版本比较。
-pub fn check() -> Result<Check, String> {
-    let Some(release) = latest_release()? else {
-        return Ok(Check::NoRelease);
-    };
+/// 按渠道查询更新。稳定渠道看 latest(不含预发布);测试渠道看最近
+/// 20 条 Release(含预发布),取首个比当前新的——列表按时间倒序,
+/// 首条就是 GitHub 上的最新版,版本号比较兜底乱序。
+pub fn check_channel(channel: crate::config::Channel) -> Result<Check, String> {
+    match channel {
+        crate::config::Channel::Stable => {
+            let Some(release) = latest_release()? else {
+                return Ok(Check::NoRelease);
+            };
+            available_or_latest(release)
+        }
+        crate::config::Channel::Beta => {
+            let releases = releases_list()?;
+            let candidate = releases
+                .iter()
+                .position(|release| is_newer(&release.version, &current_version()))
+                .map(|index| releases[index].clone());
+            Ok(match candidate {
+                Some(release) => Check::Available(release),
+                None if releases.is_empty() => Check::NoRelease,
+                None => Check::Latest,
+            })
+        }
+    }
+}
+
+fn available_or_latest(release: Release) -> Result<Check, String> {
     if is_newer(&release.version, &current_version()) {
         Ok(Check::Available(release))
     } else {
@@ -99,14 +123,41 @@ fn latest_release() -> Result<Option<Release>, String> {
         return Ok(None);
     }
     if !(200..300).contains(&status) {
-        return Err(if status == 403 {
-            "GitHub 接口限流,请稍后再试".into()
-        } else {
-            format!("GitHub 接口返回 HTTP {status}")
-        });
+        return Err(http_error(status));
     }
     let json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("解析 GitHub 响应: {e}"))?;
+    release_from_value(&json).map(Some)
+}
+
+/// 最近 20 条 Release;没有 setup.exe 资源的条目(纯源码发布)跳过。
+fn releases_list() -> Result<Vec<Release>, String> {
+    let (status, body) = fetch(API_RELEASES, API_LIMIT)?;
+    if !(200..300).contains(&status) {
+        return Err(http_error(status));
+    }
+    let json: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("解析 GitHub 响应: {e}"))?;
+    let list = json
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(release_from_value)
+        .collect();
+    Ok(list)
+}
+
+fn http_error(status: u16) -> String {
+    if status == 403 {
+        "GitHub 接口限流,请稍后再试".into()
+    } else {
+        format!("GitHub 接口返回 HTTP {status}")
+    }
+}
+
+/// 从一条 Release JSON 里取版本与安装包资源;资源缺失时报错。
+fn release_from_value(json: &serde_json::Value) -> Result<Release, String> {
     let tag = json["tag_name"]
         .as_str()
         .ok_or("GitHub 响应缺少 tag_name")?
@@ -157,7 +208,7 @@ fn latest_release() -> Result<Option<Release>, String> {
             })
         })
         .ok_or_else(|| format!("Release {tag} 没有 .sha256 校验文件"))?;
-    Ok(Some(Release {
+    Ok(Release {
         version,
         tag,
         notes: json["body"].as_str().unwrap_or("").to_string(),
@@ -167,7 +218,7 @@ fn latest_release() -> Result<Option<Release>, String> {
             .ok_or("校验文件缺少下载地址")?
             .to_string(),
         size: installer["size"].as_u64().unwrap_or(0),
-    }))
+    })
 }
 
 /// 把设置进程里的更新器复制到临时目录再启动,避免安装时覆盖正在运行的 exe。

@@ -3,6 +3,8 @@
 //! 这些类型不依赖窗口系统或平台 API;TSF/Server、E2E 与后续功能模块都通过
 //! 它们交换按键、事件、配置与组合快照。
 
+use std::collections::BTreeMap;
+
 use lueying_dict::Fuzzy;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +71,9 @@ pub struct Config {
     pub page_size: usize,
     /// 候选与上屏的字形;学习仍用简体规范形式。
     pub script: Script,
+    /// 用户自定义标点:键是单个半角符号,输出任意文本。查表先于默认
+    /// 中文标点表;映射固定输出,不做引号交替,也不受「数字后半角」影响。
+    pub punct: BTreeMap<char, String>,
 }
 
 impl Default for Config {
@@ -79,6 +84,7 @@ impl Default for Config {
             chinese_punct: true,
             page_size: 5,
             script: Script::Simplified,
+            punct: BTreeMap::new(),
         }
     }
 }

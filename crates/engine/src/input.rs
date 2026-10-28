@@ -395,7 +395,8 @@ impl Engine {
                 // 没有中文映射(或关了中文标点)时按 ASCII 上屏;
                 // 直通会让应用在组句未收时插入字符,文档与引擎就错位了。
                 let mapped = if self.cfg.chinese_punct {
-                    punct::map(
+                    punct::map_with(
+                        &self.cfg.punct,
                         p,
                         &mut self.dq_open,
                         &mut self.sq_open,
@@ -412,7 +413,7 @@ impl Engine {
                             p.to_string()
                         }
                     },
-                    |s| s.to_string(),
+                    |s| s,
                 );
                 events.push(Event::Commit(text));
                 events
@@ -438,14 +439,15 @@ impl Engine {
     /// 标点:开中文标点则上屏全角,否则全角模式下上屏全角 ASCII,再否则直通。
     pub(crate) fn punct_events(&mut self, p: char) -> Vec<Event> {
         if self.cfg.chinese_punct
-            && let Some(s) = punct::map(
+            && let Some(s) = punct::map_with(
+                &self.cfg.punct,
                 p,
                 &mut self.dq_open,
                 &mut self.sq_open,
                 &mut self.after_digit,
             )
         {
-            return vec![Event::Commit(s.to_string())];
+            return vec![Event::Commit(s)];
         }
         if self.fullwidth
             && let Some(c) = punct::fullwidth(p)

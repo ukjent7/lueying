@@ -16,6 +16,7 @@ use gpui::{
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
+use lueying_server::config::{UiFont, UiLayout};
 use lueying_server::theme;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
@@ -181,6 +182,39 @@ fn snapshot(state: &State) -> Option<SessionView> {
     (!session.host_draws && session.engine.composition().is_some()).then(|| session.view.clone())
 }
 
+/// 候选行的字号与行高;随「候选字号」档位缩放,拼音行保持小字。
+#[derive(Clone, Copy)]
+struct Metrics {
+    /// 候选文字字号。
+    text: f32,
+    /// 序号/注音字号。
+    small: f32,
+    /// 候选行高(窗口高度与菜单锚点用)。
+    row: f32,
+}
+
+impl Metrics {
+    fn of(font: UiFont) -> Self {
+        let m = font.factor();
+        Self {
+            text: 17.0 * m,
+            small: 11.0 * m,
+            row: ROW_H * m,
+        }
+    }
+
+    /// 渲染行高;比窗口行高少 4px,补上列表的行间距合成整行。
+    fn visual_row(&self) -> f32 {
+        self.row - 4.0
+    }
+}
+
+/// 读取候选窗显示设置(排列、字号、主题色)。
+fn ui_options(state: &State) -> (UiLayout, UiFont, usize) {
+    let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
+    (cfg.ui_layout, cfg.ui_font, cfg.ui_accent)
+}
+
 /// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。宿主接管候选绘制时同样算组合中。
 fn in_composition(state: &State) -> bool {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
@@ -298,8 +332,12 @@ impl CandidatePanel {
             };
             // 淡出期间让点击穿透到下层应用;实时组合才接鼠标。
             style_popup(hwnd, &self.styled, self.fading.get().is_some());
+            let (layout, font, _) = ui_options(&self.state);
+            let metrics = Metrics::of(font);
             let (park_x, park_y) = park_point();
-            let width = view.as_ref().map_or(WIDTH, panel_width);
+            let width = view
+                .as_ref()
+                .map_or(WIDTH, |view| panel_width(view, &metrics));
             // 会话号高 32 位是宿主进程号。浏览器 F11、全屏终端这类宿主
             // 自己铺满屏幕时仍要显示候选窗,只有别的进程独占全屏才让位。
             let host_pid = (self.state.active.load(Ordering::Relaxed) >> 32) as u32;
@@ -309,8 +347,10 @@ impl CandidatePanel {
                     // 候选窗通常停在外屏,`window.scale_factor()` 是停靠屏的 DPI;
                     // 必须按光标所在显示器算,否则副屏 150%/200% 下窗口尺寸不匹配。
                     let scale = scale_at(left, b);
-                    let rows = view.as_ref().map_or(1, |v| panel_rows(v, width));
-                    let h = ((PREEDIT_H + ROW_H * rows as f32 + PANEL_PAD_B) * scale) as i32;
+                    let rows = view
+                        .as_ref()
+                        .map_or(1, |v| panel_rows(v, width, layout, &metrics));
+                    let h = ((PREEDIT_H + metrics.row * rows as f32 + PANEL_PAD_B) * scale) as i32;
                     let mut w = (width * scale) as i32;
                     // 按光标所在屏的工作区夹取。
                     let work = work_area_at(left, b);
@@ -374,16 +414,16 @@ fn park(hwnd: HWND, x: i32, y: i32) {
 }
 
 /// 单条候选的估算宽度(内边距、序号、文字与注音)。
-/// 17px 微软雅黑里 CJK/全角约 17px,ASCII 约 9px;按字符类别累加,
+/// CJK/全角按候选字号计,ASCII 约半个字宽;按字符类别累加,
 /// 避免整句候选估窄后多折一行、窗口高度不够被裁。
-fn item_width(text: &str, hint: Option<&String>) -> f32 {
+fn item_width(text: &str, hint: Option<&String>, m: &Metrics) -> f32 {
     let hint_width = hint
         .filter(|hint| !hint.is_empty())
-        .map_or(0.0, |hint| 4.0 + 11.0 * text_units(hint))
+        .map_or(0.0, |hint| 4.0 + m.small * text_units(hint))
         .min(100.0);
     let hint_gap = if hint_width > 0.0 { 4.0 } else { 0.0 };
     // px_2(16)+强调条(2)+间距(4)+序号(12)+间距(4)+候选文字+注音。
-    16.0 + 2.0 + 4.0 + 12.0 + 4.0 + 17.0 * text_units(text) + hint_gap + hint_width
+    16.0 + 2.0 + 4.0 + 12.0 + 4.0 + m.text * text_units(text) + hint_gap + hint_width
 }
 
 /// 文字宽度折算成字号倍数:ASCII 约半个字宽,其余按全角算。
@@ -394,32 +434,35 @@ fn text_units(text: &str) -> f32 {
 }
 
 /// 候选窗的估算高度(逻辑像素):预编辑行 + 当前页候选行 + 底部内边距。
-fn candidate_height(view: &SessionView) -> f32 {
-    PREEDIT_H + ROW_H * panel_rows(view, panel_width(view)) as f32 + PANEL_PAD_B
+fn candidate_height(view: &SessionView, layout: UiLayout, m: &Metrics) -> f32 {
+    PREEDIT_H + m.row * panel_rows(view, panel_width(view, m), layout, m) as f32 + PANEL_PAD_B
 }
 
 /// 整个组合的窗口宽度:按全部候选估最宽一条,翻页时不来回跳。
-fn panel_width(view: &SessionView) -> f32 {
+fn panel_width(view: &SessionView, m: &Metrics) -> f32 {
     let widest = view
         .candidates
         .iter()
         .enumerate()
-        .map(|(index, text)| item_width(text, view.hints.get(index)))
+        .map(|(index, text)| item_width(text, view.hints.get(index), m))
         .fold(0.0, f32::max);
     (widest + 18.0).clamp(WIDTH, MAX_WIDTH)
 }
 
-/// 当前页候选估算占几行(按字数估宽,避免窗口比内容高出几行)。
-fn panel_rows(view: &SessionView, width: f32) -> usize {
+/// 当前页候选占几行。竖排一行一条;横排按字数估宽换行。
+fn panel_rows(view: &SessionView, width: f32, layout: UiLayout, m: &Metrics) -> usize {
     let ps = view.page_size.max(1);
     let start = view.page * ps;
     let end = (start + ps).min(view.candidates.len());
+    if matches!(layout, UiLayout::Vertical) {
+        return end - start;
+    }
     let mut rows = 0usize;
     let mut used = 0.0f32;
     // 面板左右内边距 16 + 边框 2;可用宽度少于估算会让窗口少算一行。
     let available = width - 18.0;
     for index in start..end {
-        let item = item_width(&view.candidates[index], view.hints.get(index));
+        let item = item_width(&view.candidates[index], view.hints.get(index), m);
         if rows == 0 {
             rows = 1;
             used = item;
@@ -431,6 +474,104 @@ fn panel_rows(view: &SessionView, width: f32) -> usize {
         }
     }
     rows
+}
+
+/// 一条候选行:强调条、序号、文字与注音;横排/竖排共用。
+#[allow(clippy::too_many_arguments)]
+fn candidate_item(
+    slot: usize,
+    text: String,
+    hint: String,
+    hl: bool,
+    m: Metrics,
+    colors: theme::Colors,
+    state: &Arc<State>,
+    cx: &mut Context<CandidatePanel>,
+) -> impl IntoElement {
+    let menu_text = text.clone();
+    div()
+        // `active` 只挂在有状态元素上;槽位在页内唯一。
+        .id(("cand", slot))
+        .flex()
+        .items_center()
+        .h(px(m.visual_row()))
+        .px_2()
+        .rounded_md()
+        .cursor_pointer()
+        .active(|el| el.opacity(0.82))
+        .text_size(px(m.text))
+        .when(hl, |el| {
+            el.bg(rgb(colors.selected_bg))
+                .text_color(rgb(colors.selected_text))
+        })
+        .when(!hl, |el| {
+            el.text_color(rgb(colors.text))
+                .hover(|s| s.bg(rgb(colors.hover)))
+        })
+        .on_mouse_down(MouseButton::Left, {
+            let state = Arc::clone(state);
+            move |_, _, _| {
+                let session = state.active.load(Ordering::Relaxed);
+                if session != 0 && composing(&state) {
+                    let _ = crate::imp::handle(&state, Request::Pick { session, slot });
+                }
+            }
+        })
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, _, _, cx| {
+                // 菜单锚在行下缘;贴近面板底部时翻到行上方。
+                let y = PREEDIT_H + 4.0 + slot as f32 * m.row;
+                let top = if y + m.row + MENU_H <= this.panel_h.get() {
+                    y + m.row
+                } else {
+                    (y - MENU_H).max(PREEDIT_H)
+                };
+                *this.menu.borrow_mut() = Some((slot, top, menu_text.clone()));
+                cx.notify();
+            }),
+        )
+        .child(
+            div()
+                .w(px(2.0))
+                .h(px(14.0))
+                .rounded_full()
+                .when(hl, |el| el.bg(rgb(colors.accent_text))),
+        )
+        .child(
+            div()
+                .w(px(12.0))
+                .ml(px(4.0))
+                .text_size(px(m.small))
+                .text_color(if hl {
+                    rgb(colors.accent_text)
+                } else {
+                    rgb(colors.text_tertiary)
+                })
+                .child(format!("{}", slot + 1)),
+        )
+        .child(
+            div()
+                .ml(px(4.0))
+                .max_w(px(MAX_TEXT_WIDTH))
+                .truncate()
+                .child(SharedString::from(text)),
+        )
+        .when(!hint.is_empty(), |el| {
+            el.child(
+                div()
+                    .ml(px(4.0))
+                    .max_w(px(100.0))
+                    .truncate()
+                    .text_size(px(m.small))
+                    .text_color(if hl {
+                        rgb(colors.accent_text)
+                    } else {
+                        rgb(colors.text_tertiary)
+                    })
+                    .child(SharedString::from(hint)),
+            )
+        })
 }
 
 /// 右键菜单:两项动作与点选同一条请求通道;引擎重算后行文本对不上,
@@ -644,12 +785,14 @@ impl Render for CandidatePanel {
             return div().into_any_element();
         };
         let appearance = theme::Appearance::of(window);
-        let colors = theme::colors(appearance);
+        let (layout, font, accent) = ui_options(&self.state);
+        let metrics = Metrics::of(font);
+        let colors = theme::colors_with(appearance, accent);
         // 组合结束进入淡出:右键菜单随之收起,别让它挂在旧内容上。
         if fading {
             *self.menu.borrow_mut() = None;
         }
-        let width = panel_width(&view);
+        let width = panel_width(&view, &metrics);
         let ps = view.page_size.max(1);
         let start = view.page * ps;
         let pages = view.candidates.len().div_ceil(ps).max(1);
@@ -688,7 +831,8 @@ impl Render for CandidatePanel {
             .collect();
         let has_items = !items.is_empty();
         // 菜单的上下翻转按本帧面板高度判断;面板含底边距。
-        let panel_h = PREEDIT_H + 4.0 + items.len() as f32 * ROW_H + PANEL_PAD_B;
+        let rows = panel_rows(&view, width, layout, &metrics);
+        let panel_h = PREEDIT_H + 4.0 + rows as f32 * metrics.row + PANEL_PAD_B;
         self.panel_h.set(panel_h);
         // 菜单只挂在内容未变的行上;翻页或继续打字后行文本对不上,菜单
         // 自动失效,不需要专门的清理时机。行数据随后被移进列表,先校验。
@@ -776,96 +920,38 @@ impl Render for CandidatePanel {
                         }),
                 )
                 .children(has_items.then(|| {
-                    let list = div().flex().flex_wrap().px_2().py_1().gap_1().children(
-                        items.into_iter().map(|(slot, text, hint, hl)| {
-                            let state = Arc::clone(&state);
-                            let menu_text = text.clone();
-                            div()
-                                // `active` 只挂在有状态元素上;槽位在页内唯一。
-                                .id(("cand", slot))
-                                .flex()
-                                .items_center()
-                                .h(px(30.0))
-                                .px_2()
-                                .rounded_md()
-                                .cursor_pointer()
-                                .active(|el| el.opacity(0.82))
-                                .text_size(px(17.0))
-                                .when(hl, |el| {
-                                    el.bg(rgb(colors.selected_bg))
-                                        .text_color(rgb(colors.selected_text))
-                                })
-                                .when(!hl, |el| {
-                                    el.text_color(rgb(colors.text))
-                                        .hover(|s| s.bg(rgb(colors.hover)))
-                                })
-                                .on_mouse_down(MouseButton::Left, move |_, _, _| {
-                                    let session = state.active.load(Ordering::Relaxed);
-                                    if session != 0 && composing(&state) {
-                                        let _ = crate::imp::handle(
-                                            &state,
-                                            Request::Pick { session, slot },
-                                        );
-                                    }
-                                })
-                                .on_mouse_down(
-                                    MouseButton::Right,
-                                    cx.listener(move |this, _, _, cx| {
-                                        // 菜单锚在行下缘;贴近面板底部时翻到行上方。
-                                        let y = PREEDIT_H + 4.0 + slot as f32 * ROW_H;
-                                        let top = if y + ROW_H + MENU_H <= this.panel_h.get() {
-                                            y + ROW_H
-                                        } else {
-                                            (y - MENU_H).max(PREEDIT_H)
-                                        };
-                                        *this.menu.borrow_mut() =
-                                            Some((slot, top, menu_text.clone()));
-                                        cx.notify();
-                                    }),
+                    // 横排候选挤一行自动换行;竖排一行一条,文字更宽。
+                    let list = if matches!(layout, UiLayout::Horizontal) {
+                        div().flex().flex_wrap().px_2().py_1().gap_1().children(
+                            items.into_iter().map(|(slot, text, hint, hl)| {
+                                candidate_item(
+                                    slot,
+                                    text,
+                                    hint,
+                                    hl,
+                                    metrics,
+                                    colors,
+                                    &state,
+                                    cx,
                                 )
-                                .child(
-                                    div()
-                                        .w(px(2.0))
-                                        .h(px(14.0))
-                                        .rounded_full()
-                                        .when(hl, |el| el.bg(rgb(colors.accent_text))),
+                            }),
+                        )
+                    } else {
+                        div().flex().flex_col().px(px(6.0)).py_1().gap_1().children(
+                            items.into_iter().map(|(slot, text, hint, hl)| {
+                                candidate_item(
+                                    slot,
+                                    text,
+                                    hint,
+                                    hl,
+                                    metrics,
+                                    colors,
+                                    &state,
+                                    cx,
                                 )
-                                .child(
-                                    div()
-                                        .w(px(12.0))
-                                        .ml(px(4.0))
-                                        .text_size(px(11.0))
-                                        .text_color(if hl {
-                                            rgb(colors.accent_text)
-                                        } else {
-                                            rgb(colors.text_tertiary)
-                                        })
-                                        .child(format!("{}", slot + 1)),
-                                )
-                                .child(
-                                    div()
-                                        .ml(px(4.0))
-                                        .max_w(px(MAX_TEXT_WIDTH))
-                                        .truncate()
-                                        .child(SharedString::from(text)),
-                                )
-                                .when(!hint.is_empty(), |el| {
-                                    el.child(
-                                        div()
-                                            .ml(px(4.0))
-                                            .max_w(px(100.0))
-                                            .truncate()
-                                            .text_size(px(11.0))
-                                            .text_color(if hl {
-                                                rgb(colors.accent_text)
-                                            } else {
-                                                rgb(colors.text_tertiary)
-                                            })
-                                            .child(SharedString::from(hint)),
-                                    )
-                                })
-                        }),
-                    );
+                            }),
+                        )
+                    };
                     if let Some((direction, _)) = sliding {
                         list.with_animation(
                             ("page-slide", slide_serial),

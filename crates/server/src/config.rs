@@ -1,7 +1,10 @@
 //! 用户配置:`%APPDATA%\lueying\config.ini`,设置窗与常驻服务共用。
 //!
 //! 行式 `键=值`,未知键和坏值跳过;保存先写临时文件再改名。
+//! 自定义标点(`punct.txt`)、按应用覆盖(`apps.ini`)是独立文件,
+//! 读取时并入配置,保存只写 `config.ini` 本身。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use lueying_engine::{Config, Fuzzy, Script};
@@ -45,7 +48,128 @@ impl Region {
     }
 }
 
-/// 运行时配置。引擎只关心其中五项,`shift_toggle` 由 Server 处理。
+/// 候选窗排列。横排候选挤在一行里自动换行,竖排一行一条。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UiLayout {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+impl UiLayout {
+    pub const NAMES: [&'static str; 2] = ["横排", "竖排"];
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Vertical,
+            _ => Self::Horizontal,
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "vertical" | "v" => Self::Vertical,
+            _ => Self::Horizontal,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
+        }
+    }
+}
+
+/// 候选字号档位;只缩放候选行,拼音行保持小字。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UiFont {
+    Small,
+    #[default]
+    Standard,
+    Large,
+}
+
+impl UiFont {
+    pub const NAMES: [&'static str; 3] = ["小", "标准", "大"];
+
+    /// 候选文字的缩放倍数;行高与估宽随之变化。
+    pub fn factor(self) -> f32 {
+        match self {
+            Self::Small => 0.88,
+            Self::Standard => 1.0,
+            Self::Large => 1.15,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::Small,
+            2 => Self::Large,
+            _ => Self::Standard,
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "small" => Self::Small,
+            "large" => Self::Large,
+            _ => Self::Standard,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Standard => "standard",
+            Self::Large => "large",
+        }
+    }
+}
+
+/// 更新渠道。稳定只认正式 Release;测试跟进预发布。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Channel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl Channel {
+    pub const NAMES: [&'static str; 2] = ["稳定", "测试"];
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Beta,
+            _ => Self::Stable,
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "beta" | "test" => Self::Beta,
+            _ => Self::Stable,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+}
+
+/// 单个应用的覆盖项;`None` 表示跟随全局设置。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AppOverride {
+    /// 中文标点开关。
+    pub punct: Option<bool>,
+    /// 学习开关(词库、搭配与转移都不写)。
+    pub learning: Option<bool>,
+}
+
+/// 运行时配置。引擎只关心其中若干项,`shift_toggle` 由 Server 处理。
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppConfig {
     pub page_size: usize,
@@ -60,6 +184,16 @@ pub struct AppConfig {
     pub aux: bool,
     /// 按本机上屏词序补全下一词。
     pub predict: bool,
+    /// 候选窗排列:横排换行或竖排列。
+    pub ui_layout: UiLayout,
+    /// 候选字号档位。
+    pub ui_font: UiFont,
+    /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
+    pub ui_accent: usize,
+    /// 更新渠道。
+    pub update_channel: Channel,
+    /// 自定义标点映射,来自 `punct.txt`。
+    pub punct: BTreeMap<char, String>,
 }
 
 impl Default for AppConfig {
@@ -75,6 +209,11 @@ impl Default for AppConfig {
             scheme: SchemeId::Full,
             aux: false,
             predict: true,
+            ui_layout: UiLayout::Horizontal,
+            ui_font: UiFont::Standard,
+            ui_accent: 0,
+            update_channel: Channel::Stable,
+            punct: BTreeMap::new(),
         }
     }
 }
@@ -96,6 +235,7 @@ impl AppConfig {
             } else {
                 Script::Simplified
             },
+            punct: self.punct.clone(),
         }
     }
 }
@@ -119,9 +259,23 @@ pub fn path() -> Option<PathBuf> {
 
 /// 自定义短语文件路径(`%APPDATA%\lueying\phrases.txt`)。
 pub fn phrases_path() -> Option<PathBuf> {
+    user_file("phrases.txt")
+}
+
+/// 自定义标点文件路径(`%APPDATA%\lueying\punct.txt`)。
+pub fn punct_path() -> Option<PathBuf> {
+    user_file("punct.txt")
+}
+
+/// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.ini`)。
+pub fn apps_path() -> Option<PathBuf> {
+    user_file("apps.ini")
+}
+
+fn user_file(name: &str) -> Option<PathBuf> {
     let base =
         PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    Some(base.join("lueying").join("phrases.txt"))
+    Some(base.join("lueying").join(name))
 }
 
 /// 服务日志路径(`%LOCALAPPDATA%\lueying\logs\server.log`)。
@@ -130,7 +284,7 @@ pub fn log_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("logs").join("server.log"))
 }
 
-/// 读配置;文件缺失或坏行都退回默认值。
+/// 读配置;文件缺失或坏行都退回默认值。自定义标点从 `punct.txt` 并入。
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -189,10 +343,125 @@ pub fn load(path: &Path) -> AppConfig {
                 "auto" | "1" | "true" | "on" | "yes" => cfg.fuzzy = Fuzzy::auto(),
                 _ => {}
             },
+            "ui_layout" | "layout" => {
+                cfg.ui_layout = UiLayout::from_str(value);
+            }
+            "ui_font" | "font" => {
+                cfg.ui_font = UiFont::from_str(value);
+            }
+            "ui_accent" | "accent" => {
+                match value.parse::<usize>() {
+                    Ok(index) => cfg.ui_accent = index,
+                    // 颜色名只在 Windows 下可解析(theme 是 Windows 模块)。
+                    Err(_) => {
+                        #[cfg(windows)]
+                        if let Some(index) = crate::theme::accent_index(value) {
+                            cfg.ui_accent = index;
+                        }
+                    }
+                }
+            }
+            "update_channel" | "channel" => {
+                cfg.update_channel = Channel::from_str(value);
+            }
             _ => {}
         }
     }
+    cfg.punct = load_punct(punct_path().as_deref());
     cfg
+}
+
+/// 自定义标点文件模板;写进新文件,示例去掉行首 `#` 生效。
+pub const PUNCT_TEMPLATE: &str = "\
+# 掠影自定义标点:一行一条 `键=输出`。
+# 键是单个半角符号,输出是任意文本(可为空,表示上屏空串)。
+# 表里的符号固定按映射输出;表外的走默认中文标点。
+# 示例(去掉行首 # 生效):
+#,=、
+#^=……
+#\"=「
+";
+
+/// 读自定义标点;坏行与缺文件的键都跳过,映射值超过 16 个字符的行跳过。
+pub fn load_punct(path: Option<&Path>) -> BTreeMap<char, String> {
+    let mut map = BTreeMap::new();
+    let Some(path) = path else {
+        return map;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return map;
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let Some(key) = key.trim().chars().next() else {
+            continue;
+        };
+        let value = value.trim();
+        if value.chars().count() > 16 {
+            continue;
+        }
+        map.insert(key, value.to_string());
+    }
+    map
+}
+
+/// 按应用覆盖文件模板;节名是宿主进程 exe 名(小写)。
+pub const APPS_TEMPLATE: &str = "\
+# 掠影按应用配置:节名是宿主进程的 exe 名(小写,如 notepad.exe)。
+# 可用键:
+#   punct=off     本应用关闭中文标点(直出半角)
+#   punct=on      本应用开启中文标点
+#   learning=off  本应用不写入学习记录
+#   learning=on   本应用正常学习
+# 没写的键跟随全局设置。示例(去掉行首 # 生效):
+#[notepad.exe]
+#punct=off
+";
+
+/// 解析按应用覆盖;`host` 需已小写。坏值与未知键跳过。
+pub fn app_override(text: &str, host: &str) -> AppOverride {
+    let mut current: Option<String> = None;
+    let mut matched = AppOverride::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            current = Some(name.trim().to_ascii_lowercase());
+            continue;
+        }
+        if current.as_deref() != Some(host) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let flag = flag(value.trim());
+        match key.trim() {
+            "punct" => matched.punct = flag,
+            "learning" => matched.learning = flag,
+            _ => {}
+        }
+    }
+    matched
+}
+
+/// 读宿主进程的覆盖项;文件缺失时全部跟随全局。host 统一转小写。
+pub fn app_overrides(host: &str) -> AppOverride {
+    let Some(path) = apps_path() else {
+        return AppOverride::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return AppOverride::default();
+    };
+    app_override(&text, &host.trim().to_ascii_lowercase())
 }
 
 /// 保存配置;目录不存在就创建。
@@ -209,7 +478,11 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          scheme={}\n\
          aux_code={}\n\
          predict={}\n\
-         fuzzy={}\n",
+         fuzzy={}\n\
+         ui_layout={}\n\
+         ui_font={}\n\
+         ui_accent={}\n\
+         update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
         cfg.shift_toggle,
@@ -219,6 +492,10 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.aux,
         cfg.predict,
         if cfg.fuzzy.is_off() { "off" } else { "auto" },
+        cfg.ui_layout.as_str(),
+        cfg.ui_font.as_str(),
+        cfg.ui_accent,
+        cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");
     std::fs::write(&tmp, text)?;

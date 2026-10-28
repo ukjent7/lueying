@@ -104,7 +104,11 @@ impl ModeHudPanel {
         let gap = (4.0 * scale) as i32;
         // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
         let in_comp = in_composition(&self.state);
-        let candidate_h = snapshot(&self.state).map_or(0.0, |view| candidate_height(&view)) * scale;
+        let (layout, font, _) = ui_options(&self.state);
+        let metrics = Metrics::of(font);
+        let candidate_h = snapshot(&self.state)
+            .map_or(0.0, |view| candidate_height(&view, layout, &metrics))
+            * scale;
         let candidate_below =
             caret.is_some_and(|(_, _, _, b)| b as f32 + candidate_h <= work.bottom as f32);
         let prefer_below = !in_comp || !candidate_below;
@@ -136,7 +140,7 @@ impl Render for ModeHudPanel {
             return div().into_any_element();
         };
         let appearance = theme::Appearance::of(window);
-        let colors = theme::colors(appearance);
+        let colors = theme::colors_with(appearance, ui_options(&self.state).2);
         let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
         let opacity = if cx.reduce_motion() {
             1.0

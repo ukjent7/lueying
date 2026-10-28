@@ -502,6 +502,60 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
+    // 自定义标点:表内覆盖默认映射,表外回落默认表,关闭中文标点时整体直通。
+    let mut punct_cfg = Config::default();
+    punct_cfg.punct.insert(',', "、".to_string());
+    punct_cfg.punct.insert('^', "………".to_string());
+    let mut mapped = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    let events = mapped.process(Key::Punct(','));
+    push(
+        &mut checks,
+        "自定义标点覆盖默认",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "、")),
+        format!("{events:?}"),
+    );
+
+    let mut punct_cfg = Config::default();
+    punct_cfg.punct.insert(',', "、".to_string());
+    let mut fallback = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    let events = fallback.process(Key::Punct('?'));
+    push(
+        &mut checks,
+        "自定义标点不影响表外符号",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == "？")),
+        format!("{events:?}"),
+    );
+
+    let mut punct_cfg = Config::default();
+    punct_cfg.punct.insert('.', ".".to_string());
+    let mut dot = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    dot.process(Key::Digit(3));
+    let events = dot.process(Key::Punct('.'));
+    push(
+        &mut checks,
+        "自定义句点不受数字后半角规则影响",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Commit(text) if text == ".")),
+        format!("{events:?}"),
+    );
+
+    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default());
+    plain.process(Key::Digit(3));
+    let events = plain.process(Key::Punct('.'));
+    push(
+        &mut checks,
+        "默认数字后半角",
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Passthrough(Key::Punct('.')))),
+        format!("{events:?}"),
+    );
+
     report.push_str("\n## 核心输入补齐\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0;
     for (name, ok, note) in checks {

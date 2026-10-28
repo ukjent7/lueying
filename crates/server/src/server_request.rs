@@ -17,12 +17,17 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             // 不能继承上一个线程留下的组合与待办。
             sessions.remove(&session);
             crate::settle::cancel(state, session);
+            // 按应用覆盖:apps.ini 里写了的键盖过全局设置。
+            let app = config::app_overrides(&host);
             let mut engine = {
-                let cfg = state
+                let mut cfg = state
                     .config
                     .read()
                     .unwrap_or_else(|p| p.into_inner())
                     .engine();
+                if let Some(punct) = app.punct {
+                    cfg.chinese_punct = punct;
+                }
                 let scheme = {
                     let guard = state.scheme.read().unwrap_or_else(|p| p.into_inner());
                     Arc::clone(&*guard)
@@ -39,6 +44,9 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             engine.set_fullwidth(state.fullwidth.load(Ordering::Relaxed));
             engine.set_now(local_time());
             engine.set_host(&host);
+            if app.learning == Some(false) {
+                engine.set_learning(false);
+            }
             let chinese = engine.mode() == Mode::Chinese;
             sessions.insert(
                 session,

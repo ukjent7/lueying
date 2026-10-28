@@ -100,7 +100,7 @@ mod imp {
     }
 
     fn check(options: &Options) {
-        match update::check() {
+        match update::check_channel(crate::config::Channel::Stable) {
             Ok(update::Check::Latest) => message(
                 APP,
                 &format!("已是最新版本 {}。", update::current_version()),
