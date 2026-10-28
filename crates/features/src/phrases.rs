@@ -4,6 +4,7 @@
 //! (`ni'hao`)或简拼(`nh`);带隔音符时简拼按各音节首字母生成。短语固定
 //! 上屏,不写用户词库,也不参与整句造词。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
@@ -31,10 +32,46 @@ struct Phrase {
     weight: u32,
 }
 
+/// 短语与编码索引。编码与简拼共用一张表:每个短语在各自的键下登记一次,
+/// 查询只看命中的那几条,短语文件很大时也不会每敲一键扫全表。
+struct Store {
+    phrases: Vec<Phrase>,
+    index: HashMap<String, Vec<usize>>,
+}
+
+impl Store {
+    fn new(phrases: Vec<Phrase>) -> Self {
+        let mut index: HashMap<String, Vec<usize>> = HashMap::new();
+        for (at, phrase) in phrases.iter().enumerate() {
+            for key in [&phrase.code, &phrase.initials] {
+                if key.is_empty() {
+                    continue;
+                }
+                let slots = index.entry(key.clone()).or_default();
+                if slots.last() != Some(&at) {
+                    slots.push(at);
+                }
+            }
+        }
+        Self { phrases, index }
+    }
+
+    fn len(&self) -> usize {
+        self.phrases.len()
+    }
+
+    fn matches(&self, query: &str) -> Vec<&Phrase> {
+        let Some(slots) = self.index.get(query) else {
+            return Vec::new();
+        };
+        slots.iter().map(|&at| &self.phrases[at]).collect()
+    }
+}
+
 /// 自定义短语模块。文件在首次使用时读取,保存后可由宿主调用 [`Self::reload`]。
 pub struct CustomPhrases {
     path: Option<PathBuf>,
-    phrases: RwLock<Vec<Phrase>>,
+    phrases: RwLock<Store>,
 }
 
 impl CustomPhrases {
@@ -42,7 +79,7 @@ impl CustomPhrases {
     pub fn empty() -> Self {
         Self {
             path: None,
-            phrases: RwLock::new(Vec::new()),
+            phrases: RwLock::new(Store::new(Vec::new())),
         }
     }
 
@@ -50,7 +87,7 @@ impl CustomPhrases {
     pub fn from_text(text: &str) -> Self {
         Self {
             path: None,
-            phrases: RwLock::new(parse(text)),
+            phrases: RwLock::new(Store::new(parse(text))),
         }
     }
 
@@ -59,7 +96,7 @@ impl CustomPhrases {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         Self {
             path: Some(path),
-            phrases: RwLock::new(parse(&text)),
+            phrases: RwLock::new(Store::new(parse(&text))),
         }
     }
 
@@ -71,7 +108,7 @@ impl CustomPhrases {
         let Ok(text) = std::fs::read_to_string(path) else {
             return;
         };
-        *self.phrases.write().unwrap_or_else(|p| p.into_inner()) = parse(&text);
+        *self.phrases.write().unwrap_or_else(|p| p.into_inner()) = Store::new(parse(&text));
     }
 
     /// 当前短语条数。
@@ -108,12 +145,7 @@ impl Module for CustomPhrases {
             return;
         }
         let phrases = self.phrases.read().unwrap_or_else(|p| p.into_inner());
-        let mut matched: Vec<&Phrase> = phrases
-            .iter()
-            .filter(|phrase| {
-                phrase.code == query || (!phrase.initials.is_empty() && phrase.initials == query)
-            })
-            .collect();
+        let mut matched = phrases.matches(&query);
         if matched.is_empty() {
             return;
         }

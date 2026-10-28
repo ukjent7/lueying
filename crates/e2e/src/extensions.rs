@@ -235,13 +235,22 @@ pub fn run(report: &mut String) -> usize {
                 == Some("自定义短语"),
         format!("候选 = {:?}", full.candidates()),
     );
-    let mut xiaohe = engine(SchemeId::Xiaohe, false, modules, shared());
+    let mut xiaohe = engine(SchemeId::Xiaohe, false, modules.clone(), shared());
     type_text(&mut xiaohe, "nihc");
     check(
         &mut checks,
         "自定义短语双拼",
         first(&xiaohe) == "你好",
         format!("候选 = {:?}", xiaohe.candidates()),
+    );
+    // 编码带隔音符时同时建立简拼索引;全拼方案的 `nh` 也要命中。
+    let mut initials = engine(SchemeId::Full, false, modules, shared());
+    type_text(&mut initials, "nh");
+    check(
+        &mut checks,
+        "自定义短语简拼",
+        first(&initials) == "你好",
+        format!("候选 = {:?}", initials.candidates()),
     );
 
     // 辅助码:shi + `j 只留五笔码以 j 开头的字(是/时),十(fg)应被筛掉。
