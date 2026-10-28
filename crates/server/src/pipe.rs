@@ -2,7 +2,7 @@
 //! 建法与青简 server 相同:CreateNamedPipeW + ConnectNamedPipe,句柄交给 `File` 管。
 
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -26,6 +26,9 @@ use lueying_protocol::Request;
 use crate::imp::State;
 
 const BUFFER_SIZE: u32 = 64 * 1024;
+/// 一条请求行的上限。DLL 的一行远小于这个数;不发换行的坏对端不能把
+/// 内存撑爆,超限直接断线。
+const MAX_LINE: u64 = 1024 * 1024;
 /// 连接号只增不减;用于区分同一会话的重连与旧连接断开。
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 
@@ -122,16 +125,25 @@ fn serve(file: File, state: Arc<State>) {
         Err(_) => return,
     };
     let mut reader = BufReader::new(file);
-    let mut line = String::new();
+    let mut line = Vec::new();
     let conn = NEXT_CONN.fetch_add(1, Ordering::Relaxed);
     let mut session = None;
     loop {
         line.clear();
-        match reader.read_line(&mut line) {
+        // 单行上限:对端不发换行也不能把内存撑爆;`take` 读满仍没有换行,
+        // 剩下的半行不能当成下一条请求,直接断线。
+        match reader
+            .by_ref()
+            .take(MAX_LINE)
+            .read_until(b'\n', &mut line)
+        {
             Ok(0) | Err(_) => break,
+            Ok(_) if !line.ends_with(b"\n") => break,
             Ok(_) => {}
         }
-        let request = serde_json::from_str::<Request>(line.trim()).ok();
+        let request = std::str::from_utf8(&line)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Request>(text.trim()).ok());
         // Hello 与连接绑定:同一会话重连后,旧连接断开不能删掉新会话。
         if let Some(Request::Hello {
             session: hello_session,
