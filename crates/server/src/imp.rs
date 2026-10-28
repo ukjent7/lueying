@@ -17,7 +17,7 @@ use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
 use lueying_engine::scheme::Scheme;
 use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
-use lueying_features::CustomPhrases;
+use lueying_features::{CustomPhrases, Prediction};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{Model, Rerank};
 use lueying_server::config::{self, AppConfig};
@@ -95,6 +95,8 @@ pub(super) struct State {
     pub(super) modules: Arc<Modules>,
     /// 自定义短语模块;设置重载时重新读文件。
     pub(super) phrases: Option<Arc<CustomPhrases>>,
+    /// 下一词联想模块;设置页直接翻它的开关,不必重建注册表。
+    pub(super) prediction: Arc<Prediction>,
     /// 当前输入方案;设置切换后新会话与现有会话都跟着换。
     pub(super) scheme: RwLock<Arc<dyn Scheme>>,
     /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
@@ -206,6 +208,7 @@ pub(super) fn real_main() {
         Arc::new(CustomPhrases::load(path))
     });
     let scheme = lueying_features::scheme(app_config.scheme, app_config.aux);
+    let prediction = Arc::new(Prediction::with_enabled(app_config.predict));
     let (settle_tx, settle_rx) = mpsc::channel();
     let settle_tx = settled_model.as_ref().map(|_| settle_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
@@ -223,8 +226,9 @@ pub(super) fn real_main() {
         settle_tx,
         uia_tx: Some(uia_tx),
         user,
-        modules: crate::modules::registry(phrases.clone()),
+        modules: crate::modules::registry(phrases.clone(), Arc::clone(&prediction)),
         phrases,
+        prediction,
         scheme: RwLock::new(scheme),
         config: RwLock::new(app_config),
         config_path,
@@ -532,6 +536,7 @@ fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppCon
         .clone();
     let scheme = (old.scheme != cfg.scheme || old.aux != cfg.aux)
         .then(|| lueying_features::scheme(cfg.scheme, cfg.aux));
+    let predict = cfg.predict;
     if let Some(scheme) = &scheme {
         *state.scheme.write().unwrap_or_else(|p| p.into_inner()) = Arc::clone(scheme);
     }
@@ -539,6 +544,7 @@ fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppCon
     if let Some(phrases) = &state.phrases {
         phrases.reload();
     }
+    state.prediction.set_enabled(predict);
     for s in sessions.values_mut() {
         if let Some(scheme) = &scheme {
             s.engine.set_scheme(Arc::clone(scheme));

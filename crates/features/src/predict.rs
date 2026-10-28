@@ -4,18 +4,45 @@
 //! 在下一段输入是它的拼音前缀时作为「联想」候选出现。没有云端请求,也没有
 //! 冷启动语料;用户第一次接某个词后,下一次就能命中。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
 
 /// 每次组合最多补几条联想,避免把首页灌满。
 const MAX_SUGGESTIONS: usize = 3;
 
 /// 下一词联想模块。
-#[derive(Default)]
-pub struct Prediction;
+pub struct Prediction {
+    enabled: AtomicBool,
+}
 
 impl Prediction {
+    /// 默认启用。
     pub fn new() -> Self {
-        Self
+        Self::with_enabled(true)
+    }
+
+    /// 指定初始开关;宿主启动时按配置构造。
+    pub fn with_enabled(enabled: bool) -> Self {
+        Self {
+            enabled: AtomicBool::new(enabled),
+        }
+    }
+
+    /// 设置页切换;常驻服务持有同一个实例,已有会话立即跟随。
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// 当前是否启用。
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for Prediction {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -30,6 +57,9 @@ impl Module for Prediction {
     }
 
     fn candidates(&self, ctx: &CandidateContext<'_>, cands: &mut Vec<Candidate>) {
+        if !self.is_enabled() {
+            return;
+        }
         // 辅助码组合不掺联想:辅码正在筛拼音候选,插进来的词没有字形依据。
         if ctx.raw.contains('`') {
             return;

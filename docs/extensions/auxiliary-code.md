@@ -54,6 +54,6 @@ shi`j
 
 ## 实现位置
 
-- `crates/features/src/aux.rs`:码表、匹配、方案包装。
+- `crates/features/src/aux_code.rs`:码表、匹配、方案包装。
 - `crates/engine/src/input.rs`:`` ` `` 进入组合、候选筛选后的区间扩展。
 - `crates/features/data/wubi.txt`:内置码表。

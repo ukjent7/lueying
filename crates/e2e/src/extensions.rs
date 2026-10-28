@@ -254,13 +254,13 @@ pub fn run(report: &mut String) -> usize {
         format!("未开辅码 = {:?}", plain.candidates()),
     );
     let mut aux = engine(SchemeId::Full, true, Arc::new(Modules::new()), shared());
-    type_text(&mut aux, "shi`j");
+    type_text(&mut aux, "shi`jg");
     let filtered = !has(&aux, "十") && has(&aux, "是");
     check(
         &mut checks,
         "辅助码筛选",
         filtered,
-        format!("shi`j = {:?}", aux.candidates()),
+        format!("shi`jg = {:?}", aux.candidates()),
     );
     let committed = aux
         .process(Key::Space)
@@ -290,7 +290,8 @@ pub fn run(report: &mut String) -> usize {
 
     // 联想:先形成「我 → 学习」的词序,再在上一词是「我」时打 x。
     let user = shared();
-    let modules = lueying_features::registry(None);
+    let prediction = Arc::new(lueying_features::Prediction::new());
+    let modules = lueying_features::registry_with_prediction(None, Arc::clone(&prediction));
     let mut train = engine(SchemeId::Full, false, modules.clone(), Arc::clone(&user));
     type_text(&mut train, "wo");
     let got_wo = commit(&mut train, "我");
@@ -299,7 +300,10 @@ pub fn run(report: &mut String) -> usize {
     type_text(&mut train, "wo");
     let again = commit(&mut train, "我");
     type_text(&mut train, "x");
-    let suggested = has(&train, "学习");
+    let suggested = train
+        .candidates_detailed()
+        .iter()
+        .any(|cand| cand.text == "学习" && cand.hint.as_deref() == Some("联想"));
     check(
         &mut checks,
         "下一词联想",
@@ -311,6 +315,20 @@ pub fn run(report: &mut String) -> usize {
                 .unwrap_or_else(|p| p.into_inner())
                 .key_for_word("学习")
         ),
+    );
+    // 设置页关掉联想后,同一份词序不应再补候选。
+    prediction.set_enabled(false);
+    let mut off = engine(SchemeId::Full, false, modules, Arc::clone(&user));
+    type_text(&mut off, "wo");
+    let _ = commit(&mut off, "我");
+    type_text(&mut off, "x");
+    check(
+        &mut checks,
+        "联想开关",
+        !off.candidates_detailed()
+            .iter()
+            .any(|cand| cand.text == "学习" && cand.hint.as_deref() == Some("联想")),
+        format!("关闭后候选 = {:?}", off.candidates()),
     );
 
     // SDK 注册表:模块声明与方案声明可被宿主枚举。

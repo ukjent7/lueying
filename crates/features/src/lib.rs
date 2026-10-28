@@ -3,14 +3,14 @@
 //! 这些能力都通过 [`lueying_ext`] 的公开契约接入,核心引擎只保留全拼、
 //! 候选生成与学习。宿主按配置选择方案并注册模块。
 
-pub mod aux;
+pub mod aux_code;
 pub mod phrases;
 pub mod predict;
 pub mod shuangpin;
 
 use std::sync::Arc;
 
-pub use aux::{AuxCode, AuxLookup, AuxScheme};
+pub use aux_code::{AuxCode, AuxLookup, AuxScheme};
 pub use phrases::CustomPhrases;
 pub use predict::Prediction;
 pub use shuangpin::Shuangpin;
@@ -81,13 +81,22 @@ pub fn scheme(id: SchemeId, aux: bool) -> Arc<dyn Scheme> {
     }
 }
 
-/// 组合第一批内置模块。自定义短语按宿主给出的文件创建;联想始终启用。
+/// 组合第一批内置模块。自定义短语按宿主给出的文件创建;联想默认启用。
 pub fn registry(phrases: Option<Arc<CustomPhrases>>) -> Arc<Modules> {
+    registry_with_prediction(phrases, Arc::new(Prediction::new()))
+}
+
+/// 与 [`registry`] 相同,但由宿主持有联想开关,设置变更时无需重建注册表。
+pub fn registry_with_prediction(
+    phrases: Option<Arc<CustomPhrases>>,
+    prediction: Arc<Prediction>,
+) -> Arc<Modules> {
     let mut modules = Modules::new();
     if let Some(phrases) = phrases {
         let module: Arc<dyn Module> = phrases;
         modules = modules.register(module);
     }
-    modules = modules.register(Arc::new(Prediction::new()));
+    let module: Arc<dyn Module> = prediction;
+    modules = modules.register(module);
     Arc::new(modules)
 }

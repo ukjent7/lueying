@@ -42,7 +42,7 @@ mod imp {
     use windows::core::{HSTRING, PCWSTR, PWSTR};
 
     const WIDTH: f32 = 460.0;
-    /// 四组设置 + 页脚;650 逻辑像素在 768p、150% 缩放下也放得下。
+    /// 四组设置 + 页脚;650 逻辑像素在 1080p 上留有余量,小屏按窗口高度收缩。
     const HEIGHT: f32 = 650.0;
 
     #[derive(Clone)]
@@ -82,6 +82,7 @@ mod imp {
         Traditional,
         Region,
         PageSize,
+        Prediction,
         ResetFuzzy,
         Fuzzy,
         ImportUser,
@@ -92,7 +93,7 @@ mod imp {
         Save,
     }
 
-    const KBD_ORDER: [Kbd; 16] = [
+    const KBD_ORDER: [Kbd; 17] = [
         Kbd::Update,
         Kbd::Scheme,
         Kbd::Aux,
@@ -101,6 +102,7 @@ mod imp {
         Kbd::Traditional,
         Kbd::Region,
         Kbd::PageSize,
+        Kbd::Prediction,
         Kbd::ResetFuzzy,
         Kbd::Fuzzy,
         Kbd::ImportUser,
@@ -129,6 +131,8 @@ mod imp {
         focus: FocusHandle,
         /// 键盘焦点在 KBD_ORDER 里的下标;None 表示没有键盘焦点。
         kbd: Option<usize>,
+        /// 按屏幕逻辑高度收缩后的窗口高度。
+        height: f32,
     }
 
     pub(super) fn run() {
@@ -148,12 +152,14 @@ mod imp {
                     GetSystemMetrics(SM_CYSCREEN) as f32,
                 )
             };
+            // 小屏或高缩放下按可用高度收缩,卡片内部滚动,页脚始终可见。
+            let height = HEIGHT.min((screen.1 / scale - 24.0).max(480.0));
             let bounds = Bounds {
                 origin: Point::new(
                     px(((screen.0 / scale - WIDTH) / 2.0).max(0.0)),
-                    px(((screen.1 / scale - HEIGHT) / 2.0).max(0.0)),
+                    px(((screen.1 / scale - height) / 2.0).max(0.0)),
                 ),
-                size: size(px(WIDTH), px(HEIGHT)),
+                size: size(px(WIDTH), px(height)),
             };
             let path = path.clone();
             let opened = cx.open_window(
@@ -183,6 +189,7 @@ mod imp {
                             updates: UpdateState::Checking,
                             focus: cx.focus_handle(),
                             kbd: None,
+                            height,
                         };
                         panel.check_updates(cx);
                         panel
@@ -291,6 +298,10 @@ mod imp {
                     self.clear_notice();
                 }
                 Kbd::Region | Kbd::PageSize => {}
+                Kbd::Prediction => {
+                    self.cfg.predict = !self.cfg.predict;
+                    self.clear_notice();
+                }
                 Kbd::ResetFuzzy => {
                     if self.groups.iter().any(|(_, count)| *count > 0) {
                         match call(&Request::ResetFuzzy) {
@@ -530,8 +541,8 @@ mod imp {
     fn section_label(title: &'static str, colors: theme::Colors, first: bool) -> impl IntoElement {
         div()
             .px(px(14.0))
-            .pt(px(8.0))
-            .pb(px(3.0))
+            .pt(px(7.0))
+            .pb(px(2.0))
             .when(!first, |el| {
                 el.border_t_1().border_color(rgb(colors.border))
             })
@@ -553,7 +564,7 @@ mod imp {
             .items_center()
             .justify_between()
             .gap_3()
-            .h(px(40.0))
+            .h(px(39.0))
             .px(px(14.0))
             .when(!last, |el| el.border_b_1().border_color(rgb(colors.border)))
             .child(
@@ -905,7 +916,7 @@ mod imp {
                 .child(section_label("输入", colors, true))
                 .child(setting_row(
                     "输入方案",
-                    "全拼或双拼,共享学习词库",
+                    "全拼或双拼,共享词库",
                     scheme_control,
                     colors,
                     false,
@@ -993,6 +1004,23 @@ mod imp {
                     "每页候选数",
                     "按屏幕宽度选择",
                     page_control,
+                    colors,
+                    false,
+                ))
+                .child(setting_row(
+                    "下一词联想",
+                    "按本机上屏词序补全",
+                    toggle(
+                        "prediction",
+                        self.cfg.predict,
+                        self.kbd_is(Kbd::Prediction),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.cfg.predict = !this.cfg.predict;
+                            this.clear_notice();
+                            cx.notify();
+                        }),
+                    ),
                     colors,
                     false,
                 ))
@@ -1244,7 +1272,7 @@ mod imp {
                 .gap(px(10.0))
                 .p(px(18.0))
                 .w(px(WIDTH))
-                .h(px(HEIGHT))
+                .h(px(self.height))
                 .bg(rgb(colors.bg))
                 .text_color(rgb(colors.text))
                 .track_focus(&self.focus)
@@ -1291,8 +1319,16 @@ mod imp {
                     }
                 }))
                 .child(header)
-                .child(card)
-                .child(div().flex_1())
+                .child(
+                    div()
+                        .id("settings-scroll")
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .w_full()
+                        .overflow_y_scroll()
+                        .overflow_x_hidden()
+                        .child(card),
+                )
                 .child(footer)
                 .into_any_element()
         }

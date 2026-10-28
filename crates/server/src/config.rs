@@ -58,6 +58,8 @@ pub struct AppConfig {
     pub scheme: SchemeId,
     /// 在拼音后按 `` ` `` 打 1–2 位五笔辅码。
     pub aux: bool,
+    /// 按本机上屏词序补全下一词。
+    pub predict: bool,
 }
 
 impl Default for AppConfig {
@@ -72,6 +74,7 @@ impl Default for AppConfig {
             region: Region::General,
             scheme: SchemeId::Full,
             aux: false,
+            predict: true,
         }
     }
 }
@@ -168,6 +171,11 @@ pub fn load(path: &Path) -> AppConfig {
                     cfg.aux = on;
                 }
             }
+            "predict" | "prediction" => {
+                if let Some(on) = flag(value) {
+                    cfg.predict = on;
+                }
+            }
             // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
             // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
             "fuzzy" => match value {
@@ -194,6 +202,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          traditional_region={}\n\
          scheme={}\n\
          aux_code={}\n\
+         predict={}\n\
          fuzzy={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -202,6 +211,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.region.as_str(),
         cfg.scheme.as_str(),
         cfg.aux,
+        cfg.predict,
         if cfg.fuzzy.is_off() { "off" } else { "auto" },
     );
     let tmp = path.with_extension("ini.tmp");
