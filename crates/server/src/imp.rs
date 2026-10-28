@@ -159,9 +159,7 @@ fn output_redirected() -> bool {
 /// (自动化测试)保持原样。失败时保留 [`attach_null_stdio`] 设好的 NUL 句柄。
 fn attach_log_stdio() -> bool {
     use std::os::windows::io::AsRawHandle;
-    use windows::Win32::System::Console::{
-        STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
-    };
+    use windows::Win32::System::Console::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
 
     const LIMIT: u64 = 1024 * 1024;
     let Some(path) = log_path() else {
@@ -192,7 +190,10 @@ fn attach_log_stdio() -> bool {
     }
     // 句柄要用到进程结束,不能随局部变量关闭。
     std::mem::forget(file);
-    println!("\n--- lueying-server {} 启动 ---", env!("CARGO_PKG_VERSION"));
+    println!(
+        "\n--- lueying-server {} 启动 ---",
+        env!("CARGO_PKG_VERSION")
+    );
     true
 }
 
