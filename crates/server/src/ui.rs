@@ -16,20 +16,19 @@ use gpui::{
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
-use lueying_server::config::{UiFont, UiLayout};
+use lueying_server::config::{UiBackend, UiFont, UiLayout};
 use lueying_server::theme;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
-    MonitorFromPoint,
-};
-use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SetWindowLongPtrW,
+    SetWindowPos, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+};
+
+// 摆位、DPI 与会话快照助手在 `ui_place`;这里再导出给子模块徽标用。
+pub(crate) use crate::ui_place::{
+    CARET_GAP, composing, foreground_fullscreen_at, in_composition, park, park_point,
+    primary_work_area, scale_at, snapshot, ui_options, work_area_at,
 };
 
 #[path = "ui_hud.rs"]
@@ -46,16 +45,12 @@ const MAX_WIDTH: f32 = 680.0;
 const MAX_TEXT_WIDTH: f32 = MAX_WIDTH - 190.0;
 const PREEDIT_H: f32 = 32.0;
 const ROW_H: f32 = 34.0;
-/// 候选窗与光标之间留一点呼吸,不贴着字形下缘。
-const CARET_GAP: f32 = 4.0;
 /// 面板底部的内边距。
 const PANEL_PAD_B: f32 = 6.0;
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
 /// 右键菜单高度:两项各 26px 加内边距,翻转判断用。
 const MENU_H: f32 = 64.0;
-/// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
-const PARK_GAP: i32 = 2000;
 /// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
 const SHOW_FADE: Duration = Duration::from_millis(140);
 const SHOW_START_OPACITY: f32 = 0.45;
@@ -71,46 +66,77 @@ const HUD_FADE: Duration = Duration::from_millis(180);
 const HUD_TOTAL: Duration = Duration::from_millis(780);
 
 pub(super) fn run(state: Arc<State>) {
+    // 渲染后端开关:默认 GPUI;`ui_backend=skia` 时候选窗走 Skia 线程,
+    // 本进程的 gpui 只保留模式徽标(设置窗是独立进程)。改后端要重启服务。
+    let skia = {
+        let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
+        matches!(cfg.ui_backend, UiBackend::Skia)
+    };
     application().run(move |cx: &mut App| {
         let (park_x, park_y) = park_point();
-        let bounds = Bounds {
-            origin: Point::new(px(park_x as f32), px(park_y as f32)),
-            size: size(px(WIDTH), px(PREEDIT_H + ROW_H + PANEL_PAD_B)),
-        };
-        let panel_state = Arc::clone(&state);
-        let handle = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    is_movable: false,
-                    is_resizable: false,
-                    is_minimizable: false,
-                    kind: WindowKind::PopUp,
-                    ..Default::default()
-                },
-                |_, cx| {
-                    cx.new(|_| CandidatePanel {
-                        state: panel_state,
-                        styled: Cell::new(false),
-                        last: RefCell::new(None),
-                        fading: Cell::new(None),
-                        above: Cell::new(None),
-                        page: Cell::new(None),
-                        slide: Cell::new(None),
-                        slide_serial: Cell::new(0),
-                        reduce: Cell::new(false),
-                        menu: RefCell::new(None),
-                        panel_h: Cell::new(0.0),
-                    })
-                },
-            )
-            .expect("候选窗打开失败");
-        // 建窗后先摆一次:补上无焦点/工具窗样式并挪出屏幕。只等首个按键
-        // 才摆位的话,候选窗在 Alt+Tab/任务栏里会以普通窗口出现一次。
-        let _ = handle.update(cx, |panel: &mut CandidatePanel, window, _| {
-            panel.place(window);
-        });
+        if skia {
+            crate::ui_skia::spawn(Arc::clone(&state));
+        } else {
+            let bounds = Bounds {
+                origin: Point::new(px(park_x as f32), px(park_y as f32)),
+                size: size(px(WIDTH), px(PREEDIT_H + ROW_H + PANEL_PAD_B)),
+            };
+            let panel_state = Arc::clone(&state);
+            let handle = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        focus: false,
+                        is_movable: false,
+                        is_resizable: false,
+                        is_minimizable: false,
+                        kind: WindowKind::PopUp,
+                        ..Default::default()
+                    },
+                    |_, cx| {
+                        cx.new(|_| CandidatePanel {
+                            state: panel_state,
+                            styled: Cell::new(false),
+                            last: RefCell::new(None),
+                            fading: Cell::new(None),
+                            above: Cell::new(None),
+                            page: Cell::new(None),
+                            slide: Cell::new(None),
+                            slide_serial: Cell::new(0),
+                            reduce: Cell::new(false),
+                            menu: RefCell::new(None),
+                            panel_h: Cell::new(0.0),
+                        })
+                    },
+                )
+                .expect("候选窗打开失败");
+            // 建窗后先摆一次:补上无焦点/工具窗样式并挪出屏幕。只等首个按键
+            // 才摆位的话,候选窗在 Alt+Tab/任务栏里会以普通窗口出现一次。
+            let _ = handle.update(cx, |panel: &mut CandidatePanel, window, _| {
+                panel.place(window);
+            });
+            // 轮询版本号,变了才摆位刷新;15ms 对打字反馈无感。
+            let poll = Arc::clone(&state);
+            cx.spawn(async move |cx| {
+                let mut last = 0u64;
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(15))
+                        .await;
+                    let version = poll.version.load(Ordering::Relaxed);
+                    let changed = version != last;
+                    last = version;
+                    let _ = handle.update(cx, |panel: &mut CandidatePanel, window, cx| {
+                        // 淡出结束也要进来一次:清掉旧内容并把窗口停靠出去。
+                        if changed || panel.tick() {
+                            panel.place(window);
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .detach();
+        }
         // 中英切换徽标:独立小窗,同样无焦点、置顶、鼠标穿透。
         let hud_state = Arc::clone(&state);
         let hud = cx
@@ -133,27 +159,6 @@ pub(super) fn run(state: Arc<State>) {
         let _ = hud.update(cx, |hud: &mut ModeHudPanel, window, _| {
             hud.place(window);
         });
-        // 轮询版本号,变了才摆位刷新;15ms 对打字反馈无感。
-        let poll = Arc::clone(&state);
-        cx.spawn(async move |cx| {
-            let mut last = 0u64;
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(15))
-                    .await;
-                let version = poll.version.load(Ordering::Relaxed);
-                let changed = version != last;
-                last = version;
-                let _ = handle.update(cx, |panel: &mut CandidatePanel, window, cx| {
-                    // 淡出结束也要进来一次:清掉旧内容并把窗口停靠出去。
-                    if changed || panel.tick() {
-                        panel.place(window);
-                        cx.notify();
-                    }
-                });
-            }
-        })
-        .detach();
         // 徽标只在切换后短暂显示;淡出期间 15ms 重绘一次透明度。
         cx.spawn(async move |cx| {
             loop {
@@ -173,13 +178,6 @@ pub(super) fn run(state: Arc<State>) {
         })
         .detach();
     });
-}
-
-/// 激活会话且在组合中才有窗口内容。宿主接管候选绘制时让位。
-fn snapshot(state: &State) -> Option<SessionView> {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    (!session.host_draws && session.engine.composition().is_some()).then(|| session.view.clone())
 }
 
 /// 候选行的字号与行高;随「候选字号」档位缩放,拼音行保持小字。
@@ -207,28 +205,6 @@ impl Metrics {
     fn visual_row(&self) -> f32 {
         self.row - 4.0
     }
-}
-
-/// 读取候选窗显示设置(排列、字号、主题色)。
-fn ui_options(state: &State) -> (UiLayout, UiFont, usize) {
-    let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
-    (cfg.ui_layout, cfg.ui_font, cfg.ui_accent)
-}
-
-/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。宿主接管候选绘制时同样算组合中。
-fn in_composition(state: &State) -> bool {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    sessions
-        .get(&state.active.load(Ordering::Relaxed))
-        .is_some_and(|s| s.engine.composition().is_some())
-}
-
-/// 服务端候选窗在显示;宿主接管绘制时让位。
-fn composing(state: &State) -> bool {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    sessions
-        .get(&state.active.load(Ordering::Relaxed))
-        .is_some_and(|s| !s.host_draws && s.engine.composition().is_some())
 }
 
 /// 从 gpui 窗口取原生 HWND;窗口系统不是 Win32 时返回 None。
@@ -395,21 +371,6 @@ impl CandidatePanel {
                 let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
             }
         }
-    }
-}
-
-/// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。
-fn park(hwnd: HWND, x: i32, y: i32) {
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            x,
-            y,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOSIZE,
-        );
     }
 }
 
@@ -669,110 +630,6 @@ fn page_arrow(
             }
         })
         .child(label)
-}
-
-/// 虚拟桌面左缘之外的停靠点。固定负坐标会落在左侧副屏上,露出空白候选窗。
-fn park_point() -> (i32, i32) {
-    let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
-    (left.saturating_sub(PARK_GAP), top)
-}
-
-fn monitor_at(x: i32, y: i32) -> HMONITOR {
-    unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) }
-}
-
-fn monitor_info_at(x: i32, y: i32) -> Option<MONITORINFO> {
-    monitor_info(monitor_at(x, y))
-}
-
-fn monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
-    if monitor.is_invalid() {
-        return None;
-    }
-    let mut info = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    unsafe { GetMonitorInfoW(monitor, &mut info) }
-        .as_bool()
-        .then_some(info)
-}
-
-/// 主屏工作区;没有光标位置时徽标退到这里的下三分之一处。
-fn primary_work_area() -> RECT {
-    let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-    monitor_info(monitor).map_or(
-        RECT {
-            left: 0,
-            top: 0,
-            right: 1920,
-            bottom: 1080,
-        },
-        |info| info.rcWork,
-    )
-}
-
-/// 光标所在显示器的缩放比例;取不到时按 100%。
-fn scale_at(x: i32, y: i32) -> f32 {
-    let monitor = monitor_at(x, y);
-    if monitor.is_invalid() {
-        return 1.0;
-    }
-    let mut dpi_x = 0u32;
-    let mut dpi_y = 0u32;
-    if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.is_ok()
-        && dpi_x > 0
-    {
-        dpi_x as f32 / 96.0
-    } else {
-        1.0
-    }
-}
-
-/// 光标所在显示器的工作区(物理像素);取不到时给常见主屏兜底。
-fn work_area_at(x: i32, y: i32) -> RECT {
-    monitor_info_at(x, y).map_or(
-        RECT {
-            left: 0,
-            top: 0,
-            right: 1920,
-            bottom: 1080,
-        },
-        |info| info.rcWork,
-    )
-}
-
-/// 前台窗口是否铺满光标所在显示器。最大化窗口不算(任务栏仍在),
-/// 这样 F11/独占全屏游戏不弹候选窗,普通最大化应用照常输入。
-/// `host_pid` 是当前输入会话的宿主进程:它自己的全屏窗口仍要显示候选窗。
-fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground.is_invalid()
-        || !unsafe { IsWindowVisible(foreground) }.as_bool()
-        || unsafe { IsZoomed(foreground) }.as_bool()
-    {
-        return false;
-    }
-    if host_pid != 0 {
-        let mut pid = 0u32;
-        unsafe { GetWindowThreadProcessId(foreground, Some(&mut pid)) };
-        if pid == host_pid {
-            return false;
-        }
-    }
-    let mut rect = RECT::default();
-    if unsafe { GetWindowRect(foreground, &mut rect) }.is_err() {
-        return false;
-    }
-    let Some(info) = monitor_info_at(x, y) else {
-        return false;
-    };
-    let screen = info.rcMonitor;
-    rect.left <= screen.left
-        && rect.top <= screen.top
-        && rect.right >= screen.right
-        && rect.bottom >= screen.bottom
 }
 
 impl Render for CandidatePanel {

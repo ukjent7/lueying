@@ -29,4 +29,10 @@ mod uia;
 mod ui;
 
 #[cfg(windows)]
+mod ui_place;
+
+#[cfg(windows)]
+mod ui_skia;
+
+#[cfg(windows)]
 mod user_store;

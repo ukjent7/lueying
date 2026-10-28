@@ -127,6 +127,31 @@ impl UiFont {
     }
 }
 
+/// 候选窗渲染后端。GPUI 是当前默认;Skia 路线在 parity 完成前属于实验
+/// 开关(隐藏配置键),改动需重启服务进程生效。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UiBackend {
+    #[default]
+    Gpui,
+    Skia,
+}
+
+impl UiBackend {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "skia" => Self::Skia,
+            _ => Self::Gpui,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Gpui => "gpui",
+            Self::Skia => "skia",
+        }
+    }
+}
+
 /// 更新渠道。稳定只认正式 Release;测试跟进预发布。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Channel {
@@ -190,6 +215,8 @@ pub struct AppConfig {
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
     pub ui_accent: usize,
+    /// 候选窗渲染后端:GPUI 或 Skia 实验路线。
+    pub ui_backend: UiBackend,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -212,6 +239,7 @@ impl Default for AppConfig {
             ui_layout: UiLayout::Horizontal,
             ui_font: UiFont::Standard,
             ui_accent: 0,
+            ui_backend: UiBackend::Gpui,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -364,6 +392,9 @@ pub fn load(path: &Path) -> AppConfig {
             "update_channel" | "channel" => {
                 cfg.update_channel = Channel::from_str(value);
             }
+            "ui_backend" | "backend" => {
+                cfg.ui_backend = UiBackend::from_str(value);
+            }
             _ => {}
         }
     }
@@ -482,6 +513,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          ui_layout={}\n\
          ui_font={}\n\
          ui_accent={}\n\
+         ui_backend={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -495,6 +527,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.ui_layout.as_str(),
         cfg.ui_font.as_str(),
         cfg.ui_accent,
+        cfg.ui_backend.as_str(),
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");

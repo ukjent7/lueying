@@ -225,6 +225,19 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
     Ok(format!("## 全角模式\n\nPASS,文本 `{text}`"))
 }
 
+/// Skia 渲染管线自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建窗出帧并
+/// 读回像素,结论写进日志;这里读日志断言,D3D12/DComp 断链直接红。
+pub(super) fn check_skia_selftest() -> Result<String, String> {
+    let text = std::fs::read_to_string(server_log()).unwrap_or_default();
+    match text.lines().find(|line| line.contains("SKIA 自检")) {
+        Some(line) if line.contains("通过") => {
+            Ok(format!("## Skia 渲染管线\n\nPASS,{line}"))
+        }
+        Some(line) => Err(format!("Skia 自检失败:{line}")),
+        None => Err("Server 日志里没有 Skia 自检记录".into()),
+    }
+}
+
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。
 pub(super) fn check_preserved_punct(data: &std::path::Path) -> Result<(), String> {
     const VK_CONTROL: u16 = 0x11;

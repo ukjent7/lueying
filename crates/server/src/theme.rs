@@ -34,6 +34,26 @@ impl Appearance {
             Self::Light
         }
     }
+
+    /// 无 gpui 窗口的路径(Skia 候选窗)用:注册表读系统浅色/深色,
+    /// 读不到按浅色。高对比度的判定与 `of` 相同。
+    pub fn of_system() -> Self {
+        if high_contrast() {
+            Self::HighContrast
+        } else if apps_use_light() {
+            Self::Light
+        } else {
+            Self::Dark
+        }
+    }
+}
+
+/// `AppsUseLightTheme`:0 表示系统应用走深色;键或值读不到时按浅色处理。
+fn apps_use_light() -> bool {
+    windows_registry::CURRENT_USER
+        .open("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+        .and_then(|key| key.get_u32("AppsUseLightTheme"))
+        .map_or(true, |value| value != 0)
 }
 
 /// 候选窗主题色预设。`light`/`dark` 各是 [accent, accent_hover,

@@ -11,7 +11,7 @@ lueying_tsf.dll(薄壳,每个宿主进程一份)
     ▼
 lueying-server.exe(常驻)
     ├─ 引擎会话(每宿主线程一个,共享词典/gram/用户词库)
-    ├─ 候选窗 + 模式徽标(GPUI,无焦点置顶浮层)
+    ├─ 候选窗 + 模式徽标(无焦点置顶浮层;GPUI 默认,`ui_backend=skia` 走 Skia)
     ├─ UIA 左邻文本回退线程 / 25M 停顿重排线程
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
 lueying-settings.exe(设置窗,经管道与 Server 通信)
@@ -64,6 +64,14 @@ GPUI 窗口即面板矩形(Windows 上按矩形命中,非 WS_EX_LAYERED);空闲�
 预设只改强调色,高对比度主题始终用系统色。窗口宽度按全部候选估宽,高度按
 当前页行数估算,随 DPI 每显示器计算。动效:展开 140ms、上屏淡出 90ms、
 翻页 90ms 横向滑动,全部可被按键打断,「减少动态效果」时走终态。
+
+渲染后端可切:`ui_backend=gpui|skia`(config.ini 隐藏键,默认 gpui,改动需重启
+服务)。Skia 路线(`ui_skia`)是分阶段迁移的窗口骨架:独立线程的 Win32 无焦点
+窗 + DirectComposition 交换链 + Ganesh-D3D12(无 D3D12 硬件退 WARP,建不出
+设备时放弃候选窗、输入照常),摆位/DPI/全屏避让与 GPUI 路径共用 `ui_place`;
+绘制在平台无关的 `lueying-render`(Linux E2E 光栅像素断言),Windows CI 以
+`LUEYING_SKIA_SELFTEST` 自检整条管线。淡出/翻页滑动/鼠标交互还没搬过来,
+补齐 parity 前默认保持 GPUI。
 
 ## 更新
 

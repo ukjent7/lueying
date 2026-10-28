@@ -203,6 +203,8 @@ fn real_run() -> Result<(String, String), String> {
         .env("APPDATA", &data)
         // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
         .env("LUEYING_SERVER_NO_UI", "1")
+        // Skia 渲染管线自检:建窗、Ganesh-D3D12 出帧、读回像素,结果写日志。
+        .env("LUEYING_SKIA_SELFTEST", "1")
         // UIA 回退的运行痕迹默认静默;E2E 要断言这条链路真的在跑。
         .env("LUEYING_DEBUG_UIA", "1")
         .stdout(std::process::Stdio::from(out))
@@ -455,6 +457,8 @@ fn real_run() -> Result<(String, String), String> {
         // 组合里 Ctrl+Backspace 由输入法按音节删除,不能漏给宿主去改文档。
         let segment_note = check_segment_edit(edit, &thread_mgr)?;
         let fullwidth_note = check_fullwidth(edit)?;
+        // Skia 管线自检结论在启动日志里;读不到或失败都让整轮红。
+        let skia_note = check_skia_selftest()?;
         // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
         // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
         let keys = key_latency(edit, &log)?;
@@ -463,7 +467,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{keys}\n\n{memory}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{keys}\n\n{memory}"
             ),
         ))
     })();
