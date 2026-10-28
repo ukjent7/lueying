@@ -137,10 +137,78 @@ fn attach_null_stdio() {
     std::mem::forget(nul);
 }
 
+/// 服务日志文件(`%LOCALAPPDATA%\lueying\logs\server.log`)。
+fn log_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    Some(base.join("lueying").join("logs").join("server.log"))
+}
+
+/// 标准输出已经被调用方重定向(E2E 把 stdout 收进自己的日志)时不再接管。
+fn output_redirected() -> bool {
+    use windows::Win32::System::Console::{GetStdHandle, STD_OUTPUT_HANDLE};
+    let Ok(handle) = (unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }) else {
+        return false;
+    };
+    !handle.is_invalid() && !handle.0.is_null()
+}
+
+/// 把标准输出与错误接到日志文件;超过 1 MB 先滚动一份。
+///
+/// 服务以「无句柄」方式被拉起时,`println!` 的启动与降级信息原本全进 NUL。
+/// 接到文件以后,启动、降级与 panic 才有据可查;调用方显式接管标准输出时
+/// (自动化测试)保持原样。失败时保留 [`attach_null_stdio`] 设好的 NUL 句柄。
+fn attach_log_stdio() -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::System::Console::{
+        STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+
+    const LIMIT: u64 = 1024 * 1024;
+    let Some(path) = log_path() else {
+        return false;
+    };
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > LIMIT) {
+        let old = path.with_file_name("server.log.1");
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::rename(&path, &old);
+    }
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return false;
+    };
+    let handle = HANDLE(file.as_raw_handle());
+    unsafe {
+        let _ = SetStdHandle(STD_OUTPUT_HANDLE, handle);
+        let _ = SetStdHandle(STD_ERROR_HANDLE, handle);
+    }
+    // 句柄要用到进程结束,不能随局部变量关闭。
+    std::mem::forget(file);
+    println!("\n--- lueying-server {} 启动 ---", env!("CARGO_PKG_VERSION"));
+    true
+}
+
+/// 服务只把标准输出当日志:先把空句柄接到 NUL,再尽量改接到文件。
+fn attach_stdio() {
+    if output_redirected() {
+        return;
+    }
+    attach_null_stdio();
+    attach_log_stdio();
+}
+
 pub(super) fn real_main() {
     // 安装器/TSF 用「不继承句柄」的方式拉起服务,标准句柄为空;而 println!
-    // 在写失败时会 panic。服务只把标准输出当日志,先统一接到 NUL。
-    attach_null_stdio();
+    // 在写失败时会 panic。先统一接到 NUL,再尽量接到日志文件。
+    attach_stdio();
     // 候选窗坐标来自 TSF 的物理像素光标矩形;进程必须 Per-Monitor V2,
     // 否则 SetWindowPos 会被系统按 96 DPI 虚拟化,副屏与高缩放下会偏移。
     unsafe {

@@ -159,8 +159,14 @@ fn serve(file: File, state: Arc<State>) {
             .map(|req| {
                 // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
                 catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
-                    |_| {
-                        eprintln!("请求处理 panic,已回中性应答");
+                    |payload| {
+                        // 服务日志已接到文件,panic 内容要落盘,否则只剩一句「出错了」。
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or(payload.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("<非字符串 panic>");
+                        eprintln!("请求处理 panic,已回中性应答:{msg}");
                         crate::imp::neutral(&state)
                     },
                 )
