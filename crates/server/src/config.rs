@@ -124,6 +124,12 @@ pub fn phrases_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("phrases.txt"))
 }
 
+/// 服务日志路径(`%LOCALAPPDATA%\lueying\logs\server.log`)。
+pub fn log_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    Some(base.join("lueying").join("logs").join("server.log"))
+}
+
 /// 读配置;文件缺失或坏行都退回默认值。
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();

@@ -28,9 +28,10 @@ mod imp {
     use lueying_server::config::{self, AppConfig, Region};
     use lueying_server::theme;
     use lueying_server::update::{self, Check, Release};
+    use windows::Win32::System::SystemInformation::GetLocalTime;
     use windows::Win32::UI::Controls::Dialogs::{
         GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT,
-        OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
+        OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     use windows::Win32::UI::HiDpi::{
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, SetProcessDpiAwarenessContext,
@@ -89,11 +90,12 @@ mod imp {
         ExportUser,
         Phrases,
         ClearUser,
+        Diagnostics,
         Close,
         Save,
     }
 
-    const KBD_ORDER: [Kbd; 17] = [
+    const KBD_ORDER: [Kbd; 18] = [
         Kbd::Update,
         Kbd::Scheme,
         Kbd::Aux,
@@ -109,6 +111,7 @@ mod imp {
         Kbd::ExportUser,
         Kbd::Phrases,
         Kbd::ClearUser,
+        Kbd::Diagnostics,
         Kbd::Close,
         Kbd::Save,
     ];
@@ -324,6 +327,7 @@ mod imp {
                 Kbd::ImportUser => self.import_user(),
                 Kbd::ExportUser => self.export_user(),
                 Kbd::Phrases => self.open_phrases(),
+                Kbd::Diagnostics => self.export_diagnostics(),
                 Kbd::ClearUser => {
                     if self.confirm_clear {
                         self.confirm_clear = false;
@@ -369,6 +373,51 @@ mod imp {
                     Err(e) => self.say(Notice::Error, format!("导出失败: {e}")),
                 },
                 None => self.say(Notice::Error, "输入法服务未运行,启动后再试"),
+            }
+        }
+
+        /// 版本、配置、模糊组统计与服务日志末尾拼成一份报告,贴给排障用。
+        fn export_diagnostics(&mut self) {
+            self.confirm_clear = false;
+            let Some(path) = choose_diag_file() else {
+                return;
+            };
+            let log = config::log_path().and_then(|path| std::fs::read(path).ok());
+            let (note, tail) = match &log {
+                Some(bytes) => ("", tail_text(bytes, 64 * 1024)),
+                None => ("(没有找到服务日志)\n", String::new()),
+            };
+            let groups = self
+                .groups
+                .iter()
+                .filter(|(_, count)| *count > 0)
+                .map(|(name, count)| format!("{name} {count}"))
+                .collect::<Vec<_>>();
+            let report = format!(
+                "掠影诊断报告\n\
+                 生成时间: {}\n\
+                 设置窗版本: {}\n\
+                 服务版本: {}\n\
+                 系统: {} / {}\n\
+                 模糊组: {}\n\
+                 配置: {:?}\n\n\
+                 --- 服务日志(末尾 64 KB)---\n\
+                 {note}{tail}\n",
+                local_stamp(),
+                self.current,
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                if groups.is_empty() {
+                    "(无)".to_string()
+                } else {
+                    groups.join(", ")
+                },
+                self.cfg,
+            );
+            match std::fs::write(&path, report) {
+                Ok(()) => self.say(Notice::Success, format!("已导出到 {}", path.display())),
+                Err(e) => self.say(Notice::Error, format!("导出失败: {e}")),
             }
         }
 
@@ -490,36 +539,56 @@ mod imp {
 
     /// 系统文件对话框;取消或失败时返回 None。
     fn choose_user_file(save: bool) -> Option<PathBuf> {
+        choose_file(
+            save,
+            if save { "lueying-user.tsv" } else { "" },
+            if save {
+                "导出用户词库"
+            } else {
+                "导入用户词库"
+            },
+            "用户词库 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0\0",
+            "tsv",
+        )
+    }
+
+    /// 诊断报告的另存对话框。
+    fn choose_diag_file() -> Option<PathBuf> {
+        choose_file(
+            true,
+            "lueying-diag.txt",
+            "导出诊断",
+            "文本文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0\0",
+            "txt",
+        )
+    }
+
+    /// `filter` 自带双 NUL 结尾;标题与扩展名由这里补结尾 NUL。
+    fn choose_file(
+        save: bool,
+        name: &str,
+        title: &str,
+        filter: &str,
+        extension: &str,
+    ) -> Option<PathBuf> {
         let mut buf = [0u16; 1024];
-        if save {
-            for (slot, ch) in buf.iter_mut().zip("lueying-user.tsv".encode_utf16()) {
-                *slot = ch;
-            }
+        for (slot, ch) in buf.iter_mut().zip(name.encode_utf16()) {
+            *slot = ch;
         }
-        let filter: Vec<u16> = "用户词库 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0\0"
-            .encode_utf16()
-            .collect();
-        let title: Vec<u16> = if save {
-            "导出用户词库"
-        } else {
-            "导入用户词库"
-        }
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-        let extension: Vec<u16> = "tsv\0".encode_utf16().collect();
+        let filter: Vec<u16> = filter.encode_utf16().collect();
+        let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        let extension: Vec<u16> = extension.encode_utf16().chain(std::iter::once(0)).collect();
         let mut dialog = OPENFILENAMEW {
             lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
             lpstrFilter: PCWSTR(filter.as_ptr()),
             lpstrFile: PWSTR(buf.as_mut_ptr()),
             nMaxFile: buf.len() as u32,
             lpstrTitle: PCWSTR(title.as_ptr()),
-            Flags: OFN_FILEMUSTEXIST
-                | OFN_PATHMUSTEXIST
+            Flags: OFN_PATHMUSTEXIST
                 | if save {
                     OFN_OVERWRITEPROMPT
                 } else {
-                    OPEN_FILENAME_FLAGS(0)
+                    OFN_FILEMUSTEXIST
                 },
             lpstrDefExt: PCWSTR(extension.as_ptr()),
             ..Default::default()
@@ -536,6 +605,21 @@ mod imp {
         }
         let len = buf.iter().position(|&ch| ch == 0).unwrap_or(buf.len());
         Some(PathBuf::from(String::from_utf16_lossy(&buf[..len])))
+    }
+
+    /// 诊断报告抬头的本地时间。
+    fn local_stamp() -> String {
+        let st = unsafe { GetLocalTime() };
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+        )
+    }
+
+    /// 日志只取末尾一段;截断处可能切在字符中间,按替换字符解码。
+    fn tail_text(bytes: &[u8], limit: usize) -> String {
+        let start = bytes.len().saturating_sub(limit);
+        String::from_utf8_lossy(&bytes[start..]).into_owned()
     }
 
     fn section_label(title: &'static str, colors: theme::Colors, first: bool) -> impl IntoElement {
@@ -1147,6 +1231,25 @@ mod imp {
                                 cx.notify();
                             }),
                         )),
+                    colors,
+                    true,
+                ))
+                .child(section_label("关于", colors, false))
+                .child(setting_row(
+                    "诊断信息",
+                    "版本、配置与服务日志导出成一份文本",
+                    button(
+                        "diagnostics",
+                        "导出",
+                        ButtonKind::Secondary,
+                        true,
+                        self.kbd_is(Kbd::Diagnostics),
+                        colors,
+                        cx.listener(|this, _, _, cx| {
+                            this.export_diagnostics();
+                            cx.notify();
+                        }),
+                    ),
                     colors,
                     true,
                 ));

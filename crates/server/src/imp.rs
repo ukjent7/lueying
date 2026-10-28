@@ -137,16 +137,10 @@ fn attach_null_stdio() {
     std::mem::forget(nul);
 }
 
-/// 服务日志文件(`%LOCALAPPDATA%\lueying\logs\server.log`)。
-fn log_path() -> Option<PathBuf> {
-    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
-    Some(base.join("lueying").join("logs").join("server.log"))
-}
-
 /// 标准输出已经被调用方重定向(E2E 把 stdout 收进自己的日志)时不再接管。
 fn output_redirected() -> bool {
     use windows::Win32::System::Console::{GetStdHandle, STD_OUTPUT_HANDLE};
-    let Ok(handle) = (unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }) else {
+    let Ok(handle) = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) } else {
         return false;
     };
     !handle.is_invalid() && !handle.0.is_null()
@@ -155,14 +149,15 @@ fn output_redirected() -> bool {
 /// 把标准输出与错误接到日志文件;超过 1 MB 先滚动一份。
 ///
 /// 服务以「无句柄」方式被拉起时,`println!` 的启动与降级信息原本全进 NUL。
-/// 接到文件以后,启动、降级与 panic 才有据可查;调用方显式接管标准输出时
-/// (自动化测试)保持原样。失败时保留 [`attach_null_stdio`] 设好的 NUL 句柄。
+/// 接到文件以后,启动、降级与 panic 才有据可查,设置里也能把日志导出去。
+/// 调用方显式接管标准输出时(自动化测试)保持原样;失败时保留
+/// [`attach_null_stdio`] 设好的 NUL 句柄。
 fn attach_log_stdio() -> bool {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::System::Console::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
 
     const LIMIT: u64 = 1024 * 1024;
-    let Some(path) = log_path() else {
+    let Some(path) = config::log_path() else {
         return false;
     };
     let Some(dir) = path.parent() else {
