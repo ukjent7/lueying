@@ -165,8 +165,31 @@ fn pct(values: &mut [f64], p: f64) -> f64 {
     values[((p / 100.0) * (values.len() - 1) as f64).round() as usize]
 }
 
+/// 在候选顺序上模拟一次「提升到首位」,返回期望文本的名次。
+/// `kept` 与 `order` 同长,只有 `eval_texts` 保留的候选占名额。
+fn rank_after(
+    order: &[String],
+    kept: &[bool],
+    promote: Option<usize>,
+    expected: &str,
+) -> Option<usize> {
+    let mut indices: Vec<usize> = (0..order.len())
+        .filter(|&index| kept.get(index).copied().unwrap_or(false))
+        .collect();
+    if let Some(at) = promote.filter(|&at| kept.get(at).copied().unwrap_or(false)) {
+        indices.retain(|&index| index != at);
+        indices.insert(0, at);
+    }
+    indices
+        .into_iter()
+        .position(|index| bench::matches_normalized(&order[index], expected))
+}
+
 /// 一条候选链路的还原:4M 逐键同步、25M 停顿,与产品里的应用顺序一致。
+/// 同时算出「不经过 4M、25M 直接跑在引擎顺序上」的名次,用来判断同步重排
+/// 是否值得:它换来的即时顺序如果让停顿结果也变差,就该让位。
 /// `ms` 是引擎本身的耗时,模型耗时单独统计,避免把两者混进同一列。
+#[allow(clippy::too_many_arguments)]
 fn apply_rerank(
     engine: &mut Engine,
     four: &mut Rerank,
@@ -174,7 +197,8 @@ fn apply_rerank(
     expected: &str,
     four_ms: &mut Vec<f64>,
     five_ms: &mut Vec<f64>,
-) -> (Option<usize>, Option<usize>) {
+    direct_ms: &mut Vec<f64>,
+) -> (Option<usize>, Option<usize>, Option<usize>) {
     // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排。
     if engine
         .candidates_detailed()
@@ -182,9 +206,14 @@ fn apply_rerank(
         .any(|cand| cand.quick || cand.pinned)
     {
         let rank = rank_of(engine, expected);
-        return (rank, rank);
+        return (rank, rank, rank);
     }
     let snap = crate::rerank::snapshot(engine);
+    let kept: Vec<bool> = engine
+        .candidates_detailed()
+        .iter()
+        .map(|cand| !cand.no_learn && !cand.quick)
+        .collect();
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
     let promote = four.decide(&snap.context, &texts, &snap.facts);
@@ -194,16 +223,23 @@ fn apply_rerank(
     }
     let rank4 = rank_of(engine, expected);
 
-    let snap = crate::rerank::snapshot(engine);
-    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let snap_after = crate::rerank::snapshot(engine);
+    let texts: Vec<&str> = snap_after.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let promote = five.decide_settled(&snap_after.context, &texts, &snap_after.facts, &snap_after.fuzzy);
     five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
     if let Some(index) = promote {
         engine.promote(index);
     }
     let rank5 = rank_of(engine, expected);
-    (rank4, rank5)
+
+    // 对照组:同一份 25M,不经过 4M,候选仍是引擎顺序。
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let started = Instant::now();
+    let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    direct_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    let direct = rank_after(&snap.texts, &kept, promote, expected);
+    (rank4, rank5, direct)
 }
 
 pub fn run(
@@ -225,12 +261,16 @@ pub fn run(
     let mut five = models.map(|m| Rerank::new(&m.five));
     let mut four_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
     let mut five_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut direct_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
     let mut four_overall = Metric::default();
     let mut five_overall = Metric::default();
+    let mut direct_overall = Metric::default();
     let mut four_core = Metric::default();
     let mut five_core = Metric::default();
+    let mut direct_core = Metric::default();
     let mut four_ms = Vec::new();
     let mut five_ms = Vec::new();
+    let mut direct_ms = Vec::new();
 
     for case in &cases {
         engine.process(Key::Esc);
@@ -254,13 +294,14 @@ pub fn run(
             core.add(rank, ms);
         }
         if let (Some(four), Some(five)) = (four.as_mut(), five.as_mut()) {
-            let (rank4, rank5) = apply_rerank(
+            let (rank4, rank5, direct) = apply_rerank(
                 &mut engine,
                 four,
                 five,
                 &expected,
                 &mut four_ms,
                 &mut five_ms,
+                &mut direct_ms,
             );
             four_by_category
                 .entry(case.category)
@@ -270,11 +311,17 @@ pub fn run(
                 .entry(case.category)
                 .or_default()
                 .add(rank5, ms);
+            direct_by_category
+                .entry(case.category)
+                .or_default()
+                .add(direct, ms);
             four_overall.add(rank4, ms);
             five_overall.add(rank5, ms);
+            direct_overall.add(direct, ms);
             if case.category != "hard" {
                 four_core.add(rank4, ms);
                 five_core.add(rank5, ms);
+                direct_core.add(direct, ms);
             }
         }
         items.push(Item {
@@ -301,33 +348,40 @@ pub fn run(
     row(&mut text, "核心(daily+frost)", &core);
     row(&mut text, "全量", &overall);
     if models.is_some() {
-        let line = |text: &mut String, label: &str, four: &Metric, five: &Metric| {
+        let line = |text: &mut String,
+                    label: &str,
+                    four: &Metric,
+                    five: &Metric,
+                    direct: &Metric| {
             let _ = writeln!(
                 text,
-                "| {label} | {} | {:.1}% | {:.1}% | {:.1}% |",
+                "| {label} | {} | {:.1}% | {:.1}% | {:.1}% | {:.1}% |",
                 five.n,
                 four.rate(four.top1),
                 five.rate(five.top1),
                 five.rate(five.top5),
+                direct.rate(direct.top1),
             );
         };
         text.push_str(
             "\n### 神经重排(产品链路)\n\n\
-             4M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\n\
-             | 类别 | 条数 | 4M top-1 | +25M top-1 | +25M top-5 |\n\
-             |---|---:|---:|---:|---:|\n",
+             4M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\
+             最后一列是同一份 25M 不经过 4M、直接在引擎顺序上决策的对照。\n\n\
+             | 类别 | 条数 | 4M top-1 | +25M top-1 | +25M top-5 | 仅 25M top-1 |\n\
+             |---|---:|---:|---:|---:|---:|\n",
         );
         for category in four_by_category.keys() {
-            let (Some(four), Some(five)) = (
+            let (Some(four), Some(five), Some(direct)) = (
                 four_by_category.get(*category),
                 five_by_category.get(*category),
+                direct_by_category.get(*category),
             ) else {
                 continue;
             };
-            line(&mut text, *category, four, five);
+            line(&mut text, *category, four, five, direct);
         }
-        line(&mut text, "核心(daily+frost)", &four_core, &five_core);
-        line(&mut text, "全量", &four_overall, &five_overall);
+        line(&mut text, "核心(daily+frost)", &four_core, &five_core, &direct_core);
+        line(&mut text, "全量", &four_overall, &five_overall, &direct_overall);
         let four_p95 = pct(&mut four_ms.clone(), 95.0);
         let five_p95 = pct(&mut five_ms.clone(), 95.0);
         let _ = writeln!(
@@ -404,6 +458,7 @@ pub fn run(
     let rerank_json = if models.is_some() {
         let mut four_times = four_ms.clone();
         let mut five_times = five_ms.clone();
+        let mut direct_times = direct_ms.clone();
         serde_json::json!({
             "4m": {
                 "overall": metric_json(&four_overall),
@@ -416,6 +471,12 @@ pub fn run(
                 "core": metric_json(&five_core),
                 "categories": category_map(&five_by_category),
                 "ms_p95": pct(&mut five_times, 95.0),
+            },
+            "25m_direct": {
+                "overall": metric_json(&direct_overall),
+                "core": metric_json(&direct_core),
+                "categories": category_map(&direct_by_category),
+                "ms_p95": pct(&mut direct_times, 95.0),
             },
         })
     } else {
