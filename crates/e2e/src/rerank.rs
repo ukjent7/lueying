@@ -56,14 +56,15 @@ pub fn load(dir: &Path) -> Result<Models, String> {
     })
 }
 
-struct Snap {
-    context: String,
-    texts: Vec<String>,
-    facts: Vec<Fact>,
-    fuzzy: Vec<bool>,
+/// 候选与事实的一次快照,供同步/停顿重排共用。共享语料基准也走同一条路径。
+pub(crate) struct Snap {
+    pub(crate) context: String,
+    pub(crate) texts: Vec<String>,
+    pub(crate) facts: Vec<Fact>,
+    pub(crate) fuzzy: Vec<bool>,
 }
 
-fn snapshot(engine: &Engine) -> Snap {
+pub(crate) fn snapshot(engine: &Engine) -> Snap {
     let context = engine.context().to_string();
     let cands = engine.candidates_detailed();
     Snap {

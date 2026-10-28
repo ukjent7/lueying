@@ -14,9 +14,11 @@ use std::time::Instant;
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Fuzzy, Key};
+use lueying_engine::{Engine, Fuzzy, Key};
+use lueying_rerank::Rerank;
 
 use crate::bench;
+use crate::rerank::Models;
 
 const CORPUS: &str = include_str!("../../../dicts/eval-shared-v1.tsv");
 const CORPUS_NAME: &str = "shared-v1";
@@ -148,7 +150,68 @@ fn row(text: &mut String, label: &str, metric: &Metric) {
     );
 }
 
-pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) -> usize {
+/// 与 `bench::eval_texts` 同口径的候选排名:快捷项与固定项不占名额。
+fn rank_of(engine: &Engine, expected: &str) -> Option<usize> {
+    bench::eval_texts(engine)
+        .into_iter()
+        .position(|text| bench::matches_normalized(text, expected))
+}
+
+fn pct(values: &mut [f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f64::total_cmp);
+    values[((p / 100.0) * (values.len() - 1) as f64).round() as usize]
+}
+
+/// 一条候选链路的还原:4M 逐键同步、25M 停顿,与产品里的应用顺序一致。
+/// `ms` 是引擎本身的耗时,模型耗时单独统计,避免把两者混进同一列。
+fn apply_rerank(
+    engine: &mut Engine,
+    four: &mut Rerank,
+    five: &mut Rerank,
+    expected: &str,
+    four_ms: &mut Vec<f64>,
+    five_ms: &mut Vec<f64>,
+) -> (Option<usize>, Option<usize>) {
+    // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排。
+    if engine
+        .candidates_detailed()
+        .iter()
+        .any(|cand| cand.quick || cand.pinned)
+    {
+        let rank = rank_of(engine, expected);
+        return (rank, rank);
+    }
+    let snap = crate::rerank::snapshot(engine);
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let started = Instant::now();
+    let promote = four.decide(&snap.context, &texts, &snap.facts);
+    four_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    if let Some(index) = promote {
+        engine.promote(index);
+    }
+    let rank4 = rank_of(engine, expected);
+
+    let snap = crate::rerank::snapshot(engine);
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let started = Instant::now();
+    let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    if let Some(index) = promote {
+        engine.promote(index);
+    }
+    let rank5 = rank_of(engine, expected);
+    (rank4, rank5)
+}
+
+pub fn run(
+    dict: Arc<Dictionary>,
+    gram: Option<Arc<Gram>>,
+    models: Option<&Models>,
+    report: &mut String,
+) -> usize {
     let (cases, malformed) = cases();
     let mut failures = (malformed > 0) as usize + cases.is_empty() as usize;
     let gram_on = gram.is_some();
@@ -157,6 +220,17 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
     let mut overall = Metric::default();
     let mut core = Metric::default();
     let mut items = Vec::with_capacity(cases.len());
+    // 产品链路:4M 逐键同步,25M 停顿。只在提供了模型目录时测量。
+    let mut four = models.map(|m| Rerank::new(&m.four));
+    let mut five = models.map(|m| Rerank::new(&m.five));
+    let mut four_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut five_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut four_overall = Metric::default();
+    let mut five_overall = Metric::default();
+    let mut four_core = Metric::default();
+    let mut five_core = Metric::default();
+    let mut four_ms = Vec::new();
+    let mut five_ms = Vec::new();
 
     for case in &cases {
         engine.process(Key::Esc);
@@ -171,17 +245,44 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
         let rank = candidates
             .iter()
             .position(|text| bench::matches_normalized(text, &expected));
+        let top1 = candidates
+            .first()
+            .map_or(String::new(), |text| (*text).to_string());
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
         if case.category != "hard" {
             core.add(rank, ms);
+        }
+        if let (Some(four), Some(five)) = (four.as_mut(), five.as_mut()) {
+            let (rank4, rank5) = apply_rerank(
+                &mut engine,
+                four,
+                five,
+                &expected,
+                &mut four_ms,
+                &mut five_ms,
+            );
+            four_by_category
+                .entry(case.category)
+                .or_default()
+                .add(rank4, ms);
+            five_by_category
+                .entry(case.category)
+                .or_default()
+                .add(rank5, ms);
+            four_overall.add(rank4, ms);
+            five_overall.add(rank5, ms);
+            if case.category != "hard" {
+                four_core.add(rank4, ms);
+                five_core.add(rank5, ms);
+            }
         }
         items.push(Item {
             category: case.category,
             input: case.input,
             expected: case.expected,
             rank: rank.map_or(-1, |index| index as i64),
-            top1: candidates.first().copied().unwrap_or_default().to_string(),
+            top1,
             ms,
         });
     }
@@ -199,6 +300,40 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
     }
     row(&mut text, "核心(daily+frost)", &core);
     row(&mut text, "全量", &overall);
+    if models.is_some() {
+        let line = |text: &mut String, label: &str, four: &Metric, five: &Metric| {
+            let _ = writeln!(
+                text,
+                "| {label} | {} | {:.1}% | {:.1}% | {:.1}% |",
+                five.n,
+                four.rate(four.top1),
+                five.rate(five.top1),
+                five.rate(five.top5),
+            );
+        };
+        text.push_str(
+            "\n### 神经重排(产品链路)\n\n\
+             4M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\n\
+             | 类别 | 条数 | 4M top-1 | +25M top-1 | +25M top-5 |\n\
+             |---|---:|---:|---:|---:|\n",
+        );
+        for category in four_by_category.keys() {
+            let (Some(four), Some(five)) =
+                (four_by_category.get(*category), five_by_category.get(*category))
+            else {
+                continue;
+            };
+            line(&mut text, *category, four, five);
+        }
+        line(&mut text, "核心(daily+frost)", &four_core, &five_core);
+        line(&mut text, "全量", &four_overall, &five_overall);
+        let four_p95 = pct(&mut four_ms.clone(), 95.0);
+        let five_p95 = pct(&mut five_ms.clone(), 95.0);
+        let _ = writeln!(
+            text,
+            "\n4M 决策 p95 {four_p95:.2} ms,25M 决策 p95 {five_p95:.2} ms。"
+        );
+    }
 
     text.push_str("\n### 判定\n\n| 检查 | 结果 |\n|---|---|\n");
     for (category, min_top1, min_top5) in GATES {
@@ -236,11 +371,55 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
             format!("FAIL: {malformed} 行不是 4 列")
         }
     );
+    if models.is_some() {
+        let base = overall.rate(overall.top1);
+        let settled = five_overall.rate(five_overall.top1);
+        let ok = settled + 2.0 >= base;
+        if !ok {
+            failures += 1;
+        }
+        let _ = writeln!(
+            text,
+            "| 25M 不拖低共享语料 top-1 | {} |",
+            if ok {
+                "PASS".to_string()
+            } else {
+                format!("FAIL: {base:.1}% → {settled:.1}%")
+            }
+        );
+    }
 
     let mut categories_json = serde_json::Map::new();
     for (category, metric) in &by_category {
         categories_json.insert((*category).to_string(), metric_json(metric));
     }
+    let category_map = |by: &BTreeMap<&str, Metric>| {
+        let mut map = serde_json::Map::new();
+        for (category, metric) in by {
+            map.insert((*category).to_string(), metric_json(metric));
+        }
+        map
+    };
+    let rerank_json = if models.is_some() {
+        let mut four_times = four_ms.clone();
+        let mut five_times = five_ms.clone();
+        serde_json::json!({
+            "4m": {
+                "overall": metric_json(&four_overall),
+                "core": metric_json(&four_core),
+                "categories": category_map(&four_by_category),
+                "ms_p95": pct(&mut four_times, 95.0),
+            },
+            "25m": {
+                "overall": metric_json(&five_overall),
+                "core": metric_json(&five_core),
+                "categories": category_map(&five_by_category),
+                "ms_p95": pct(&mut five_times, 95.0),
+            },
+        })
+    } else {
+        serde_json::Value::Null
+    };
     let items_json: Vec<_> = items
         .iter()
         .map(|item| {
@@ -266,6 +445,7 @@ pub fn run(dict: Arc<Dictionary>, gram: Option<Arc<Gram>>, report: &mut String) 
         "categories": categories_json,
         "core": metric_json(&core),
         "overall": metric_json(&overall),
+        "rerank": rerank_json,
         "items": items_json,
     });
     let _ = std::fs::create_dir_all("target");
