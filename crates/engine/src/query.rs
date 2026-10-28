@@ -151,7 +151,9 @@ const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
 const EXACT_PROTECT_MIN_FREQ: u64 = 1;
 /// 整句精确保护允许的落后幅度(对数概率)。整句没有词典频次背书,只有分数
 /// 与首位接近时才说明两种读法都成立;差距过大留给模糊读法。
-const EXACT_SENTENCE_MARGIN: f64 = 3.0;
+/// 3.0 会让「藏书/参数」这类词频差 20–50 倍的精确整句落在门外,放宽到 5.0;
+/// 口音语料与中立难例一起看,若保护了「总过」这类勉强切分就回收。
+const EXACT_SENTENCE_MARGIN: f64 = 5.0;
 /// 签名翻转变体上限;超过后只保留原键与单点翻转,保证至少有一条召回。
 const MAX_SIG_VARIANTS: usize = 32;
 /// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
