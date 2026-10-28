@@ -156,6 +156,11 @@ const EXACT_SENTENCE_MARGIN: f64 = 3.0;
 const MAX_SIG_VARIANTS: usize = 32;
 /// 全拼模糊组合的键数上限;按改动处数截断,原键与单点模糊优先保留。
 const MAX_FUZZY_KEYS: usize = 64;
+/// 超过这个字节数按长句处理。长句每个词都展开 64 种模糊组合时,索引查询
+/// 随音节数放大,首键延迟会被拖到几十毫秒;保留原键与单点模糊已够用。
+const LONG_INPUT_BYTES: usize = 30;
+/// 长句的模糊键上限:原键 + 各位置单点变体,丢掉多点组合。
+const MAX_FUZZY_KEYS_LONG: usize = 8;
 /// 精确整词达到这个频次就不补全;1 表示只要词典里有整词就不猜用户少打了字母。
 const COMPLETION_EXACT_MIN_FREQ: u64 = 1;
 /// 补全只面向词,不面向整句。四音节以上的输入按句子处理,避免长句每次
@@ -353,6 +358,8 @@ struct Querier<'a> {
     /// 与 `cache` 同键:当前输入能匹配上的用户词及最有力的一条记录。
     user_cache: HashMap<String, Rc<HashMap<String, UserMatch>>>,
     exp_cache: HashMap<String, Expansions>,
+    /// 长句只保留单点模糊;短词不受影响。
+    long: bool,
 }
 
 /// 词图节点:一个词典词覆盖 `[start, end)` 这段原始输入。

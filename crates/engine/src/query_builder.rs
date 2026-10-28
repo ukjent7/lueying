@@ -115,6 +115,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         cache: HashMap::new(),
         user_cache: HashMap::new(),
         exp_cache: HashMap::new(),
+        long: raw.len() > LONG_INPUT_BYTES,
     };
     let edges = segment::edges(raw);
     // finish[p]:raw[p..] 能否被音节图切完。词尾落在切不动的位置时,剩下

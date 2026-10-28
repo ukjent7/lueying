@@ -214,6 +214,11 @@ impl Querier<'_> {
             return vec![(typed_key(sylls), 0, 0)];
         }
         let fuzzy = self.fuzzy;
+        let cap = if self.long {
+            MAX_FUZZY_KEYS_LONG
+        } else {
+            MAX_FUZZY_KEYS
+        };
         let mut out = vec![(String::new(), 0usize, 0u8)];
         for t in sylls {
             let exps = self
@@ -233,9 +238,9 @@ impl Querier<'_> {
                 }
             }
             out = next;
-            if out.len() > MAX_FUZZY_KEYS {
+            if out.len() > cap {
                 out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-                out.truncate(MAX_FUZZY_KEYS);
+                out.truncate(cap);
             }
         }
         out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
