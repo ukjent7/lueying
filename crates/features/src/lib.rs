@@ -72,9 +72,7 @@ impl SchemeId {
 pub fn scheme(id: SchemeId, aux: bool) -> Arc<dyn Scheme> {
     let base: Arc<dyn Scheme> = match id {
         SchemeId::Full => Arc::new(FullPinyin),
-        _ => Arc::new(
-            Shuangpin::by_id(id.as_str()).expect("SchemeId 与双拼布局表必须一一对应"),
-        ),
+        _ => Arc::new(Shuangpin::by_id(id.as_str()).expect("SchemeId 与双拼布局表必须一一对应")),
     };
     if aux {
         Arc::new(AuxScheme::new(base, AuxCode::builtin()))

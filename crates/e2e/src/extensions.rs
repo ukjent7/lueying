@@ -44,10 +44,7 @@ fn first(engine: &Engine) -> String {
 }
 
 fn has(engine: &Engine, word: &str) -> bool {
-    engine
-        .candidates()
-        .iter()
-        .any(|text| text.as_str() == word)
+    engine.candidates().iter().any(|text| text.as_str() == word)
 }
 
 fn commit(engine: &mut Engine, word: &str) -> bool {
@@ -60,7 +57,12 @@ fn commit(engine: &mut Engine, word: &str) -> bool {
         .any(|event| matches!(event, Event::Commit(text) if text == word))
 }
 
-fn check(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
+fn check(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    ok: bool,
+    note: String,
+) {
     checks.push((name, ok, note));
 }
 
@@ -199,12 +201,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 运行中切换方案:旧击键不能按新规则继续解释。
-    let mut switching = engine(
-        SchemeId::Full,
-        false,
-        Arc::new(Modules::new()),
-        shared(),
-    );
+    let mut switching = engine(SchemeId::Full, false, Arc::new(Modules::new()), shared());
     type_text(&mut switching, "ni");
     switching.set_scheme(lueying_features::scheme(SchemeId::Xiaohe, false));
     check(
@@ -248,12 +245,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 辅助码:shi + `j 只留五笔码以 j 开头的字(是/时),十(fg)应被筛掉。
-    let mut plain = engine(
-        SchemeId::Full,
-        false,
-        Arc::new(Modules::new()),
-        shared(),
-    );
+    let mut plain = engine(SchemeId::Full, false, Arc::new(Modules::new()), shared());
     type_text(&mut plain, "shi");
     check(
         &mut checks,
@@ -337,7 +329,8 @@ pub fn run(report: &mut String) -> usize {
         format!("{} / {}", aux_manifest.id, aux_manifest.name),
     );
 
-    report.push_str("\n## 扩展:双拼 / 短语 / 辅码 / 联想\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
+    report
+        .push_str("\n## 扩展:双拼 / 短语 / 辅码 / 联想\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0usize;
     for (name, ok, note) in checks {
         if !ok {

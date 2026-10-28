@@ -40,9 +40,7 @@
 pub use lueying_engine::module::{
     CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
 };
-pub use lueying_engine::scheme::{
-    CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest,
-};
+pub use lueying_engine::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
 pub use lueying_engine::{
     Candidate, CivilTime, Config, Engine, Event, Fuzzy, Key, Mode, Script, UserDict,
 };
@@ -54,7 +52,7 @@ pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod prelude {
     pub use crate::{
         Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext, Config,
-        Engine, Event, Expansion, FullPinyin, Fuzzy, Key, Manifest, Mode, Module, Modules, Script,
-        Scheme, SchemeManifest, UserDict, SDK_VERSION,
+        Engine, Event, Expansion, FullPinyin, Fuzzy, Key, Manifest, Mode, Module, Modules,
+        SDK_VERSION, Scheme, SchemeManifest, Script, UserDict,
     };
 }

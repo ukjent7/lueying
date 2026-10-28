@@ -459,11 +459,7 @@ impl UserDict {
                         .or_default()
                         .push(k.to_string());
                 }
-                if self
-                    .word_keys
-                    .get(w)
-                    .is_none_or(|old| old.len() < k.len())
-                {
+                if self.word_keys.get(w).is_none_or(|old| old.len() < k.len()) {
                     self.word_keys.insert(w.to_string(), k.to_string());
                 }
                 changed = true;

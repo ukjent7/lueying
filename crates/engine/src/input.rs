@@ -948,7 +948,9 @@ impl Engine {
         if let Some(filter) = &expansion.filter {
             let mut fallback = built.cands.clone();
             fallback.retain(|cand| cand.full);
-            built.cands.retain(|cand| cand.full && filter.matches(&cand.text));
+            built
+                .cands
+                .retain(|cand| cand.full && filter.matches(&cand.text));
             if built.cands.is_empty() {
                 built.cands = fallback;
             }

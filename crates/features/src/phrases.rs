@@ -76,10 +76,7 @@ impl CustomPhrases {
 
     /// 当前短语条数。
     pub fn len(&self) -> usize {
-        self.phrases
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .len()
+        self.phrases.read().unwrap_or_else(|p| p.into_inner()).len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,11 +117,7 @@ impl Module for CustomPhrases {
         if matched.is_empty() {
             return;
         }
-        matched.sort_by(|a, b| {
-            b.weight
-                .cmp(&a.weight)
-                .then_with(|| a.text.cmp(&b.text))
-        });
+        matched.sort_by(|a, b| b.weight.cmp(&a.weight).then_with(|| a.text.cmp(&b.text)));
         for (index, phrase) in matched.into_iter().enumerate() {
             // 短语优先:同文的词典候选让位,避免首页出现两个完全相同的词。
             cands.retain(|cand| cand.text != phrase.text);

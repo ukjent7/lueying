@@ -60,9 +60,9 @@ impl AuxCode {
     /// 内置五笔表。
     pub fn builtin() -> Arc<Self> {
         static TABLE: OnceLock<Arc<AuxCode>> = OnceLock::new();
-        Arc::clone(TABLE.get_or_init(|| {
-            Arc::new(AuxCode::from_text(include_str!("../data/wubi.txt")))
-        }))
+        Arc::clone(
+            TABLE.get_or_init(|| Arc::new(AuxCode::from_text(include_str!("../data/wubi.txt")))),
+        )
     }
 
     /// 收录的单字数。
@@ -88,7 +88,9 @@ impl AuxLookup for AuxCode {
             return true;
         };
         let Some(second) = chars.next() else {
-            return text.chars().any(|ch| self.starts_with(ch, &first.to_string()));
+            return text
+                .chars()
+                .any(|ch| self.starts_with(ch, &first.to_string()));
         };
         let pair = format!("{first}{second}");
         if text.chars().any(|ch| self.starts_with(ch, &pair)) {
@@ -171,7 +173,9 @@ impl Scheme for AuxScheme {
             }));
         }
         // 辅码段没有查询串对应;补齐契约要求的长度,统一指向基础输入末尾。
-        expansion.raw_to_query.resize(raw.len() + 1, expansion.query.len());
+        expansion
+            .raw_to_query
+            .resize(raw.len() + 1, expansion.query.len());
         expansion.segments.push((base_raw.len(), raw.len()));
         expansion
     }

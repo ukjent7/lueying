@@ -42,9 +42,7 @@ pub mod prelude {
     pub use crate::module::{
         CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
     };
-    pub use crate::scheme::{
-        CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest,
-    };
+    pub use crate::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
     pub use crate::{Candidate, Config, Engine, Event, Key, Mode, UserDict};
 }
 

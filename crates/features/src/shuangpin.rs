@@ -190,8 +190,8 @@ static SOGOU: Layout = Layout {
 };
 
 const LETTERS: [&str; 26] = [
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
-    "s", "t", "u", "v", "w", "x", "y", "z",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z",
 ];
 
 /// 一套可用的双拼方案。
@@ -316,9 +316,7 @@ impl Scheme for Shuangpin {
                 at += 1;
                 continue;
             }
-            let end = raw[at..]
-                .find('\'')
-                .map_or(raw.len(), |offset| at + offset);
+            let end = raw[at..].find('\'').map_or(raw.len(), |offset| at + offset);
             let segment = &raw[at..end];
             let mut index = 0usize;
             while index < segment.len() {
