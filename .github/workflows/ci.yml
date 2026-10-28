@@ -182,10 +182,11 @@ jobs:
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
         run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer
       # Skia 渲染核心 spike:d3d+textlayout 组合必须命中预编译二进制;
-      # 链接失败或触发本地编 Skia 都在这里暴露。首跑清单刚变,锁由
+      # 链接失败或触发本地编 Skia 都在这里暴露。d3d 特性由 render 的
+      # cfg(windows) 依赖声明,无需 --features。首跑清单刚变,锁由
       # fmt job 落库后才允许 --locked,这里先放开。
       - name: Skia d3d 预编译命中
-        run: cargo build --release -p lueying-render --features d3d
+        run: cargo build --release -p lueying-render
       - name: Build Windows E2E harness
         id: build_e2e
         run: cargo build --release --locked -p lueying-win-e2e
