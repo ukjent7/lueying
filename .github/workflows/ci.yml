@@ -75,8 +75,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Clippy(观察期,不阻断)
-        continue-on-error: true
+      # 工具链固定,警告即失败;偶发的新 lint 先修再合。
+      - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
