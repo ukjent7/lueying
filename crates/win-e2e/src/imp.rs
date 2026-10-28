@@ -449,19 +449,21 @@ fn real_run() -> Result<(String, String), String> {
         // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
         // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
         let latency = commit_latency(edit, &thread_mgr)?;
-        let keys = key_latency(edit, &log)?;
-        let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
         //    拼音,也不改选候选;组合与 UI 元素都必须结束。
         let finalize_note = check_finalize(edit, &thread_mgr, &ui_events)?;
         // 组合里 Ctrl+Backspace 由输入法按音节删除,不能漏给宿主去改文档。
         let segment_note = check_segment_edit(edit, &thread_mgr)?;
         let fullwidth_note = check_fullwidth(edit)?;
+        // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
+        // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
+        let keys = key_latency(edit, &log)?;
+        let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
         Ok((
             text,
             format!(
-                "{latency}\n\n{keys}\n\n{memory}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{keys}\n\n{memory}"
             ),
         ))
     })();
