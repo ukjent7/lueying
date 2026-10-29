@@ -202,11 +202,7 @@ impl Manifest {
         if legacy {
             let api = self.api.ok_or("旧版清单缺少 api")?;
             check_api(Component::Appearance, api, APPEARANCE_API)?;
-            check_entry(
-                "入口脚本",
-                self.main.as_deref().unwrap_or("index.js"),
-                "js",
-            )?;
+            check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
             components += 1;
         }
         if let Some(appearance) = &self.appearance {
@@ -237,8 +233,7 @@ impl Manifest {
         if let Some(appearance) = &self.appearance {
             return Some(&appearance.main);
         }
-        self.api
-            .map(|_| self.main.as_deref().unwrap_or("index.js"))
+        self.api.map(|_| self.main.as_deref().unwrap_or("index.js"))
     }
 
     /// 外观 API 版本:新清单的 `appearance.api`,或旧版顶层 `api`。

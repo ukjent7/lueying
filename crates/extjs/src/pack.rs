@@ -165,10 +165,7 @@ impl Pack {
             return self.stale(manifest_hash, e);
         }
         let Some(main) = manifest.appearance_main().map(str::to_string) else {
-            return self.stale(
-                manifest_hash,
-                format!("扩展 {} 没有外观组件", manifest.id),
-            );
+            return self.stale(manifest_hash, format!("扩展 {} 没有外观组件", manifest.id));
         };
         let bytes = match read_capped(&self.dir.join(&main), MAX_SOURCE_BYTES) {
             Ok(bytes) => bytes,
