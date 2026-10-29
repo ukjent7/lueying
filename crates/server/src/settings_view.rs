@@ -577,31 +577,37 @@ impl Settings {
 
     /// 运行期脚本那行的说明:当前包,或者怎么开始。
     fn script_detail(&self) -> String {
-        if self.cfg.script.is_empty() {
-            if self.scripts.is_empty() {
-                "未安装扩展;点「目录」放入扩展包".to_string()
-            } else {
-                format!("未启用 · 已安装 {} 个", self.scripts.len())
+        match self.cfg.extensions.as_slice() {
+            [] => {
+                if self.scripts.is_empty() {
+                    "未安装扩展;点「目录」放入扩展包".to_string()
+                } else {
+                    format!("未启用 · 已安装 {} 个", self.scripts.len())
+                }
             }
-        } else if let Some(script) = self.scripts.iter().find(|s| s.id == self.cfg.script) {
-            format!("{} · {}", script.name, script.id)
-        } else {
-            format!("{} · 未安装", self.cfg.script)
+            [id] => match self.scripts.iter().find(|script| &script.id == id) {
+                Some(script) => format!("{} · {}", script.name, script.id),
+                None => format!("{id} · 未安装"),
+            },
+            ids => format!("已启用 {} 个 · {}", ids.len(), ids.join(", ")),
         }
     }
 
     /// 选择运行期脚本;`None` 关闭。下标越界按关闭处理。
     pub fn select_script(&mut self, index: Option<usize>) {
         match index.and_then(|index| self.scripts.get(index)) {
-            Some(script) => self.cfg.script = script.id.clone(),
-            None => self.cfg.script.clear(),
+            Some(script) => self.cfg.extensions = vec![script.id.clone()],
+            None => self.cfg.extensions.clear(),
         }
         self.clear_notice();
     }
 
-    /// 当前启用的包在列表里的下标;没启用或没安装返回 None。
+    /// 当前启用的包在列表里的下标;没启用或启用了多个返回 None。
     pub fn script_selected(&self) -> Option<usize> {
-        self.scripts.iter().position(|s| s.id == self.cfg.script)
+        let [id] = self.cfg.extensions.as_slice() else {
+            return None;
+        };
+        self.scripts.iter().position(|script| &script.id == id)
     }
 
     /// 模糊音统计有没有内容可重置。

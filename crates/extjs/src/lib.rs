@@ -1,11 +1,13 @@
-//! 运行期脚本扩展:用户写 TS/JS,输入法在沙箱里跑它,只让它改候选窗的外观。
+//! 运行期脚本扩展:用户写 TS/JS,输入法在沙箱里跑它,可以改候选窗外观,
+//! 也可以提供命令。
 //!
 //! 扩展是一个目录(`%APPDATA%\lueying\extensions\<id>\`),里面一份
 //! `manifest.json` 与一份入口脚本。入口脚本由用户自己的 esbuild 打成单文件
 //! IIFE,输入法不内置转译器;运行期不加载 DLL,也没有 `import`。
 //!
 //! 扩展能看见的只有面板状态([`SceneIn`]),能改的只有主题色与三个 SkSL
-//! 槽位([`ScenePatch`])。候选文字、击键历史、宿主应用名都不进 JS。
+//! 槽位([`ScenePatch`])。候选文字、击键历史、宿主应用名都不进 JS。命令
+//! 只能执行扩展自己声明过的短 id,完整 id 由 [`Runtime`] 加上扩展前缀。
 //!
 //! # 边界
 //!
@@ -34,11 +36,15 @@
 mod host;
 mod manifest;
 mod pack;
+mod runtime;
 mod scene;
 
 pub use host::{Host, Limits};
-pub use manifest::{MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
+pub use manifest::{
+    Activate, Command, Manifest, Permission, Service, When, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES,
+};
 pub use pack::{Pack, Poll};
+pub use runtime::{CommandInfo, Runtime, Scope, IDLE_UNLOAD};
 pub use scene::{EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, SceneIn, ScenePatch};
 
 /// 场景协议版本。脚本在清单里声明依赖的版本,高于本值拒绝加载。

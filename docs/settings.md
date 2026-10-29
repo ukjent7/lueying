@@ -14,7 +14,7 @@
 | 候选 | 候选字号 | 小、标准、大;只缩放候选行,拼音行不变 |
 | 候选 | 主题色 | 六种强调色预设;高对比度主题跟随系统色 |
 | 候选 | 用户效果 | 打开 `%APPDATA%\lueying\effects` 目录,写 SkSL 装饰候选窗;见[用户效果](effects.md) |
-| 候选 | 运行期脚本 | 「选择」列出已安装的包,可启用、切换或关闭;「目录」打开 `%APPDATA%\lueying\extensions`,见[运行期脚本扩展](extensions/script.md) |
+| 候选 | 运行期脚本 | 「选择」列出已安装的包,可启用、切换或关闭;「目录」打开 `%APPDATA%\lueying\extensions`;多个扩展用 `config.ini` 的 `extensions=逗号分隔列表` 按序启用,见[运行期脚本扩展](extensions/script.md) |
 | 候选 | 下一词联想 | 按本机上屏词序补全 |
 | 候选 | 自动模糊音 | 默认开启;「重置」清空模糊组的使用统计 |
 | 词库 | 自定义短语 | 打开 `phrases.txt`,保存后自动重载 |

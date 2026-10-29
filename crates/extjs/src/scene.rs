@@ -127,8 +127,7 @@ impl ScenePatch {
     }
 
     /// 校验字段取值。
-    pub fn validate(&self) -> Result<(), String> {
-        if let Some(accent) = self.accent
+    pub fn validate(&self) -> Result<(), String> {        if let Some(accent) = self.accent
             && accent > 0x00ff_ffff
         {
             return Err(format!("主题色 0x{accent:06x} 超出 24 位"));
@@ -150,6 +149,18 @@ impl ScenePatch {
             }
         }
         Ok(())
+    }
+
+    /// 按配置顺序合并后一个扩展的补丁:后出现的非空字段覆盖前一个。
+    pub fn merge(&mut self, patch: Self) {
+        if patch.accent.is_some() {
+            self.accent = patch.accent;
+        }
+        match (self.effects.as_mut(), patch.effects) {
+            (Some(current), Some(next)) => current.merge(next),
+            (None, Some(next)) => self.effects = Some(next),
+            _ => {}
+        }
     }
 }
 
@@ -217,6 +228,19 @@ impl EffectsPatch {
         EffectSlot::ALL
             .into_iter()
             .filter_map(|slot| self.get(slot).map(|source| (slot, source)))
+    }
+
+    /// 逐槽位合并:后出现的非空槽位覆盖前一个。
+    pub fn merge(&mut self, patch: Self) {
+        if patch.background.is_some() {
+            self.background = patch.background;
+        }
+        if patch.highlight.is_some() {
+            self.highlight = patch.highlight;
+        }
+        if patch.menu.is_some() {
+            self.menu = patch.menu;
+        }
     }
 }
 

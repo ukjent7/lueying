@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::MAX_FAULTS;
 use crate::host::{Host, Limits};
-use crate::manifest::{MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
+use crate::manifest::{MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Command, Manifest};
 use crate::scene::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";
@@ -59,8 +59,8 @@ impl Pack {
         let manifest = Manifest::parse(&manifest_bytes)?;
         check_dir(dir, &manifest)?;
         let main = manifest
-            .appearance_main()
-            .ok_or_else(|| format!("扩展 {} 没有外观组件", manifest.id))?;
+            .script_main()
+            .ok_or_else(|| format!("扩展 {} 没有脚本入口", manifest.id))?;
         let source = read_text(&dir.join(main), MAX_SOURCE_BYTES)
             .map_err(|e| format!("读入口脚本 {main} 失败: {e}"))?;
         let host = Host::new(&source, limits)
@@ -99,6 +99,41 @@ impl Pack {
     /// 连续失败被停用的原因;重载成功后清空。
     pub fn disabled_reason(&self) -> Option<&str> {
         self.disabled.as_deref()
+    }
+
+    /// 清单里声明的命令。
+    pub fn commands(&self) -> &[Command] {
+        self.manifest.commands()
+    }
+
+    /// 执行一条已声明的命令;参数与返回值都是 JSON 文本。
+    ///
+    /// 未声明的命令直接拒绝,JS 侧即使注册了同名函数也调不到;命令失败
+    /// 与派发失败共用连续失败计数。
+    pub fn invoke(&mut self, command: &str, args: &str) -> Result<String, String> {
+        if self.removed {
+            return Err(format!("扩展 {} 已卸载", self.manifest.id));
+        }
+        if let Some(reason) = &self.disabled {
+            return Err(format!("扩展 {} 已停用: {reason}", self.manifest.id));
+        }
+        if !self.manifest.commands().iter().any(|c| c.id == command) {
+            return Err(format!(
+                "扩展 {} 没有声明命令 {command}",
+                self.manifest.id
+            ));
+        }
+        match self.host.invoke(command, args) {
+            Ok(text) => {
+                self.faults = 0;
+                self.last_error = None;
+                Ok(text)
+            }
+            Err(error) => {
+                self.fault(error.clone());
+                Err(error)
+            }
+        }
     }
 
     /// 派发一次场景状态。
@@ -164,8 +199,8 @@ impl Pack {
         if let Err(e) = check_dir(&self.dir, &manifest) {
             return self.stale(manifest_hash, e);
         }
-        let Some(main) = manifest.appearance_main().map(str::to_string) else {
-            return self.stale(manifest_hash, format!("扩展 {} 没有外观组件", manifest.id));
+        let Some(main) = manifest.script_main().map(str::to_string) else {
+            return self.stale(manifest_hash, format!("扩展 {} 没有脚本入口", manifest.id));
         };
         let bytes = match read_capped(&self.dir.join(&main), MAX_SOURCE_BYTES) {
             Ok(bytes) => bytes,
@@ -225,7 +260,7 @@ impl Pack {
 
     /// 当前入口脚本的哈希;读不到按 0 算,文件出现后哈希变化会触发重载。
     fn current_source_hash(&self) -> u64 {
-        let Some(main) = self.manifest.appearance_main() else {
+        let Some(main) = self.manifest.script_main() else {
             return 0;
         };
         std::fs::read(self.dir.join(main))

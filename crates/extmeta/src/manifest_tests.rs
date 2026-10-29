@@ -19,8 +19,151 @@ fn legacy() -> serde_json::Value {
     })
 }
 
+fn script_v2() -> serde_json::Value {
+    json!({
+        "id": "shot-ocr",
+        "name": "截图 OCR",
+        "version": "0.1.0",
+        "api": 2,
+        "main": "index.js",
+        "activate": {
+            "triggers": ["ocr"],
+            "hotkeys": ["Ctrl+Alt+O"],
+            "commands": [
+                { "id": "run", "title": "截图并识别文字", "when": "any" }
+            ]
+        },
+        "needs": ["capture", "ocr", "output"],
+        "capabilities": ["screen-capture", "ocr"]
+    })
+}
+
 fn parse(value: serde_json::Value) -> Result<Manifest, String> {
     Manifest::parse(value.to_string().as_bytes())
+}
+
+#[test]
+fn parses_script_v2() {
+    let manifest = parse(script_v2()).expect("API 2 清单应通过");
+    assert_eq!(manifest.script_main(), Some("index.js"));
+    assert_eq!(manifest.needs, vec![Service::Capture, Service::Ocr, Service::Output]);
+    assert_eq!(
+        manifest.commands(),
+        &[Command {
+            id: "run".into(),
+            title: "截图并识别文字".into(),
+            when: When::Any,
+        }]
+    );
+    let activate = manifest.activate().expect("激活声明");
+    assert_eq!(activate.triggers, vec!["ocr"]);
+    assert_eq!(activate.hotkeys, vec!["Ctrl+Alt+O"]);
+}
+
+#[test]
+fn v2_defaults_entry_and_allows_no_activation() {
+    let value = json!({
+        "id": "skin",
+        "name": "外观",
+        "version": "1.0.0",
+        "api": 2
+    });
+    let manifest = parse(value).expect("API 2 外观包应通过");
+    assert_eq!(manifest.script_main(), Some("index.js"));
+    assert!(manifest.commands().is_empty());
+}
+
+#[test]
+fn rejects_v2_mixed_with_components() {
+    let mut value = script_v2();
+    value["appearance"] = json!({ "api": 1 });
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_bad_command() {
+    for (id, title) in [("", "标题"), ("Run", "标题"), ("run", ""), ("run", "a\nb")] {
+        let mut value = script_v2();
+        value["activate"]["commands"] = json!([{ "id": id, "title": title }]);
+        assert!(parse(value).is_err(), "{id:?} {title:?}");
+    }
+}
+
+#[test]
+fn rejects_v2_duplicate_command() {
+    let mut value = script_v2();
+    value["activate"]["commands"] = json!([
+        { "id": "run", "title": "一" },
+        { "id": "run", "title": "二" }
+    ]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_bad_trigger() {
+    for trigger in ["", "a b", "a\nb", "x".repeat(33).as_str()] {
+        let mut value = script_v2();
+        value["activate"]["triggers"] = json!([trigger]);
+        assert!(parse(value).is_err(), "{trigger:?}");
+    }
+}
+
+#[test]
+fn rejects_v2_duplicate_trigger() {
+    let mut value = script_v2();
+    value["activate"]["triggers"] = json!(["ocr", "ocr"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_empty_activation() {
+    let mut value = script_v2();
+    value["activate"] = json!({});
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_unknown_service() {
+    let mut value = script_v2();
+    value["needs"] = json!(["capture", "telepathy"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_duplicate_service() {
+    let mut value = script_v2();
+    value["needs"] = json!(["capture", "capture"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_unknown_capability() {
+    let mut value = script_v2();
+    value["capabilities"] = json!(["root"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_duplicate_capability() {
+    let mut value = script_v2();
+    value["capabilities"] = json!(["ocr", "ocr"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_v2_bad_entry() {
+    for main in ["../x.js", "a/b.js", ".hidden.js", "x.txt"] {
+        let mut value = script_v2();
+        value["main"] = json!(main);
+        assert!(parse(value).is_err(), "{main:?}");
+    }
+}
+
+#[test]
+fn rejects_v1_activation() {
+    let mut value = legacy();
+    value["activate"] = json!({ "commands": [{ "id": "run", "title": "跑" }] });
+    assert!(parse(value).is_err());
 }
 
 #[test]

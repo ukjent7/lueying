@@ -15,9 +15,9 @@ fn select_script_sets_and_clears() {
         ..Settings::default()
     };
     settings.select_script(Some(1));
-    assert_eq!(settings.cfg.script, "second");
+    assert_eq!(settings.cfg.extensions, vec!["second"]);
     settings.select_script(None);
-    assert!(settings.cfg.script.is_empty());
+    assert!(settings.cfg.extensions.is_empty());
 }
 
 #[test]
@@ -26,23 +26,26 @@ fn select_script_out_of_range_closes() {
         scripts: vec![entry("only", "唯一")],
         ..Settings::default()
     };
-    settings.cfg.script = "only".to_string();
+    settings.cfg.extensions = vec!["only".to_string()];
     settings.select_script(Some(9));
-    assert!(settings.cfg.script.is_empty());
+    assert!(settings.cfg.extensions.is_empty());
 }
 
 #[test]
 fn script_detail_reports_state() {
     let mut settings = Settings {
-        scripts: vec![entry("demo", "演示包")],
+        scripts: vec![entry("demo", "演示包"), entry("other", "另一个")],
         ..Settings::default()
     };
     assert!(settings.script_detail().contains("未启用"));
-    settings.cfg.script = "demo".to_string();
+    settings.cfg.extensions = vec!["demo".to_string()];
     let active = settings.script_detail();
     assert!(active.contains("演示包") && active.contains("demo"));
-    settings.cfg.script = "gone".to_string();
+    settings.cfg.extensions = vec!["gone".to_string()];
     assert!(settings.script_detail().contains("未安装"));
+    settings.cfg.extensions = vec!["demo".to_string(), "other".to_string()];
+    let multiple = settings.script_detail();
+    assert!(multiple.contains("已启用 2 个") && multiple.contains("demo, other"));
 }
 
 #[test]

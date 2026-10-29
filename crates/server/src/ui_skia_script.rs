@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{EffectSlot, EffectsPatch, Pack, Poll, SceneIn, ScenePatch};
+use lueying_extjs::{EffectSlot, EffectsPatch, Limits, Runtime, SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
 use lueying_server::config;
@@ -79,15 +79,15 @@ impl Script {
     }
 }
 
-/// 脚本线程:跟配置换包、跟目录热重载、按最新场景派发。
+/// 脚本线程:跟配置换扩展、跟目录热重载、按最新场景派发。
 fn worker(
     state: Arc<State>,
     latest: Arc<Mutex<Option<(u64, SceneIn)>>>,
     wake: Receiver<()>,
     patches: Sender<(u64, Option<ScenePatch>)>,
 ) {
-    let mut id = String::new();
-    let mut pack: Option<Pack> = None;
+    let mut order: Vec<String> = Vec::new();
+    let mut runtime: Option<Runtime> = None;
     let mut reported: Option<String> = None;
     let mut last_seq = 0;
     let mut next_config = Instant::now();
@@ -98,93 +98,70 @@ fn worker(
         if now >= next_config {
             next_config = now + CONFIG;
             let want = configured(&state);
-            if want != id {
-                id = want;
-                pack = load(&id);
+            if want != order {
+                order = want;
+                runtime = load(&order);
                 reported = None;
-                // 换包或关包先摘掉旧效果,等新场景的补丁。
+                // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
                 let _ = patches.send((last_seq, None));
             }
         }
         if now >= next_poll {
             next_poll = now + POLL;
-            let mut unloaded = false;
-            if let Some(current) = pack.as_mut() {
-                match current.poll() {
-                    Poll::Unchanged => {}
-                    Poll::Reloaded => {
-                        println!("扩展 {} 已重载", current.manifest().id);
-                        reported = None;
-                    }
-                    Poll::Failed(e) => {
-                        println!("扩展 {} 重载失败,继续用上一版: {e}", current.manifest().id)
-                    }
-                    Poll::Removed => {
-                        println!("扩展 {} 已卸载(清单被删)", current.manifest().id);
-                        unloaded = true;
+            if let Some(current) = runtime.as_mut() {
+                let removed = current.poll();
+                current.idle_unload();
+                if removed > 0 {
+                    let _ = patches.send((last_seq, None));
+                }
+                for id in &order {
+                    let Some(error) = current.error(id) else {
+                        continue;
+                    };
+                    let message = format!("{id}: {error}");
+                    if reported.as_deref() != Some(&message) {
+                        println!("扩展 {id} 运行失败: {error}");
+                        reported = Some(message);
                     }
                 }
-            }
-            if unloaded {
-                pack = None;
-                let _ = patches.send((last_seq, None));
             }
         }
         let Some((seq, scene)) = latest.lock().unwrap_or_else(|p| p.into_inner()).take() else {
             continue;
         };
         last_seq = seq;
-        let Some(current) = pack.as_mut() else {
-            // 没启用扩展也要回一条清空,别让上一个包的装饰留在窗口上。
-            let _ = patches.send((seq, None));
-            continue;
-        };
-        let patch = current.dispatch(&scene);
-        match current.last_error() {
-            Some(error) if reported.as_deref() != Some(error) => {
-                println!("扩展 {} 运行失败: {error}", current.manifest().id);
-                reported = Some(error.to_string());
-            }
-            None => reported = None,
-            Some(_) => {}
-        }
+        let patch = runtime
+            .as_mut()
+            .and_then(|runtime| runtime.dispatch(&scene));
         let _ = patches.send((seq, patch));
     }
 }
 
-/// 配置里生效的扩展 id;空表示不启用。
-fn configured(state: &State) -> String {
+/// 配置里生效的扩展 id,按组合顺序;空表示不启用。
+fn configured(state: &State) -> Vec<String> {
     state
         .config
         .read()
         .unwrap_or_else(|p| p.into_inner())
-        .script
+        .extensions
         .clone()
 }
 
-/// 按 id 加载扩展包;目录名必须等于清单里的 id,由 `Pack` 检查。
-fn load(id: &str) -> Option<Pack> {
-    if id.is_empty() {
+/// 按配置顺序打开扩展;坏包只记日志,不影响其他扩展。
+fn load(order: &[String]) -> Option<Runtime> {
+    if order.is_empty() {
         return None;
     }
     let Some(root) = config::extensions_dir() else {
-        println!("扩展 {id} 不可用:APPDATA 缺失");
+        println!("扩展不可用:APPDATA 缺失");
         return None;
     };
-    match Pack::load(&root.join(id)) {
-        Ok(pack) => {
-            let manifest = pack.manifest();
-            println!(
-                "扩展 {} 已加载({} {})",
-                manifest.name, manifest.id, manifest.version
-            );
-            Some(pack)
-        }
-        Err(e) => {
-            println!("扩展 {id} 加载失败: {e}");
-            None
-        }
+    let (runtime, errors) = Runtime::open(&root, order, Limits::default());
+    for error in errors {
+        println!("{error}");
     }
+    println!("运行期扩展:{} 个槽位", order.len());
+    Some(runtime)
 }
 
 /// 面板状态转场景;只含几何与主题,没有候选文字与宿主名。

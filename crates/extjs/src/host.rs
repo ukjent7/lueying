@@ -1,9 +1,9 @@
 //! QuickJS 宿主:一个扩展包一个运行时,内存、栈、指令时间都有上限。
 //!
 //! 扩展跑在输入法进程里,任何一次派发都不能拖住击键。这里不追求通用 JS
-//! 能力:没有事件循环、没有定时器、没有 I/O,只有 `lueying.register` 与一次
-//! 同步派发。超时用 QuickJS 的 interrupt handler 打断,内存上限由运行时
-//! 分配器兜底。
+//! 能力:没有事件循环、没有定时器、没有 I/O,只有 `lueying.register`、
+//! `lueying.command` 与一次同步派发。超时用 QuickJS 的 interrupt handler
+//! 打断,内存上限由运行时分配器兜底。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -51,8 +51,9 @@ pub struct Host {
 impl Host {
     /// 建运行时、装引导脚本、执行入口脚本。
     ///
-    /// 入口脚本必须同步调用一次 `lueying.register(handler)`;顶层死循环由
-    /// [`Limits::init_ms`] 打断,语法错直接返回原文。
+    /// 入口脚本必须同步注册至少一个派发入口:`lueying.register(handler)`
+    /// 或 `lueying.command(name, fn)`。顶层死循环由 [`Limits::init_ms`]
+    /// 打断,语法错直接返回原文。
     pub fn new(source: &str, limits: Limits) -> Result<Self, String> {
         let runtime = rquickjs::Runtime::new().map_err(|e| format!("创建 JS 运行时失败: {e}"))?;
         runtime.set_memory_limit(limits.memory_bytes);
@@ -97,7 +98,7 @@ impl Host {
         let timed_out = host.tripped.swap(false, Ordering::Relaxed);
         match ready {
             Ok(true) => Ok(host),
-            Ok(false) => Err("扩展没有调用 lueying.register(handler)".into()),
+            Ok(false) => Err("扩展没有注册 lueying.register 或 lueying.command".into()),
             Err(_) if timed_out => Err(format!("扩展初始化超时({} ms)", limits.init_ms)),
             Err(e) if is_oom(&e) => Err(format!(
                 "扩展初始化超出内存上限({} MiB)",
@@ -121,10 +122,45 @@ impl Host {
                 .map_err(|e| js_error(&ctx, e))
         });
         self.disarm();
+        self.finish(result, "执行", budget)
+    }
+
+    /// 执行一条命令;参数与返回值都是 JSON 文本,空串表示无参数/无返回值。
+    ///
+    /// 命令名是扩展内的短名(清单里声明的那一个),不是全局完整 id;
+    /// 完整 id 的解析与作用域由 [`crate::Runtime`] 负责。
+    pub fn invoke(&mut self, command: &str, args_json: &str) -> Result<String, String> {
+        let budget = self.limits.dispatch_ms;
+        self.arm(budget);
+        let result = self.context.with(|ctx| -> Result<String, String> {
+            let invoke: Function = ctx
+                .globals()
+                .get("__lueying_invoke")
+                .map_err(|e| js_error(&ctx, e))?;
+            invoke
+                .call::<_, String>((command, args_json))
+                .map_err(|e| js_error(&ctx, e))
+        });
+        self.disarm();
+        self.finish(result, "命令执行", budget)
+    }
+
+    /// 命令是否已注册;不跑用户代码,只查引导层里的表。
+    pub fn has_command(&self, command: &str) -> bool {
+        self.context.with(|ctx| {
+            ctx.globals()
+                .get::<_, Function>("__lueying_has_command")
+                .ok()
+                .and_then(|check| check.call::<_, bool>((command,)).ok())
+                .unwrap_or(false)
+        })
+    }
+
+    fn finish(&mut self, result: Result<String, String>, what: &str, budget: u64) -> Result<String, String> {
         let timed_out = self.tripped.swap(false, Ordering::Relaxed);
         match result {
             Ok(text) => Ok(text),
-            Err(_) if timed_out => Err(format!("执行超时({} ms)", self.limits.dispatch_ms)),
+            Err(_) if timed_out => Err(format!("{what}超时({budget} ms)")),
             Err(error) if is_oom(&error) => Err(format!(
                 "内存超出上限({} MiB)",
                 self.limits.memory_bytes >> 20

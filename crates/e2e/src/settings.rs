@@ -97,14 +97,14 @@ pub fn run(report: &mut String) -> usize {
     // 运行期脚本行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
     // 「目录」交给平台侧;模型本身负责切换与关闭。
     let idle = row_detail(&page, "候选", "运行期脚本");
-    settings.cfg.script = "demo-pack".to_string();
+    settings.cfg.extensions = vec!["demo-pack".to_string()];
     let active = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     settings.select_script(Some(1));
-    let switched = settings.cfg.script == "other-pack";
+    let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
-    settings.cfg.script = "gone".to_string();
+    settings.cfg.extensions = vec!["gone".to_string()];
     let missing = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
     settings.select_script(None);
     push(
@@ -118,7 +118,7 @@ pub fn run(report: &mut String) -> usize {
             && choose == Some(Action::ChooseScript)
             && open == Some(Action::OpenScripts)
             && switched
-            && settings.cfg.script.is_empty()
+            && settings.cfg.extensions.is_empty()
             && missing
                 .as_deref()
                 .is_some_and(|text| text.contains("未安装")),
@@ -249,32 +249,33 @@ pub fn run(report: &mut String) -> usize {
         format!("页脚下沿={:.1}", layout.footer.bottom),
     );
 
-    // 配置往返:script 键要能读、能原样存回;路径分隔符不能当扩展 id。
+    // 配置往返:extensions 键要能读、能原样存回;路径分隔符不能当扩展 id。
     let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}", std::process::id()));
-    let _ = std::fs::write(&path, "script=my-pack\n");
+    let _ = std::fs::write(&path, "extensions=my-pack,other-pack\n");
     let cfg = lueying_server::config::load(&path);
-    let loaded = cfg.script == "my-pack";
+    let loaded = cfg.extensions == vec!["my-pack", "other-pack"];
     let saved =
         lueying_server::config::save(&path, &cfg).and_then(|()| std::fs::read_to_string(&path));
     let _ = std::fs::remove_file(&path);
     push(
         &mut checks,
-        "配置保留脚本 id",
+        "配置保留扩展列表与顺序",
         loaded
             && saved
                 .as_deref()
-                .is_ok_and(|text| text.contains("script=my-pack")),
+                .is_ok_and(|text| text.contains("extensions=my-pack,other-pack")),
         format!("读取 {loaded} 存回 {:?}", saved.as_deref().map(str::len)),
     );
     let path = std::env::temp_dir().join(format!("lueying-config-e2e-bad-{}", std::process::id()));
-    let _ = std::fs::write(&path, "script=../evil\n");
-    let rejected = lueying_server::config::load(&path).script.is_empty();
+    let _ = std::fs::write(&path, "extensions=../evil,ok-pack\n");
+    let cfg = lueying_server::config::load(&path);
+    let rejected = cfg.extensions == vec!["ok-pack"];
     let _ = std::fs::remove_file(&path);
     push(
         &mut checks,
-        "脚本 id 拒绝路径",
+        "扩展 id 拒绝路径",
         rejected,
-        "config.ini 的 script=../evil 应被忽略".into(),
+        "config.ini 的 extensions=../evil 应被忽略".into(),
     );
 
     report.push_str("\n## 设置页模型\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

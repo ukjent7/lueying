@@ -4,8 +4,9 @@
 //! 未知字段、越界的组件路径、未知权限、过高的 API 版本。运行期不再
 //! 为坏清单兜底,也不猜作者意图。
 //!
-//! 旧版外观包(`{ "api": 1, "main": "index.js" }`)继续可用;新清单把
-//! 组件分开写,每个组件有自己的 API 版本与权限。
+//! 旧版外观包(`{ "api": 1, "main": "index.js" }`)继续可用。API 2 起
+//! 清单直接描述脚本层:入口、激活方式(触发词/热键/命令)、需要的宿主
+//! 服务与能力。命令只声明,不拥有按键;绑定由用户决定。
 
 use serde::Deserialize;
 
@@ -18,6 +19,8 @@ pub const APPEARANCE_API: u32 = 1;
 pub const LOGIC_API: u32 = 1;
 /// 能力组件当前 API。
 pub const PANEL_API: u32 = 1;
+/// 脚本层清单当前 API。
+pub const SCRIPT_API: u32 = 2;
 
 /// 扩展清单,对应包内的 `manifest.json`。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -29,24 +32,125 @@ pub struct Manifest {
     pub name: String,
     /// 扩展自己的版本号,只用于显示。
     pub version: String,
-    /// 旧版外观包:顶层 API 版本。
+    /// 清单 API 版本:1 是旧版外观包,2 是脚本层清单。
     #[serde(default)]
     pub api: Option<u32>,
-    /// 旧版外观包:顶层入口脚本,默认 `index.js`。
+    /// 脚本入口,包内裸文件名;API 2 默认 `index.js`。
     #[serde(default)]
     pub main: Option<String>,
-    /// 旧版能力声明;必须为空。
+    /// API 2 的激活方式。
+    #[serde(default)]
+    pub activate: Option<Activate>,
+    /// API 2 需要的宿主服务。
+    #[serde(default)]
+    pub needs: Vec<Service>,
+    /// 申请的权限;API 1 必须为空。
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// 候选窗外观组件。
+    /// 候选窗外观组件(API 1)。
     #[serde(default)]
     pub appearance: Option<Appearance>,
-    /// 逻辑组件(WASM)。
+    /// 逻辑组件(WASM,API 1)。
     #[serde(default)]
     pub logic: Option<Logic>,
-    /// 进程外能力组件。
+    /// 进程外能力组件(API 1)。
     #[serde(default)]
     pub panel: Option<Panel>,
+}
+
+/// API 2 的激活声明。三种入口都只是声明,按键绑定仍归用户。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Activate {
+    /// 输入内触发词;整串完全匹配才出现动作候选。
+    #[serde(default)]
+    pub triggers: Vec<String>,
+    /// 建议热键;宿主只把它当建议,实际绑定在用户表里。
+    #[serde(default)]
+    pub hotkeys: Vec<String>,
+    /// 扩展提供的命令。
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// 一条命令声明。命令 id 在扩展内唯一,完整 id 是 `<扩展 id>.<命令 id>`。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Command {
+    /// 命令 id,扩展内唯一。
+    pub id: String,
+    /// 命令面板与动作候选里显示的文字。
+    pub title: String,
+    /// 绑定生效的输入状态;默认任何场景。
+    #[serde(default)]
+    pub when: When,
+}
+
+/// 命令绑定生效的输入状态。
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum When {
+    /// 任何场景。
+    #[default]
+    Any,
+    /// 当前焦点可编辑。
+    Editable,
+    /// 正在组句。
+    Composing,
+}
+
+/// 宿主服务。扩展声明需要什么,宿主按需提供;没声明就调用失败。
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum Service {
+    /// 截取屏幕区域或窗口。
+    Capture,
+    /// 对图像做文字识别。
+    Ocr,
+    /// 读写剪贴板。
+    Clipboard,
+    /// 宿主绘制的声明式面板。
+    Panel,
+    /// 把结果送到当前输入框。
+    Output,
+    /// 注册全局热键。
+    Hotkey,
+    /// 访问网络(域名白名单)。
+    Net,
+    /// 扩展私有存储目录。
+    Store,
+    /// 系统通知。
+    Notify,
+}
+
+impl Service {
+    /// 全部服务;设置页与诊断按这个顺序列。
+    pub const ALL: [Self; 9] = [
+        Self::Capture,
+        Self::Ocr,
+        Self::Clipboard,
+        Self::Panel,
+        Self::Output,
+        Self::Hotkey,
+        Self::Net,
+        Self::Store,
+        Self::Notify,
+    ];
+
+    /// 清单里的服务名。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Capture => "capture",
+            Self::Ocr => "ocr",
+            Self::Clipboard => "clipboard",
+            Self::Panel => "panel",
+            Self::Output => "output",
+            Self::Hotkey => "hotkey",
+            Self::Net => "net",
+            Self::Store => "store",
+            Self::Notify => "notify",
+        }
+    }
 }
 
 /// 候选窗外观组件:入口是一段 JS。
@@ -187,53 +291,95 @@ impl Manifest {
         if !valid_version(&self.version) {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
-        if !self.capabilities.is_empty() {
-            return Err(format!(
-                "扩展声明了旧版能力 {:?},请改用组件权限",
-                self.capabilities.join(", ")
-            ));
-        }
 
-        let legacy = self.api.is_some() || self.main.is_some();
-        if legacy && (self.appearance.is_some() || self.logic.is_some() || self.panel.is_some()) {
-            return Err("旧版顶层 api/main 不能和 appearance/logic/panel 混用".into());
+        let components = self.appearance.is_some() || self.logic.is_some() || self.panel.is_some();
+        match self.api {
+            Some(SCRIPT_API) => {
+                if components {
+                    return Err("API 2 清单不能和 appearance/logic/panel 混用".into());
+                }
+                check_entry(
+                    "入口脚本",
+                    self.main.as_deref().unwrap_or("index.js"),
+                    "js",
+                )?;
+                if !self.capabilities.is_empty() {
+                    check_capabilities(&self.capabilities)?;
+                }
+                check_services(&self.needs)?;
+                if let Some(activate) = &self.activate {
+                    activate.validate()?;
+                }
+                Ok(())
+            }
+            Some(1) => {
+                if components {
+                    return Err("旧版顶层 api/main 不能和 appearance/logic/panel 混用".into());
+                }
+                check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
+                if self.activate.is_some() || !self.needs.is_empty() {
+                    return Err("旧版清单不能声明 activate/needs".into());
+                }
+                if !self.capabilities.is_empty() {
+                    return Err(format!(
+                        "扩展声明了旧版能力 {:?},请改用组件权限",
+                        self.capabilities.join(", ")
+                    ));
+                }
+                Ok(())
+            }
+            Some(api) => Err(format!("清单 API {api} 不支持,当前支持 1..={SCRIPT_API}")),
+            None => {
+                if !self.capabilities.is_empty() {
+                    return Err(format!(
+                        "扩展声明了旧版能力 {:?},请改用组件权限",
+                        self.capabilities.join(", ")
+                    ));
+                }
+                if self.activate.is_some() || !self.needs.is_empty() || self.main.is_some() {
+                    return Err("没有 api 的清单不能声明 main/activate/needs".into());
+                }
+                let mut count = 0;
+                if let Some(appearance) = &self.appearance {
+                    check_api(Component::Appearance, appearance.api, APPEARANCE_API)?;
+                    check_entry("入口脚本", &appearance.main, "js")?;
+                    count += 1;
+                }
+                if let Some(logic) = &self.logic {
+                    check_api(Component::Logic, logic.api, LOGIC_API)?;
+                    check_entry("逻辑模块", &logic.module, "wasm")?;
+                    check_permissions(Component::Logic, &logic.permissions)?;
+                    count += 1;
+                }
+                if let Some(panel) = &self.panel {
+                    check_api(Component::Panel, panel.api, PANEL_API)?;
+                    check_entry("能力入口", &panel.command, "exe")?;
+                    check_permissions(Component::Panel, &panel.permissions)?;
+                    count += 1;
+                }
+                if count == 0 {
+                    return Err("清单没有可加载的组件".into());
+                }
+                Ok(())
+            }
         }
-        let mut components = 0;
-        if legacy {
-            let api = self.api.ok_or("旧版清单缺少 api")?;
-            check_api(Component::Appearance, api, APPEARANCE_API)?;
-            check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
-            components += 1;
-        }
-        if let Some(appearance) = &self.appearance {
-            check_api(Component::Appearance, appearance.api, APPEARANCE_API)?;
-            check_entry("入口脚本", &appearance.main, "js")?;
-            components += 1;
-        }
-        if let Some(logic) = &self.logic {
-            check_api(Component::Logic, logic.api, LOGIC_API)?;
-            check_entry("逻辑模块", &logic.module, "wasm")?;
-            check_permissions(Component::Logic, &logic.permissions)?;
-            components += 1;
-        }
-        if let Some(panel) = &self.panel {
-            check_api(Component::Panel, panel.api, PANEL_API)?;
-            check_entry("能力入口", &panel.command, "exe")?;
-            check_permissions(Component::Panel, &panel.permissions)?;
-            components += 1;
-        }
-        if components == 0 {
-            return Err("清单没有可加载的组件".into());
-        }
-        Ok(())
     }
 
-    /// 外观入口:新清单的 `appearance.main`,或旧版顶层 `main`。
-    pub fn appearance_main(&self) -> Option<&str> {
-        if let Some(appearance) = &self.appearance {
-            return Some(&appearance.main);
+    /// 脚本入口:API 2 的 `main`,或外观组件的入口,或旧版顶层 `main`。
+    pub fn script_main(&self) -> Option<&str> {
+        match self.api {
+            Some(SCRIPT_API) => Some(self.main.as_deref().unwrap_or("index.js")),
+            Some(1) => Some(self.main.as_deref().unwrap_or("index.js")),
+            _ => self
+                .appearance
+                .as_ref()
+                .map(|appearance| appearance.main.as_str()),
         }
-        self.api.map(|_| self.main.as_deref().unwrap_or("index.js"))
+    }
+
+    /// 旧名保留:外观入口与脚本入口是同一个文件。
+    pub fn appearance_main(&self) -> Option<&str> {
+        self.script_main()
     }
 
     /// 外观 API 版本:新清单的 `appearance.api`,或旧版顶层 `api`。
@@ -241,9 +387,53 @@ impl Manifest {
         self.appearance.as_ref().map(|a| a.api).or(self.api)
     }
 
-    /// 是否只有外观组件。设置页的「运行期脚本」只列这类包。
+    /// 是否只有外观组件。设置页的「运行期脚本」列所有带脚本入口的包。
     pub fn is_appearance_only(&self) -> bool {
-        self.appearance_main().is_some() && self.logic.is_none() && self.panel.is_none()
+        self.script_main().is_some() && self.logic.is_none() && self.panel.is_none()
+    }
+
+    /// 激活声明;旧版包没有。
+    pub fn activate(&self) -> Option<&Activate> {
+        self.activate.as_ref()
+    }
+
+    /// 命令声明;旧版包返回空表。
+    pub fn commands(&self) -> &[Command] {
+        self.activate
+            .as_ref()
+            .map(|activate| activate.commands.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+impl Activate {
+    /// 校验触发词、热键与命令声明。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.triggers.is_empty() && self.hotkeys.is_empty() && self.commands.is_empty() {
+            return Err("activate 至少要有 triggers、hotkeys 或 commands 之一".into());
+        }
+        let mut triggers = Vec::new();
+        for trigger in &self.triggers {
+            check_trigger(trigger)?;
+            if triggers.contains(trigger) {
+                return Err(format!("触发词 {trigger:?} 重复声明"));
+            }
+            triggers.push(trigger);
+        }
+        for hotkey in &self.hotkeys {
+            if hotkey.is_empty() || hotkey.len() > 64 || hotkey.chars().any(char::is_control) {
+                return Err(format!("热键 {hotkey:?} 不合法"));
+            }
+        }
+        let mut commands = Vec::new();
+        for command in &self.commands {
+            check_command(command)?;
+            if commands.contains(&command.id) {
+                return Err(format!("命令 {} 重复声明", command.id));
+            }
+            commands.push(command.id.clone());
+        }
+        Ok(())
     }
 }
 
@@ -258,6 +448,63 @@ fn valid_id(id: &str) -> bool {
     }
     id.len() <= 48
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// 命令 id 与扩展 id 同一套字符规则。
+fn check_command(command: &Command) -> Result<(), String> {
+    if !valid_id(&command.id) {
+        return Err(format!(
+            "命令 id {:?} 不合法:只允许小写字母、数字、- 与 _,且以字母或数字开头",
+            command.id
+        ));
+    }
+    if command.title.trim().is_empty() || command.title.chars().count() > 80 {
+        return Err(format!("命令 {} 的标题为空或超过 80 字", command.id));
+    }
+    if command.title.chars().any(char::is_control) {
+        return Err(format!("命令 {} 的标题含控制字符", command.id));
+    }
+    Ok(())
+}
+
+/// 触发词是输入内整串匹配的文本:不能为空、不能含空白或控制字符。
+fn check_trigger(trigger: &str) -> Result<(), String> {
+    let len = trigger.chars().count();
+    if len == 0 || len > 32 {
+        return Err(format!("触发词 {trigger:?} 长度必须在 1..=32"));
+    }
+    if trigger.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!("触发词 {trigger:?} 不能含空白或控制字符"));
+    }
+    Ok(())
+}
+
+/// API 2 的能力名必须在已知权限里,且不能重复。
+fn check_capabilities(capabilities: &[String]) -> Result<(), String> {
+    let mut seen = Vec::new();
+    for capability in capabilities {
+        let permission = Permission::ALL
+            .into_iter()
+            .find(|permission| permission.key() == capability)
+            .ok_or_else(|| format!("未知能力 {capability:?}"))?;
+        if seen.contains(&permission) {
+            return Err(format!("能力 {capability:?} 重复声明"));
+        }
+        seen.push(permission);
+    }
+    Ok(())
+}
+
+/// 宿主服务不能重复声明。
+fn check_services(services: &[Service]) -> Result<(), String> {
+    let mut seen = Vec::new();
+    for service in services {
+        if seen.contains(service) {
+            return Err(format!("宿主服务 {} 重复声明", service.key()));
+        }
+        seen.push(*service);
+    }
+    Ok(())
 }
 
 /// 显示名 1–80 字,不能含控制字符。

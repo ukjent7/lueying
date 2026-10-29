@@ -6,6 +6,11 @@
 
 ### 新增
 
+- 脚本命令与多扩展:API 2 清单声明激活方式(触发词/建议热键/命令)、宿主
+  服务(`needs`)与权限(`capabilities`);`lueying.command` 命令宿主按完整
+  id `<扩展>.<命令>` 调用,只能执行清单里声明过的命令;`config.ini` 的
+  `extensions=a,b,c` 按序加载多个扩展,命令包按激活事件懒加载、空闲 30 秒
+  卸载,卸载时 Scope(命令/触发词/热键)整体回收;旧键 `script=` 继续可读。
 - 扩展分层模型:共享清单与权限模型(`lueying-extmeta`),一个包可以同时带
   外观、逻辑 WASM 与进程外能力组件;旧版顶层 `api`/`main` 外观包保持兼容。
   分层设计见 `docs/extensions/layers.md`。

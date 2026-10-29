@@ -1,4 +1,4 @@
-//! 运行期脚本扩展 E2E:包校验、场景协议、预算、隐私与热重载。
+//! 运行期脚本扩展 E2E:包校验、场景协议、预算、隐私、热重载与命令运行期。
 //!
 //! 先列失败方式:
 //! 1. 坏清单(未知字段、过高版本、声明能力、越界入口)被放进来。
@@ -9,11 +9,13 @@
 //! 6. 隐私字段仍调用脚本;高对比度下效果没被摘掉。
 //! 7. 热重载写坏文件后,正在用的扩展被弄没。
 //! 8. 一次异常后宿主不可用,后续派发全挂。
+//! 9. 卸载扩展后命令、触发词、热键还留在宿主里,或 JS 宿主没被丢弃。
+//! 10. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{Limits, Pack, Poll, SceneIn};
+use lueying_extjs::{Limits, Pack, Poll, Runtime, SceneIn};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -507,9 +509,132 @@ fn manifests(checks: &mut Vec<(&'static str, bool, String)>) {
     let error = Pack::load(&dir).err();
     push(
         checks,
-        "逻辑包不进外观宿主",
-        error.as_deref().is_some_and(|e| e.contains("外观组件")),
+        "逻辑包不进脚本宿主",
+        error.as_deref().is_some_and(|e| e.contains("脚本入口")),
         format!("{error:?}"),
+    );
+}
+
+/// 多扩展运行期:有序加载、懒加载、命令作用域、空闲卸载与 Scope 回收。
+fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
+    let temp = Temp::new("runtime");
+
+    let command_manifest = |id: &str| {
+        format!(
+            r#"{{"id":"{id}","name":"命令包","version":"1.0.0","api":2,"main":"index.js","activate":{{"commands":[{{"id":"run","title":"运行"}}]}},"needs":["notify"]}}"#
+        )
+    };
+    let command_source = r#"
+lueying.command("run", function (args) {
+  return { ok: true, echo: args ? args.value : 0 };
+});
+"#;
+    let a = temp.pack("alpha");
+    write_pack(&a, &command_manifest("alpha"), command_source);
+    let b = temp.pack("beta");
+    write_pack(&b, &command_manifest("beta"), command_source);
+
+    let order = vec!["alpha".to_string(), "beta".to_string()];
+    let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
+    let commands = runtime.commands();
+    let listed = commands.len() == 2
+        && commands.iter().any(|command| command.id == "alpha.run")
+        && commands.iter().any(|command| command.id == "beta.run");
+    push(
+        checks,
+        "多扩展命令按清单列出且不加载 JS",
+        errors.is_empty() && listed && runtime.loaded_count() == 0,
+        format!("{errors:?} {:?} loaded={}", commands, runtime.loaded_count()),
+    );
+
+    let invoked = runtime.invoke("alpha.run", r#"{"value":7}"#);
+    let only_alpha = runtime.loaded("alpha") && !runtime.loaded("beta");
+    push(
+        checks,
+        "命令按需加载且只拉起被调用的扩展",
+        invoked.as_deref().ok() == Some(r#"{"ok":true,"echo":7}"#) && only_alpha,
+        format!("{invoked:?} alpha={} beta={}", runtime.loaded("alpha"), runtime.loaded("beta")),
+    );
+
+    let scope = runtime.scope("alpha");
+    push(
+        checks,
+        "Scope 暴露声明的命令",
+        scope.as_ref().is_some_and(|scope| scope.commands == vec!["run"]),
+        format!("{scope:?}"),
+    );
+
+    let unloaded = runtime.unload("alpha");
+    let gone = runtime.scope("alpha").is_none()
+        && runtime.commands().iter().all(|command| command.id != "alpha.run")
+        && runtime.invoke("alpha.run", "").is_err();
+    push(
+        checks,
+        "卸载后 Scope 与命令全部消失",
+        unloaded && gone,
+        format!("unloaded={unloaded} commands={:?}", runtime.commands()),
+    );
+
+    let beta = runtime.invoke("beta.run", "");
+    runtime.set_idle(Duration::ZERO);
+    runtime.idle_unload();
+    let still_listed = runtime
+        .commands()
+        .iter()
+        .any(|command| command.id == "beta.run");
+    push(
+        checks,
+        "空闲卸载丢弃 JS 但保留命令声明",
+        beta.is_ok() && !runtime.loaded("beta") && still_listed,
+        format!("{beta:?} loaded={} listed={still_listed}", runtime.loaded("beta")),
+    );
+
+    let first = temp.pack("first");
+    write_pack(
+        &first,
+        &manifest("first", 1),
+        r#"lueying.register(function () { return { accent: 0x111111 }; });"#,
+    );
+    let second = temp.pack("second");
+    write_pack(
+        &second,
+        &manifest("second", 1),
+        r#"lueying.register(function () { return { accent: 0x222222 }; });"#,
+    );
+    let (mut forward, _) = Runtime::open(
+        &temp.root,
+        &["first".to_string(), "second".to_string()],
+        Limits::default(),
+    );
+    let forward_accent = forward
+        .dispatch(&SceneIn::default())
+        .and_then(|patch| patch.accent);
+    let (mut backward, _) = Runtime::open(
+        &temp.root,
+        &["second".to_string(), "first".to_string()],
+        Limits::default(),
+    );
+    let backward_accent = backward
+        .dispatch(&SceneIn::default())
+        .and_then(|patch| patch.accent);
+    push(
+        checks,
+        "外观补丁按配置顺序合并",
+        forward_accent == Some(0x222222) && backward_accent == Some(0x111111),
+        format!("{forward_accent:?} {backward_accent:?}"),
+    );
+
+    let (mut missing, errors) = Runtime::open(
+        &temp.root,
+        &["ghost".to_string(), "first".to_string()],
+        Limits::default(),
+    );
+    let usable = missing.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+    push(
+        checks,
+        "坏扩展只记诊断,不影响其他扩展",
+        !errors.is_empty() && usable == Some(0x111111),
+        format!("{errors:?} {usable:?}"),
     );
 }
 
@@ -518,6 +643,7 @@ pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     bad_packs(&mut checks);
     manifests(&mut checks);
+    runtime(&mut checks);
     scene(&mut checks);
     patches(&mut checks);
     budget(&mut checks);

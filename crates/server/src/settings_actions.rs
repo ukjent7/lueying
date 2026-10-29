@@ -227,7 +227,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         let Ok(manifest) = lueying_extjs::Manifest::parse(&bytes) else {
             continue;
         };
-        if manifest.appearance_main().is_none() {
+        if manifest.script_main().is_none() {
             continue;
         }
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
@@ -243,7 +243,8 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
 }
 
 /// 弹出扩展选择菜单:关闭,或启用某个已安装的包。选择只改配置,
-/// 点保存后服务端才重载。
+/// 点保存后服务端才重载。多扩展的有序列表在配置文件里维护;这个
+/// 菜单保持单选,选中一个就替换列表。
 pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
     settings.confirm_clear = false;
     settings.scripts = installed_scripts();
@@ -258,7 +259,7 @@ pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
     let selected = settings.script_selected();
     let off = HSTRING::from("关闭运行期脚本");
     unsafe {
-        let flags = if settings.cfg.script.is_empty() {
+        let flags = if settings.cfg.extensions.is_empty() {
             MF_STRING | MF_CHECKED
         } else {
             MF_STRING

@@ -1,8 +1,8 @@
 # 运行期脚本扩展
 
-候选窗的外观可以交给一段 JS 决定。扩展只改主题色与三个 SkSL 槽位,看不到候选文字,也拿不到宿主应用名。
+候选窗的外观可以交给一段 JS 决定,扩展也可以提供命令。扩展只改主题色与三个 SkSL 槽位,看不到候选文字,也拿不到宿主应用名。
 
-> 状态:内核(`lueying-extjs`)、服务端加载、Windows 自检与设置页选择器已就绪;Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、隐私与热重载。
+> 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、隐私、热重载与卸载回收。截图、OCR、剪贴板等服务缝与异步步进在后续阶段。
 
 ## 包结构
 
@@ -14,13 +14,53 @@
 
 - 目录名必须等于清单里的 `id`,两个包不能共用同一个配置键。
 - `index.js` 是单文件 IIFE,由你自己的 esbuild/tsc 打包。输入法不内置转译器,也不支持 `import`。
-- 入口脚本在顶层同步调用一次 `lueying.register(handler)`;没有注册、注册两次、传非函数都会在加载期报错。
+- 入口脚本在顶层同步注册至少一个派发入口:`lueying.register(handler)` 或 `lueying.command(name, fn)`。没有注册、重复注册、传非函数都会在加载期报错。
 
 ## 启用
 
-打开设置页「候选 → 运行期脚本」,点「选择」挑一个包,保存后生效;也可以直接编辑 `%APPDATA%\lueying\config.ini`,写一行 `script=my-pack`(值是目录名)。空值、`off`、`none` 表示不启用。改完脚本不用重启,服务每秒按内容哈希检查一次热重载。
+打开设置页「候选 → 运行期脚本」,点「选择」挑一个包,保存后生效。多扩展直接编辑 `%APPDATA%\lueying\config.ini`,写一行逗号分隔的列表:
+
+```ini
+extensions=shot-ocr,clipboard-history
+```
+
+顺序即组合顺序:后面的扩展返回的非空补丁字段覆盖前面的。空值、`off`、`none` 表示不启用;旧键 `script=my-pack` 仍可读,等价于只有一个扩展。改完脚本不用重启,服务每秒按内容哈希检查一次热重载。
 
 ## manifest.json
+
+API 2 的脚本清单:
+
+```json
+{
+  "id": "my-pack",
+  "name": "我的扩展",
+  "version": "1.0.0",
+  "api": 2,
+  "main": "index.js",
+  "activate": {
+    "triggers": ["my"],
+    "hotkeys": ["Ctrl+Alt+M"],
+    "commands": [
+      { "id": "run", "title": "执行我的命令", "when": "any" }
+    ]
+  },
+  "needs": ["notify"],
+  "capabilities": []
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | 是 | 小写字母、数字、`-`、`_`,最长 48 字节;必须等于目录名 |
+| `name` | 是 | 显示名,1–80 字 |
+| `version` | 是 | 扩展自己的版本号,只用于显示 |
+| `api` | 是 | 清单 API;当前支持 `1`(旧版外观)与 `2`(脚本层) |
+| `main` | 否 | 脚本入口,包内裸文件名,默认 `index.js` |
+| `activate` | 否 | 激活声明;`triggers`、`hotkeys`、`commands` 至少一项 |
+| `needs` | 否 | 需要的宿主服务:capture、ocr、clipboard、panel、output、hotkey、net、store、notify |
+| `capabilities` | 否 | 申请的权限;API 1 必须为空 |
+
+旧版外观包继续可用:
 
 ```json
 {
@@ -31,17 +71,25 @@
 }
 ```
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `id` | 是 | 小写字母、数字、`-`、`_`,最长 48 字节;必须等于目录名 |
-| `name` | 是 | 显示名,1–80 字 |
-| `version` | 是 | 扩展自己的版本号,只用于显示 |
-| `appearance` | 是* | 外观组件;`api` 是场景协议版本,当前只支持 `1`,`main` 默认 `index.js` |
-| `logic` / `panel` | 否 | 逻辑 WASM 与进程外能力组件,见[分层模型](layers.md) |
-| `api` / `main` | 否 | 旧版顶层写法,等价于只有 `appearance`;不能和新组件混用 |
-| `capabilities` | 否 | 旧字段,必须为空;新权限写在组件里 |
+顶层 `{ "api": 1, "main": "index.js" }` 等价于只有 `appearance` 组件。API 2 不能和 `appearance`/`logic`/`panel` 混用。清单出现未知字段会被拒绝,避免按旧/新语义猜。
 
-清单出现未知字段会被拒绝,避免按旧/新语义猜。*没有 `appearance` 也没有旧版 `api`/`main` 的包不是外观扩展。
+## 命令
+
+命令在清单里声明,在 JS 里实现。完整 id 是 `<扩展 id>.<命令 id>`,例如 `my-pack.run`:
+
+```js
+lueying.command("run", (args) => {
+  return { ok: true, received: args ?? null };
+});
+```
+
+- 只能执行清单里声明过的命令;JS 里注册了未声明的名字也调不到。
+- 参数与返回值都走 JSON;返回 `undefined` 表示没有返回值。
+- 命令必须同步返回;Promise 会被拒绝。异步步进在后续阶段接入。
+- 命令失败与派发失败共用连续失败计数,连续 3 次停用该扩展。
+- `when` 可选 `any`、`editable`、`composing`,由宿主在绑定时过滤。
+
+命令面板、全局热键与输入内触发在后续阶段接线;当前宿主已能按完整 id 调用命令,Scope 随扩展卸载整体回收。
 
 ## 场景状态
 
@@ -131,14 +179,15 @@ esbuild src/index.ts --bundle --format=iife --minify --outfile="%APPDATA%\lueyin
 | 运行时内存 | 8 MiB |
 | JS 栈 | 256 KiB |
 | 初始化 | 100 ms |
-| 单次派发 | 8 ms |
+| 单次派发 / 命令 | 8 ms |
 | 清单 / 入口脚本 / 单份效果源码 | 64 KiB / 512 KiB / 64 KiB |
+| 命令包空闲卸载 | 30 s |
 
 - 初始化与每次派发都有指令时限,超时由 QuickJS 中断打断,不会拖住击键。
-- 连续 3 次失败停用该包;热重载成功后计数清零。
+- 连续 3 次失败停用该扩展;热重载成功后计数清零。
 - 热重载按内容哈希轮询,写坏时保留上一版可用的宿主;把文件改回来就恢复。
-- 删除 `manifest.json` 视为卸载。
+- 删除 `manifest.json` 视为卸载;Scope 里的命令、触发词与热键一起消失。
 
 ## 不支持
 
-能力声明(文件、网络、候选注入)、`import`、异步 handler、定时器、DOM。清单里出现任何 `capabilities` 都会被拒绝;运行期不加载 DLL。
+`import`、异步 handler、定时器、DOM、运行期加载 DLL。网络、剪贴板、截图、OCR 等能力要等宿主服务缝接线,并且只按清单声明授权。
