@@ -29,12 +29,27 @@ const ITEM_RADIUS: f32 = 4.0;
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub bg: u32,
+    /// 设置窗这类「整块窗口」的底色;候选窗本身不用它。
+    pub window_bg: u32,
     pub surface_alt: u32,
     pub border: u32,
+    /// 输入框、次级按钮的描边。
+    pub border_strong: u32,
     pub text: u32,
     pub text_secondary: u32,
     pub text_tertiary: u32,
     pub accent: u32,
+    /// 主色填充上的文字色。
+    pub on_accent: u32,
+    /// 分段控件选中格;浅色下浮起,深色下比轨道亮一档。
+    pub segment: u32,
+    /// 开关关闭时的轨道。
+    pub off_bg: u32,
+    /// 开关关闭时的旋钮。
+    pub knob_off: u32,
+    /// 危险操作(清空)的文字色与底色。
+    pub danger: u32,
+    pub danger_soft: u32,
     pub accent_text: u32,
     pub selected_bg: u32,
     pub selected_text: u32,

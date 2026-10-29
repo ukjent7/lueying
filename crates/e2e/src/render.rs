@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use lueying_render::badge;
 use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
+use lueying_render::ui;
 use skia_safe::{ImageInfo, Paint, Surface, surfaces};
 
 fn push(
@@ -107,16 +108,108 @@ fn spec() -> PanelSpec {
 fn palette() -> Palette {
     Palette {
         bg: 0xffffff,
+        window_bg: 0xf3f4f7,
         surface_alt: 0xf2f2f2,
         border: 0xdddddd,
+        border_strong: 0xcfd2d9,
         text: 0x111111,
         text_secondary: 0x444444,
         text_tertiary: 0x6a6e77,
         accent: 0x2f6fed,
+        on_accent: 0xffffff,
+        segment: 0xffffff,
+        off_bg: 0xd9dce3,
+        knob_off: 0xffffff,
+        danger: 0xb3261e,
+        danger_soft: 0xfdecea,
         accent_text: 0x2459c9,
         selected_bg: 0xeaf1ff,
         selected_text: 0x11224d,
         hover: 0xf0f2f6,
+    }
+}
+
+/// 矩形中心横坐标。
+fn center_x(rect: skia_safe::Rect) -> f32 {
+    (rect.left + rect.right) / 2.0
+}
+
+/// 矩形中心纵坐标。
+fn center_y(rect: skia_safe::Rect) -> f32 {
+    (rect.top + rect.bottom) / 2.0
+}
+
+/// 设置窗的样例页面:一个分组,三种控件各来一个。
+fn settings_page() -> ui::Page {
+    ui::Page {
+        title: "掠影".into(),
+        subtitle: "拼音输入法 · v0.1.0".into(),
+        header_button: Some(ui::Button {
+            id: ui::Id::new("update", 0),
+            text: "检查更新".into(),
+            kind: ui::ButtonKind::Ghost,
+            enabled: true,
+        }),
+        groups: vec![ui::Group {
+            title: "输入".into(),
+            rows: vec![
+                ui::Row {
+                    label: "辅助码".into(),
+                    detail: "拼音后按 ` 再打 1–2 位五笔码".into(),
+                    control: ui::Control::Toggle {
+                        id: ui::Id::new("aux", 0),
+                        on: true,
+                    },
+                },
+                ui::Row {
+                    label: "输入方案".into(),
+                    detail: "全拼或双拼,共享词库".into(),
+                    control: ui::Control::Segment {
+                        id: ui::Id::new("scheme", 0),
+                        options: vec!["全拼".into(), "双拼".into()],
+                        selected: 0,
+                        width: 44.0,
+                    },
+                },
+                ui::Row {
+                    label: "自定义短语".into(),
+                    detail: "编辑 phrases.txt,保存后重载".into(),
+                    control: ui::Control::Buttons {
+                        items: vec![ui::Button {
+                            id: ui::Id::new("open-phrases", 0),
+                            text: "编辑".into(),
+                            kind: ui::ButtonKind::Secondary,
+                            enabled: true,
+                        }],
+                    },
+                },
+            ],
+        }],
+        notice: "修改后点保存生效".into(),
+        notice_tint: 0x5f636b,
+        footer_buttons: vec![
+            ui::Button {
+                id: ui::Id::new("close", 0),
+                text: "关闭".into(),
+                kind: ui::ButtonKind::Secondary,
+                enabled: true,
+            },
+            ui::Button {
+                id: ui::Id::new("save", 0),
+                text: "保存".into(),
+                kind: ui::ButtonKind::Primary,
+                enabled: true,
+            },
+        ],
+    }
+}
+
+/// 设置窗用的字型;系统没有字型时退回默认字型(只影响宽度测量)。
+fn ui_font() -> skia_safe::Font {
+    let mgr = skia_safe::FontMgr::new();
+    match mgr.legacy_make_typeface(None, skia_safe::FontStyle::normal()) {
+        Some(face) => skia_safe::Font::from_typeface(face, 17.0),
+        None => skia_safe::Font::default(),
     }
 }
 
@@ -622,6 +715,89 @@ pub fn run(report: &mut String) -> usize {
         }
         None => push(&mut checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
     }
+
+    // 设置窗控件层:布局、命中与像素。
+    let font = ui_font();
+    let page = settings_page();
+    let layout = ui::layout(&page, &font, 1.0);
+    // 命中:开关、分段格、按钮各归各位;空白处不命中。
+    let toggle = layout
+        .card_hit(ui::Id::new("aux", 0))
+        .expect("开关矩形");
+    let hit = layout.hit_card(center_x(toggle), center_y(toggle));
+    push(
+        &mut checks,
+        "设置开关命中",
+        hit == Some(ui::Id::new("aux", 0)),
+        format!("{hit:?}"),
+    );
+    let cell = layout
+        .card_hit(ui::Id::new("scheme", 1))
+        .expect("分段格矩形");
+    let hit = layout.hit_card(center_x(cell), center_y(cell));
+    push(
+        &mut checks,
+        "设置分段命中",
+        hit == Some(ui::Id::new("scheme", 1)),
+        format!("{hit:?}"),
+    );
+    let button = layout
+        .card_hit(ui::Id::new("open-phrases", 0))
+        .expect("按钮矩形");
+    let hit = layout.hit_card(center_x(button), center_y(button));
+    push(
+        &mut checks,
+        "设置按钮命中",
+        hit == Some(ui::Id::new("open-phrases", 0)),
+        format!("{hit:?}"),
+    );
+    let hit = layout.hit_card(4.0, 4.0);
+    push(
+        &mut checks,
+        "设置空白不命中",
+        hit.is_none(),
+        format!("{hit:?}"),
+    );
+    // 控件右对齐在行内,不出卡片(卡片坐标)。
+    let aligned = (toggle.right - (layout.card.width() - 14.0)).abs() < 0.5;
+    let inside = toggle.right <= layout.card.width() && toggle.left >= 0.0;
+    push(
+        &mut checks,
+        "设置控件右对齐",
+        aligned && inside,
+        format!("右边距={:.1}", layout.card.right - toggle.right),
+    );
+    // 像素:窗口底色、开关闭合的旋钮、选中分段的底色。
+    let mut ui_surface = surfaces::raster_n32_premul((460, 650)).expect("raster surface");
+    ui::Painter::new(ui_surface.canvas(), &palette(), &font, 1.0).paint(&page, &layout, None, 0.0);
+    let corner = read_bgra(&mut ui_surface, 2, 2);
+    push(
+        &mut checks,
+        "设置窗底色",
+        corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().window_bg)),
+        format!("{corner:?} 期望 {:?}", rgb(palette().window_bg)),
+    );
+    let knob_x = (layout.card.left + toggle.right - 3.0 - 8.0) as i32;
+    let knob_y = (layout.card.top + center_y(toggle)) as i32;
+    let knob = read_bgra(&mut ui_surface, knob_x, knob_y);
+    push(
+        &mut checks,
+        "设置开关旋钮",
+        knob.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().on_accent)),
+        format!("{knob:?} 期望 {:?}", rgb(palette().on_accent)),
+    );
+    // 选中格的底色在格子左缘(避开居中的文字)。
+    let (cell_x, cell_y) = (
+        (layout.card.left + cell.left + 2.0) as i32,
+        (layout.card.top + center_y(cell)) as i32,
+    );
+    let cell_pixel = read_bgra(&mut ui_surface, cell_x, cell_y);
+    push(
+        &mut checks,
+        "设置选中分段底色",
+        cell_pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().segment)),
+        format!("{cell_pixel:?} 期望 {:?}", rgb(palette().segment)),
+    );
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0;

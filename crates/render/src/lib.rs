@@ -12,6 +12,7 @@
 pub mod badge;
 pub mod effect;
 pub mod panel;
+pub mod ui;
 
 pub use panel::{
     CONTRAST_TEXT, CONTRAST_WEAK, Effects, Hit, Item, Layout, ListFx, Metrics, Palette, PanelSpec,

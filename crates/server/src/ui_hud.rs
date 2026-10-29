@@ -273,8 +273,8 @@ impl Layer {
         let Some(surface) = self.surface.as_mut() else {
             return Err("没有光栅表面".into());
         };
-        let canvas = surface.canvas();
         let (width, height) = (surface.width() as f32, surface.height() as f32);
+        let canvas = surface.canvas();
         canvas.clear(skia_safe::Color::TRANSPARENT);
         // 淡入淡出作用整窗;圆角之外的像素保持透明。
         if opacity < 1.0 {
