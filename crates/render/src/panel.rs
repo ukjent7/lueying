@@ -156,7 +156,7 @@ pub enum Hit {
 /// 右键菜单项;与 GPUI 路径同一套动作与文案。
 pub const MENU_ITEMS: [&str; 2] = ["置顶", "降权"];
 
-fn color(rgb: u32) -> Color {
+pub(crate) fn color(rgb: u32) -> Color {
     Color::from_rgb(
         ((rgb >> 16) & 0xff) as u8,
         ((rgb >> 8) & 0xff) as u8,
@@ -164,7 +164,7 @@ fn color(rgb: u32) -> Color {
     )
 }
 
-fn fill_paint(rgb: u32) -> Paint {
+pub(crate) fn fill_paint(rgb: u32) -> Paint {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(color(rgb));

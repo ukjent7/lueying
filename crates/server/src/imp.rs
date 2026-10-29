@@ -82,6 +82,8 @@ pub(super) struct State {
     /// 每次中英切换自增,模式徽标轮询它决定是否重新显示。
     pub(super) hud_serial: AtomicU64,
     pub(super) mode_hud: Mutex<Option<ModeHud>>,
+    /// 候选窗当前贴光标的上方还是下方;模式徽标据此躲到另一侧。
+    pub(super) candidate_above: AtomicBool,
     /// 最近收到按键/光标上报的会话,候选窗只跟它。
     pub(super) active: AtomicU64,
     /// 三档降级后实际生效的主词典来源:`pyd`、`tsv` 或 `builtin`。
@@ -293,6 +295,7 @@ pub(super) fn real_main() {
         version: AtomicU64::new(0),
         hud_serial: AtomicU64::new(0),
         mode_hud: Mutex::new(None),
+        candidate_above: AtomicBool::new(false),
         active: AtomicU64::new(0),
         sync_model,
         settled_model,
@@ -315,7 +318,7 @@ pub(super) fn real_main() {
     let pipe = pipe_name();
     println!("lueying-server 监听 {pipe}");
     {
-        // 管道服务在后台线程,主线程留给 gpui 事件循环。
+        // 管道服务在后台线程,主线程只等着;窗口各有各的线程。
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
     }
@@ -324,7 +327,7 @@ pub(super) fn real_main() {
     if std::env::var_os("LUEYING_SKIA_SELFTEST").is_some() {
         crate::ui_skia_selftest::selftest();
     }
-    // 无桌面会话(CI/服务)没有窗口站,GPUI 建窗会失败;输入法本身只依赖管道。
+    // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
         loop {
             std::thread::park();

@@ -17,7 +17,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
 
-use crate::ui_skia::{create_window, palette_of, panel_font};
+use crate::ui_skia::{create_window, panel_font};
 use crate::ui_skia_gpu::{Frame, FrameTarget, Offscreen, Pipeline, Raster, rgb};
 
 /// GPU 自检子进程的上限;超时就杀掉,GPU 管线卡死不该拖住输入法启动。
@@ -29,7 +29,7 @@ pub(super) fn selftest() {
     let spec = demo_spec();
     let width = panel::panel_width(&spec, &metrics, None);
     let height = panel::panel_height(&spec, &metrics, None);
-    let palette = palette_of(theme::colors_with(theme::Appearance::Light, 0));
+    let palette = theme::palette(theme::colors_with(theme::Appearance::Light, 0));
     // 光栅:确定性的像素期望,任何环境都能跑。
     match Raster::new(width as u32, height as u32) {
         Ok(mut target) => match check_pixels(&mut target, &spec, &palette, &metrics) {
@@ -64,7 +64,7 @@ pub(super) fn gpu_selftest() {
     let spec = demo_spec();
     let width = panel::panel_width(&spec, &metrics, None);
     let height = panel::panel_height(&spec, &metrics, None);
-    let palette = palette_of(theme::colors_with(theme::Appearance::Light, 0));
+    let palette = theme::palette(theme::colors_with(theme::Appearance::Light, 0));
     let (mode, outcome) = match window_target(width as u32, height as u32) {
         Ok((mut pipe, hwnd)) => {
             let outcome = check_pixels(&mut pipe, &spec, &palette, &metrics);

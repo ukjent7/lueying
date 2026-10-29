@@ -12,7 +12,7 @@ lueying_tsf.dll(薄壳,每个宿主进程一份)
 lueying-server.exe(常驻)
     ├─ 引擎会话(每宿主线程一个,共享词典/gram/用户词库)
     ├─ 候选窗(Skia:Win32 无焦点窗 + DirectComposition + Ganesh-D3D12)
-    ├─ 模式徽标(gpui 无焦点置顶浮层)
+    ├─ 模式徽标(原生分层窗:CPU 光栅 + UpdateLayeredWindow)
     ├─ UIA 左邻文本回退线程 / 25M 停顿重排线程
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
 lueying-settings.exe(设置窗,经管道与 Server 通信)
@@ -72,7 +72,10 @@ Skia 拿着空命令表句柄继续走就崩,建不出设备就放弃候选窗�
 
 绘制、命中测试与菜单几何都在平台无关的 `lueying-render`(Linux E2E 光栅像素
 断言),窗口层只把命中翻译成协议请求。摆位、DPI 与全屏避让在 `ui_place`,
-模式徽标共用同一套。Windows CI 以 `LUEYING_SKIA_SELFTEST` 自检整条管线:光栅
+模式徽标共用同一套。徽标不走 GPU:它是分层窗口上的预乘 alpha 位图,Skia CPU
+光栅出帧、UpdateLayeredWindow 上屏,在没有硬件 D3D12 的机器上也照样显示;
+候选窗在同一侧时徽标躲到另一侧,两者不互相遮挡。Windows CI 以
+`LUEYING_SKIA_SELFTEST` 自检整条管线:光栅
 路径与服务端同进程跑,给出确定性像素断言与字体断言(DirectWrite 字型必须真的
 画进画面);Ganesh-D3D12 路径另起子进程跑——没有硬件适配器或驱动异常的机器上
 GPU 管线会把进程带崩,隔离在子进程里,崩了也不影响输入法,日志如实记下原因。

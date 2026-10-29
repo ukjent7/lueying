@@ -4,6 +4,7 @@
 use std::ffi::c_void;
 
 use gpui::{Window, WindowAppearance};
+use lueying_render::panel::Palette;
 use windows::Win32::Graphics::Gdi::{
     COLOR_3DFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
     COLOR_WINDOWFRAME, COLOR_WINDOWTEXT, GetSysColor, SYS_COLOR_INDEX,
@@ -259,4 +260,24 @@ pub fn high_contrast() -> bool {
 pub fn system_color(index: SYS_COLOR_INDEX) -> u32 {
     let color = unsafe { GetSysColor(index) };
     ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff)
+}
+
+/// 界面色 → 渲染令牌;候选窗与模式徽标共用同一套。
+///
+/// 渲染层的 `bg` 是面板底色(浅色下的白、深色下的深灰),设置窗的底色
+/// 是另一张牌,不走渲染层。
+pub fn palette(colors: Colors) -> Palette {
+    Palette {
+        bg: colors.surface,
+        surface_alt: colors.surface_alt,
+        border: colors.border,
+        text: colors.text,
+        text_secondary: colors.text_secondary,
+        text_tertiary: colors.text_tertiary,
+        accent: colors.accent,
+        accent_text: colors.accent_text,
+        selected_bg: colors.selected_bg,
+        selected_text: colors.selected_text,
+        hover: colors.hover,
+    }
 }

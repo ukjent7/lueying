@@ -9,6 +9,7 @@
 //! 效果只画装饰层,文字永远由引擎绘制;加载期编译,帧内只打包 uniform。
 //! 效果之上压一层引擎遮罩(`scrim_alpha`),文字对比度因此有下限。
 
+pub mod badge;
 pub mod effect;
 pub mod panel;
 

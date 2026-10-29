@@ -2534,7 +2534,6 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
- "raw-window-handle",
  "serde_json",
  "skia-safe",
  "windows 0.62.2",

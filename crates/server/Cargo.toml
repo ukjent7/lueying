@@ -27,9 +27,9 @@ serde_json = "1"
 
 [target."cfg(windows)".dependencies]
 # 官方推荐:git 依赖跟随 zed 仓库 main(无独立版本号)
+# 设置窗还在 gpui 上;候选窗与模式徽标已迁到原生 + Skia。
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed" }
-raw-window-handle = "0.6"
 # Skia 候选窗:渲染核心 + Ganesh-D3D12 后端。
 lueying-render.workspace = true
 skia-safe = { workspace = true, features = ["d3d"] }

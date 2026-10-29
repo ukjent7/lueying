@@ -37,6 +37,9 @@ mod uia;
 mod ui;
 
 #[cfg(windows)]
+mod ui_hud;
+
+#[cfg(windows)]
 mod ui_place;
 
 #[cfg(windows)]

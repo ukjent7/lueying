@@ -6,7 +6,8 @@
 //! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 只用硬件适配器,
 //! 建不出设备时放弃候选窗并写日志,输入本身不受影响;设备中途被系统摘掉
 //! 就停用候选窗,不再进 Skia。
-//! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标仍是 GPUI(Stage 2b)。
+//! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标走原生分层窗口
+//! (`ui_hud`:CPU 光栅 + UpdateLayeredWindow),不在这条管线上。
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use lueying_protocol::{Request, SessionView};
 use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
-use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
+use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, PreeditBar};
 use lueying_server::config::UiLayout;
 use lueying_server::theme;
 use skia_safe::{Font, FontMgr, FontStyle};
@@ -328,6 +329,10 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
                 _ => !fits_below && fits_above,
             };
             ctx.fx.above = Some(prefer_above);
+            // 徽标据此躲到候选窗的另一侧,两者不互相遮挡。
+            ctx.state
+                .candidate_above
+                .store(prefer_above, Ordering::Relaxed);
             let y = (if prefer_above { over } else { below })
                 .clamp(work.top, (work.bottom - h).max(work.top));
             let x = left.clamp(work.left, (work.right - w).max(work.left));
@@ -338,6 +343,7 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
         }
         None => {
             ctx.fx.above = None;
+            ctx.state.candidate_above.store(false, Ordering::Relaxed);
             (0, 0, 0, 0)
         }
     };
@@ -404,7 +410,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
     let appearance = theme::Appearance::of_system();
-    let palette = palette_of(theme::colors_with(appearance, accent));
+    let palette = theme::palette(theme::colors_with(appearance, accent));
     // 高对比度由系统接管外观,用户效果整个关掉,免得压过系统配色。
     let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
@@ -777,7 +783,7 @@ fn style_click_through(hwnd: HWND, click_through: bool) {
 }
 
 /// 系统「减少动态效果」;开启后动效全部走终态。查询失败按可用处理。
-fn reduce_motion() -> bool {
+pub(super) fn reduce_motion() -> bool {
     let mut enabled = BOOL::default();
     let ok = unsafe {
         SystemParametersInfoW(
@@ -924,21 +930,4 @@ fn measure_width(
         })
         .collect();
     panel::panel_width(&spec, metrics, font)
-}
-
-/// `theme::Colors` → 渲染令牌;候选窗底色是 surface,bg 是设置窗的。
-pub(super) fn palette_of(c: theme::Colors) -> Palette {
-    Palette {
-        bg: c.surface,
-        surface_alt: c.surface_alt,
-        border: c.border,
-        text: c.text,
-        text_secondary: c.text_secondary,
-        text_tertiary: c.text_tertiary,
-        accent: c.accent,
-        accent_text: c.accent_text,
-        selected_bg: c.selected_bg,
-        selected_text: c.selected_text,
-        hover: c.hover,
-    }
 }

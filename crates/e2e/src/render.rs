@@ -10,6 +10,7 @@
 
 use std::time::{Duration, Instant};
 
+use lueying_render::badge;
 use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use skia_safe::{ImageInfo, Paint, Surface, surfaces};
@@ -33,6 +34,18 @@ fn read_bgr(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8)> {
     }
     let at = ((y * w + x) * 4) as usize;
     Some((buf[at], buf[at + 1], buf[at + 2]))
+}
+
+/// 读回一个像素的 (B, G, R, A);N32 预乘,透明处的 alpha 是 0。
+fn read_bgra(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8, u8)> {
+    let (w, h) = (surface.width(), surface.height());
+    let info = ImageInfo::new_n32_premul((w, h), None);
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    if !surface.read_pixels(&info, &mut buf, info.min_row_bytes(), (0, 0)) {
+        return None;
+    }
+    let at = ((y * w + x) * 4) as usize;
+    Some((buf[at], buf[at + 1], buf[at + 2], buf[at + 3]))
 }
 
 /// 0xRRGGBB 转成与 [`read_bgr`] 同序的 (B, G, R),比较时才不会错位。
@@ -541,6 +554,73 @@ pub fn run(report: &mut String) -> usize {
             format!("{pixel:?} 期望 {expected_pager:?}"),
         ),
         None => push(&mut checks, "箭头悬停底色", false, "像素读回失败".into()),
+    }
+
+    // 模式徽标:卡片底色、圆角外的透明,以及字型有没有真的画出来。
+    let (bw, bh) = (badge::WIDTH as i32, badge::HEIGHT as i32);
+    let plain_badge = |surface: &mut Surface, font: Option<&skia_safe::Font>| {
+        badge::draw(
+            surface.canvas(),
+            &badge::BadgeSpec {
+                label: "中",
+                palette: &palette(),
+                font,
+                width: badge::WIDTH,
+                height: badge::HEIGHT,
+                scale: 1.0,
+                shadow: false,
+            },
+        );
+    };
+    let mut badge_surface = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
+    plain_badge(&mut badge_surface, None);
+    match read_bgra(&mut badge_surface, bw / 2, bh / 2) {
+        Some(pixel) => push(
+            &mut checks,
+            "徽标卡片底色",
+            pixel.3 == 255 && (pixel.0, pixel.1, pixel.2) == rgb(palette().bg),
+            format!("{pixel:?} 期望 {:?} 全不透明", rgb(palette().bg)),
+        ),
+        None => push(&mut checks, "徽标卡片底色", false, "像素读回失败".into()),
+    }
+    match read_bgra(&mut badge_surface, 0, 0) {
+        Some(pixel) => push(
+            &mut checks,
+            "徽标圆角外透明",
+            pixel.3 == 0,
+            format!("{pixel:?} 期望 alpha=0"),
+        ),
+        None => push(&mut checks, "徽标圆角外透明", false, "像素读回失败".into()),
+    }
+    // 字型:系统一个可用字型都没有是环境问题,跳过;有字型却画不出东西才是 bug。
+    let mgr = skia_safe::FontMgr::new();
+    let families = mgr.count_families();
+    match mgr.legacy_make_typeface(None, skia_safe::FontStyle::normal()) {
+        Some(face) => {
+            let font = skia_safe::Font::from_typeface(face, 17.0);
+            let mut with_font = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
+            plain_badge(&mut with_font, Some(&font));
+            let mut plain = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
+            plain_badge(&mut plain, None);
+            let mut differs = false;
+            'y: for y in 0..bh {
+                for x in 0..bw {
+                    if read_bgra(&mut with_font, x, y) != read_bgra(&mut plain, x, y) {
+                        differs = true;
+                        break 'y;
+                    }
+                }
+            }
+            // 一个字体族都没有时,字型画不出东西是环境问题,不算渲染 bug。
+            let ok = differs || families == 0;
+            push(
+                &mut checks,
+                "徽标字型出图",
+                ok,
+                format!("与无字型画面不同={differs} 字体族={families}"),
+            );
+        }
+        None => push(&mut checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
     }
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
