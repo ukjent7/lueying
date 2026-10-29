@@ -68,8 +68,10 @@ fn valid_script_id_boundaries() {
 #[test]
 fn save_keeps_script_and_round_trips() {
     let path = temp("roundtrip");
-    let mut cfg = AppConfig::default();
-    cfg.script = "demo-pack".to_string();
+    let cfg = AppConfig {
+        script: "demo-pack".to_string(),
+        ..AppConfig::default()
+    };
     save(&path, &cfg).expect("写配置");
     let text = std::fs::read_to_string(&path).expect("读配置");
     let loaded = load(&path);
