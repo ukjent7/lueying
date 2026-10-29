@@ -8,6 +8,9 @@
 //! 扩展能看见的只有面板状态([`SceneIn`]),能改的只有主题色与三个 SkSL
 //! 槽位([`ScenePatch`])。候选文字、击键历史、宿主应用名都不进 JS。命令
 //! 只能执行扩展自己声明过的短 id,完整 id 由 [`Runtime`] 加上扩展前缀。
+//! 清单 `needs` 里声明过的服务经 `lueying.<service>.*` 调用,Promise 结算,
+//! 调用面在引导层按 needs 门控;接口记录在 `lueying-extsvc` 的
+//! `lueying.wit`。
 //!
 //! # 边界
 //!
@@ -42,6 +45,7 @@ mod runtime;
 mod scene;
 
 pub use host::{Host, Invoke, Limits, Settled};
+pub use lueying_extsvc::{Completion, Done, Provider, Registry};
 pub use manifest::{
     Activate, Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Permission, Service, When,
 };

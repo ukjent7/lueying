@@ -1,0 +1,95 @@
+// 掠影扩展服务缝 v1(WIT 风格 IDL)。
+//
+// 这是接口的记录文件:Rust 侧 Registry/Provider 与 JS 侧 lueying.<service>.*
+// 都按这里的名字与方法实现;改接口先改这里,再改注册表里的方法白名单。
+// 每个方法都是「JSON 进、Promise 出」:参数是 record 的 JSON 形式,结果经
+// 完成队列异步送达,返回 result 的 Err 分支是给用户看的错误文本。
+
+package lueying:ext@1.0.0;
+
+// 截取屏幕:返回临时位图文件路径,喂给 ocr.recognize 或外部命令。
+interface capture {
+  record region {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+  }
+  record shot-options {
+    region: option<region>,
+  }
+  record shot-result {
+    file: string,
+    width: u32,
+    height: u32,
+  }
+  shot: func(options: shot-options) -> result<shot-result, string>;
+}
+
+// 文字识别:输入位图文件路径,输出识别文本。
+interface ocr {
+  record recognize-options {
+    file: string,
+    lang: option<string>,
+  }
+  record recognize-result {
+    text: string,
+    lang: string,
+  }
+  recognize: func(options: recognize-options) -> result<recognize-result, string>;
+}
+
+// 上屏:把文本送进当前输入焦点(经 TSF 提交链路)。
+interface output {
+  record deliver-options {
+    text: string,
+  }
+  record deliver-result {
+    delivered: bool,
+  }
+  deliver: func(options: deliver-options) -> result<deliver-result, string>;
+}
+
+// 宿主绘制的声明式面板:列出候选项,等用户挑选后异步返回。
+interface panel {
+  record show-options {
+    title: string,
+    items: list<string>,
+  }
+  record show-result {
+    selected: option<u32>,
+  }
+  show: func(options: show-options) -> result<show-result, string>;
+}
+
+// 全局热键:注册与注销;注册冲突时返回 Err。
+interface hotkey {
+  record register-options {
+    id: string,
+    modifiers: list<string>,
+    key: string,
+  }
+  register: func(options: register-options) -> result<string, string>;
+  record unregister-options {
+    id: string,
+  }
+  unregister: func(options: unregister-options) -> result<string, string>;
+}
+
+// 系统通知。
+interface notify {
+  record show-options {
+    title: string,
+    body: string,
+  }
+  show: func(options: show-options) -> result<string, string>;
+}
+
+world extension {
+  import capture;
+  import ocr;
+  import output;
+  import panel;
+  import hotkey;
+  import notify;
+}

@@ -9,7 +9,10 @@
 //! 也能列出来,命令面板与设置页因此没有额外成本。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use lueying_extsvc::Registry;
 
 use crate::host::{Invoke, Limits, Settled};
 use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
@@ -81,6 +84,8 @@ impl Slot {
 /// 多扩展运行期。
 pub struct Runtime {
     limits: Limits,
+    /// 服务缝注册表;所有槽位共享,提供者由宿主进程装填。
+    services: Arc<Registry>,
     slots: Vec<Slot>,
     idle: Duration,
 }
@@ -91,6 +96,16 @@ impl Runtime {
     /// 坏清单与缺失目录只记一条诊断,不影响其他扩展;返回的诊断由调用方
     /// 写进日志与设置页。重复 id 只保留第一次出现的位置。
     pub fn open(root: &Path, order: &[String], limits: Limits) -> (Self, Vec<String>) {
+        Self::open_with(root, order, limits, Arc::new(Registry::new()))
+    }
+
+    /// 同上,另带服务注册表;注册表被全部槽位共享。
+    pub fn open_with(
+        root: &Path,
+        order: &[String],
+        limits: Limits,
+        services: Arc<Registry>,
+    ) -> (Self, Vec<String>) {
         let mut slots = Vec::new();
         let mut errors = Vec::new();
         for id in order {
@@ -117,6 +132,7 @@ impl Runtime {
         (
             Self {
                 limits,
+                services,
                 slots,
                 idle: IDLE_UNLOAD,
             },
@@ -216,12 +232,13 @@ impl Runtime {
             return None;
         }
         let mut merged: Option<ScenePatch> = None;
+        let services = Arc::clone(&self.services);
         for slot in self.slots.iter_mut() {
             if slot.pack.is_none() {
                 if !slot.resident || slot.manifest.script_main().is_none() {
                     continue;
                 }
-                match Pack::load_with(&slot.dir, self.limits) {
+                match Pack::load_with_services(&slot.dir, self.limits, &services) {
                     Ok(pack) => {
                         slot.pack = Some(pack);
                         slot.error = None;
@@ -370,8 +387,9 @@ impl Runtime {
             return Ok(());
         }
         let limits = self.limits;
+        let services = Arc::clone(&self.services);
         let slot = &mut self.slots[index];
-        match Pack::load_with(&slot.dir, limits) {
+        match Pack::load_with_services(&slot.dir, limits, &services) {
             Ok(pack) => {
                 slot.pack = Some(pack);
                 slot.error = None;

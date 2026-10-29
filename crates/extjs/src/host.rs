@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
-use rquickjs::{Context, Ctx, Function};
+use rquickjs::{Context, Ctx, Func, Function};
 use serde::Deserialize;
 
 use crate::SCENE_API;
+use lueying_extsvc::Registry;
 
 const BOOTSTRAP: &str = include_str!("bootstrap.js");
 
@@ -94,17 +95,30 @@ pub struct Host {
     deadline_ns: Arc<AtomicU64>,
     tripped: Arc<AtomicBool>,
     limits: Limits,
+    /// 服务缝注册表;`lueying.<service>.*` 经它路由到宿主进程的提供者。
+    services: Arc<Registry>,
     /// 已挂起、尚未结算的任务数。
     pending: u64,
 }
 
 impl Host {
-    /// 建运行时、装引导脚本、执行入口脚本。
-    ///
-    /// 入口脚本必须同步注册至少一个派发入口:`lueying.register(handler)`
-    /// 或 `lueying.command(name, fn)`。顶层死循环由 [`Limits::init_ms`]
-    /// 打断,语法错直接返回原文。
+    /// 建运行时、装引导脚本、执行入口脚本;没有 needs、没有服务提供者。
     pub fn new(source: &str, limits: Limits) -> Result<Self, String> {
+        Self::new_with(source, limits, &[], Arc::new(Registry::new()))
+    }
+
+    /// 同上,另带清单声明的服务(needs)与服务注册表。
+    ///
+    /// needs 只喂给引导层做调用面门控;注册表挂在宿主上,提供者由宿主
+    /// 进程按平台装填。入口脚本必须同步注册至少一个派发入口:
+    /// `lueying.register(handler)` 或 `lueying.command(name, fn)`。顶层
+    /// 死循环由 [`Limits::init_ms`] 打断,语法错直接返回原文。
+    pub fn new_with(
+        source: &str,
+        limits: Limits,
+        needs: &[&str],
+        services: Arc<Registry>,
+    ) -> Result<Self, String> {
         let runtime = rquickjs::Runtime::new().map_err(|e| format!("创建 JS 运行时失败: {e}"))?;
         runtime.set_memory_limit(limits.memory_bytes);
         runtime.set_max_stack_size(limits.stack_bytes);
@@ -131,11 +145,34 @@ impl Host {
             deadline_ns,
             tripped,
             limits,
+            services,
             pending: 0,
         };
         host.arm(limits.init_ms);
+        let needs_json = serde_json::to_string(needs).unwrap_or_else(|_| "[]".into());
         let ready = host.context.with(|ctx| -> Result<bool, String> {
-            let bootstrap = BOOTSTRAP.replace("__LUEYING_API__", &SCENE_API.to_string());
+            // 服务调用的 Rust 入口;用户脚本运行前就位,引导层包成 Promise。
+            let registry = Arc::clone(&host.services);
+            ctx.globals()
+                .set(
+                    "__lueying_service_call",
+                    Func::from(
+                        move |service: String,
+                              method: String,
+                              args: String,
+                              token: f64|
+                              -> String {
+                            match registry.call(&service, &method, &args, token as u64) {
+                                Ok(()) => String::new(),
+                                Err(text) => format!("__error:{text}"),
+                            }
+                        },
+                    ),
+                )
+                .map_err(|e| format!("注册服务入口失败: {e}"))?;
+            let bootstrap = BOOTSTRAP
+                .replace("__LUEYING_API__", &SCENE_API.to_string())
+                .replace("__LUEYING_NEEDS__", &needs_json);
             ctx.eval::<(), _>(bootstrap)
                 .map_err(|e| js_error(&ctx, e))?;
             ctx.eval::<(), _>(source).map_err(|e| js_error(&ctx, e))?;
@@ -212,24 +249,41 @@ impl Host {
         self.pending
     }
 
-    /// 推进异步任务:按宿主时钟兑现到点定时器,跑一轮作业队列,收走结算结果。
+    /// 推进异步任务:按宿主时钟兑现到点定时器,送出服务完成结果,跑一轮
+    /// 作业队列,收走结算结果。
     ///
     /// 每个作业步都受 [`Limits::dispatch_ms`] 约束;等待定时器与原生服务
     /// 不在预算内。一轮最多 [`PUMP_STEPS`] 步,反复重新入队的任务留给下一轮。
     pub fn pump(&mut self, now_ms: u64) -> Vec<Settled> {
-        if self.pending == 0 {
+        if self.pending == 0 && !self.services.has_completions() {
             return Vec::new();
         }
         let budget = self.limits.dispatch_ms;
         let epoch = self.epoch;
         let deadline_ns = Arc::clone(&self.deadline_ns);
         let tripped = Arc::clone(&self.tripped);
+        let services = Arc::clone(&self.services);
         let mut pending = self.pending;
         let mut out = Vec::new();
         // 闭包只拿局部克隆,避免与 self.pending 的写冲突。
         self.context.with(|ctx| {
             if let Ok(tick) = ctx.globals().get::<_, Function>("__lueying_tick") {
                 let _ = tick.call::<_, ()>((now_ms as f64,));
+            }
+            // 提供者的完成结果先兑现成 Promise 结算,再跑作业队列传播。
+            let completions = services.take_completions();
+            if !completions.is_empty()
+                && let Ok(resolve) = ctx
+                    .globals()
+                    .get::<_, Function>("__lueying_service_resolve")
+            {
+                for completion in completions {
+                    let (ok, value) = match completion.result {
+                        Ok(value) => (true, value),
+                        Err(text) => (false, text),
+                    };
+                    let _ = resolve.call::<_, ()>((completion.token as f64, ok, value));
+                }
             }
             for _ in 0..PUMP_STEPS {
                 tripped.store(false, Ordering::Relaxed);

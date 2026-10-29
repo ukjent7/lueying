@@ -11,11 +11,15 @@
 //! 8. 一次异常后宿主不可用,后续派发全挂。
 //! 9. 卸载扩展后命令、触发词、热键还留在宿主里,或 JS 宿主没被丢弃。
 //! 10. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
+//! 11. 未声明 needs 的服务调到了;缺提供者的服务静默成功;服务结果丢失。
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{Invoke, Limits, Pack, Poll, Runtime, SceneIn};
+use lueying_extjs::{
+    Done, Invoke, Limits, Pack, Poll, Provider, Registry, Runtime, SceneIn, Service,
+};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -750,6 +754,277 @@ lueying.command("boom", function () {
     );
 }
 
+/// 服务缝的假提供者:截图写临时文件,识别返回固定文本。
+struct FakeCapture {
+    dir: PathBuf,
+}
+
+impl Provider for FakeCapture {
+    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        let _ = args;
+        if method != "shot" {
+            return Err(format!("假 capture 不认识方法 {method}"));
+        }
+        let file = self.dir.join("shot.bmp");
+        std::fs::write(&file, b"BMfake").map_err(|e| e.to_string())?;
+        let payload = serde_json::json!({
+            "file": file.to_string_lossy(),
+            "width": 80,
+            "height": 20,
+        });
+        done.complete(Ok(payload.to_string()));
+        Ok(())
+    }
+}
+
+/// 假识别:参数里缺 file 时经完成队列回错误文本。
+struct FakeOcr;
+
+impl Provider for FakeOcr {
+    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        if method != "recognize" {
+            return Err(format!("假 ocr 不认识方法 {method}"));
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        if parsed["file"].as_str().unwrap_or_default().is_empty() {
+            done.complete(Err("缺 file".into()));
+            return Ok(());
+        }
+        done.complete(Ok(r#"{"text":"假识别文本","lang":"zh"}"#.into()));
+        Ok(())
+    }
+}
+
+/// 假上屏:记录送进来的文本,断言链路时核对。
+#[derive(Default)]
+struct FakeOutput {
+    delivered: Mutex<Vec<String>>,
+}
+
+impl Provider for FakeOutput {
+    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        if method != "deliver" {
+            return Err(format!("假 output 不认识方法 {method}"));
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        self.delivered
+            .lock()
+            .unwrap()
+            .push(parsed["text"].as_str().unwrap_or_default().to_string());
+        done.complete(Ok(r#"{"delivered":true}"#.into()));
+        Ok(())
+    }
+}
+
+/// 假面板:先挂住调用,测试调 settle 才完成,验证跨泵轮的异步结算。
+struct FakePanel {
+    waiting: Mutex<Option<Done>>,
+}
+
+impl FakePanel {
+    fn settle(&self, selected: Option<u32>) {
+        if let Some(done) = self.waiting.lock().unwrap().take() {
+            let payload = match selected {
+                Some(index) => format!(r#"{{"selected":{index}}}"#),
+                None => r#"{"selected":null}"#.to_string(),
+            };
+            done.complete(Ok(payload));
+        }
+    }
+}
+
+impl Provider for FakePanel {
+    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        let _ = args;
+        if method != "show" {
+            return Err(format!("假 panel 不认识方法 {method}"));
+        }
+        *self.waiting.lock().unwrap() = Some(done);
+        Ok(())
+    }
+}
+
+/// 假热键:重复注册走完成队列的错误分支。
+#[derive(Default)]
+struct FakeHotkey {
+    registered: Mutex<Vec<String>>,
+}
+
+impl Provider for FakeHotkey {
+    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        if method != "register" {
+            return Err(format!("假 hotkey 不认识方法 {method}"));
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        let id = parsed["id"].as_str().unwrap_or_default().to_string();
+        let mut ids = self.registered.lock().unwrap();
+        if ids.contains(&id) {
+            done.complete(Err(format!("热键已注册: {id}")));
+            return Ok(());
+        }
+        ids.push(id);
+        done.complete(Ok(r#"{"registered":true}"#.into()));
+        Ok(())
+    }
+}
+
+/// 服务缝:needs 门控、调用路由、完成队列与错误回传。
+/// notify 故意不装提供者:验证「声明了但提供者缺席」的报错路径。
+fn services(checks: &mut Vec<(&'static str, bool, String)>) {
+    let temp = Temp::new("services");
+    let shots = temp.root.join("shots");
+    std::fs::create_dir_all(&shots).expect("建截图目录");
+    let svc_manifest = r#"{"id":"svc","name":"服务","version":"1.0.0","api":2,"main":"index.js","needs":["capture","ocr","output","panel","hotkey","notify"],"activate":{"commands":[{"id":"chain","title":"链"},{"id":"panel","title":"板"},{"id":"hk","title":"键"},{"id":"notify","title":"告"}]}}"#;
+    let gate_manifest = r#"{"id":"gate","name":"门","version":"1.0.0","api":2,"main":"index.js","needs":[],"activate":{"commands":[{"id":"try_ocr","title":"试"}]}}"#;
+    const SVC: &str = r#"
+lueying.command("chain", function () {
+  return lueying.capture.shot({}).then(function (shot) {
+    return lueying.ocr.recognize({ file: shot.file });
+  }).then(function (ocr) {
+    return lueying.output.deliver({ text: ocr.text });
+  }).then(function (delivered) {
+    return { chain: true, delivered: delivered.delivered };
+  });
+});
+lueying.command("panel", function () {
+  return lueying.panel.show({ title: "测试", items: ["甲", "乙"] });
+});
+lueying.command("hk", function (args) {
+  return lueying.hotkey.register({ id: args.id, modifiers: ["ctrl"], key: "K" });
+});
+lueying.command("notify", function () {
+  return lueying.notify.show({ title: "标题", body: "正文" });
+});
+"#;
+    const GATE: &str = r#"
+lueying.command("try_ocr", function () {
+  return lueying.ocr.recognize({ file: "x" });
+});
+"#;
+    let svc_dir = temp.pack("svc");
+    write_pack(&svc_dir, svc_manifest, SVC);
+    let gate_dir = temp.pack("gate");
+    write_pack(&gate_dir, gate_manifest, GATE);
+
+    let output = Arc::new(FakeOutput::default());
+    let panel = Arc::new(FakePanel {
+        waiting: Mutex::new(None),
+    });
+    let registry = Arc::new(Registry::new());
+    registry.set(Service::Capture, Arc::new(FakeCapture { dir: shots }));
+    registry.set(Service::Ocr, Arc::new(FakeOcr));
+    registry.set(Service::Output, output.clone());
+    registry.set(Service::Panel, panel.clone());
+    registry.set(Service::Hotkey, Arc::new(FakeHotkey::default()));
+    let order = vec!["svc".to_string(), "gate".to_string()];
+    let (mut runtime, errors) =
+        Runtime::open_with(&temp.root, &order, Limits::default(), registry);
+    if !errors.is_empty() {
+        push(checks, "服务包打开", false, format!("{errors:?}"));
+        return;
+    }
+
+    let chain = runtime.invoke("svc.chain", "");
+    let mut settled = Vec::new();
+    for _ in 0..10 {
+        settled = runtime.pump(0);
+        if !settled.is_empty() {
+            break;
+        }
+    }
+    push(
+        checks,
+        "服务链 capture→ocr→output",
+        matches!(chain, Ok(Invoke::Pending(_)))
+            && settled.len() == 1
+            && settled[0].1.ok
+            && settled[0].1.value.as_deref() == Some(r#"{"chain":true,"delivered":true}"#)
+            && output
+                .delivered
+                .lock()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                == vec!["假识别文本"],
+        format!("{chain:?} {settled:?}"),
+    );
+
+    let shown = runtime.invoke("svc.panel", "");
+    let idle = runtime.pump(0);
+    panel.settle(Some(0));
+    let picked = runtime.pump(0);
+    push(
+        checks,
+        "panel 等提供者再结算",
+        matches!(shown, Ok(Invoke::Pending(_)))
+            && idle.is_empty()
+            && picked.len() == 1
+            && picked[0].1.ok
+            && picked[0].1.value.as_deref() == Some(r#"{"selected":0}"#),
+        format!("{shown:?} {idle:?} {picked:?}"),
+    );
+
+    let first = runtime.invoke("svc.hk", r#"{"id":"paste"}"#);
+    let first_settled = runtime.pump(0);
+    let second = runtime.invoke("svc.hk", r#"{"id":"paste"}"#);
+    let second_settled = runtime.pump(0);
+    push(
+        checks,
+        "热键注册成功与冲突",
+        matches!(first, Ok(Invoke::Pending(_)))
+            && first_settled.len() == 1
+            && first_settled[0].1.ok
+            && matches!(second, Ok(Invoke::Pending(_)))
+            && second_settled.len() == 1
+            && !second_settled[0].1.ok
+            && second_settled[0].1.error.as_deref() == Some("热键已注册: paste"),
+        format!("{first:?} {first_settled:?} {second:?} {second_settled:?}"),
+    );
+
+    let notify = runtime.invoke("svc.notify", "");
+    let settled = runtime.pump(0);
+    push(
+        checks,
+        "缺提供者的服务报错",
+        matches!(notify, Ok(Invoke::Pending(_)))
+            && settled.len() == 1
+            && !settled[0].1.ok
+            && settled[0]
+                .1
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("没有提供者")),
+        format!("{notify:?} {settled:?}"),
+    );
+
+    let denied = runtime.invoke("gate.try_ocr", "");
+    let settled = runtime.pump(0);
+    push(
+        checks,
+        "未声明的服务被拒",
+        matches!(denied, Ok(Invoke::Pending(_)))
+            && settled.len() == 1
+            && !settled[0].1.ok
+            && settled[0]
+                .1
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("未在 needs 声明")),
+        format!("{denied:?} {settled:?}"),
+    );
+
+    push(
+        checks,
+        "服务结算后挂起清零",
+        runtime.pending() == 0,
+        format!("pending={}", runtime.pending()),
+    );
+}
+
 /// 运行全部检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
@@ -757,6 +1032,7 @@ pub fn run(report: &mut String) -> usize {
     manifests(&mut checks);
     runtime(&mut checks);
     async_commands(&mut checks);
+    services(&mut checks);
     scene(&mut checks);
     patches(&mut checks);
     budget(&mut checks);

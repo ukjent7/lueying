@@ -6,6 +6,11 @@
 
 ### 新增
 
+- 服务缝 v1(T3):六项宿主服务 capture/ocr/output/panel/hotkey/notify 走
+  `lueying.<service>.*` Promise 接口,调用面按清单 `needs` 门控,接口记录在
+  `lueying-extsvc` 的 WIT 文件;提供者经注册表装填,结果走完成队列异步回传,
+  缺提供者与未声明服务当场报错;E2E 用假提供者覆盖调用链、面板延迟结算、
+  热键冲突、缺提供者与未声明拒绝。
 - 扩展平台验证(任务书 V1–V8)进入 Windows E2E:V1 用 GDI 画中文样张走
   Windows.Media.Ocr(普通 push 测语言包缺失行为,手动触发先装 zh-CN 能力
   测质量),V3 出二进制体积基线,V5 实测 UIA 判断焦点可编辑性(含只读态

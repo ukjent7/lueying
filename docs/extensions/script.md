@@ -103,6 +103,35 @@ lueying.command("later", async (args) => {
 
 宿主拿到 `Invoke::Pending` 后按宿主时钟泵作业队列;等待期间扩展照常参与空闲卸载计时。
 
+## 服务调用
+
+清单 `needs` 里声明过的服务经 `lueying.<service>.<方法>(args)` 调用,返回
+Promise;结果与错误都由宿主提供者异步回传。没声明的服务当场拒绝,声明了但
+宿主没装提供者同样报错。接口与载荷以 `crates/extsvc/lueying.wit` 为准,
+v1 开放:
+
+| 服务 | 方法 | 说明 |
+|---|---|---|
+| capture | `shot({region?})` | 截屏,返回 `{file, width, height}` 临时位图路径 |
+| ocr | `recognize({file, lang?})` | 文字识别,返回 `{text, lang}` |
+| output | `deliver({text})` | 把文本送进当前输入焦点,返回 `{delivered}` |
+| panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}` |
+| hotkey | `register({id, modifiers, key})` / `unregister({id})` | 全局热键,冲突报错 |
+| notify | `show({title, body})` | 系统通知 |
+
+剪贴板、网络与存储在 v1 没有开放接口;声明了也调不到。
+
+```js
+lueying.command("shot-ocr", async () => {
+  const shot = await lueying.capture.shot({});
+  const ocr = await lueying.ocr.recognize({ file: shot.file });
+  await lueying.output.deliver({ text: ocr.text });
+  return { chars: ocr.text.length };
+});
+```
+
+等待提供者不占脚本预算;服务错误文本走 Promise 拒绝,计入连续失败计数。
+
 ## 场景状态
 
 `handler(state)` 收到一个对象,字段固定:

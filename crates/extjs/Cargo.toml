@@ -8,6 +8,8 @@ description = "运行期 JS 扩展:场景协议、QuickJS 宿主与热重载"
 [dependencies]
 # 扩展清单与权限模型:外观、逻辑与能力组件共用。
 lueying-extmeta.workspace = true
+# 服务缝:命令里 lueying.<service>.* 的调用路由与完成队列。
+lueying-extsvc.workspace = true
 # QuickJS-NG 绑定,默认只开 std;预编译绑定覆盖 Linux x86_64 与 Windows MSVC x64。
 # 32 位 Windows 没有随包绑定,所以本 crate 不进 i686 的构建。
 rquickjs = { version = "0.14", default-features = false, features = ["std"] }

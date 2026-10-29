@@ -1,5 +1,6 @@
-// 扩展引导:用户脚本只拿到 lueying.register、lueying.command 与 lueying.timeout,
-// 派发入口由这里封死。__LUEYING_API__ 在加载时由 Rust 侧替换成 SCENE_API。
+// 扩展引导:用户脚本只拿到 lueying.register、lueying.command、lueying.timeout
+// 与声明过的 lueying.<service>.*,派发入口由这里封死。__LUEYING_API__ 在加载时
+// 由 Rust 侧替换成 SCENE_API,__LUEYING_NEEDS__ 替换成清单 needs 的服务名数组。
 // 所有用到的内建函数在用户脚本运行前就存进闭包,脚本改全局对象也换不掉。
 (function () {
   "use strict";
@@ -15,6 +16,8 @@
   var ready = [];
   var pending_seq = 0;
   var clock = 0;
+  var needs = __LUEYING_NEEDS__;
+  var services_pending = Object.create(null);
 
   function describe(e) {
     // QuickJS 的 stack 只有调用栈,没有错误文本;两段都带上,日志里才看得到
@@ -57,6 +60,20 @@
         timers.push({ at: clock + delay, resolve: resolve });
       });
     },
+    // 服务缝:方法都在,调用面按 needs 门控;接口见 extsvc 的 lueying.wit。
+    capture: { shot: serviceFn("lueying.capture.shot", "capture", "shot") },
+    ocr: { recognize: serviceFn("lueying.ocr.recognize", "ocr", "recognize") },
+    output: { deliver: serviceFn("lueying.output.deliver", "output", "deliver") },
+    panel: { show: serviceFn("lueying.panel.show", "panel", "show") },
+    hotkey: {
+      register: serviceFn("lueying.hotkey.register", "hotkey", "register"),
+      unregister: serviceFn(
+        "lueying.hotkey.unregister",
+        "hotkey",
+        "unregister"
+      ),
+    },
+    notify: { show: serviceFn("lueying.notify.show", "notify", "show") },
   };
   Object.freeze(api);
   Object.defineProperty(globalThis, "lueying", {
@@ -82,6 +99,37 @@
         delete pending[token];
       }
     );
+  }
+
+  // 服务调用:发起时把 resolve/reject 存进 services_pending,宿主拿到
+  // 提供者的完成结果后经 __lueying_service_resolve 兑现。参数是对象或空。
+  function servicePromise(service, method, args) {
+    return new PromiseCtor(function (resolve, reject) {
+      var token = ++pending_seq;
+      var json = args === undefined || args === null ? "" : stringify(args);
+      var out;
+      try {
+        out = __lueying_service_call(service, method, json, token);
+      } catch (e) {
+        reject(describe(e));
+        return;
+      }
+      if (out.slice(0, 8) === "__error:") {
+        reject(out.slice(8));
+        return;
+      }
+      services_pending[token] = { resolve: resolve, reject: reject };
+    });
+  }
+
+  // 声明过的服务才有调用面:没在 needs 里声明的当场拒绝,错误文本直说。
+  function serviceFn(label, service, method) {
+    return function (args) {
+      if (needs.indexOf(service) < 0) {
+        return PromiseCtor.reject(label + " 未在 needs 声明");
+      }
+      return servicePromise(service, method, args);
+    };
   }
 
   Object.defineProperty(globalThis, "__lueying_dispatch", {
@@ -170,6 +218,26 @@
       var out = ready;
       ready = [];
       return stringify(out);
+    },
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
+  // 兑现一次服务调用:宿主从完成队列抽到结果后调用;找不到等待中的
+  // Promise 就丢弃(重复完成或调用方没等结果)。
+  Object.defineProperty(globalThis, "__lueying_service_resolve", {
+    value: function (token, ok, value) {
+      var entry = services_pending[token];
+      if (entry === undefined) {
+        return;
+      }
+      delete services_pending[token];
+      if (ok) {
+        entry.resolve(value === "" ? undefined : parse(value));
+      } else {
+        entry.reject(value);
+      }
     },
     writable: false,
     enumerable: false,

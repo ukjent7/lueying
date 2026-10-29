@@ -5,13 +5,19 @@
 //! 热重载保留上一版可用的宿主,写坏的存盘不会把正在用的扩展弄没。
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
+
+use lueying_extsvc::Registry;
 
 use crate::MAX_FAULTS;
 use crate::host::{Host, Invoke, Limits, Settled};
-use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
+use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Service};
 use crate::scene::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";
+
+/// 没有服务提供者的默认注册表;单包加载(`Pack::load`)用它。
+static EMPTY_SERVICES: LazyLock<Arc<Registry>> = LazyLock::new(|| Arc::new(Registry::new()));
 
 /// 轮询结果。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +46,8 @@ pub struct Pack {
     stamp: Stamp,
     host: Host,
     limits: Limits,
+    /// 服务注册表;热重载时重建宿主要原样带上。
+    services: Arc<Registry>,
     faults: u32,
     disabled: Option<String>,
     last_error: Option<String>,
@@ -54,6 +62,17 @@ impl Pack {
 
     /// 用指定上限加载一个包目录。
     pub fn load_with(dir: &Path, limits: Limits) -> Result<Self, String> {
+        Self::load_with_services(dir, limits, &EMPTY_SERVICES)
+    }
+
+    /// 用指定上限与服务注册表加载一个包目录。
+    ///
+    /// 清单 `needs` 喂给引导层做调用面门控:没声明的服务在 JS 侧当场拒绝。
+    pub fn load_with_services(
+        dir: &Path,
+        limits: Limits,
+        services: &Arc<Registry>,
+    ) -> Result<Self, String> {
         let manifest_bytes = read_capped(&dir.join(MANIFEST), MAX_MANIFEST_BYTES)
             .map_err(|e| format!("读扩展清单失败: {e}"))?;
         let manifest = Manifest::parse(&manifest_bytes)?;
@@ -63,7 +82,8 @@ impl Pack {
             .ok_or_else(|| format!("扩展 {} 没有脚本入口", manifest.id))?;
         let source = read_text(&dir.join(main), MAX_SOURCE_BYTES)
             .map_err(|e| format!("读入口脚本 {main} 失败: {e}"))?;
-        let host = Host::new(&source, limits)
+        let needs: Vec<&str> = manifest.needs.iter().map(|service| service.key()).collect();
+        let host = Host::new_with(&source, limits, &needs, Arc::clone(services))
             .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -74,6 +94,7 @@ impl Pack {
             manifest,
             host,
             limits,
+            services: Arc::clone(services),
             faults: 0,
             disabled: None,
             last_error: None,
@@ -244,7 +265,8 @@ impl Pack {
                 return Poll::Failed(format!("入口脚本不是 UTF-8: {e}"));
             }
         };
-        match Host::new(&source, self.limits) {
+        let needs: Vec<&str> = manifest.needs.iter().map(|service| service.key()).collect();
+        match Host::new_with(&source, self.limits, &needs, Arc::clone(&self.services)) {
             Ok(host) => {
                 self.host = host;
                 self.manifest = manifest;

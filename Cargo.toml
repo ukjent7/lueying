@@ -12,6 +12,8 @@ members = [
     "crates/protocol",
     # 运行期扩展:场景协议 + QuickJS 宿主,平台无关
     "crates/extjs",
+    # 扩展服务缝:提供者契约与完成队列,平台无关
+    "crates/extsvc",
     # 渲染核心:候选窗 Skia 出帧,平台无关
     "crates/render",
     # Windows 宿主与安装
@@ -35,6 +37,7 @@ lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }
 lueying-extjs = { path = "crates/extjs" }
 lueying-extmeta = { path = "crates/extmeta" }
+lueying-extsvc = { path = "crates/extsvc" }
 lueying-features = { path = "crates/features" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
