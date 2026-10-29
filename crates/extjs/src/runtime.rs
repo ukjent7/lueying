@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::host::Limits;
-use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
+use crate::host::{Invoke, Limits, Settled};
+use crate::manifest::{Manifest, When, MAX_MANIFEST_BYTES};
 use crate::pack::{Pack, Poll};
 use crate::scene::{SceneIn, ScenePatch};
 
@@ -175,8 +175,11 @@ impl Runtime {
         self.ensure(index)
     }
 
-    /// 执行一条完整 id 的命令,返回 JS 给的 JSON 文本。
-    pub fn invoke(&mut self, command: &str, args: &str) -> Result<String, String> {
+    /// 执行一条完整 id 的命令。
+    ///
+    /// 命令返回 Promise 时得到 [`Invoke::Pending`],用 [`Runtime::pump`]
+    /// 按宿主时钟推进;等待期间扩展照常空闲卸载计时。
+    pub fn invoke(&mut self, command: &str, args: &str) -> Result<Invoke, String> {
         let Some((extension, local)) = command.split_once('.') else {
             return Err(format!("命令 id {command:?} 缺少扩展前缀"));
         };
@@ -215,7 +218,7 @@ impl Runtime {
         let mut merged: Option<ScenePatch> = None;
         for slot in self.slots.iter_mut() {
             if slot.pack.is_none() {
-                if !slot.resident {
+                if !slot.resident || slot.manifest.script_main().is_none() {
                     continue;
                 }
                 match Pack::load_with(&slot.dir, self.limits) {
@@ -269,6 +272,37 @@ impl Runtime {
             println!("扩展 {} 已卸载(清单被删)", slot.id);
         }
         removed.len()
+    }
+
+    /// 推进全部挂起任务:兑现到点定时器、跑作业队列、收结算结果。
+    /// 返回 (扩展 id, 结算) 列表;有活动的扩展刷新空闲计时。
+    pub fn pump(&mut self, now_ms: u64) -> Vec<(String, Settled)> {
+        let mut out = Vec::new();
+        for slot in self.slots.iter_mut() {
+            let Some(pack) = slot.pack.as_mut() else {
+                continue;
+            };
+            if pack.pending() == 0 {
+                continue;
+            }
+            let settled = pack.pump(now_ms);
+            if !settled.is_empty() {
+                slot.last_used = Instant::now();
+            }
+            for item in settled {
+                out.push((slot.id.clone(), item));
+            }
+        }
+        out
+    }
+
+    /// 全部扩展挂起、尚未结算的任务数。
+    pub fn pending(&self) -> u64 {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.pack.as_ref())
+            .map(|pack| pack.pending())
+            .sum()
     }
 
     /// 卸载空闲超过阈值的命令包;常驻外观包不动。

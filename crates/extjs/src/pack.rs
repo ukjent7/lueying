@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::MAX_FAULTS;
-use crate::host::{Host, Limits};
-use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
+use crate::host::{Host, Invoke, Limits, Settled};
+use crate::manifest::{Command, Manifest, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES};
 use crate::scene::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";
@@ -109,8 +109,9 @@ impl Pack {
     /// 执行一条已声明的命令;参数与返回值都是 JSON 文本。
     ///
     /// 未声明的命令直接拒绝,JS 侧即使注册了同名函数也调不到;命令失败
-    /// 与派发失败共用连续失败计数。
-    pub fn invoke(&mut self, command: &str, args: &str) -> Result<String, String> {
+    /// 与派发失败共用连续失败计数。命令返回 Promise 时得到
+    /// [`Invoke::Pending`],由 [`Pack::pump`] 推进。
+    pub fn invoke(&mut self, command: &str, args: &str) -> Result<Invoke, String> {
         if self.removed {
             return Err(format!("扩展 {} 已卸载", self.manifest.id));
         }
@@ -121,16 +122,40 @@ impl Pack {
             return Err(format!("扩展 {} 没有声明命令 {command}", self.manifest.id));
         }
         match self.host.invoke(command, args) {
-            Ok(text) => {
+            Ok(invoke) => {
                 self.faults = 0;
                 self.last_error = None;
-                Ok(text)
+                Ok(invoke)
             }
             Err(error) => {
                 self.fault(error.clone());
                 Err(error)
             }
         }
+    }
+
+    /// 推进挂起任务:兑现到点定时器、跑一轮作业队列、收结算结果。
+    ///
+    /// 结算失败计入连续失败计数;停用或卸载后挂起任务不再推进。
+    pub fn pump(&mut self, now_ms: u64) -> Vec<Settled> {
+        if self.removed || self.disabled.is_some() {
+            return Vec::new();
+        }
+        let settled = self.host.pump(now_ms);
+        for item in &settled {
+            if item.ok {
+                self.faults = 0;
+                self.last_error = None;
+            } else {
+                self.fault(item.error.clone().unwrap_or_default());
+            }
+        }
+        settled
+    }
+
+    /// 挂起、尚未结算的任务数。
+    pub fn pending(&self) -> u64 {
+        self.host.pending()
     }
 
     /// 派发一次场景状态。

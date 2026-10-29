@@ -10,10 +10,58 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use rquickjs::{Context, Ctx, Function};
+use serde::Deserialize;
 
 use crate::SCENE_API;
 
 const BOOTSTRAP: &str = include_str!("bootstrap.js");
+
+/// 一次命令调用的结果:同步返回 JSON,或挂起等宿主泵作业。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Invoke {
+    /// 已完成;JSON 文本,空串表示没有返回值。
+    Done(String),
+    /// 返回了 Promise;等 [`Host::pump`] 兑现。
+    Pending(u64),
+}
+
+/// 一条挂起任务的结算结果。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Settled {
+    /// 发起调用时拿到的任务号。
+    pub token: u64,
+    /// 是否成功;失败看 [`Settled::error`]。
+    pub ok: bool,
+    /// 成功时的 JSON 文本;`None` 表示 JS 返回 undefined。
+    pub value: Option<String>,
+    /// 失败时的错误文本。
+    pub error: Option<String>,
+}
+
+/// 引导层回传的就绪结果。
+#[derive(Deserialize)]
+struct Ready {
+    token: u64,
+    ok: bool,
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<Ready> for Settled {
+    fn from(ready: Ready) -> Self {
+        Self {
+            token: ready.token,
+            ok: ready.ok,
+            value: ready.value,
+            error: ready.error,
+        }
+    }
+}
+
+/// 单次泵作业的步数上限;被反复重新入队的任务留给下一轮泵。
+const PUMP_STEPS: u32 = 256;
 
 /// 运行期上限。
 #[derive(Clone, Copy, Debug)]
@@ -46,6 +94,8 @@ pub struct Host {
     deadline_ns: Arc<AtomicU64>,
     tripped: Arc<AtomicBool>,
     limits: Limits,
+    /// 已挂起、尚未结算的任务数。
+    pending: u64,
 }
 
 impl Host {
@@ -81,6 +131,7 @@ impl Host {
             deadline_ns,
             tripped,
             limits,
+            pending: 0,
         };
         host.arm(limits.init_ms);
         let ready = host.context.with(|ctx| -> Result<bool, String> {
@@ -128,8 +179,9 @@ impl Host {
     /// 执行一条命令;参数与返回值都是 JSON 文本,空串表示无参数/无返回值。
     ///
     /// 命令名是扩展内的短名(清单里声明的那一个),不是全局完整 id;
-    /// 完整 id 的解析与作用域由 [`crate::Runtime`] 负责。
-    pub fn invoke(&mut self, command: &str, args_json: &str) -> Result<String, String> {
+    /// 完整 id 的解析与作用域由 [`crate::Runtime`] 负责。命令返回 Promise
+    /// 时得到 [`Invoke::Pending`],由 [`Host::pump`] 推进。
+    pub fn invoke(&mut self, command: &str, args_json: &str) -> Result<Invoke, String> {
         let budget = self.limits.dispatch_ms;
         self.arm(budget);
         let result = self.context.with(|ctx| -> Result<String, String> {
@@ -142,7 +194,58 @@ impl Host {
                 .map_err(|e| js_error(&ctx, e))
         });
         self.disarm();
-        self.finish(result, "命令执行", budget)
+        let text = self.finish(result, "命令执行", budget)?;
+        match text.strip_prefix("__pending:") {
+            Some(token) => {
+                let token = token
+                    .parse::<u64>()
+                    .map_err(|_| format!("坏的任务标记 {text:?}"))?;
+                self.pending = self.pending.saturating_add(1);
+                Ok(Invoke::Pending(token))
+            }
+            None => Ok(Invoke::Done(text)),
+        }
+    }
+
+    /// 挂起、尚未结算的任务数。
+    pub fn pending(&self) -> u64 {
+        self.pending
+    }
+
+    /// 推进异步任务:按宿主时钟兑现到点定时器,跑一轮作业队列,收走结算结果。
+    ///
+    /// 每个作业步都受 [`Limits::dispatch_ms`] 约束;等待定时器与原生服务
+    /// 不在预算内。一轮最多 [`PUMP_STEPS`] 步,反复重新入队的任务留给下一轮。
+    pub fn pump(&mut self, now_ms: u64) -> Vec<Settled> {
+        if self.pending == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        self.context.with(|ctx| {
+            if let Ok(tick) = ctx.globals().get::<_, Function>("__lueying_tick") {
+                let _ = tick.call::<_, ()>((now_ms as f64,));
+            }
+            for _ in 0..PUMP_STEPS {
+                self.arm(self.limits.dispatch_ms);
+                let ran = ctx.execute_pending_job();
+                self.disarm();
+                let tripped = self.tripped.swap(false, Ordering::Relaxed);
+                if !ran || tripped {
+                    break;
+                }
+            }
+            if let Ok(take) = ctx.globals().get::<_, Function>("__lueying_take_ready") {
+                if let Ok(json) = take.call::<_, String>(())
+                    && let Ok(list) = serde_json::from_str::<Vec<Ready>>(&json)
+                {
+                    for ready in list {
+                        self.pending = self.pending.saturating_sub(1);
+                        out.push(ready.into());
+                    }
+                }
+            }
+        });
+        out
     }
 
     /// 命令是否已注册;不跑用户代码,只查引导层里的表。

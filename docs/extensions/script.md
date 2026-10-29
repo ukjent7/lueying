@@ -85,11 +85,23 @@ lueying.command("run", (args) => {
 
 - 只能执行清单里声明过的命令;JS 里注册了未声明的名字也调不到。
 - 参数与返回值都走 JSON;返回 `undefined` 表示没有返回值。
-- 命令必须同步返回;Promise 会被拒绝。异步步进在后续阶段接入。
+- 命令可以返回 Promise:等待不占脚本预算,由宿主时钟推进;每个作业步仍受
+  8 ms 限,反复重新入队的任务每轮泵至多 256 步。`lueying.timeout(ms)` 返回
+  宿主时钟上的延时 Promise,是等待的最小原语;原生服务(OCR、截图)的等待
+  也走同一条预算规则。
 - 命令失败与派发失败共用连续失败计数,连续 3 次停用该扩展。
 - `when` 可选 `any`、`editable`、`composing`,由宿主在绑定时过滤。
 
-命令面板、全局热键与输入内触发在后续阶段接线;当前宿主已能按完整 id 调用命令,Scope 随扩展卸载整体回收。
+命令面板、全局热键与输入内触发在后续阶段接线;当前宿主已能按完整 id 调用命令,Scope 随扩展卸载整体回收。异步示例:
+
+```js
+lueying.command("later", async (args) => {
+  await lueying.timeout(args.ms);
+  return { done: true };
+});
+```
+
+宿主拿到 `Invoke::Pending` 后按宿主时钟泵作业队列;等待期间扩展照常参与空闲卸载计时。
 
 ## 场景状态
 
@@ -190,4 +202,4 @@ esbuild src/index.ts --bundle --format=iife --minify --outfile="%APPDATA%\lueyin
 
 ## 不支持
 
-`import`、异步 handler、定时器、DOM、运行期加载 DLL。网络、剪贴板、截图、OCR 等能力要等宿主服务缝接线,并且只按清单声明授权。
+`import`、定时器(`setTimeout` 用 `lueying.timeout` 代替)、DOM、运行期加载 DLL。网络、剪贴板、截图、OCR 等能力要等宿主服务缝接线,并且只按清单声明授权。外观 handler 保持同步;只有命令可以返回 Promise。

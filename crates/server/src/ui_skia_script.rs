@@ -114,6 +114,12 @@ fn worker(
                 if removed > 0 {
                     let _ = patches.send((last_seq, None));
                 }
+                // 推进挂起的异步命令;没有挂起任务时这是零成本检查。
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis() as u64)
+                    .unwrap_or(0);
+                let _ = current.pump(now_ms);
                 for id in &order {
                     let Some(error) = current.error(id) else {
                         continue;

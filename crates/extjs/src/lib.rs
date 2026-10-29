@@ -13,6 +13,8 @@
 //!
 //! - 内存上限 [`Limits::memory_bytes`],栈上限 [`Limits::stack_bytes`]。
 //! - 初始化与每次派发都有指令时限,超时由 QuickJS 中断。
+//! - 命令可以返回 Promise:等待 `lueying.timeout` 与原生服务不占预算,
+//!   每个作业步仍受派发时限约束,反复入队的任务每轮泵至多 256 步。
 //! - 密码/隐私字段([`SceneIn::private`])直接跳过,脚本不会收到那次状态。
 //! - 高对比度下补丁里的效果被摘掉,只留主题色。
 //! - 连续 [`MAX_FAULTS`] 次失败停用该包,重载成功后恢复。
@@ -39,7 +41,7 @@ mod pack;
 mod runtime;
 mod scene;
 
-pub use host::{Host, Limits};
+pub use host::{Host, Invoke, Limits, Settled};
 pub use manifest::{
     Activate, Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Permission, Service, When,
 };

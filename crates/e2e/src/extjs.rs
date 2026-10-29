@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{Limits, Pack, Poll, Runtime, SceneIn};
+use lueying_extjs::{Invoke, Limits, Pack, Poll, Runtime, SceneIn};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -556,7 +556,8 @@ lueying.command("run", function (args) {
     push(
         checks,
         "命令按需加载且只拉起被调用的扩展",
-        invoked.as_deref().ok() == Some(r#"{"ok":true,"echo":7}"#) && only_alpha,
+        matches!(&invoked, Ok(Invoke::Done(text)) if text == r#"{"ok":true,"echo":7}"#)
+            && only_alpha,
         format!(
             "{invoked:?} alpha={} beta={}",
             runtime.loaded("alpha"),
@@ -654,12 +655,107 @@ lueying.command("run", function (args) {
     );
 }
 
+/// 异步命令:Promise 挂起、宿主时钟推进、步进预算与失败结算。
+fn async_commands(checks: &mut Vec<(&'static str, bool, String)>) {
+    let temp = Temp::new("async");
+    let manifest = r#"{"id":"async","name":"异步","version":"1.0.0","api":2,"main":"index.js","activate":{"commands":[{"id":"slow","title":"慢"},{"id":"spin","title":"转"},{"id":"boom","title":"炸"}]}}"#;
+    const SOURCE: &str = r#"
+lueying.command("slow", function (args) {
+  return lueying.timeout(args.ms).then(function () {
+    return { done: true };
+  });
+});
+lueying.command("spin", function () {
+  return lueying.timeout(1).then(function () { while (true) {} });
+});
+lueying.command("boom", function () {
+  return lueying.timeout(1).then(function () { throw new Error("late boom"); });
+});
+"#;
+    let dir = temp.pack("async");
+    write_pack(&dir, manifest, SOURCE);
+    let limits = Limits {
+        dispatch_ms: 20,
+        ..Limits::default()
+    };
+    let (mut runtime, errors) = Runtime::open(&temp.root, &["async".to_string()], limits);
+    if !errors.is_empty() {
+        push(checks, "异步包打开", false, format!("{errors:?}"));
+        return;
+    }
+
+    let slow = runtime.invoke("async.slow", r#"{"ms":50}"#);
+    let pending = matches!(&slow, Ok(Invoke::Pending(1)));
+    let started = Instant::now();
+    let early = runtime.pump(0);
+    let pump_elapsed = started.elapsed();
+    push(
+        checks,
+        "Promise 命令挂起且泵不空转",
+        pending && early.is_empty() && pump_elapsed < Duration::from_secs(1),
+        format!("{slow:?} {early:?} {pump_elapsed:?}"),
+    );
+    push(
+        checks,
+        "等待期不结算",
+        runtime.pump(49).is_empty() && runtime.pending() == 1,
+        format!("pending={}", runtime.pending()),
+    );
+    let settled = runtime.pump(50);
+    push(
+        checks,
+        "到点后结算为 JSON",
+        settled.len() == 1
+            && settled[0].0 == "async"
+            && settled[0].1.token == 1
+            && settled[0].1.ok
+            && settled[0].1.value.as_deref() == Some(r#"{"done":true}"#),
+        format!("{settled:?}"),
+    );
+
+    let spin = runtime.invoke("async.spin", "");
+    let started = Instant::now();
+    let interrupted = runtime.pump(1);
+    let continued = runtime.pump(1);
+    let spin_elapsed = started.elapsed();
+    push(
+        checks,
+        "死循环作业被步进预算打断",
+        matches!(spin, Ok(Invoke::Pending(2)))
+            && interrupted.is_empty()
+            && continued.iter().any(|(_, settled)| !settled.ok)
+            && spin_elapsed < Duration::from_secs(2),
+        format!("{spin:?} {interrupted:?} {continued:?} {spin_elapsed:?}"),
+    );
+
+    let boom = runtime.invoke("async.boom", "");
+    let settled = runtime.pump(1);
+    let error = settled
+        .iter()
+        .find(|(_, item)| !item.ok)
+        .and_then(|(_, item)| item.error.clone())
+        .unwrap_or_default();
+    push(
+        checks,
+        "异步异常带错误文本结算",
+        matches!(boom, Ok(Invoke::Pending(3))) && error.contains("late boom"),
+        format!("{boom:?} {error:?}"),
+    );
+    push(
+        checks,
+        "全部任务结算后挂起清零",
+        runtime.pending() == 0,
+        format!("pending={}", runtime.pending()),
+    );
+}
+
 /// 运行全部检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     bad_packs(&mut checks);
     manifests(&mut checks);
     runtime(&mut checks);
+    async_commands(&mut checks);
     scene(&mut checks);
     patches(&mut checks);
     budget(&mut checks);
