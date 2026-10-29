@@ -118,17 +118,30 @@ jobs:
           "LUEYING_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build (release)
         id: build
-        run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+        # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
+        run: cargo build --release --locked -p lueying-server -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
       # 定时任务不经过 ci.yml 的 ARM64 检查,这里要自己补 i686 target。
       - name: 安装 i686 target
         run: rustup target add i686-pc-windows-msvc
+      # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release。
+      - name: TSF 构建(静态 CRT)
+        id: buildtsf
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --locked -p lueying-tsf
+          Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
       - name: Build 32-bit TSF
         id: build32tsf
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
         id: stage32
         shell: pwsh
-        run: Copy-Item target/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
+        run: Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
       - name: Build 32-bit E2E host
         id: build32
         run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
@@ -140,6 +153,8 @@ jobs:
         run: |
           $dir = "target/i686-pc-windows-msvc/release"
           Copy-Item target/release/lueying-server.exe $dir -Force
+          # 32 位 TSF DLL 从静态 CRT 的独立目录来。
+          Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll $dir -Force
           # Server 是 64 位的,依赖的运行时 DLL 也要跟着过去;TSF DLL 保留 32 位。
           Get-ChildItem target/release -Filter *.dll -File |
             Where-Object { $_.Name -notlike "lueying_tsf*" } |
@@ -151,7 +166,7 @@ jobs:
           Pop-Location
           exit $code
       - name: 安装/卸载冒烟
-        if: always() && steps.build.outcome == 'success' && steps.build32tsf.outcome == 'success' && steps.stage32.outcome == 'success' && steps.build32.outcome == 'success'
+        if: always() && steps.build.outcome == 'success' && steps.buildtsf.outcome == 'success' && steps.build32tsf.outcome == 'success' && steps.stage32.outcome == 'success' && steps.build32.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
       # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。

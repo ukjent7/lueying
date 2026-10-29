@@ -106,13 +106,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
       # 预编译命中门禁:特性集与 rust-skia 发布的键对不上时,这里几秒就红;
       # 否则会静默退化成十几分钟的本地编 Skia,还把原因埋在日志里。
       - name: Skia 预编译命中
         run: cargo build --release -p lueying-render --features prebuilt-only --locked
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          lookup-only: ${{ github.event_name == 'pull_request' }}
       - name: 缓存词典与模型
         id: dict-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -183,7 +183,12 @@ jobs:
       # ARM64 安装被 lueying.iss 明确拒绝:ARM64 与 x64 共用同一份 64 位注册表
       # 视图,原生宿主能加载的 TSF 得做成 ARM64X DLL,目前没有。这里仍做真实
       # 链接而不只是 check,保证该目标随时可产出可用的原生 DLL。
+      # TSF DLL 装在宿主进程里,必须静态链接 CRT(见 .cargo/config.toml),
+      # 所以单独一个 target 目录 + 显式 RUSTFLAGS,不碰主构建目录。
       - name: ARM64 TSF 构建
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
@@ -198,7 +203,16 @@ jobs:
         id: build
         # 只编发版真正用到的包;64 位 E2E 宿主每次 push/PR 都编。
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
-        run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer
+        # TSF 不在这里:它要静态 CRT,单独一步构建。
+        run: cargo build --release --locked -p lueying-server -p lueying-installer
+      # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
+      - name: TSF 构建(静态 CRT)
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --locked -p lueying-tsf
+          Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
       - name: Build Windows E2E harness
         id: build_e2e
         run: cargo build --release --locked -p lueying-win-e2e
@@ -207,11 +221,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo build --release --locked -p lueying-install-e2e
       - name: Build 32-bit TSF
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
       - name: Stage 32-bit DLL for install E2E
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: pwsh
-        run: Copy-Item target/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
+        run: Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
       - name: Build 32-bit E2E host
         id: build32
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
@@ -225,6 +242,8 @@ jobs:
         run: |
           $dir = "target/i686-pc-windows-msvc/release"
           Copy-Item target/release/lueying-server.exe $dir -Force
+          # 32 位 TSF DLL 从静态 CRT 的独立目录来(见 TSF 构建步骤)。
+          Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll $dir -Force
           # Server 是 64 位的,依赖的运行时 DLL 也要跟着过去;TSF DLL 保留 32 位。
           Get-ChildItem target/release -Filter *.dll -File |
             Where-Object { $_.Name -notlike "lueying_tsf*" } |
@@ -316,7 +335,7 @@ jobs:
         run: |
           version_args=()
           if [ -n "${VERSION:-}" ]; then version_args=(--version "$VERSION"); fi
-          cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying "${version_args[@]}"
+          cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/tsf/i686-pc-windows-msvc/release --data data --out dist/lueying "${version_args[@]}"
       # 签名脚手架:仓库里配 WINDOWS_PFX_BASE64(PFX 证书的 base64)与
       # WINDOWS_PFX_PASSWORD 两个 secret 后,tag 构建自动签 setup.exe 并加
       # RFC3161 时间戳;没配 secret 时跳过,发布物与现状一致。

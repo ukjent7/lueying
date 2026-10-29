@@ -10,6 +10,18 @@ use std::path::{Path, PathBuf};
 use lueying_engine::{Config, Fuzzy, Script};
 use lueying_features::SchemeId;
 
+/// 主题色名只在 Windows 下可解析(theme 是 Windows 模块)。
+#[cfg(windows)]
+fn accent_by_name(value: &str) -> Option<usize> {
+    crate::theme::accent_index(value)
+}
+
+/// 非 Windows 没有主题表,颜色名一律解析不出来。
+#[cfg(not(windows))]
+fn accent_by_name(_value: &str) -> Option<usize> {
+    None
+}
+
 /// 繁体字形地区;`traditional` 开着时生效。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Region {
@@ -388,16 +400,10 @@ pub fn load(path: &Path) -> AppConfig {
                 cfg.ui_font = UiFont::from_str(value);
             }
             "ui_accent" | "accent" => {
-                match value.parse::<usize>() {
-                    Ok(index) => cfg.ui_accent = index,
-                    // 颜色名只在 Windows 下可解析(theme 是 Windows 模块)。
-                    Err(_) =>
-                    {
-                        #[cfg(windows)]
-                        if let Some(index) = crate::theme::accent_index(value) {
-                            cfg.ui_accent = index;
-                        }
-                    }
+                if let Ok(index) = value.parse::<usize>() {
+                    cfg.ui_accent = index;
+                } else if let Some(index) = accent_by_name(value) {
+                    cfg.ui_accent = index;
                 }
             }
             "update_channel" | "channel" => {

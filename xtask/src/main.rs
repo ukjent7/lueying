@@ -3,7 +3,7 @@
 //! - `pack`:把可执行文件与数据装进发布目录,生成清单、版本号与 Inno 安装包。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
-//! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/i686-pc-windows-msvc/release --data data --out dist/lueying`
+//! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/tsf/i686-pc-windows-msvc/release --data data --out dist/lueying`
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
