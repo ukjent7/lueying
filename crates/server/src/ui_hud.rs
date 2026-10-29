@@ -5,27 +5,22 @@
 //! 画面是预乘 alpha 的位图,靠 UpdateLayeredWindow 上屏,圆角、描边与淡入
 //! 淡出都是逐像素的。
 
-use std::ffi::c_void;
-use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_render::badge;
 use lueying_render::panel::Palette;
+use lueying_server::blit::Layer;
 use lueying_server::theme;
 use skia_safe::{Font, Surface};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
-use windows::Win32::Graphics::Gdi::{
-    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject,
-};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
-    RegisterClassW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    RegisterClassW, TranslateMessage, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::w;
 
@@ -123,10 +118,19 @@ fn hud_loop(state: Arc<State>) {
                     let scale = w as f32 / badge::WIDTH;
                     let palette = theme::palette(theme::colors_with(appearance, accent));
                     let opacity = opacity(&view, now, reduce);
-                    if let Err(e) =
-                        layer.draw(&view, font.as_ref(), &palette, appearance, opacity, scale)
-                    {
-                        println!("模式徽标绘制失败: {e}");
+                    match layer.surface(w as u32, h as u32) {
+                        Ok(surface) => {
+                            draw_badge(
+                                surface,
+                                &view,
+                                font.as_ref(),
+                                &palette,
+                                appearance,
+                                opacity,
+                                scale,
+                            );
+                        }
+                        Err(e) => println!("模式徽标表面失败: {e}"),
                     }
                     if let Err(e) = layer.present(hwnd, x, y, w, h) {
                         println!("模式徽标上屏失败: {e}");
@@ -224,171 +228,41 @@ fn opacity(view: &HudView, now: Instant, reduce: bool) -> f32 {
     }
 }
 
-/// 光栅表面 + GDI 位图:Skia 画完把像素搬进位图,UpdateLayeredWindow 上屏。
-struct Layer {
-    surface: Option<Surface>,
-    mem_dc: HDC,
-    dib: Option<HBITMAP>,
-    /// 位图像素(32 位 BGRA 预乘)。
-    bits: *mut c_void,
-    /// 换回旧位图才敢删 DIB。
-    old: Option<HGDIOBJ>,
-    size: (u32, u32),
-}
-
-impl Layer {
-    fn new() -> Result<Self, String> {
-        unsafe {
-            let screen = GetDC(None);
-            let mem_dc = CreateCompatibleDC(Some(screen));
-            let _ = ReleaseDC(None, screen);
-            if mem_dc.is_invalid() {
-                return Err("CreateCompatibleDC 失败".into());
-            }
-            Ok(Self {
-                surface: None,
-                mem_dc,
-                dib: None,
-                bits: ptr::null_mut(),
-                old: None,
-                size: (0, 0),
-            })
-        }
-    }
-
-    /// 画一帧徽标:圆角卡片 + 描边 + 居中的字。
-    fn draw(
-        &mut self,
-        view: &HudView,
-        font: Option<&Font>,
-        palette: &Palette,
-        appearance: theme::Appearance,
-        opacity: f32,
-        scale: f32,
-    ) -> Result<(), String> {
-        let (w, h) = (
-            (badge::WIDTH * scale) as u32,
-            (badge::HEIGHT * scale) as u32,
+/// 画一帧徽标:圆角卡片 + 描边 + 居中的字。
+fn draw_badge(
+    surface: &mut Surface,
+    view: &HudView,
+    font: Option<&Font>,
+    palette: &Palette,
+    appearance: theme::Appearance,
+    opacity: f32,
+    scale: f32,
+) {
+    let (width, height) = (surface.width() as f32, surface.height() as f32);
+    let canvas = surface.canvas();
+    canvas.clear(skia_safe::Color::TRANSPARENT);
+    // 淡入淡出作用整窗;圆角之外的像素保持透明。
+    if opacity < 1.0 {
+        canvas.save_layer_alpha_f(
+            skia_safe::Rect::from_wh(width, height),
+            opacity.clamp(0.0, 1.0),
         );
-        self.ensure(w, h)?;
-        let Some(surface) = self.surface.as_mut() else {
-            return Err("没有光栅表面".into());
-        };
-        let (width, height) = (surface.width() as f32, surface.height() as f32);
-        let canvas = surface.canvas();
-        canvas.clear(skia_safe::Color::TRANSPARENT);
-        // 淡入淡出作用整窗;圆角之外的像素保持透明。
-        if opacity < 1.0 {
-            canvas.save_layer_alpha_f(
-                skia_safe::Rect::from_wh(width, height),
-                opacity.clamp(0.0, 1.0),
-            );
-        }
-        let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
-        badge::draw(
-            canvas,
-            &badge::BadgeSpec {
-                label: view.label,
-                palette,
-                font,
-                width,
-                height,
-                scale,
-                shadow: !high_contrast,
-            },
-        );
-        if opacity < 1.0 {
-            canvas.restore();
-        }
-        Ok(())
     }
-
-    /// 把表面像素搬进位图,再让分层窗口显示它。
-    fn present(&mut self, hwnd: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
-        if self.bits.is_null() {
-            return Err("位图还没建好".into());
-        }
-        let Some(surface) = self.surface.as_mut() else {
-            return Err("没有光栅表面".into());
-        };
-        let pixels = crate::ui_skia_gpu::read_all(surface).ok_or("像素读回失败")?;
-        unsafe {
-            if !pixels.is_empty() {
-                ptr::copy_nonoverlapping(pixels.as_ptr(), self.bits.cast::<u8>(), pixels.len());
-            }
-            let dest = POINT { x, y };
-            let size = SIZE { cx: w, cy: h };
-            // AC_SRC_OVER + AC_SRC_ALPHA:按源位图的 alpha 混合。
-            let blend = BLENDFUNCTION {
-                BlendOp: 0,
-                BlendFlags: 0,
-                SourceConstantAlpha: 255,
-                AlphaFormat: 1,
-            };
-            UpdateLayeredWindow(
-                hwnd,
-                None,
-                Some(&dest),
-                Some(&size),
-                Some(self.mem_dc),
-                None,
-                COLORREF(0),
-                Some(&blend),
-                ULW_ALPHA,
-            )
-            .map_err(|e| format!("UpdateLayeredWindow: {e}"))?;
-        }
-        Ok(())
-    }
-
-    /// 尺寸变了就重建表面与位图;徽标尺寸只跟 DPI 走,很少变。
-    fn ensure(&mut self, w: u32, h: u32) -> Result<(), String> {
-        if self.size == (w, h) && self.surface.is_some() {
-            return Ok(());
-        }
-        unsafe {
-            // 旧位图先换回去再删,GDI 里不留野句柄。
-            if let (Some(dib), Some(old)) = (self.dib, self.old) {
-                SelectObject(self.mem_dc, old);
-                let _ = DeleteObject(HGDIOBJ(dib.0));
-            }
-            let info = BITMAPINFO {
-                bmiHeader: BITMAPINFOHEADER {
-                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: w as i32,
-                    // 负高度:位图自上而下,和 Skia 的行序一致。
-                    biHeight: -(h as i32),
-                    biPlanes: 1,
-                    biBitCount: 32,
-                    biCompression: 0,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let mut bits: *mut c_void = ptr::null_mut();
-            let dib =
-                CreateDIBSection(Some(self.mem_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
-                    .map_err(|e| format!("CreateDIBSection: {e}"))?;
-            let old = SelectObject(self.mem_dc, HGDIOBJ(dib.0));
-            self.dib = Some(dib);
-            self.bits = bits;
-            self.old = Some(old);
-        }
-        self.surface = skia_safe::surfaces::raster_n32_premul((w as i32, h as i32));
-        self.size = (w, h);
-        Ok(())
-    }
-}
-
-impl Drop for Layer {
-    fn drop(&mut self) {
-        unsafe {
-            if let (Some(dib), Some(old)) = (self.dib, self.old) {
-                SelectObject(self.mem_dc, old);
-                let _ = DeleteObject(HGDIOBJ(dib.0));
-            }
-            let _ = DeleteDC(self.mem_dc);
-        }
+    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+    badge::draw(
+        canvas,
+        &badge::BadgeSpec {
+            label: view.label,
+            palette,
+            font,
+            width,
+            height,
+            scale,
+            shadow: !high_contrast,
+        },
+    );
+    if opacity < 1.0 {
+        canvas.restore();
     }
 }
 

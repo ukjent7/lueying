@@ -207,12 +207,11 @@ fn inside(rect: Rect, x: f32, y: f32) -> bool {
     x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
 }
 
-/// 文字在左、居中还是靠右。
+/// 文字在左还是居中。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Align {
     Left,
     Center,
-    Right,
 }
 
 /// 算一页的几何。`scale` 是 DPI 缩放,字型按逻辑字号给。
@@ -422,10 +421,10 @@ impl<'a> Painter<'a> {
             subtitle,
             Align::Left,
         );
-        if let Some(button) = &page.header_button {
-            if let Some(rect) = layout.ring_page(button.id) {
-                self.button(button, rect);
-            }
+        if let Some(button) = &page.header_button
+            && let Some(rect) = layout.ring_page(button.id)
+        {
+            self.button(button, rect);
         }
     }
 
@@ -745,7 +744,6 @@ impl<'a> Painter<'a> {
         let x = match align {
             Align::Left => rect.left,
             Align::Center => rect.left + (rect.width() - width) / 2.0,
-            Align::Right => rect.right - width,
         };
         let baseline = (rect.top + rect.bottom) / 2.0 - (metrics.ascent + metrics.descent) / 2.0;
         let mut paint = Paint::default();
@@ -772,7 +770,6 @@ impl<'a> Painter<'a> {
         let x = match align {
             Align::Left => rect.left,
             Align::Center => rect.left + (rect.width() - width) / 2.0,
-            Align::Right => rect.right - width,
         };
         let baseline = (rect.top + rect.bottom) / 2.0 - (metrics.ascent + metrics.descent) / 2.0;
         let mut paint = Paint::default();

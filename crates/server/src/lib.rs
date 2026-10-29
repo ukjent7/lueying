@@ -3,6 +3,9 @@
 pub mod config;
 
 #[cfg(windows)]
+pub mod blit;
+
+#[cfg(windows)]
 pub mod theme;
 
 #[cfg(windows)]
