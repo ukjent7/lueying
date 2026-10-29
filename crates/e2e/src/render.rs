@@ -726,9 +726,7 @@ pub fn run(report: &mut String) -> usize {
     let page = settings_page();
     let layout = ui::layout(&page, &font, 1.0);
     // 命中:开关、分段格、按钮各归各位;空白处不命中。
-    let toggle = layout
-        .card_hit(ui::Id::new("aux", 0))
-        .expect("开关矩形");
+    let toggle = layout.card_hit(ui::Id::new("aux", 0)).expect("开关矩形");
     let hit = layout.hit_card(center_x(toggle), center_y(toggle));
     push(
         &mut checks,
