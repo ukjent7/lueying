@@ -4,8 +4,8 @@
 //! 全屏避让同 `ui_place` 助手共用。
 //! 交互 parity:淡入/淡出、翻页滑动、点选/滚轮/翻页箭头、右键菜单与悬停,
 //! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 只用硬件适配器,
-//! 建不出设备时放弃候选窗并写日志,输入本身不受影响;设备中途被系统摘掉
-//! 就停用候选窗,不再进 Skia。
+//! 建不出设备时退到 CPU 光栅 + 分层窗口(`ui_skia_cpu`),画面一模一样,
+//! 只是每帧多花一点 CPU;设备中途被系统摘掉就停用候选窗,不再进 Skia。
 //! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标走原生分层窗口
 //! (`ui_hud`:CPU 光栅 + UpdateLayeredWindow),不在这条管线上。
 
@@ -28,13 +28,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowLongPtrW, SetWindowPos,
     SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WS_VISIBLE,
 };
 use windows::core::{BOOL, w};
 
 use crate::imp::State;
 use crate::ui_place::{self, CARET_GAP};
+use crate::ui_skia_cpu::CpuPipeline;
 use crate::ui_skia_effect;
 use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
 
@@ -145,7 +147,7 @@ struct Geom {
 struct WinCtx {
     state: Arc<State>,
     fx: Fx,
-    pipe: Pipeline,
+    pipe: Presenter,
     font: Option<Font>,
     cursor_arrow: Option<HCURSOR>,
     cursor_hand: Option<HCURSOR>,
@@ -157,29 +159,80 @@ struct WinCtx {
     dead: bool,
 }
 
+/// 出帧路径:GPU 优先,没有硬件 D3D12 就退到 CPU 光栅。
+///
+/// 两条路径的画面完全一致(同一套绘制代码),只是上屏方式不同:GPU 走
+/// DirectComposition 交换链,CPU 走 GDI 分层窗口。
+enum Presenter {
+    Gpu(Pipeline),
+    Cpu(CpuPipeline),
+}
+
+impl Presenter {
+    fn draw(&mut self, f: Frame) -> Result<(), String> {
+        match self {
+            Presenter::Gpu(pipe) => pipe.draw(f),
+            Presenter::Cpu(pipe) => pipe.draw(f),
+        }
+    }
+
+    fn present(&mut self) -> Result<(), String> {
+        match self {
+            Presenter::Gpu(pipe) => pipe.present(),
+            Presenter::Cpu(pipe) => pipe.present(),
+        }
+    }
+
+    fn rebuild_surfaces(&mut self, w: u32, h: u32) -> Result<(), String> {
+        match self {
+            Presenter::Gpu(pipe) => pipe.rebuild_surfaces(w, h),
+            Presenter::Cpu(pipe) => pipe.rebuild_surfaces(w, h),
+        }
+    }
+
+    fn device_removed(&self) -> bool {
+        match self {
+            Presenter::Gpu(pipe) => pipe.device_removed(),
+            Presenter::Cpu(_) => false,
+        }
+    }
+}
+
+/// 建候选窗与出帧路径。GPU 管线建不起来(没有硬件 D3D12、驱动异常)时,
+/// 换一个分层窗口走 CPU 光栅,候选窗照常弹出来。
+fn open() -> Result<(HWND, Presenter), String> {
+    let hwnd = create_window()?;
+    match Pipeline::new(hwnd) {
+        Ok(pipe) => {
+            println!("Skia 候选窗就绪:Ganesh-D3D12 + DirectComposition");
+            Ok((hwnd, Presenter::Gpu(pipe)))
+        }
+        Err(e) => {
+            println!("Skia 候选窗 D3D12 管线不可用: {e};改用 CPU 光栅");
+            // 原来的窗口已经挂了 DComp 目标,换一个新的分层窗口。
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            let hwnd = create_layered_window()?;
+            let pipe = CpuPipeline::new(hwnd)?;
+            println!("Skia 候选窗就绪:CPU 光栅 + 分层窗口");
+            Ok((hwnd, Presenter::Cpu(pipe)))
+        }
+    }
+}
+
 fn window_loop(state: Arc<State>) {
     // DComp 与窗口消息都归这条线程;COM 已按别的 apartment 初始化过时忽略。
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
-    let hwnd = match create_window() {
-        Ok(hwnd) => hwnd,
+    let (hwnd, pipe) = match open() {
+        Ok(pair) => pair,
         Err(e) => {
-            println!("Skia 候选窗建窗失败: {e}");
+            println!("Skia 候选窗初始化失败: {e}");
             return;
         }
     };
-    let pipe = match Pipeline::new(hwnd) {
-        Ok(pipe) => pipe,
-        Err(e) => {
-            println!("Skia 候选窗 D3D12 管线初始化失败: {e}");
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            return;
-        }
-    };
-    println!("Skia 候选窗就绪:Ganesh-D3D12 + DirectComposition");
     let font = panel_font();
     let (cursor_arrow, cursor_hand) = unsafe {
         (
@@ -825,6 +878,32 @@ pub(super) fn create_window() -> Result<HWND, String> {
             // NOREDIRECTIONBITMAP:窗口自身不画,画面由 DComp 视觉树给出。
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
             class,
+            w!("lueying"),
+            WS_POPUP | WS_VISIBLE,
+            park_x,
+            park_y,
+            360,
+            76,
+            None,
+            None,
+            Some(HINSTANCE(hmodule.0)),
+            None,
+        )
+        .map_err(|e| format!("CreateWindowExW: {e}"))?;
+        Ok(hwnd)
+    }
+}
+
+/// CPU 光栅兜底用的分层窗口:画面由 UpdateLayeredWindow 给,窗口自己不画,
+/// 所以不能带 NOREDIRECTIONBITMAP。
+pub(super) fn create_layered_window() -> Result<HWND, String> {
+    unsafe {
+        let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
+        ensure_class(HINSTANCE(hmodule.0))?;
+        let (park_x, park_y) = ui_place::park_point();
+        let hwnd = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            w!("lueying-skia-candidate"),
             w!("lueying"),
             WS_POPUP | WS_VISIBLE,
             park_x,

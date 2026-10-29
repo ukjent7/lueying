@@ -70,7 +70,7 @@ pub trait FrameTarget {
 }
 
 /// 把一帧画到画布上;两条出帧路径共用,像素结果一致。
-fn paint(canvas: &Canvas, f: Frame) {
+pub(super) fn paint(canvas: &Canvas, f: Frame) {
     let width = panel::panel_width(f.spec, f.metrics, f.font);
     let height = panel::panel_height(f.spec, f.metrics, f.font);
     canvas.clear(Color::TRANSPARENT);

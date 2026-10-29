@@ -245,7 +245,17 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
                 || line.contains("SKIA GPU 自检失败")
         })
         .unwrap_or("无");
-    Ok(format!("## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}"))
+    // CPU 兜底(没有硬件 D3D12 的机器上候选窗走这条路):结论带进报告,
+    // 失败不拖垮整轮 E2E——分层窗口在某些无桌面会话里本来就建不出来。
+    let cpu = text
+        .lines()
+        .find(|line| {
+            line.contains("SKIA CPU 自检通过") || line.contains("SKIA CPU 自检失败")
+        })
+        .unwrap_or("无");
+    Ok(format!(
+        "## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}\n\nCPU:{cpu}"
+    ))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。

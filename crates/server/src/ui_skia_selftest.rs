@@ -48,6 +48,13 @@ pub(super) fn selftest() {
         Err(FontCheck::NoFont) => println!("SKIA 字体自检:系统没有可用字型,跳过"),
         Err(FontCheck::Failed(e)) => println!("SKIA 自检失败:字体 {e}"),
     }
+    // CPU 兜底:没有硬件 D3D12 的机器上候选窗靠这条路,上屏与像素都要过。
+    // 这条失败不拖垮整轮 E2E(分层窗口在某些无桌面会话里本来就建不出来),
+    // 结论写进报告由人看。
+    match cpu_check(&spec, &palette, &metrics, width as u32, height as u32) {
+        Ok(()) => println!("SKIA CPU 自检通过:CPU 光栅上屏一致"),
+        Err(e) => println!("SKIA CPU 自检失败:{e}"),
+    }
     // GPU:另起子进程。崩了只影响子进程。
     match gpu_child() {
         Ok(text) => println!("{text}"),
@@ -196,6 +203,41 @@ fn raster_pixels(
         Some(buf) => Ok(buf),
         None => Err(FontCheck::Failed("像素读回失败".into())),
     }
+}
+
+/// CPU 兜底路径:建分层窗口、画一帧、贴上屏,像素断言与 GPU 路径同一套。
+/// 没有硬件 D3D12 的机器上候选窗走这条路,上屏这步不通就等于没有候选窗。
+fn cpu_check(
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    let hwnd = crate::ui_skia::create_layered_window()?;
+    let mut pipe = match crate::ui_skia_cpu::CpuPipeline::new(hwnd) {
+        Ok(pipe) => pipe,
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(e);
+        }
+    };
+    if let Err(e) = pipe.rebuild_surfaces(w, h) {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+        return Err(e);
+    }
+    let outcome = check_pixels(&mut pipe, spec, palette, metrics);
+    let presented = pipe.present();
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+    outcome?;
+    presented?;
+    Ok(())
 }
 
 /// 建窗 + DComp 交换链;失败时把原因带回去,自检据此决定是否降级。
