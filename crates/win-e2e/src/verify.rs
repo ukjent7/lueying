@@ -163,7 +163,7 @@ unsafe extern "system" fn proc_def(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    DefWindowProcW(hwnd, msg, wparam, lparam)
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
 /// 建一个带 EDIT/只读 EDIT/BUTTON 的小窗口,逐个 SetFocus 后读 UIA 控件类型。
@@ -401,7 +401,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
             0,
             0,
             0,
-            FW_NORMAL.0,
+            FW_NORMAL.0 as i32,
             0,
             0,
             0,
@@ -409,7 +409,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
             OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY,
-            DEFAULT_PITCH.0 | FF_DONTCARE.0,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
             w!("Microsoft YaHei"),
         );
         let previous_font = SelectObject(memory, font.into());
