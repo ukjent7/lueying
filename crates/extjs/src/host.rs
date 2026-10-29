@@ -220,17 +220,30 @@ impl Host {
         if self.pending == 0 {
             return Vec::new();
         }
+        let budget = self.limits.dispatch_ms;
+        let epoch = self.epoch;
+        let deadline_ns = Arc::clone(&self.deadline_ns);
+        let tripped = Arc::clone(&self.tripped);
+        let mut pending = self.pending;
         let mut out = Vec::new();
+        // 闭包只拿局部克隆,避免与 self.pending 的写冲突。
         self.context.with(|ctx| {
             if let Ok(tick) = ctx.globals().get::<_, Function>("__lueying_tick") {
                 let _ = tick.call::<_, ()>((now_ms as f64,));
             }
             for _ in 0..PUMP_STEPS {
-                self.arm(self.limits.dispatch_ms);
+                tripped.store(false, Ordering::Relaxed);
+                let nanos = u128::from(budget) * 1_000_000;
+                let at = epoch
+                    .elapsed()
+                    .as_nanos()
+                    .saturating_add(nanos)
+                    .min(u128::from(u64::MAX)) as u64;
+                deadline_ns.store(at, Ordering::Relaxed);
                 let ran = ctx.execute_pending_job();
-                self.disarm();
-                let tripped = self.tripped.swap(false, Ordering::Relaxed);
-                if !ran || tripped {
+                deadline_ns.store(u64::MAX, Ordering::Relaxed);
+                let killed = tripped.swap(false, Ordering::Relaxed);
+                if !ran || killed {
                     break;
                 }
             }
@@ -239,12 +252,13 @@ impl Host {
                     && let Ok(list) = serde_json::from_str::<Vec<Ready>>(&json)
                 {
                     for ready in list {
-                        self.pending = self.pending.saturating_sub(1);
+                        pending = pending.saturating_sub(1);
                         out.push(ready.into());
                     }
                 }
             }
         });
+        self.pending = pending;
         out
     }
 
