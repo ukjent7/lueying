@@ -6,6 +6,10 @@
 
 ### 新增
 
+- 设置窗迁到原生窗口:普通 Win32 窗 + Skia 光栅 + GDI 贴图,不再依赖 GPUI;
+  页面模型下沉到平台无关的 `lueying-server::settings_view`,画面与命中在
+  `lueying-render::ui`,Linux E2E 直接断言设置页结构与交互结果;
+  Windows CI 跑设置窗自检(建窗、画一帧、贴一次、读回像素)。
 - Skia 候选窗:Win32 无焦点窗 + DirectComposition 交换链 + Ganesh-D3D12
   (只用硬件 D3D12 适配器,建不出设备时放弃候选窗、输入照常);摆位/DPI/全屏
   避让与模式徽标共用,绘制、命中测试与菜单几何在平台无关的 `lueying-render`,

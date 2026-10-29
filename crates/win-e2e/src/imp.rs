@@ -101,6 +101,36 @@ pub(super) fn run() {
     }
 }
 
+/// 设置窗自检:原生窗口这条链路(CI 里没人点窗口,只能这样确认它活着)。
+///
+/// 设置窗是独立进程,自检建窗、画一帧、贴一次位图,再读回像素确认
+/// 画面不是一块底色;报告写进文件,这里原样带进 E2E 报告。
+fn settings_selftest(dir: &std::path::Path) -> Result<String, String> {
+    let exe = dir.join("lueying-settings.exe");
+    if !exe.exists() {
+        return Err(format!("没有 {}", exe.display()));
+    }
+    let report = std::env::current_dir()
+        .unwrap_or_default()
+        .join("target")
+        .join("lueying-settings-selftest.txt");
+    let _ = std::fs::create_dir_all("target");
+    let _ = std::fs::remove_file(&report);
+    let output = std::process::Command::new(&exe)
+        .arg("--selftest")
+        .arg(&report)
+        .output()
+        .map_err(|e| format!("启动设置窗自检失败: {e}"))?;
+    let text = std::fs::read_to_string(&report).unwrap_or_default();
+    if !output.status.success() {
+        return Err(format!("设置窗自检失败: {text}"));
+    }
+    if !text.contains("结果:通过") {
+        return Err(format!("设置窗自检没有结论: {text}"));
+    }
+    Ok(format!("## 设置窗自检\n\n{text}\n"))
+}
+
 fn server_log() -> std::path::PathBuf {
     std::env::current_dir()
         .unwrap_or_default()
@@ -459,6 +489,8 @@ fn real_run() -> Result<(String, String), String> {
         let fullwidth_note = check_fullwidth(edit)?;
         // Skia 管线自检结论在启动日志里;读不到或失败都让整轮红。
         let skia_note = check_skia_selftest()?;
+        // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
+        let settings_note = settings_selftest(&dir)?;
         // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
         // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
         let keys = key_latency(edit, &log)?;
@@ -467,7 +499,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{keys}\n\n{memory}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{settings_note}\n\n{keys}\n\n{memory}"
             ),
         ))
     })();

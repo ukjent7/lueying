@@ -12,17 +12,19 @@ use std::sync::Mutex;
 use lueying_protocol::Request;
 use lueying_render::panel::Palette;
 use lueying_render::ui::{self, Id};
-use lueying_server::accents::ACCENTS;
-use lueying_server::blit::Layer;
-use lueying_server::config::{self, AppConfig};
-use lueying_server::font;
-use lueying_server::settings_actions;
-use lueying_server::settings_view::{Action, Notice, PageColors, Settings, UpdateState};
-use lueying_server::theme;
-use lueying_server::update::{self, Check, Release};
+use crate::accents::ACCENTS;
+use crate::blit::Layer;
+use crate::config::{self, AppConfig};
+use crate::font;
+use crate::settings_actions;
+use crate::settings_view::{Action, Notice, PageColors, Settings, UpdateState, ids};
+use crate::theme;
+use crate::update::{self, Check, Release};
 use skia_safe::Font;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, HDC, PAINTSTRUCT};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, EndPaint, GetDC, HDC, InvalidateRect, PAINTSTRUCT, ReleaseDC, UpdateWindow,
+};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -34,11 +36,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, InvalidateRect, MSG, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, SM_CXSCREEN,
-    SM_CYSCREEN, SWP_NOZORDER, SW_SHOW, TranslateMessage, UpdateWindow, WINDOW_EX_STYLE, WM_APP,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-    WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN,
+    SWP_NOZORDER, SW_SHOW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
+    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT,
+    WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::w;
 
@@ -97,6 +99,8 @@ pub fn run() {
             Box::into_raw(Box::new(window)) as isize,
         );
         ShowWindow(hwnd, SW_SHOW);
+        // 首次显示前把整块客户区标脏,第一帧就是最新配置。
+        let _ = InvalidateRect(Some(hwnd), None, false);
         UpdateWindow(hwnd);
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -112,6 +116,104 @@ fn effects_detail() -> String {
         Some(dir) => format!("SkSL 装饰层,{}", dir.display()),
         None => "SkSL 装饰层,没有可写的目录".to_string(),
     }
+}
+
+/// 自检:建窗、画一帧、贴一次,再读回像素确认画面不是空的。
+///
+/// Windows CI 跑这条,证明原生设置窗这条链路没断:窗口、光栅、位图、
+/// GDI 贴图,每一步都得通。报告写到文件里,CI 收进产物。
+pub fn selftest(report: &std::path::Path) -> Result<(), String> {
+    let mut lines: Vec<String> = Vec::new();
+    let result = selftest_run(&mut lines);
+    match &result {
+        Ok(()) => lines.push("结果:通过".to_string()),
+        Err(e) => lines.push(format!("结果:失败 — {e}")),
+    }
+    let _ = std::fs::write(report, lines.join("\n"));
+    result
+}
+
+/// 自检的正文。
+fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
+    let hwnd = create_window()?;
+    let settings = Settings::default();
+    let mut window = Window::new(settings)?;
+    window.scale = dpi_of(hwnd);
+    window.size = client_size(hwnd);
+    window.relayout();
+    let (w, h) = window.size;
+    lines.push(format!("客户区 {w}×{h} 像素"));
+    if w <= 0 || h <= 0 {
+        return Err("客户区没有尺寸".to_string());
+    }
+    // 画一帧。
+    {
+        let surface = window
+            .layer
+            .surface(w as u32, h as u32)
+            .map_err(|e| format!("光栅表面: {e}"))?;
+        let canvas = surface.canvas();
+        ui::Painter::new(canvas, &window.palette, &window.font, window.scale).paint(
+            &window.page,
+            &window.layout,
+            None,
+            0.0,
+        );
+    }
+    // 贴一次:走通 GDI 那一步。
+    unsafe {
+        let hdc = GetDC(Some(hwnd));
+        let blit = window.layer.blit(hdc, w, h);
+        let _ = ReleaseDC(Some(hwnd), hdc);
+        blit.map_err(|e| format!("BitBlt: {e}"))?;
+    }
+    // 读回像素:角落是窗口底色,卡片里是卡片色。
+    let pixels = window.layer.pixels().ok_or("像素读回失败")?;
+    let at = |x: i32, y: i32| -> (u8, u8, u8) {
+        let index = ((y * w + x) * 4) as usize;
+        (
+            pixels[index + 2],
+            pixels[index + 1],
+            pixels[index],
+        )
+    };
+    let corner = at(2, 2);
+    let expect_corner = bgr(window.palette.window_bg);
+    if corner != expect_corner {
+        return Err(format!("窗口底色不对: {corner:?} 期望 {expect_corner:?}"));
+    }
+    let card = at(
+        window.layout.card.left as i32 + 2,
+        window.layout.card.top as i32 + 2,
+    );
+    let expect_card = bgr(window.palette.bg);
+    if card != expect_card {
+        return Err(format!("卡片底色不对: {card:?} 期望 {expect_card:?}"));
+    }
+    lines.push(format!("窗口底色 {corner:?} 卡片底色 {card:?}"));
+    // 命中区能对上:第一个开关点得到。
+    let toggle = ui::Id::new(ids::AUX, 0);
+    let rect = window
+        .layout
+        .card_hit(toggle)
+        .ok_or("找不到辅助码开关的命中区")?;
+    let hit = window.layout.hit_card(
+        (rect.left + rect.right) / 2.0,
+        (rect.top + rect.bottom) / 2.0,
+    );
+    if hit != Some(toggle) {
+        return Err(format!("开关命中不对: {hit:?}"));
+    }
+    lines.push("开关命中正常".to_string());
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+    Ok(())
+}
+
+/// 0xRRGGBB 转成与像素同序的 (R, G, B)。
+fn bgr(rgb: u32) -> (u8, u8, u8) {
+    ((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
 /// 窗口状态:配置、页面、几何与绘制资源。

@@ -83,6 +83,12 @@ impl Layer {
         Ok(())
     }
 
+    /// 表面像素(N32 预乘,小端机上字节序是 BGRA)。
+    pub fn pixels(&mut self) -> Option<Vec<u8>> {
+        let surface = self.surface.as_mut()?;
+        read_pixels(surface)
+    }
+
     /// 不透明窗口:从内存 DC 贴到窗口客户区。
     pub fn blit(&self, hdc: HDC, w: i32, h: i32) -> Result<(), String> {
         unsafe {

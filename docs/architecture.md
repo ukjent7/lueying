@@ -15,7 +15,7 @@ lueying-server.exe(常驻)
     ├─ 模式徽标(原生分层窗:CPU 光栅 + UpdateLayeredWindow)
     ├─ UIA 左邻文本回退线程 / 25M 停顿重排线程
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
-lueying-settings.exe(设置窗,经管道与 Server 通信)
+lueying-settings.exe(设置窗:原生窗口 + Skia 光栅,经管道与 Server 通信)
 lueying-update.exe(更新器:下载 setup.exe,校验 SHA-256 后静默安装)
 lueying-user.exe(安装期用户状态:输入法列表、HKCU Run、清理)
 ```
@@ -79,6 +79,18 @@ Skia 拿着空命令表句柄继续走就崩,建不出设备就放弃候选窗�
 路径与服务端同进程跑,给出确定性像素断言与字体断言(DirectWrite 字型必须真的
 画进画面);Ganesh-D3D12 路径另起子进程跑——没有硬件适配器或驱动异常的机器上
 GPU 管线会把进程带崩,隔离在子进程里,崩了也不影响输入法,日志如实记下原因。
+
+## 设置窗
+
+设置窗是独立的 `lueying-settings.exe`:普通不透明 Win32 窗(客户区 460×650
+逻辑像素),Skia 在 CPU 上光栅出帧,再经 GDI `BitBlt` 贴到客户区——它不需要
+GPU,在没有硬件 D3D12 的机器上也照样开。页面模型在平台无关的
+`lueying-server::settings_view`:配置铺成一页(分组、设置行、开关、分段组、
+按钮),点一下改配置、左右键改分段值、Tab 走焦点顺序,都在这一层;画面与命中
+在 `lueying-render::ui`,与候选窗共用同一套排版与像素断言,Linux E2E 因此
+能直接断言设置页的结构与交互结果。平台侧只剩「要动文件系统或常驻服务」的
+动作(备份、导入导出、词库、自动更新),在 `settings_actions`。
+窗口自检 `--selftest` 建窗、画一帧、贴一次、读回像素,Windows E2E 跑它。
 
 ## 更新
 

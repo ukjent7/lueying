@@ -33,9 +33,10 @@ fn colors() -> PageColors {
 
 /// 设置窗的样例状态。
 fn settings() -> Settings {
-    let mut settings = Settings::default();
-    settings.current = "0.1.0".to_string();
-    settings
+    Settings {
+        current: "0.1.0".to_string(),
+        ..Settings::default()
+    }
 }
 
 /// 找一行的说明文字;行不在就是 None。
