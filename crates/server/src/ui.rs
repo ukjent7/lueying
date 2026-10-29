@@ -87,7 +87,9 @@ pub(super) fn run(state: Arc<State>) {
 
 /// 从 gpui 窗口取原生 HWND;窗口系统不是 Win32 时返回 None。
 pub(super) fn window_hwnd(window: &Window) -> Option<HWND> {
-    let raw = <Window as HasWindowHandle>::window_handle(window).ok()?.as_raw();
+    let raw = <Window as HasWindowHandle>::window_handle(window)
+        .ok()?
+        .as_raw();
     let RawWindowHandle::Win32(handle) = raw else {
         return None;
     };

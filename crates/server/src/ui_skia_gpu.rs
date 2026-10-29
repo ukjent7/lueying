@@ -360,8 +360,8 @@ pub struct Raster {
 
 impl Raster {
     pub fn new(w: u32, h: u32) -> Result<Self, String> {
-        let surface = skia_safe::surfaces::raster_n32_premul((w as i32, h as i32))
-            .ok_or("建光栅表面失败")?;
+        let surface =
+            skia_safe::surfaces::raster_n32_premul((w as i32, h as i32)).ok_or("建光栅表面失败")?;
         Ok(Self { surface })
     }
 
