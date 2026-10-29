@@ -35,10 +35,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
     GetMessageW, GetSystemMetrics, GetWindowLongPtrW, InvalidateRect, MSG, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, SM_CXSCREEN,
-    SM_CYSCREEN, SWP_NOZORDER, SW_SHOW, TranslateMessage, UpdateWindow, WINDOW_EX_STYLE, WM_APP,
-    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-    WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, UpdateWindow, WINDOW_EX_STYLE,
+    WM_APP, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_MOUSEWHEEL, WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::w;
 
@@ -256,7 +256,11 @@ impl Window {
             return;
         };
         // 头部与页脚不在滚动区里,不用管。
-        let Some(rect) = self.layout.card_hit(id).or_else(|| self.layout.ring_card(id)) else {
+        let Some(rect) = self
+            .layout
+            .card_hit(id)
+            .or_else(|| self.layout.ring_card(id))
+        else {
             return;
         };
         let card_top = self.layout.card.top;
@@ -621,7 +625,13 @@ fn create_window() -> Result<HWND, String> {
             right: (WIDTH * scale) as i32,
             bottom: height as i32,
         };
-        let _ = AdjustWindowRectExForDpi(&mut rect, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0), dpi);
+        let _ = AdjustWindowRectExForDpi(
+            &mut rect,
+            WS_OVERLAPPEDWINDOW,
+            false,
+            WINDOW_EX_STYLE(0),
+            dpi,
+        );
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         let x = ((screen_w - width) / 2).max(0);
