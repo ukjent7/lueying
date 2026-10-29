@@ -12,6 +12,7 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use lueying_protocol::{Request, SessionView};
+use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, Palette, PreeditBar};
 use lueying_server::config::UiLayout;
 use lueying_server::theme;
@@ -32,7 +33,8 @@ use windows::core::{BOOL, w};
 
 use crate::imp::State;
 use crate::ui_place::{self, CARET_GAP};
-use crate::ui_skia_gpu::{Frame, FrameTarget, Offscreen, Pipeline, rgb};
+use crate::ui_skia_effect;
+use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
 
 /// 会话版本号轮询间隔;与 GPUI 路径一致,对打字反馈无感。
 const POLL: Duration = Duration::from_millis(15);
@@ -45,6 +47,8 @@ const SHOW_START_OPACITY: f32 = 0.45;
 const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
+/// 效果目录的检查间隔;用户改完 .sksl 一秒内生效。
+const EFFECT_CHECK: Duration = Duration::from_millis(1000);
 
 /// 启动 Skia 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
 pub(super) fn spawn(state: Arc<State>) {
@@ -90,6 +94,10 @@ struct Fx {
     mouse: (f32, f32),
     /// 最近一帧的绘制输入;命中测试用它,保证所指即所画。
     geometry: Option<Geom>,
+    /// 新组合的第一帧走素色;之后才上效果,候选一出现就可读。
+    first_frame: bool,
+    /// 本次组合的起点;效果的动画时钟从这儿算。
+    since: Option<Instant>,
 }
 
 impl Fx {
@@ -99,6 +107,27 @@ impl Fx {
             reduce: self.reduce,
             ..Fx::default()
         };
+    }
+
+    /// 效果的动画时钟:本次组合开始后的秒数;「减少动态效果」时冻结为 0。
+    fn clock(&self, now: Instant) -> f32 {
+        if self.reduce {
+            return 0.0;
+        }
+        self.since
+            .map(|since| now.saturating_duration_since(since).as_secs_f32())
+            .unwrap_or(0.0)
+    }
+
+    /// 入场/翻页进度:静止为 1,淡出时退回 0。
+    fn anim(&self, now: Instant) -> f32 {
+        if let Some(end) = self.show {
+            return ease_out_quint(progress(SHOW_FADE, end, now));
+        }
+        if let Some(end) = self.hide {
+            return 1.0 - ease_out_quint(progress(HIDE_FADE, end, now));
+        }
+        1.0
     }
 }
 
@@ -117,6 +146,10 @@ struct WinCtx {
     font: Option<Font>,
     cursor_arrow: Option<HCURSOR>,
     cursor_hand: Option<HCURSOR>,
+    /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
+    effects: ui_skia_effect::Effects,
+    /// 效果帧预算:连续超预算就临时摘掉效果。
+    budget: BudgetGuard,
 }
 
 fn window_loop(state: Arc<State>) {
@@ -157,12 +190,15 @@ fn window_loop(state: Arc<State>) {
         font,
         cursor_arrow,
         cursor_hand,
+        effects: ui_skia_effect::Effects::load(&state),
+        budget: BudgetGuard::new(Budget::default()),
     }));
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
     }
     let mut last_version = 0u64;
     let mut next_poll = Instant::now();
+    let mut next_effect_check = Instant::now();
     loop {
         // 无焦点窗口的消息量很小,每轮顺手排干;真正的节奏靠 5ms 睡眠。
         unsafe {
@@ -183,6 +219,12 @@ fn window_loop(state: Arc<State>) {
                 ctx.fx.reduce = reduce_motion();
                 place(ctx, hwnd);
             }
+        }
+        // 效果目录或开关变了就重新加载;编译在加载期做,帧内只打包 uniform。
+        if now >= next_effect_check {
+            next_effect_check = now + EFFECT_CHECK;
+            let ctx = unsafe { &mut *ctx };
+            ctx.effects.refresh(&ctx.state);
         }
         // 淡入/淡出/滑动进行中按循环节奏重绘;5ms 粒度足够 90–140ms 的动效。
         let animating = unsafe {
@@ -228,6 +270,9 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
         ctx.fx.menu_hover = None;
         ctx.fx.hover = None;
         ctx.fx.pager = None;
+        // 新组合:第一帧走素色,效果时钟从现在起算。
+        ctx.fx.first_frame = true;
+        ctx.fx.since = Some(Instant::now());
         ctx.fx.show = if ctx.fx.reduce {
             None
         } else {
@@ -334,7 +379,10 @@ fn animate(ctx: &mut WinCtx, hwnd: HWND) {
 /// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
 fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
-    let palette = palette_of(theme::colors_with(theme::Appearance::of_system(), accent));
+    let appearance = theme::Appearance::of_system();
+    let palette = palette_of(theme::colors_with(appearance, accent));
+    // 高对比度由系统接管外观,用户效果整个关掉,免得压过系统配色。
+    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
         Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),
@@ -379,6 +427,60 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         metrics,
         menu_xy: menu,
     });
+    // 效果:按 uniform 生成三个槽位的 shader。新组合的第一帧走素色,
+    // 保证候选一出现就可读;帧耗时超预算、开了高对比度时也临时摘掉效果。
+    let width = panel::panel_width(&spec, &metrics, ctx.font.as_ref());
+    let height = panel::panel_height(&spec, &metrics, ctx.font.as_ref());
+    // 画布单位与逻辑单位(设计像素)的比例;效果坐标按它换算。
+    let unit = metrics.scale();
+    let accent = Uniforms::accent_from_rgb(palette.accent);
+    let time = ctx.fx.clock(now);
+    let anim = ctx.fx.anim(now);
+    // 三个槽位各自在自己的区域里作画:坐标从区域左上角起算,单位是逻辑单位。
+    let rects = panel::item_rects(&spec, &metrics, ctx.font.as_ref());
+    let selected = spec
+        .items
+        .iter()
+        .position(|item| item.selected)
+        .and_then(|index| rects.get(index))
+        .copied();
+    let allowed = !ctx.fx.first_frame && !high_contrast && ctx.budget.allows(now);
+    let (background, highlight, menu_effect) = if allowed {
+        let panel_uniforms = Uniforms {
+            size: [width / unit, height / unit],
+            time,
+            anim,
+            accent,
+        };
+        let mut highlight_uniforms = panel_uniforms;
+        if let Some(rect) = selected {
+            highlight_uniforms.size = [rect.width() / unit, rect.height() / unit];
+        }
+        let mut menu_uniforms = panel_uniforms;
+        if let Some((mx, my)) = menu {
+            menu_uniforms.size = [116.0, panel::menu_height(&metrics) / unit];
+        }
+        (
+            ctx.effects
+                .set()
+                .shader(Slot::Background, &panel_uniforms, (0.0, 0.0), unit),
+            ctx.effects.set().shader(
+                Slot::Highlight,
+                &highlight_uniforms,
+                selected.map_or((0.0, 0.0), |rect| (rect.left, rect.top)),
+                unit,
+            ),
+            ctx.effects.set().shader(
+                Slot::Menu,
+                &menu_uniforms,
+                menu.map_or((0.0, 0.0), |(mx, my)| (mx, my)),
+                unit,
+            ),
+        )
+    } else {
+        (None, None, None)
+    };
+    ctx.fx.first_frame = false;
     let frame = Frame {
         spec: &spec,
         palette: &palette,
@@ -390,8 +492,18 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         pager: ctx.fx.pager,
         menu,
         menu_hover: ctx.fx.menu_hover,
+        effects: panel::Effects {
+            background: background.as_ref(),
+            highlight: highlight.as_ref(),
+            menu: menu_effect.as_ref(),
+        },
     };
-    if let Err(e) = ctx.pipe.draw(frame) {
+    let started = Instant::now();
+    let drawn = ctx.pipe.draw(frame);
+    if allowed {
+        ctx.budget.observe(started.elapsed(), Instant::now());
+    }
+    if let Err(e) = drawn {
         println!("Skia 出帧失败,丢帧: {e}");
         return;
     }
@@ -658,7 +770,7 @@ fn panel_font() -> Option<Font> {
 }
 
 /// 无焦点置顶工具窗;样式在创建时给足,停靠点出生,避免 Alt+Tab 里露脸。
-fn create_window() -> Result<HWND, String> {
+pub(super) fn create_window() -> Result<HWND, String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         ensure_class(HINSTANCE(hmodule.0))?;
@@ -775,7 +887,7 @@ fn measure_width(
 }
 
 /// `theme::Colors` → 渲染令牌;候选窗底色是 surface,bg 是设置窗的。
-fn palette_of(c: theme::Colors) -> Palette {
+pub(super) fn palette_of(c: theme::Colors) -> Palette {
     Palette {
         bg: c.surface,
         surface_alt: c.surface_alt,
@@ -788,162 +900,5 @@ fn palette_of(c: theme::Colors) -> Palette {
         selected_bg: c.selected_bg,
         selected_text: c.selected_text,
         hover: c.hover,
-    }
-}
-
-/// CI 自检:建窗、Ganesh-D3D12 出帧、读回像素断言,结论写日志。
-/// 与 Linux 光栅 E2E 同一套期望值(无字体估算路径),失败由 win-e2e 断言。
-/// 没有桌面会话或合成交换链不可用时退回离屏渲染,像素期望不变。
-pub(super) fn selftest() {
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
-    // 固定 100% 缩放与无字体估算路径,像素期望与 Linux E2E 完全一致。
-    let metrics = Metrics::standard();
-    let spec = demo_spec();
-    let width = panel::panel_width(&spec, &metrics, None);
-    let height = panel::panel_height(&spec, &metrics, None);
-    let palette = palette_of(theme::colors_with(theme::Appearance::Light, 0));
-    let (mode, outcome) = match window_target(width as u32, height as u32) {
-        Ok((mut pipe, hwnd)) => {
-            let outcome = check_pixels(&mut pipe, &spec, &palette, &metrics);
-            // 先放管线再销窗:DComp 目标还指着这个 HWND。
-            drop(pipe);
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            ("合成交换链", outcome)
-        }
-        Err(e) => {
-            // 桌面会话缺失或合成交换链建不起来时,退回离屏渲染验证出帧。
-            println!("SKIA 自检降级:合成交换链不可用({e}),改走离屏渲染");
-            match Offscreen::new(width as u32, height as u32) {
-                Ok(mut target) => (
-                    "离屏渲染",
-                    check_pixels(&mut target, &spec, &palette, &metrics),
-                ),
-                Err(e) => {
-                    println!("SKIA 自检失败:离屏渲染建管线 {e}");
-                    return;
-                }
-            }
-        }
-    };
-    match outcome {
-        Ok(()) => println!(
-            "SKIA 自检通过:{mode}帧读回一致({}x{})",
-            width as u32, height as u32
-        ),
-        Err(e) => println!("SKIA 自检失败:{mode} {e}"),
-    }
-}
-
-/// 建窗 + DComp 交换链;失败时把原因带回去,自检据此决定是否降级。
-fn window_target(w: u32, h: u32) -> Result<(Pipeline, HWND), String> {
-    let hwnd = create_window().map_err(|e| format!("建窗 {e}"))?;
-    let mut pipe = match Pipeline::new(hwnd) {
-        Ok(pipe) => pipe,
-        Err(e) => {
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            return Err(e);
-        }
-    };
-    if let Err(e) = pipe.rebuild_surfaces(w, h) {
-        drop(pipe);
-        unsafe {
-            let _ = DestroyWindow(hwnd);
-        }
-        return Err(e);
-    }
-    Ok((pipe, hwnd))
-}
-
-/// 两帧的像素断言:静态面板的底色与拼音条,再验悬停与菜单的叠加顺序。
-/// 窗口路径与离屏路径共用同一套期望值。
-fn check_pixels(
-    target: &mut dyn FrameTarget,
-    spec: &PanelSpec,
-    palette: &Palette,
-    metrics: &Metrics,
-) -> Result<(), String> {
-    // 第一帧:静态面板,读回底色与拼音条。
-    target.draw(Frame {
-        spec,
-        palette,
-        metrics,
-        font: None,
-        opacity: 1.0,
-        list: panel::ListFx::NEUTRAL,
-        hover: None,
-        pager: None,
-        menu: None,
-        menu_hover: None,
-    })?;
-    let expected_bg = rgb(palette.bg);
-    let expected_bar = rgb(palette.surface_alt);
-    let bg = target.pixel(5, 60).ok_or("像素读回失败(背景)")?;
-    if bg != expected_bg {
-        return Err(format!("背景像素 {bg:?} 期望 {expected_bg:?}"));
-    }
-    let bar = target.pixel(5, 10).ok_or("像素读回失败(拼音条)")?;
-    if bar != expected_bar {
-        return Err(format!("拼音条像素 {bar:?} 期望 {expected_bar:?}"));
-    }
-    // 第二帧:第二行悬停 + 菜单压住它左半,验证叠加顺序与菜单底色。
-    let rects = panel::item_rects(spec, metrics, None);
-    let hover_at = ((rects[1].right - 6.0) as i32, (rects[1].top + 6.0) as i32);
-    let covered_at = ((rects[1].left + 6.0) as i32, (rects[1].top + 6.0) as i32);
-    target.draw(Frame {
-        spec,
-        palette,
-        metrics,
-        font: None,
-        opacity: 1.0,
-        list: panel::ListFx::NEUTRAL,
-        hover: Some(1),
-        pager: None,
-        menu: Some((8.0, 40.0)),
-        menu_hover: None,
-    })?;
-    let hover = target
-        .pixel(hover_at.0, hover_at.1)
-        .ok_or("像素读回失败(悬停)")?;
-    let expected_hover = rgb(palette.hover);
-    if hover != expected_hover {
-        return Err(format!("悬停像素 {hover:?} 期望 {expected_hover:?}"));
-    }
-    let covered = target
-        .pixel(covered_at.0, covered_at.1)
-        .ok_or("像素读回失败(菜单)")?;
-    if covered != expected_bg {
-        return Err(format!("菜单像素 {covered:?} 期望 {expected_bg:?}"));
-    }
-    Ok(())
-}
-
-/// 自检用的固定面板;内容与 Linux E2E 的 `render::spec()` 一致。
-fn demo_spec() -> PanelSpec {
-    PanelSpec {
-        width: 360.0,
-        max_text_width: 490.0,
-        preedit: PreeditBar {
-            text: "nihao".into(),
-            page_label: "1/2".into(),
-        },
-        items: vec![
-            Item {
-                text: "你好".into(),
-                hint: String::new(),
-                selected: true,
-            },
-            Item {
-                text: "你号".into(),
-                hint: String::new(),
-                selected: false,
-            },
-        ],
-        layout: Layout::Wrap,
     }
 }

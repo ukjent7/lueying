@@ -1,8 +1,17 @@
 //! 管道请求分发。
 
 use lueying_protocol::EngineStatus;
+use lueying_render::effect::{self, Slot};
 
 use super::*;
+
+/// 三个槽位的模板源码;设置窗写进效果目录当起点。
+fn effect_templates() -> Vec<(String, String)> {
+    Slot::ALL
+        .iter()
+        .map(|slot| (slot.file_name().to_string(), effect::template(*slot).to_string()))
+        .collect()
+}
 
 pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
     // 任何请求后候选窗都可能要重摆,先记账再处理;只读上报不触发重绘。
@@ -546,6 +555,10 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             Reply::default()
         }
         Request::FuzzyStats => group_reply(&state.user),
+        Request::EffectTemplates => Reply {
+            templates: effect_templates(),
+            ..Reply::default()
+        },
         Request::Status => Reply {
             status: Some(EngineStatus {
                 dict_words: state.dict.len(),

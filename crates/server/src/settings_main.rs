@@ -83,6 +83,8 @@ mod imp {
         Layout,
         Font,
         Accent,
+        Effects,
+        EffectsToggle,
         Prediction,
         ResetFuzzy,
         Fuzzy,
@@ -100,7 +102,7 @@ mod imp {
         Save,
     }
 
-    const KBD_ORDER: [Kbd; 26] = [
+    const KBD_ORDER: [Kbd; 28] = [
         Kbd::Update,
         Kbd::Scheme,
         Kbd::Aux,
@@ -112,6 +114,8 @@ mod imp {
         Kbd::Layout,
         Kbd::Font,
         Kbd::Accent,
+        Kbd::Effects,
+        Kbd::EffectsToggle,
         Kbd::Prediction,
         Kbd::ResetFuzzy,
         Kbd::Fuzzy,
@@ -354,6 +358,11 @@ mod imp {
                 }
                 Kbd::Region | Kbd::PageSize | Kbd::Layout | Kbd::Font | Kbd::Accent
                 | Kbd::Channel => {}
+                Kbd::Effects => self.open_effects(),
+                Kbd::EffectsToggle => {
+                    self.cfg.effects = !self.cfg.effects;
+                    self.clear_notice();
+                }
                 Kbd::Prediction => {
                     self.cfg.predict = !self.cfg.predict;
                     self.clear_notice();
@@ -502,6 +511,49 @@ mod imp {
         fn open_apps(&mut self) {
             self.confirm_clear = false;
             self.open_text_file(config::apps_path(), config::APPS_TEMPLATE, "没有可写的应用配置路径");
+        }
+
+        /// 打开用户效果目录:先让常驻服务给出三个槽位的模板(缺文件才写),
+        /// 再拉起资源管理器。模板是起点,用户改完存盘即生效。
+        fn open_effects(&mut self) {
+            self.confirm_clear = false;
+            let Some(dir) = config::effects_dir() else {
+                self.say(Notice::Error, "没有可写的效果目录");
+                return;
+            };
+            let Some(reply) = call(&Request::EffectTemplates) else {
+                self.say(Notice::Error, "输入法服务未运行,启动后再试");
+                return;
+            };
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                self.say(Notice::Error, format!("建目录失败: {e}"));
+                return;
+            }
+            let mut written = 0;
+            for (name, source) in &reply.templates {
+                let path = dir.join(name);
+                if path.exists() {
+                    continue;
+                }
+                match std::fs::write(&path, source) {
+                    Ok(()) => written += 1,
+                    Err(e) => {
+                        self.say(Notice::Error, format!("写 {} 失败: {e}", path.display()));
+                        return;
+                    }
+                }
+            }
+            match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+                Ok(_) => self.say(
+                    Notice::Info,
+                    if written > 0 {
+                        format!("已写入 {written} 个模板,打开 {}", dir.display())
+                    } else {
+                        format!("已打开 {}", dir.display())
+                    },
+                ),
+                Err(e) => self.say(Notice::Error, format!("打开失败: {e}")),
+            }
         }
 
         /// 打开一份用户数据文件;缺失时先写模板。保存后由 Server 在下次
@@ -940,6 +992,11 @@ mod imp {
             };
             let notice_tint = notice_color(notice_kind, colors);
             let version = format!("拼音输入法 · v{}", self.current);
+            // 效果目录:用户在设置窗里按「目录」直接打开,文件放进去即生效。
+            let effects_detail = match config::effects_dir() {
+                Some(dir) => format!("SkSL 装饰层,{}", dir.display()),
+                None => "SkSL 装饰层,没有可写的目录".to_string(),
+            };
 
             let scheme_control = div()
                 .flex()
@@ -1317,6 +1374,39 @@ mod imp {
                     "主题色",
                     "候选窗的强调色,高对比度下跟随系统",
                     accent_control,
+                    colors,
+                    false,
+                ))
+                .child(setting_row(
+                    "用户效果",
+                    effects_detail,
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(button(
+                            "open-effects",
+                            "目录",
+                            ButtonKind::Secondary,
+                            true,
+                            self.kbd_is(Kbd::Effects),
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                this.open_effects();
+                                cx.notify();
+                            }),
+                        ))
+                        .child(toggle(
+                            "effects",
+                            self.cfg.effects,
+                            self.kbd_is(Kbd::EffectsToggle),
+                            colors,
+                            cx.listener(|this, _, _, cx| {
+                                this.cfg.effects = !this.cfg.effects;
+                                this.clear_notice();
+                                cx.notify();
+                            }),
+                        )),
                     colors,
                     false,
                 ))

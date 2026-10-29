@@ -35,7 +35,13 @@ mod ui_place;
 mod ui_skia;
 
 #[cfg(windows)]
+mod ui_skia_effect;
+
+#[cfg(windows)]
 mod ui_skia_gpu;
+
+#[cfg(windows)]
+mod ui_skia_selftest;
 
 #[cfg(windows)]
 mod user_store;

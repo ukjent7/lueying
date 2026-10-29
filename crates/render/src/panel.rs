@@ -6,7 +6,7 @@
 
 use skia_safe::{
     BlurStyle, Canvas, ClipOp, Color, Font, MaskFilter, Paint, PaintStyle, Point, Rect, RRect,
-    Vector,
+    Shader, Vector,
 };
 
 /// 预编辑条高(逻辑像素);与 server 的 `PREEDIT_H` 一致。
@@ -169,6 +169,124 @@ fn fill_paint(rgb: u32) -> Paint {
     paint.set_anti_alias(true);
     paint.set_color(color(rgb));
     paint
+}
+
+/// 候选正文与拼音的对比度下限(WCAG AA 正文)。
+pub const CONTRAST_TEXT: f32 = 4.5;
+/// 序号、注音、菜单项这些次要文字的对比度下限。
+pub const CONTRAST_WEAK: f32 = 3.0;
+
+/// 用户效果之上的遮罩不透明度。
+///
+/// 底色按这个不透明度压在用户效果上:效果最多只能改动底色的一小部分,
+/// 文字对比度因此有下限。效果能画任意颜色,遮罩之后的面板底色落在一段
+/// 区间里(最暗 = 底色本身,最亮 = 底色被纯白盖满);文字亮度若落在这段
+/// 区间内,效果就能画出跟文字同色的底,对比度归零。这里按「离文字亮度
+/// 最近的那一端」解出最小不透明度,再留一点余量。
+pub fn scrim_alpha(base: u32, text: u32, target: f32) -> f32 {
+    let base_c = channels(base);
+    let text_l = luminance(channels(text));
+    let mut alpha = 1.0f32;
+    for step in 0..=64 {
+        let weight = step as f32 / 64.0;
+        let low = luminance(mix(base_c, [0.0, 0.0, 0.0], weight));
+        let high = luminance(mix(base_c, [1.0, 1.0, 1.0], weight));
+        let worst = if text_l <= low {
+            contrast(low, text_l)
+        } else if text_l >= high {
+            contrast(high, text_l)
+        } else {
+            // 文字亮度落在可达区间里:效果能画出同色底,对比度归零。
+            1.0
+        };
+        if worst >= target {
+            alpha = weight;
+            break;
+        }
+    }
+    // 留一点余量,免得刚好卡在阈值上。
+    (alpha + 0.04).min(0.95)
+}
+
+/// 面板底上的文字:候选正文与序号。
+fn background_scrim(palette: &Palette) -> f32 {
+    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT)
+        .max(scrim_alpha(palette.bg, palette.text_tertiary, CONTRAST_WEAK))
+}
+
+/// 选中块上的文字:候选正文与序号。
+fn highlight_scrim(palette: &Palette) -> f32 {
+    scrim_alpha(palette.selected_bg, palette.selected_text, CONTRAST_TEXT)
+        .max(scrim_alpha(palette.selected_bg, palette.accent_text, CONTRAST_WEAK))
+}
+
+/// 菜单上的文字:悬停项与普通项。
+fn menu_scrim(palette: &Palette) -> f32 {
+    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT)
+        .max(scrim_alpha(palette.bg, palette.text_secondary, CONTRAST_WEAK))
+}
+
+/// 遮罩:底色按不透明度压在用户效果上,文字画在遮罩之上。
+fn scrim_paint(rgb: u32, alpha: f32) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::from_argb(
+        (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+        ((rgb >> 16) & 0xff) as u8,
+        ((rgb >> 8) & 0xff) as u8,
+        (rgb & 0xff) as u8,
+    ));
+    paint
+}
+
+/// 0xRRGGBB 拆成 0..1 的 sRGB 三通道。
+fn channels(rgb: u32) -> [f32; 3] {
+    [
+        ((rgb >> 16) & 0xff) as f32 / 255.0,
+        ((rgb >> 8) & 0xff) as f32 / 255.0,
+        (rgb & 0xff) as f32 / 255.0,
+    ]
+}
+
+/// sRGB 通道值转线性值。
+fn linearize(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// 相对亮度(WCAG 定义)。
+fn luminance(rgb: [f32; 3]) -> f32 {
+    0.2126 * linearize(rgb[0]) + 0.7152 * linearize(rgb[1]) + 0.0722 * linearize(rgb[2])
+}
+
+/// 两个亮度的对比度。
+fn contrast(a: f32, b: f32) -> f32 {
+    let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// 按权重混合两个颜色;Skia 在 sRGB 空间里就是这么混的。
+fn mix(base: [f32; 3], other: [f32; 3], weight: f32) -> [f32; 3] {
+    [
+        base[0] * weight + other[0] * (1.0 - weight),
+        base[1] * weight + other[1] * (1.0 - weight),
+        base[2] * weight + other[2] * (1.0 - weight),
+    ]
+}
+
+/// 一帧用到的效果:每个槽位一个 shader(窗口层按 uniform 生成)。
+/// 槽位为空就画素色;效果层永远画在文字下面。
+#[derive(Clone, Copy, Default)]
+pub struct Effects<'a> {
+    /// 面板底。
+    pub background: Option<&'a Shader>,
+    /// 选中候选的高亮块。
+    pub highlight: Option<&'a Shader>,
+    /// 右键菜单底。
+    pub menu: Option<&'a Shader>,
 }
 
 /// 单条候选的估算宽度:内边距、强调条、序号、文字与注音。
@@ -339,7 +457,17 @@ pub fn draw(
 ) -> (f32, f32) {
     let width = panel_width(spec, metrics, font);
     let height = panel_height(spec, metrics, font);
-    draw_chrome(canvas, width, height, spec, palette, metrics, font, None);
+    draw_chrome(
+        canvas,
+        width,
+        height,
+        spec,
+        palette,
+        metrics,
+        font,
+        None,
+        Effects::default(),
+    );
     draw_items(
         canvas,
         width,
@@ -350,6 +478,7 @@ pub fn draw(
         font,
         ListFx::NEUTRAL,
         None,
+        Effects::default(),
     );
     (width, height)
 }
@@ -365,12 +494,21 @@ pub fn draw_chrome(
     metrics: &Metrics,
     font: Option<&Font>,
     pager: Option<Hit>,
+    effects: Effects,
 ) {
     let s = scale_of(metrics);
     // 背景圆角矩形 + 1px 描边(内缩 0.5px 让描边完整落在窗口里)。
     let body = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, height - s);
     let rounded = RRect::new_rect_radii(body, &[Vector::new(RADIUS * s, RADIUS * s); 4]);
+    // 底色始终不透明:效果叠在底色上,文字画在最上面。
     canvas.draw_rrect(rounded, &fill_paint(palette.bg));
+    // 面板底效果盖住底色;遮罩再压一层,文字对比度因此有下限。
+    if let Some(shader) = effects.background {
+        let mut effect = fill_paint(palette.bg);
+        effect.set_shader(shader.clone());
+        canvas.draw_rrect(rounded, &effect);
+        canvas.draw_rrect(rounded, &scrim_paint(palette.bg, background_scrim(palette)));
+    }
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
     stroke.set_style(PaintStyle::Stroke);
@@ -399,6 +537,7 @@ pub fn draw_items(
     font: Option<&Font>,
     fx: ListFx,
     hover: Option<usize>,
+    effects: Effects,
 ) {
     let s = scale_of(metrics);
     canvas.save();
@@ -428,13 +567,19 @@ pub fn draw_items(
         let row_h = rect.height();
         // 选中块:柔和底色 + 左侧 2px 主色条;悬停块只给非选中行。
         if item.selected {
-            canvas.draw_rrect(
-                RRect::new_rect_radii(
-                    *rect,
-                    &[Vector::new(ITEM_RADIUS * s, ITEM_RADIUS * s); 4],
-                ),
-                &fill_paint(palette.selected_bg),
-            );
+            let selected_rect =
+                RRect::new_rect_radii(*rect, &[Vector::new(ITEM_RADIUS * s, ITEM_RADIUS * s); 4]);
+            canvas.draw_rrect(selected_rect, &fill_paint(palette.selected_bg));
+            // 选中块效果盖住底色;遮罩压住它,选中文字照样读得清。
+            if let Some(shader) = effects.highlight {
+                let mut effect = fill_paint(palette.selected_bg);
+                effect.set_shader(shader.clone());
+                canvas.draw_rrect(selected_rect, &effect);
+                canvas.draw_rrect(
+                    selected_rect,
+                    &scrim_paint(palette.selected_bg, highlight_scrim(palette)),
+                );
+            }
             canvas.draw_rrect(
                 RRect::new_rect_radii(
                     Rect::from_xywh(
@@ -515,6 +660,7 @@ pub fn draw_items(
 }
 
 /// 画右键菜单;`(x, y)` 是菜单左上角,`hover` 是悬停的菜单项,尺寸随缩放。
+#[allow(clippy::too_many_arguments)]
 pub fn draw_menu(
     canvas: &Canvas,
     x: f32,
@@ -523,6 +669,7 @@ pub fn draw_menu(
     metrics: &Metrics,
     font: Option<&Font>,
     hover: Option<usize>,
+    effects: Effects,
 ) {
     let s = scale_of(metrics);
     let w = 116.0 * s;
@@ -540,10 +687,15 @@ pub fn draw_menu(
         &shadow,
     );
     let body = Rect::from_xywh(x + 0.5 * s, y + 0.5 * s, w - s, h - s);
-    canvas.draw_rrect(
-        RRect::new_rect_radii(body, &[Vector::new(4.0 * s, 4.0 * s); 4]),
-        &fill_paint(palette.bg),
-    );
+    let menu_rect = RRect::new_rect_radii(body, &[Vector::new(4.0 * s, 4.0 * s); 4]);
+    canvas.draw_rrect(menu_rect, &fill_paint(palette.bg));
+    // 菜单底效果盖住底色;遮罩压住它,菜单文字照样读得清。
+    if let Some(shader) = effects.menu {
+        let mut effect = fill_paint(palette.bg);
+        effect.set_shader(shader.clone());
+        canvas.draw_rrect(menu_rect, &effect);
+        canvas.draw_rrect(menu_rect, &scrim_paint(palette.bg, menu_scrim(palette)));
+    }
     let mut stroke = Paint::default();
     stroke.set_anti_alias(true);
     stroke.set_style(PaintStyle::Stroke);

@@ -6,6 +6,9 @@
 //! 3. uniform 打包错位:效果读到的 u_accent/u_size 不是契约值。
 //! 4. 坏 SkSL 没有返回错误,或错误被静默吞掉。
 //! 5. 换行/竖排行数与 server 的窗口高度公式不一致。
+//! 6. 用户效果盖过文字:遮罩没把对比度守住。
+
+use std::time::{Duration, Instant};
 
 use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
@@ -34,6 +37,29 @@ fn rgb(rgb: u32) -> (u8, u8, u8) {
         ((rgb >> 8) & 0xff) as u8,
         ((rgb >> 16) & 0xff) as u8,
     )
+}
+
+/// sRGB 通道值转线性值。
+fn linearize(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// 像素(读回是 BGR)的相对亮度;与渲染层的遮罩算法各算各的,互为验证。
+fn luminance(pixel: (u8, u8, u8)) -> f32 {
+    let (b, g, r) = pixel;
+    let channel = |value: u8| linearize(value as f32 / 255.0);
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+}
+
+/// 两个像素的对比度。
+fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    let (x, y) = (luminance(a), luminance(b));
+    let (hi, lo) = if x >= y { (x, y) } else { (y, x) };
+    (hi + 0.05) / (lo + 0.05)
 }
 
 fn spec() -> PanelSpec {
@@ -67,7 +93,7 @@ fn palette() -> Palette {
         border: 0xdddddd,
         text: 0x111111,
         text_secondary: 0x444444,
-        text_tertiary: 0x888888,
+        text_tertiary: 0x6a6e77,
         accent: 0x2f6fed,
         accent_text: 0x2459c9,
         selected_bg: 0xeaf1ff,
@@ -122,17 +148,17 @@ pub fn run(report: &mut String) -> usize {
             };
             let mut paint = Paint::default();
             let mut shader_ok = false;
-            if let Some(shader) = effect::background_shader(&rt, &uniforms) {
+            if let Some(shader) = effect::make_shader(&rt, &uniforms) {
                 paint.set_shader(shader);
                 small.canvas().draw_paint(&paint);
                 shader_ok = true;
             }
             let blue = read_bgr(&mut small, 16, 16).map(|(b, _, _)| b).unwrap_or(0);
-            // 模板在中心处 accent × (0.10 + 0.04×smoothstep) ≈ 0.13 × 255 ≈ 33。
+            // 模板在中心处 accent × (0.55 + 0.35×smoothstep) ≈ 0.9 × 255 ≈ 230。
             push(
                 &mut checks,
                 "SkSL 背景效果",
-                shader_ok && (20..=44).contains(&blue),
+                shader_ok && (200..=255).contains(&blue),
                 format!("shader_ok={shader_ok} B={blue}"),
             );
         }
@@ -147,6 +173,148 @@ pub fn run(report: &mut String) -> usize {
             Ok(_) => "坏 SkSL 竟然编译通过".into(),
             Err(_) => "编译错误正常返回".into(),
         },
+    );
+
+    // 用户效果:纯黑效果盖住面板底,遮罩要把它拉回来并守住文字对比度。
+    let solid = "half4 main(float2 p) { return half4(0.0, 0.0, 0.0, 1.0); }";
+    match effect::compile_background(solid) {
+        Ok(rt) => {
+            let uniforms = Uniforms {
+                size: [360.0, 120.0],
+                time: 0.0,
+                anim: 1.0,
+                accent: [0.0, 0.0, 0.0, 0.0],
+            };
+            let shader = effect::make_shader(&rt, &uniforms);
+            let spec = spec();
+            let palette = palette();
+            let (width, height) = (
+                panel::panel_width(&spec, &metrics, None),
+                panel::panel_height(&spec, &metrics, None),
+            );
+            let mut surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+            panel::draw_chrome(
+                surface.canvas(),
+                width,
+                height,
+                &spec,
+                &palette,
+                &metrics,
+                None,
+                None,
+                panel::Effects {
+                    background: shader.as_ref(),
+                    ..panel::Effects::default()
+                },
+            );
+            match read_bgr(&mut surface, 5, 60) {
+                Some(pixel) => {
+                    let plain = rgb(palette.bg);
+                    let body = contrast(pixel, rgb(palette.text));
+                    let weak = contrast(pixel, rgb(palette.text_tertiary));
+                    push(
+                        &mut checks,
+                        "效果槽位出图",
+                        // 效果确实画上去了(与素色不同),又被遮罩拉回可读区间。
+                        pixel != plain && pixel.0 >= 128 && body >= 4.5 && weak >= 3.0,
+                        format!("{pixel:?} 素色 {plain:?} 正文 {body:.2} 弱文字 {weak:.2}"),
+                    );
+                }
+                None => push(&mut checks, "效果槽位出图", false, "像素读回失败".into()),
+            }
+        }
+        Err(e) => push(&mut checks, "效果槽位出图", false, e),
+    }
+
+    // 遮罩不透明度:按渲染层同样的口径解出来(正文与弱文字取更严的一档),
+    // 再把不透明度量化成 8 位 alpha,两端最坏情况都要守住对比度。
+    let alpha = panel::scrim_alpha(palette().bg, palette().text, panel::CONTRAST_TEXT)
+        .max(panel::scrim_alpha(palette().bg, palette().text_tertiary, panel::CONTRAST_WEAK));
+    let byte = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let a = byte as f32 / 255.0;
+    let base = palette().bg;
+    // 遮罩是底色按 alpha 压在效果上;Skia 在 sRGB 空间里做 src-over。
+    // 效果能画纯黑,也能画纯白,两端都要够。
+    let over = |effect: f32| -> (u8, u8, u8) {
+        let channel = |shift: u32| ((base >> shift) & 0xff) as f32;
+        (
+            (effect * (1.0 - a) + channel(0) * a).round() as u8,
+            (effect * (1.0 - a) + channel(8) * a).round() as u8,
+            (effect * (1.0 - a) + channel(16) * a).round() as u8,
+        )
+    };
+    let dark = over(0.0);
+    let light = over(255.0);
+    let body = contrast(dark, rgb(palette().text)).min(contrast(light, rgb(palette().text)));
+    let weak =
+        contrast(dark, rgb(palette().text_tertiary)).min(contrast(light, rgb(palette().text_tertiary)));
+    push(
+        &mut checks,
+        "遮罩守住对比度",
+        alpha > 0.0 && alpha < 1.0 && body >= 4.5 && weak >= 3.0,
+        format!("alpha={alpha:.3} 暗端 {dark:?} 亮端 {light:?} 正文 {body:.2} 弱文字 {weak:.2}"),
+    );
+
+    // 坏文件只废掉自己的槽位:好模板、坏 SkSL、版本过高三份文件同放一个目录。
+    let dir = std::env::temp_dir().join(format!("lueying-effect-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let prepared = std::fs::create_dir_all(&dir)
+        .and_then(|()| {
+            std::fs::write(dir.join("background.sksl"), effect::BACKGROUND_TEMPLATE)
+        })
+        .and_then(|()| {
+            std::fs::write(
+                dir.join("highlight.sksl"),
+                "half4 main(float2 p) { return nonexistent; }",
+            )
+        })
+        .and_then(|()| {
+            std::fs::write(
+                dir.join("menu.sksl"),
+                "// effect-api: 99\nhalf4 main(float2 p) { return half4(0.0); }",
+            )
+        });
+    if prepared.is_err() {
+        push(&mut checks, "坏效果只废一个槽位", false, "临时目录写不了".into());
+    } else {
+        let set = effect::EffectSet::load_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        push(
+            &mut checks,
+            "坏效果只废一个槽位",
+            set.has(effect::Slot::Background)
+                && !set.has(effect::Slot::Highlight)
+                && !set.has(effect::Slot::Menu)
+                && set.errors().len() == 2,
+            format!(
+                "背景={} 选中={} 菜单={} 错误 {:?}",
+                set.has(effect::Slot::Background),
+                set.has(effect::Slot::Highlight),
+                set.has(effect::Slot::Menu),
+                set.errors()
+            ),
+        );
+        push(
+            &mut checks,
+            "契约版本过高拒绝加载",
+            set.errors().iter().any(|e| e.contains("契约版本")),
+            format!("{:?}", set.errors()),
+        );
+    }
+
+    // 帧预算:连续超预算就摘掉效果,冷却期内不放行,冷却到期再给一次机会。
+    let mut guard = effect::BudgetGuard::new(effect::Budget::default());
+    let now = Instant::now();
+    guard.observe(Duration::from_millis(20), now);
+    guard.observe(Duration::from_millis(20), now);
+    let blocked = !guard.allows(now);
+    let after = now + Duration::from_millis(2500);
+    let allowed = guard.allows(after);
+    push(
+        &mut checks,
+        "帧预算摘效果",
+        blocked && allowed,
+        format!("冷却内 blocked={blocked} 冷却后 allowed={allowed}"),
     );
 
     // 布局:两个短候选一行;长候选换行;竖排一条一行,行数进窗口高度公式。
@@ -280,6 +448,7 @@ pub fn run(report: &mut String) -> usize {
         &hit_metrics,
         None,
         None,
+        panel::Effects::default(),
     );
     panel::draw_items(
         hover_surface.canvas(),
@@ -291,6 +460,7 @@ pub fn run(report: &mut String) -> usize {
         None,
         panel::ListFx::NEUTRAL,
         Some(1),
+        panel::Effects::default(),
     );
     let second = rects[1];
     let expected_hover = rgb(palette().hover);
@@ -314,6 +484,7 @@ pub fn run(report: &mut String) -> usize {
         &hit_metrics,
         None,
         Some(0),
+        panel::Effects::default(),
     );
     let expected_menu_hover = rgb(palette().hover);
     match read_bgr(&mut menu_surface, 10, 17) {
@@ -347,6 +518,7 @@ pub fn run(report: &mut String) -> usize {
         &hit_metrics,
         None,
         Some(panel::Hit::PrevPage),
+        panel::Effects::default(),
     );
     let (prev, _, _) = panel::pager_rects(hw, &hit_metrics);
     let expected_pager = rgb(palette().border);

@@ -13,6 +13,7 @@
 | 候选 | 候选排列 | 横排挤一行自动换行,或竖排一行一条 |
 | 候选 | 候选字号 | 小、标准、大;只缩放候选行,拼音行不变 |
 | 候选 | 主题色 | 六种强调色预设;高对比度主题跟随系统色 |
+| 候选 | 用户效果 | 打开 `%APPDATA%\lueying\effects` 目录,写 SkSL 装饰候选窗;见[用户效果](effects.md) |
 | 候选 | 下一词联想 | 按本机上屏词序补全 |
 | 候选 | 自动模糊音 | 默认开启;「重置」清空模糊组的使用统计 |
 | 词库 | 自定义短语 | 打开 `phrases.txt`,保存后自动重载 |
@@ -46,10 +47,11 @@ traditional_region=general
 ui_layout=horizontal
 ui_font=standard
 ui_accent=0
+effects=on
 update_channel=stable
 ```
 
-`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `auto` 或 `off`(关掉自动模糊音);`traditional_region` 取 `general`、`tw`、`hk`;`ui_layout` 取 `horizontal`、`vertical`;`ui_font` 取 `small`、`standard`、`large`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `蓝`、`青`、`绿`、`紫`、`红`、`橙`;`update_channel` 取 `stable`、`beta`。
+`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `auto` 或 `off`(关掉自动模糊音);`traditional_region` 取 `general`、`tw`、`hk`;`ui_layout` 取 `horizontal`、`vertical`;`ui_font` 取 `small`、`standard`、`large`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `蓝`、`青`、`绿`、`紫`、`红`、`橙`;`effects` 取 `on` 或 `off`(关掉用户效果);`update_channel` 取 `stable`、`beta`。
 
 直接编辑文件也可以;改动会在设置窗保存时或服务下次读取时生效。
 

@@ -217,6 +217,8 @@ pub struct AppConfig {
     pub ui_accent: usize,
     /// 候选窗渲染后端:GPUI 或 Skia 实验路线。
     pub ui_backend: UiBackend,
+    /// 是否启用用户效果(SkSL 装饰层);关掉就只画素色。
+    pub effects: bool,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -240,6 +242,7 @@ impl Default for AppConfig {
             ui_font: UiFont::Standard,
             ui_accent: 0,
             ui_backend: UiBackend::Gpui,
+            effects: true,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -298,6 +301,13 @@ pub fn punct_path() -> Option<PathBuf> {
 /// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.ini`)。
 pub fn apps_path() -> Option<PathBuf> {
     user_file("apps.ini")
+}
+
+/// 用户效果目录(`%APPDATA%\lueying\effects`);每个槽位一个 `.sksl` 文件。
+pub fn effects_dir() -> Option<PathBuf> {
+    let base =
+        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
+    Some(base.join("lueying").join("effects"))
 }
 
 fn user_file(name: &str) -> Option<PathBuf> {
@@ -394,6 +404,12 @@ pub fn load(path: &Path) -> AppConfig {
             }
             "ui_backend" | "backend" => {
                 cfg.ui_backend = UiBackend::from_str(value);
+            }
+            // 用户效果开关:默认开(目录里没文件就是素色),关掉就整目录忽略。
+            "effects" | "effect" => {
+                if let Some(on) = flag(value) {
+                    cfg.effects = on;
+                }
             }
             _ => {}
         }
@@ -514,6 +530,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          ui_font={}\n\
          ui_accent={}\n\
          ui_backend={}\n\
+         effects={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -528,6 +545,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.ui_font.as_str(),
         cfg.ui_accent,
         cfg.ui_backend.as_str(),
+        if cfg.effects { "on" } else { "off" },
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");

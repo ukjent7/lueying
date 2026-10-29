@@ -322,7 +322,7 @@ pub(super) fn real_main() {
     // Skia 渲染管线自检(E2E 打开):建窗、Ganesh-D3D12 出一帧、读回像素,
     // 结论写日志;不依赖管道与真实输入,无 UI 环境也能跑。
     if std::env::var_os("LUEYING_SKIA_SELFTEST").is_some() {
-        crate::ui_skia::selftest();
+        crate::ui_skia_selftest::selftest();
     }
     // 无桌面会话(CI/服务)没有窗口站,GPUI 建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {

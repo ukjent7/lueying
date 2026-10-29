@@ -56,6 +56,8 @@ pub struct Frame<'a> {
     pub menu: Option<(f32, f32)>,
     /// 悬停的菜单项。
     pub menu_hover: Option<usize>,
+    /// 三个槽位的用户效果;为空就是素色。
+    pub effects: panel::Effects<'a>,
 }
 
 /// 出帧路径的最小接口:画一帧、读回一个像素。
@@ -83,6 +85,7 @@ fn paint(canvas: &Canvas, f: Frame) {
         f.metrics,
         f.font,
         f.pager,
+        f.effects,
     );
     panel::draw_items(
         canvas,
@@ -94,9 +97,19 @@ fn paint(canvas: &Canvas, f: Frame) {
         f.font,
         f.list,
         f.hover,
+        f.effects,
     );
     if let Some((mx, my)) = f.menu {
-        panel::draw_menu(canvas, mx, my, f.palette, f.metrics, f.font, f.menu_hover);
+        panel::draw_menu(
+            canvas,
+            mx,
+            my,
+            f.palette,
+            f.metrics,
+            f.font,
+            f.menu_hover,
+            f.effects,
+        );
     }
     if f.opacity < 1.0 {
         canvas.restore();

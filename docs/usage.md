@@ -37,6 +37,7 @@
 - [自定义短语](extensions/custom-phrases.md):`编码<TAB>候选` 一行一条。
 - [辅助码](extensions/auxiliary-code.md):拼音后按 `` ` `` 再打 1–2 位五笔码。
 - [下一词联想](extensions/prediction.md):按本机上屏词序补全。
+- [用户效果](effects.md):写一段 SkSL 装饰候选窗的面板底、选中块与右键菜单。
 
 ## 候选窗
 

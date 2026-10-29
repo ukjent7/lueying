@@ -138,6 +138,8 @@ pub enum Request {
     FuzzyStats,
     /// 设置窗读取引擎资源状态(词典与模型的加载情况)。
     Status,
+    /// 设置窗取用户效果的模板源码(文件名 + SkSL 文本)。
+    EffectTemplates,
     /// 设置窗只重置组级适应,保留词条。
     ResetFuzzy,
     /// 安装器卸载前让常驻服务干净退出。
@@ -197,6 +199,9 @@ pub struct Reply {
     /// 引擎资源状态(仅 `Status` 应答使用)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<EngineStatus>,
+    /// 用户效果模板(仅 `EffectTemplates` 应答使用):(文件名, 源码)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub templates: Vec<(String, String)>,
     /// 全部候选(按页切片由 `page`/`page_size` 决定),供 TSF 的
     /// `ITfCandidateListUIElement` 回答宿主与读屏软件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

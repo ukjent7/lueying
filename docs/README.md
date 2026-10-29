@@ -5,6 +5,7 @@
 - [安装与卸载](install.md)
 - [使用](usage.md)
 - [设置](settings.md)
+- [用户效果](effects.md)
 - [排障](troubleshooting.md)
 
 ## 开发
