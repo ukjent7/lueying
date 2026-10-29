@@ -12,7 +12,7 @@ use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::{FileAccessMode, StorageFile};
-use windows::Win32::Foundation::{COLORREF, HWND, LRESULT, LPARAM, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH,
@@ -478,7 +478,8 @@ fn deferred(rows: &mut Vec<Row>) {
         "V4",
         "命令面板归还焦点后上屏",
         Verdict::Note,
-        "命令面板在 T4 实现;届时用 Notepad 与自绘窗口先行,Electron 场景需要可下载的测试应用。".to_string(),
+        "命令面板在 T4 实现;届时用 Notepad 与自绘窗口先行,Electron 场景需要可下载的测试应用。"
+            .to_string(),
     ));
     rows.push((
         "V6",
