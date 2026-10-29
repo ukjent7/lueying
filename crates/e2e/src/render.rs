@@ -713,7 +713,12 @@ pub fn run(report: &mut String) -> usize {
                 format!("与无字型画面不同={differs} 字体族={families}"),
             );
         }
-        None => push(&mut checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
+        None => push(
+            &mut checks,
+            "徽标字型出图",
+            true,
+            "系统没有可用字型,跳过".into(),
+        ),
     }
 
     // 设置窗控件层:布局、命中与像素。

@@ -18,14 +18,14 @@ use skia_safe::{Font, Surface};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HDC, HBITMAP, HGDIOBJ, ReleaseDC, SelectObject,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject,
 };
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, RegisterClassW,
-    ULW_ALPHA, UpdateLayeredWindow, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE, TranslateMessage,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
+    RegisterClassW, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::w;
 
@@ -57,9 +57,7 @@ pub(super) fn spawn(state: Arc<State>) {
     let spawned = std::thread::Builder::new()
         .name("mode-hud".into())
         .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hud_loop(state)))
-                .is_err()
-            {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hud_loop(state))).is_err() {
                 println!("模式徽标线程崩溃,中英切换不再提示");
             }
         });
@@ -268,7 +266,10 @@ impl Layer {
         opacity: f32,
         scale: f32,
     ) -> Result<(), String> {
-        let (w, h) = ((badge::WIDTH * scale) as u32, (badge::HEIGHT * scale) as u32);
+        let (w, h) = (
+            (badge::WIDTH * scale) as u32,
+            (badge::HEIGHT * scale) as u32,
+        );
         self.ensure(w, h)?;
         let Some(surface) = self.surface.as_mut() else {
             return Err("没有光栅表面".into());
@@ -365,8 +366,9 @@ impl Layer {
                 ..Default::default()
             };
             let mut bits: *mut c_void = ptr::null_mut();
-            let dib = CreateDIBSection(Some(self.mem_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
-                .map_err(|e| format!("CreateDIBSection: {e}"))?;
+            let dib =
+                CreateDIBSection(Some(self.mem_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
+                    .map_err(|e| format!("CreateDIBSection: {e}"))?;
             let old = SelectObject(self.mem_dc, HGDIOBJ(dib.0));
             self.dib = Some(dib);
             self.bits = bits;
@@ -397,11 +399,7 @@ fn create_window() -> Result<HWND, String> {
         ensure_class(HINSTANCE(hmodule.0))?;
         let (park_x, park_y) = ui_place::park_point();
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED
-                | WS_EX_NOACTIVATE
-                | WS_EX_TOOLWINDOW
-                | WS_EX_TOPMOST
-                | WS_EX_TRANSPARENT,
+            WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
             w!("lueying-mode-hud"),
             w!("lueying-hud"),
             WS_POPUP | WS_VISIBLE,
