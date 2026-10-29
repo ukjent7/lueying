@@ -720,21 +720,26 @@ lueying.command("boom", function () {
     let spin = runtime.invoke("async.spin", "");
     let started = Instant::now();
     // slow 段结束时时钟已推进到 50,spin 的定时器到点在 51,合成时钟要越过它。
+    // 被杀作业的 Promise 不结算(quickjs 对不可捕获异常跳过 capability
+    // reject),两泵都应空,宿主把挂起记账清零。
     let interrupted = runtime.pump(60);
     let continued = runtime.pump(60);
     let spin_elapsed = started.elapsed();
     push(
         checks,
-        "死循环作业被步进预算打断",
-        matches!(spin, Ok(Invoke::Pending(2)))
+        "死循环作业被步进预算打断且记账清零",
+        matches!(spin, Ok(Invoke::Pending(_)))
             && interrupted.is_empty()
-            && continued.iter().any(|(_, settled)| !settled.ok)
+            && continued.is_empty()
+            && runtime.pending() == 0
             && spin_elapsed < Duration::from_secs(2),
         format!("{spin:?} {interrupted:?} {continued:?} {spin_elapsed:?}"),
     );
 
     let boom = runtime.invoke("async.boom", "");
-    let settled = runtime.pump(60);
+    // boom 在被杀之后注册,定时器到点在 61,用更大的合成时钟越过它;
+    // 能正常结算说明中断后宿主仍然可用。
+    let settled = runtime.pump(200);
     let error = settled
         .iter()
         .find(|(_, item)| !item.ok)

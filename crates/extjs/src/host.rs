@@ -253,11 +253,8 @@ impl Host {
     /// 作业队列,收走结算结果。
     ///
     /// 每个作业步都受 [`Limits::dispatch_ms`] 约束;等待定时器与原生服务
-    /// 不在预算内。一轮最多 [`PUMP_STEPS`] 步,反复重新入队的任务留给下一轮。
+    /// 不在预算内。一轮最多 `PUMP_STEPS` 步,反复重新入队的任务留给下一轮。
     pub fn pump(&mut self, now_ms: u64) -> Vec<Settled> {
-        if self.pending == 0 && !self.services.has_completions() {
-            return Vec::new();
-        }
         let budget = self.limits.dispatch_ms;
         let epoch = self.epoch;
         let deadline_ns = Arc::clone(&self.deadline_ns);
@@ -285,6 +282,7 @@ impl Host {
                     let _ = resolve.call::<_, ()>((completion.token as f64, ok, value));
                 }
             }
+            let mut killed = false;
             for _ in 0..PUMP_STEPS {
                 tripped.store(false, Ordering::Relaxed);
                 let nanos = u128::from(budget) * 1_000_000;
@@ -296,10 +294,17 @@ impl Host {
                 deadline_ns.store(at, Ordering::Relaxed);
                 let ran = ctx.execute_pending_job();
                 deadline_ns.store(u64::MAX, Ordering::Relaxed);
-                let killed = tripped.swap(false, Ordering::Relaxed);
+                killed = tripped.swap(false, Ordering::Relaxed);
                 if !ran || killed {
                     break;
                 }
+            }
+            // quickjs-ng 语义:作业被中断杀掉时,异常不可捕获,Promise 链
+            // 的 capability reject 被跳过,根任务从此不成功也不失败。挂起
+            // 记账在这里作废清零;其他链路后续到点的结算按饱和减法照收,
+            // 不会减穿。
+            if killed {
+                pending = 0;
             }
             if let Ok(take) = ctx.globals().get::<_, Function>("__lueying_take_ready")
                 && let Ok(json) = take.call::<_, String>(())

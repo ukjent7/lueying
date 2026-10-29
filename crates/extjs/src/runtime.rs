@@ -296,12 +296,11 @@ impl Runtime {
     pub fn pump(&mut self, now_ms: u64) -> Vec<(String, Settled)> {
         let mut out = Vec::new();
         for slot in self.slots.iter_mut() {
+            // 不按 pending 跳过:被中断杀掉的任务记账清零后,包里仍可能有
+            // 到点的定时器要兑现;这里每次都进,空泵只有微秒级开销。
             let Some(pack) = slot.pack.as_mut() else {
                 continue;
             };
-            if pack.pending() == 0 {
-                continue;
-            }
             let settled = pack.pump(now_ms);
             if !settled.is_empty() {
                 slot.last_used = Instant::now();
