@@ -55,6 +55,9 @@ mod ui_skia_effect;
 mod ui_skia_gpu;
 
 #[cfg(windows)]
+mod ui_skia_mouse;
+
+#[cfg(windows)]
 mod ui_skia_selftest;
 
 #[cfg(windows)]

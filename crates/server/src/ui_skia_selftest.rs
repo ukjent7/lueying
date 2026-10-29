@@ -15,9 +15,11 @@ use lueying_server::theme;
 use skia_safe::Font;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
-use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+use windows::Win32::UI::WindowsAndMessaging::{
+    DestroyWindow, HWND_TOPMOST, IsWindow, SWP_NOACTIVATE, SetWindowPos,
+};
 
-use crate::ui_skia::{create_window, panel_font};
+use crate::ui_skia::{Presenter, cpu_presenter, create_window, panel_font, swap_window};
 use crate::ui_skia_gpu::{Frame, FrameTarget, Offscreen, Pipeline, Raster, rgb};
 
 /// GPU 自检子进程的上限;超时就杀掉,GPU 管线卡死不该拖住输入法启动。
@@ -55,6 +57,11 @@ pub(super) fn selftest() {
         Ok(()) => println!("SKIA CPU 自检通过:CPU 光栅上屏一致"),
         Err(e) => println!("SKIA CPU 自检失败:{e}"),
     }
+    // 换手:设备被摘掉后要能换到 CPU 光栅接着弹,候选窗不整块消失。
+    match swap_check(&spec, &palette, &metrics, width as u32, height as u32) {
+        Ok(()) => println!("SKIA 换手自检通过:换窗口后画面与上屏一致"),
+        Err(e) => println!("SKIA 换手自检失败:{e}"),
+    }
     // GPU:另起子进程。崩了只影响子进程。
     match gpu_child() {
         Ok(text) => println!("{text}"),
@@ -73,12 +80,30 @@ pub(super) fn gpu_selftest() {
     let height = panel::panel_height(&spec, &metrics, None);
     let palette = theme::palette(theme::colors_with(theme::Appearance::Light, 0));
     let (mode, outcome) = match window_target(width as u32, height as u32) {
-        Ok((mut pipe, hwnd)) => {
-            let outcome = check_pixels(&mut pipe, &spec, &palette, &metrics);
-            // 先放管线再销窗:DComp 目标还指着这个 HWND。
-            drop(pipe);
-            unsafe {
-                let _ = DestroyWindow(hwnd);
+        Ok((pipe, hwnd)) => {
+            let mut presenter = Presenter::Gpu(pipe);
+            let outcome = check_pixels(&mut presenter, &spec, &palette, &metrics);
+            // 设备被摘掉时的换手:GPU 窗口换成 CPU 分层窗口,画面与上屏要照旧。
+            // 这条真跑 GPU → CPU,崩了也只影响这个子进程。
+            let swapped = handover(
+                hwnd,
+                &mut presenter,
+                &spec,
+                &palette,
+                &metrics,
+                width as u32,
+                height as u32,
+            );
+            match swapped {
+                Ok(()) => println!("SKIA GPU 换手自检通过:GPU 窗口换成 CPU 光栅后画面一致"),
+                Err(e) => println!("SKIA GPU 换手自检失败:{e}"),
+            }
+            // 先放管线再销窗:DComp 目标还指着这个 HWND(换手成功时窗口已经换过)。
+            drop(presenter);
+            if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
             }
             ("合成交换链", outcome)
         }
@@ -214,16 +239,7 @@ fn cpu_check(
     w: u32,
     h: u32,
 ) -> Result<(), String> {
-    let hwnd = crate::ui_skia::create_layered_window()?;
-    let mut pipe = match crate::ui_skia_cpu::CpuPipeline::new(hwnd) {
-        Ok(pipe) => pipe,
-        Err(e) => {
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            return Err(e);
-        }
-    };
+    let (hwnd, mut pipe) = cpu_presenter()?;
     if let Err(e) = pipe.rebuild_surfaces(w, h) {
         unsafe {
             let _ = DestroyWindow(hwnd);
@@ -238,6 +254,75 @@ fn cpu_check(
     outcome?;
     presented?;
     Ok(())
+}
+
+/// 换手自检:旧窗口换成 CPU 分层窗口,新窗口要接手、旧窗口要销毁、画面与上屏照旧。
+///
+/// 服务端进程里从 CPU 那条换起(不碰 GPU,崩不了);GPU → CPU 的换手在 GPU
+/// 子进程里跑,崩了也只影响子进程。
+fn swap_check(
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    let (hwnd, cpu) = cpu_presenter()?;
+    let mut pipe = Presenter::Cpu(cpu);
+    let outcome = handover(hwnd, &mut pipe, spec, palette, metrics, w, h);
+    // 换手成功时旧窗口已经销毁,这里再销一次是空操作。
+    if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+    }
+    outcome
+}
+
+/// 把旧窗口换成 CPU 分层窗口,再走一遍像素与上屏断言。
+fn handover(
+    old_hwnd: HWND,
+    pipe: &mut Presenter,
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    let new_hwnd = swap_window(old_hwnd, pipe)?;
+    // 新窗口要接手,旧窗口要销毁。
+    let new_alive = unsafe { IsWindow(Some(new_hwnd)) }.as_bool();
+    let old_alive = unsafe { IsWindow(Some(old_hwnd)) }.as_bool();
+    let mut result = Ok(());
+    if !new_alive {
+        result = Err("新窗口没有建起来".into());
+    } else if old_alive {
+        result = Err("旧窗口没有销毁".into());
+    } else {
+        // 新窗口摆到指定位置,表面尺寸对上,画面与上屏都要照旧。
+        unsafe {
+            let _ = SetWindowPos(
+                new_hwnd,
+                Some(HWND_TOPMOST),
+                120,
+                160,
+                w as i32,
+                h as i32,
+                SWP_NOACTIVATE,
+            );
+        }
+        result = pipe.rebuild_surfaces(w, h);
+        if result.is_ok() {
+            result = check_pixels(&mut *pipe, spec, palette, metrics);
+        }
+        if result.is_ok() {
+            result = pipe.present();
+        }
+    }
+    unsafe {
+        let _ = DestroyWindow(new_hwnd);
+    }
+    result
 }
 
 /// 建窗 + DComp 交换链;失败时把原因带回去,自检据此决定是否降级。

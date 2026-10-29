@@ -251,8 +251,18 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
         .lines()
         .find(|line| line.contains("SKIA CPU 自检通过") || line.contains("SKIA CPU 自检失败"))
         .unwrap_or("无");
+    // 换手(设备被摘掉后换到 CPU 光栅):同样只进报告;GPU 子进程里那条也带上。
+    let swap: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("换手自检"))
+        .collect();
+    let swap = if swap.is_empty() {
+        "无".to_string()
+    } else {
+        swap.join("; ")
+    };
     Ok(format!(
-        "## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}\n\nCPU:{cpu}"
+        "## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}\n\nCPU:{cpu}\n\n换手:{swap}"
     ))
 }
 

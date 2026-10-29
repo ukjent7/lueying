@@ -202,6 +202,14 @@ impl Pipeline {
         unsafe { self.device.GetDeviceRemovedReason().is_err() }
     }
 
+    /// 放弃 GPU 上下文:设备已经没了,析构时不能再碰后端 API。
+    ///
+    /// 放弃之后这块管线的资源不再回收(设备都没了,回收也回收不回来),
+    /// 但析构过程不会去调 D3D12,也就不会访问冲突。
+    pub fn abandon(&mut self) {
+        self.direct_context.abandon();
+    }
+
     /// 窗口尺寸变化时改交换链大小并重新包裹两块后缓冲。
     pub fn rebuild_surfaces(&mut self, w: u32, h: u32) -> Result<(), String> {
         if self.size == (w, h) && !self.surfaces.is_empty() {

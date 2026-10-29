@@ -5,7 +5,8 @@
 //! 交互 parity:淡入/淡出、翻页滑动、点选/滚轮/翻页箭头、右键菜单与悬停,
 //! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 只用硬件适配器,
 //! 建不出设备时退到 CPU 光栅 + 分层窗口(`ui_skia_cpu`),画面一模一样,
-//! 只是每帧多花一点 CPU;设备中途被系统摘掉就停用候选窗,不再进 Skia。
+//! 只是每帧多花一点 CPU;设备中途被系统摘掉(驱动重启、GPU 挂起)也走同一条
+//! 换手路:另建一个分层窗口接着弹,候选窗不会整块消失。
 //! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标走原生分层窗口
 //! (`ui_hud`:CPU 光栅 + UpdateLayeredWindow),不在这条管线上。
 
@@ -13,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
-use lueying_protocol::{Request, SessionView};
+use lueying_protocol::SessionView;
 use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, PreeditBar};
 use lueying_server::config::UiLayout;
@@ -26,11 +27,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GWLP_USERDATA,
     GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG, PM_REMOVE,
     PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowLongPtrW, SetWindowPos,
-    SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
-    WS_VISIBLE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
+    TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{BOOL, w};
 
@@ -39,6 +39,7 @@ use crate::ui_place::{self, CARET_GAP};
 use crate::ui_skia_cpu::CpuPipeline;
 use crate::ui_skia_effect;
 use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
+use crate::ui_skia_mouse;
 
 /// 会话版本号轮询间隔;与 GPUI 路径一致,对打字反馈无感。
 const POLL: Duration = Duration::from_millis(15);
@@ -72,7 +73,7 @@ pub(super) fn spawn(state: Arc<State>) {
 
 /// 窗口线程的动画与交互状态;全部归窗口线程所有。
 #[derive(Default)]
-struct Fx {
+pub(super) struct Fx {
     /// 淡入截止时刻;`None` 表示没有在淡入。
     show: Option<Instant>,
     /// 淡出截止时刻;期间沿用最后一份内容并让鼠标穿透。
@@ -88,17 +89,17 @@ struct Fx {
     /// 系统「减少动态效果」;开启后全部动效走终态。
     reduce: bool,
     /// 页内悬停候选;鼠标移出或换页后由重绘修正。
-    hover: Option<usize>,
+    pub(super) hover: Option<usize>,
     /// 悬停的翻页箭头;单页时恒为 `None`。
-    pager: Option<panel::Hit>,
+    pub(super) pager: Option<panel::Hit>,
     /// 打开的右键菜单:(页内槽位, 菜单顶部 y, 行文本)。行文本变了菜单自动失效。
-    menu: Option<(usize, f32, String)>,
+    pub(super) menu: Option<(usize, f32, String)>,
     /// 悬停的菜单项。
-    menu_hover: Option<usize>,
+    pub(super) menu_hover: Option<usize>,
     /// 鼠标最后位置(客户区);WM_SETCURSOR 用它做命中,省一次坐标换算。
-    mouse: (f32, f32),
+    pub(super) mouse: (f32, f32),
     /// 最近一帧的绘制输入;命中测试用它,保证所指即所画。
-    geometry: Option<Geom>,
+    pub(super) geometry: Option<Geom>,
     /// 新组合的第一帧走素色;之后才上效果,候选一出现就可读。
     first_frame: bool,
     /// 本次组合的起点;效果的动画时钟从这儿算。
@@ -137,25 +138,27 @@ impl Fx {
 }
 
 /// 最近一帧的绘制输入快照;鼠标命中据此换算,不重算布局。
-struct Geom {
-    spec: PanelSpec,
-    metrics: Metrics,
-    menu_xy: Option<(f32, f32)>,
+pub(super) struct Geom {
+    pub(super) spec: PanelSpec,
+    pub(super) metrics: Metrics,
+    pub(super) menu_xy: Option<(f32, f32)>,
 }
 
 /// 窗口过程持有的上下文;窗口与线程同生命周期,进程退出一起回收。
-struct WinCtx {
-    state: Arc<State>,
-    fx: Fx,
+pub(super) struct WinCtx {
+    /// 候选窗窗口;换出帧路径时会换成新窗口。
+    pub(super) hwnd: HWND,
+    pub(super) state: Arc<State>,
+    pub(super) fx: Fx,
     pipe: Presenter,
-    font: Option<Font>,
-    cursor_arrow: Option<HCURSOR>,
-    cursor_hand: Option<HCURSOR>,
+    pub(super) font: Option<Font>,
+    pub(super) cursor_arrow: Option<HCURSOR>,
+    pub(super) cursor_hand: Option<HCURSOR>,
     /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
     effects: ui_skia_effect::Effects,
     /// 效果帧预算:连续超预算就临时摘掉效果。
     budget: BudgetGuard,
-    /// D3D12 设备已被系统摘掉:候选窗停用,不再进 Skia。
+    /// 出帧路径彻底走不通(设备被摘掉且 CPU 兜底也建不起来):候选窗停用。
     dead: bool,
 }
 
@@ -163,27 +166,20 @@ struct WinCtx {
 ///
 /// 两条路径的画面完全一致(同一套绘制代码),只是上屏方式不同:GPU 走
 /// DirectComposition 交换链,CPU 走 GDI 分层窗口。
-enum Presenter {
+pub(super) enum Presenter {
     Gpu(Pipeline),
     Cpu(CpuPipeline),
 }
 
 impl Presenter {
-    fn draw(&mut self, f: Frame) -> Result<(), String> {
-        match self {
-            Presenter::Gpu(pipe) => pipe.draw(f),
-            Presenter::Cpu(pipe) => pipe.draw(f),
-        }
-    }
-
-    fn present(&mut self) -> Result<(), String> {
+    pub(super) fn present(&mut self) -> Result<(), String> {
         match self {
             Presenter::Gpu(pipe) => pipe.present(),
             Presenter::Cpu(pipe) => pipe.present(),
         }
     }
 
-    fn rebuild_surfaces(&mut self, w: u32, h: u32) -> Result<(), String> {
+    pub(super) fn rebuild_surfaces(&mut self, w: u32, h: u32) -> Result<(), String> {
         match self {
             Presenter::Gpu(pipe) => pipe.rebuild_surfaces(w, h),
             Presenter::Cpu(pipe) => pipe.rebuild_surfaces(w, h),
@@ -194,6 +190,22 @@ impl Presenter {
         match self {
             Presenter::Gpu(pipe) => pipe.device_removed(),
             Presenter::Cpu(_) => false,
+        }
+    }
+}
+
+impl FrameTarget for Presenter {
+    fn draw(&mut self, f: Frame) -> Result<(), String> {
+        match self {
+            Presenter::Gpu(pipe) => pipe.draw(f),
+            Presenter::Cpu(pipe) => pipe.draw(f),
+        }
+    }
+
+    fn pixel(&mut self, x: i32, y: i32) -> Option<(u8, u8, u8)> {
+        match self {
+            Presenter::Gpu(pipe) => pipe.pixel(x, y),
+            Presenter::Cpu(pipe) => pipe.pixel(x, y),
         }
     }
 }
@@ -213,10 +225,79 @@ fn open() -> Result<(HWND, Presenter), String> {
             unsafe {
                 let _ = DestroyWindow(hwnd);
             }
-            let hwnd = create_layered_window()?;
-            let pipe = CpuPipeline::new(hwnd)?;
+            let (hwnd, pipe) = cpu_presenter()?;
             println!("Skia 候选窗就绪:CPU 光栅 + 分层窗口");
             Ok((hwnd, Presenter::Cpu(pipe)))
+        }
+    }
+}
+
+/// CPU 光栅呈现器:分层窗口 + 位图。
+pub(super) fn cpu_presenter() -> Result<(HWND, CpuPipeline), String> {
+    let hwnd = create_layered_window()?;
+    match CpuPipeline::new(hwnd) {
+        Ok(pipe) => Ok((hwnd, pipe)),
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// 换一条出帧路径:另建一个分层窗口走 CPU 光栅,旧窗口销毁。
+///
+/// 设备被系统摘掉(驱动重启、GPU 挂起)时用它接手,候选窗不会整块消失。
+pub(super) fn swap_window(old: HWND, pipe: &mut Presenter) -> Result<HWND, String> {
+    let (new_hwnd, cpu) = cpu_presenter()?;
+    // 旧 GPU 管线这就要丢:设备可能已经被摘掉,先让 Skia 放弃上下文,
+    // 析构时就不会再碰后端 API(否则会访问冲突)。
+    if let Presenter::Gpu(gpu) = pipe {
+        gpu.abandon();
+    }
+    *pipe = Presenter::Cpu(cpu);
+    // 淡出期间的点击穿透样式要跟着搬到新窗口。
+    if ex_style(old) & WS_EX_TRANSPARENT.0 != 0 {
+        style_click_through(new_hwnd, true);
+    }
+    unsafe {
+        let _ = DestroyWindow(old);
+    }
+    Ok(new_hwnd)
+}
+
+/// 出帧路径的准备结果。
+enum Ready {
+    /// 路径照旧,直接画。
+    Same,
+    /// 换了路径(设备被摘掉):窗口要重新摆位、重建表面。
+    Switched,
+    /// 这条路彻底走不通:候选窗停用。
+    Dead,
+}
+
+/// 出帧前的准备:设备被系统摘掉就换到 CPU 光栅路径。
+///
+/// 换了路径要重新摆位、重建表面,由调用方接着做。
+fn ensure_presenter(ctx: &mut WinCtx) -> Ready {
+    if !ctx.pipe.device_removed() {
+        return Ready::Same;
+    }
+    match swap_window(ctx.hwnd, &mut ctx.pipe) {
+        Ok(hwnd) => {
+            ctx.hwnd = hwnd;
+            // 窗口过程靠这个指针反查上下文;新窗口也要挂上。
+            unsafe {
+                let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as *mut WinCtx as isize);
+            }
+            println!("Skia 候选窗:D3D12 设备被摘掉,改走 CPU 光栅");
+            Ready::Switched
+        }
+        Err(e) => {
+            ctx.dead = true;
+            println!("Skia 候选窗:D3D12 设备被摘掉,CPU 兜底也没建起来({e}),候选窗停用");
+            Ready::Dead
         }
     }
 }
@@ -242,6 +323,7 @@ fn window_loop(state: Arc<State>) {
     };
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
+        hwnd,
         state: Arc::clone(&state),
         fx: Fx::default(),
         pipe,
@@ -276,7 +358,7 @@ fn window_loop(state: Arc<State>) {
                 // 消息泵之外取可变借用;窗口过程里的借用都已结束。
                 let ctx = unsafe { &mut *ctx };
                 ctx.fx.reduce = reduce_motion();
-                place(ctx, hwnd);
+                place(ctx);
             }
         }
         // 效果目录或开关变了就重新加载;编译在加载期做,帧内只打包 uniform。
@@ -292,24 +374,24 @@ fn window_loop(state: Arc<State>) {
         };
         if animating {
             let ctx = unsafe { &mut *ctx };
-            animate(ctx, hwnd);
+            animate(ctx);
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 
 /// 组合变化后重新摆位并出帧;无内容时淡出或停靠。
-fn place(ctx: &mut WinCtx, hwnd: HWND) {
+fn place(ctx: &mut WinCtx) {
     if ctx.dead {
-        // 设备没了,窗口一直停在屏幕外,不再参与摆位与绘制。
-        park(hwnd);
+        // 出帧路径没了,窗口一直停在屏幕外,不再参与摆位与绘制。
+        park(ctx);
         return;
     }
     let Some(view) = ui_place::snapshot(&ctx.state) else {
         // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
         if ctx.fx.reduce || ctx.fx.last.is_none() {
             ctx.fx.clear();
-            park(hwnd);
+            park(ctx);
             return;
         }
         if ctx.fx.hide.is_none() {
@@ -320,7 +402,7 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
             ctx.fx.menu_hover = None;
             ctx.fx.hover = None;
             ctx.fx.pager = None;
-            style_click_through(hwnd, true);
+            style_click_through(ctx.hwnd, true);
         }
         return;
     };
@@ -344,7 +426,7 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
         };
     }
     ctx.fx.hide = None;
-    style_click_through(hwnd, false);
+    style_click_through(ctx.hwnd, false);
     // 只有翻页才滑动;首次展开和继续打字不横向跳。
     if !ctx.fx.reduce && ctx.fx.page.is_some_and(|page| page != view.page) {
         let previous = ctx.fx.page.unwrap_or(view.page);
@@ -354,67 +436,24 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
         ctx.fx.pager = None;
     }
     ctx.fx.page = Some(view.page);
-    let (layout, ui_font, _) = ui_place::ui_options(&ctx.state);
-    let host_pid = (ctx.state.active.load(Ordering::Relaxed) >> 32) as u32;
-    let (x, y, w, h) = match view.caret {
-        Some((l, t, r, b)) => {
-            let left = l.min(r);
-            // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
-            let scale = ui_place::scale_at(left, b);
-            let metrics = Metrics::scaled(ui_font.factor() * scale);
-            let mut spec = spec_of(&view, layout);
-            spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-            spec.width = measure_width(&view, layout, &metrics, ctx.font.as_ref());
-            let mut w = panel::panel_width(&spec, &metrics, ctx.font.as_ref()) as i32;
-            let h = panel::panel_height(&spec, &metrics, ctx.font.as_ref()) as i32;
-            let work = ui_place::work_area_at(left, b);
-            w = w.min((work.right - work.left).max(1));
-            // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
-            // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
-            let gap = (CARET_GAP * scale) as i32;
-            let below = b + gap;
-            let over = t - h - gap;
-            let fits_below = below + h <= work.bottom;
-            let fits_above = over >= work.top;
-            let prefer_above = match ctx.fx.above {
-                Some(previous) if previous && fits_above => true,
-                Some(previous) if !previous && fits_below => false,
-                _ => !fits_below && fits_above,
-            };
-            ctx.fx.above = Some(prefer_above);
-            // 徽标据此躲到候选窗的另一侧,两者不互相遮挡。
-            ctx.state
-                .candidate_above
-                .store(prefer_above, Ordering::Relaxed);
-            let y = (if prefer_above { over } else { below })
-                .clamp(work.top, (work.bottom - h).max(work.top));
-            let x = left.clamp(work.left, (work.right - w).max(work.left));
-            // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
-            let hidden = ui_place::foreground_fullscreen_at(left, b, host_pid);
-            let w = if hidden { 0 } else { w };
-            (x, y, w, h)
-        }
-        None => {
-            ctx.fx.above = None;
-            ctx.state.candidate_above.store(false, Ordering::Relaxed);
-            (0, 0, 0, 0)
-        }
-    };
-    if w == 0 {
+    let rect = caret_rect(ctx, &view);
+    if rect.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合淡入,不会接着上一次的状态。
         ctx.fx.show = None;
         ctx.fx.hide = None;
         ctx.fx.slide = None;
         ctx.fx.last = None;
-        park(hwnd);
+        park(ctx);
         return;
     }
-    unsafe {
-        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+    // 设备被系统摘掉就先换到 CPU 光栅,再摆位出帧。
+    match ensure_presenter(ctx) {
+        Ready::Dead => return,
+        Ready::Same | Ready::Switched => {}
     }
-    if let Err(e) = ctx.pipe.rebuild_surfaces(w as u32, h as u32) {
-        println!("Skia 交换链调整失败: {e}");
+    if let Err(e) = layout_window(ctx, rect) {
+        println!("Skia 候选窗调整失败: {e}");
         return;
     }
     // 先落内容再出帧;淡出期间用的就是这份冻结内容。
@@ -422,17 +461,75 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
     draw_view(ctx, &view);
 }
 
+/// 光标位置算出的候选窗矩形(x, y, 宽, 高);宽为 0 表示这次不弹。
+fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
+    let (layout, ui_font, _) = ui_place::ui_options(&ctx.state);
+    let host_pid = (ctx.state.active.load(Ordering::Relaxed) >> 32) as u32;
+    let Some((l, t, r, b)) = view.caret else {
+        ctx.fx.above = None;
+        ctx.state.candidate_above.store(false, Ordering::Relaxed);
+        return (0, 0, 0, 0);
+    };
+    let left = l.min(r);
+    // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
+    let scale = ui_place::scale_at(left, b);
+    let metrics = Metrics::scaled(ui_font.factor() * scale);
+    let mut spec = spec_of(view, layout);
+    spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
+    spec.width = measure_width(view, layout, &metrics, ctx.font.as_ref());
+    let mut w = panel::panel_width(&spec, &metrics, ctx.font.as_ref()) as i32;
+    let h = panel::panel_height(&spec, &metrics, ctx.font.as_ref()) as i32;
+    let work = ui_place::work_area_at(left, b);
+    w = w.min((work.right - work.left).max(1));
+    // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
+    // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
+    let gap = (CARET_GAP * scale) as i32;
+    let below = b + gap;
+    let over = t - h - gap;
+    let fits_below = below + h <= work.bottom;
+    let fits_above = over >= work.top;
+    let prefer_above = match ctx.fx.above {
+        Some(previous) if previous && fits_above => true,
+        Some(previous) if !previous && fits_below => false,
+        _ => !fits_below && fits_above,
+    };
+    ctx.fx.above = Some(prefer_above);
+    // 徽标据此躲到候选窗的另一侧,两者不互相遮挡。
+    ctx.state
+        .candidate_above
+        .store(prefer_above, Ordering::Relaxed);
+    let y = (if prefer_above { over } else { below })
+        .clamp(work.top, (work.bottom - h).max(work.top));
+    let x = left.clamp(work.left, (work.right - w).max(work.left));
+    // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
+    let hidden = ui_place::foreground_fullscreen_at(left, b, host_pid);
+    let w = if hidden { 0 } else { w };
+    (x, y, w, h)
+}
+
+/// 摆位并把表面尺寸对上;GPU 与 CPU 两条路径同一套。
+fn layout_window(ctx: &mut WinCtx, rect: (i32, i32, i32, i32)) -> Result<(), String> {
+    let (x, y, w, h) = rect;
+    if w <= 0 || h <= 0 {
+        return Err("候选窗尺寸为空".to_string());
+    }
+    unsafe {
+        let _ = SetWindowPos(ctx.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+    }
+    ctx.pipe.rebuild_surfaces(w as u32, h as u32)
+}
+
 /// 动画帧:淡入/淡出/滑动进行中重绘;淡出到期停靠,其余到期走终态。
-fn animate(ctx: &mut WinCtx, hwnd: HWND) {
+fn animate(ctx: &mut WinCtx) {
     if ctx.dead {
-        park(hwnd);
+        park(ctx);
         return;
     }
     let now = Instant::now();
     if ctx.fx.hide.is_some_and(|end| now >= end) {
         ctx.fx.clear();
-        style_click_through(hwnd, false);
-        park(hwnd);
+        style_click_through(ctx.hwnd, false);
+        park(ctx);
         return;
     }
     // 到期的动画清掉;终态与上一帧在视觉上已重合,下轮不再进动画分支。
@@ -450,16 +547,23 @@ fn animate(ctx: &mut WinCtx, hwnd: HWND) {
 }
 
 /// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
-fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
-    // 设备被系统摘掉(驱动重启、GPU 挂起)后不能再进 Skia:命令表已经建不出来,
-    // Skia 拿着空句柄继续走会崩。摘掉了就停用候选窗,输入法本身照常工作。
+pub(super) fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     if ctx.dead {
         return;
     }
-    if ctx.pipe.device_removed() {
-        ctx.dead = true;
-        println!("Skia 候选窗:D3D12 设备已被系统摘掉,候选窗停用");
-        return;
+    // 设备被系统摘掉(驱动重启、GPU 挂起)后不能再进 Skia:命令表已经建不出来,
+    // Skia 拿着空句柄继续走会崩。换到 CPU 光栅路径接着弹,候选窗不会消失。
+    match ensure_presenter(ctx) {
+        Ready::Dead => return,
+        Ready::Same => {}
+        Ready::Switched => {
+            // 新窗口要重新摆位、重建表面,才能接着画这一帧。
+            let rect = caret_rect(ctx, view);
+            if let Err(e) = layout_window(ctx, rect) {
+                println!("Skia 候选窗调整失败: {e}");
+                return;
+            }
+        }
     }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
     let appearance = theme::Appearance::of_system();
@@ -597,7 +701,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
 
 /// 菜单锚点:锚在行下缘,贴近面板底部时翻到行上方;与 GPUI 路径同款规则。
 /// 行位置取自 `item_rects`,横排换行时也不会锚错行。
-fn menu_origin(
+pub(super) fn menu_origin(
     slot: usize,
     spec: &PanelSpec,
     metrics: &Metrics,
@@ -618,189 +722,6 @@ fn menu_origin(
     (8.0 * s, top)
 }
 
-/// 鼠标/菜单变化后的重绘;淡出窗口不接鼠标,内容与位置都不动。
-fn redraw(ctx: &mut WinCtx) {
-    if ctx.fx.hide.is_some() {
-        return;
-    }
-    let Some(view) = ctx.fx.last.clone() else {
-        return;
-    };
-    draw_view(ctx, &view);
-}
-
-/// 可交互:有激活会话且服务端候选窗在显示(组合中)。
-fn interactive(state: &State) -> bool {
-    state.active.load(Ordering::Relaxed) != 0 && ui_place::composing(state)
-}
-
-/// 鼠标位置是否落在可点区域(候选行/箭头/菜单);WM_SETCURSOR 用。
-fn hand_hit(ctx: &WinCtx, x: f32, y: f32) -> bool {
-    let Some(geom) = ctx.fx.geometry.as_ref() else {
-        return false;
-    };
-    if !matches!(
-        panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y),
-        panel::Hit::Nothing
-    ) {
-        return true;
-    }
-    geom.menu_xy
-        .is_some_and(|(mx, my)| panel::menu_hit(mx, my, &geom.metrics, x, y).is_some())
-}
-
-/// 左键命中后的动作;菜单项优先于候选行。
-enum Click {
-    Menu { item: usize, slot: usize },
-    Pick(usize),
-    Page(i32),
-    Nothing,
-}
-
-fn on_mouse(ctx: &mut WinCtx, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let x = (lparam.0 & 0xffff) as u16 as i32 as f32;
-    let y = ((lparam.0 >> 16) & 0xffff) as u16 as i32 as f32;
-    match msg {
-        WM_MOUSEMOVE => {
-            ctx.fx.mouse = (x, y);
-            if ctx.fx.hide.is_some() {
-                return LRESULT(0);
-            }
-            let (item, pager, menu_hover) = match ctx.fx.geometry.as_ref() {
-                Some(geom) => {
-                    let menu_hover = geom
-                        .menu_xy
-                        .and_then(|(mx, my)| panel::menu_hit(mx, my, &geom.metrics, x, y));
-                    // 菜单项压住的行不参与悬停,避免菜单下还有一块高亮跟着动。
-                    let hit = if menu_hover.is_some() {
-                        panel::Hit::Nothing
-                    } else {
-                        panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y)
-                    };
-                    let item = match hit {
-                        panel::Hit::Item(index) => Some(index),
-                        _ => None,
-                    };
-                    let pager = match hit {
-                        panel::Hit::PrevPage | panel::Hit::NextPage => Some(hit),
-                        _ => None,
-                    };
-                    (item, pager, menu_hover)
-                }
-                None => (None, None, None),
-            };
-            if item != ctx.fx.hover || pager != ctx.fx.pager || menu_hover != ctx.fx.menu_hover {
-                ctx.fx.hover = item;
-                ctx.fx.pager = pager;
-                ctx.fx.menu_hover = menu_hover;
-                redraw(ctx);
-            }
-            LRESULT(0)
-        }
-        WM_SETCURSOR => {
-            // 命中候选/箭头/菜单给手型,其余交回系统;坐标用最近的 WM_MOUSEMOVE。
-            let (mx, my) = ctx.fx.mouse;
-            let hand = hand_hit(ctx, mx, my);
-            let cursor = if hand {
-                ctx.cursor_hand
-            } else {
-                ctx.cursor_arrow
-            };
-            if let Some(cursor) = cursor {
-                unsafe { SetCursor(Some(cursor)) };
-            }
-            LRESULT(if hand { 1 } else { 0 })
-        }
-        WM_LBUTTONDOWN => {
-            if !interactive(&ctx.state) {
-                return LRESULT(0);
-            }
-            let session = ctx.state.active.load(Ordering::Relaxed);
-            let click = match ctx.fx.geometry.as_ref() {
-                Some(geom) => {
-                    if let Some((mx, my)) = geom.menu_xy
-                        && let Some(item) = panel::menu_hit(mx, my, &geom.metrics, x, y)
-                    {
-                        Click::Menu {
-                            item,
-                            slot: ctx.fx.menu.as_ref().map_or(0, |(slot, _, _)| *slot),
-                        }
-                    } else {
-                        match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y) {
-                            panel::Hit::Item(slot) => Click::Pick(slot),
-                            panel::Hit::PrevPage => Click::Page(-1),
-                            panel::Hit::NextPage => Click::Page(1),
-                            panel::Hit::Nothing => Click::Nothing,
-                        }
-                    }
-                }
-                None => Click::Nothing,
-            };
-            match click {
-                Click::Menu { item, slot } => {
-                    let request = if item == 0 {
-                        Request::Pin { session, slot }
-                    } else {
-                        Request::Demote { session, slot }
-                    };
-                    let _ = crate::imp::handle(&ctx.state, request);
-                    ctx.fx.menu = None;
-                    ctx.fx.menu_hover = None;
-                    redraw(ctx);
-                }
-                Click::Pick(slot) => {
-                    let _ = crate::imp::handle(&ctx.state, Request::Pick { session, slot });
-                }
-                Click::Page(delta) => {
-                    let _ = crate::imp::handle(&ctx.state, Request::Page { session, delta });
-                }
-                Click::Nothing => {}
-            }
-            LRESULT(0)
-        }
-        WM_RBUTTONDOWN => {
-            if !interactive(&ctx.state) {
-                return LRESULT(0);
-            }
-            let target = match ctx.fx.geometry.as_ref() {
-                Some(geom) => {
-                    match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y) {
-                        panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
-                            let (_, top) =
-                                menu_origin(slot, &geom.spec, &geom.metrics, ctx.font.as_ref());
-                            (slot, top, item.text.clone())
-                        }),
-                        _ => None,
-                    }
-                }
-                None => None,
-            };
-            if let Some((slot, top, text)) = target {
-                ctx.fx.menu = Some((slot, top, text));
-                ctx.fx.menu_hover = None;
-                redraw(ctx);
-            }
-            LRESULT(0)
-        }
-        WM_MOUSEWHEEL => {
-            // 高 16 位是有符号滚轮增量;向上翻上一页,向下翻下一页。
-            let delta = (wparam.0 >> 16) as u16 as i16;
-            if delta != 0 && interactive(&ctx.state) {
-                let session = ctx.state.active.load(Ordering::Relaxed);
-                let _ = crate::imp::handle(
-                    &ctx.state,
-                    Request::Page {
-                        session,
-                        delta: if delta > 0 { -1 } else { 1 },
-                    },
-                );
-            }
-            LRESULT(0)
-        }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
-    }
-}
-
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -813,7 +734,7 @@ unsafe extern "system" fn wnd_proc(
     }
     match msg {
         WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_SETCURSOR => unsafe {
-            on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
+            ui_skia_mouse::on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
         },
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
@@ -821,18 +742,23 @@ unsafe extern "system" fn wnd_proc(
 
 /// 淡出期间点击穿透到宿主;实时组合才接鼠标。与 GPUI 路径同款。
 fn style_click_through(hwnd: HWND, click_through: bool) {
-    unsafe {
-        let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let mut style = old;
-        if click_through {
-            style |= WS_EX_TRANSPARENT.0;
-        } else {
-            style &= !WS_EX_TRANSPARENT.0;
-        }
-        if style != old {
+    let old = ex_style(hwnd);
+    let mut style = old;
+    if click_through {
+        style |= WS_EX_TRANSPARENT.0;
+    } else {
+        style &= !WS_EX_TRANSPARENT.0;
+    }
+    if style != old {
+        unsafe {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style as isize);
         }
     }
+}
+
+/// 窗口的扩展样式。
+fn ex_style(hwnd: HWND) -> u32 {
+    unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 }
 }
 
 /// 系统「减少动态效果」;开启后动效全部走终态。查询失败按可用处理。
@@ -946,9 +872,9 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
 }
 
 /// 挪到虚拟桌面之外并保持尺寸;停靠点按当前虚拟桌面算。
-fn park(hwnd: HWND) {
+fn park(ctx: &mut WinCtx) {
     let (x, y) = ui_place::park_point();
-    ui_place::park(hwnd, x, y);
+    ui_place::park(ctx.hwnd, x, y);
 }
 
 /// 会话视图转面板输入;页切片、选中态与页码标签与 GPUI 路径同一套语义。
