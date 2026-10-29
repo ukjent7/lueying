@@ -5,7 +5,7 @@
 //! 把点击反查回控件。平台侧只管窗口、事件与状态,画面与命中都在这里,
 //! Linux E2E 因此能直接断言布局与像素。
 
-use skia_safe::{Canvas, ClipOp, Font, Paint, PaintStyle, Point, Rect, RRect, Vector};
+use skia_safe::{Canvas, ClipOp, Font, Paint, PaintStyle, Point, RRect, Rect, Vector};
 
 use crate::panel::{Palette, color, fill_paint};
 
@@ -260,7 +260,12 @@ pub fn layout(page: &Page, font: &Font, scale: f32) -> Layout {
     // 滚动区:卡片之外留给页脚的高度。
     let footer_h = BUTTON_H * scale;
     out.height = out.card.bottom + gap + footer_h + pad;
-    out.scroll = Rect::from_xywh(pad, card_top, content, (out.height - footer_h - pad * 2.0 - gap).max(0.0));
+    out.scroll = Rect::from_xywh(
+        pad,
+        card_top,
+        content,
+        (out.height - footer_h - pad * 2.0 - gap).max(0.0),
+    );
     // 页脚:提示在左,按钮在右。
     let footer_top = out.card.bottom + gap;
     let mut fx = width - pad;
@@ -297,21 +302,17 @@ fn place_control(
             out.card_rings.push((*id, rect));
         }
         Control::Segment {
-            id,
-            options,
-            width,
-            ..
+            id, options, width, ..
         } => {
             let cell = width * scale;
             let count = options.len().max(1) as f32;
-            let group_w = SEGMENT_PAD * 2.0 * scale + count * cell + (count - 1.0) * SEGMENT_GAP * scale;
+            let group_w =
+                SEGMENT_PAD * 2.0 * scale + count * cell + (count - 1.0) * SEGMENT_GAP * scale;
             let group_h = (SEGMENT_H + SEGMENT_PAD * 2.0) * scale;
             let gx = right - group_w;
             let gy = row_top + (ROW_H * scale - group_h) / 2.0;
-            out.card_rings.push((
-                *id,
-                Rect::from_xywh(gx, gy, group_w, group_h),
-            ));
+            out.card_rings
+                .push((*id, Rect::from_xywh(gx, gy, group_w, group_h)));
             for index in 0..options.len() {
                 let cx = gx + (SEGMENT_PAD + index as f32 * (cell + SEGMENT_GAP)) * scale;
                 out.card_hits.push((
@@ -377,7 +378,8 @@ impl<'a> Painter<'a> {
         self.header(page, layout);
         // 卡片:裁在滚动区里,内容按滚动量上移。
         self.canvas.save();
-        self.canvas.clip_rect(layout.scroll, ClipOp::Intersect, false);
+        self.canvas
+            .clip_rect(layout.scroll, ClipOp::Intersect, false);
         self.canvas
             .translate((layout.card.left, layout.card.top - scroll));
         self.card(layout);
@@ -433,10 +435,7 @@ impl<'a> Painter<'a> {
         let s = self.scale;
         let card = Rect::from_xywh(0.0, 0.0, layout.card.width(), layout.card.height());
         self.canvas.draw_rrect(
-            RRect::new_rect_radii(
-                card,
-                &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4],
-            ),
+            RRect::new_rect_radii(card, &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4]),
             &fill_paint(self.palette.bg),
         );
         let mut stroke = Paint::default();
@@ -445,10 +444,7 @@ impl<'a> Painter<'a> {
         stroke.set_stroke_width(s);
         stroke.set_color(color(self.palette.border));
         self.canvas.draw_rrect(
-            RRect::new_rect_radii(
-                card,
-                &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4],
-            ),
+            RRect::new_rect_radii(card, &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4]),
             &stroke,
         );
     }
@@ -532,25 +528,19 @@ impl<'a> Painter<'a> {
                 self.segment_group(group);
                 let count = options.len().max(1) as f32;
                 // 格子宽度从组框反推:组框 = 内边距 + 格子 + 格间空隙。
-                let cell_w = (group.width()
-                    - SEGMENT_PAD * 2.0 * s
-                    - (count - 1.0) * SEGMENT_GAP * s)
-                    / count;
+                let cell_w =
+                    (group.width() - SEGMENT_PAD * 2.0 * s - (count - 1.0) * SEGMENT_GAP * s)
+                        / count;
                 for (index, option) in options.iter().enumerate() {
                     let rect = Rect::from_xywh(
-                        group.left
-                            + SEGMENT_PAD * s
-                            + index as f32 * (cell_w + SEGMENT_GAP * s),
+                        group.left + SEGMENT_PAD * s + index as f32 * (cell_w + SEGMENT_GAP * s),
                         group.top + SEGMENT_PAD * s,
                         cell_w,
                         SEGMENT_H * s,
                     );
                     if index == *selected {
                         self.canvas.draw_rrect(
-                            RRect::new_rect_radii(
-                                rect,
-                                &[Vector::new(RADIUS * s, RADIUS * s); 4],
-                            ),
+                            RRect::new_rect_radii(rect, &[Vector::new(RADIUS * s, RADIUS * s); 4]),
                             &fill_paint(self.palette.segment),
                         );
                     }
@@ -585,10 +575,8 @@ impl<'a> Painter<'a> {
         let mut paint = Paint::default();
         paint.set_anti_alias(false);
         paint.set_color(color(self.palette.border));
-        self.canvas.draw_rect(
-            Rect::from_xywh(0.0, y, width, s),
-            &paint,
-        );
+        self.canvas
+            .draw_rect(Rect::from_xywh(0.0, y, width, s), &paint);
     }
 
     /// 页脚:提示文字与按钮。
@@ -607,12 +595,7 @@ impl<'a> Painter<'a> {
                 &fill_paint(page.notice_tint),
             );
         }
-        let text = Rect::from_xywh(
-            ROW_PAD * s + 14.0 * s,
-            top,
-            280.0 * s,
-            BUTTON_H * s,
-        );
+        let text = Rect::from_xywh(ROW_PAD * s + 14.0 * s, top, 280.0 * s, BUTTON_H * s);
         self.label_clipped(
             &page.notice,
             12.0,
@@ -708,7 +691,11 @@ impl<'a> Painter<'a> {
             &button.text,
             BUTTON_TEXT,
             false,
-            if button.enabled { text } else { self.palette.text_tertiary },
+            if button.enabled {
+                text
+            } else {
+                self.palette.text_tertiary
+            },
             rect,
             Align::Center,
         );
