@@ -1,8 +1,27 @@
 //! 中英/全半角切换徽标:独立小窗的轮询、摆位与渲染。
 //!
-//! 与候选窗共用父模块的屏幕/调色板辅助函数,但生命周期和摆放规则独立。
+//! 徽标与候选窗各占一侧:候选窗在 Skia 管线里,徽标仍走 gpui 窗口,
+//! 两者共用 `ui_place` 的屏幕/DPI 助手与候选窗的实际高度。
 
-use super::*;
+use std::cell::{Cell, RefCell};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+use gpui::{Window, div, prelude::*, px, rgb};
+use lueying_render::panel;
+use lueying_server::theme;
+use windows::Win32::UI::WindowsAndMessaging::{HWND_TOPMOST, SWP_NOACTIVATE, SetWindowPos};
+
+use super::{
+    HUD_FADE, HUD_FADE_IN, HUD_H, HUD_SHOW, HUD_START_OPACITY, HUD_TOTAL, HUD_W, style_popup,
+    window_hwnd,
+};
+use crate::imp::State;
+use crate::ui_place::{
+    foreground_fullscreen_at, in_composition, park, park_point, primary_work_area, scale_at,
+    snapshot, ui_options, work_area_at,
+};
 
 /// 当前这份徽标:显示哪个字、贴哪个光标、从何时开始计时。
 #[derive(Clone)]
@@ -105,10 +124,12 @@ impl ModeHudPanel {
         // 候选窗默认贴光标下方、放不下才翻到上方;徽标选相反的一侧,两者不会互相遮挡。
         let in_comp = in_composition(&self.state);
         let (layout, font, _) = ui_options(&self.state);
-        let metrics = Metrics::of(font);
-        let candidate_h = snapshot(&self.state)
-            .map_or(0.0, |view| candidate_height(&view, layout, &metrics))
-            * scale;
+        // 候选窗的实际高度(物理像素);徽标据此选边。
+        let candidate_h = snapshot(&self.state).map_or(0.0, |view| {
+            let spec = crate::ui_skia::spec_of(&view, layout);
+            let metrics = panel::Metrics::scaled(font.factor() * scale);
+            panel::panel_height(&spec, &metrics, None)
+        });
         let candidate_below =
             caret.is_some_and(|(_, _, _, b)| b as f32 + candidate_h <= work.bottom as f32);
         let prefer_below = !in_comp || !candidate_below;
@@ -130,7 +151,9 @@ impl ModeHudPanel {
             None => anchor_y - h / 2,
         })
         .clamp(work.top, (work.bottom - h).max(work.top));
-        unsafe { SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE) };
+        unsafe {
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+        }
     }
 }
 

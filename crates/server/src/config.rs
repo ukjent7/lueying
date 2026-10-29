@@ -139,31 +139,6 @@ impl UiFont {
     }
 }
 
-/// 候选窗渲染后端。GPUI 是当前默认;Skia 路线在 parity 完成前属于实验
-/// 开关(隐藏配置键),改动需重启服务进程生效。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum UiBackend {
-    #[default]
-    Gpui,
-    Skia,
-}
-
-impl UiBackend {
-    fn from_str(value: &str) -> Self {
-        match value {
-            "skia" => Self::Skia,
-            _ => Self::Gpui,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Gpui => "gpui",
-            Self::Skia => "skia",
-        }
-    }
-}
-
 /// 更新渠道。稳定只认正式 Release;测试跟进预发布。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Channel {
@@ -227,8 +202,6 @@ pub struct AppConfig {
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
     pub ui_accent: usize,
-    /// 候选窗渲染后端:GPUI 或 Skia 实验路线。
-    pub ui_backend: UiBackend,
     /// 是否启用用户效果(SkSL 装饰层);关掉就只画素色。
     pub effects: bool,
     /// 更新渠道。
@@ -253,7 +226,6 @@ impl Default for AppConfig {
             ui_layout: UiLayout::Horizontal,
             ui_font: UiFont::Standard,
             ui_accent: 0,
-            ui_backend: UiBackend::Gpui,
             effects: true,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
@@ -409,9 +381,6 @@ pub fn load(path: &Path) -> AppConfig {
             "update_channel" | "channel" => {
                 cfg.update_channel = Channel::from_str(value);
             }
-            "ui_backend" | "backend" => {
-                cfg.ui_backend = UiBackend::from_str(value);
-            }
             // 用户效果开关:默认开(目录里没文件就是素色),关掉就整目录忽略。
             "effects" | "effect" => {
                 if let Some(on) = flag(value) {
@@ -536,7 +505,6 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          ui_layout={}\n\
          ui_font={}\n\
          ui_accent={}\n\
-         ui_backend={}\n\
          effects={}\n\
          update_channel={}\n",
         cfg.page_size,
@@ -551,7 +519,6 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.ui_layout.as_str(),
         cfg.ui_font.as_str(),
         cfg.ui_accent,
-        cfg.ui_backend.as_str(),
         if cfg.effects { "on" } else { "off" },
         cfg.update_channel.as_str(),
     );

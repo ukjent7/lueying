@@ -11,7 +11,8 @@ lueying_tsf.dll(薄壳,每个宿主进程一份)
     ▼
 lueying-server.exe(常驻)
     ├─ 引擎会话(每宿主线程一个,共享词典/gram/用户词库)
-    ├─ 候选窗 + 模式徽标(无焦点置顶浮层;GPUI 默认,`ui_backend=skia` 走 Skia)
+    ├─ 候选窗(Skia:Win32 无焦点窗 + DirectComposition + Ganesh-D3D12)
+    ├─ 模式徽标(gpui 无焦点置顶浮层)
     ├─ UIA 左邻文本回退线程 / 25M 停顿重排线程
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
 lueying-settings.exe(设置窗,经管道与 Server 通信)
@@ -59,22 +60,22 @@ SHA-256 钉住;gram 或重排模型缺失时引擎照常出词频候选。
 
 ## 候选窗
 
-GPUI 窗口即面板矩形(Windows 上按矩形命中,非 WS_EX_LAYERED);空闲停靠在
-虚拟桌面外。排列有横排(自动换行)与竖排;候选字号三档只缩放候选行;主题色
-预设只改强调色,高对比度主题始终用系统色。窗口宽度按全部候选估宽,高度按
-当前页行数估算,随 DPI 每显示器计算。动效:展开 140ms、上屏淡出 90ms、
-翻页 90ms 横向滑动,全部可被按键打断,「减少动态效果」时走终态。
+候选窗是 Skia 画的:独立线程自建 Win32 无焦点窗(WS_EX_NOACTIVATE|TOOLWINDOW|
+TOPMOST),画面由 DirectComposition 交换链给出,Ganesh 走 D3D12。D3D12 只用硬件
+适配器:软件适配器(WARP、Basic Render Driver)的设备在 Ganesh 下会掉设备,
+Skia 拿着空命令表句柄继续走就崩,建不出设备就放弃候选窗、输入照常。设备中途
+被系统摘掉(驱动重启、GPU 挂起)同样停用候选窗,不再进 Skia。空闲停靠在虚拟
+桌面外。排列有横排(自动换行)与竖排;候选字号三档只缩放候选行;主题色预设只改
+强调色,高对比度主题始终用系统色。窗口宽度按全部候选估宽,高度按当前页行数
+估算,随 DPI 每显示器计算。动效:展开 140ms、上屏淡出 90ms、翻页 90ms 横向
+滑动,全部可被按键打断,「减少动态效果」时走终态。
 
-渲染后端可切:`ui_backend=gpui|skia`(config.ini 隐藏键,默认 gpui,改动需重启
-服务)。Skia 路线(`ui_skia`)已补齐交互 parity:独立线程的 Win32 无焦点窗 +
-DirectComposition 交换链 + Ganesh-D3D12(无 D3D12 硬件退 WARP,建不出设备时
-放弃候选窗、输入照常),摆位/DPI/全屏避让与 GPUI 路径共用 `ui_place`;绘制、
-命中测试与菜单几何在平台无关的 `lueying-render`(Linux E2E 光栅像素断言),
-窗口层只把命中翻译成协议请求。淡入/淡出、翻页滑动、悬停、点选、滚轮与右键
-菜单与 GPUI 路径同参数,「减少动态效果」走终态。Windows CI 以
-`LUEYING_SKIA_SELFTEST` 自检整条管线(含菜单/悬停叠加);没有桌面会话或合成交换链
-建不起来时,自检退回离屏 Ganesh-D3D12 渲染,像素期望不变,日志里标「降级」。
-默认切到 Skia 前仍保留 GPUI 回退。
+绘制、命中测试与菜单几何都在平台无关的 `lueying-render`(Linux E2E 光栅像素
+断言),窗口层只把命中翻译成协议请求。摆位、DPI 与全屏避让在 `ui_place`,
+模式徽标共用同一套。Windows CI 以 `LUEYING_SKIA_SELFTEST` 自检整条管线:光栅
+路径与服务端同进程跑,给出确定性像素断言与字体断言(DirectWrite 字型必须真的
+画进画面);Ganesh-D3D12 路径另起子进程跑——没有硬件适配器或驱动异常的机器上
+GPU 管线会把进程带崩,隔离在子进程里,崩了也不影响输入法,日志如实记下原因。
 
 ## 更新
 
