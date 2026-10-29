@@ -620,7 +620,12 @@ pub fn run(report: &mut String) -> usize {
                 format!("与无字型画面不同={differs} 字体族={families}"),
             );
         }
-        None => push(&mut checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
+        None => push(
+            &mut checks,
+            "徽标字型出图",
+            true,
+            "系统没有可用字型,跳过".into(),
+        ),
     }
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
