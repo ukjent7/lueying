@@ -5,7 +5,7 @@
 //! 入口(`script_main`)。
 
 pub use lueying_extmeta::{
-    Activate, Command, Manifest, Permission, Service, When, MAX_MANIFEST_BYTES,
+    Activate, Command, MAX_MANIFEST_BYTES, Manifest, Permission, Service, When,
 };
 
 /// 入口脚本的大小上限。打包后的单文件 IIFE 通常几十 KB,留足余量。

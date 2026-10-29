@@ -298,11 +298,7 @@ impl Manifest {
                 if components {
                     return Err("API 2 清单不能和 appearance/logic/panel 混用".into());
                 }
-                check_entry(
-                    "入口脚本",
-                    self.main.as_deref().unwrap_or("index.js"),
-                    "js",
-                )?;
+                check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
                 if !self.capabilities.is_empty() {
                     check_capabilities(&self.capabilities)?;
                 }

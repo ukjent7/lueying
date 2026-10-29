@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::host::Limits;
-use crate::manifest::{Manifest, When, MAX_MANIFEST_BYTES};
+use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
 use crate::pack::{Pack, Poll};
 use crate::scene::{SceneIn, ScenePatch};
 
@@ -311,10 +311,7 @@ impl Runtime {
 
     /// 已加载的扩展数量。
     pub fn loaded_count(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|slot| slot.pack.is_some())
-            .count()
+        self.slots.iter().filter(|slot| slot.pack.is_some()).count()
     }
 
     /// 某个扩展最近一次错误。
@@ -357,12 +354,16 @@ impl Runtime {
 
 /// 读清单并检查目录名;不建 JS 运行时。
 fn read_manifest(dir: &Path) -> Result<Manifest, String> {
-    let bytes = std::fs::read(dir.join(MANIFEST)).map_err(|error| format!("读清单失败: {error}"))?;
+    let bytes =
+        std::fs::read(dir.join(MANIFEST)).map_err(|error| format!("读清单失败: {error}"))?;
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(format!("清单超过 {MAX_MANIFEST_BYTES} 字节"));
     }
     let manifest = Manifest::parse(&bytes)?;
-    let name = dir.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    let name = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
     if name != manifest.id {
         return Err(format!(
             "目录名 {name:?} 与扩展 id {:?} 不一致",

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::MAX_FAULTS;
 use crate::host::{Host, Limits};
-use crate::manifest::{MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Command, Manifest};
+use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
 use crate::scene::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";
@@ -118,10 +118,7 @@ impl Pack {
             return Err(format!("扩展 {} 已停用: {reason}", self.manifest.id));
         }
         if !self.manifest.commands().iter().any(|c| c.id == command) {
-            return Err(format!(
-                "扩展 {} 没有声明命令 {command}",
-                self.manifest.id
-            ));
+            return Err(format!("扩展 {} 没有声明命令 {command}", self.manifest.id));
         }
         match self.host.invoke(command, args) {
             Ok(text) => {

@@ -156,7 +156,12 @@ impl Host {
         })
     }
 
-    fn finish(&mut self, result: Result<String, String>, what: &str, budget: u64) -> Result<String, String> {
+    fn finish(
+        &mut self,
+        result: Result<String, String>,
+        what: &str,
+        budget: u64,
+    ) -> Result<String, String> {
         let timed_out = self.tripped.swap(false, Ordering::Relaxed);
         match result {
             Ok(text) => Ok(text),

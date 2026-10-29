@@ -41,10 +41,10 @@ mod scene;
 
 pub use host::{Host, Limits};
 pub use manifest::{
-    Activate, Command, Manifest, Permission, Service, When, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES,
+    Activate, Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Permission, Service, When,
 };
 pub use pack::{Pack, Poll};
-pub use runtime::{CommandInfo, Runtime, Scope, IDLE_UNLOAD};
+pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope};
 pub use scene::{EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, SceneIn, ScenePatch};
 
 /// 场景协议版本。脚本在清单里声明依赖的版本,高于本值拒绝加载。

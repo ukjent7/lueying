@@ -127,7 +127,8 @@ impl ScenePatch {
     }
 
     /// 校验字段取值。
-    pub fn validate(&self) -> Result<(), String> {        if let Some(accent) = self.accent
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(accent) = self.accent
             && accent > 0x00ff_ffff
         {
             return Err(format!("主题色 0x{accent:06x} 超出 24 位"));

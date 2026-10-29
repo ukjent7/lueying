@@ -46,7 +46,10 @@ fn parse(value: serde_json::Value) -> Result<Manifest, String> {
 fn parses_script_v2() {
     let manifest = parse(script_v2()).expect("API 2 清单应通过");
     assert_eq!(manifest.script_main(), Some("index.js"));
-    assert_eq!(manifest.needs, vec![Service::Capture, Service::Ocr, Service::Output]);
+    assert_eq!(
+        manifest.needs,
+        vec![Service::Capture, Service::Ocr, Service::Output]
+    );
     assert_eq!(
         manifest.commands(),
         &[Command {

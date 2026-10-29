@@ -544,7 +544,11 @@ lueying.command("run", function (args) {
         checks,
         "多扩展命令按清单列出且不加载 JS",
         errors.is_empty() && listed && runtime.loaded_count() == 0,
-        format!("{errors:?} {:?} loaded={}", commands, runtime.loaded_count()),
+        format!(
+            "{errors:?} {:?} loaded={}",
+            commands,
+            runtime.loaded_count()
+        ),
     );
 
     let invoked = runtime.invoke("alpha.run", r#"{"value":7}"#);
@@ -553,20 +557,29 @@ lueying.command("run", function (args) {
         checks,
         "命令按需加载且只拉起被调用的扩展",
         invoked.as_deref().ok() == Some(r#"{"ok":true,"echo":7}"#) && only_alpha,
-        format!("{invoked:?} alpha={} beta={}", runtime.loaded("alpha"), runtime.loaded("beta")),
+        format!(
+            "{invoked:?} alpha={} beta={}",
+            runtime.loaded("alpha"),
+            runtime.loaded("beta")
+        ),
     );
 
     let scope = runtime.scope("alpha");
     push(
         checks,
         "Scope 暴露声明的命令",
-        scope.as_ref().is_some_and(|scope| scope.commands == vec!["run"]),
+        scope
+            .as_ref()
+            .is_some_and(|scope| scope.commands == vec!["run"]),
         format!("{scope:?}"),
     );
 
     let unloaded = runtime.unload("alpha");
     let gone = runtime.scope("alpha").is_none()
-        && runtime.commands().iter().all(|command| command.id != "alpha.run")
+        && runtime
+            .commands()
+            .iter()
+            .all(|command| command.id != "alpha.run")
         && runtime.invoke("alpha.run", "").is_err();
     push(
         checks,
@@ -586,7 +599,10 @@ lueying.command("run", function (args) {
         checks,
         "空闲卸载丢弃 JS 但保留命令声明",
         beta.is_ok() && !runtime.loaded("beta") && still_listed,
-        format!("{beta:?} loaded={} listed={still_listed}", runtime.loaded("beta")),
+        format!(
+            "{beta:?} loaded={} listed={still_listed}",
+            runtime.loaded("beta")
+        ),
     );
 
     let first = temp.pack("first");
