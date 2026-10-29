@@ -9,9 +9,6 @@
 
 use std::sync::Mutex;
 
-use lueying_protocol::Request;
-use lueying_render::panel::Palette;
-use lueying_render::ui::{self, Id};
 use crate::accents::ACCENTS;
 use crate::blit::Layer;
 use crate::config::{self, AppConfig};
@@ -20,6 +17,9 @@ use crate::settings_actions;
 use crate::settings_view::{Action, Notice, PageColors, Settings, UpdateState, ids};
 use crate::theme;
 use crate::update::{self, Check, Release};
+use lueying_protocol::Request;
+use lueying_render::panel::Palette;
+use lueying_render::ui::{self, Id};
 use skia_safe::Font;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -37,8 +37,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
     GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN,
-    SWP_NOZORDER, SW_SHOW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
+    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
     WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT,
     WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
@@ -171,11 +171,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     let pixels = window.layer.pixels().ok_or("像素读回失败")?;
     let at = |x: i32, y: i32| -> (u8, u8, u8) {
         let index = ((y * w + x) * 4) as usize;
-        (
-            pixels[index + 2],
-            pixels[index + 1],
-            pixels[index],
-        )
+        (pixels[index + 2], pixels[index + 1], pixels[index])
     };
     let corner = at(2, 2);
     let expect_corner = bgr(window.palette.window_bg);
@@ -358,7 +354,11 @@ impl Window {
             return;
         };
         // 头部与页脚不在滚动区里,不用管。
-        let Some(rect) = self.layout.card_hit(id).or_else(|| self.layout.ring_card(id)) else {
+        let Some(rect) = self
+            .layout
+            .card_hit(id)
+            .or_else(|| self.layout.ring_card(id))
+        else {
             return;
         };
         let card_top = self.layout.card.top;
@@ -723,7 +723,13 @@ fn create_window() -> Result<HWND, String> {
             right: (WIDTH * scale) as i32,
             bottom: height as i32,
         };
-        let _ = AdjustWindowRectExForDpi(&mut rect, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE(0), dpi);
+        let _ = AdjustWindowRectExForDpi(
+            &mut rect,
+            WS_OVERLAPPEDWINDOW,
+            false,
+            WINDOW_EX_STYLE(0),
+            dpi,
+        );
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         let x = ((screen_w - width) / 2).max(0);

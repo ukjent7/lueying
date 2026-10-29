@@ -6,10 +6,10 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use lueying_protocol::{Reply, Request, pipe_name};
 use crate::config;
 use crate::settings_view::{Notice, Settings, status_detail};
 use crate::update;
+use lueying_protocol::{Reply, Request, pipe_name};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
