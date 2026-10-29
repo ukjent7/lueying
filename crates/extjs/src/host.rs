@@ -86,8 +86,7 @@ impl Host {
             let bootstrap = BOOTSTRAP.replace("__LUEYING_API__", &SCENE_API.to_string());
             ctx.eval::<(), _>(bootstrap)
                 .map_err(|e| js_error(&ctx, e))?;
-            ctx.eval::<(), _>(source)
-                .map_err(|e| js_error(&ctx, e))?;
+            ctx.eval::<(), _>(source).map_err(|e| js_error(&ctx, e))?;
             let ready: Function = ctx
                 .globals()
                 .get("__lueying_ready")

@@ -121,8 +121,7 @@ impl ScenePatch {
                 text.len()
             ));
         }
-        let patch: Self =
-            serde_json::from_str(text).map_err(|e| format!("补丁解析失败: {e}"))?;
+        let patch: Self = serde_json::from_str(text).map_err(|e| format!("补丁解析失败: {e}"))?;
         patch.validate()?;
         Ok(patch)
     }

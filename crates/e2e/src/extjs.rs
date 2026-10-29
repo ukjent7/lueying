@@ -123,8 +123,7 @@ lueying.register(function (state) {
 
 const SPIN: &str = "lueying.register(function () { while (true) {} });";
 
-const HOG: &str =
-    "lueying.register(function () { var a = new ArrayBuffer(64 * 1024 * 1024); return { accent: 1 }; });";
+const HOG: &str = "lueying.register(function () { var a = new ArrayBuffer(64 * 1024 * 1024); return { accent: 1 }; });";
 
 /// 包校验:坏清单在加载期就拒绝,错误文本能定位到字段。
 fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
@@ -293,22 +292,13 @@ fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
         selected,
         ..SceneIn::default()
     };
-    let ok = pack
-        .dispatch(&good(0))
-        .and_then(|p| p.accent)
-        .is_some();
+    let ok = pack.dispatch(&good(0)).and_then(|p| p.accent).is_some();
     let bad_accent = pack.dispatch(&good(1)).is_none();
     let accent_error = pack.last_error().unwrap_or_default().to_string();
-    let ok_again = pack
-        .dispatch(&good(0))
-        .and_then(|p| p.accent)
-        .is_some();
+    let ok_again = pack.dispatch(&good(0)).and_then(|p| p.accent).is_some();
     let bad_size = pack.dispatch(&good(2)).is_none();
     let size_error = pack.last_error().unwrap_or_default().to_string();
-    let ok_third = pack
-        .dispatch(&good(0))
-        .and_then(|p| p.accent)
-        .is_some();
+    let ok_third = pack.dispatch(&good(0)).and_then(|p| p.accent).is_some();
     let bad_field = pack.dispatch(&good(3)).is_none();
     let field_error = pack.last_error().unwrap_or_default().to_string();
     push(
@@ -398,17 +388,13 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
         private: true,
         ..SceneIn::default()
     });
-    let normal = pack
-        .dispatch(&SceneIn::default())
-        .and_then(|p| p.accent);
+    let normal = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
     let high = pack.dispatch(&SceneIn {
         high_contrast: true,
         ..SceneIn::default()
     });
     let high_accent = high.as_ref().and_then(|p| p.accent);
-    let high_effects = high
-        .as_ref()
-        .is_some_and(|p| p.effects.as_ref().is_none());
+    let high_effects = high.as_ref().is_some_and(|p| p.effects.as_ref().is_none());
     push(
         checks,
         "隐私字段不调用脚本",
@@ -433,9 +419,7 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
         ..SceneIn::default()
     });
     let error = pack.last_error().unwrap_or_default().to_string();
-    let after = pack
-        .dispatch(&SceneIn::default())
-        .and_then(|p| p.accent);
+    let after = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
     push(
         checks,
         "一次异常后宿主仍可派发",
