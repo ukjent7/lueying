@@ -715,8 +715,9 @@ lueying.command("boom", function () {
 
     let spin = runtime.invoke("async.spin", "");
     let started = Instant::now();
-    let interrupted = runtime.pump(1);
-    let continued = runtime.pump(1);
+    // slow 段结束时时钟已推进到 50,spin 的定时器到点在 51,合成时钟要越过它。
+    let interrupted = runtime.pump(60);
+    let continued = runtime.pump(60);
     let spin_elapsed = started.elapsed();
     push(
         checks,
@@ -729,7 +730,7 @@ lueying.command("boom", function () {
     );
 
     let boom = runtime.invoke("async.boom", "");
-    let settled = runtime.pump(1);
+    let settled = runtime.pump(60);
     let error = settled
         .iter()
         .find(|(_, item)| !item.ok)

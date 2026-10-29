@@ -12,7 +12,7 @@ use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::{FileAccessMode, StorageFile};
-use windows::Win32::Foundation::COLORREF;
+use windows::Win32::Foundation::{COLORREF, HWND, LRESULT, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
     CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH,
@@ -27,11 +27,11 @@ use windows::Win32::UI::Accessibility::{
     UIA_EditControlTypeId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_CONTROL, RegisterHotKey, UnregisterHotKey, VK_DELETE,
+    MOD_ALT, MOD_CONTROL, RegisterHotKey, SetFocus, UnregisterHotKey, VK_DELETE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, ES_READONLY, RegisterClassW, SW_SHOWNORMAL,
-    SetFocus, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW,
+    ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW,
     WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, w};
@@ -102,7 +102,7 @@ fn v3_sizes(rows: &mut Vec<Row>) {
         "V3",
         "候选窗 GPU/CPU 常驻内存与首帧",
         Verdict::Note,
-        "帧级测量需要候选窗渲染核心可独立驱动(基准模式);挂到 T17 前补。",
+        "帧级测量需要候选窗渲染核心可独立驱动(基准模式);挂到 T17 前补。".to_string(),
     ));
 }
 
@@ -130,16 +130,14 @@ fn v8_hotkey(rows: &mut Vec<Row>) {
         "V8",
         "管理员前台窗口的热键",
         Verdict::Note,
-        "CI runner 全程高权限,普通进程注册的热键在特权前台是否触发无法在本环境复现;留待带降权子进程的后续验证。",
+        "CI runner 全程高权限,普通进程注册的热键在特权前台是否触发无法在本环境复现;留待带降权子进程的后续验证。".to_string(),
     ));
 }
 
 /// V5:无 TSF 会话时,UIA 能否回答「焦点是否可编辑」。
 fn v5_uia(rows: &mut Vec<Row>) {
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        uia_focus_probe()
-    }))
-    .unwrap_or_else(|_| Err("UIA 探测 panic".into()));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(uia_focus_probe))
+        .unwrap_or_else(|_| Err("UIA 探测 panic".into()));
     match outcome {
         Ok((edit, read_only, button)) => {
             let ok = edit == UIA_EditControlTypeId
@@ -158,13 +156,23 @@ fn v5_uia(rows: &mut Vec<Row>) {
     }
 }
 
+/// windows-rs 里的 DefWindowProcW 是 Rust 函数,作 WNDPROC 需要包一层 system ABI。
+unsafe extern "system" fn proc_def(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
 /// 建一个带 EDIT/只读 EDIT/BUTTON 的小窗口,逐个 SetFocus 后读 UIA 控件类型。
 /// COM 与 UIA 客户端都可用:外层 E2E 已把本线程初始化成 STA。
 fn uia_focus_probe() -> Result<(UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID), String>
 {
     let class_name: Vec<u16> = "lueying-verify-uia\0".encode_utf16().collect();
     let wc = WNDCLASSW {
-        lpfnWndProc: Some(DefWindowProcW),
+        lpfnWndProc: Some(proc_def),
         lpszClassName: PCWSTR(class_name.as_ptr()),
         ..Default::default()
     };
@@ -328,19 +336,19 @@ fn ocr_inner() -> Result<(Verdict, String), String> {
     let sample = write_sample_bitmap()?;
     let path = HSTRING::from(sample.to_str().unwrap_or_default());
     let file = unsafe { StorageFile::GetFileFromPathAsync(&path) }
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
         .map_err(|e| format!("GetFileFromPathAsync: {e}"))?;
     let stream = unsafe { file.OpenAsync(FileAccessMode::Read) }
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
         .map_err(|e| format!("OpenAsync: {e}"))?;
     let decoder = unsafe { BitmapDecoder::CreateAsync(&stream) }
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
         .map_err(|e| format!("BitmapDecoder: {e}"))?;
     let bitmap = unsafe { decoder.GetSoftwareBitmapAsync() }
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
         .map_err(|e| format!("GetSoftwareBitmapAsync: {e}"))?;
     let recognized = unsafe { engine.RecognizeAsync(&bitmap) }
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
         .map_err(|e| format!("RecognizeAsync: {e}"))?;
     let text = unsafe { recognized.Text() }
         .map_err(|e| format!("OcrResult.Text: {e}"))?
@@ -382,7 +390,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
         bmi.bmiHeader.biHeight = HEIGHT;
         bmi.bmiHeader.biPlanes = 1;
         bmi.bmiHeader.biBitCount = 24;
-        bmi.bmiHeader.biCompression = BI_RGB;
+        bmi.bmiHeader.biCompression = BI_RGB.0;
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
         let section = CreateDIBSection(Some(memory), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
             .map_err(|e| format!("CreateDIBSection: {e}"))?;
@@ -393,7 +401,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
             0,
             0,
             0,
-            FW_NORMAL,
+            FW_NORMAL.0,
             0,
             0,
             0,
@@ -401,7 +409,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
             OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
+            DEFAULT_PITCH.0 | FF_DONTCARE.0,
             w!("Microsoft YaHei"),
         );
         let previous_font = SelectObject(memory, font.into());
@@ -441,7 +449,7 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
                 biHeight: HEIGHT,
                 biPlanes: 1,
                 biBitCount: 24,
-                biCompression: BI_RGB,
+                biCompression: BI_RGB.0,
                 ..Default::default()
             } as *const BITMAPINFOHEADER) as *const u8,
             std::mem::size_of::<BITMAPINFOHEADER>(),
@@ -463,24 +471,27 @@ fn deferred(rows: &mut Vec<Row>) {
         "V2",
         "异步结果经 TSF 轮询上屏",
         Verdict::Note,
-        "依赖 T3 output.deliver 的异步链路;poll.rs 的 40ms 停顿轮询已承载 25M 重排的异步写回(先例),T3 落地后补全链路 E2E。",
+        "依赖 T3 output.deliver 的异步链路;poll.rs 的 40ms 停顿轮询已承载 25M 重排的异步写回(先例),T3 落地后补全链路 E2E。"
+            .to_string(),
     ));
     rows.push((
         "V4",
         "命令面板归还焦点后上屏",
         Verdict::Note,
-        "命令面板在 T4 实现;届时用 Notepad 与自绘窗口先行,Electron 场景需要可下载的测试应用。",
+        "命令面板在 T4 实现;届时用 Notepad 与自绘窗口先行,Electron 场景需要可下载的测试应用。".to_string(),
     ));
     rows.push((
         "V6",
         "rquickjs Promise 与作业队列",
         Verdict::Note,
-        "已在 crates/e2e/src/extjs.rs 异步命令 E2E 覆盖:同步 Runtime + interrupt handler + execute_pending_job 的步进模型可行,单轮 256 步上限,死循环作业被派发预算打断。",
+        "已在 crates/e2e/src/extjs.rs 异步命令 E2E 覆盖:同步 Runtime + interrupt handler + execute_pending_job 的步进模型可行,单轮 256 步上限,死循环作业被派发预算打断。"
+            .to_string(),
     ));
     rows.push((
         "V7",
         "AccessKit 集成 Skia 自绘窗口",
         Verdict::Note,
-        "依赖 T9;方案:设置窗接 SubclassingAdapter 回答 WM_GETOBJECT,win-e2e 断言 UIA 树,短语编辑的文本输入方案一并验证。",
+        "依赖 T9;方案:设置窗接 SubclassingAdapter 回答 WM_GETOBJECT,win-e2e 断言 UIA 树,短语编辑的文本输入方案一并验证。"
+            .to_string(),
     ));
 }

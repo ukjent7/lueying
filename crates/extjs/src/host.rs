@@ -247,14 +247,13 @@ impl Host {
                     break;
                 }
             }
-            if let Ok(take) = ctx.globals().get::<_, Function>("__lueying_take_ready") {
-                if let Ok(json) = take.call::<_, String>(())
-                    && let Ok(list) = serde_json::from_str::<Vec<Ready>>(&json)
-                {
-                    for ready in list {
-                        pending = pending.saturating_sub(1);
-                        out.push(ready.into());
-                    }
+            if let Ok(take) = ctx.globals().get::<_, Function>("__lueying_take_ready")
+                && let Ok(json) = take.call::<_, String>(())
+                && let Ok(list) = serde_json::from_str::<Vec<Ready>>(&json)
+            {
+                for ready in list {
+                    pending = pending.saturating_sub(1);
+                    out.push(ready.into());
                 }
             }
         });
