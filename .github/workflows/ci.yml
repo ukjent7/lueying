@@ -21,10 +21,9 @@ env:
 
 jobs:
   # 格式化 + 维护 Cargo.lock,有变化就回推(仅 push 到 main;GITHUB_TOKEN 推送不触发新 run)。
-  # 锁文件必须入库:git 依赖(zed main)不锁则每次 run 解析新 rev,天然抖动。
-  # 锁只在缺失或与清单失配时才重新生成(重新生成=把 zed 解析到当天 HEAD 并从此钉住);
-  # 已有锁原样保留——rust-cache 的键含锁哈希,锁稳定缓存才不会每次全量重存挤爆配额。
-  # 要跟进 zed main 时 `cargo update` 一次(本地或本 job 手动触发均可)。
+  # 锁文件必须入库:不锁则每次 run 重新解析版本,天然抖动。
+  # 锁只在清单或锁本身变了、或锁已经跟清单失配时才更新;已有锁原样保留——
+  # rust-cache 的键含锁哈希,锁稳定缓存才不会每次全量重存挤爆配额。
   fmt:
     runs-on: ubuntu-latest
     permissions:
@@ -35,10 +34,10 @@ jobs:
         with:
           # 判断本次提交是否动了清单需要父提交;浅克隆里 HEAD^ 不存在。
           fetch-depth: 2
-      # 依赖解析要拉 zed 的 git 仓库,冷启动约 3 分钟。只有这次 push 动了清单/锁
-      # 或锁已经跟清单失配时才重新解析;其余情况直接跳过,避免把 fmt 这个本该几秒的
-      # job 拖成门禁。锁失配的另一种来路是上一次回推失败(格式化先红、锁没落地),
-      # 那种情况 git diff 看不出来,所以离线比对清单与锁(.github/lock_in_sync.py)。
+      # 只有这次 push 动了清单/锁或锁已经跟清单失配时才重新解析;其余情况直接跳过,
+      # 避免把 fmt 这个本该几秒的 job 拖成门禁。锁失配的另一种来路是上一次回推失败
+      # (格式化先红、锁没落地),那种情况 git diff 看不出来,所以离线比对清单与锁
+      # (.github/lock_in_sync.py)。
       - name: 维护 Cargo.lock
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -51,7 +50,8 @@ jobs:
             echo "清单与锁未变化,跳过依赖解析"
             exit 0
           fi
-          cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo generate-lockfile
+          # 锁跟不上清单时做一次最小更新:只补变动的那几个依赖,不动其它包的版本。
+          cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo metadata --format-version 1 >/dev/null
       - name: 格式化
         run: cargo fmt --all
       - name: 回推(如有变化)

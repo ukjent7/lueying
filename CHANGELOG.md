@@ -10,6 +10,8 @@
   页面模型下沉到平台无关的 `lueying-server::settings_view`,画面与命中在
   `lueying-render::ui`,Linux E2E 直接断言设置页结构与交互结果;
   Windows CI 跑设置窗自检(建窗、画一帧、贴一次、读回像素)。
+- 摘掉 GPUI/zed 的 git 依赖:候选窗、模式徽标、设置窗三条路都走原生窗口,
+  依赖树里不再有 zed 仓库,锁文件从 609 个包缩到 160 个。
 - Skia 候选窗:Win32 无焦点窗 + DirectComposition 交换链 + Ganesh-D3D12
   (只用硬件 D3D12 适配器,建不出设备时放弃候选窗、输入照常);摆位/DPI/全屏
   避让与模式徽标共用,绘制、命中测试与菜单几何在平台无关的 `lueying-render`,
