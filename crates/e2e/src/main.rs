@@ -10,6 +10,7 @@ mod quick;
 mod render;
 mod rerank;
 mod scenarios;
+mod settings;
 mod shared;
 mod ui;
 mod user_dict;
@@ -171,6 +172,9 @@ fn main() {
 
     // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
     failures += render::run(&mut report);
+
+    // 设置页模型:页面结构、点击改配置、键盘改值与焦点顺序。
+    failures += settings::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

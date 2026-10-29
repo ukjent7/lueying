@@ -15,5 +15,7 @@ lueying-engine.workspace = true
 lueying-features.workspace = true
 lueying-render.workspace = true
 lueying-rerank.workspace = true
+# 设置页模型在服务端 crate 的平台无关部分,E2E 直接断言它的结构与交互。
+lueying-server.workspace = true
 skia-safe.workspace = true
 serde_json = "1"

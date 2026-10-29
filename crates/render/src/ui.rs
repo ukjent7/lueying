@@ -160,6 +160,35 @@ pub struct Page {
     pub footer_buttons: Vec<Button>,
 }
 
+impl Page {
+    /// 按 id 找按钮;分段格与开关不算按钮。
+    pub fn button(&self, id: Id) -> Option<&Button> {
+        if let Some(button) = &self.header_button
+            && button.id == id
+        {
+            return Some(button);
+        }
+        for button in &self.footer_buttons {
+            if button.id == id {
+                return Some(button);
+            }
+        }
+        for group in &self.groups {
+            for row in &group.rows {
+                let items = match &row.control {
+                    Control::Buttons { items } => items,
+                    Control::ButtonsToggle { items, .. } => items,
+                    _ => continue,
+                };
+                if let Some(button) = items.iter().find(|button| button.id == id) {
+                    return Some(button);
+                }
+            }
+        }
+        None
+    }
+}
+
 /// 布局结果:几何都在物理像素里。
 #[derive(Clone, Debug, Default)]
 pub struct Layout {
@@ -458,7 +487,39 @@ impl<'a> Painter<'a> {
         self.card(layout);
         self.groups(page, layout, focus);
         self.canvas.restore();
+        self.scrollbar(layout, scroll);
         self.footer(page, layout);
+    }
+
+    /// 滚动条:内容比视口高时,右边画一根细条,滑块按滚动量走。
+    fn scrollbar(&self, layout: &Layout, scroll: f32) {
+        let max = layout.max_scroll();
+        if max <= 0.0 {
+            return;
+        }
+        let s = self.scale;
+        let track_h = layout.scroll.height();
+        if track_h <= 0.0 {
+            return;
+        }
+        // 滑块长度 = 可见比例,至少留一截把手。
+        let ratio = (layout.scroll.height() / layout.card.height()).clamp(0.08, 1.0);
+        let thumb_h = (track_h * ratio).max(28.0 * s);
+        let travel = (track_h - thumb_h).max(0.0);
+        let pos = (scroll / max).clamp(0.0, 1.0) * travel;
+        let rect = Rect::from_xywh(
+            layout.scroll.right - 7.0 * s,
+            layout.scroll.top + pos,
+            3.0 * s,
+            thumb_h,
+        );
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(color(self.palette.border_strong));
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(rect, &[Vector::new(1.5 * s, 1.5 * s); 4]),
+            &paint,
+        );
     }
 
     /// 品牌、标题与头部按钮。

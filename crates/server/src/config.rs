@@ -10,16 +10,9 @@ use std::path::{Path, PathBuf};
 use lueying_engine::{Config, Fuzzy, Script};
 use lueying_features::SchemeId;
 
-/// 主题色名只在 Windows 下可解析(theme 是 Windows 模块)。
-#[cfg(windows)]
+/// 主题色名转下标;表在 `accents` 里,Windows 与否都能解析。
 fn accent_by_name(value: &str) -> Option<usize> {
-    crate::theme::accent_index(value)
-}
-
-/// 非 Windows 没有主题表,颜色名一律解析不出来。
-#[cfg(not(windows))]
-fn accent_by_name(_value: &str) -> Option<usize> {
-    None
+    crate::accents::accent_index(value)
 }
 
 /// 繁体字形地区;`traditional` 开着时生效。

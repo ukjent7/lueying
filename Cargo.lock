@@ -2456,6 +2456,7 @@ dependencies = [
  "lueying-features",
  "lueying-render",
  "lueying-rerank",
+ "lueying-server",
  "serde_json",
  "skia-safe",
 ]

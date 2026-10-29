@@ -18,7 +18,7 @@ use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, PreeditBar};
 use lueying_server::config::UiLayout;
 use lueying_server::theme;
-use skia_safe::{Font, FontMgr, FontStyle};
+use skia_safe::Font;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -811,11 +811,7 @@ fn ease_out_quint(t: f32) -> f32 {
 /// DirectWrite 默认字体管理器里取微软雅黑;系统里没有这一族就退回系统默认
 /// 字型——拿不到字型就没有字,候选窗会空成一块底色,比字体难看得多。
 pub(super) fn panel_font() -> Option<Font> {
-    let mgr = FontMgr::new();
-    let face = mgr
-        .match_family_style("Microsoft YaHei UI", FontStyle::normal())
-        .or_else(|| mgr.legacy_make_typeface(None, FontStyle::normal()))?;
-    Some(Font::from_typeface(face, 17.0))
+    lueying_server::font::panel_font()
 }
 
 /// 无焦点置顶工具窗;样式在创建时给足,停靠点出生,避免 Alt+Tab 里露脸。

@@ -22,16 +22,17 @@ lueying-dict.workspace = true
 lueying-engine.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
+# 渲染核心:设置页的控件层在平台无关的部分,Windows 与 Linux E2E 共用。
+lueying-render.workspace = true
 lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 
 [target."cfg(windows)".dependencies]
 # 官方推荐:git 依赖跟随 zed 仓库 main(无独立版本号)
-# 设置窗还在 gpui 上;候选窗与模式徽标已迁到原生 + Skia。
+# 设置窗已迁到原生 + Skia,这两条依赖暂时留着,下一轮连同锁文件一起摘掉。
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed" }
 # Skia 候选窗:渲染核心 + Ganesh-D3D12 后端。
-lueying-render.workspace = true
 skia-safe = { workspace = true, features = ["d3d"] }
 windows-registry = "0.100"
 windows-core = "0.62.2"
@@ -57,5 +58,6 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Accessibility",
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
