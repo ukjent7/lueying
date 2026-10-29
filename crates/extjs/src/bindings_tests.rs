@@ -13,7 +13,10 @@ fn parse_normalizes_order_case_and_spelling() {
     assert_eq!(named.canonical(), "Ctrl+Shift+PageUp");
     let fkey = parse("shift+win+f4").unwrap();
     assert_eq!(fkey.canonical(), "Shift+Win+F4");
-    assert_eq!(parse("ctrl+windows+space").err().unwrap(), "热键 \"Ctrl+Win+Space\" 是系统保留组合");
+    assert_eq!(
+        parse("ctrl+windows+space").err().unwrap(),
+        "热键 \"Ctrl+Win+Space\" 是系统保留组合"
+    );
 }
 
 #[test]
@@ -85,5 +88,8 @@ fn hit_filters_by_when() {
     assert!(table.hit("ctrl+alt+e", editing).is_some());
     assert!(table.hit("ctrl+alt+e", idle).is_none());
     assert!(table.hit("ctrl+alt+a", idle).is_some(), "any 处处生效");
-    assert!(table.hit("ctrl+alt+z", composing).is_none(), "没绑的组合不命中");
+    assert!(
+        table.hit("ctrl+alt+z", composing).is_none(),
+        "没绑的组合不命中"
+    );
 }

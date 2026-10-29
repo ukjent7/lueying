@@ -66,8 +66,21 @@ impl Hotkey {
 
 /// 命名键的规范拼写;服务端的虚拟键映射用同一套名字。
 const NAMED_KEYS: [&str; 15] = [
-    "Space", "Enter", "Tab", "Backspace", "Delete", "Insert", "Home", "End", "PageUp", "PageDown",
-    "Up", "Down", "Left", "Right", "Esc",
+    "Space",
+    "Enter",
+    "Tab",
+    "Backspace",
+    "Delete",
+    "Insert",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "Esc",
 ];
 
 /// 系统保留组合;单修饰键的系统键(Alt+Tab、Win+L 等)由两修饰键规则挡住。

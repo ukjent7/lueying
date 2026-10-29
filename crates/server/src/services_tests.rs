@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use lueying_extjs::{Completion, Registry};
 use lueying_extmeta::Service;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VK_CONTROL, VK_MENU, VIRTUAL_KEY,
+    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU,
 };
 
 use crate::services::{

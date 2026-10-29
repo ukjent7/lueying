@@ -1053,7 +1053,12 @@ fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
     }
     let mut reserved_ok = true;
     let mut reserved_note = String::new();
-    for combo in ["Ctrl+Alt+Del", "Ctrl+Shift+Esc", "Ctrl+Win+Space", "Ctrl+Win+Left"] {
+    for combo in [
+        "Ctrl+Alt+Del",
+        "Ctrl+Shift+Esc",
+        "Ctrl+Win+Space",
+        "Ctrl+Win+Left",
+    ] {
         match parse(combo) {
             Ok(_) => {
                 reserved_ok = false;
