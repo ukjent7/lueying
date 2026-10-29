@@ -116,11 +116,13 @@ impl Pack {
         match self.host.dispatch(&json) {
             Ok(text) if text.is_empty() => {
                 self.faults = 0;
+                self.last_error = None;
                 None
             }
             Ok(text) => match ScenePatch::parse(&text) {
                 Ok(mut patch) => {
                     self.faults = 0;
+                    self.last_error = None;
                     if state.high_contrast {
                         patch.effects = None;
                     }

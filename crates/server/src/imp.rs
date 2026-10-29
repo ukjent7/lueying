@@ -57,6 +57,8 @@ pub(super) struct Session {
     pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
     pub(super) host_draws: bool,
+    /// 当前输入范围是密码/隐私字段;运行期脚本整个跳过。
+    pub(super) private: bool,
     /// 最近一次 Context 的焦点代次;异步 UIA 结果据此丢弃过期文本。
     pub(super) context_epoch: u64,
     /// 每次 Context 自增;同一代次里连开两次组合也能区分旧查询。
@@ -326,6 +328,7 @@ pub(super) fn real_main() {
     // 结论写日志;不依赖管道与真实输入,无 UI 环境也能跑。
     if std::env::var_os("LUEYING_SKIA_SELFTEST").is_some() {
         crate::ui_skia_selftest::selftest();
+        crate::ext_selftest::run();
     }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {

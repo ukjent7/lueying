@@ -489,6 +489,8 @@ fn real_run() -> Result<(String, String), String> {
         let fullwidth_note = check_fullwidth(edit)?;
         // Skia 管线自检结论在启动日志里;读不到或失败都让整轮红。
         let skia_note = check_skia_selftest()?;
+        // 运行期脚本自检:QuickJS 在 Windows 上加载、派发、隐私拦截。
+        let ext_note = check_ext_selftest()?;
         // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
         let settings_note = settings_selftest(&dir)?;
         // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
@@ -499,7 +501,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{settings_note}\n\n{keys}\n\n{memory}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{keys}\n\n{memory}"
             ),
         ))
     })();

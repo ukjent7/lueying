@@ -18,7 +18,7 @@
 
 候选窗外观可以交给一段 JS:包放在 `%APPDATA%\lueying\extensions\<id>\`,输入法在 QuickJS 沙箱里同步派发面板状态,脚本只回主题色与三个 SkSL 槽位。状态里没有候选文字与宿主名,密码/隐私字段不调用脚本,内存、栈、初始化与单次派发都有上限。
 
-包格式、场景字段、补丁与限额见 [script.md](script.md)。内核(`lueying-extjs`)与 Linux E2E 已就绪;服务端加载与设置页接入在下一阶段。
+包格式、场景字段、补丁与限额见 [script.md](script.md)。服务端按 `config.ini` 的 `script` 键加载,派发在独立线程里,窗口线程只收主题色与 SkSL 源码;Windows CI 有运行时自检。设置页的扩展选择器在下一阶段接入。
 
 ## SDK crate
 

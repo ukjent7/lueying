@@ -266,6 +266,19 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
     ))
 }
 
+/// 运行期脚本自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建临时扩展包,
+/// 验证 QuickJS 在 Windows 上能加载、派发、拦截隐私场景。
+pub(super) fn check_ext_selftest() -> Result<String, String> {
+    let text = std::fs::read_to_string(server_log()).unwrap_or_default();
+    if let Some(line) = text.lines().find(|line| line.contains("扩展自检失败")) {
+        return Err(format!("扩展自检失败:{line}"));
+    }
+    let Some(line) = text.lines().find(|line| line.contains("扩展自检通过")) else {
+        return Err("Server 日志里没有扩展自检记录".into());
+    };
+    Ok(format!("## 运行期脚本\n\nPASS,{line}"))
+}
+
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。
 pub(super) fn check_preserved_punct(data: &std::path::Path) -> Result<(), String> {
     const VK_CONTROL: u16 = 0x11;

@@ -197,6 +197,8 @@ pub struct AppConfig {
     pub ui_accent: usize,
     /// 是否启用用户效果(SkSL 装饰层);关掉就只画素色。
     pub effects: bool,
+    /// 启用的运行期脚本扩展 id;空表示不启用。
+    pub script: String,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -220,6 +222,7 @@ impl Default for AppConfig {
             ui_font: UiFont::Standard,
             ui_accent: 0,
             effects: true,
+            script: String::new(),
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -285,6 +288,11 @@ pub fn effects_dir() -> Option<PathBuf> {
     let base =
         PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
     Some(base.join("lueying").join("effects"))
+}
+
+/// 运行期脚本扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
+pub fn extensions_dir() -> Option<PathBuf> {
+    user_file("extensions")
 }
 
 fn user_file(name: &str) -> Option<PathBuf> {
@@ -378,6 +386,14 @@ pub fn load(path: &Path) -> AppConfig {
             "effects" | "effect" => {
                 if let Some(on) = flag(value) {
                     cfg.effects = on;
+                }
+            }
+            // 运行期脚本扩展:值是扩展目录名;空值或 off 表示不启用。
+            "script" | "extension" => {
+                if matches!(value, "" | "off" | "none") {
+                    cfg.script.clear();
+                } else if valid_script_id(value) {
+                    cfg.script = value.to_string();
                 }
             }
             _ => {}
@@ -499,6 +515,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          ui_font={}\n\
          ui_accent={}\n\
          effects={}\n\
+         script={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -513,6 +530,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.ui_font.as_str(),
         cfg.ui_accent,
         if cfg.effects { "on" } else { "off" },
+        cfg.script,
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");
@@ -526,4 +544,15 @@ fn flag(value: &str) -> Option<bool> {
         "0" | "false" | "off" | "no" => Some(false),
         _ => None,
     }
+}
+
+/// 运行期脚本扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。
+fn valid_script_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && id.len() <= 48
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }

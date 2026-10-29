@@ -80,6 +80,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                         .as_ref()
                         .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
                     host_draws: false,
+                    private: false,
                     context_epoch: 0,
                     context_seq: 0,
                 },
@@ -198,7 +199,13 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             let mut uia_seq = 0;
             if let Some(s) = sessions.get_mut(&session) {
                 // 输入范围每次焦点/组合开始都重报;私密字段不学、不记前文。
+                let private_changed = s.private != private;
                 s.engine.set_learning(!private);
+                s.private = private;
+                if private_changed {
+                    // 隐私标记变了要重摆一帧:扩展层在密码框里整个停用。
+                    state.version.fetch_add(1, Ordering::Relaxed);
+                }
                 s.context_epoch = epoch;
                 s.context_seq = s.context_seq.wrapping_add(1);
                 uia_seq = s.context_seq;
@@ -295,6 +302,8 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             let mut reply = neutral(state);
             if let Some(s) = sessions.get_mut(&session) {
                 // 失焦/换输入框时作废在途的 UIA 读取;新 Context 会带来新代次。
+                // 隐私标记属于上一个输入范围,新 Context 上报前先清掉。
+                s.private = false;
                 s.context_epoch = s.context_epoch.wrapping_add(1);
                 s.context_seq = s.context_seq.wrapping_add(1);
                 s.pending = None;

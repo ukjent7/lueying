@@ -14,10 +14,10 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
+use lueying_extjs::ScenePatch;
 use lueying_protocol::SessionView;
 use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
-use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, PreeditBar};
-use lueying_server::config::UiLayout;
+use lueying_render::panel::{self, Metrics, PanelSpec};
 use lueying_server::theme;
 use skia_safe::Font;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
@@ -40,6 +40,7 @@ use crate::ui_skia_cpu::CpuPipeline;
 use crate::ui_skia_effect;
 use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
 use crate::ui_skia_mouse;
+use crate::ui_skia_script;
 
 /// 会话版本号轮询间隔;与 GPUI 路径一致,对打字反馈无感。
 const POLL: Duration = Duration::from_millis(15);
@@ -161,6 +162,10 @@ pub(super) struct WinCtx {
     pub(super) cursor_hand: Option<HCURSOR>,
     /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
     effects: ui_skia_effect::Effects,
+    /// 运行期脚本:后台线程跑 QuickJS,这里只收补丁。
+    script: ui_skia_script::Script,
+    /// 已应用的脚本补丁;空表示没有扩展生效。
+    script_fx: Option<ui_skia_script::ScriptFx>,
     /// 效果帧预算:连续超预算就临时摘掉效果。
     budget: BudgetGuard,
     /// 出帧路径彻底走不通(设备被摘掉且 CPU 兜底也建不起来):候选窗停用。
@@ -326,6 +331,7 @@ fn window_loop(state: Arc<State>) {
             LoadCursorW(None, IDC_HAND).ok(),
         )
     };
+    let script = ui_skia_script::Script::spawn(Arc::clone(&state));
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
         hwnd,
@@ -336,6 +342,8 @@ fn window_loop(state: Arc<State>) {
         cursor_arrow,
         cursor_hand,
         effects: ui_skia_effect::Effects::load(&state),
+        script,
+        script_fx: None,
         budget: BudgetGuard::new(Budget::default()),
         dead: false,
     }));
@@ -355,6 +363,13 @@ fn window_loop(state: Arc<State>) {
             }
         }
         let now = Instant::now();
+        // 脚本补丁到了就应用;这一轮有新内容时由 place 一起重绘。
+        let patch = unsafe { &(*ctx).script }.take();
+        if let Some((seq, patch)) = patch {
+            let ctx = unsafe { &mut *ctx };
+            let redraw_now = state.version.load(Ordering::Relaxed) == last_version;
+            apply_script(ctx, seq, patch, redraw_now);
+        }
         if now >= next_poll {
             next_poll = now + POLL;
             let version = state.version.load(Ordering::Relaxed);
@@ -392,7 +407,7 @@ fn place(ctx: &mut WinCtx) {
         park(ctx);
         return;
     }
-    let Some(view) = ui_place::snapshot(&ctx.state) else {
+    let Some(snap) = ui_place::snapshot(&ctx.state) else {
         // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
         if ctx.fx.reduce || ctx.fx.last.is_none() {
             ctx.fx.clear();
@@ -411,6 +426,11 @@ fn place(ctx: &mut WinCtx) {
         }
         return;
     };
+    let view = &snap.view;
+    if snap.private {
+        // 隐私字段整个扩展层停用:不等脚本线程回包,这一帧就回素色。
+        ctx.script_fx = None;
+    }
     let fresh = ctx.fx.last.is_none() || ctx.fx.hide.is_some();
     if fresh {
         // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
@@ -441,7 +461,7 @@ fn place(ctx: &mut WinCtx) {
         ctx.fx.pager = None;
     }
     ctx.fx.page = Some(view.page);
-    let rect = caret_rect(ctx, &view);
+    let rect = caret_rect(ctx, view);
     if rect.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合淡入,不会接着上一次的状态。
@@ -463,7 +483,43 @@ fn place(ctx: &mut WinCtx) {
     }
     // 先落内容再出帧;淡出期间用的就是这份冻结内容。
     ctx.fx.last = Some(view.clone());
-    draw_view(ctx, &view);
+    submit_scene(ctx, view, snap.private);
+    draw_view(ctx, view);
+}
+
+/// 把当前面板状态交给脚本线程;补丁晚一帧到,不影响这一帧。
+fn submit_scene(ctx: &WinCtx, view: &SessionView, private: bool) {
+    let now = Instant::now();
+    let scene = ui_skia_script::scene(
+        &ctx.state,
+        view,
+        private,
+        ctx.fx.reduce,
+        ctx.fx.clock(now),
+        ctx.fx.anim(now),
+    );
+    ctx.script.submit(scene);
+}
+
+/// 应用脚本补丁;内容没变就不重绘。
+fn apply_script(ctx: &mut WinCtx, seq: u64, patch: Option<ScenePatch>, redraw_now: bool) {
+    // 旧场景的补丁晚到:新一帧或隐私字段已经提交,直接丢弃。
+    if seq < ctx.script.seq() {
+        return;
+    }
+    let unchanged = match (&patch, &ctx.script_fx) {
+        (Some(next), Some(current)) => current.same(next),
+        (None, None) => true,
+        _ => false,
+    };
+    if unchanged {
+        return;
+    }
+    let previous = ctx.script_fx.take();
+    ctx.script_fx = patch.map(|patch| ui_skia_script::ScriptFx::update(previous, patch));
+    if redraw_now {
+        redraw(ctx);
+    }
 }
 
 /// 光标位置算出的候选窗矩形(x, y, 宽, 高);宽为 0 表示这次不弹。
@@ -479,9 +535,9 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
     // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
     let scale = ui_place::scale_at(left, b);
     let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let mut spec = spec_of(view, layout);
+    let mut spec = ui_place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = measure_width(view, layout, &metrics, ctx.font.as_ref());
+    spec.width = ui_place::measure_width(view, layout, &metrics, ctx.font.as_ref());
     let mut w = panel::panel_width(&spec, &metrics, ctx.font.as_ref()) as i32;
     let h = panel::panel_height(&spec, &metrics, ctx.font.as_ref()) as i32;
     let work = ui_place::work_area_at(left, b);
@@ -572,18 +628,23 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
     let appearance = theme::Appearance::of_system();
-    let palette = theme::palette(theme::colors_with(appearance, accent));
     // 高对比度由系统接管外观,用户效果整个关掉,免得压过系统配色。
     let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+    // 脚本主题色只换主色与选中底色;高对比度仍用系统色。
+    let colors = match ctx.script_fx.as_ref().and_then(|fx| fx.accent()) {
+        Some(rgb) if !high_contrast => theme::colors_with_accent(appearance, rgb),
+        _ => theme::colors_with(appearance, accent),
+    };
+    let palette = theme::palette(colors);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
         Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),
         None => 1.0,
     };
     let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let mut spec = spec_of(view, layout);
+    let mut spec = ui_place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = measure_width(view, layout, &metrics, ctx.font.as_ref());
+    spec.width = ui_place::measure_width(view, layout, &metrics, ctx.font.as_ref());
     let now = Instant::now();
     let opacity = if let Some(end) = ctx.fx.hide {
         (1.0 - ease_out_quint(progress(HIDE_FADE, end, now))).max(0.0)
@@ -652,21 +713,25 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         if menu.is_some() {
             menu_uniforms.size = [116.0, panel::menu_height(&metrics) / unit];
         }
+        let script = ctx.script_fx.as_ref();
+        let file = ctx.effects.set();
+        // 脚本补丁优先;没给或编译失败的槽位落到用户效果目录。
+        let shader = |slot: Slot, uniforms: &Uniforms, origin: (f32, f32)| {
+            script
+                .and_then(|fx| fx.shader(slot, uniforms, origin, unit))
+                .or_else(|| file.shader(slot, uniforms, origin, unit))
+        };
         (
-            ctx.effects
-                .set()
-                .shader(Slot::Background, &panel_uniforms, (0.0, 0.0), unit),
-            ctx.effects.set().shader(
+            shader(Slot::Background, &panel_uniforms, (0.0, 0.0)),
+            shader(
                 Slot::Highlight,
                 &highlight_uniforms,
                 selected.map_or((0.0, 0.0), |rect| (rect.left, rect.top)),
-                unit,
             ),
-            ctx.effects.set().shader(
+            shader(
                 Slot::Menu,
                 &menu_uniforms,
                 menu.map_or((0.0, 0.0), |(mx, my)| (mx, my)),
-                unit,
             ),
         )
     } else {
@@ -891,60 +956,4 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
 fn park(ctx: &mut WinCtx) {
     let (x, y) = ui_place::park_point();
     ui_place::park(ctx.hwnd, x, y);
-}
-
-/// 会话视图转面板输入;页切片、选中态与页码标签与 GPUI 路径同一套语义。
-pub(super) fn spec_of(view: &SessionView, layout: UiLayout) -> PanelSpec {
-    let ps = view.page_size.max(1);
-    let start = view.page * ps;
-    let end = (start + ps).min(view.candidates.len());
-    let items = (start..end)
-        .map(|i| Item {
-            text: view.candidates[i].clone(),
-            hint: view.hints.get(i).cloned().unwrap_or_default(),
-            selected: i == view.highlight,
-        })
-        .collect();
-    let pages = view.candidates.len().div_ceil(ps).max(1);
-    let page_label = if pages > 1 {
-        format!("{}/{}", view.page + 1, pages)
-    } else {
-        String::new()
-    };
-    PanelSpec {
-        width: 0.0,
-        // 摆位时按字号档 × DPI 补上;这里先置零。
-        max_text_width: 0.0,
-        preedit: PreeditBar {
-            text: view.raw.clone(),
-            page_label,
-        },
-        items,
-        layout: if matches!(layout, UiLayout::Horizontal) {
-            Layout::Wrap
-        } else {
-            Layout::Column
-        },
-    }
-}
-
-/// 全组合候选都参与估宽;翻页时窗口宽度与 GPUI 路径一致,不会来回跳。
-fn measure_width(
-    view: &SessionView,
-    layout: UiLayout,
-    metrics: &Metrics,
-    font: Option<&Font>,
-) -> f32 {
-    let mut spec = spec_of(view, layout);
-    spec.items = view
-        .candidates
-        .iter()
-        .enumerate()
-        .map(|(index, text)| Item {
-            text: text.clone(),
-            hint: view.hints.get(index).cloned().unwrap_or_default(),
-            selected: false,
-        })
-        .collect();
-    panel::panel_width(&spec, metrics, font)
 }

@@ -19,6 +19,9 @@ fn main() {
 }
 
 #[cfg(windows)]
+mod ext_selftest;
+
+#[cfg(windows)]
 mod imp;
 
 #[cfg(windows)]
@@ -56,6 +59,9 @@ mod ui_skia_gpu;
 
 #[cfg(windows)]
 mod ui_skia_mouse;
+
+#[cfg(windows)]
+mod ui_skia_script;
 
 #[cfg(windows)]
 mod ui_skia_selftest;

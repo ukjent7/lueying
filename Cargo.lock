@@ -323,6 +323,7 @@ version = "0.1.0"
 dependencies = [
  "lueying-dict",
  "lueying-engine",
+ "lueying-extjs",
  "lueying-features",
  "lueying-protocol",
  "lueying-render",

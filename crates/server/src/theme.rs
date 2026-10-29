@@ -63,6 +63,35 @@ pub fn colors_with(appearance: Appearance, accent: usize) -> Colors {
     colors
 }
 
+/// 运行期脚本给的主题色:换主色与选中底色,文字色沿用系统主题。
+///
+/// 选中文字与弱文字都还是主题里那套颜色,脚本换一个再亮的主题色,
+/// 对比度也有下限;高对比度下整条忽略。
+pub fn colors_with_accent(appearance: Appearance, accent: u32) -> Colors {
+    let mut colors = colors(appearance);
+    if matches!(appearance, Appearance::HighContrast) {
+        return colors;
+    }
+    colors.accent = accent;
+    colors.accent_hover = accent;
+    let weight = match appearance {
+        Appearance::Light => 0.08,
+        _ => 0.20,
+    };
+    colors.selected_bg = blend(colors.surface, accent, weight);
+    colors
+}
+
+/// 按权重把 `tint` 混进 `base`;0 保留底色,1 取满主题色。
+fn blend(base: u32, tint: u32, weight: f32) -> u32 {
+    let mix = |shift: u32| {
+        let base = ((base >> shift) & 0xff) as f32;
+        let tint = ((tint >> shift) & 0xff) as f32;
+        (base + (tint - base) * weight).round() as u32
+    };
+    (mix(16) << 16) | (mix(8) << 8) | mix(0)
+}
+
 /// 一套界面颜色。字段按用途命名,数值均为 0xRRGGBB。
 #[derive(Clone, Copy)]
 pub struct Colors {

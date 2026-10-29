@@ -6,7 +6,9 @@
 use std::sync::atomic::Ordering;
 
 use lueying_protocol::SessionView;
+use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, PreeditBar};
 use lueying_server::config::{UiFont, UiLayout};
+use skia_safe::Font;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
@@ -26,11 +28,20 @@ pub(super) const PARK_GAP: i32 = 2000;
 /// 候选窗与光标之间留一点呼吸,不贴着字形下缘。
 pub(super) const CARET_GAP: f32 = 4.0;
 
+/// 候选窗要画的一帧:会话视图加隐私标记。
+pub(super) struct Snapshot {
+    pub(super) view: SessionView,
+    pub(super) private: bool,
+}
+
 /// 激活会话且在组合中才有窗口内容。宿主接管候选绘制时让位。
-pub(super) fn snapshot(state: &State) -> Option<SessionView> {
+pub(super) fn snapshot(state: &State) -> Option<Snapshot> {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    (!session.host_draws && session.engine.composition().is_some()).then(|| session.view.clone())
+    (!session.host_draws && session.engine.composition().is_some()).then(|| Snapshot {
+        view: session.view.clone(),
+        private: session.private,
+    })
 }
 
 /// 读取候选窗显示设置(排列、字号、主题色)。
@@ -172,4 +183,60 @@ pub(super) fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
         && rect.top <= screen.top
         && rect.right >= screen.right
         && rect.bottom >= screen.bottom
+}
+
+/// 会话视图转面板输入;页切片、选中态与页码标签与候选窗同一套语义。
+pub(super) fn spec_of(view: &SessionView, layout: UiLayout) -> PanelSpec {
+    let ps = view.page_size.max(1);
+    let start = view.page * ps;
+    let end = (start + ps).min(view.candidates.len());
+    let items = (start..end)
+        .map(|i| Item {
+            text: view.candidates[i].clone(),
+            hint: view.hints.get(i).cloned().unwrap_or_default(),
+            selected: i == view.highlight,
+        })
+        .collect();
+    let pages = view.candidates.len().div_ceil(ps).max(1);
+    let page_label = if pages > 1 {
+        format!("{}/{}", view.page + 1, pages)
+    } else {
+        String::new()
+    };
+    PanelSpec {
+        width: 0.0,
+        // 摆位时按字号档 × DPI 补上;这里先置零。
+        max_text_width: 0.0,
+        preedit: PreeditBar {
+            text: view.raw.clone(),
+            page_label,
+        },
+        items,
+        layout: if matches!(layout, UiLayout::Horizontal) {
+            Layout::Wrap
+        } else {
+            Layout::Column
+        },
+    }
+}
+
+/// 全组合候选都参与估宽;翻页时窗口宽度保持一致,不会来回跳。
+pub(super) fn measure_width(
+    view: &SessionView,
+    layout: UiLayout,
+    metrics: &Metrics,
+    font: Option<&Font>,
+) -> f32 {
+    let mut spec = spec_of(view, layout);
+    spec.items = view
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(index, text)| Item {
+            text: text.clone(),
+            hint: view.hints.get(index).cloned().unwrap_or_default(),
+            selected: false,
+        })
+        .collect();
+    panel::panel_width(&spec, metrics, font)
 }

@@ -428,6 +428,29 @@ pub fn run(report: &mut String) -> usize {
         );
     }
 
+    // 运行期脚本给的源码:好源码编译,坏源码只废自己,与目录加载同一套错误。
+    let set = effect::EffectSet::from_sources([
+        (effect::Slot::Background, effect::BACKGROUND_TEMPLATE),
+        (
+            effect::Slot::Menu,
+            "half4 main(float2 p) { return nonexistent; }",
+        ),
+    ]);
+    push(
+        &mut checks,
+        "源码效果只废坏槽位",
+        set.has(effect::Slot::Background)
+            && !set.has(effect::Slot::Menu)
+            && !set.has(effect::Slot::Highlight)
+            && set.errors().len() == 1,
+        format!(
+            "背景={} 菜单={} 错误 {:?}",
+            set.has(effect::Slot::Background),
+            set.has(effect::Slot::Menu),
+            set.errors()
+        ),
+    );
+
     // 帧预算:连续超预算就摘掉效果,冷却期内不放行,冷却到期再给一次机会。
     let mut guard = effect::BudgetGuard::new(effect::Budget::default());
     let now = Instant::now();

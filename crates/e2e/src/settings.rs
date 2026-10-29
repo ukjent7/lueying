@@ -206,6 +206,34 @@ pub fn run(report: &mut String) -> usize {
         format!("页脚下沿={:.1}", layout.footer.bottom),
     );
 
+    // 配置往返:script 键要能读、能原样存回;路径分隔符不能当扩展 id。
+    let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}", std::process::id()));
+    let _ = std::fs::write(&path, "script=my-pack\n");
+    let cfg = lueying_server::config::load(&path);
+    let loaded = cfg.script == "my-pack";
+    let saved = lueying_server::config::save(&path, &cfg)
+        .and_then(|()| std::fs::read_to_string(&path));
+    let _ = std::fs::remove_file(&path);
+    push(
+        &mut checks,
+        "配置保留脚本 id",
+        loaded
+            && saved
+                .as_deref()
+                .is_ok_and(|text| text.contains("script=my-pack")),
+        format!("读取 {loaded} 存回 {:?}", saved.as_deref().map(str::len)),
+    );
+    let path = std::env::temp_dir().join(format!("lueying-config-e2e-bad-{}", std::process::id()));
+    let _ = std::fs::write(&path, "script=../evil\n");
+    let rejected = lueying_server::config::load(&path).script.is_empty();
+    let _ = std::fs::remove_file(&path);
+    push(
+        &mut checks,
+        "脚本 id 拒绝路径",
+        rejected,
+        "config.ini 的 script=../evil 应被忽略".into(),
+    );
+
     report.push_str("\n## 设置页模型\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0;
     for (name, ok, note) in checks {
