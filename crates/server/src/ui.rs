@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::imp::State;
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, MouseButton, Point, ScrollDelta, SharedString,
+    Animation, AnimationExt, App, Bounds, Context, Div, MouseButton, Point, ScrollDelta, SharedString,
     Window, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint, prelude::*, px, rgb,
     size,
 };
@@ -438,6 +438,9 @@ fn panel_rows(view: &SessionView, width: f32, layout: UiLayout, m: &Metrics) -> 
 }
 
 /// 一条候选行:强调条、序号、文字与注音;横排/竖排共用。
+///
+/// 返回具体的 `Div` 而不是 `impl IntoElement`:后者会把参数里的借用算进
+/// 不透明类型,闭包里造出来的元素就带不出闭包体。
 #[allow(clippy::too_many_arguments)]
 fn candidate_item(
     slot: usize,
@@ -448,7 +451,7 @@ fn candidate_item(
     colors: theme::Colors,
     state: &Arc<State>,
     cx: &mut Context<CandidatePanel>,
-) -> impl IntoElement {
+) -> Div {
     let menu_text = text.clone();
     div()
         // `active` 只挂在有状态元素上;槽位在页内唯一。

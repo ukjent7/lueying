@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
-use skia_safe::{ImageInfo, Paint, Surface};
+use skia_safe::{ImageInfo, Paint, Surface, surfaces};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -111,7 +111,7 @@ pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
 
     // 面板底色与预编辑条:(5,60) 在候选区背景上,(5,10) 在拼音条上。
-    let mut surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+    let mut surface = surfaces::raster_n32_premul((360, 120)).expect("raster surface");
     let metrics = Metrics::standard();
     panel::draw(surface.canvas(), &spec(), &palette(), &metrics, None);
     let expected_bg = rgb(palette().bg);
@@ -138,7 +138,7 @@ pub fn run(report: &mut String) -> usize {
     // SkSL 契约:模板可编译、uniform 打包按名字对位、坏效果报错。
     match effect::compile_background(effect::BACKGROUND_TEMPLATE) {
         Ok(rt) => {
-            let mut small = Surface::new_raster_n32_premul((32, 32)).expect("raster surface");
+            let mut small = surfaces::raster_n32_premul((32, 32)).expect("raster surface");
             let uniforms = Uniforms {
                 size: [32.0, 32.0],
                 time: 0.0,
@@ -191,7 +191,7 @@ pub fn run(report: &mut String) -> usize {
                 panel::panel_width(&spec, &metrics, None),
                 panel::panel_height(&spec, &metrics, None),
             );
-            let mut surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+            let mut surface = surfaces::raster_n32_premul((360, 120)).expect("raster surface");
             panel::draw_chrome(
                 surface.canvas(),
                 width,
@@ -437,7 +437,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 悬停底色:非选中行画 hover 色,绘制与命中同一份矩形。
-    let mut hover_surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+    let mut hover_surface = surfaces::raster_n32_premul((360, 120)).expect("raster surface");
     let (hw, hh) = (
         panel::panel_width(&hit_spec, &hit_metrics, None),
         panel::panel_height(&hit_spec, &hit_metrics, None),
@@ -482,7 +482,7 @@ pub fn run(report: &mut String) -> usize {
     }
 
     // 菜单绘制:首行悬停给 hover 底色,次行保持菜单底色;与 menu_hit 同一套行几何。
-    let mut menu_surface = Surface::new_raster_n32_premul((160, 80)).expect("raster surface");
+    let mut menu_surface = surfaces::raster_n32_premul((160, 80)).expect("raster surface");
     panel::draw_menu(
         menu_surface.canvas(),
         0.0,
@@ -515,7 +515,7 @@ pub fn run(report: &mut String) -> usize {
     }
 
     // 翻页箭头悬停:位置由 pager_rects 决定,悬停时垫一层描边色底。
-    let mut pager_surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+    let mut pager_surface = surfaces::raster_n32_premul((360, 120)).expect("raster surface");
     panel::draw_chrome(
         pager_surface.canvas(),
         hw,

@@ -458,7 +458,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
             highlight_uniforms.size = [rect.width() / unit, rect.height() / unit];
         }
         let mut menu_uniforms = panel_uniforms;
-        if let Some((mx, my)) = menu {
+        if menu.is_some() {
             menu_uniforms.size = [116.0, panel::menu_height(&metrics) / unit];
         }
         (

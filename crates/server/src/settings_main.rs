@@ -303,7 +303,7 @@ mod imp {
             } else {
                 0
             };
-            let next = (current + delta).rem_euclid(2);
+            let next = (current + delta).rem_euclid(2) as usize;
             self.cfg.ui_layout = UiLayout::from_index(next);
             self.clear_notice();
         }
@@ -335,7 +335,7 @@ mod imp {
             } else {
                 0
             };
-            let next = (current + delta).rem_euclid(2);
+            let next = (current + delta).rem_euclid(2) as usize;
             self.cfg.update_channel = Channel::from_index(next);
             self.clear_notice();
         }

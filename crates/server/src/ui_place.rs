@@ -3,7 +3,6 @@
 //! GPUI 路径(`ui.rs`)与 Skia 路径(`ui_skia.rs`)共用同一套停靠点、
 //! 逐显示器 DPI、工作区夹取与全屏避让;"画什么"由会话快照决定。
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use lueying_protocol::SessionView;

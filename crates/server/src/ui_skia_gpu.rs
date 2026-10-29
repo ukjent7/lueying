@@ -25,12 +25,14 @@ use windows::Win32::Graphics::DirectComposition::{
     DCompositionCreateDevice2, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
 };
 use windows::Win32::Graphics::Dxgi::{
-    Common::{DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
+    Common::{
+        DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+        DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN,
+    },
     CreateDXGIFactory1, DXGI_ADAPTER_FLAG, DXGI_ADAPTER_FLAG_NONE, DXGI_ADAPTER_FLAG_SOFTWARE,
-    DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN,
-    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter1, IDXGIDevice, IDXGIFactory4, IDXGISwapChain1,
-    IDXGISwapChain3,
+    DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
+    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter1, IDXGIDevice,
+    IDXGIFactory4, IDXGISwapChain1, IDXGISwapChain3,
 };
 use windows::core::Interface;
 
@@ -131,7 +133,11 @@ impl Pipeline {
             )
             .ok_or("创建 D3D12 DirectContext 失败")?;
             // 只拿 DComp 做合成交换链,不建 DComp 表面,所以渲染设备可以不给。
-            let dcomp: IDCompositionDevice = DCompositionCreateDevice2(None::<&IDXGIDevice>)
+            // 但 CreateDevice2 只接受 IUnknown,得把 D3D12 设备转成 DXGI 设备传进去。
+            let dxgi_device: IDXGIDevice = device
+                .cast()
+                .map_err(|e| format!("取 DXGI 设备: {e}"))?;
+            let dcomp: IDCompositionDevice = DCompositionCreateDevice2(&dxgi_device)
                 .map_err(|e| format!("DCompositionCreateDevice2: {e}"))?;
             let target = dcomp
                 .CreateTargetForHwnd(hwnd, true)
