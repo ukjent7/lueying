@@ -293,36 +293,43 @@ fn handover(
     // 新窗口要接手,旧窗口要销毁。
     let new_alive = unsafe { IsWindow(Some(new_hwnd)) }.as_bool();
     let old_alive = unsafe { IsWindow(Some(old_hwnd)) }.as_bool();
-    let mut result = Ok(());
-    if !new_alive {
-        result = Err("新窗口没有建起来".into());
+    let result = if !new_alive {
+        Err("新窗口没有建起来".into())
     } else if old_alive {
-        result = Err("旧窗口没有销毁".into());
+        Err("旧窗口没有销毁".into())
     } else {
-        // 新窗口摆到指定位置,表面尺寸对上,画面与上屏都要照旧。
-        unsafe {
-            let _ = SetWindowPos(
-                new_hwnd,
-                Some(HWND_TOPMOST),
-                120,
-                160,
-                w as i32,
-                h as i32,
-                SWP_NOACTIVATE,
-            );
-        }
-        result = pipe.rebuild_surfaces(w, h);
-        if result.is_ok() {
-            result = check_pixels(&mut *pipe, spec, palette, metrics);
-        }
-        if result.is_ok() {
-            result = pipe.present();
-        }
-    }
+        repaint(new_hwnd, pipe, spec, palette, metrics, w, h)
+    };
     unsafe {
         let _ = DestroyWindow(new_hwnd);
     }
     result
+}
+
+/// 换手后的新窗口:摆到指定位置、重建表面,像素与上屏都要照旧。
+fn repaint(
+    new_hwnd: HWND,
+    pipe: &mut Presenter,
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    unsafe {
+        let _ = SetWindowPos(
+            new_hwnd,
+            Some(HWND_TOPMOST),
+            120,
+            160,
+            w as i32,
+            h as i32,
+            SWP_NOACTIVATE,
+        );
+    }
+    pipe.rebuild_surfaces(w, h)?;
+    check_pixels(&mut *pipe, spec, palette, metrics)?;
+    pipe.present()
 }
 
 /// 建窗 + DComp 交换链;失败时把原因带回去,自检据此决定是否降级。

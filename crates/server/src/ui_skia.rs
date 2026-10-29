@@ -115,6 +115,11 @@ impl Fx {
         };
     }
 
+    /// 淡出中:窗口沿用冻结内容并让鼠标穿透。
+    pub(super) fn fading(&self) -> bool {
+        self.hide.is_some()
+    }
+
     /// 效果的动画时钟:本次组合开始后的秒数;「减少动态效果」时冻结为 0。
     fn clock(&self, now: Instant) -> f32 {
         if self.reduce {
@@ -547,7 +552,7 @@ fn animate(ctx: &mut WinCtx) {
 }
 
 /// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
-pub(super) fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
+fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     if ctx.dead {
         return;
     }
@@ -697,6 +702,17 @@ pub(super) fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     if let Err(e) = ctx.pipe.present() {
         println!("Skia 呈现失败: {e}");
     }
+}
+
+/// 鼠标/菜单变化后的重绘;淡出窗口不接鼠标,内容与位置都不动。
+pub(super) fn redraw(ctx: &mut WinCtx) {
+    if ctx.fx.fading() {
+        return;
+    }
+    let Some(view) = ctx.fx.last.clone() else {
+        return;
+    };
+    draw_view(ctx, &view);
 }
 
 /// 菜单锚点:锚在行下缘,贴近面板底部时翻到行上方;与 GPUI 路径同款规则。

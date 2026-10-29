@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::imp::State;
 use crate::ui_place;
-use crate::ui_skia::{WinCtx, menu_origin};
+use crate::ui_skia::{WinCtx, menu_origin, redraw};
 
 /// 可交互:有激活会话且服务端候选窗在显示(组合中)。
 fn interactive(state: &State) -> bool {
@@ -58,7 +58,7 @@ pub(super) fn on_mouse(
     match msg {
         WM_MOUSEMOVE => {
             ctx.fx.mouse = (x, y);
-            if ctx.fx.hide.is_some() {
+            if ctx.fx.fading() {
                 return LRESULT(0);
             }
             let (item, pager, menu_hover) = match ctx.fx.geometry.as_ref() {
@@ -194,15 +194,4 @@ pub(super) fn on_mouse(
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
-}
-
-/// 鼠标状态变了要重画;淡出窗口不接鼠标,内容与位置都不动。
-fn redraw(ctx: &mut WinCtx) {
-    if ctx.fx.hide.is_some() {
-        return;
-    }
-    let Some(view) = ctx.fx.last.clone() else {
-        return;
-    };
-    crate::ui_skia::draw_view(ctx, &view);
 }
