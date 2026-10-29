@@ -71,7 +71,7 @@ pub fn map_with(
     after_digit: &mut bool,
 ) -> Option<String> {
     if let Some(text) = custom.get(&c) {
-        std::mem::replace(after_digit, false);
+        *after_digit = false;
         return Some(text.clone());
     }
     map(c, dq_open, sq_open, after_digit).map(str::to_string)

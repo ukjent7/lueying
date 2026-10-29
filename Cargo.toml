@@ -34,9 +34,17 @@ lueying-features = { path = "crates/features" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 # 候选窗 Skia 渲染:默认光栅(E2E/无头),Windows 叠加 d3d。
+# 特性集必须与 rust-skia 发布的预编译二进制键逐字对上,对不上就静默退化成本地
+# 编 Skia(CI 上十几分钟起,Linux 还会因为缺 freetype 头文件直接失败):
+#   Linux : jpegd-jpege-pdf-textlayout
+#   Windows: d3d-ganesh-jpegd-jpege-pdf-textlayout
+# jpeg/pdf 不是功能需求,是命中预编译键的必要条件;Windows 侧还必须留
+# textlayout,因为只有带它的预编译包才带 icudtl.dat(embed-icudtl 要用)。
 skia-safe = { version = "0.156", default-features = false, features = [
     "binary-cache",
     "embed-icudtl",
+    "jpeg",
+    "pdf",
     "textlayout",
 ] }
 

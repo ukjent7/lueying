@@ -858,6 +858,8 @@ fn text(
             canvas.draw_str(content, Point::new(x, baseline), font, &paint);
             canvas.restore();
         }
-        None => canvas.draw_str(content, Point::new(x, baseline), font, &paint),
+        None => {
+            canvas.draw_str(content, Point::new(x, baseline), font, &paint);
+        }
     }
 }

@@ -405,16 +405,13 @@ impl Engine {
                 } else {
                     None
                 };
-                let text = mapped.map_or_else(
-                    || {
-                        if self.fullwidth {
-                            punct::fullwidth(p).map_or_else(|| p.to_string(), String::from)
-                        } else {
-                            p.to_string()
-                        }
-                    },
-                    |s| s,
-                );
+                let text = mapped.unwrap_or_else(|| {
+                    if self.fullwidth {
+                        punct::fullwidth(p).map_or_else(|| p.to_string(), String::from)
+                    } else {
+                        p.to_string()
+                    }
+                });
                 events.push(Event::Commit(text));
                 events
             }

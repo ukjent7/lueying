@@ -100,6 +100,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Skia 预编译二进制静态链进了系统 freetype/fontconfig,链接期要 -lfreetype/
+      # -lfontconfig,也就是 .so 与 pkg-config 头文件;Ubuntu runner 镜像只有运行库。
+      - name: 安装 Skia 链接依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
+      # 预编译命中门禁:特性集与 rust-skia 发布的键对不上时,这里几秒就红;
+      # 否则会静默退化成十几分钟的本地编 Skia,还把原因埋在日志里。
+      - name: Skia 预编译命中
+        run: cargo build --release -p lueying-render --features prebuilt-only --locked
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
@@ -177,18 +187,18 @@ jobs:
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
+      # Skia 渲染核心 spike:d3d+textlayout+jpeg/pdf 组合必须命中预编译二进制;
+      # 链接失败或触发本地编 Skia 都在这里暴露。d3d 特性由 render/server 的
+      # cfg(windows) 依赖声明,无需 --features。prebuilt-only 让预编译缺失时
+      # 立刻失败,而不是本地编 Skia 十几分钟后才失败。
+      - name: Skia d3d 预编译命中
+        run: cargo build --release -p lueying-render --features prebuilt-only --locked
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
         # 只编发版真正用到的包;64 位 E2E 宿主每次 push/PR 都编。
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
         run: cargo build --release --locked -p lueying-server -p lueying-tsf -p lueying-installer
-      # Skia 渲染核心 spike:d3d+textlayout 组合必须命中预编译二进制;
-      # 链接失败或触发本地编 Skia 都在这里暴露。d3d 特性由 render 的
-      # cfg(windows) 依赖声明,无需 --features。首跑清单刚变,锁由
-      # fmt job 落库后才允许 --locked,这里先放开。
-      - name: Skia d3d 预编译命中
-        run: cargo build --release -p lueying-render
       - name: Build Windows E2E harness
         id: build_e2e
         run: cargo build --release --locked -p lueying-win-e2e

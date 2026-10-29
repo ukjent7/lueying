@@ -5,9 +5,15 @@ edition.workspace = true
 license.workspace = true
 description = "候选窗 Skia 渲染核心:平台无关,吃数据出帧"
 
+[features]
+# CI 门禁:只走预编译二进制。预编译缺失时立刻失败,而不是退化成十几分钟的
+# 本地编 Skia(失败原因还埋在日志里)。
+prebuilt-only = ["skia-safe/no-compile"]
+
 [dependencies]
 skia-safe.workspace = true
 
 # D3D 后端只在 Windows 参与构建;Linux/E2E 用光栅出帧。
+# d3d 会连带 ganesh,Windows 侧的预编译键因此是 d3d-ganesh-jpegd-jpege-pdf-textlayout。
 [target.'cfg(windows)'.dependencies]
 skia-safe = { workspace = true, features = ["d3d"] }
