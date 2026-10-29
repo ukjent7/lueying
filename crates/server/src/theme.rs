@@ -115,10 +115,10 @@ pub fn colors_with(appearance: Appearance, accent: usize) -> Colors {
         Appearance::Dark => ACCENTS.get(accent).map(|a| a.dark),
     };
     if let Some([accent, accent_hover, accent_text, selected_bg]) = preset {
-        colors.accent = *accent;
-        colors.accent_hover = *accent_hover;
-        colors.accent_text = *accent_text;
-        colors.selected_bg = *selected_bg;
+        colors.accent = accent;
+        colors.accent_hover = accent_hover;
+        colors.accent_text = accent_text;
+        colors.selected_bg = selected_bg;
     }
     colors
 }

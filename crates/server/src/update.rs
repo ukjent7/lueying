@@ -143,7 +143,7 @@ fn releases_list() -> Result<Vec<Release>, String> {
         .cloned()
         .unwrap_or_default()
         .iter()
-        .filter_map(release_from_value)
+        .filter_map(|value| release_from_value(value).ok())
         .collect();
     Ok(list)
 }
