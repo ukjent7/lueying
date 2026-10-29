@@ -131,7 +131,7 @@ fn provider_error_text_reaches_queue() {
         .call("hotkey", "register", r#"{"id":"paste"}"#, 3)
         .unwrap();
     let completions = registry.take_completions();
-    assert_eq!(completions[0].result.as_deref(), Err("热键已注册: paste"));
+    assert_eq!(completions[0].result, Err("热键已注册: paste".to_string()));
 }
 
 /// 完成可以来自任意线程;泵任务只管抽队列。
@@ -143,7 +143,7 @@ fn completion_from_another_thread() {
         fn call(&self, _method: &str, _args: &str, done: Done) -> Result<(), String> {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(10));
-                done.complete(Ok(r#"{"delivered":true}"#));
+                done.complete(Ok(r#"{"delivered":true}"#.to_string()));
             });
             Ok(())
         }

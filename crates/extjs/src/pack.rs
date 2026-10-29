@@ -11,7 +11,7 @@ use lueying_extsvc::Registry;
 
 use crate::MAX_FAULTS;
 use crate::host::{Host, Invoke, Limits, Settled};
-use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Service};
+use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
 use crate::scene::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";

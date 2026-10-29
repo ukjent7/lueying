@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
-use rquickjs::{Context, Ctx, Func, Function};
+use rquickjs::function::Func;
+use rquickjs::{Context, Ctx, Function};
 use serde::Deserialize;
 
 use crate::SCENE_API;
