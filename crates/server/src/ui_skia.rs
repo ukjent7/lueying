@@ -503,8 +503,8 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
     ctx.state
         .candidate_above
         .store(prefer_above, Ordering::Relaxed);
-    let y = (if prefer_above { over } else { below })
-        .clamp(work.top, (work.bottom - h).max(work.top));
+    let y =
+        (if prefer_above { over } else { below }).clamp(work.top, (work.bottom - h).max(work.top));
     let x = left.clamp(work.left, (work.right - w).max(work.left));
     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
     let hidden = ui_place::foreground_fullscreen_at(left, b, host_pid);
