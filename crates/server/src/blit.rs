@@ -10,7 +10,7 @@ use skia_safe::Surface;
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, SIZE};
 use windows::Win32::Graphics::Gdi::{
     BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HDC, HBITMAP, HGDIOBJ, ReleaseDC, SRCCOPY,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SRCCOPY,
     SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
@@ -144,8 +144,9 @@ impl Layer {
                 ..Default::default()
             };
             let mut bits: *mut c_void = ptr::null_mut();
-            let dib = CreateDIBSection(Some(self.mem_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
-                .map_err(|e| format!("CreateDIBSection: {e}"))?;
+            let dib =
+                CreateDIBSection(Some(self.mem_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
+                    .map_err(|e| format!("CreateDIBSection: {e}"))?;
             let old = SelectObject(self.mem_dc, HGDIOBJ(dib.0));
             self.dib = Some(dib);
             self.bits = bits;
