@@ -38,12 +38,14 @@
 
 #![deny(missing_docs)]
 
+mod bindings;
 mod host;
 mod manifest;
 mod pack;
 mod runtime;
 mod scene;
 
+pub use bindings::{Binding, BindingTable, Hotkey, Input, Modifier};
 pub use host::{Host, Invoke, Limits, Settled};
 pub use lueying_extsvc::{Completion, Done, Provider, Registry};
 pub use manifest::{

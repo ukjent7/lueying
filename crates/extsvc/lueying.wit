@@ -62,7 +62,8 @@ interface panel {
   show: func(options: show-options) -> result<show-result, string>;
 }
 
-// 全局热键:注册与注销;注册冲突时返回 Err。
+// 全局热键:注册与注销;注册冲突时返回 Err。press 等一次触发:扩展在
+// async 循环里反复调用,每个热键事件兑现一次挂起的调用。
 interface hotkey {
   record register-options {
     id: string,
@@ -74,6 +75,10 @@ interface hotkey {
     id: string,
   }
   unregister: func(options: unregister-options) -> result<string, string>;
+  record press-options {
+    id: string,
+  }
+  press: func(options: press-options) -> result<string, string>;
 }
 
 // 系统通知。

@@ -61,6 +61,21 @@ fn extensions_key_keeps_order_and_skips_bad_items() {
 }
 
 #[test]
+fn bindings_key_parses_pairs_and_skips_bad_items() {
+    let cfg = load_text(
+        "bind",
+        "bindings=Ctrl+Alt+O=shot.run, bad-item,, Ctrl+Shift+L=clip.search ,Ctrl+Alt+O=dup,=empty,x=\n",
+    );
+    assert_eq!(
+        cfg.bindings,
+        vec![
+            ("Ctrl+Alt+O".to_string(), "shot.run".to_string()),
+            ("Ctrl+Shift+L".to_string(), "clip.search".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn extensions_key_replaces_legacy_script() {
     let cfg = load_text("both", "script=old-pack\nextensions=new-pack\n");
     assert_eq!(cfg.extensions, vec!["new-pack"]);

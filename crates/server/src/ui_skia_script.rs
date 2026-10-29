@@ -9,8 +9,9 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use lueying_extjs::bindings::BindingTable;
 use lueying_extjs::{
-    EffectSlot, EffectsPatch, Limits, Registry, Runtime, SceneIn, ScenePatch, Service,
+    EffectSlot, EffectsPatch, Invoke, Limits, Registry, Runtime, SceneIn, ScenePatch, Service,
 };
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
@@ -91,6 +92,9 @@ fn worker(
 ) {
     let mut order: Vec<String> = Vec::new();
     let mut runtime: Option<Runtime> = None;
+    let hotkey = Arc::new(services::HotkeyProvider::default());
+    let mut bindings = BindingTable::default();
+    let mut bound: Vec<(String, String)> = Vec::new();
     let mut reported: Option<String> = None;
     let mut last_seq = 0;
     let mut next_config = Instant::now();
@@ -101,12 +105,20 @@ fn worker(
         if now >= next_config {
             next_config = now + CONFIG;
             let want = configured(&state);
-            if want != order {
+            let want_binds = configured_bindings(&state);
+            let order_changed = want != order;
+            if order_changed {
                 order = want;
-                runtime = load(&order);
+                // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
+                hotkey.reset();
+                runtime = load(&order, &hotkey);
                 reported = None;
                 // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
                 let _ = patches.send((last_seq, None));
+            }
+            if order_changed || want_binds != bound {
+                bound = want_binds;
+                bindings = bind_rows(&state, runtime.as_ref(), &hotkey);
             }
         }
         if now >= next_poll {
@@ -117,12 +129,6 @@ fn worker(
                 if removed > 0 {
                     let _ = patches.send((last_seq, None));
                 }
-                // 推进挂起的异步命令;没有挂起任务时这是零成本检查。
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|elapsed| elapsed.as_millis() as u64)
-                    .unwrap_or(0);
-                let _ = current.pump(now_ms);
                 for id in &order {
                     let Some(error) = current.error(id) else {
                         continue;
@@ -135,6 +141,11 @@ fn worker(
                 }
             }
         }
+        if let Some(current) = runtime.as_mut() {
+            // 热键触发与异步命令推进;没有热键和挂起任务时都是微秒级空检查。
+            dispatch_hotkey(&state, current, &hotkey, &bindings);
+            let _ = current.pump(unix_ms());
+        }
         let Some((seq, scene)) = latest.lock().unwrap_or_else(|p| p.into_inner()).take() else {
             continue;
         };
@@ -144,6 +155,112 @@ fn worker(
             .and_then(|runtime| runtime.dispatch(&scene));
         let _ = patches.send((seq, patch));
     }
+}
+
+/// 配置里的绑定行;配置变化检查用。
+fn configured_bindings(state: &State) -> Vec<(String, String)> {
+    state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .bindings
+        .clone()
+}
+
+/// 配置绑定行 → 建绑定表并注册热键;命令不存在或组合不合法的行写日志跳过。
+/// 行号即 [`services::HotkeyProvider::bind`] 的注册序号,触发事件按它回带。
+fn bind_rows(
+    state: &State,
+    runtime: Option<&Runtime>,
+    hotkey: &services::HotkeyProvider,
+) -> BindingTable {
+    let rows = configured_bindings(state);
+    let mut table = BindingTable::default();
+    // 清空的绑定也要摘掉旧注册,否则组合键仍被输入法吃掉。
+    hotkey.unbind_users();
+    if rows.is_empty() {
+        return table;
+    }
+    let Some(runtime) = runtime else {
+        println!("扩展未启用,{} 条绑定忽略", rows.len());
+        return table;
+    };
+    for (combo, command) in rows {
+        let Some(info) = runtime.command(&command) else {
+            println!("绑定 {combo} 跳过:没有命令 {command}");
+            continue;
+        };
+        if let Err(error) = table.insert(&combo, command, info.when) {
+            println!("绑定 {combo} 跳过:{error}");
+            continue;
+        }
+        let row = table.rows().len() - 1;
+        if let Err(error) = hotkey.bind(row, &combo) {
+            println!("绑定 {combo} 注册失败:{error}");
+        }
+    }
+    table
+}
+
+/// 收热键触发:扩展 press 已在 pump 里就地兑现;用户绑定行按 when 过滤后
+/// 执行,结果与错误都写日志。破坏性确认与命令面板入口随 T4 后续任务接上。
+fn dispatch_hotkey(
+    state: &State,
+    runtime: &mut Runtime,
+    hotkey: &services::HotkeyProvider,
+    bindings: &BindingTable,
+) {
+    let fired = hotkey.pump();
+    if fired.is_empty() {
+        return;
+    }
+    let input = session_input(state);
+    for row in fired {
+        let Some(binding) = bindings.rows().get(row) else {
+            continue;
+        };
+        if !input.allows(binding.when) {
+            println!("热键 {} 跳过:当前输入状态不满足 when", binding.hotkey);
+            continue;
+        }
+        match runtime.invoke(&binding.command, "{}") {
+            Ok(Invoke::Done(json)) => {
+                println!("热键 {} 执行 {} → {json}", binding.hotkey, binding.command)
+            }
+            Ok(Invoke::Pending(_)) => {
+                println!("热键 {} 触发 {}(异步执行)", binding.hotkey, binding.command)
+            }
+            Err(error) => println!("热键 {} 执行失败:{error}", binding.hotkey),
+        }
+        // 立刻泵几轮,快命令当次结算;等服务与长定时器的由循环节拍收尾。
+        let now_ms = unix_ms();
+        for _ in 0..32 {
+            if runtime.pending() == 0 {
+                break;
+            }
+            let _ = runtime.pump(now_ms);
+        }
+    }
+}
+
+/// 触发时刻的输入状态:活跃会话在即可编辑,其组合在即组句。
+fn session_input(state: &State) -> lueying_extjs::bindings::Input {
+    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
+    let active = sessions.get(&state.active.load(Ordering::Relaxed));
+    lueying_extjs::bindings::Input {
+        editable: active.is_some(),
+        composing: active
+            .and_then(|session| session.engine.composition())
+            .is_some(),
+    }
+}
+
+/// Unix 毫秒;扩展的 lueying.timeout 以它为宿主时钟。
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// 配置里生效的扩展 id,按组合顺序;空表示不启用。
@@ -157,8 +274,9 @@ fn configured(state: &State) -> Vec<String> {
 }
 
 /// 按配置顺序打开扩展;坏包只记日志,不影响其他扩展。
-/// 服务缝装上 Windows 提供者;output/panel 是 T6/T4 的占位,回明确错误。
-fn load(order: &[String]) -> Option<Runtime> {
+/// 服务缝装上 Windows 提供者;output/panel 是 T6/T4b 的占位,回明确错误。
+/// 热键提供者由 worker 持有,换扩展时其注册整表重建,不随运行期重建。
+fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runtime> {
     if order.is_empty() {
         return None;
     }
@@ -171,10 +289,7 @@ fn load(order: &[String]) -> Option<Runtime> {
     registry.set(Service::Ocr, Arc::new(services::OcrProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     registry.set(Service::Panel, Arc::new(services::PanelProvider));
-    registry.set(
-        Service::Hotkey,
-        Arc::new(services::HotkeyProvider::default()),
-    );
+    registry.set(Service::Hotkey, Arc::clone(hotkey));
     registry.set(Service::Notify, Arc::new(services::NotifyProvider));
     let (runtime, errors) = Runtime::open_with(&root, order, Limits::default(), registry);
     for error in errors {

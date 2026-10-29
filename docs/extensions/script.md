@@ -93,7 +93,12 @@ lueying.command("run", (args) => {
 - 命令失败与派发失败共用连续失败计数,连续 3 次停用该扩展。
 - `when` 可选 `any`、`editable`、`composing`,由宿主在绑定时过滤。
 
-命令面板、全局热键与输入内触发在后续阶段接线;当前宿主已能按完整 id 调用命令,Scope 随扩展卸载整体回收。异步示例:
+全局热键由宿主的用户绑定表管理,扩展清单里的 `activate.hotkeys` 只是建议。
+`config.ini` 写 `bindings=Ctrl+Alt+O=my-pack.run,...` 把组合串映射到完整
+命令 id;宿主强制至少两个修饰键、拒绝系统保留组合,同组合冲突时报已绑定的
+命令。命中后按命令的 `when` 与当前输入状态过滤,再执行命令并写日志。命令
+面板与输入内触发在后续阶段接线;当前宿主已能按完整 id 调用命令,Scope 随
+扩展卸载整体回收。异步示例:
 
 ```js
 lueying.command("later", async (args) => {
@@ -117,7 +122,7 @@ v1 开放:
 | ocr | `recognize({file, lang?})` | 文字识别,返回 `{text, lang}` |
 | output | `deliver({text})` | 把文本送进当前输入焦点,返回 `{delivered}` |
 | panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}` |
-| hotkey | `register({id, modifiers, key})` / `unregister({id})` | 全局热键,冲突报错 |
+| hotkey | `register({id, modifiers, key})` / `unregister({id})` / `press({id})` | 全局热键,冲突报错;`press` 等一次触发,扩展在 async 循环里反复调用 |
 | notify | `show({title, body})` | 系统通知 |
 
 剪贴板、网络与存储在 v1 没有开放接口;声明了也调不到。

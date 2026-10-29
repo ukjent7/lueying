@@ -147,7 +147,7 @@ pub fn methods(service: Service) -> &'static [&'static str] {
         Service::Ocr => &["recognize"],
         Service::Output => &["deliver"],
         Service::Panel => &["show"],
-        Service::Hotkey => &["register", "unregister"],
+        Service::Hotkey => &["register", "unregister", "press"],
         Service::Notify => &["show"],
         Service::Clipboard | Service::Net | Service::Store => &[],
     }

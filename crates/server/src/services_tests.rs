@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 
 use lueying_extjs::{Completion, Registry};
 use lueying_extmeta::Service;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VK_CONTROL, VK_MENU, VIRTUAL_KEY,
+};
 
 use crate::services::{
     CaptureProvider, HotkeyProvider, NotifyProvider, OcrProvider, OutputProvider, PanelProvider,
@@ -117,6 +120,91 @@ fn hotkey_register_conflict_unregister() {
     assert!(released.result.is_ok(), "{released:?}");
     let third = register(&registry, "paste");
     assert!(third.result.is_ok(), "{third:?}");
+}
+
+/// 真实注入一次 Ctrl+Alt+<key>;WM_HOTKEY 投到注册线程的队列,由 pump 收取。
+fn send_combo(key: VIRTUAL_KEY) {
+    let press = |vk: VIRTUAL_KEY, up: bool| {
+        let mut input = INPUT::default();
+        input.r#type = INPUT_KEYBOARD;
+        input.Anonymous.ki.wVk = vk;
+        if up {
+            input.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+        }
+        input
+    };
+    let inputs = [
+        press(VK_CONTROL, false),
+        press(VK_MENU, false),
+        press(key, false),
+        press(key, true),
+        press(VK_MENU, true),
+        press(VK_CONTROL, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    assert_eq!(sent as usize, inputs.len(), "SendInput 被拦截");
+}
+
+#[test]
+fn hotkey_user_binding_fires() {
+    let hotkey = HotkeyProvider::default();
+    hotkey.bind(0, "Ctrl+Alt+J").expect("绑定注册失败");
+    send_combo(VIRTUAL_KEY(0x4A)); // J
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(hotkey.pump(), vec![0], "触发行号不符");
+    hotkey.reset();
+    hotkey.bind(1, "Ctrl+Alt+J").expect("reset 后应可重注册");
+    hotkey.reset();
+}
+
+#[test]
+fn hotkey_bind_rejects_bad_and_conflicting_combos() {
+    let hotkey = HotkeyProvider::default();
+    assert!(hotkey.bind(0, "Ctrl+O").is_err(), "单修饰键要拒");
+    assert!(hotkey.bind(0, "Ctrl+Alt+Del").is_err(), "保留组合要拒");
+    hotkey.bind(0, "Ctrl+Alt+H").expect("绑定注册失败");
+    // 同组合再注册:OS 层冲突,错误文本可读。
+    let error = hotkey.bind(1, "ctrl+alt+h").expect_err("应冲突");
+    assert!(error.contains("热键注册失败"), "{error}");
+    hotkey.reset();
+    hotkey.bind(2, "Ctrl+Alt+H").expect("reset 后应可重注册");
+    hotkey.reset();
+}
+
+#[test]
+fn hotkey_press_resolves_on_fire() {
+    let registry = Registry::new();
+    let hotkey = Arc::new(HotkeyProvider::default());
+    registry.set(Service::Hotkey, Arc::clone(&hotkey));
+    registry
+        .call(
+            "hotkey",
+            "register",
+            r#"{"id":"paste","modifiers":["ctrl","alt"],"key":"N"}"#,
+            1,
+        )
+        .unwrap();
+    let registered = wait_completion(&registry, Duration::from_secs(5)).expect("注册未回传");
+    assert!(registered.result.is_ok(), "{registered:?}");
+    registry
+        .call("hotkey", "press", r#"{"id":"ghost"}"#, 2)
+        .unwrap();
+    let missing = wait_completion(&registry, Duration::from_secs(5)).expect("未回传");
+    assert_eq!(missing.result.as_deref(), Err("热键未注册: ghost"));
+    registry
+        .call("hotkey", "press", r#"{"id":"paste"}"#, 3)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        registry.take_completions().is_empty(),
+        "press 不能在触发前回传"
+    );
+    send_combo(VIRTUAL_KEY(0x4E)); // N
+    std::thread::sleep(Duration::from_millis(300));
+    hotkey.pump(); // 扩展线程的循环节拍在测试里由本线程代收
+    let pressed = wait_completion(&registry, Duration::from_secs(5)).expect("press 未回传");
+    assert_eq!(pressed.result.as_deref(), Ok(r#"{"pressed":true}"#));
+    hotkey.reset();
 }
 
 #[test]

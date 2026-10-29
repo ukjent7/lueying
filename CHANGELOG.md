@@ -6,6 +6,14 @@
 
 ### 新增
 
+- 扩展入口·绑定表与全局热键(T4a):用户绑定表由宿主管理,`config.ini` 的
+  `bindings=Ctrl+Alt+O=shot.run,...` 把组合串映射到完整命令 id,宿主强制
+  两个修饰键、拒绝系统保留组合,表内冲突报已绑定的命令;`when` 过滤(any/
+  editable/composing)按触发时刻的会话状态放行。热键在扩展线程注册与收取,
+  WM_HOTKEY 经消息泵兑现:`hotkey.press` 让扩展挂起等触发(async 循环里
+  反复调用),用户绑定命中后执行命令并记日志;换扩展或改绑定时 OS 注册
+  整表重建,不会残留旧组合。Windows 集成测试用真实按键注入覆盖注册冲突、
+  触发派发与 press 兑现。
 - 异步命令的被打断语义闭环:quickjs-ng 对不可捕获的中断异常跳过 Promise
   capability reject,被步进预算杀掉的作业永远不结算;宿主在泵里检测到打断
   后清零挂起记账(等价于丢弃本轮被杀的根任务),并去掉按挂起数跳泵的旁路,
@@ -13,7 +21,7 @@
   中断后宿主可用。
 - Windows 服务提供者:capture 用 GDI 截虚拟桌面或指定区域写 32 位 BMP,ocr
   走 Windows.Media.Ocr(请求语言不支持时回退用户语言并报实际语言),hotkey
-  做注册/冲突/注销语义(消息泵与派发在 T4),notify 落日志;output 与 panel
+  做注册/冲突/注销语义,notify 落日志;output 与 panel
   是 T6/T4 的占位,回明确错误文本。服务端 worker 装填提供者;CI 的 Windows
   job 增加服务端 lib 测试,跑真截图与真识别的提供者集成验证。
 - 服务缝 v1(T3):六项宿主服务 capture/ocr/output/panel/hotkey/notify 走

@@ -72,6 +72,7 @@
         "hotkey",
         "unregister"
       ),
+      press: serviceFn("lueying.hotkey.press", "hotkey", "press"),
     },
     notify: { show: serviceFn("lueying.notify.show", "notify", "show") },
   };

@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use lueying_extjs::bindings::{BindingTable, Input};
 use lueying_extjs::{
-    Done, Invoke, Limits, Pack, Poll, Provider, Registry, Runtime, SceneIn, Service,
+    Done, Invoke, Limits, Pack, Poll, Provider, Registry, Runtime, SceneIn, Service, When,
 };
 
 fn push(
@@ -1026,6 +1027,107 @@ lueying.command("try_ocr", function () {
     );
 }
 
+/// 用户绑定表(T4 入口):解析归一、语法与保留组合拒绝、表内冲突、when 过滤。
+fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
+    let parse = |combo: &str| lueying_extjs::bindings::parse(combo);
+    let canonical = parse("alt+CTRL+o").map(|hotkey| hotkey.canonical());
+    push(
+        checks,
+        "组合串归一",
+        canonical.as_deref() == Some("Ctrl+Alt+O"),
+        format!("{canonical:?}"),
+    );
+    for (combo, why) in [
+        ("Ctrl+O", "单修饰键"),
+        ("Ctrl+Alt+O+P", "多主键"),
+        ("Ctrl+Ctrl+O", "重复修饰键"),
+        ("Ctrl+Shift+F13", "F 键越界"),
+    ] {
+        let error = parse(combo).err().unwrap_or_default();
+        push(
+            checks,
+            "语法拒绝",
+            !error.is_empty(),
+            format!("{why}:{error:?}"),
+        );
+    }
+    let mut reserved_ok = true;
+    let mut reserved_note = String::new();
+    for combo in ["Ctrl+Alt+Del", "Ctrl+Shift+Esc", "Ctrl+Win+Space", "Ctrl+Win+Left"] {
+        match parse(combo) {
+            Ok(_) => {
+                reserved_ok = false;
+                reserved_note.push_str(combo);
+            }
+            Err(error) => reserved_note.push_str(&error),
+        }
+    }
+    push(checks, "保留组合被拒", reserved_ok, reserved_note);
+    let mut table = BindingTable::default();
+    table
+        .insert("Ctrl+Alt+O", "shot.run".to_string(), When::Any)
+        .unwrap();
+    let conflict = table
+        .insert("alt+ctrl+o", "clip.search".to_string(), When::Any)
+        .err();
+    push(
+        checks,
+        "表内冲突带占用者",
+        conflict.as_deref() == Some("热键 Ctrl+Alt+O 已绑定 shot.run"),
+        conflict.unwrap_or_default(),
+    );
+    let mut table = BindingTable::default();
+    table
+        .insert("Ctrl+Alt+C", "shot.run".to_string(), When::Composing)
+        .unwrap();
+    table
+        .insert("Ctrl+Alt+E", "clip.search".to_string(), When::Editable)
+        .unwrap();
+    let hit = table
+        .hit(
+            "ctrl+alt+c",
+            Input {
+                editable: true,
+                composing: true,
+            },
+        )
+        .map(|binding| binding.command.as_str());
+    push(
+        checks,
+        "when 过滤:组句态命中 composing",
+        hit == Some("shot.run"),
+        format!("{hit:?}"),
+    );
+    let missed = table.hit(
+        "ctrl+alt+c",
+        Input {
+            editable: true,
+            composing: false,
+        },
+    );
+    push(
+        checks,
+        "when 过滤:非组句态放过 composing",
+        missed.is_none(),
+        "None".to_string(),
+    );
+    let hit = table
+        .hit(
+            "ctrl+alt+e",
+            Input {
+                editable: true,
+                composing: false,
+            },
+        )
+        .map(|binding| binding.command.as_str());
+    push(
+        checks,
+        "when 过滤:可编辑态命中 editable",
+        hit == Some("clip.search"),
+        format!("{hit:?}"),
+    );
+}
+
 /// 运行全部检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
@@ -1034,6 +1136,7 @@ pub fn run(report: &mut String) -> usize {
     runtime(&mut checks);
     async_commands(&mut checks);
     services(&mut checks);
+    hotkey_bindings(&mut checks);
     scene(&mut checks);
     patches(&mut checks);
     budget(&mut checks);

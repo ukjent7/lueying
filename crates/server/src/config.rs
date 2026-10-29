@@ -199,6 +199,8 @@ pub struct AppConfig {
     pub effects: bool,
     /// 启用的运行期脚本扩展 id,按组合顺序排列;空表示不启用。
     pub extensions: Vec<String>,
+    /// 扩展命令的全局热键绑定:(组合串, 完整命令 id);空表示没有绑定。
+    pub bindings: Vec<(String, String)>,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -223,6 +225,7 @@ impl Default for AppConfig {
             ui_accent: 0,
             effects: true,
             extensions: Vec::new(),
+            bindings: Vec::new(),
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -390,6 +393,8 @@ pub fn load(path: &Path) -> AppConfig {
             }
             // 运行期脚本扩展:逗号分隔的有序列表,顺序即组合顺序。
             "extensions" => cfg.extensions = parse_extensions(value),
+            // 扩展命令热键:`Ctrl+Alt+O=shot.run,Ctrl+Shift+L=clip.search`。
+            "bindings" | "bind" => cfg.bindings = parse_bindings(value),
             // 旧键:单个扩展 id;空值或 off 表示不启用。
             "script" | "extension" => {
                 if matches!(value, "" | "off" | "none") {
@@ -518,6 +523,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          ui_accent={}\n\
          effects={}\n\
          extensions={}\n\
+         bindings={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -533,6 +539,11 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.ui_accent,
         if cfg.effects { "on" } else { "off" },
         cfg.extensions.join(","),
+        cfg.bindings
+            .iter()
+            .map(|(combo, command)| format!("{combo}={command}"))
+            .collect::<Vec<_>>()
+            .join(","),
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");
@@ -567,6 +578,30 @@ fn parse_extensions(value: &str) -> Vec<String> {
         if valid_script_id(id) && !out.iter().any(|existing| existing == id) {
             out.push(id.to_string());
         }
+    }
+    out
+}
+
+/// `组合串=命令 id` 列表:逐项 trim、按组合去重,坏项直接丢掉。
+/// 组合与命令的严格校验在建绑定表时做,这里只保证格式可拆。
+fn parse_bindings(value: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for item in value.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let Some((combo, command)) = item.split_once('=') else {
+            continue;
+        };
+        let (combo, command) = (combo.trim(), command.trim());
+        if combo.is_empty() || command.is_empty() {
+            continue;
+        }
+        if out.iter().any(|(existing, _)| existing == combo) {
+            continue;
+        }
+        out.push((combo.to_string(), command.to_string()));
     }
     out
 }
