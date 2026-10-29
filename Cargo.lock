@@ -265,6 +265,7 @@ name = "lueying-extjs"
 version = "0.1.0"
 dependencies = [
  "lueying-extmeta",
+ "lueying-extsvc",
  "rquickjs",
  "serde",
  "serde_json",
@@ -276,6 +277,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "lueying-extsvc"
+version = "0.1.0"
+dependencies = [
+ "lueying-extmeta",
 ]
 
 [[package]]

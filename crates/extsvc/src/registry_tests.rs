@@ -94,7 +94,10 @@ fn call_without_provider_is_rejected() {
 #[test]
 fn provider_receives_method_and_completes_queue() {
     let registry = Registry::new();
-    let provider = fake(true, r#"{"file":"C:\\tmp\\shot.bmp","width":800,"height":200}"#);
+    let provider = fake(
+        true,
+        r#"{"file":"C:\\tmp\\shot.bmp","width":800,"height":200}"#,
+    );
     registry.set(Service::Capture, provider.clone());
     assert!(registry.has(Service::Capture));
     registry
@@ -128,10 +131,7 @@ fn provider_error_text_reaches_queue() {
         .call("hotkey", "register", r#"{"id":"paste"}"#, 3)
         .unwrap();
     let completions = registry.take_completions();
-    assert_eq!(
-        completions[0].result.as_deref(),
-        Err("热键已注册: paste")
-    );
+    assert_eq!(completions[0].result.as_deref(), Err("热键已注册: paste"));
 }
 
 /// 完成可以来自任意线程;泵任务只管抽队列。
@@ -149,7 +149,9 @@ fn completion_from_another_thread() {
         }
     }
     registry.set(Service::Output, Arc::new(Threaded));
-    registry.call("output", "deliver", r#"{"text":"你好"}"#, 9).unwrap();
+    registry
+        .call("output", "deliver", r#"{"text":"你好"}"#, 9)
+        .unwrap();
     assert!(!registry.has_completions());
     let completions = registry.take_completions();
     assert!(completions.is_empty());
@@ -165,7 +167,9 @@ fn set_replaces_provider() {
     let registry = Registry::new();
     registry.set(Service::Ocr, fake(true, r#"{"text":"一"}"#));
     registry.set(Service::Ocr, fake(true, r#"{"text":"二"}"#));
-    registry.call("ocr", "recognize", r#"{"file":"a"}"#, 1).unwrap();
+    registry
+        .call("ocr", "recognize", r#"{"file":"a"}"#, 1)
+        .unwrap();
     let completions = registry.take_completions();
     assert_eq!(completions[0].result.as_deref(), Ok(r#"{"text":"二"}"#));
 }

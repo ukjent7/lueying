@@ -785,8 +785,7 @@ impl Provider for FakeOcr {
         if method != "recognize" {
             return Err(format!("假 ocr 不认识方法 {method}"));
         }
-        let parsed: serde_json::Value =
-            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         if parsed["file"].as_str().unwrap_or_default().is_empty() {
             done.complete(Err("缺 file".into()));
             return Ok(());
@@ -807,8 +806,7 @@ impl Provider for FakeOutput {
         if method != "deliver" {
             return Err(format!("假 output 不认识方法 {method}"));
         }
-        let parsed: serde_json::Value =
-            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         self.delivered
             .lock()
             .unwrap()
@@ -857,8 +855,7 @@ impl Provider for FakeHotkey {
         if method != "register" {
             return Err(format!("假 hotkey 不认识方法 {method}"));
         }
-        let parsed: serde_json::Value =
-            serde_json::from_str(args).map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let id = parsed["id"].as_str().unwrap_or_default().to_string();
         let mut ids = self.registered.lock().unwrap();
         if ids.contains(&id) {
@@ -920,8 +917,7 @@ lueying.command("try_ocr", function () {
     registry.set(Service::Panel, panel.clone());
     registry.set(Service::Hotkey, Arc::new(FakeHotkey::default()));
     let order = vec!["svc".to_string(), "gate".to_string()];
-    let (mut runtime, errors) =
-        Runtime::open_with(&temp.root, &order, Limits::default(), registry);
+    let (mut runtime, errors) = Runtime::open_with(&temp.root, &order, Limits::default(), registry);
     if !errors.is_empty() {
         push(checks, "服务包打开", false, format!("{errors:?}"));
         return;
