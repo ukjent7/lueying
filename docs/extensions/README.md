@@ -110,7 +110,7 @@ impl Scheme for Uppercase {
 
 ## 测试
 
-扩展用 E2E 验证,不写孤立单元测试。参考 `crates/e2e/src/extensions.rs`:
+扩展以 E2E 为主:复杂链路与跨方案行为用 `crates/e2e/src/extensions.rs` 验证;清单与补丁的纯逻辑边界另有单元测试(`crates/extjs/src/*_tests.rs`),补回归网密度:
 
 - 从按键序列走到候选、上屏、学习与跨方案召回。
 - 覆盖错误路径:辅码无匹配、短语坏行、方案切换后的组合清理。
