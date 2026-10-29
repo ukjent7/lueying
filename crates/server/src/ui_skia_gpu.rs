@@ -134,9 +134,8 @@ impl Pipeline {
             .ok_or("创建 D3D12 DirectContext 失败")?;
             // 只拿 DComp 做合成交换链,不建 DComp 表面,所以渲染设备可以不给。
             // 但 CreateDevice2 只接受 IUnknown,得把 D3D12 设备转成 DXGI 设备传进去。
-            let dxgi_device: IDXGIDevice = device
-                .cast()
-                .map_err(|e| format!("取 DXGI 设备: {e}"))?;
+            let dxgi_device: IDXGIDevice =
+                device.cast().map_err(|e| format!("取 DXGI 设备: {e}"))?;
             let dcomp: IDCompositionDevice = DCompositionCreateDevice2(&dxgi_device)
                 .map_err(|e| format!("DCompositionCreateDevice2: {e}"))?;
             let target = dcomp

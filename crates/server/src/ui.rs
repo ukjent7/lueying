@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use crate::imp::State;
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, Div, MouseButton, Point, ScrollDelta, SharedString,
-    Window, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint, prelude::*, px, rgb,
-    size,
+    Animation, AnimationExt, App, Bounds, Context, Div, MouseButton, Point, ScrollDelta,
+    SharedString, Window, WindowBounds, WindowKind, WindowOptions, div, ease_out_quint, prelude::*,
+    px, rgb, size,
 };
 use gpui_platform::application;
 use lueying_protocol::{Request, SessionView};
