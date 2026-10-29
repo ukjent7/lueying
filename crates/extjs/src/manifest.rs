@@ -1,7 +1,7 @@
 //! 外观宿主的清单兼容层:类型与校验在 `lueying-extmeta`,这里只保留源码上限。
 //!
 //! 旧版外观包(`{ "api": 1, "main": "index.js" }`)与新清单都由
-//! [`lueying_extmeta::Manifest`] 解析;外观宿主只要求包里带 `appearance`
+//! `lueying_extmeta::Manifest` 解析;外观宿主只要求包里带 `appearance`
 //! 组件(或旧版顶层 `api`/`main`)。
 
 pub use lueying_extmeta::{MAX_MANIFEST_BYTES, Manifest};

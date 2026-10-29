@@ -155,7 +155,7 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
             "escape",
             manifest_extra("escape", 1, r#""main":"../evil.js""#),
             GOOD,
-            "main",
+            "入口脚本",
         ),
         (
             "目录名与 id 不一致被拒",
@@ -471,10 +471,53 @@ fn reload(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
+/// 新清单:外观组件可加载;逻辑-only 包不进外观宿主;多组件包只取外观。
+fn manifests(checks: &mut Vec<(&'static str, bool, String)>) {
+    let temp = Temp::new("manifests");
+
+    let dir = temp.pack("appearance");
+    let manifest = r#"{"id":"appearance","name":"测试","version":"1.0.0","appearance":{"api":1,"main":"index.js"}}"#;
+    write_pack(&dir, manifest, GOOD);
+    if let Some(mut pack) = load_or_fail(checks, "新清单外观组件可加载", &dir) {
+        let accent = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+        push(
+            checks,
+            "新清单外观组件可派发",
+            accent == Some(0x123456),
+            format!("{accent:?}"),
+        );
+    }
+
+    let dir = temp.pack("multi");
+    let manifest = r#"{"id":"multi","name":"测试","version":"1.0.0","appearance":{"api":1},"logic":{"api":1,"module":"logic.wasm"}}"#;
+    write_pack(&dir, manifest, GOOD);
+    if let Some(mut pack) = load_or_fail(checks, "多组件包外观部分可加载", &dir) {
+        let accent = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+        push(
+            checks,
+            "多组件包只取外观组件",
+            accent == Some(0x123456),
+            format!("{accent:?}"),
+        );
+    }
+
+    let dir = temp.pack("logic-only");
+    let manifest = r#"{"id":"logic-only","name":"测试","version":"1.0.0","logic":{"api":1,"module":"logic.wasm"}}"#;
+    write_pack(&dir, manifest, GOOD);
+    let error = Pack::load(&dir).err();
+    push(
+        checks,
+        "逻辑包不进外观宿主",
+        error.as_deref().is_some_and(|e| e.contains("外观组件")),
+        format!("{error:?}"),
+    );
+}
+
 /// 运行全部检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     bad_packs(&mut checks);
+    manifests(&mut checks);
     scene(&mut checks);
     patches(&mut checks);
     budget(&mut checks);
