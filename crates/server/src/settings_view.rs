@@ -27,6 +27,7 @@ pub mod ids {
     pub const ACCENT: &str = "accent";
     pub const EFFECTS: &str = "effects";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
+    pub const SCRIPTS: &str = "scripts";
     pub const PREDICT: &str = "predict";
     pub const RESET_FUZZY: &str = "reset-fuzzy";
     pub const FUZZY: &str = "fuzzy";
@@ -87,6 +88,7 @@ pub enum Action {
     CheckUpdate,
     InstallUpdate(String),
     OpenEffects,
+    OpenScripts,
     OpenPhrases,
     OpenPunct,
     OpenApps,
@@ -328,6 +330,18 @@ impl Settings {
                         },
                     },
                     Row {
+                        label: "运行期脚本".to_string(),
+                        detail: self.script_detail(),
+                        control: Control::Buttons {
+                            items: vec![Button {
+                                id: Id::new(ids::SCRIPTS, 0),
+                                text: "目录".to_string(),
+                                kind: ButtonKind::Secondary,
+                                enabled: true,
+                            }],
+                        },
+                    },
+                    Row {
                         label: "下一词联想".to_string(),
                         detail: "按本机上屏词序补全".to_string(),
                         control: Control::Toggle {
@@ -541,6 +555,15 @@ impl Settings {
         }
     }
 
+    /// 运行期脚本那行的说明:启用了哪个包,或者怎么启用。
+    fn script_detail(&self) -> String {
+        if self.cfg.script.is_empty() {
+            "在 config.ini 写 script=<id> 启用".to_string()
+        } else {
+            format!("当前 {}", self.cfg.script)
+        }
+    }
+
     /// 模糊音统计有没有内容可重置。
     pub fn reset_enabled(&self) -> bool {
         self.groups.iter().any(|(_, count)| *count > 0)
@@ -631,6 +654,7 @@ impl Settings {
             }
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::EFFECTS => Some(Action::OpenEffects),
+            ids::SCRIPTS => Some(Action::OpenScripts),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),
@@ -721,6 +745,7 @@ impl Settings {
             Id::new(ids::ACCENT, 0),
             Id::new(ids::EFFECTS, 0),
             Id::new(ids::EFFECTS_TOGGLE, 0),
+            Id::new(ids::SCRIPTS, 0),
             Id::new(ids::PREDICT, 0),
             Id::new(ids::RESET_FUZZY, 0),
             Id::new(ids::FUZZY, 0),

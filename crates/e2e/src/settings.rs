@@ -10,7 +10,7 @@
 use lueying_features::SchemeId;
 use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
-use lueying_server::settings_view::{PageColors, Settings, ids};
+use lueying_server::settings_view::{Action, PageColors, Settings, ids};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -83,6 +83,21 @@ pub fn run(report: &mut String) -> usize {
         aux.is_some() && punct.is_some(),
         format!("辅助码={aux:?} 中文标点={punct:?}"),
     );
+
+    // 运行期脚本行:没启用时写怎么启用,启用后显示包名;目录按钮交给平台侧。
+    let idle = row_detail(&page, "候选", "运行期脚本");
+    settings.cfg.script = "demo-pack".to_string();
+    let active = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
+    let action = settings.activate(&Id::new(ids::SCRIPTS, 0));
+    push(
+        &mut checks,
+        "设置运行期脚本行",
+        idle.as_deref().is_some_and(|text| text.contains("script="))
+            && active.as_deref() == Some("当前 demo-pack")
+            && action == Some(Action::OpenScripts),
+        format!("未启用 {idle:?} 启用后 {active:?} 动作 {action:?}"),
+    );
+    settings.cfg.script.clear();
 
     // 点开关:配置跟着翻。
     let before = settings.cfg.aux;

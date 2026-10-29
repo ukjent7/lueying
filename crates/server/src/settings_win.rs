@@ -498,6 +498,7 @@ fn handle_action(hwnd: HWND, action: Action) {
         Action::Save => with_settings(hwnd, settings_actions::save),
         Action::ResetFuzzy => with_settings(hwnd, settings_actions::reset_fuzzy),
         Action::OpenEffects => with_settings(hwnd, settings_actions::open_effects),
+        Action::OpenScripts => with_settings(hwnd, settings_actions::open_scripts),
         Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),
         Action::OpenApps => with_settings(hwnd, settings_actions::open_apps),

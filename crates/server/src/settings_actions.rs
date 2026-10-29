@@ -178,6 +178,24 @@ pub fn open_effects(settings: &mut Settings) {
     }
 }
 
+/// 打开运行期脚本目录:没有就建,再拉起资源管理器。每个包一个子
+/// 目录,启用哪个由配置里的 `script` 决定。
+pub fn open_scripts(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let Some(dir) = config::extensions_dir() else {
+        settings.say(Notice::Error, "没有可写的扩展目录");
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        settings.say(Notice::Error, format!("建目录失败: {e}"));
+        return;
+    }
+    match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+        Ok(_) => settings.say(Notice::Info, format!("已打开 {}", dir.display())),
+        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
+    }
+}
+
 /// 导出用户词库到文件。
 pub fn export_user(settings: &mut Settings) {
     settings.confirm_clear = false;

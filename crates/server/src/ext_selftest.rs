@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use lueying_extjs::{Pack, SceneIn};
+use lueying_render::effect::{Slot, Uniforms};
 use lueying_server::config;
 
 /// 扩展包内容:每次派发计数加一,主题色随计数变化,便于断言隐私场景没被调用。
@@ -49,13 +50,13 @@ fn check() -> Result<(), String> {
 
 fn check_pack(dir: &Path) -> Result<(), String> {
     let mut pack = Pack::load(dir).map_err(|e| format!("加载: {e}"))?;
-    let patch = pack
+    let first = pack
         .dispatch(&SceneIn::default())
         .ok_or("普通场景没有补丁")?;
-    if patch.accent != Some(0x10_00_01) {
-        return Err(format!("首次派发主题色 {:?}", patch.accent));
+    if first.accent != Some(0x10_00_01) {
+        return Err(format!("首次派发主题色 {:?}", first.accent));
     }
-    if patch
+    if first
         .effects
         .as_ref()
         .and_then(|e| e.background.as_deref())
@@ -90,6 +91,20 @@ fn check_pack(dir: &Path) -> Result<(), String> {
             "高对比度补丁 {:?} / 效果 {:?}",
             patch.accent, patch.effects
         ));
+    }
+    // 脚本给的效果源码要真的能编译成 Skia shader,与候选窗同一条路径。
+    let fx = crate::ui_skia_script::ScriptFx::update(None, first);
+    let uniforms = Uniforms {
+        size: [32.0, 32.0],
+        time: 0.0,
+        anim: 1.0,
+        accent: [1.0, 0.0, 0.0, 0.0],
+    };
+    if fx
+        .shader(Slot::Background, &uniforms, (0.0, 0.0), 1.0)
+        .is_none()
+    {
+        return Err("脚本效果没有编译成 shader".into());
     }
     Ok(())
 }
