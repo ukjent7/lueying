@@ -6,6 +6,12 @@
 
 ### 新增
 
+- 扩展平台验证(任务书 V1–V8)进入 Windows E2E:V1 用 GDI 画中文样张走
+  Windows.Media.Ocr(普通 push 测语言包缺失行为,手动触发先装 zh-CN 能力
+  测质量),V3 出二进制体积基线,V5 实测 UIA 判断焦点可编辑性(含只读态
+  的结论),V8 实测 RegisterHotKey 注册/冲突/保留键;V2/V4/V7 记录方法与
+  依赖,等 T3/T4/T9 落地后补齐。报告写 `target/ext-verify-report.md`,
+  随 CI artifact 保留。
 - 异步命令:T2 步进模型。命令可以返回 Promise,`lueying.timeout(ms)` 提供
   宿主时钟延时;宿主按步进预算泵 QuickJS 作业队列(每步受派发时限,单轮
   至多 256 步),等待原生服务与定时器不计时;异步失败计入连续失败计数,

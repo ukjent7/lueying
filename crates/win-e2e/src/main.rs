@@ -11,3 +11,7 @@ fn main() {
 
 #[cfg(windows)]
 mod imp;
+
+/// 扩展平台验证(任务书 V1–V8):OCR、体积、UIA 可编辑、热键,报告进 artifact。
+#[cfg(windows)]
+mod verify;

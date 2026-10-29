@@ -239,6 +239,16 @@ jobs:
         id: build32
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
+      # V1 验证分两种模式:普通 push 只测「语言包缺失时的行为」;手动触发
+      # 先装 zh-CN OCR 能力,同一段代码给出中文识别质量。装不上也不挡链路。
+      - name: 安装中文 OCR 语言能力
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $cap = Get-WindowsCapability -Online | Where-Object Name -like 'Language.OCR*zh-CN*'
+          if ($cap) { Add-WindowsCapability -Online -Name $cap.Name | Out-Null } else { "镜像里没有 zh-CN OCR 能力包" }
+          exit 0
       - name: Windows 全链路 E2E
         if: steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
@@ -289,6 +299,7 @@ jobs:
           name: win-e2e-report
           path: |
             target/win-e2e-report.md
+            target/ext-verify-report.md
             target/win-e2e-tsf.log
             target/win-e2e-server.log
             target/lueying-settings-selftest.txt

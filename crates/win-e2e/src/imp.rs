@@ -497,11 +497,13 @@ fn real_run() -> Result<(String, String), String> {
         // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
         let keys = key_latency(edit, &log)?;
         let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
+        // 扩展平台验证放最后:它会抢焦点建自己的窗口,后面的检查都已完成。
+        let verify = crate::verify::section();
         let _ = unsafe { ui_source.UnadviseSink(ui_cookie) };
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{keys}\n\n{memory}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{keys}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();
