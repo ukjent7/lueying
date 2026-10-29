@@ -161,7 +161,9 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         );
     }
     // 像素搬进位图,再贴一次:走通 GDI 那一步。
-    window.layer.copy_pixels().map_err(|e| format!("搬像素: {e}"))?;
+    if let Err(e) = window.layer.copy_pixels() {
+        return Err(format!("搬像素: {e}"));
+    }
     unsafe {
         let hdc = GetDC(Some(hwnd));
         let blit = window.layer.blit(hdc, w, h);
@@ -181,8 +183,9 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     }
     // 卡片是圆角的,角上那一点落在圆角外,是窗口底色;取上边缘中点
     // 才是卡片底色。
-    let card_x = window.layout.card.left as i32 + window.layout.card.width() as i32 / 2;
-    let card_y = window.layout.card.top as i32 + 2;
+    let card_rect = window.layout.card;
+    let card_x = (card_rect.left + card_rect.width() / 2.0) as i32;
+    let card_y = card_rect.top as i32 + 2;
     let card = at(card_x, card_y);
     let expect_card = bgr(window.palette.bg);
     if card != expect_card {
