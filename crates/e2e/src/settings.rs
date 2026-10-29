@@ -119,7 +119,9 @@ pub fn run(report: &mut String) -> usize {
             && open == Some(Action::OpenScripts)
             && switched
             && settings.cfg.script.is_empty()
-            && missing.as_deref().is_some_and(|text| text.contains("未安装")),
+            && missing
+                .as_deref()
+                .is_some_and(|text| text.contains("未安装")),
         format!(
             "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?} 切换 {switched}"
         ),
