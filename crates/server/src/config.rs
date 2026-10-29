@@ -391,7 +391,8 @@ pub fn load(path: &Path) -> AppConfig {
                 match value.parse::<usize>() {
                     Ok(index) => cfg.ui_accent = index,
                     // 颜色名只在 Windows 下可解析(theme 是 Windows 模块)。
-                    Err(_) => {
+                    Err(_) =>
+                    {
                         #[cfg(windows)]
                         if let Some(index) = crate::theme::accent_index(value) {
                             cfg.ui_accent = index;

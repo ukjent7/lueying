@@ -67,7 +67,11 @@ fn load_set(state: &State) -> EffectSet {
 
 /// 效果开关;配置重载后立即生效。
 fn enabled(state: &State) -> bool {
-    state.config.read().unwrap_or_else(|p| p.into_inner()).effects
+    state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .effects
 }
 
 /// 效果目录的指纹:开关状态加三个文件的修改时间与大小。

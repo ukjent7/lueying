@@ -5,7 +5,7 @@
 //! 判定也在这里,窗口层只把命中结果翻译成协议请求。
 
 use skia_safe::{
-    BlurStyle, Canvas, ClipOp, Color, Font, MaskFilter, Paint, PaintStyle, Point, Rect, RRect,
+    BlurStyle, Canvas, ClipOp, Color, Font, MaskFilter, Paint, PaintStyle, Point, RRect, Rect,
     Shader, Vector,
 };
 
@@ -210,20 +210,29 @@ pub fn scrim_alpha(base: u32, text: u32, target: f32) -> f32 {
 
 /// 面板底上的文字:候选正文与序号。
 fn background_scrim(palette: &Palette) -> f32 {
-    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT)
-        .max(scrim_alpha(palette.bg, palette.text_tertiary, CONTRAST_WEAK))
+    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT).max(scrim_alpha(
+        palette.bg,
+        palette.text_tertiary,
+        CONTRAST_WEAK,
+    ))
 }
 
 /// 选中块上的文字:候选正文与序号。
 fn highlight_scrim(palette: &Palette) -> f32 {
-    scrim_alpha(palette.selected_bg, palette.selected_text, CONTRAST_TEXT)
-        .max(scrim_alpha(palette.selected_bg, palette.accent_text, CONTRAST_WEAK))
+    scrim_alpha(palette.selected_bg, palette.selected_text, CONTRAST_TEXT).max(scrim_alpha(
+        palette.selected_bg,
+        palette.accent_text,
+        CONTRAST_WEAK,
+    ))
 }
 
 /// 菜单上的文字:悬停项与普通项。
 fn menu_scrim(palette: &Palette) -> f32 {
-    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT)
-        .max(scrim_alpha(palette.bg, palette.text_secondary, CONTRAST_WEAK))
+    scrim_alpha(palette.bg, palette.text, CONTRAST_TEXT).max(scrim_alpha(
+        palette.bg,
+        palette.text_secondary,
+        CONTRAST_WEAK,
+    ))
 }
 
 /// 遮罩:底色按不透明度压在用户效果上,文字画在遮罩之上。
@@ -515,7 +524,10 @@ pub fn draw_chrome(
     stroke.set_stroke_width(s);
     stroke.set_color(color(palette.border));
     canvas.draw_rrect(
-        RRect::new_rect_radii(body, &[Vector::new((RADIUS - 0.5) * s, (RADIUS - 0.5) * s); 4]),
+        RRect::new_rect_radii(
+            body,
+            &[Vector::new((RADIUS - 0.5) * s, (RADIUS - 0.5) * s); 4],
+        ),
         &stroke,
     );
     // 拼音条满宽;按面板圆角裁掉顶角,与 GPUI 的 overflow_hidden 一致。
@@ -582,22 +594,14 @@ pub fn draw_items(
             }
             canvas.draw_rrect(
                 RRect::new_rect_radii(
-                    Rect::from_xywh(
-                        x + 8.0 * s,
-                        y + (row_h - 14.0 * s) * 0.5,
-                        2.0 * s,
-                        14.0 * s,
-                    ),
+                    Rect::from_xywh(x + 8.0 * s, y + (row_h - 14.0 * s) * 0.5, 2.0 * s, 14.0 * s),
                     &[Vector::new(s, s); 4],
                 ),
                 &fill_paint(palette.accent_text),
             );
         } else if hover == Some(index) {
             canvas.draw_rrect(
-                RRect::new_rect_radii(
-                    *rect,
-                    &[Vector::new(ITEM_RADIUS * s, ITEM_RADIUS * s); 4],
-                ),
+                RRect::new_rect_radii(*rect, &[Vector::new(ITEM_RADIUS * s, ITEM_RADIUS * s); 4]),
                 &fill_paint(palette.hover),
             );
         }

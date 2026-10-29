@@ -13,7 +13,7 @@ pub mod effect;
 pub mod panel;
 
 pub use panel::{
-    draw, draw_chrome, draw_items, draw_menu, hit_test, item_rects, item_width, layout_rows,
-    menu_height, menu_hit, pager_rects, panel_height, panel_width, scrim_alpha, Effects, Hit,
-    Item, Layout, ListFx, Metrics, Palette, PanelSpec, PreeditBar, CONTRAST_TEXT, CONTRAST_WEAK,
+    CONTRAST_TEXT, CONTRAST_WEAK, Effects, Hit, Item, Layout, ListFx, Metrics, Palette, PanelSpec,
+    PreeditBar, draw, draw_chrome, draw_items, draw_menu, hit_test, item_rects, item_width,
+    layout_rows, menu_height, menu_hit, pager_rects, panel_height, panel_width, scrim_alpha,
 };

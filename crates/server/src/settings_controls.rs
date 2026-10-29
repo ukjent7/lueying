@@ -13,7 +13,11 @@ pub(super) enum ButtonKind {
     Danger,
 }
 
-pub(super) fn section_label(title: &'static str, colors: theme::Colors, first: bool) -> impl IntoElement {
+pub(super) fn section_label(
+    title: &'static str,
+    colors: theme::Colors,
+    first: bool,
+) -> impl IntoElement {
     div()
         .px(px(14.0))
         .pt(px(7.0))

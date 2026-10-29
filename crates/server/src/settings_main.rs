@@ -298,7 +298,11 @@ mod imp {
 
         /// 候选排列分段组:左右键在横排/竖排之间切换。
         fn layout_shift(&mut self, delta: isize) {
-            let current = if self.cfg.ui_layout == UiLayout::Vertical { 1 } else { 0 };
+            let current = if self.cfg.ui_layout == UiLayout::Vertical {
+                1
+            } else {
+                0
+            };
             let next = (current + delta).rem_euclid(2);
             self.cfg.ui_layout = UiLayout::from_index(next);
             self.clear_notice();
@@ -326,7 +330,11 @@ mod imp {
 
         /// 更新渠道分段组:左右键在稳定/测试之间切换。
         fn channel_shift(&mut self, delta: isize) {
-            let current = if self.cfg.update_channel == Channel::Beta { 1 } else { 0 };
+            let current = if self.cfg.update_channel == Channel::Beta {
+                1
+            } else {
+                0
+            };
             let next = (current + delta).rem_euclid(2);
             self.cfg.update_channel = Channel::from_index(next);
             self.clear_notice();
@@ -360,7 +368,11 @@ mod imp {
                     self.cfg.traditional = !self.cfg.traditional;
                     self.clear_notice();
                 }
-                Kbd::Region | Kbd::PageSize | Kbd::Layout | Kbd::Font | Kbd::Accent
+                Kbd::Region
+                | Kbd::PageSize
+                | Kbd::Layout
+                | Kbd::Font
+                | Kbd::Accent
                 | Kbd::Channel => {}
                 Kbd::Effects => self.open_effects(),
                 Kbd::EffectsToggle => {
@@ -509,12 +521,20 @@ mod imp {
 
         fn open_punct(&mut self) {
             self.confirm_clear = false;
-            self.open_text_file(config::punct_path(), config::PUNCT_TEMPLATE, "没有可写的标点文件路径");
+            self.open_text_file(
+                config::punct_path(),
+                config::PUNCT_TEMPLATE,
+                "没有可写的标点文件路径",
+            );
         }
 
         fn open_apps(&mut self) {
             self.confirm_clear = false;
-            self.open_text_file(config::apps_path(), config::APPS_TEMPLATE, "没有可写的应用配置路径");
+            self.open_text_file(
+                config::apps_path(),
+                config::APPS_TEMPLATE,
+                "没有可写的应用配置路径",
+            );
         }
 
         /// 打开用户效果目录:先让常驻服务给出三个槽位的模板(缺文件才写),
@@ -664,7 +684,9 @@ mod imp {
                     "punct.txt" => config::punct_path(),
                     "apps.ini" => config::apps_path(),
                     "user.tsv" => {
-                        if send(&Request::ImportUser { text: content.clone() }) {
+                        if send(&Request::ImportUser {
+                            text: content.clone(),
+                        }) {
                             imported_user = true;
                         }
                         continue;
@@ -689,7 +711,10 @@ mod imp {
             if written > 0 || imported_user {
                 self.say(
                     Notice::Success,
-                    format!("已恢复 {written} 份配置文件{}", if imported_user { "与词库" } else { "" }),
+                    format!(
+                        "已恢复 {written} 份配置文件{}",
+                        if imported_user { "与词库" } else { "" }
+                    ),
                 );
             } else {
                 self.say(Notice::Error, "备份里没有可恢复的内容");
@@ -1120,22 +1145,27 @@ mod imp {
                 .when(self.kbd_is(Kbd::Layout), |el| {
                     el.border_2().border_color(rgb(colors.accent))
                 })
-                .children(UiLayout::NAMES.into_iter().enumerate().map(|(index, name)| {
-                    segment(
-                        "layout",
-                        index,
-                        name,
-                        44.0,
-                        (self.cfg.ui_layout == UiLayout::Vertical) as usize == index,
-                        high_contrast,
-                        colors,
-                        cx.listener(move |this, _, _, cx| {
-                            this.cfg.ui_layout = UiLayout::from_index(index);
-                            this.clear_notice();
-                            cx.notify();
+                .children(
+                    UiLayout::NAMES
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, name)| {
+                            segment(
+                                "layout",
+                                index,
+                                name,
+                                44.0,
+                                (self.cfg.ui_layout == UiLayout::Vertical) as usize == index,
+                                high_contrast,
+                                colors,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.cfg.ui_layout = UiLayout::from_index(index);
+                                    this.clear_notice();
+                                    cx.notify();
+                                }),
+                            )
                         }),
-                    )
-                }));
+                );
 
             // 候选字号:三档缩放,拼音行不受影响。
             let font_options = [UiFont::Small, UiFont::Standard, UiFont::Large];

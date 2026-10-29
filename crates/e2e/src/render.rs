@@ -14,7 +14,12 @@ use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use skia_safe::{ImageInfo, Paint, Surface};
 
-fn push(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
+fn push(
+    checks: &mut Vec<(&'static str, bool, String)>,
+    name: &'static str,
+    ok: bool,
+    note: String,
+) {
     checks.push((name, ok, note));
 }
 
@@ -108,13 +113,7 @@ pub fn run(report: &mut String) -> usize {
     // 面板底色与预编辑条:(5,60) 在候选区背景上,(5,10) 在拼音条上。
     let mut surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
     let metrics = Metrics::standard();
-    panel::draw(
-        surface.canvas(),
-        &spec(),
-        &palette(),
-        &metrics,
-        None,
-    );
+    panel::draw(surface.canvas(), &spec(), &palette(), &metrics, None);
     let expected_bg = rgb(palette().bg);
     let expected_bar = rgb(palette().surface_alt);
     match read_bgr(&mut surface, 5, 60) {
@@ -228,8 +227,9 @@ pub fn run(report: &mut String) -> usize {
 
     // 遮罩不透明度:按渲染层同样的口径解出来(正文与弱文字取更严的一档),
     // 再把不透明度量化成 8 位 alpha,两端最坏情况都要守住对比度。
-    let alpha = panel::scrim_alpha(palette().bg, palette().text, panel::CONTRAST_TEXT)
-        .max(panel::scrim_alpha(palette().bg, palette().text_tertiary, panel::CONTRAST_WEAK));
+    let alpha = panel::scrim_alpha(palette().bg, palette().text, panel::CONTRAST_TEXT).max(
+        panel::scrim_alpha(palette().bg, palette().text_tertiary, panel::CONTRAST_WEAK),
+    );
     let byte = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
     let a = byte as f32 / 255.0;
     let base = palette().bg;
@@ -246,8 +246,8 @@ pub fn run(report: &mut String) -> usize {
     let dark = over(0.0);
     let light = over(255.0);
     let body = contrast(dark, rgb(palette().text)).min(contrast(light, rgb(palette().text)));
-    let weak =
-        contrast(dark, rgb(palette().text_tertiary)).min(contrast(light, rgb(palette().text_tertiary)));
+    let weak = contrast(dark, rgb(palette().text_tertiary))
+        .min(contrast(light, rgb(palette().text_tertiary)));
     push(
         &mut checks,
         "遮罩守住对比度",
@@ -259,9 +259,7 @@ pub fn run(report: &mut String) -> usize {
     let dir = std::env::temp_dir().join(format!("lueying-effect-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let prepared = std::fs::create_dir_all(&dir)
-        .and_then(|()| {
-            std::fs::write(dir.join("background.sksl"), effect::BACKGROUND_TEMPLATE)
-        })
+        .and_then(|()| std::fs::write(dir.join("background.sksl"), effect::BACKGROUND_TEMPLATE))
         .and_then(|()| {
             std::fs::write(
                 dir.join("highlight.sksl"),
@@ -275,7 +273,12 @@ pub fn run(report: &mut String) -> usize {
             )
         });
     if prepared.is_err() {
-        push(&mut checks, "坏效果只废一个槽位", false, "临时目录写不了".into());
+        push(
+            &mut checks,
+            "坏效果只废一个槽位",
+            false,
+            "临时目录写不了".into(),
+        );
     } else {
         let set = effect::EffectSet::load_dir(&dir);
         let _ = std::fs::remove_dir_all(&dir);
@@ -464,7 +467,11 @@ pub fn run(report: &mut String) -> usize {
     );
     let second = rects[1];
     let expected_hover = rgb(palette().hover);
-    match read_bgr(&mut hover_surface, second.left as i32 + 6, second.top as i32 + 6) {
+    match read_bgr(
+        &mut hover_surface,
+        second.left as i32 + 6,
+        second.top as i32 + 6,
+    ) {
         Some(pixel) => push(
             &mut checks,
             "悬停底色",

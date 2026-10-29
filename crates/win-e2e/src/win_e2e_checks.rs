@@ -240,7 +240,9 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
         .lines()
         .find(|line| line.contains("SKIA 自检降级"))
         .unwrap_or("无");
-    Ok(format!("## Skia 渲染管线\n\nPASS,{line}\n\n降级:{degraded}"))
+    Ok(format!(
+        "## Skia 渲染管线\n\nPASS,{line}\n\n降级:{degraded}"
+    ))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。

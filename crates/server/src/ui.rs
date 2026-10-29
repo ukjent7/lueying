@@ -703,128 +703,110 @@ impl Render for CandidatePanel {
         let previous = Arc::clone(&self.state);
         let next = Arc::clone(&self.state);
         let preedit = SharedString::from(view.raw.clone());
-        let panel =
-            div()
-                .font_family("Microsoft YaHei UI")
-                .relative()
-                .flex()
-                .flex_col()
-                .w(px(width))
-                .bg(rgb(colors.surface))
-                .border_1()
-                .border_color(rgb(colors.border))
-                .rounded_lg()
-                .overflow_hidden()
-                .on_scroll(move |event, _, _| {
-                    let dir = match event.delta {
-                        ScrollDelta::Lines(p) => p.y.signum(),
-                        ScrollDelta::Pixels(p) => (p.y / px(1.0)).signum(),
-                    };
-                    if dir == 0.0 {
-                        return;
-                    }
-                    let session = scroll_state.active.load(Ordering::Relaxed);
-                    if session != 0 && composing(&scroll_state) {
-                        let _ = crate::imp::handle(
-                            &scroll_state,
-                            Request::Page {
-                                session,
-                                delta: if dir > 0.0 { -1 } else { 1 },
-                            },
-                        );
-                    }
-                })
-                .child(
-                    div()
-                        .flex()
-                        .h(px(PREEDIT_H))
-                        .px_3()
-                        .gap_2()
-                        .items_center()
-                        .justify_between()
-                        .bg(rgb(colors.surface_alt))
-                        // 只有当前页有候选时才分隔拼音与候选,空页不留一条孤线。
-                        .when(has_items, |el| {
-                            el.border_b_1().border_color(rgb(colors.border))
-                        })
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .truncate()
-                                .text_size(px(13.0))
-                                .text_color(rgb(colors.text_secondary))
-                                .child(preedit),
-                        )
-                        .child(if pages > 1 {
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .child(page_arrow("‹", -1, previous, colors))
-                                .child(
-                                    div()
-                                        .min_w(px(28.0))
-                                        .text_center()
-                                        .text_size(px(11.0))
-                                        .text_color(rgb(colors.text_tertiary))
-                                        .child(format!("{page_no}/{pages}")),
-                                )
-                                .child(page_arrow("›", 1, next, colors))
-                                .into_any_element()
-                        } else {
-                            div().into_any_element()
-                        }),
-                )
-                .children(has_items.then(|| {
-                    // 横排候选挤一行自动换行;竖排一行一条,文字更宽。
-                    let list = if matches!(layout, UiLayout::Horizontal) {
+        let panel = div()
+            .font_family("Microsoft YaHei UI")
+            .relative()
+            .flex()
+            .flex_col()
+            .w(px(width))
+            .bg(rgb(colors.surface))
+            .border_1()
+            .border_color(rgb(colors.border))
+            .rounded_lg()
+            .overflow_hidden()
+            .on_scroll(move |event, _, _| {
+                let dir = match event.delta {
+                    ScrollDelta::Lines(p) => p.y.signum(),
+                    ScrollDelta::Pixels(p) => (p.y / px(1.0)).signum(),
+                };
+                if dir == 0.0 {
+                    return;
+                }
+                let session = scroll_state.active.load(Ordering::Relaxed);
+                if session != 0 && composing(&scroll_state) {
+                    let _ = crate::imp::handle(
+                        &scroll_state,
+                        Request::Page {
+                            session,
+                            delta: if dir > 0.0 { -1 } else { 1 },
+                        },
+                    );
+                }
+            })
+            .child(
+                div()
+                    .flex()
+                    .h(px(PREEDIT_H))
+                    .px_3()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .bg(rgb(colors.surface_alt))
+                    // 只有当前页有候选时才分隔拼音与候选,空页不留一条孤线。
+                    .when(has_items, |el| {
+                        el.border_b_1().border_color(rgb(colors.border))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .text_size(px(13.0))
+                            .text_color(rgb(colors.text_secondary))
+                            .child(preedit),
+                    )
+                    .child(if pages > 1 {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(page_arrow("‹", -1, previous, colors))
+                            .child(
+                                div()
+                                    .min_w(px(28.0))
+                                    .text_center()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(colors.text_tertiary))
+                                    .child(format!("{page_no}/{pages}")),
+                            )
+                            .child(page_arrow("›", 1, next, colors))
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
+            )
+            .children(has_items.then(|| {
+                // 横排候选挤一行自动换行;竖排一行一条,文字更宽。
+                let list =
+                    if matches!(layout, UiLayout::Horizontal) {
                         div().flex().flex_wrap().px_2().py_1().gap_1().children(
                             items.into_iter().map(|(slot, text, hint, hl)| {
-                                candidate_item(
-                                    slot,
-                                    text,
-                                    hint,
-                                    hl,
-                                    metrics,
-                                    colors,
-                                    &state,
-                                    cx,
-                                )
+                                candidate_item(slot, text, hint, hl, metrics, colors, &state, cx)
                             }),
                         )
                     } else {
                         div().flex().flex_col().px(px(6.0)).py_1().gap_1().children(
                             items.into_iter().map(|(slot, text, hint, hl)| {
-                                candidate_item(
-                                    slot,
-                                    text,
-                                    hint,
-                                    hl,
-                                    metrics,
-                                    colors,
-                                    &state,
-                                    cx,
-                                )
+                                candidate_item(slot, text, hint, hl, metrics, colors, &state, cx)
                             }),
                         )
                     };
-                    if let Some((direction, _)) = sliding {
-                        list.with_animation(
-                            ("page-slide", slide_serial),
-                            Animation::new(PAGE_SLIDE).with_easing(ease_out_quint()),
-                            move |list, delta| {
-                                list.relative()
-                                    .left(px(direction * 10.0 * (1.0 - delta)))
-                                    .opacity(0.55 + 0.45 * delta)
-                            },
-                        )
-                        .into_any_element()
-                    } else {
-                        list.into_any_element()
-                    }
-                }))
-                .children(menu_open.map(|(slot, top, _)| menu_panel(slot, top, colors, &state)));
+                if let Some((direction, _)) = sliding {
+                    list.with_animation(
+                        ("page-slide", slide_serial),
+                        Animation::new(PAGE_SLIDE).with_easing(ease_out_quint()),
+                        move |list, delta| {
+                            list.relative()
+                                .left(px(direction * 10.0 * (1.0 - delta)))
+                                .opacity(0.55 + 0.45 * delta)
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    list.into_any_element()
+                }
+            }))
+            .children(menu_open.map(|(slot, top, _)| menu_panel(slot, top, colors, &state)));
         // 首次出现 140ms 淡入(首帧 45% 不透明度,候选立即可读),组合结束
         // 90ms 淡出;GPUI 的 reduced-motion 会自动给终态,淡出期间点击由
         // `composing` 拦掉。

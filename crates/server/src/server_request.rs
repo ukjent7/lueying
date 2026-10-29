@@ -9,7 +9,12 @@ use super::*;
 fn effect_templates() -> Vec<(String, String)> {
     Slot::ALL
         .iter()
-        .map(|slot| (slot.file_name().to_string(), effect::template(*slot).to_string()))
+        .map(|slot| {
+            (
+                slot.file_name().to_string(),
+                effect::template(*slot).to_string(),
+            )
+        })
         .collect()
 }
 

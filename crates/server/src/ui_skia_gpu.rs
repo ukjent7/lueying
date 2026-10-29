@@ -5,7 +5,7 @@
 //! 离屏路径(`Offscreen`)不依赖窗口与 DComp,给没有桌面会话的环境留一条
 //! 能验证出帧与像素的路。
 
-use lueying_render::panel::{self, Metrics, PanelSpec, Palette};
+use lueying_render::panel::{self, Metrics, Palette, PanelSpec};
 use skia_safe::{
     Canvas, Color, ColorType, Font, ImageInfo, Rect, Surface,
     gpu::{
@@ -16,9 +16,9 @@ use skia_safe::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct3D::D3D_FEATURE_LEVEL_11_0;
 use windows::Win32::Graphics::Direct3D12::{
-    D3D12CreateDevice, D3D12_COMMAND_QUEUE_DESC, D3D12_HEAP_FLAG_NONE, D3D12_HEAP_PROPERTIES,
-    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_DESC, D3D12_RESOURCE_DIMENSION_TEXTURE2D,
-    D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COMMON, D3D12_TEXTURE_LAYOUT_UNKNOWN,
+    D3D12_COMMAND_QUEUE_DESC, D3D12_HEAP_FLAG_NONE, D3D12_HEAP_PROPERTIES, D3D12_HEAP_TYPE_DEFAULT,
+    D3D12_RESOURCE_DESC, D3D12_RESOURCE_DIMENSION_TEXTURE2D, D3D12_RESOURCE_FLAG_NONE,
+    D3D12_RESOURCE_STATE_COMMON, D3D12_TEXTURE_LAYOUT_UNKNOWN, D3D12CreateDevice,
     ID3D12CommandQueue, ID3D12Device, ID3D12Resource,
 };
 use windows::Win32::Graphics::DirectComposition::{
@@ -27,8 +27,8 @@ use windows::Win32::Graphics::DirectComposition::{
 use windows::Win32::Graphics::Dxgi::{
     Common::{DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
     CreateDXGIFactory1, DXGI_ADAPTER_FLAG, DXGI_ADAPTER_FLAG_NONE, DXGI_ADAPTER_FLAG_SOFTWARE,
-    DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
-    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN,
+    DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_STANDARD_MULTISAMPLE_QUALITY_PATTERN,
+    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
     DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIAdapter1, IDXGIDevice, IDXGIFactory4, IDXGISwapChain1,
     IDXGISwapChain3,
 };
@@ -77,27 +77,10 @@ fn paint(canvas: &Canvas, f: Frame) {
         canvas.save_layer_alpha_f(Rect::from_wh(width, height), f.opacity.clamp(0.0, 1.0));
     }
     panel::draw_chrome(
-        canvas,
-        width,
-        height,
-        f.spec,
-        f.palette,
-        f.metrics,
-        f.font,
-        f.pager,
-        f.effects,
+        canvas, width, height, f.spec, f.palette, f.metrics, f.font, f.pager, f.effects,
     );
     panel::draw_items(
-        canvas,
-        width,
-        height,
-        f.spec,
-        f.palette,
-        f.metrics,
-        f.font,
-        f.list,
-        f.hover,
-        f.effects,
+        canvas, width, height, f.spec, f.palette, f.metrics, f.font, f.list, f.hover, f.effects,
     );
     if let Some((mx, my)) = f.menu {
         panel::draw_menu(
@@ -185,7 +168,9 @@ impl Pipeline {
             visual
                 .SetContent(&content)
                 .map_err(|e| format!("SetContent: {e}"))?;
-            target.SetRoot(&visual).map_err(|e| format!("SetRoot: {e}"))?;
+            target
+                .SetRoot(&visual)
+                .map_err(|e| format!("SetRoot: {e}"))?;
             dcomp
                 .Commit()
                 .map_err(|e| format!("DComp 首次 Commit: {e}"))?;

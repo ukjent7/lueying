@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 
 use lueying_protocol::{Request, SessionView};
 use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
-use lueying_render::panel::{self, Item, Layout, Metrics, PanelSpec, Palette, PreeditBar};
+use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use lueying_server::config::UiLayout;
 use lueying_server::theme;
-use skia_safe::{Font, FontStyle, FontMgr};
+use skia_safe::{Font, FontMgr, FontStyle};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -25,9 +25,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG, PM_REMOVE,
     PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowLongPtrW, SetWindowPos,
-    SystemParametersInfoW, TranslateMessage, WNDCLASSW, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_RBUTTONDOWN, WM_SETCURSOR, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::{BOOL, w};
 
@@ -55,7 +55,8 @@ pub(super) fn spawn(state: Arc<State>) {
     let spawned = std::thread::Builder::new()
         .name("skia-candidate".into())
         .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| window_loop(state))).is_err()
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| window_loop(state)))
+                .is_err()
             {
                 println!("Skia 候选窗线程崩溃,后续组合不再有候选窗");
             }
@@ -514,7 +515,12 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
 
 /// 菜单锚点:锚在行下缘,贴近面板底部时翻到行上方;与 GPUI 路径同款规则。
 /// 行位置取自 `item_rects`,横排换行时也不会锚错行。
-fn menu_origin(slot: usize, spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> (f32, f32) {
+fn menu_origin(
+    slot: usize,
+    spec: &PanelSpec,
+    metrics: &Metrics,
+    font: Option<&Font>,
+) -> (f32, f32) {
     let s = metrics.scale();
     let panel_h = panel::panel_height(spec, metrics, font);
     let menu_h = panel::menu_height(metrics);
@@ -557,9 +563,8 @@ fn hand_hit(ctx: &WinCtx, x: f32, y: f32) -> bool {
     ) {
         return true;
     }
-    geom.menu_xy.is_some_and(|(mx, my)| {
-        panel::menu_hit(mx, my, &geom.metrics, x, y).is_some()
-    })
+    geom.menu_xy
+        .is_some_and(|(mx, my)| panel::menu_hit(mx, my, &geom.metrics, x, y).is_some())
 }
 
 /// 左键命中后的动作;菜单项优先于候选行。
@@ -614,7 +619,11 @@ fn on_mouse(ctx: &mut WinCtx, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             // 命中候选/箭头/菜单给手型,其余交回系统;坐标用最近的 WM_MOUSEMOVE。
             let (mx, my) = ctx.fx.mouse;
             let hand = hand_hit(ctx, mx, my);
-            let cursor = if hand { ctx.cursor_hand } else { ctx.cursor_arrow };
+            let cursor = if hand {
+                ctx.cursor_hand
+            } else {
+                ctx.cursor_arrow
+            };
             if let Some(cursor) = cursor {
                 unsafe { SetCursor(Some(cursor)) };
             }
@@ -672,14 +681,16 @@ fn on_mouse(ctx: &mut WinCtx, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
                 return LRESULT(0);
             }
             let target = match ctx.fx.geometry.as_ref() {
-                Some(geom) => match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y)
-                {
-                    panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
-                        let (_, top) = menu_origin(slot, &geom.spec, &geom.metrics, ctx.font.as_ref());
-                        (slot, top, item.text.clone())
-                    }),
-                    _ => None,
-                },
+                Some(geom) => {
+                    match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y) {
+                        panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
+                            let (_, top) =
+                                menu_origin(slot, &geom.spec, &geom.metrics, ctx.font.as_ref());
+                            (slot, top, item.text.clone())
+                        }),
+                        _ => None,
+                    }
+                }
                 None => None,
             };
             if let Some((slot, top, text)) = target {
@@ -708,15 +719,20 @@ fn on_mouse(ctx: &mut WinCtx, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
     }
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let ctx = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut WinCtx;
     if ctx.is_null() {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     match msg {
-        WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_SETCURSOR => {
-            unsafe { on_mouse(&mut *ctx, hwnd, msg, wparam, lparam) }
-        }
+        WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_SETCURSOR => unsafe {
+            on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
+        },
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
@@ -778,10 +794,7 @@ pub(super) fn create_window() -> Result<HWND, String> {
         let (park_x, park_y) = ui_place::park_point();
         let hwnd = CreateWindowExW(
             // NOREDIRECTIONBITMAP:窗口自身不画,画面由 DComp 视觉树给出。
-            WS_EX_NOACTIVATE
-                | WS_EX_TOOLWINDOW
-                | WS_EX_TOPMOST
-                | WS_EX_NOREDIRECTIONBITMAP,
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
             class,
             w!("lueying"),
             WS_POPUP | WS_VISIBLE,

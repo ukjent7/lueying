@@ -223,8 +223,8 @@ impl EffectSet {
                 slot.title()
             ));
         }
-        let effect = compile_background(source)
-            .map_err(|e| format!("{} 编译失败: {e}", slot.title()))?;
+        let effect =
+            compile_background(source).map_err(|e| format!("{} 编译失败: {e}", slot.title()))?;
         self.slots[slot.index()] = Some(effect);
         Ok(())
     }
