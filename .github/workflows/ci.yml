@@ -89,9 +89,9 @@ jobs:
       # 不必为此编译 Windows 原生链路。
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
-      # 扩展层单元测试:清单与补丁的边界矩阵,E2E 覆盖不到的取值组合。
+      # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
       - name: 扩展层单元测试
-        run: cargo test -p lueying-extjs --lib --locked
+        run: cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
 
   # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准 + 1444 条共享语料。
   # 全量语料、x86 与安装冒烟成本高,仍在 quality.yml 定时跑。

@@ -1,0 +1,10 @@
+[package]
+name = "lueying-extmeta"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "扩展包清单与权限模型:外观、逻辑与能力组件共用"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

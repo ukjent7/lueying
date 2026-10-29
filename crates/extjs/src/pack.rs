@@ -58,8 +58,11 @@ impl Pack {
             .map_err(|e| format!("读扩展清单失败: {e}"))?;
         let manifest = Manifest::parse(&manifest_bytes)?;
         check_dir(dir, &manifest)?;
-        let source = read_text(&dir.join(&manifest.main), MAX_SOURCE_BYTES)
-            .map_err(|e| format!("读入口脚本 {} 失败: {e}", manifest.main))?;
+        let main = manifest
+            .appearance_main()
+            .ok_or_else(|| format!("扩展 {} 没有外观组件", manifest.id))?;
+        let source = read_text(&dir.join(main), MAX_SOURCE_BYTES)
+            .map_err(|e| format!("读入口脚本 {main} 失败: {e}"))?;
         let host = Host::new(&source, limits)
             .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
         Ok(Self {
@@ -161,13 +164,16 @@ impl Pack {
         if let Err(e) = check_dir(&self.dir, &manifest) {
             return self.stale(manifest_hash, e);
         }
-        let bytes = match read_capped(&self.dir.join(&manifest.main), MAX_SOURCE_BYTES) {
+        let Some(main) = manifest.appearance_main().map(str::to_string) else {
+            return self.stale(
+                manifest_hash,
+                format!("扩展 {} 没有外观组件", manifest.id),
+            );
+        };
+        let bytes = match read_capped(&self.dir.join(&main), MAX_SOURCE_BYTES) {
             Ok(bytes) => bytes,
             Err(e) => {
-                return self.stale(
-                    manifest_hash,
-                    format!("读入口脚本 {} 失败: {e}", manifest.main),
-                );
+                return self.stale(manifest_hash, format!("读入口脚本 {main} 失败: {e}"));
             }
         };
         let source_hash = hash(&bytes);
@@ -222,7 +228,10 @@ impl Pack {
 
     /// 当前入口脚本的哈希;读不到按 0 算,文件出现后哈希变化会触发重载。
     fn current_source_hash(&self) -> u64 {
-        std::fs::read(self.dir.join(&self.manifest.main))
+        let Some(main) = self.manifest.appearance_main() else {
+            return 0;
+        };
+        std::fs::read(self.dir.join(main))
             .map(|bytes| hash(&bytes))
             .unwrap_or(0)
     }

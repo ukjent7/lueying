@@ -227,6 +227,9 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         let Ok(manifest) = lueying_extjs::Manifest::parse(&bytes) else {
             continue;
         };
+        if manifest.appearance_main().is_none() {
+            continue;
+        }
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
             continue;
         }
