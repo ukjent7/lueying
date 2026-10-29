@@ -211,8 +211,8 @@ pub fn run(report: &mut String) -> usize {
     let _ = std::fs::write(&path, "script=my-pack\n");
     let cfg = lueying_server::config::load(&path);
     let loaded = cfg.script == "my-pack";
-    let saved = lueying_server::config::save(&path, &cfg)
-        .and_then(|()| std::fs::read_to_string(&path));
+    let saved =
+        lueying_server::config::save(&path, &cfg).and_then(|()| std::fs::read_to_string(&path));
     let _ = std::fs::remove_file(&path);
     push(
         &mut checks,

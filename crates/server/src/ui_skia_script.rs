@@ -116,10 +116,9 @@ fn worker(
                         println!("扩展 {} 已重载", current.manifest().id);
                         reported = None;
                     }
-                    Poll::Failed(e) => println!(
-                        "扩展 {} 重载失败,继续用上一版: {e}",
-                        current.manifest().id
-                    ),
+                    Poll::Failed(e) => {
+                        println!("扩展 {} 重载失败,继续用上一版: {e}", current.manifest().id)
+                    }
                     Poll::Removed => {
                         println!("扩展 {} 已卸载(清单被删)", current.manifest().id);
                         unloaded = true;
@@ -265,11 +264,7 @@ impl ScriptFx {
 
 /// 编译补丁里的效果源码;坏源码只废掉自己的槽位,错误写日志。
 fn compile(sources: &EffectsPatch) -> EffectSet {
-    let set = EffectSet::from_sources(
-        sources
-            .iter()
-            .map(|(slot, source)| (slot_of(slot), source)),
-    );
+    let set = EffectSet::from_sources(sources.iter().map(|(slot, source)| (slot_of(slot), source)));
     for error in set.errors() {
         println!("扩展效果:{error}");
     }
