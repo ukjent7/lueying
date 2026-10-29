@@ -8,34 +8,33 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use windows::core::{HSTRING, PCWSTR, w};
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::{FileAccessMode, StorageFile};
 use windows::Win32::Foundation::COLORREF;
 use windows::Win32::Graphics::Gdi::{
-    BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CLEARTYPE_QUALITY,
-    CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DIB_RGB_COLORS, DeleteDC, DeleteObject, FF_DONTCARE, FW_NORMAL, GetDC,
-    OUT_DEFAULT_PRECIS, PatBlt, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TextOutW,
-    TRANSPARENT, WHITENESS,
+    BI_RGB, BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, FF_DONTCARE, FW_NORMAL, GetDC, OUT_DEFAULT_PRECIS,
+    PatBlt, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TRANSPARENT, TextOutW, WHITENESS,
 };
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation8, IUIAutomation, UIA_ButtonControlTypeId, UIA_EditControlTypeId,
-    UIA_CONTROLTYPE_ID,
+    CUIAutomation8, IUIAutomation, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_EditControlTypeId,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_ALT, MOD_CONTROL, RegisterHotKey, UnregisterHotKey, VK_DELETE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, ES_READONLY, RegisterClassW, SetFocus,
-    ShowWindow, SW_SHOWNORMAL, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD,
-    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, ES_READONLY, RegisterClassW, SW_SHOWNORMAL,
+    SetFocus, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW,
+    WS_TABSTOP, WS_VISIBLE,
 };
+use windows::core::{HSTRING, PCWSTR, w};
 
 /// 一条验证结果。
 enum Verdict {
@@ -58,8 +57,9 @@ pub(super) fn section() -> String {
     v1_ocr(&mut rows);
     deferred(&mut rows);
 
-    let mut text =
-        String::from("## 扩展平台验证(任务书 V1–V8)\n\n| 项 | 检查 | 结果 | 说明 |\n|---|---|---|---|\n");
+    let mut text = String::from(
+        "## 扩展平台验证(任务书 V1–V8)\n\n| 项 | 检查 | 结果 | 说明 |\n|---|---|---|---|\n",
+    );
     for (id, name, verdict, note) in &rows {
         let flag = match verdict {
             Verdict::Pass => "PASS",
@@ -160,7 +160,8 @@ fn v5_uia(rows: &mut Vec<Row>) {
 
 /// 建一个带 EDIT/只读 EDIT/BUTTON 的小窗口,逐个 SetFocus 后读 UIA 控件类型。
 /// COM 与 UIA 客户端都可用:外层 E2E 已把本线程初始化成 STA。
-fn uia_focus_probe() -> Result<(UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID), String> {
+fn uia_focus_probe() -> Result<(UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID), String>
+{
     let class_name: Vec<u16> = "lueying-verify-uia\0".encode_utf16().collect();
     let wc = WNDCLASSW {
         lpfnWndProc: Some(DefWindowProcW),
@@ -413,8 +414,8 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
         SelectObject(memory, previous_font);
         SelectObject(memory, previous);
 
-        let pixels = std::slice::from_raw_parts(bits as *const u8, STRIDE * HEIGHT as usize)
-            .to_vec();
+        let pixels =
+            std::slice::from_raw_parts(bits as *const u8, STRIDE * HEIGHT as usize).to_vec();
         DeleteObject(font.into());
         DeleteObject(section.into());
         let _ = DeleteDC(memory);
