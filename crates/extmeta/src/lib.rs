@@ -414,7 +414,7 @@ impl Activate {
             if triggers.contains(trigger) {
                 return Err(format!("触发词 {trigger:?} 重复声明"));
             }
-            triggers.push(trigger);
+            triggers.push(trigger.clone());
         }
         for hotkey in &self.hotkeys {
             if hotkey.is_empty() || hotkey.len() > 64 || hotkey.chars().any(char::is_control) {
