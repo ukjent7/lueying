@@ -47,8 +47,8 @@
 | `api` | number | 场景协议版本 |
 | `composing` | boolean | 是否正在组合 |
 | `page` / `pages` | number | 当前页(从 1 开始)与总页数 |
-| `candidates` | number | 候选数量 |
-| `selected` | number | 选中下标(从 0 开始) |
+| `candidates` | number | 当前页候选数量 |
+| `selected` | number | 当前页选中下标(从 0 开始) |
 | `accent` | number | 主题色 `0xRRGGBB` |
 | `dark` | boolean | 是否深色主题 |
 | `high_contrast` | boolean | 系统是否开启高对比度 |

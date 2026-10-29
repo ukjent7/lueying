@@ -27,9 +27,9 @@ pub struct SceneIn {
     pub page: u32,
     /// 总页数,至少 1。
     pub pages: u32,
-    /// 候选数量,不含序号与文字。
+    /// 当前页候选数量,不含序号与文字。
     pub candidates: u32,
-    /// 选中候选的下标,从 0 开始。
+    /// 当前页选中候选的下标,从 0 开始。
     pub selected: u32,
     /// 主题色 0xRRGGBB。
     pub accent: u32,

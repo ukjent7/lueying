@@ -46,7 +46,11 @@
         }
         return stringify(patch);
       } catch (e) {
-        throw toText(e && e.stack ? e.stack : e);
+        // QuickJS 的 stack 只有调用栈,没有错误文本;两段都带上,日志里才看得到
+        // 「out of memory」「Error: boom」这类原因。
+        var message = toText(e);
+        var stack = e && e.stack ? toText(e.stack) : "";
+        throw stack ? message + " | " + stack : message;
       }
     },
     writable: false,
