@@ -74,6 +74,7 @@ pub fn run() {
     settings.status = settings_actions::call(&Request::Status).and_then(|reply| reply.status);
     settings.current = update::current_version();
     settings.effects_detail = effects_detail();
+    settings.scripts = settings_actions::installed_scripts();
 
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
@@ -498,6 +499,11 @@ fn handle_action(hwnd: HWND, action: Action) {
         Action::Save => with_settings(hwnd, settings_actions::save),
         Action::ResetFuzzy => with_settings(hwnd, settings_actions::reset_fuzzy),
         Action::OpenEffects => with_settings(hwnd, settings_actions::open_effects),
+        Action::ChooseScript => {
+            with_settings(hwnd, |settings| {
+                settings_actions::choose_script(hwnd, settings);
+            });
+        }
         Action::OpenScripts => with_settings(hwnd, settings_actions::open_scripts),
         Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),

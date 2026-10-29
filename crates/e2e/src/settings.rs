@@ -10,7 +10,7 @@
 use lueying_features::SchemeId;
 use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
-use lueying_server::settings_view::{Action, PageColors, Settings, ids};
+use lueying_server::settings_view::{Action, PageColors, ScriptEntry, Settings, ids};
 
 fn push(
     checks: &mut Vec<(&'static str, bool, String)>,
@@ -51,6 +51,16 @@ fn row_detail(page: &ui::Page, group: &str, label: &str) -> Option<String> {
 pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
     let mut settings = settings();
+    settings.scripts = vec![
+        ScriptEntry {
+            id: "demo-pack".to_string(),
+            name: "演示包".to_string(),
+        },
+        ScriptEntry {
+            id: "other-pack".to_string(),
+            name: "另一个包".to_string(),
+        },
+    ];
     let page = settings.page(&colors());
 
     // 四个分组,顺序固定。
@@ -84,20 +94,36 @@ pub fn run(report: &mut String) -> usize {
         format!("辅助码={aux:?} 中文标点={punct:?}"),
     );
 
-    // 运行期脚本行:没启用时写怎么启用,启用后显示包名;目录按钮交给平台侧。
+    // 运行期脚本行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
+    // 「目录」交给平台侧;模型本身负责切换与关闭。
     let idle = row_detail(&page, "候选", "运行期脚本");
     settings.cfg.script = "demo-pack".to_string();
     let active = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
-    let action = settings.activate(&Id::new(ids::SCRIPTS, 0));
+    let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
+    let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
+    settings.select_script(Some(1));
+    let switched = settings.cfg.script == "other-pack";
+    settings.select_script(None);
+    settings.cfg.script = "gone".to_string();
+    let missing = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
+    settings.select_script(None);
     push(
         &mut checks,
-        "设置运行期脚本行",
-        idle.as_deref().is_some_and(|text| text.contains("script="))
-            && active.as_deref() == Some("当前 demo-pack")
-            && action == Some(Action::OpenScripts),
-        format!("未启用 {idle:?} 启用后 {active:?} 动作 {action:?}"),
+        "设置运行期脚本选择",
+        idle.as_deref()
+            .is_some_and(|text| text.contains("未启用") && text.contains('2'))
+            && active
+                .as_deref()
+                .is_some_and(|text| text.contains("演示包") && text.contains("demo-pack"))
+            && choose == Some(Action::ChooseScript)
+            && open == Some(Action::OpenScripts)
+            && switched
+            && settings.cfg.script.is_empty()
+            && missing.as_deref().is_some_and(|text| text.contains("未安装")),
+        format!(
+            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?} 切换 {switched}"
+        ),
     );
-    settings.cfg.script.clear();
 
     // 点开关:配置跟着翻。
     let before = settings.cfg.aux;

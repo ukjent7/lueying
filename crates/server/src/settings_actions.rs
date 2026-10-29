@@ -7,16 +7,19 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use crate::config;
-use crate::settings_view::{Notice, Settings, status_detail};
+use crate::settings_view::{Notice, ScriptEntry, Settings, status_detail};
 use crate::update;
 use lueying_protocol::{Reply, Request, pipe_name};
+use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
     OPENFILENAMEW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    IDOK, MB_DEFBUTTON2, MB_ICONQUESTION, MB_OKCANCEL, MessageBoxW,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, IDOK, MB_DEFBUTTON2, MB_ICONQUESTION,
+    MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW, SetForegroundWindow,
+    TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -194,6 +197,120 @@ pub fn open_scripts(settings: &mut Settings) {
         Ok(_) => settings.say(Notice::Info, format!("已打开 {}", dir.display())),
         Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
     }
+}
+
+/// 读扩展目录里的包清单;坏包跳过,按显示名排序。设置页只读清单,
+/// 不加载 JS,所以坏脚本也能先选上,由服务端记失败原因。
+pub fn installed_scripts() -> Vec<ScriptEntry> {
+    let Some(root) = config::extensions_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    let mut scripts = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = path.join("manifest.json");
+        let Ok(meta) = std::fs::metadata(&manifest_path) else {
+            continue;
+        };
+        if meta.len() > lueying_extjs::MAX_MANIFEST_BYTES as u64 {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&manifest_path) else {
+            continue;
+        };
+        let Ok(manifest) = lueying_extjs::Manifest::parse(&bytes) else {
+            continue;
+        };
+        if entry.file_name().to_str() != Some(manifest.id.as_str()) {
+            continue;
+        }
+        scripts.push(ScriptEntry {
+            id: manifest.id,
+            name: manifest.name,
+        });
+    }
+    scripts.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+    scripts
+}
+
+/// 弹出扩展选择菜单:关闭,或启用某个已安装的包。选择只改配置,
+/// 点保存后服务端才重载。
+pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
+    settings.confirm_clear = false;
+    settings.scripts = installed_scripts();
+    if settings.scripts.is_empty() {
+        settings.say(Notice::Info, "没有已安装的扩展;点「目录」放入扩展包");
+        return;
+    }
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        settings.say(Notice::Error, "建菜单失败");
+        return;
+    };
+    let selected = settings.script_selected();
+    let off = HSTRING::from("关闭运行期脚本");
+    unsafe {
+        let flags = if settings.cfg.script.is_empty() {
+            MF_STRING | MF_CHECKED
+        } else {
+            MF_STRING
+        };
+        let _ = AppendMenuW(menu, flags, 1, &off);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        for (index, script) in settings.scripts.iter().enumerate() {
+            let label = HSTRING::from(format!("{}  {}", escape_menu(&script.name), script.id));
+            let flags = if selected == Some(index) {
+                MF_STRING | MF_CHECKED
+            } else {
+                MF_STRING
+            };
+            let _ = AppendMenuW(menu, flags, 2 + index, &label);
+        }
+    }
+    let mut point = POINT { x: 0, y: 0 };
+    let _ = unsafe { GetCursorPos(&mut point) };
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    let command = unsafe {
+        TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY,
+            point.x,
+            point.y,
+            None,
+            hwnd,
+            None,
+        )
+    };
+    unsafe {
+        let _ = DestroyMenu(menu);
+    }
+    match command.0 as usize {
+        0 => {}
+        1 => {
+            settings.select_script(None);
+            settings.say(Notice::Info, "已关闭运行期脚本,保存后生效");
+        }
+        command => {
+            let index = command - 2;
+            if let Some(script) = settings.scripts.get(index) {
+                let name = script.name.clone();
+                settings.select_script(Some(index));
+                settings.say(Notice::Info, format!("已选择 {name},保存后生效"));
+            }
+        }
+    }
+}
+
+/// 菜单里的 `&` 是助记符;包名里的 `&` 要写成 `&&`。
+fn escape_menu(text: &str) -> String {
+    text.replace('&', "&&")
 }
 
 /// 导出用户词库到文件。

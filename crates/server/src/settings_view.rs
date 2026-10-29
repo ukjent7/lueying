@@ -28,6 +28,7 @@ pub mod ids {
     pub const EFFECTS: &str = "effects";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
     pub const SCRIPTS: &str = "scripts";
+    pub const SCRIPTS_DIR: &str = "scripts-dir";
     pub const PREDICT: &str = "predict";
     pub const RESET_FUZZY: &str = "reset-fuzzy";
     pub const FUZZY: &str = "fuzzy";
@@ -88,6 +89,7 @@ pub enum Action {
     CheckUpdate,
     InstallUpdate(String),
     OpenEffects,
+    ChooseScript,
     OpenScripts,
     OpenPhrases,
     OpenPunct,
@@ -99,6 +101,13 @@ pub enum Action {
     ClearUser,
     Diagnostics,
     ResetFuzzy,
+}
+
+/// 已安装的运行期脚本包;设置页只读清单,不加载 JS。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptEntry {
+    pub id: String,
+    pub name: String,
 }
 
 /// 设置窗的状态:配置 + 服务端回来的东西 + 提示。
@@ -120,6 +129,8 @@ pub struct Settings {
     pub updates: UpdateState,
     /// 用户效果目录的说明文字。
     pub effects_detail: String,
+    /// 已安装的运行期脚本包;平台侧读目录后填入。
+    pub scripts: Vec<ScriptEntry>,
 }
 
 impl Default for Settings {
@@ -135,6 +146,7 @@ impl Default for Settings {
             current: String::new(),
             updates: UpdateState::Idle,
             effects_detail: "SkSL 装饰层".to_string(),
+            scripts: Vec::new(),
         }
     }
 }
@@ -333,12 +345,20 @@ impl Settings {
                         label: "运行期脚本".to_string(),
                         detail: self.script_detail(),
                         control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::SCRIPTS, 0),
-                                text: "目录".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
+                            items: vec![
+                                Button {
+                                    id: Id::new(ids::SCRIPTS, 0),
+                                    text: "选择".to_string(),
+                                    kind: ButtonKind::Secondary,
+                                    enabled: true,
+                                },
+                                Button {
+                                    id: Id::new(ids::SCRIPTS_DIR, 0),
+                                    text: "目录".to_string(),
+                                    kind: ButtonKind::Secondary,
+                                    enabled: true,
+                                },
+                            ],
                         },
                     },
                     Row {
@@ -555,13 +575,33 @@ impl Settings {
         }
     }
 
-    /// 运行期脚本那行的说明:启用了哪个包,或者怎么启用。
+    /// 运行期脚本那行的说明:当前包,或者怎么开始。
     fn script_detail(&self) -> String {
         if self.cfg.script.is_empty() {
-            "在 config.ini 写 script=<id> 启用".to_string()
+            if self.scripts.is_empty() {
+                "未安装扩展;点「目录」放入扩展包".to_string()
+            } else {
+                format!("未启用 · 已安装 {} 个", self.scripts.len())
+            }
+        } else if let Some(script) = self.scripts.iter().find(|s| s.id == self.cfg.script) {
+            format!("{} · {}", script.name, script.id)
         } else {
-            format!("当前 {}", self.cfg.script)
+            format!("{} · 未安装", self.cfg.script)
         }
+    }
+
+    /// 选择运行期脚本;`None` 关闭。下标越界按关闭处理。
+    pub fn select_script(&mut self, index: Option<usize>) {
+        match index.and_then(|index| self.scripts.get(index)) {
+            Some(script) => self.cfg.script = script.id.clone(),
+            None => self.cfg.script.clear(),
+        }
+        self.clear_notice();
+    }
+
+    /// 当前启用的包在列表里的下标;没启用或没安装返回 None。
+    pub fn script_selected(&self) -> Option<usize> {
+        self.scripts.iter().position(|s| s.id == self.cfg.script)
     }
 
     /// 模糊音统计有没有内容可重置。
@@ -654,7 +694,8 @@ impl Settings {
             }
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::EFFECTS => Some(Action::OpenEffects),
-            ids::SCRIPTS => Some(Action::OpenScripts),
+            ids::SCRIPTS => Some(Action::ChooseScript),
+            ids::SCRIPTS_DIR => Some(Action::OpenScripts),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),
@@ -746,6 +787,7 @@ impl Settings {
             Id::new(ids::EFFECTS, 0),
             Id::new(ids::EFFECTS_TOGGLE, 0),
             Id::new(ids::SCRIPTS, 0),
+            Id::new(ids::SCRIPTS_DIR, 0),
             Id::new(ids::PREDICT, 0),
             Id::new(ids::RESET_FUZZY, 0),
             Id::new(ids::FUZZY, 0),

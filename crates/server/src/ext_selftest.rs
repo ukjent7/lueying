@@ -28,7 +28,7 @@ fn manifest(id: &str) -> String {
 
 pub(super) fn run() {
     match check() {
-        Ok(()) => println!("扩展自检通过:加载、主题色、效果、隐私与高对比度"),
+        Ok(()) => println!("扩展自检通过:加载、主题色、效果、隐私、高对比度与设置列表"),
         Err(e) => println!("扩展自检失败:{e}"),
     }
 }
@@ -43,9 +43,20 @@ fn check() -> Result<(), String> {
         .and_then(|()| std::fs::write(dir.join("index.js"), SCRIPT));
     let outcome = written
         .map_err(|e| format!("写扩展包: {e}"))
-        .and_then(|()| check_pack(&dir));
+        .and_then(|()| check_pack(&dir))
+        .and_then(|()| check_listing(&id));
     let _ = std::fs::remove_dir_all(&dir);
     outcome
+}
+
+/// 设置页的扩展列表要能读到这个包(只读清单,不加载 JS)。
+fn check_listing(id: &str) -> Result<(), String> {
+    let listed = lueying_server::settings_actions::installed_scripts();
+    if listed.iter().any(|script| script.id == id) {
+        Ok(())
+    } else {
+        Err(format!("设置页没有列出扩展 {id}"))
+    }
 }
 
 fn check_pack(dir: &Path) -> Result<(), String> {
