@@ -36,7 +36,9 @@ jobs:
           # 判断本次提交是否动了清单需要父提交;浅克隆里 HEAD^ 不存在。
           fetch-depth: 2
       # 依赖解析要拉 zed 的 git 仓库,冷启动约 3 分钟。只有这次 push 动了清单/锁
-      # 才需要重新解析;其余情况直接跳过,避免把 fmt 这个本该几秒的 job 拖成门禁。
+      # 或锁已经跟清单失配时才重新解析;其余情况直接跳过,避免把 fmt 这个本该几秒的
+      # job 拖成门禁。锁失配的另一种来路是上一次回推失败(格式化先红、锁没落地),
+      # 那种情况 git diff 看不出来,所以离线比对清单与锁(.github/lock_in_sync.py)。
       - name: 维护 Cargo.lock
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -45,7 +47,7 @@ jobs:
           if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             base=$(git rev-parse HEAD^ 2>/dev/null || true)
           fi
-          if [ -n "$base" ] && ! git diff --name-only "$base" HEAD | grep -Eq '(^|/)Cargo\.(toml|lock)$'; then
+          if [ -n "$base" ] && ! git diff --name-only "$base" HEAD | grep -Eq '(^|/)Cargo\.(toml|lock)$' && python3 .github/lock_in_sync.py; then
             echo "清单与锁未变化,跳过依赖解析"
             exit 0
           fi

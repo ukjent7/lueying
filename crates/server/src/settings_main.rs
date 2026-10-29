@@ -11,6 +11,11 @@ fn main() {
     println!("lueying-settings 仅支持 Windows");
 }
 
+/// 设置窗的纯控件(设置行、分段组、开关、按钮);模块声明放在 crate 根下,
+/// 内联 `mod imp` 的子模块目录规则会把相对路径带偏。
+#[cfg(windows)]
+mod settings_controls;
+
 #[cfg(windows)]
 mod imp {
     use std::io::{BufRead, BufReader, Write};
@@ -41,10 +46,9 @@ mod imp {
     };
     use windows::core::{HSTRING, PCWSTR, PWSTR};
 
-    #[path = "settings_controls.rs"]
-    mod controls;
-
-    use controls::{ButtonKind, button, group_label, section_label, segment, setting_row, toggle};
+    use crate::settings_controls::{
+        ButtonKind, button, group_label, section_label, segment, setting_row, toggle,
+    };
 
     const WIDTH: f32 = 460.0;
     /// 四组设置 + 页脚;650 逻辑像素在 1080p 上留有余量,小屏按窗口高度收缩。
