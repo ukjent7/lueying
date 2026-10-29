@@ -6,11 +6,12 @@
 
 ### 新增
 
-- Skia 候选窗实验路线(窗口骨架):`ui_backend=skia` 隐藏配置键切换,Win32
-  无焦点窗 + DirectComposition 交换链 + Ganesh-D3D12(无硬件退 WARP,建不出
-  设备时放弃候选窗、输入照常);摆位/DPI/全屏避让与 GPUI 路径共用,绘制在
-  平台无关的 `lueying-render`,Linux E2E 光栅像素断言,Windows CI 管线自检。
-  淡出与翻页动效待 parity,默认仍是 GPUI。
+- Skia 候选窗实验路线:`ui_backend=skia` 隐藏配置键切换,Win32 无焦点窗 +
+  DirectComposition 交换链 + Ganesh-D3D12(无硬件退 WARP,建不出设备时放弃
+  候选窗、输入照常);摆位/DPI/全屏避让与 GPUI 路径共用,绘制、命中测试与
+  菜单几何在平台无关的 `lueying-render`,Linux E2E 光栅像素断言,Windows CI
+  管线自检。淡入/淡出、翻页滑动、悬停、点选、滚轮与右键菜单已与 GPUI 同
+  参数(含「减少动态效果」),默认仍是 GPUI。
 - 候选窗外观设置:排列(横排换行/竖排单列)、候选字号三档、主题色六档;
   高对比度主题始终跟随系统色,候选字号只缩放候选行。
 - 自定义标点:`%APPDATA%\lueying\punct.txt`,一行一条 `键=输出`,

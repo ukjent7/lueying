@@ -27,11 +27,12 @@ fn read_bgr(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8)> {
     Some((buf[at], buf[at + 1], buf[at + 2]))
 }
 
+/// 0xRRGGBB 转成与 [`read_bgr`] 同序的 (B, G, R),比较时才不会错位。
 fn rgb(rgb: u32) -> (u8, u8, u8) {
     (
-        ((rgb >> 16) & 0xff) as u8,
-        ((rgb >> 8) & 0xff) as u8,
         (rgb & 0xff) as u8,
+        ((rgb >> 8) & 0xff) as u8,
+        ((rgb >> 16) & 0xff) as u8,
     )
 }
 
@@ -71,6 +72,7 @@ fn palette() -> Palette {
         accent_text: 0x2459c9,
         selected_bg: 0xeaf1ff,
         selected_text: 0x11224d,
+        hover: 0xf0f2f6,
     }
 }
 
@@ -183,9 +185,184 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "窗口高度公式",
-        (height - (32.0 + 4.0 + 34.0 + 6.0)).abs() < f32::EPSILON,
+        // 拼音条 32 + 列表上边距 4 + 一行 30 + 底边距 6;与 GPUI 路径同公式。
+        (height - (32.0 + 4.0 + 30.0 + 6.0)).abs() < f32::EPSILON,
         format!("height={height}"),
     );
+
+    // 命中测试与绘制共用布局:所指即所画,窗口层不用再写一份命中判定。
+    let hit_spec = spec();
+    let hit_metrics = Metrics::standard();
+    let rects = panel::item_rects(&hit_spec, &hit_metrics, None);
+    let first = rects[0];
+    let hit = panel::hit_test(
+        &hit_spec,
+        &hit_metrics,
+        None,
+        first.left + 2.0,
+        first.top + 2.0,
+    );
+    push(
+        &mut checks,
+        "命中候选行",
+        hit == panel::Hit::Item(0),
+        format!("{hit:?}"),
+    );
+    let hit = panel::hit_test(&hit_spec, &hit_metrics, None, 5.0, 10.0);
+    push(
+        &mut checks,
+        "命中拼音条空白",
+        hit == panel::Hit::Nothing,
+        format!("{hit:?}"),
+    );
+    let hit_width = panel::panel_width(&hit_spec, &hit_metrics, None);
+    let (prev, _, next) = panel::pager_rects(hit_width, &hit_metrics);
+    let hit = panel::hit_test(
+        &hit_spec,
+        &hit_metrics,
+        None,
+        (prev.left + prev.right) * 0.5,
+        (prev.top + prev.bottom) * 0.5,
+    );
+    push(
+        &mut checks,
+        "命中上一页箭头",
+        hit == panel::Hit::PrevPage,
+        format!("{hit:?}"),
+    );
+    let hit = panel::hit_test(
+        &hit_spec,
+        &hit_metrics,
+        None,
+        (next.left + next.right) * 0.5,
+        (next.top + next.bottom) * 0.5,
+    );
+    push(
+        &mut checks,
+        "命中下一页箭头",
+        hit == panel::Hit::NextPage,
+        format!("{hit:?}"),
+    );
+
+    // 右键菜单:两行 26px,行间空隙与菜单外都不是菜单项。
+    push(
+        &mut checks,
+        "菜单首行",
+        panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 17.0) == Some(0),
+        format!("{:?}", panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 17.0)),
+    );
+    push(
+        &mut checks,
+        "菜单次行",
+        panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 45.0) == Some(1),
+        format!("{:?}", panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 45.0)),
+    );
+    push(
+        &mut checks,
+        "菜单行间隙与外侧",
+        panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 31.0).is_none()
+            && panel::menu_hit(0.0, 0.0, &hit_metrics, 200.0, 17.0).is_none(),
+        "间隙与 116px 外都落空".into(),
+    );
+
+    // 悬停底色:非选中行画 hover 色,绘制与命中同一份矩形。
+    let mut hover_surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+    let (hw, hh) = (
+        panel::panel_width(&hit_spec, &hit_metrics, None),
+        panel::panel_height(&hit_spec, &hit_metrics, None),
+    );
+    panel::draw_chrome(
+        hover_surface.canvas(),
+        hw,
+        hh,
+        &hit_spec,
+        &palette(),
+        &hit_metrics,
+        None,
+        None,
+    );
+    panel::draw_items(
+        hover_surface.canvas(),
+        hw,
+        hh,
+        &hit_spec,
+        &palette(),
+        &hit_metrics,
+        None,
+        panel::ListFx::NEUTRAL,
+        Some(1),
+    );
+    let second = rects[1];
+    let expected_hover = rgb(palette().hover);
+    match read_bgr(&mut hover_surface, second.left as i32 + 6, second.top as i32 + 6) {
+        Some(pixel) => push(
+            &mut checks,
+            "悬停底色",
+            pixel == expected_hover,
+            format!("{pixel:?} 期望 {expected_hover:?}"),
+        ),
+        None => push(&mut checks, "悬停底色", false, "像素读回失败".into()),
+    }
+
+    // 菜单绘制:首行悬停给 hover 底色,次行保持菜单底色;与 menu_hit 同一套行几何。
+    let mut menu_surface = Surface::new_raster_n32_premul((160, 80)).expect("raster surface");
+    panel::draw_menu(
+        menu_surface.canvas(),
+        0.0,
+        0.0,
+        &palette(),
+        &hit_metrics,
+        None,
+        Some(0),
+    );
+    let expected_menu_hover = rgb(palette().hover);
+    match read_bgr(&mut menu_surface, 10, 17) {
+        Some(pixel) => push(
+            &mut checks,
+            "菜单悬停底色",
+            pixel == expected_menu_hover,
+            format!("{pixel:?} 期望 {expected_menu_hover:?}"),
+        ),
+        None => push(&mut checks, "菜单悬停底色", false, "像素读回失败".into()),
+    }
+    let expected_menu_bg = rgb(palette().bg);
+    match read_bgr(&mut menu_surface, 10, 45) {
+        Some(pixel) => push(
+            &mut checks,
+            "菜单底色",
+            pixel == expected_menu_bg,
+            format!("{pixel:?} 期望 {expected_menu_bg:?}"),
+        ),
+        None => push(&mut checks, "菜单底色", false, "像素读回失败".into()),
+    }
+
+    // 翻页箭头悬停:位置由 pager_rects 决定,悬停时垫一层描边色底。
+    let mut pager_surface = Surface::new_raster_n32_premul((360, 120)).expect("raster surface");
+    panel::draw_chrome(
+        pager_surface.canvas(),
+        hw,
+        hh,
+        &hit_spec,
+        &palette(),
+        &hit_metrics,
+        None,
+        Some(panel::Hit::PrevPage),
+    );
+    let (prev, _, _) = panel::pager_rects(hw, &hit_metrics);
+    let expected_pager = rgb(palette().border);
+    let (px, py) = (
+        ((prev.left + prev.right) * 0.5) as i32,
+        ((prev.top + prev.bottom) * 0.5) as i32,
+    );
+    match read_bgr(&mut pager_surface, px, py) {
+        Some(pixel) => push(
+            &mut checks,
+            "箭头悬停底色",
+            pixel == expected_pager,
+            format!("{pixel:?} 期望 {expected_pager:?}"),
+        ),
+        None => push(&mut checks, "箭头悬停底色", false, "像素读回失败".into()),
+    }
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0;

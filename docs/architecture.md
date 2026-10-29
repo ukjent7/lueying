@@ -66,12 +66,15 @@ GPUI 窗口即面板矩形(Windows 上按矩形命中,非 WS_EX_LAYERED);空闲�
 翻页 90ms 横向滑动,全部可被按键打断,「减少动态效果」时走终态。
 
 渲染后端可切:`ui_backend=gpui|skia`(config.ini 隐藏键,默认 gpui,改动需重启
-服务)。Skia 路线(`ui_skia`)是分阶段迁移的窗口骨架:独立线程的 Win32 无焦点
-窗 + DirectComposition 交换链 + Ganesh-D3D12(无 D3D12 硬件退 WARP,建不出
-设备时放弃候选窗、输入照常),摆位/DPI/全屏避让与 GPUI 路径共用 `ui_place`;
-绘制在平台无关的 `lueying-render`(Linux E2E 光栅像素断言),Windows CI 以
-`LUEYING_SKIA_SELFTEST` 自检整条管线。淡出/翻页滑动/鼠标交互还没搬过来,
-补齐 parity 前默认保持 GPUI。
+服务)。Skia 路线(`ui_skia`)已补齐交互 parity:独立线程的 Win32 无焦点窗 +
+DirectComposition 交换链 + Ganesh-D3D12(无 D3D12 硬件退 WARP,建不出设备时
+放弃候选窗、输入照常),摆位/DPI/全屏避让与 GPUI 路径共用 `ui_place`;绘制、
+命中测试与菜单几何在平台无关的 `lueying-render`(Linux E2E 光栅像素断言),
+窗口层只把命中翻译成协议请求。淡入/淡出、翻页滑动、悬停、点选、滚轮与右键
+菜单与 GPUI 路径同参数,「减少动态效果」走终态。Windows CI 以
+`LUEYING_SKIA_SELFTEST` 自检整条管线(含菜单/悬停叠加);没有桌面会话或合成交换链
+建不起来时,自检退回离屏 Ganesh-D3D12 渲染,像素期望不变,日志里标「降级」。
+默认切到 Skia 前仍保留 GPUI 回退。
 
 ## 更新
 

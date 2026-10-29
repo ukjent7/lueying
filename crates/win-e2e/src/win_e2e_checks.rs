@@ -227,15 +227,20 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
 
 /// Skia 渲染管线自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建窗出帧并
 /// 读回像素,结论写进日志;这里读日志断言,D3D12/DComp 断链直接红。
+/// 没有桌面会话时自检会退回离屏渲染,那一行「降级」也一并带进报告。
 pub(super) fn check_skia_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();
-    match text.lines().find(|line| line.contains("SKIA 自检")) {
-        Some(line) if line.contains("通过") => {
-            Ok(format!("## Skia 渲染管线\n\nPASS,{line}"))
-        }
-        Some(line) => Err(format!("Skia 自检失败:{line}")),
-        None => Err("Server 日志里没有 Skia 自检记录".into()),
+    if let Some(line) = text.lines().find(|line| line.contains("SKIA 自检失败")) {
+        return Err(format!("Skia 自检失败:{line}"));
     }
+    let Some(line) = text.lines().find(|line| line.contains("SKIA 自检通过")) else {
+        return Err("Server 日志里没有 Skia 自检记录".into());
+    };
+    let degraded = text
+        .lines()
+        .find(|line| line.contains("SKIA 自检降级"))
+        .unwrap_or("无");
+    Ok(format!("## Skia 渲染管线\n\nPASS,{line}\n\n降级:{degraded}"))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。
