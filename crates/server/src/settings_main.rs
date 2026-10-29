@@ -14,9 +14,10 @@ fn main() {
     {
         let mut args = std::env::args().skip(1);
         if args.next().as_deref() == Some("--selftest") {
-            let path = args.next().map(std::path::PathBuf::from).unwrap_or_else(|| {
-                std::env::temp_dir().join("lueying-settings-selftest.txt")
-            });
+            let path = args
+                .next()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::env::temp_dir().join("lueying-settings-selftest.txt"));
             if let Err(e) = lueying_server::settings_win::selftest(&path) {
                 eprintln!("设置窗自检失败: {e}");
                 std::process::exit(1);
