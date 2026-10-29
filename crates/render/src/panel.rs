@@ -783,6 +783,21 @@ fn preedit_bar(
             &fill_paint(palette.border),
         );
     }
+    // 翻页箭头:悬停底色是几何,没有字体也要画(无字体路径也看得出悬停反馈);
+    // 箭头字形与页码要字体,留到后面。
+    let has_pages = !spec.preedit.page_label.is_empty();
+    let (prev, label, next) = pager_rects(width, metrics);
+    if has_pages {
+        for (rect, hit) in [(prev, Hit::PrevPage), (next, Hit::NextPage)] {
+            if pager == Some(hit) {
+                // 与 GPUI 的 hover 反馈一致:一层圆角描边色底。
+                canvas.draw_rrect(
+                    RRect::new_rect_radii(rect, &[Vector::new(6.0 * s, 6.0 * s); 4]),
+                    &fill_paint(palette.border),
+                );
+            }
+        }
+    }
     let Some(font) = font else { return };
     // 拼音行:13px,左侧 12 内边距。
     let mut preedit_font = font.clone();
@@ -798,20 +813,12 @@ fn preedit_bar(
         &paint,
     );
     // 页码与翻页箭头;单页时都没有。
-    if spec.preedit.page_label.is_empty() {
+    if !has_pages {
         return;
     }
-    let (prev, label, next) = pager_rects(width, metrics);
     let mut arrow_font = font.clone();
     arrow_font.set_size(15.0 * s);
-    for (glyph, rect, hit) in [("‹", prev, Hit::PrevPage), ("›", next, Hit::NextPage)] {
-        // 悬停箭头给一层圆角底色,与 GPUI 的 hover 反馈一致。
-        if pager == Some(hit) {
-            canvas.draw_rrect(
-                RRect::new_rect_radii(rect, &[Vector::new(6.0 * s, 6.0 * s); 4]),
-                &fill_paint(palette.border),
-            );
-        }
+    for (glyph, rect) in [("‹", prev), ("›", next)] {
         let (glyph_width, _) = arrow_font.measure_str(glyph, None);
         let mid = (rect.top + rect.bottom) * 0.5 + 15.0 * s * 0.36;
         canvas.draw_str(

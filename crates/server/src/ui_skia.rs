@@ -779,9 +779,13 @@ fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(5)
 }
 
-/// DirectWrite 默认字体管理器里取微软雅黑;取不到时走无字体路径(只画背景)。
+/// DirectWrite 默认字体管理器里取微软雅黑;系统里没有这一族就退回系统默认
+/// 字型——拿不到字型就没有字,候选窗会空成一块底色,比字体难看得多。
 fn panel_font() -> Option<Font> {
-    let face = FontMgr::new().match_family_style("Microsoft YaHei UI", FontStyle::normal())?;
+    let mgr = FontMgr::new();
+    let face = mgr
+        .match_family_style("Microsoft YaHei UI", FontStyle::normal())
+        .or_else(|| mgr.legacy_make_typeface(None, FontStyle::normal()))?;
     Some(Font::from_typeface(face, 17.0))
 }
 
