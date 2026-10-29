@@ -211,6 +211,11 @@ jobs:
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
         run: cargo build --release --locked -p lueying-server -p lueying-installer
+      # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
+      # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
+      - name: 服务端单元测试(Windows)
+        if: steps.build.outcome == 'success'
+        run: cargo test -p lueying-server --lib --release --locked
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
       - name: TSF 构建(静态 CRT)
         env:

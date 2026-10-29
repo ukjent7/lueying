@@ -35,6 +35,12 @@ lueying-extjs.workspace = true
 windows-registry = "0.100"
 windows-core = "0.62.2"
 windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage",
+    "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D12",

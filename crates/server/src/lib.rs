@@ -13,6 +13,9 @@ pub mod blit;
 pub mod font;
 
 #[cfg(windows)]
+pub mod services;
+
+#[cfg(windows)]
 pub mod settings_actions;
 
 #[cfg(windows)]

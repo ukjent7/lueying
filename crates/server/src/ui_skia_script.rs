@@ -9,10 +9,13 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{EffectSlot, EffectsPatch, Limits, Runtime, SceneIn, ScenePatch};
+use lueying_extjs::{
+    EffectSlot, EffectsPatch, Limits, Registry, Runtime, SceneIn, ScenePatch, Service,
+};
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
 use lueying_server::config;
+use lueying_server::services;
 use lueying_server::theme;
 use skia_safe::Shader;
 
@@ -154,6 +157,7 @@ fn configured(state: &State) -> Vec<String> {
 }
 
 /// 按配置顺序打开扩展;坏包只记日志,不影响其他扩展。
+/// 服务缝装上 Windows 提供者;output/panel 是 T6/T4 的占位,回明确错误。
 fn load(order: &[String]) -> Option<Runtime> {
     if order.is_empty() {
         return None;
@@ -162,7 +166,17 @@ fn load(order: &[String]) -> Option<Runtime> {
         println!("扩展不可用:APPDATA 缺失");
         return None;
     };
-    let (runtime, errors) = Runtime::open(&root, order, Limits::default());
+    let registry = Arc::new(Registry::new());
+    registry.set(Service::Capture, Arc::new(services::CaptureProvider));
+    registry.set(Service::Ocr, Arc::new(services::OcrProvider));
+    registry.set(Service::Output, Arc::new(services::OutputProvider));
+    registry.set(Service::Panel, Arc::new(services::PanelProvider));
+    registry.set(
+        Service::Hotkey,
+        Arc::new(services::HotkeyProvider::default()),
+    );
+    registry.set(Service::Notify, Arc::new(services::NotifyProvider));
+    let (runtime, errors) = Runtime::open_with(&root, order, Limits::default(), registry);
     for error in errors {
         println!("{error}");
     }

@@ -6,6 +6,11 @@
 
 ### 新增
 
+- Windows 服务提供者:capture 用 GDI 截虚拟桌面或指定区域写 32 位 BMP,ocr
+  走 Windows.Media.Ocr(请求语言不支持时回退用户语言并报实际语言),hotkey
+  做注册/冲突/注销语义(消息泵与派发在 T4),notify 落日志;output 与 panel
+  是 T6/T4 的占位,回明确错误文本。服务端 worker 装填提供者;CI 的 Windows
+  job 增加服务端 lib 测试,跑真截图与真识别的提供者集成验证。
 - 服务缝 v1(T3):六项宿主服务 capture/ocr/output/panel/hotkey/notify 走
   `lueying.<service>.*` Promise 接口,调用面按清单 `needs` 门控,接口记录在
   `lueying-extsvc` 的 WIT 文件;提供者经注册表装填,结果走完成队列异步回传,
