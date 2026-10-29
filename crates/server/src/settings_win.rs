@@ -160,7 +160,8 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
             0.0,
         );
     }
-    // 贴一次:走通 GDI 那一步。
+    // 像素搬进位图,再贴一次:走通 GDI 那一步。
+    window.layer.copy_pixels().map_err(|e| format!("搬像素: {e}"))?;
     unsafe {
         let hdc = GetDC(Some(hwnd));
         let blit = window.layer.blit(hdc, w, h);
@@ -182,10 +183,11 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     if corner != expect_corner {
         return Err(format!("窗口底色不对: {corner:?} 期望 {expect_corner:?}"));
     }
-    let card = at(
-        window.layout.card.left as i32 + 2,
-        window.layout.card.top as i32 + 2,
-    );
+    // 卡片是圆角的,角上那一点落在圆角外,是窗口底色;取上边缘中点
+    // 才是卡片底色。
+    let card_x = window.layout.card.left as i32 + window.layout.card.width() as i32 / 2;
+    let card_y = window.layout.card.top as i32 + 2;
+    let card = at(card_x, card_y);
     let expect_card = bgr(window.palette.bg);
     if card != expect_card {
         return Err(format!("卡片底色不对: {card:?} 期望 {expect_card:?}"));
@@ -552,12 +554,15 @@ fn start_update_check(hwnd: HWND) {
         window.relayout();
     }
     *UPDATE_RESULT.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    // 句柄不能跨线程传(HWND 里面是裸指针),只把地址带过去,线程里再装回去。
+    let hwnd_raw = hwnd.0 as usize;
     let spawned = std::thread::Builder::new()
         .name("settings-update".into())
         .spawn(move || {
             let result = update::check_channel(channel);
             *UPDATE_RESULT.lock().unwrap_or_else(|p| p.into_inner()) = Some(result);
             unsafe {
+                let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
                 let _ = PostMessageW(Some(hwnd), WM_UPDATE_DONE, WPARAM(0), LPARAM(0));
             }
         });
