@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::host::{Invoke, Limits, Settled};
-use crate::manifest::{Manifest, When, MAX_MANIFEST_BYTES};
+use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
 use crate::pack::{Pack, Poll};
 use crate::scene::{SceneIn, ScenePatch};
 
