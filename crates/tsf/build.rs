@@ -37,7 +37,7 @@ fn has_static_crt() -> bool {
     }
     let flags = std::env::var("RUSTFLAGS").unwrap_or_default()
         + &std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-flags
+    flags
         .split([' ', ',', '"'])
         .any(|f| f.contains("crt-static"))
 }
