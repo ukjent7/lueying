@@ -300,7 +300,7 @@ pub struct Effects<'a> {
 
 /// 单条候选的估算宽度:内边距、强调条、序号、文字与注音。
 /// 有字体时实量,否则按字号倍率估算。
-pub fn item_width(item: &Item, spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> f32 {
+pub fn item_width(item: &Item, metrics: &Metrics, font: Option<&Font>) -> f32 {
     let s = scale_of(metrics);
     let text_width = match font {
         // 量宽必须与绘制同字号,否则 DPI/字号档放大后窗口会窄一截。
@@ -339,7 +339,7 @@ pub fn layout_rows(spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> 
     let mut rows = 0usize;
     let mut used = 0.0f32;
     for item in &spec.items {
-        let item = item_width(item, spec, metrics, font);
+        let item = item_width(item, metrics, font);
         if rows == 0 {
             rows = 1;
             used = item;
@@ -360,7 +360,7 @@ pub fn panel_width(spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> 
     let widest = spec
         .items
         .iter()
-        .map(|item| item_width(item, spec, metrics, font))
+        .map(|item| item_width(item, metrics, font))
         .fold(0.0, f32::max);
     (widest + 18.0 * s)
         .max(spec.width)
@@ -403,7 +403,7 @@ pub fn item_rects(spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> V
     let mut rects = Vec::with_capacity(spec.items.len());
     for item in &spec.items {
         let item_w = if wrap {
-            item_width(item, spec, metrics, font)
+            item_width(item, metrics, font)
         } else {
             box_width
         };
