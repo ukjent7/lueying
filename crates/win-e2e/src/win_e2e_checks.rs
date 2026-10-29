@@ -225,9 +225,10 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
     Ok(format!("## 全角模式\n\nPASS,文本 `{text}`"))
 }
 
-/// Skia 渲染管线自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建窗出帧并
-/// 读回像素,结论写进日志;这里读日志断言,D3D12/DComp 断链直接红。
-/// 没有桌面会话时自检会退回离屏渲染,那一行「降级」也一并带进报告。
+/// Skia 渲染管线自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 出帧并读回
+/// 像素,结论写进日志;这里读日志断言。光栅路径的像素断言不过就红;
+/// GPU 路径在子进程里跑,没有硬件适配器或驱动异常时不可用——不可用不算失败,
+/// 但原因要带进报告,免得「GPU 没验过」被悄悄咽下去。
 pub(super) fn check_skia_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();
     if let Some(line) = text.lines().find(|line| line.contains("SKIA 自检失败")) {
@@ -236,13 +237,15 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
     let Some(line) = text.lines().find(|line| line.contains("SKIA 自检通过")) else {
         return Err("Server 日志里没有 Skia 自检记录".into());
     };
-    let degraded = text
+    let gpu = text
         .lines()
-        .find(|line| line.contains("SKIA 自检降级"))
+        .find(|line| {
+            line.contains("SKIA GPU 自检通过")
+                || line.contains("SKIA GPU 自检不可用")
+                || line.contains("SKIA GPU 自检失败")
+        })
         .unwrap_or("无");
-    Ok(format!(
-        "## Skia 渲染管线\n\nPASS,{line}\n\n降级:{degraded}"
-    ))
+    Ok(format!("## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}"))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。

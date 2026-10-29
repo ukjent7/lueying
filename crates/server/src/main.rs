@@ -5,7 +5,15 @@
 
 fn main() {
     #[cfg(windows)]
-    imp::real_main();
+    {
+        // Skia GPU 自检的子进程:只跑 GPU 自检,跑完就退,不碰管道与单实例锁。
+        // GPU 管线在驱动异常的机器上会崩,隔离在子进程里,崩了也不影响服务端。
+        if std::env::var_os("LUEYING_SKIA_SELFTEST_GPU").is_some() {
+            ui_skia_selftest::gpu_selftest();
+            return;
+        }
+        imp::real_main();
+    }
     #[cfg(not(windows))]
     println!("lueying-server 仅支持 Windows");
 }

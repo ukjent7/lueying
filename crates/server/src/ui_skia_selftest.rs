@@ -1,23 +1,65 @@
-//! Skia 候选窗自检:建窗、Ganesh-D3D12 出帧、读回像素断言。
+//! Skia 候选窗自检:出帧、读回像素断言。
 //!
-//! 与 Linux 光栅 E2E 同一套期望值(无字体估算路径),失败由 win-e2e
-//! 断言;没有桌面会话或合成交换链不可用时退回离屏渲染,像素期望不变。
+//! 分两层跑:
+//!
+//! - 光栅(CPU)路径在服务端进程里跑,给出确定性的像素断言(与 Linux E2E 同一套
+//!   期望值),外加一条字体断言——DirectWrite 取到的字型必须真的画进画面。
+//! - Ganesh-D3D12 路径另起子进程跑。没有硬件适配器(虚拟机、CI runner)或驱动
+//!   异常的机器上,GPU 管线会把进程带崩(访问冲突);子进程崩了服务端照常活着,
+//!   日志如实记下原因,不把输入法拖下水。
+
+use std::time::{Duration, Instant};
 
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use lueying_server::theme;
+use skia_safe::Font;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
 
-use crate::ui_skia::{create_window, palette_of};
-use crate::ui_skia_gpu::{Frame, FrameTarget, Offscreen, Pipeline, rgb};
+use crate::ui_skia::{create_window, palette_of, panel_font};
+use crate::ui_skia_gpu::{Frame, FrameTarget, Offscreen, Pipeline, Raster, rgb};
 
-/// CI 自检:建窗、出帧、读回像素断言,结论写日志。
+/// GPU 自检子进程的上限;超时就杀掉,GPU 管线卡死不该拖住输入法启动。
+const GPU_CHILD_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// CI 自检:光栅断言(本进程)+ GPU 断言(子进程),结论写日志。
 pub(super) fn selftest() {
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    let metrics = Metrics::standard();
+    let spec = demo_spec();
+    let width = panel::panel_width(&spec, &metrics, None);
+    let height = panel::panel_height(&spec, &metrics, None);
+    let palette = palette_of(theme::colors_with(theme::Appearance::Light, 0));
+    // 光栅:确定性的像素期望,任何环境都能跑。
+    match Raster::new(width as u32, height as u32) {
+        Ok(mut target) => match check_pixels(&mut target, &spec, &palette, &metrics) {
+            Ok(()) => println!(
+                "SKIA 自检通过:光栅帧读回一致({}x{})",
+                width as u32, height as u32
+            ),
+            Err(e) => println!("SKIA 自检失败:光栅渲染 {e}"),
+        },
+        Err(e) => println!("SKIA 自检失败:光栅渲染建面 {e}"),
     }
-    // 固定 100% 缩放与无字体估算路径,像素期望与 Linux E2E 完全一致。
+    // 字体:字型必须真的画进画面。系统一个可用字型都没有是环境问题,记下来
+    // 不算失败;字型拿到了却画不出东西才是真 bug。
+    match font_check(&spec, &palette, &metrics, width as u32, height as u32) {
+        Ok(()) => println!("SKIA 自检通过:DirectWrite 字型已画出"),
+        Err(FontCheck::NoFont) => println!("SKIA 字体自检:系统没有可用字型,跳过"),
+        Err(FontCheck::Failed(e)) => println!("SKIA 自检失败:字体 {e}"),
+    }
+    // GPU:另起子进程。崩了只影响子进程。
+    match gpu_child() {
+        Ok(text) => println!("{text}"),
+        Err(e) => println!("SKIA GPU 自检不可用:{e}"),
+    }
+}
+
+/// GPU 自检(子进程):合成交换链 → 离屏 D3D12,两条都建不起来就算不可用。
+pub(super) fn gpu_selftest() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    }
     let metrics = Metrics::standard();
     let spec = demo_spec();
     let width = panel::panel_width(&spec, &metrics, None);
@@ -35,14 +77,14 @@ pub(super) fn selftest() {
         }
         Err(e) => {
             // 桌面会话缺失或合成交换链建不起来时,退回离屏渲染验证出帧。
-            println!("SKIA 自检降级:合成交换链不可用({e}),改走离屏渲染");
+            println!("SKIA GPU 自检降级:合成交换链不可用({e}),改走离屏渲染");
             match Offscreen::new(width as u32, height as u32) {
                 Ok(mut target) => (
                     "离屏渲染",
                     check_pixels(&mut target, &spec, &palette, &metrics),
                 ),
                 Err(e) => {
-                    println!("SKIA 自检失败:离屏渲染建管线 {e}");
+                    println!("SKIA GPU 自检不可用:离屏渲染建管线 {e}");
                     return;
                 }
             }
@@ -50,10 +92,109 @@ pub(super) fn selftest() {
     };
     match outcome {
         Ok(()) => println!(
-            "SKIA 自检通过:{mode}帧读回一致({}x{})",
+            "SKIA GPU 自检通过:{mode}帧读回一致({}x{})",
             width as u32, height as u32
         ),
-        Err(e) => println!("SKIA 自检失败:{mode} {e}"),
+        Err(e) => println!("SKIA GPU 自检失败:{mode} {e}"),
+    }
+}
+
+/// 起子进程跑 GPU 自检。子进程崩了只影响它自己,服务端继续活着。
+fn gpu_child() -> Result<String, String> {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return Err(format!("取可执行文件路径 {e}")),
+    };
+    let mut child = std::process::Command::new(exe)
+        .env("LUEYING_SKIA_SELFTEST_GPU", "1")
+        .stdout(std::process::Stdio::piped())
+        // 子进程的 stderr 直接进服务端日志:Skia 的报错都在那儿。
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("起子进程 {e}"))?;
+    // 管道得有人读,否则子进程写满缓冲就卡住。
+    let reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            let _ = std::io::Read::read_to_string(&mut pipe, &mut buf);
+            buf
+        })
+    });
+    let deadline = Instant::now() + GPU_CHILD_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("等子进程 {e}")),
+        }
+    };
+    let text = match reader {
+        Some(handle) => handle.join().unwrap_or_default(),
+        None => String::new(),
+    };
+    let Some(status) = status else {
+        return Err(format!("子进程超时({}秒)", GPU_CHILD_TIMEOUT.as_secs()));
+    };
+    let text = text.trim().to_string();
+    if !status.success() {
+        let code = status.code().map_or(0, |c| c as u32);
+        return Err(format!("子进程退出码 0x{code:08X}"));
+    }
+    if text.is_empty() {
+        return Err("子进程没有输出".into());
+    }
+    Ok(text)
+}
+
+/// 字体自检的两种结果:系统没字型是环境问题,画不出东西才是 bug。
+enum FontCheck {
+    NoFont,
+    Failed(String),
+}
+
+/// 带字型再画一帧,像素必须和无字型那帧不同;相同就说明字型没进画面。
+fn font_check(
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+) -> Result<(), FontCheck> {
+    let Some(font) = panel_font() else {
+        return Err(FontCheck::NoFont);
+    };
+    let plain = raster_pixels(spec, palette, metrics, w, h, None)?;
+    let with = raster_pixels(spec, palette, metrics, w, h, Some(&font))?;
+    if plain == with {
+        return Err(FontCheck::Failed(
+            "带字型那帧与无字型那帧像素相同,字型没画进画面".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 光栅画一帧,读回整幅像素。
+fn raster_pixels(
+    spec: &PanelSpec,
+    palette: &Palette,
+    metrics: &Metrics,
+    w: u32,
+    h: u32,
+    font: Option<&Font>,
+) -> Result<Vec<u8>, FontCheck> {
+    let mut target = Raster::new(w, h).map_err(FontCheck::Failed)?;
+    let f = frame(spec, palette, metrics, font);
+    target.draw(f).map_err(FontCheck::Failed)?;
+    match target.pixels() {
+        Some(buf) => Ok(buf),
+        None => Err(FontCheck::Failed("像素读回失败".into())),
     }
 }
 
@@ -79,6 +220,28 @@ fn window_target(w: u32, h: u32) -> Result<(Pipeline, HWND), String> {
     Ok((pipe, hwnd))
 }
 
+/// 一帧的绘制输入;各条出帧路径共用。
+fn frame<'a>(
+    spec: &'a PanelSpec,
+    palette: &'a Palette,
+    metrics: &'a Metrics,
+    font: Option<&'a Font>,
+) -> Frame<'a> {
+    Frame {
+        spec,
+        palette,
+        metrics,
+        font,
+        opacity: 1.0,
+        list: panel::ListFx::NEUTRAL,
+        hover: None,
+        pager: None,
+        menu: None,
+        menu_hover: None,
+        effects: panel::Effects::default(),
+    }
+}
+
 /// 两帧的像素断言:静态面板的底色与拼音条,再验悬停与菜单的叠加顺序。
 /// 窗口路径与离屏路径共用同一套期望值。
 fn check_pixels(
@@ -88,19 +251,7 @@ fn check_pixels(
     metrics: &Metrics,
 ) -> Result<(), String> {
     // 第一帧:静态面板,读回底色与拼音条。
-    target.draw(Frame {
-        spec,
-        palette,
-        metrics,
-        font: None,
-        opacity: 1.0,
-        list: panel::ListFx::NEUTRAL,
-        hover: None,
-        pager: None,
-        menu: None,
-        menu_hover: None,
-        effects: panel::Effects::default(),
-    })?;
+    target.draw(frame(spec, palette, metrics, None))?;
     let expected_bg = rgb(palette.bg);
     let expected_bar = rgb(palette.surface_alt);
     let bg = target.pixel(5, 60).ok_or("像素读回失败(背景)")?;

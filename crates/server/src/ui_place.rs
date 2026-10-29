@@ -58,7 +58,7 @@ pub(super) fn composing(state: &State) -> bool {
 /// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。
 pub(super) fn park(hwnd: HWND, x: i32, y: i32) {
     unsafe {
-        SetWindowPos(
+        let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
             x,

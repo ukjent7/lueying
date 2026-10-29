@@ -110,6 +110,8 @@ pub struct Pipeline {
     _visual: IDCompositionVisual,
     surfaces: Vec<(Surface, BackendRenderTarget)>,
     size: (u32, u32),
+    /// 设备句柄留着查「是否已被系统摘掉」。
+    device: ID3D12Device,
 }
 
 impl Pipeline {
@@ -187,10 +189,17 @@ impl Pipeline {
                 _visual: visual,
                 surfaces: Vec::new(),
                 size: (0, 0),
+                device: device.clone(),
             };
             pipe.rebuild_surfaces(360, 76)?;
             Ok(pipe)
         }
+    }
+
+    /// 设备是否已被系统摘掉(驱动重启、GPU 挂起)。摘掉之后不能再进 Skia:
+    /// 命令表已经建不出来,Skia 会拿着空句柄继续走,直接崩。
+    pub fn device_removed(&self) -> bool {
+        unsafe { self.device.GetDeviceRemovedReason().is_err() }
     }
 
     /// 窗口尺寸变化时改交换链大小并重新包裹两块后缓冲。
@@ -280,6 +289,8 @@ pub struct Offscreen {
     _target: BackendRenderTarget,
     _resource: ID3D12Resource,
     ctx: DirectContext,
+    /// 设备句柄留着查「是否已被系统摘掉」。
+    device: ID3D12Device,
 }
 
 impl Offscreen {
@@ -330,8 +341,44 @@ impl Offscreen {
                 _target: target,
                 _resource: resource,
                 ctx,
+                device: device.clone(),
             })
         }
+    }
+
+    /// 设备是否已被系统摘掉;摘掉后这条路径不能再画。
+    pub fn device_removed(&self) -> bool {
+        unsafe { self.device.GetDeviceRemovedReason().is_err() }
+    }
+}
+
+/// 光栅(CPU)出帧:完全不碰 D3D12。没有硬件适配器的机器上 GPU 管线建不起来,
+/// 这条路照样能出画面、也能读回像素,自检的确定性断言就走它。
+pub struct Raster {
+    surface: Surface,
+}
+
+impl Raster {
+    pub fn new(w: u32, h: u32) -> Result<Self, String> {
+        let surface = skia_safe::surfaces::raster_n32_premul((w as i32, h as i32))
+            .ok_or("建光栅表面失败")?;
+        Ok(Self { surface })
+    }
+
+    /// 整幅像素读回;自检拿它比对两帧的差异。
+    pub fn pixels(&mut self) -> Option<Vec<u8>> {
+        read_all(&mut self.surface)
+    }
+}
+
+impl FrameTarget for Raster {
+    fn draw(&mut self, f: Frame) -> Result<(), String> {
+        paint(self.surface.canvas(), f);
+        Ok(())
+    }
+
+    fn pixel(&mut self, x: i32, y: i32) -> Option<(u8, u8, u8)> {
+        read_bgr(&mut self.surface, x, y)
     }
 }
 
@@ -388,10 +435,11 @@ fn create_texture(device: &ID3D12Device, w: u32, h: u32) -> Result<ID3D12Resourc
     }
 }
 
-/// 硬件适配器优先,没有可用的再退 WARP(远程桌面/虚拟机)。
+/// 只挑硬件适配器。软件适配器(WARP、Basic Render Driver)的 D3D12 设备在
+/// Ganesh 下会掉设备:Skia 拿不到命令表,继续用空句柄就崩。与其赌一把,
+/// 不如没有候选窗——输入法本身照常工作。
 fn pick_adapter(factory: &IDXGIFactory4) -> Result<(IDXGIAdapter1, ID3D12Device), String> {
     unsafe {
-        let mut software: Option<(IDXGIAdapter1, ID3D12Device)> = None;
         let mut i = 0u32;
         while let Ok(adapter) = factory.EnumAdapters1(i) {
             i += 1;
@@ -400,29 +448,34 @@ fn pick_adapter(factory: &IDXGIFactory4) -> Result<(IDXGIAdapter1, ID3D12Device)
             };
             let is_software = (DXGI_ADAPTER_FLAG(desc.Flags as _) & DXGI_ADAPTER_FLAG_SOFTWARE)
                 != DXGI_ADAPTER_FLAG_NONE;
+            if is_software {
+                continue;
+            }
             let mut device: Option<ID3D12Device> = None;
             if D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_11_0, &mut device).is_ok()
                 && let Some(device) = device
             {
-                if is_software {
-                    software = Some((adapter, device));
-                } else {
-                    return Ok((adapter, device));
-                }
+                return Ok((adapter, device));
             }
         }
-        software.ok_or_else(|| "没有可用的 D3D12 适配器(含 WARP)".to_string())
+        Err("没有硬件 D3D12 适配器".to_string())
     }
+}
+
+/// 整幅像素读回(N32 预乘;小端机上字节序是 BGRA)。
+pub fn read_all(surface: &mut Surface) -> Option<Vec<u8>> {
+    let (w, h) = (surface.width(), surface.height());
+    let info = ImageInfo::new_n32_premul((w, h), None);
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    surface
+        .read_pixels(&info, &mut buf, info.min_row_bytes(), (0, 0))
+        .then_some(buf)
 }
 
 /// N32 小端内存字节序是 BGRA,读回 (B, G, R)。
 pub fn read_bgr(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8)> {
-    let (w, h) = (surface.width(), surface.height());
-    let info = ImageInfo::new_n32_premul((w, h), None);
-    let mut buf = vec![0u8; (w * h * 4) as usize];
-    if !surface.read_pixels(&info, &mut buf, info.min_row_bytes(), (0, 0)) {
-        return None;
-    }
+    let (w, _) = (surface.width(), surface.height());
+    let buf = read_all(surface)?;
     let at = ((y * w + x) * 4) as usize;
     Some((buf[at], buf[at + 1], buf[at + 2]))
 }

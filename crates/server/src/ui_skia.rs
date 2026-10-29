@@ -1,10 +1,11 @@
 //! Skia 候选窗:Win32 无焦点弹出窗 + DirectComposition 交换链 + Ganesh-D3D12。
 //!
-//! `ui_backend=skia` 时启用(默认仍是 GPUI):独立线程自建消息泵,15ms
-//! 轮询会话版本号;摆位、停靠、DPI 与全屏避让同 GPUI 路径共用 `ui_place`。
+//! 候选窗:独立线程自建消息泵,15ms 轮询会话版本号;摆位、停靠、DPI 与
+//! 全屏避让同 `ui_place` 助手共用。
 //! 交互 parity:淡入/淡出、翻页滑动、点选/滚轮/翻页箭头、右键菜单与悬停,
-//! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 优先挑硬件适配器,
-//! 没有就退 WARP,建不出设备时放弃候选窗并写日志,输入本身不受影响。
+//! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 只用硬件适配器,
+//! 建不出设备时放弃候选窗并写日志,输入本身不受影响;设备中途被系统摘掉
+//! 就停用候选窗,不再进 Skia。
 //! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标仍是 GPUI(Stage 2b)。
 
 use std::sync::atomic::Ordering;
@@ -151,12 +152,14 @@ struct WinCtx {
     effects: ui_skia_effect::Effects,
     /// 效果帧预算:连续超预算就临时摘掉效果。
     budget: BudgetGuard,
+    /// D3D12 设备已被系统摘掉:候选窗停用,不再进 Skia。
+    dead: bool,
 }
 
 fn window_loop(state: Arc<State>) {
     // DComp 与窗口消息都归这条线程;COM 已按别的 apartment 初始化过时忽略。
     unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
@@ -193,6 +196,7 @@ fn window_loop(state: Arc<State>) {
         cursor_hand,
         effects: ui_skia_effect::Effects::load(&state),
         budget: BudgetGuard::new(Budget::default()),
+        dead: false,
     }));
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
@@ -242,6 +246,11 @@ fn window_loop(state: Arc<State>) {
 
 /// 组合变化后重新摆位并出帧;无内容时淡出或停靠。
 fn place(ctx: &mut WinCtx, hwnd: HWND) {
+    if ctx.dead {
+        // 设备没了,窗口一直停在屏幕外,不再参与摆位与绘制。
+        park(hwnd);
+        return;
+    }
     let Some(view) = ui_place::snapshot(&ctx.state) else {
         // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
         if ctx.fx.reduce || ctx.fx.last.is_none() {
@@ -356,6 +365,10 @@ fn place(ctx: &mut WinCtx, hwnd: HWND) {
 
 /// 动画帧:淡入/淡出/滑动进行中重绘;淡出到期停靠,其余到期走终态。
 fn animate(ctx: &mut WinCtx, hwnd: HWND) {
+    if ctx.dead {
+        park(hwnd);
+        return;
+    }
     let now = Instant::now();
     if ctx.fx.hide.is_some_and(|end| now >= end) {
         ctx.fx.clear();
@@ -379,6 +392,16 @@ fn animate(ctx: &mut WinCtx, hwnd: HWND) {
 
 /// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
 fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
+    // 设备被系统摘掉(驱动重启、GPU 挂起)后不能再进 Skia:命令表已经建不出来,
+    // Skia 拿着空句柄继续走会崩。摘掉了就停用候选窗,输入法本身照常工作。
+    if ctx.dead {
+        return;
+    }
+    if ctx.pipe.device_removed() {
+        ctx.dead = true;
+        println!("Skia 候选窗:D3D12 设备已被系统摘掉,候选窗停用");
+        return;
+    }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
     let appearance = theme::Appearance::of_system();
     let palette = palette_of(theme::colors_with(appearance, accent));
@@ -781,7 +804,7 @@ fn ease_out_quint(t: f32) -> f32 {
 
 /// DirectWrite 默认字体管理器里取微软雅黑;系统里没有这一族就退回系统默认
 /// 字型——拿不到字型就没有字,候选窗会空成一块底色,比字体难看得多。
-fn panel_font() -> Option<Font> {
+pub(super) fn panel_font() -> Option<Font> {
     let mgr = FontMgr::new();
     let face = mgr
         .match_family_style("Microsoft YaHei UI", FontStyle::normal())
@@ -848,7 +871,7 @@ fn park(hwnd: HWND) {
 }
 
 /// 会话视图转面板输入;页切片、选中态与页码标签与 GPUI 路径同一套语义。
-fn spec_of(view: &SessionView, layout: UiLayout) -> PanelSpec {
+pub(super) fn spec_of(view: &SessionView, layout: UiLayout) -> PanelSpec {
     let ps = view.page_size.max(1);
     let start = view.page * ps;
     let end = (start + ps).min(view.candidates.len());
