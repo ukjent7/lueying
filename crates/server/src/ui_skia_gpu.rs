@@ -207,9 +207,7 @@ impl Pipeline {
         }
         let mut surfaces = Vec::with_capacity(BUFFER_COUNT);
         for i in 0..BUFFER_COUNT {
-            let resource: ID3D12Resource = self
-                .swapchain
-                .GetBuffer(i as u32)
+            let resource: ID3D12Resource = unsafe { self.swapchain.GetBuffer(i as u32) }
                 .map_err(|e| format!("GetBuffer({i}): {e}"))?;
             let target = gpu::backend_render_targets::make_d3d(
                 (w as i32, h as i32),
