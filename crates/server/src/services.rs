@@ -24,13 +24,11 @@ use windows::Win32::Graphics::Gdi::{
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC, SRCCOPY,
     SelectObject,
 };
-use windows::Win32::System::Com::{
-    COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize,
-};
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
-    VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT,
-    VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
+    VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR,
+    VK_RETURN, VK_RIGHT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -335,9 +333,7 @@ impl HotkeyProvider {
             .ok_or_else(|| "缺 id".to_string())?
             .to_string();
         let modifiers = modifiers(&parsed["modifiers"])?;
-        let key = parsed["key"]
-            .as_str()
-            .ok_or_else(|| "缺 key".to_string())?;
+        let key = parsed["key"].as_str().ok_or_else(|| "缺 key".to_string())?;
         let virtual_key = virtual_key(key).ok_or_else(|| format!("不支持的热键 {key:?}"))?;
         let mut state = self.state.lock().unwrap();
         if state.map.contains_key(&id) {
@@ -345,7 +341,11 @@ impl HotkeyProvider {
             return Ok(());
         }
         let hot_id = state.next;
-        state.next = if state.next >= 0xBFFF { 1 } else { state.next + 1 };
+        state.next = if state.next >= 0xBFFF {
+            1
+        } else {
+            state.next + 1
+        };
         match unsafe { RegisterHotKey(None, hot_id, modifiers, virtual_key) } {
             Ok(()) => {
                 state.map.insert(id.clone(), hot_id);
@@ -365,8 +365,7 @@ impl HotkeyProvider {
         let mut state = self.state.lock().unwrap();
         match state.map.remove(&id) {
             Some(hot_id) => {
-                let result =
-                    unsafe { UnregisterHotKey(None, hot_id) }.map_err(|e| e.to_string());
+                let result = unsafe { UnregisterHotKey(None, hot_id) }.map_err(|e| e.to_string());
                 match result {
                     Ok(()) => done.complete(Ok(json!({ "unregistered": true }).to_string())),
                     Err(error) => done.complete(Err(error)),
@@ -396,7 +395,9 @@ fn modifiers(value: &serde_json::Value) -> Result<HOT_KEY_MODIFIERS, String> {
 
 /// 单个字符(经 VkKeyScanW)与常用命名键;更多命名键随 T4 的绑定表扩。
 fn virtual_key(key: &str) -> Option<u32> {
-    if let Some(number) = key.strip_prefix('F').and_then(|rest| rest.parse::<u32>().ok())
+    if let Some(number) = key
+        .strip_prefix('F')
+        .and_then(|rest| rest.parse::<u32>().ok())
         && (1..=12).contains(&number)
     {
         return Some(0x70 + number - 1);
