@@ -62,6 +62,9 @@ fn script_buttons_map_to_actions() {
 fn focus_order_lists_script_buttons_once() {
     let order = Settings::focus_order();
     let choose = order.iter().filter(|id| id.base == ids::SCRIPTS).count();
-    let dir = order.iter().filter(|id| id.base == ids::SCRIPTS_DIR).count();
+    let dir = order
+        .iter()
+        .filter(|id| id.base == ids::SCRIPTS_DIR)
+        .count();
     assert_eq!((choose, dir), (1, 1));
 }
