@@ -166,7 +166,10 @@ fn settings_page() -> ui::Page {
                     detail: "全拼或双拼,共享词库".into(),
                     control: ui::Control::Segment {
                         id: ui::Id::new("scheme", 0),
-                        options: vec!["全拼".into(), "双拼".into()],
+                        options: vec![
+                            ui::SegmentOption::new("全拼"),
+                            ui::SegmentOption::new("双拼"),
+                        ],
                         selected: 0,
                         width: 44.0,
                     },
@@ -181,6 +184,20 @@ fn settings_page() -> ui::Page {
                             kind: ui::ButtonKind::Secondary,
                             enabled: true,
                         }],
+                    },
+                },
+                ui::Row {
+                    label: "用户效果".into(),
+                    detail: "SkSL 装饰层,放进去即生效".into(),
+                    control: ui::Control::ButtonsToggle {
+                        items: vec![ui::Button {
+                            id: ui::Id::new("open-effects", 0),
+                            text: "目录".into(),
+                            kind: ui::ButtonKind::Secondary,
+                            enabled: true,
+                        }],
+                        toggle: ui::Id::new("effects", 0),
+                        toggle_on: true,
                     },
                 },
             ],
@@ -724,7 +741,7 @@ pub fn run(report: &mut String) -> usize {
     // 设置窗控件层:布局、命中与像素。
     let font = ui_font();
     let page = settings_page();
-    let layout = ui::layout(&page, &font, 1.0);
+    let layout = ui::layout(&page, &font, 1.0, 650.0);
     // 命中:开关、分段格、按钮各归各位;空白处不命中。
     let toggle = layout.card_hit(ui::Id::new("aux", 0)).expect("开关矩形");
     let hit = layout.hit_card(center_x(toggle), center_y(toggle));
@@ -800,6 +817,47 @@ pub fn run(report: &mut String) -> usize {
         "设置选中分段底色",
         cell_pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().segment)),
         format!("{cell_pixel:?} 期望 {:?}", rgb(palette().segment)),
+    );
+    // 页脚贴视口底:内容比视口矮时页脚也在底上。
+    let footer_bottom = layout.footer.bottom;
+    push(
+        &mut checks,
+        "设置页脚贴底",
+        (footer_bottom - (650.0 - 18.0)).abs() < 0.5,
+        format!("页脚下沿={footer_bottom:.1}"),
+    );
+    // 视口够高时卡片不滚动。
+    let tall = ui::layout(&page, &font, 1.0, 2000.0);
+    push(
+        &mut checks,
+        "设置视口够高不滚动",
+        tall.max_scroll() == 0.0,
+        format!("max_scroll={:.1}", tall.max_scroll()),
+    );
+    // 视口矮时卡片能滚,滚动量等于多出来的高度。
+    let short = ui::layout(&page, &font, 1.0, 200.0);
+    let expect = (short.card.bottom - short.scroll.bottom).max(0.0);
+    push(
+        &mut checks,
+        "设置视口矮时可滚动",
+        (short.max_scroll() - expect).abs() < 0.5 && expect > 0.0,
+        format!("max_scroll={:.1} 期望 {expect:.1}", short.max_scroll()),
+    );
+    // 按钮与开关并排:开关贴行右,按钮在它左边,两者各自命中。
+    let effect_toggle = layout.card_hit(ui::Id::new("effects", 0)).expect("效果开关矩形");
+    let effect_button = layout
+        .card_hit(ui::Id::new("open-effects", 0))
+        .expect("效果按钮矩形");
+    let hit = layout.hit_card(center_x(effect_toggle), center_y(effect_toggle));
+    let hit_button = layout.hit_card(center_x(effect_button), center_y(effect_button));
+    push(
+        &mut checks,
+        "设置按钮开关并排",
+        hit == Some(ui::Id::new("effects", 0))
+            && hit_button == Some(ui::Id::new("open-effects", 0))
+            && (effect_button.right <= effect_toggle.left)
+            && (effect_toggle.right - toggle.right).abs() < 0.5,
+        format!("开关={hit:?} 按钮={hit_button:?}"),
     );
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

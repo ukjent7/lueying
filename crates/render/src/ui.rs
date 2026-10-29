@@ -1,9 +1,9 @@
 //! 设置窗的控件层:页面描述、布局、绘制与命中。
 //!
 //! 设置窗的结构是「一页说明 + 每行一个控件」,不需要通用 GUI 框架:
-//! [`Page`] 描述内容,[`layout`] 算几何,[`Painter`] 出帧,[`Layout::hit`]
-//! 把点击反查回控件。平台侧只管窗口、事件与状态,画面与命中都在这里,
-//! Linux E2E 因此能直接断言布局与像素。
+//! [`Page`] 描述内容,[`layout`] 算几何,[`Painter`] 出帧,[`Layout::hit_page`]
+//! 与 [`Layout::hit_card`] 把点击反查回控件。平台侧只管窗口、事件与状态,
+//! 画面与命中都在这里,Linux E2E 因此能直接断言布局与像素。
 
 use skia_safe::{Canvas, ClipOp, Font, Paint, PaintStyle, Point, RRect, Rect, Vector};
 
@@ -80,6 +80,31 @@ pub struct Button {
     pub enabled: bool,
 }
 
+/// 分段组里的一格。
+#[derive(Clone, Debug)]
+pub struct SegmentOption {
+    pub text: String,
+    /// 选中时的文字颜色;None 用默认色。
+    pub tint: Option<u32>,
+}
+
+impl SegmentOption {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            tint: None,
+        }
+    }
+
+    /// 带固定文字颜色的选项(主题色一列用)。
+    pub fn tinted(text: impl Into<String>, tint: u32) -> Self {
+        Self {
+            text: text.into(),
+            tint: Some(tint),
+        }
+    }
+}
+
 /// 行右侧的控件。
 #[derive(Clone, Debug)]
 pub enum Control {
@@ -88,13 +113,19 @@ pub enum Control {
     /// 分段组;每格按下标有自己的 id,`selected` 是选中格。
     Segment {
         id: Id,
-        options: Vec<String>,
+        options: Vec<SegmentOption>,
         selected: usize,
         /// 每格宽度(逻辑像素)。
         width: f32,
     },
     /// 一排按钮。
     Buttons { items: Vec<Button> },
+    /// 按钮与开关并排:开关贴行右,按钮在它左边。
+    ButtonsToggle {
+        items: Vec<Button>,
+        toggle: Id,
+        toggle_on: bool,
+    },
     /// 右侧没有控件。
     None,
 }
@@ -132,12 +163,14 @@ pub struct Page {
 /// 布局结果:几何都在物理像素里。
 #[derive(Clone, Debug, Default)]
 pub struct Layout {
-    /// 内容总高(物理像素)。
+    /// 页面自然总高(物理像素);比视口高时可滚动。
     pub height: f32,
-    /// 卡片在页面里的位置。
+    /// 卡片在页面里的位置(自然位置,还没滚动)。
     pub card: Rect,
-    /// 滚动区(页面坐标);卡片在里面滚。
+    /// 滚动区:视口里露出来的那一段(页面坐标)。
     pub scroll: Rect,
+    /// 页脚:视口底部的一条。
+    pub footer: Rect,
     /// 品牌图标。
     pub logo: Rect,
     /// 固定部分(头部、页脚)的可点区域。
@@ -192,6 +225,11 @@ impl Layout {
             .find(|(i, _)| *i == id)
             .map(|(_, rect)| *rect)
     }
+
+    /// 卡片最多能往上滚多远(物理像素);内容不够一屏时是 0。
+    pub fn max_scroll(&self) -> f32 {
+        (self.card.bottom - self.scroll.bottom).max(0.0)
+    }
 }
 
 /// 后画的控件优先命中:分段格压在组框上。
@@ -214,8 +252,9 @@ enum Align {
     Center,
 }
 
-/// 算一页的几何。`scale` 是 DPI 缩放,字型按逻辑字号给。
-pub fn layout(page: &Page, font: &Font, scale: f32) -> Layout {
+/// 算一页的几何。`scale` 是 DPI 缩放,字型按逻辑字号给;`viewport` 是
+/// 窗口客户区高度(物理像素),页脚贴底、卡片在中间滚动。
+pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
     let mut out = Layout::default();
     let pad = PAD * scale;
     let gap = GAP * scale;
@@ -257,17 +296,18 @@ pub fn layout(page: &Page, font: &Font, scale: f32) -> Layout {
         }
     }
     out.card = Rect::from_xywh(pad, card_top, content, cy);
-    // 滚动区:卡片之外留给页脚的高度。
+    // 页脚贴视口底,滚动区是卡片起点到页脚之间那一条。
     let footer_h = BUTTON_H * scale;
-    out.height = out.card.bottom + gap + footer_h + pad;
+    let footer_top = (viewport - footer_h - pad).max(card_top + footer_h);
+    out.footer = Rect::from_xywh(pad, footer_top, content, footer_h);
     out.scroll = Rect::from_xywh(
         pad,
         card_top,
         content,
-        (out.height - footer_h - pad * 2.0 - gap).max(0.0),
+        (footer_top - gap - card_top).max(0.0),
     );
+    out.height = out.card.bottom + gap + footer_h + pad;
     // 页脚:提示在左,按钮在右。
-    let footer_top = out.card.bottom + gap;
     let mut fx = width - pad;
     for button in page.footer_buttons.iter().rev() {
         let w = button_width(button, font, scale);
@@ -329,6 +369,39 @@ fn place_control(
             let total: f32 = widths.iter().sum::<f32>()
                 + BUTTON_GAP * scale * items.len().saturating_sub(1) as f32;
             let mut x = right - total;
+            for (button, w) in items.iter().zip(widths) {
+                let rect = Rect::from_xywh(
+                    x,
+                    row_top + (ROW_H - BUTTON_H) * scale / 2.0,
+                    w,
+                    BUTTON_H * scale,
+                );
+                out.card_hits.push((button.id, rect));
+                out.card_rings.push((button.id, rect));
+                x += w + BUTTON_GAP * scale;
+            }
+        }
+        Control::ButtonsToggle {
+            items,
+            toggle,
+            toggle_on: _,
+        } => {
+            // 开关贴行右,按钮排在它左边。
+            let toggle_rect = Rect::from_xywh(
+                right - TOGGLE_W * scale,
+                row_top + (ROW_H - TOGGLE_H) * scale / 2.0,
+                TOGGLE_W * scale,
+                TOGGLE_H * scale,
+            );
+            out.card_hits.push((*toggle, toggle_rect));
+            out.card_rings.push((*toggle, toggle_rect));
+            let widths: Vec<f32> = items
+                .iter()
+                .map(|button| button_width(button, font, scale))
+                .collect();
+            let total: f32 = widths.iter().sum::<f32>()
+                + BUTTON_GAP * scale * items.len().saturating_sub(1) as f32;
+            let mut x = toggle_rect.left - BUTTON_GAP * scale - total;
             for (button, w) in items.iter().zip(widths) {
                 let rect = Rect::from_xywh(
                     x,
@@ -544,15 +617,17 @@ impl<'a> Painter<'a> {
                             &fill_paint(self.palette.segment),
                         );
                     }
+                    // 选中格可以用自己的颜色(主题色一列),没选中的走次级色。
+                    let tint = if index == *selected {
+                        option.tint.unwrap_or(self.palette.text)
+                    } else {
+                        self.palette.text_secondary
+                    };
                     self.label_clipped(
-                        option,
+                        &option.text,
                         12.0,
                         index == *selected,
-                        if index == *selected {
-                            self.palette.text
-                        } else {
-                            self.palette.text_secondary
-                        },
+                        tint,
                         rect,
                         Align::Center,
                     );
@@ -563,6 +638,20 @@ impl<'a> Painter<'a> {
                     if let Some(rect) = layout.ring_card(button.id) {
                         self.button(button, rect);
                     }
+                }
+            }
+            Control::ButtonsToggle {
+                items,
+                toggle,
+                toggle_on,
+            } => {
+                for button in items {
+                    if let Some(rect) = layout.ring_card(button.id) {
+                        self.button(button, rect);
+                    }
+                }
+                if let Some(rect) = layout.ring_card(*toggle) {
+                    self.toggle(*toggle_on, rect);
                 }
             }
             Control::None => {}
@@ -582,7 +671,7 @@ impl<'a> Painter<'a> {
     /// 页脚:提示文字与按钮。
     fn footer(&self, page: &Page, layout: &Layout) {
         let s = self.scale;
-        let top = layout.card.bottom + GAP * s;
+        let top = layout.footer.top;
         if !page.notice.is_empty() {
             let dot = Rect::from_xywh(
                 ROW_PAD * s,
