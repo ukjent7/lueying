@@ -127,3 +127,7 @@ fn valid_main(name: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
+
+#[cfg(test)]
+#[path = "manifest_tests.rs"]
+mod tests;

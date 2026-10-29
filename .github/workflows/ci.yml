@@ -86,9 +86,12 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --locked
       # 版本比较/SHA 解析在 protocol crate,纯逻辑在 Linux 上测,
-      # 不必为此在 Windows 上编译整棵 GPUI 依赖树。
+      # 不必为此编译 Windows 原生链路。
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
+      # 扩展层单元测试:清单与补丁的边界矩阵,E2E 覆盖不到的取值组合。
+      - name: 扩展层单元测试
+        run: cargo test -p lueying-extjs --lib --locked
 
   # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准 + 1444 条共享语料。
   # 全量语料、x86 与安装冒烟成本高,仍在 quality.yml 定时跑。
@@ -113,6 +116,9 @@ jobs:
       # 否则会静默退化成十几分钟的本地编 Skia,还把原因埋在日志里。
       - name: Skia 预编译命中
         run: cargo build --release -p lueying-render --features prebuilt-only --locked
+      # 单元测试补回归网密度;E2E 仍是主路径,这里只测纯逻辑边界。
+      - name: 服务端单元测试
+        run: cargo test -p lueying-server --lib --release --locked
       - name: 缓存词典与模型
         id: dict-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -163,7 +169,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 缓存只留 windows job(gpui/zed 树是编译大头,ubuntu 两个 job 全量也只要几分钟);
+      # 缓存只留 windows job(Windows 原生链路与 Skia 是编译大头,ubuntu 两个 job 全量也只要几分钟);
       # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

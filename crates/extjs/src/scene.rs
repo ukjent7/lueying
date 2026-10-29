@@ -219,3 +219,7 @@ impl EffectsPatch {
             .filter_map(|slot| self.get(slot).map(|source| (slot, source)))
     }
 }
+
+#[cfg(test)]
+#[path = "scene_tests.rs"]
+mod tests;

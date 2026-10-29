@@ -840,3 +840,7 @@ fn word_count(words: usize) -> String {
 fn mark(on: bool) -> &'static str {
     if on { "✓" } else { "✗" }
 }
+
+#[cfg(test)]
+#[path = "settings_view_tests.rs"]
+mod tests;

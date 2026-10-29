@@ -556,3 +556,7 @@ fn valid_script_id(id: &str) -> bool {
         && id.len() <= 48
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;

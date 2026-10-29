@@ -117,10 +117,13 @@ setup.exe,未配置时发布未签名包。
 
 ## 质量门禁
 
-- `ci.yml`:fmt 回推、clippy `-D warnings`、rustdoc 断链检查、快速 E2E +
-  共享语料基准、Windows 全链路 E2E(TSF 真实链接,x86 定时跑)。
+- `ci.yml`:fmt 回推、clippy `-D warnings`、rustdoc 断链检查、protocol/extjs
+  单元测试、快速 E2E + 共享语料基准、server 单元测试、Windows 全链路 E2E
+  (TSF 真实链接,x86 定时跑)。
 - `quality.yml`(定时):全量语料准确率门限(clean 92% / top-5 95%)、
   x86 全链路、Inno 安装/卸载冒烟。
 - `audit.yml`(定时):`cargo audit` 依赖漏洞审计。
-- E2E 是唯一测试机制:`crates/e2e`(引擎场景 + 基准)、`crates/win-e2e`
-  (真实 TSF 宿主)、`crates/install-e2e`(真实安装包)。
+- E2E 是主路径:`crates/e2e`(引擎场景 + 基准)、`crates/win-e2e`
+  (真实 TSF 宿主)、`crates/install-e2e`(真实安装包)。单元测试补回归网密度,
+  覆盖配置解析、清单/补丁校验与页面模型等纯逻辑边界,放在 `src/*_tests.rs`,
+  由 `engine`(protocol/extjs)与 `quality`(server)分别执行。
