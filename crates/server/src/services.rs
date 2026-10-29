@@ -234,7 +234,8 @@ fn ocr_inner(file: &str, lang: Option<String>) -> Result<String, String> {
     let text = unsafe { recognized.Text() }
         .map_err(|e| format!("OcrResult.Text: {e}"))?
         .to_string();
-    let actual = engine.RecognizerLanguage()
+    let actual = engine
+        .RecognizerLanguage()
         .and_then(|language| language.LanguageTag())
         .map(|tag| tag.to_string())
         .unwrap_or_default();
@@ -254,7 +255,8 @@ fn requested_engine(tag: &str) -> Result<OcrEngine, String> {
 }
 
 fn fallback_engine() -> Result<OcrEngine, String> {
-    OcrEngine::TryCreateFromUserProfileLanguages().map_err(|_| "没有可用 OCR 引擎(语言包缺失)".to_string())
+    OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|_| "没有可用 OCR 引擎(语言包缺失)".to_string())
 }
 
 /// 系统通知;v1 只落日志,toast 需要包标识或快捷方式激活,挂后续可见性任务。
