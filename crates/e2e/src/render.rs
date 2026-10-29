@@ -844,7 +844,9 @@ pub fn run(report: &mut String) -> usize {
         format!("max_scroll={:.1} 期望 {expect:.1}", short.max_scroll()),
     );
     // 按钮与开关并排:开关贴行右,按钮在它左边,两者各自命中。
-    let effect_toggle = layout.card_hit(ui::Id::new("effects", 0)).expect("效果开关矩形");
+    let effect_toggle = layout
+        .card_hit(ui::Id::new("effects", 0))
+        .expect("效果开关矩形");
     let effect_button = layout
         .card_hit(ui::Id::new("open-effects", 0))
         .expect("效果按钮矩形");
