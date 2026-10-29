@@ -57,7 +57,8 @@ impl CpuPipeline {
             return Err("候选窗尺寸未定".to_string());
         }
         let mut rect = RECT::default();
-        unsafe { GetWindowRect(self.hwnd, &mut rect) }.map_err(|e| format!("GetWindowRect: {e}"))?;
+        unsafe { GetWindowRect(self.hwnd, &mut rect) }
+            .map_err(|e| format!("GetWindowRect: {e}"))?;
         self.layer
             .present(self.hwnd, rect.left, rect.top, w as i32, h as i32)
     }

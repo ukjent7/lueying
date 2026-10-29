@@ -249,9 +249,7 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
     // 失败不拖垮整轮 E2E——分层窗口在某些无桌面会话里本来就建不出来。
     let cpu = text
         .lines()
-        .find(|line| {
-            line.contains("SKIA CPU 自检通过") || line.contains("SKIA CPU 自检失败")
-        })
+        .find(|line| line.contains("SKIA CPU 自检通过") || line.contains("SKIA CPU 自检失败"))
         .unwrap_or("无");
     Ok(format!(
         "## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}\n\nCPU:{cpu}"
