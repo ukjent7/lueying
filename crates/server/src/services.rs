@@ -234,7 +234,7 @@ fn ocr_inner(file: &str, lang: Option<String>) -> Result<String, String> {
     let text = unsafe { recognized.Text() }
         .map_err(|e| format!("OcrResult.Text: {e}"))?
         .to_string();
-    let actual = unsafe { engine.CurrentLanguage() }
+    let actual = engine.RecognizerLanguage()
         .and_then(|language| language.LanguageTag())
         .map(|tag| tag.to_string())
         .unwrap_or_default();
@@ -243,12 +243,10 @@ fn ocr_inner(file: &str, lang: Option<String>) -> Result<String, String> {
 
 /// 请求的语言受支持就用它;不支持时记下原因走回退,结果里的 lang 说明实情。
 fn requested_engine(tag: &str) -> Result<OcrEngine, String> {
-    let language = unsafe { Language::CreateLanguage(&HSTRING::from(tag)) }
+    let language = Language::CreateLanguage(&HSTRING::from(tag))
         .map_err(|e| format!("建语言对象失败: {e}"))?;
-    if unsafe { OcrEngine::IsLanguageSupported(&language) }
-        .map_err(|e| format!("IsLanguageSupported: {e}"))?
-    {
-        unsafe { OcrEngine::TryCreateFromLanguage(&language) }
+    if OcrEngine::IsLanguageSupported(&language).map_err(|e| format!("IsLanguageSupported: {e}"))? {
+        OcrEngine::TryCreateFromLanguage(&language)
             .map_err(|e| format!("请求语言 {tag} 创建引擎失败: {e}"))
     } else {
         fallback_engine()
@@ -256,8 +254,7 @@ fn requested_engine(tag: &str) -> Result<OcrEngine, String> {
 }
 
 fn fallback_engine() -> Result<OcrEngine, String> {
-    unsafe { OcrEngine::TryCreateFromUserProfileLanguages() }
-        .map_err(|_| "没有可用 OCR 引擎(语言包缺失)".to_string())
+    OcrEngine::TryCreateFromUserProfileLanguages().map_err(|_| "没有可用 OCR 引擎(语言包缺失)".to_string())
 }
 
 /// 系统通知;v1 只落日志,toast 需要包标识或快捷方式激活,挂后续可见性任务。
