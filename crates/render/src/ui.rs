@@ -187,6 +187,47 @@ impl Page {
         }
         None
     }
+
+    /// 页面上有没有这个控件:开关、分段组、按钮都算。
+    pub fn has_control(&self, id: Id) -> bool {
+        if let Some(button) = &self.header_button
+            && button.id == id
+        {
+            return true;
+        }
+        if self.footer_buttons.iter().any(|button| button.id == id) {
+            return true;
+        }
+        for group in &self.groups {
+            for row in &group.rows {
+                match &row.control {
+                    Control::Toggle { id: control, .. } => {
+                        if *control == id {
+                            return true;
+                        }
+                    }
+                    Control::Segment { id: control, .. } => {
+                        // 分段组里的每一格都算这个组的控件。
+                        if control.base == id.base {
+                            return true;
+                        }
+                    }
+                    Control::Buttons { items } => {
+                        if items.iter().any(|button| button.id == id) {
+                            return true;
+                        }
+                    }
+                    Control::ButtonsToggle { items, toggle, .. } => {
+                        if *toggle == id || items.iter().any(|button| button.id == id) {
+                            return true;
+                        }
+                    }
+                    Control::None => {}
+                }
+            }
+        }
+        false
+    }
 }
 
 /// 布局结果:几何都在物理像素里。

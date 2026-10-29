@@ -806,10 +806,14 @@ pub fn run(report: &mut String) -> usize {
         knob.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().on_accent)),
         format!("{knob:?} 期望 {:?}", rgb(palette().on_accent)),
     );
-    // 选中格的底色在格子左缘(避开居中的文字)。
+    // 选中格的底色在格子左缘(避开居中的文字);只有选中的那格是白的,
+    // 没选中的格子露的是分段轨道底色。
+    let selected_cell = layout
+        .card_hit(ui::Id::new("scheme", 0))
+        .expect("选中分段格矩形");
     let (cell_x, cell_y) = (
-        (layout.card.left + cell.left + 2.0) as i32,
-        (layout.card.top + center_y(cell)) as i32,
+        (layout.card.left + selected_cell.left + 2.0) as i32,
+        (layout.card.top + center_y(selected_cell)) as i32,
     );
     let cell_pixel = read_bgra(&mut ui_surface, cell_x, cell_y);
     push(

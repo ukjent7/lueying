@@ -132,6 +132,8 @@ pub fn run(report: &mut String) -> usize {
         stepped != before && settings.cfg.scheme == before,
         format!("{before:?} → {stepped:?} → {:?}", settings.cfg.scheme),
     );
+    // 绕回:从第一格再往前一步,回到最后一格。
+    settings.activate(&Id::new(ids::SCHEME, 0));
     settings.shift(&Id::new(ids::SCHEME, 0), -1);
     push(
         &mut checks,
@@ -171,7 +173,7 @@ pub fn run(report: &mut String) -> usize {
     // 焦点顺序里的控件都得在页面上找得到。
     let missing: Vec<&str> = order
         .iter()
-        .filter(|id| !Settings::is_segment(id.base) && page.button(**id).is_none())
+        .filter(|id| !Settings::is_segment(id.base) && !page.has_control(**id))
         .map(|id| id.base)
         .collect();
     push(
