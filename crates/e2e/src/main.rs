@@ -4,6 +4,7 @@
 mod address;
 mod bench;
 mod extensions;
+mod extjs;
 mod features;
 mod modules;
 mod quick;
@@ -169,6 +170,9 @@ fn main() {
 
     // 第一批内置扩展:双拼、自定义短语、辅助码、下一词联想。
     failures += extensions::run(&mut report);
+
+    // 运行期脚本扩展:包校验、场景协议、预算、隐私与热重载。
+    failures += extjs::run(&mut report);
 
     // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
     failures += render::run(&mut report);

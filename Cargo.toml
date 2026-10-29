@@ -9,6 +9,8 @@ members = [
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
+    # 运行期扩展:场景协议 + QuickJS 宿主,平台无关
+    "crates/extjs",
     # 渲染核心:候选窗 Skia 出帧,平台无关
     "crates/render",
     # Windows 宿主与安装
@@ -30,6 +32,7 @@ license = "GPL-3.0-or-later"
 lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }
+lueying-extjs = { path = "crates/extjs" }
 lueying-features = { path = "crates/features" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }

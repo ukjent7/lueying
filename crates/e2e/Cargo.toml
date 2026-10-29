@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
+lueying-extjs.workspace = true
 lueying-features.workspace = true
 lueying-render.workspace = true
 lueying-rerank.workspace = true
