@@ -47,7 +47,7 @@ fn script_detail_reports_state() {
 
 #[test]
 fn script_buttons_map_to_actions() {
-    let settings = Settings::default();
+    let mut settings = Settings::default();
     assert_eq!(
         settings.activate(&Id::new(ids::SCRIPTS, 0)),
         Some(Action::ChooseScript)
