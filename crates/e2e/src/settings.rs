@@ -115,7 +115,10 @@ pub fn run(report: &mut String) -> usize {
             && settings.cfg.update_channel == Channel::Beta,
         format!(
             "地区={:?} 排列={:?} 字号={:?} 渠道={:?}",
-            settings.cfg.region, settings.cfg.ui_layout, settings.cfg.ui_font, settings.cfg.update_channel
+            settings.cfg.region,
+            settings.cfg.ui_layout,
+            settings.cfg.ui_font,
+            settings.cfg.update_channel
         ),
     );
     // 左右键循环:往后一步,再往前一步回到原处;绕回也停得住。
