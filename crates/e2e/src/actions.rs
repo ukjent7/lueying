@@ -48,10 +48,7 @@ fn check(
 
 /// 点选页尾的字面原文候选;动作候选出现时总会补一条。
 fn pick_literal(engine: &mut Engine) -> Option<String> {
-    let index = engine
-        .candidates()
-        .iter()
-        .position(|text| text == "bc")?;
+    let index = engine.candidates().iter().position(|text| text == "bc")?;
     commit_text(engine.pick(index))
 }
 
