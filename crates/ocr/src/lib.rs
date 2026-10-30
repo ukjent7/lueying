@@ -89,11 +89,8 @@ impl PpOcr {
             return Err("图片为空".to_string());
         }
         let prepared = det::prepare(image, self.options.max_side);
-        let tensor = Tensor::from_shape(
-            &[1, 3, prepared.height, prepared.width],
-            &prepared.data,
-        )
-        .map_err(|e| format!("det 输入张量失败: {e}"))?;
+        let tensor = Tensor::from_shape(&[1, 3, prepared.height, prepared.width], &prepared.data)
+            .map_err(|e| format!("det 输入张量失败: {e}"))?;
         let outputs = self
             .det
             .run(tvec!(tensor.into()))

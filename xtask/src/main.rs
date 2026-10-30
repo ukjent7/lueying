@@ -186,12 +186,16 @@ fn pack(args: PackArgs) -> Result<(), String> {
     let ppocr = args.data.join("ppocr");
     if ppocr.is_dir() {
         let target = args.out.join("models/ppocr");
-        std::fs::create_dir_all(&target)
-            .map_err(|e| format!("创建 {}: {e}", target.display()))?;
+        std::fs::create_dir_all(&target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
         for name in PACK_PPOCR {
             let source = ppocr.join(name);
             if source.exists() {
-                copy_file(&source, &args.out, &format!("models/ppocr/{name}"), &mut files)?;
+                copy_file(
+                    &source,
+                    &args.out,
+                    &format!("models/ppocr/{name}"),
+                    &mut files,
+                )?;
             } else if args.allow_missing_data {
                 println!("警告: 缺少 PP-OCR 文件 {}", source.display());
             } else {

@@ -15,7 +15,13 @@ pub struct RgbImage {
 
 impl RgbImage {
     /// 取一块矩形(左闭右开);越界部分裁掉。
-    pub(crate) fn crop(&self, left: usize, top: usize, right: usize, bottom: usize) -> Option<Self> {
+    pub(crate) fn crop(
+        &self,
+        left: usize,
+        top: usize,
+        right: usize,
+        bottom: usize,
+    ) -> Option<Self> {
         let right = right.min(self.width);
         let bottom = bottom.min(self.height);
         if left >= right || top >= bottom {
@@ -148,7 +154,13 @@ mod tests {
 
     #[test]
     fn decodes_bottom_up_24_bit() {
-        let data = bmp(2, 2, 24, false, &[[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]);
+        let data = bmp(
+            2,
+            2,
+            24,
+            false,
+            &[[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]],
+        );
         let image = decode_bmp(&data).unwrap();
         assert_eq!((image.width, image.height), (2, 2));
         assert_eq!(image.pixels, vec![7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6]);

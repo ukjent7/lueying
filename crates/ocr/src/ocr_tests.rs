@@ -2,10 +2,7 @@ use super::*;
 
 #[test]
 fn open_reports_missing_model() {
-    let dir = std::env::temp_dir().join(format!(
-        "lueying-ocr-missing-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("lueying-ocr-missing-{}", std::process::id()));
     let Err(error) = PpOcr::open(&dir) else {
         panic!("缺少模型时不应加载成功");
     };

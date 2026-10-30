@@ -264,9 +264,8 @@ fn recognize_file(
 
 /// PP-OCRv6 只吃 BMP;截图链路固定产出 BMP,其它格式回明确错误。
 fn ppocr_file(cache: &PpOcrCache, file: &str) -> Result<String, String> {
-    let dir = crate::config::ppocr_dir().ok_or_else(|| {
-        "PP-OCRv6 模型未安装:需要 det.onnx、rec.onnx、dict.txt".to_string()
-    })?;
+    let dir = crate::config::ppocr_dir()
+        .ok_or_else(|| "PP-OCRv6 模型未安装:需要 det.onnx、rec.onnx、dict.txt".to_string())?;
     let model = cache.load(dir)?;
     let image = lueying_ocr::load_bmp(Path::new(file))?;
     let lines = model.recognize(&image)?;

@@ -7,8 +7,8 @@
 use std::path::Path;
 
 pub(crate) fn load(path: &Path) -> Result<Vec<String>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
     let mut dict: Vec<String> = text.lines().map(str::to_string).collect();
     if dict.last().is_some_and(|line| line.is_empty()) {
         dict.pop();
@@ -27,10 +27,7 @@ mod tests {
     use super::*;
 
     fn temp(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "lueying-ocr-dict-{}-{name}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("lueying-ocr-dict-{}-{name}", std::process::id()))
     }
 
     #[test]

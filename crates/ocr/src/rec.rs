@@ -90,7 +90,14 @@ pub(crate) fn decode(
         }
         previous = best;
     }
-    Ok((text, if emitted == 0 { 0.0 } else { score / emitted as f32 }))
+    Ok((
+        text,
+        if emitted == 0 {
+            0.0
+        } else {
+            score / emitted as f32
+        },
+    ))
 }
 
 #[cfg(test)]

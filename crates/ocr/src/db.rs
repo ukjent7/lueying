@@ -84,7 +84,8 @@ pub(crate) fn boxes(
         // 用包围盒面积与周长估外扩距离,等价于 DB 的 unclip 简化版。
         let box_width = (right - left + 1) as f32;
         let box_height = (bottom - top + 1) as f32;
-        let distance = box_width * box_height * options.unclip_ratio / (2.0 * (box_width + box_height));
+        let distance =
+            box_width * box_height * options.unclip_ratio / (2.0 * (box_width + box_height));
         let rect = [
             ((left as f32 - distance) / scale_x).max(0.0),
             ((top as f32 - distance) / scale_y).max(0.0),
@@ -102,7 +103,11 @@ pub(crate) fn boxes(
 /// 按行聚类后排序;同一行内从左到右。
 fn order(boxes: Vec<DetBox>) -> Vec<DetBox> {
     let mut sorted = boxes;
-    sorted.sort_by(|a, b| a.rect[1].total_cmp(&b.rect[1]).then(a.rect[0].total_cmp(&b.rect[0])));
+    sorted.sort_by(|a, b| {
+        a.rect[1]
+            .total_cmp(&b.rect[1])
+            .then(a.rect[0].total_cmp(&b.rect[0]))
+    });
     let mut rows: Vec<Vec<DetBox>> = Vec::new();
     for item in sorted {
         let same_row = rows.last().is_some_and(|row| {

@@ -133,10 +133,7 @@ fn panel_hotkey_defaults_to_three_modifiers() {
 fn ocr_engine_parses_aliases() {
     assert_eq!(load_text("ocr-default", "").ocr_backend, OcrBackend::System);
     for value in ["ppocr", "pp-ocr", "paddle"] {
-        let cfg = load_text(
-            &format!("ocr-{value}"),
-            &format!("ocr_engine={value}\n"),
-        );
+        let cfg = load_text(&format!("ocr-{value}"), &format!("ocr_engine={value}\n"));
         assert_eq!(cfg.ocr_backend, OcrBackend::Ppocr, "{value}");
     }
     assert_eq!(
