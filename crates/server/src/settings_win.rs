@@ -7,13 +7,17 @@
 //! 候选窗走 DirectComposition,徽标走分层窗口,设置窗走 GDI——三条路各有
 //! 各的理由,只有「像素怎么进屏幕」这一步是共通的。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use accesskit::{NodeId, TreeUpdate};
 
 use crate::accents::ACCENTS;
 use crate::blit::Layer;
 use crate::config::{self, AppConfig};
 use crate::font;
+use crate::settings_a11y::{self, A11y, QueuedAction, WM_A11Y};
 use crate::settings_actions;
+use crate::settings_edit::{self, WM_PHRASES_SAVED};
 use crate::settings_view::{Action, Notice, PageColors, Settings, UpdateState, ids};
 use crate::theme;
 use crate::update::{self, Check, Release};
@@ -39,8 +43,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage,
     RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW,
     SetWindowPos, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT,
-    WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
+    WM_PAINT, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::w;
 
@@ -101,12 +105,20 @@ pub fn run() {
             GWLP_USERDATA,
             Box::into_raw(Box::new(window)) as isize,
         );
+        // AccessKit 必须在首次显示前子类化窗口,才能截到 WM_GETOBJECT。
+        if let Some(window) = state_of(hwnd) {
+            window.enable_a11y(hwnd);
+        }
         ShowWindow(hwnd, SW_SHOW);
         // 首次显示前把整块客户区标脏,第一帧就是最新配置。
         let _ = InvalidateRect(Some(hwnd), None, false);
         UpdateWindow(hwnd);
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            // 短语编辑器没有对话框管理器:Esc 与 Tab 在这里补。
+            if settings_edit::handle_key(&msg) {
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -240,6 +252,14 @@ struct Window {
     size: (i32, i32),
     /// 待安装的新版。
     release: Option<Release>,
+    /// 无障碍树快照;适配器激活时每次重排后下发。
+    a11y_tree: Arc<Mutex<TreeUpdate>>,
+    /// 无障碍节点到控件 ID 的反查表。
+    a11y_ids: Vec<(NodeId, Id)>,
+    /// 读屏软件动作队列;窗口线程消费。
+    a11y_actions: Arc<Mutex<Vec<QueuedAction>>>,
+    /// AccessKit 适配器;自检与无读屏时留空。
+    a11y: Option<A11y>,
 }
 
 impl Window {
@@ -253,6 +273,7 @@ impl Window {
         let scale = system_scale();
         let page = settings.page(&page_colors(&colors, appearance));
         let layout = ui::layout(&page, &font, scale, HEIGHT * scale);
+        let snapshot = settings_a11y::page_tree(&page, &layout, &settings, None, 0.0, (0, 0));
         Ok(Self {
             settings,
             appearance,
@@ -267,6 +288,10 @@ impl Window {
             scale,
             size: (0, 0),
             release: None,
+            a11y_tree: Arc::new(Mutex::new(snapshot.update)),
+            a11y_ids: snapshot.ids,
+            a11y_actions: Arc::new(Mutex::new(Vec::new())),
+            a11y: None,
         })
     }
 
@@ -278,6 +303,72 @@ impl Window {
         self.layout = ui::layout(&self.page, &self.font, self.scale, self.size.1 as f32);
         let max = self.layout.max_scroll();
         self.scroll = self.scroll.clamp(0.0, max);
+        self.publish_a11y();
+    }
+
+    /// 重建无障碍树并下发给读屏软件。
+    fn publish_a11y(&mut self) {
+        let snapshot = settings_a11y::page_tree(
+            &self.page,
+            &self.layout,
+            &self.settings,
+            self.focus,
+            self.scroll,
+            self.size,
+        );
+        self.a11y_ids = snapshot.ids;
+        *self
+            .a11y_tree
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = snapshot.update;
+        if let Some(a11y) = self.a11y.as_mut() {
+            a11y.refresh();
+        }
+    }
+
+    /// 挂上 AccessKit;必须在窗口首次显示前调用。
+    fn enable_a11y(&mut self, hwnd: HWND) {
+        self.a11y = Some(A11y::new(
+            hwnd,
+            Arc::clone(&self.a11y_tree),
+            Arc::clone(&self.a11y_actions),
+        ));
+    }
+
+    /// 取出读屏软件排队的动作。
+    fn take_a11y_actions(&self) -> Vec<QueuedAction> {
+        std::mem::take(
+            &mut *self
+                .a11y_actions
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        )
+    }
+
+    /// 执行一条无障碍动作:点击与鼠标点走同一条路,焦点只移动焦点。
+    fn a11y_action(&mut self, queued: QueuedAction) -> Option<Action> {
+        match queued {
+            QueuedAction::Click(node) => {
+                let id = self.a11y_ids.iter().find_map(|(candidate, id)| {
+                    (*candidate == node).then_some(*id)
+                })?;
+                self.press(id)
+            }
+            QueuedAction::Focus(node) => {
+                let id = self.a11y_ids.iter().find_map(|(candidate, id)| {
+                    (*candidate == node).then_some(*id)
+                })?;
+                self.focus = Some(if Settings::is_segment(id.base) {
+                    Id::new(id.base, 0)
+                } else {
+                    id
+                });
+                self.relayout();
+                self.scroll_to_focus();
+                self.publish_a11y();
+                None
+            }
+        }
     }
 
     /// 画一帧:Skia 画进位图,再贴到客户区。
@@ -319,15 +410,22 @@ impl Window {
     /// 点一下:改配置或者给平台侧一个动作。
     fn click(&mut self, x: f32, y: f32) -> Option<Action> {
         let id = self.hit(x, y)?;
+        self.press(id)
+    }
+
+    /// 按下控件:读屏软件与键盘激活共用这一条。
+    fn press(&mut self, id: Id) -> Option<Action> {
         if let Some(button) = self.page.button(id)
             && !button.enabled
         {
             return None;
         }
         // 点分段格:焦点落到整组上,左右键才好使。
-        if Settings::is_segment(id.base) {
-            self.focus = Some(Id::new(id.base, 0));
-        }
+        self.focus = Some(if Settings::is_segment(id.base) {
+            Id::new(id.base, 0)
+        } else {
+            id
+        });
         let action = self.settings.activate(&id);
         self.relayout();
         action
@@ -354,6 +452,7 @@ impl Window {
         };
         self.focus = Some(order[next]);
         self.scroll_to_focus();
+        self.publish_a11y();
     }
 
     /// 焦点控件滚进视野。
@@ -395,20 +494,14 @@ impl Window {
     /// Enter / Space 激活焦点上的控件。
     fn activate_focus(&mut self) -> Option<Action> {
         let id = self.focus?;
-        if let Some(button) = self.page.button(id)
-            && !button.enabled
-        {
-            return None;
-        }
-        let action = self.settings.activate(&id);
-        self.relayout();
-        action
+        self.press(id)
     }
 
     /// 滚轮:向上滚看更早的内容。
     fn wheel(&mut self, delta: f32) {
         let max = self.layout.max_scroll();
         self.scroll = (self.scroll - delta / 120.0 * WHEEL_STEP * self.scale).clamp(0.0, max);
+        self.publish_a11y();
     }
 
     /// 后台查更新回来了。
@@ -511,7 +604,7 @@ fn handle_action(hwnd: HWND, action: Action) {
         Action::OpenExtAudit => with_settings(hwnd, settings_actions::open_ext_audit),
         Action::RefreshExtMetrics => with_settings(hwnd, settings_actions::refresh_ext_metrics),
         Action::OpenOcrModels => with_settings(hwnd, settings_actions::open_ocr_models),
-        Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
+        Action::OpenPhrases => open_phrase_editor(hwnd),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),
         Action::OpenApps => with_settings(hwnd, settings_actions::open_apps),
         Action::BackupExport => with_settings(hwnd, settings_actions::backup_export),
@@ -548,6 +641,15 @@ fn handle_action(hwnd: HWND, action: Action) {
                 put_settings(hwnd, settings);
             }
         }
+    }
+}
+
+/// 打开窗内短语编辑器:标准 EDIT 控件,读屏软件与输入法都能正常工作。
+fn open_phrase_editor(hwnd: HWND) {
+    if let Err(error) = settings_edit::open(hwnd) {
+        with_settings(hwnd, |settings| {
+            settings.say(Notice::Error, error);
+        });
     }
 }
 
@@ -695,6 +797,32 @@ unsafe extern "system" fn wnd_proc(
                 let action = state_of(hwnd).and_then(|window| window.key(key, shift, ctrl));
                 if let Some(action) = action {
                     handle_action(hwnd, action);
+                }
+                LRESULT(0)
+            }
+            WM_SETFOCUS | WM_KILLFOCUS => {
+                // 读屏软件要按实际焦点决定读哪里;焦点变化后重新下发树。
+                if let Some(window) = state_of(hwnd) {
+                    window.publish_a11y();
+                }
+                LRESULT(0)
+            }
+            WM_A11Y => {
+                let actions = state_of(hwnd)
+                    .map(|window| window.take_a11y_actions())
+                    .unwrap_or_default();
+                for queued in actions {
+                    let action = state_of(hwnd).and_then(|window| window.a11y_action(queued));
+                    if let Some(action) = action {
+                        handle_action(hwnd, action);
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_PHRASES_SAVED => {
+                if let Some(window) = state_of(hwnd) {
+                    window.settings.say(Notice::Success, "短语已保存");
+                    window.relayout();
                 }
                 LRESULT(0)
             }

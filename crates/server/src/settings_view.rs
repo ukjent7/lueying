@@ -473,7 +473,7 @@ impl Settings {
                 rows: vec![
                     Row {
                         label: "自定义短语".to_string(),
-                        detail: "编辑 phrases.txt，保存后重载".to_string(),
+                        detail: "在设置窗里编辑 phrases.txt，保存后重载".to_string(),
                         control: Control::Buttons {
                             items: vec![Button {
                                 id: Id::new(ids::PHRASES, 0),

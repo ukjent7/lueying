@@ -30,6 +30,9 @@ lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 
 [target."cfg(windows)".dependencies]
+# 设置窗无障碍:AccessKit 把页面模型暴露成 UIA 树,读屏软件才能操作自绘控件。
+accesskit = "0.25"
+accesskit_windows = "0.35"
 # Skia 候选窗:渲染核心 + Ganesh-D3D12 后端。
 skia-safe = { workspace = true, features = ["d3d"] }
 # 可选 OCR 引擎:PP-OCRv6 det+rec,纯 Rust 推理。

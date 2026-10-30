@@ -20,7 +20,13 @@ pub mod font;
 pub mod services;
 
 #[cfg(windows)]
+pub mod settings_a11y;
+
+#[cfg(windows)]
 pub mod settings_actions;
+
+#[cfg(windows)]
+pub mod settings_edit;
 
 #[cfg(windows)]
 pub mod settings_win;

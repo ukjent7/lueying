@@ -491,8 +491,8 @@ fn deferred(rows: &mut Vec<Row>) {
     rows.push((
         "V7",
         "AccessKit 集成 Skia 自绘窗口",
-        Verdict::Note,
-        "依赖 T9;方案:设置窗接 SubclassingAdapter 回答 WM_GETOBJECT,win-e2e 断言 UIA 树,短语编辑的文本输入方案一并验证。"
+        Verdict::Pass,
+        "设置窗接 SubclassingAdapter 回答 WM_GETOBJECT;win-e2e 用 UIA 读树,断言保存/关闭/分组/开关,再经 UIA Invoke 打开短语编辑器,确认标准 EDIT 文本控件与保存按钮存在。"
             .to_string(),
     ));
 }

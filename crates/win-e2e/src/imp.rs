@@ -554,6 +554,8 @@ fn real_run() -> Result<(String, String), String> {
         let ext_note = check_ext_selftest()?;
         // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
         let settings_note = settings_selftest(&dir)?;
+        // 设置窗无障碍:UIA 读 AccessKit 树,并按「编辑」打开短语编辑器。
+        let a11y_note = crate::settings_a11y::check(&dir, &data)?;
         // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
         let panel_note = panel_selftest(&dir)?;
         // 面板自检把前台还给了它自己的宿主;后面的按键要回到 RichEdit。
@@ -577,7 +579,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

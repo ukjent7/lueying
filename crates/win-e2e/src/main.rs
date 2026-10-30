@@ -16,6 +16,10 @@ mod imp;
 #[cfg(windows)]
 mod ext_metrics;
 
+/// 设置窗无障碍:UIA 读 AccessKit 树,再打开短语编辑器验证文本输入。
+#[cfg(windows)]
+mod settings_a11y;
+
 /// 扩展平台验证(任务书 V1–V8):OCR、体积、UIA 可编辑、热键,报告进 artifact。
 #[cfg(windows)]
 mod verify;

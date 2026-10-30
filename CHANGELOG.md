@@ -6,6 +6,13 @@
 
 ### 新增
 
+- 设置窗无障碍(T9):设置窗接入 AccessKit,把 `settings_view` 的稳定控件 ID
+  映射成 UI Automation 树,读屏软件能读到分组、开关、单选、按钮与状态提示,
+  并通过 `Click` / `Focus` 操作,与鼠标走同一条处理路径;焦点移动、滚动与
+  设置变化后树立即刷新。自定义短语改为设置窗内的原生 `EDIT` 编辑窗,`Tab`
+  在编辑区、保存、取消之间循环,保存后自动重载。Windows E2E 用 UIA 读树,
+  断言名称、分组与开关,再经 `Invoke` 打开编辑器,用 `ValuePattern` 写入
+  短语并保存,读回 `phrases.txt` 确认文本输入与落盘。
 - 扩展运行指标(T8):常驻服务每秒把扩展状态、内存占用、派发/作业步峰值、
   超时与内存超限、连续失败与最近错误写到
   `%LOCALAPPDATA%\lueying\logs\ext-metrics.json`;内容不变时只按 30 秒心跳
