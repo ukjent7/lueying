@@ -7,8 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{Completion, Registry};
-use lueying_extmeta::Service;
+use lueying_extjs::{Completion, Registry, Service};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU,
 };
@@ -112,7 +111,10 @@ fn hotkey_register_conflict_unregister() {
     let first = register(&registry, "paste");
     assert!(first.result.is_ok(), "{first:?}");
     let second = register(&registry, "paste");
-    assert_eq!(second.result.as_deref(), Err("热键已注册: paste"));
+    assert_eq!(
+        second.result.as_deref().map_err(String::as_str),
+        Err("热键已注册: paste")
+    );
     registry
         .call("hotkey", "unregister", r#"{"id":"paste"}"#, 0)
         .unwrap();
@@ -192,7 +194,10 @@ fn hotkey_press_resolves_on_fire() {
         .call("hotkey", "press", r#"{"id":"ghost"}"#, 2)
         .unwrap();
     let missing = wait_completion(&registry, Duration::from_secs(5)).expect("未回传");
-    assert_eq!(missing.result.as_deref(), Err("热键未注册: ghost"));
+    assert_eq!(
+        missing.result.as_deref().map_err(String::as_str),
+        Err("热键未注册: ghost")
+    );
     registry
         .call("hotkey", "press", r#"{"id":"paste"}"#, 3)
         .unwrap();
@@ -226,7 +231,7 @@ fn notify_ok_and_stubbed_services_report() {
         .unwrap();
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("output 未回传");
     assert_eq!(
-        completion.result.as_deref(),
+        completion.result.as_deref().map_err(String::as_str),
         Err("output 提交链路在 T6 接线")
     );
 
@@ -234,5 +239,8 @@ fn notify_ok_and_stubbed_services_report() {
         .call("panel", "show", r#"{"title":"板","items":["甲"]}"#, 3)
         .unwrap();
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("panel 未回传");
-    assert_eq!(completion.result.as_deref(), Err("面板在 T4 落地"));
+    assert_eq!(
+        completion.result.as_deref().map_err(String::as_str),
+        Err("面板在 T4 落地")
+    );
 }

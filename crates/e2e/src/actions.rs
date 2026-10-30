@@ -46,6 +46,15 @@ fn check(
     checks.push((name, ok, note));
 }
 
+/// 点选页尾的字面原文候选;动作候选出现时总会补一条。
+fn pick_literal(engine: &mut Engine) -> Option<String> {
+    let index = engine
+        .candidates()
+        .iter()
+        .position(|text| text == "bc")?;
+    commit_text(engine.pick(index))
+}
+
 pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
 
@@ -130,20 +139,23 @@ pub fn run(report: &mut String) -> usize {
         format!("niha → {:?}", e.candidates()),
     );
 
-    // 负反馈:连续两次选字面原文后,该触发词的动作候选不再出现。
+    // 负反馈:连续两次点选字面原文后,该触发词的动作候选不再出现。
+    // `bc` 在词典里能出「班」,所以字面原文只能靠点选/数字选中,空格仍是中文首选。
     let mut e = engine();
     let act = action("bc", "运行演示");
     e.set_action(Some(act.clone()));
     type_text(&mut e, "bc");
     let showed = e.candidates().iter().any(|text| text == "运行演示");
-    let first = commit_text(e.process(Key::Space));
+    let first = pick_literal(&mut e);
     e.set_action(Some(act.clone()));
     type_text(&mut e, "bc");
-    let second = commit_text(e.process(Key::Space));
+    let second = pick_literal(&mut e);
     e.set_action(Some(act.clone()));
     type_text(&mut e, "bc");
-    let lingers = e.candidates().iter().any(|text| text == "运行演示");
-    let literal = e.candidates().iter().any(|text| text == "bc");
+    let after = e.candidates();
+    let lingers = after.iter().any(|text| text == "运行演示");
+    // 动作候选被抑制后不再补字面候选;Enter 仍照旧上屏原文。
+    let raw = commit_text(e.process(Key::Enter));
     check(
         &mut checks,
         "字面负反馈降频",
@@ -151,8 +163,8 @@ pub fn run(report: &mut String) -> usize {
             && first.as_deref() == Some("bc")
             && second.as_deref() == Some("bc")
             && !lingers
-            && literal,
-        format!("两次字面 {first:?}/{second:?} 之后 → {:?}", e.candidates()),
+            && raw.as_deref() == Some("bc"),
+        format!("两次选原文 {first:?}/{second:?} 之后 {after:?},Enter {raw:?}"),
     );
 
     // 置顶:动作候选排到首位,数字 1 执行命令,字面原文仍在候选里。
