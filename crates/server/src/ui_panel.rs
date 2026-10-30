@@ -752,7 +752,7 @@ fn create_host_window() -> Result<HWND, String> {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         let hinstance = HINSTANCE(hmodule.0);
         static ONCE: std::sync::Once = std::sync::Once::new();
-        let mut result = Ok(());
+        let mut result: Result<(), String> = Ok(());
         ONCE.call_once(|| unsafe {
             let wc = WNDCLASSW {
                 lpfnWndProc: Some(host_proc),
