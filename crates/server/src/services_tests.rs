@@ -175,7 +175,9 @@ fn hotkey_bind_rejects_bad_and_conflicting_combos() {
 fn hotkey_press_resolves_on_fire() {
     let registry = Registry::new();
     let hotkey = Arc::new(HotkeyProvider::default());
-    registry.set(Service::Hotkey, Arc::clone(&hotkey));
+    // `set` 收 `Arc<dyn Provider>`;先复制成具体类型,参数位置再做 trait 对象强转。
+    let provider: Arc<HotkeyProvider> = Arc::clone(&hotkey);
+    registry.set(Service::Hotkey, provider);
     registry
         .call(
             "hotkey",
