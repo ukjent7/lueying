@@ -124,6 +124,9 @@ fn save_keeps_extensions_and_round_trips() {
     let _ = std::fs::remove_file(&path);
     assert!(text.contains("extensions=first,second\n"), "{text}");
     assert!(text.contains("triggers=bc=shot.run\n"), "{text}");
-    assert_eq!(loaded.triggers, vec![("bc".to_string(), "shot.run".to_string())]);
+    assert_eq!(
+        loaded.triggers,
+        vec![("bc".to_string(), "shot.run".to_string())]
+    );
     assert_eq!(loaded.extensions, vec!["first", "second"]);
 }
