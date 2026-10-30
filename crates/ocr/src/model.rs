@@ -15,6 +15,7 @@ pub(crate) fn load(path: &Path, fixed_shape: Option<&[usize]>) -> Result<Plan, S
     if !path.is_file() {
         return Err(format!("模型缺失:{}", path.display()));
     }
+    // tract 的 Display 只给最后一句,这里用 Debug 带上原因链。
     let mut model = tract_onnx::onnx()
         // 模型自带的中间张量形状来自 Paddle2ONNX 导出时的推断,Resize
         // 这类节点的声明和实际不一致;交给 tract 自己推。
