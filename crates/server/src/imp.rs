@@ -16,7 +16,7 @@ use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
 use lueying_engine::scheme::Scheme;
-use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
+use lueying_engine::{Action, CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
 use lueying_features::{CustomPhrases, Prediction};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{Model, Rerank};
@@ -73,6 +73,13 @@ pub(super) struct ModeHud {
     pub(super) at: Instant,
 }
 
+/// 动作候选执行命令的入口:请求线程投完整命令 id,脚本线程执行。
+pub(super) struct ExtHub {
+    pub(super) invoke: mpsc::Sender<String>,
+    /// 完整命令 id → 标题;扩展重载后由脚本线程刷新。
+    pub(super) titles: Arc<Mutex<HashMap<String, String>>>,
+}
+
 pub(super) struct State {
     pub(super) dict: Arc<Dictionary>,
     pub(super) gram: Option<Arc<Gram>>,
@@ -107,6 +114,8 @@ pub(super) struct State {
     pub(super) scheme: RwLock<Arc<dyn Scheme>>,
     /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
     pub(super) config: RwLock<AppConfig>,
+    /// 动作候选执行命令的通道;脚本线程启动时装填。
+    pub(super) ext_hub: Mutex<Option<ExtHub>>,
     pub(super) config_path: Option<PathBuf>,
     /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
     pub(super) chinese: AtomicBool,
@@ -309,6 +318,7 @@ pub(super) fn real_main() {
         prediction,
         scheme: RwLock::new(scheme),
         config: RwLock::new(app_config),
+        ext_hub: Mutex::new(None),
         config_path,
         chinese: AtomicBool::new(true),
         fullwidth: AtomicBool::new(false),

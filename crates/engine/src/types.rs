@@ -43,10 +43,23 @@ pub enum Key {
     Shift,
 }
 
+/// 触发词对应的动作:整串输入完全匹配时作为候选出现,选中执行命令,不上屏文字。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Action {
+    /// 触发词(小写字母串,不含隔音符);只做整串完全匹配,不做前缀匹配。
+    pub trigger: String,
+    /// 完整命令 id `<扩展 id>.<命令 id>`。
+    pub id: String,
+    /// 候选上显示的标题。
+    pub title: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// 上屏一段文本。
     Commit(String),
+    /// 选中动作候选:执行该命令,不上屏文字。
+    Action(String),
     /// 模式切换。
     Mode(Mode),
     /// 键不被输入法处理,交还宿主直通。

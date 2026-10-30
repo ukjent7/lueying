@@ -241,6 +241,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             learn_text: None,
             no_learn: false,
             completion: false,
+            action: None,
         });
     }
     // 个人上下文只调整整句候选的顺序:词频、模糊罚分和语法模型已经决定了
@@ -313,6 +314,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                 learn_text: None,
                 no_learn: false,
                 completion: false,
+                action: None,
             });
         }
     }
@@ -453,6 +455,7 @@ fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candid
                 learn_text: None,
                 no_learn: false,
                 completion: true,
+                action: None,
             });
         }
     }

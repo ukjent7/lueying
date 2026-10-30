@@ -553,6 +553,14 @@ impl UserDict {
         ((1.0 + f64::from(effective)).ln() * REJECT_BONUS_STEP).min(REJECT_BONUS_MAX)
     }
 
+    /// 该键下某词的跳过次数(按周衰减);动作候选降频据此判断。
+    pub fn reject_effective(&self, key: &str, word: &str) -> u32 {
+        self.rejects
+            .get(key)
+            .and_then(|words| words.get(word))
+            .map_or(0, |stat| stat.effective(now()))
+    }
+
     /// 用户重新选中该词:清掉它在所有学习键下的跳过记录。
     /// 返回是否确实清掉了一条记录。
     pub fn forgive_word(&mut self, word: &str) -> bool {

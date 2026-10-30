@@ -1,6 +1,7 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
 //! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast] [--bench-shared]`
 
+mod actions;
 mod address;
 mod bench;
 mod extensions;
@@ -170,6 +171,9 @@ fn main() {
 
     // 第一批内置扩展:双拼、自定义短语、辅助码、下一词联想。
     failures += extensions::run(&mut report);
+
+    // 动作候选:触发词整串匹配、空格/数字/点选、负反馈与置顶。
+    failures += actions::run(&mut report);
 
     // 运行期脚本扩展:包校验、场景协议、预算、隐私与热重载。
     failures += extjs::run(&mut report);
@@ -488,6 +492,7 @@ fn run_scenario(sc: &Scenario, dict: &Arc<Dictionary>) -> Result<(), String> {
             for ev in engine.process(*key) {
                 match ev {
                     Event::Commit(t) => commits.push(t),
+                    Event::Action(_) => {}
                     Event::Mode(m) => modes.push(m),
                     Event::Passthrough(_) => passed = true,
                 }

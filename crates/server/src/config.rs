@@ -201,6 +201,8 @@ pub struct AppConfig {
     pub extensions: Vec<String>,
     /// 扩展命令的全局热键绑定:(组合串, 完整命令 id);空表示没有绑定。
     pub bindings: Vec<(String, String)>,
+    /// 动作候选触发词:(触发词, 完整命令 id);整串完全匹配才出现。
+    pub triggers: Vec<(String, String)>,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -226,6 +228,7 @@ impl Default for AppConfig {
             effects: true,
             extensions: Vec::new(),
             bindings: Vec::new(),
+            triggers: Vec::new(),
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -395,6 +398,8 @@ pub fn load(path: &Path) -> AppConfig {
             "extensions" => cfg.extensions = parse_extensions(value),
             // 扩展命令热键:`Ctrl+Alt+O=shot.run,Ctrl+Shift+L=clip.search`。
             "bindings" | "bind" => cfg.bindings = parse_bindings(value),
+            // 动作候选触发词:`bc=shot.run`;整串输入完全匹配时把命令放进候选。
+            "triggers" | "trigger" => cfg.triggers = parse_triggers(value),
             // 旧键:单个扩展 id;空值或 off 表示不启用。
             "script" | "extension" => {
                 if matches!(value, "" | "off" | "none") {
@@ -524,6 +529,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          effects={}\n\
          extensions={}\n\
          bindings={}\n\
+         triggers={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -542,6 +548,11 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
         cfg.bindings
             .iter()
             .map(|(combo, command)| format!("{combo}={command}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        cfg.triggers
+            .iter()
+            .map(|(trigger, command)| format!("{trigger}={command}"))
             .collect::<Vec<_>>()
             .join(","),
         cfg.update_channel.as_str(),
@@ -602,6 +613,34 @@ fn parse_bindings(value: &str) -> Vec<(String, String)> {
             continue;
         }
         out.push((combo.to_string(), command.to_string()));
+    }
+    out
+}
+
+/// `触发词=命令 id` 列表:触发词归一为小写字母串(整串匹配用),按触发词
+/// 去重,坏项直接丢掉。命令是否存在由脚本线程的标题表把关。
+fn parse_triggers(value: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for item in value.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let Some((trigger, command)) = item.split_once('=') else {
+            continue;
+        };
+        let trigger = trigger.trim().to_ascii_lowercase();
+        let command = command.trim();
+        if trigger.is_empty()
+            || command.is_empty()
+            || !trigger.bytes().all(|b| b.is_ascii_lowercase())
+        {
+            continue;
+        }
+        if out.iter().any(|(existing, _)| existing == &trigger) {
+            continue;
+        }
+        out.push((trigger, command.to_string()));
     }
     out
 }

@@ -34,7 +34,7 @@ use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
 pub use quick::CivilTime;
-pub use types::{Composition, Config, Event, Key, Mode, Script};
+pub use types::{Action, Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;
 
 /// 功能模块与输入方案作者常用的公开类型。
@@ -104,6 +104,8 @@ pub struct Engine {
     modules: Arc<module::Modules>,
     /// 输入方案;默认全拼。所有会话共享同一个不可变方案对象。
     scheme: Arc<dyn scheme::Scheme>,
+    /// 宿主绑定表把当前整串输入映射到的动作;只做整串完全匹配。
+    action: Option<Action>,
 }
 
 /// 文本末尾是不是数字;全角数字也按数字处理,小数点和 IP 地址不必切半角。

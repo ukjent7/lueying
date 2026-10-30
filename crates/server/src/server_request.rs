@@ -124,9 +124,17 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             // 每次按键刷新本地时间,跨午夜/夏令时切换后日期仍然正确。
             s.engine.set_now(local_time());
             let events = s.engine.process(engine_key);
+            // 触发词整串匹配时把动作交给引擎注入候选;命令是否可执行看标题表。
+            sync_action(state, s);
             // 只有候选集合重算过才重排;翻页/移动高亮不能把用户的选择重置。
             if s.engine.revision() != before_rev {
                 apply_sync_rerank(s);
+            }
+            // 选中动作候选:执行扩展命令,不上屏文字。
+            for event in &events {
+                if let Event::Action(id) = event {
+                    invoke_extension(state, id);
+                }
             }
             let mut reply = reply_from(s, &events);
             if let Some(carried) = carried {
@@ -158,6 +166,8 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             let carried = s.ui_reply.take();
             let before_rev = s.engine.revision();
             let events = s.engine.process(Key::Shift);
+            // 组合被落定时动作也随之撤销,避免下一次组合用旧触发词注入。
+            sync_action(state, s);
             if s.engine.revision() != before_rev {
                 apply_sync_rerank(s);
             }
@@ -368,6 +378,11 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             if let Some(s) = sessions.get_mut(&session) {
                 let before = s.engine.revision();
                 let events = s.engine.pick_in_page(slot);
+                for event in &events {
+                    if let Event::Action(id) = event {
+                        invoke_extension(state, id);
+                    }
+                }
                 if s.engine.revision() != before {
                     apply_sync_rerank(s);
                 }
@@ -420,6 +435,11 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             if let Some(s) = sessions.get_mut(&session) {
                 let before = s.engine.revision();
                 let events = s.engine.pick(index);
+                for event in &events {
+                    if let Event::Action(id) = event {
+                        invoke_extension(state, id);
+                    }
+                }
                 if s.engine.revision() != before {
                     apply_sync_rerank(s);
                 }
@@ -622,5 +642,42 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             crate::settle::cancel(state, session);
             Reply::default()
         }
+    }
+}
+
+/// 当前组合的整串输入命中用户触发表时,把动作交给引擎注入候选。
+/// 标题表由脚本线程维护:命令不存在(扩展没启用或已卸载)就不出动作候选。
+fn sync_action(state: &State, s: &mut Session) {
+    let action = s.engine.composition().and_then(|comp| {
+        let raw = comp.raw.replace('\'', "");
+        let command = state
+            .config
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .triggers
+            .iter()
+            .find(|(trigger, _)| trigger == &raw)
+            .map(|(_, command)| command.clone())?;
+        let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
+        let hub = hub.as_ref()?;
+        let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
+        let title = titles.get(&command)?.clone();
+        Some(Action {
+            trigger: raw,
+            id: command,
+            title,
+        })
+    });
+    s.engine.set_action(action);
+}
+
+/// 把动作候选选中的命令交给脚本线程执行;扩展不在线时只写日志。
+fn invoke_extension(state: &State, id: &str) {
+    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
+    match hub.as_ref() {
+        Some(hub) => {
+            let _ = hub.invoke.send(id.to_string());
+        }
+        None => println!("动作候选跳过:脚本线程未启动({id})"),
     }
 }

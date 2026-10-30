@@ -36,6 +36,7 @@ impl Engine {
             rev: 0,
             modules: Arc::new(module::Modules::new()),
             scheme: Arc::new(scheme::FullPinyin),
+            action: None,
         }
     }
 
@@ -330,7 +331,7 @@ impl Engine {
         let Some(cand) = self.cands.get(index).cloned() else {
             return false;
         };
-        if cand.quick || cand.no_learn || !cand.full {
+        if cand.quick || (cand.no_learn && cand.action.is_none()) || !cand.full {
             return false;
         }
         let Some(comp) = self.comp.as_ref() else {
@@ -339,6 +340,21 @@ impl Engine {
         // 键用方案展开后的规范串,并去掉隔音符:同一串字母的不同切分
         // (xian / xi'an)以及双拼与全拼都落到同一个置顶槽。
         let key = self.scheme.expand(&comp.raw).key.replace('\'', "");
+        // 动作候选置顶写 `!命令 id`;重建时据此把它放回首位。
+        if let Some(id) = cand.action.as_deref() {
+            let pin = format!("!{id}");
+            self.user
+                .write()
+                .unwrap_or_else(|p| p.into_inner())
+                .pin(&key, &pin);
+            self.recompute();
+            if let Some(pos) = self.cands.iter().position(|cand| cand.pinned) {
+                self.hl = pos;
+                self.page = pos / self.cfg.page_size.max(1);
+                self.sync_display();
+            }
+            return true;
+        }
         let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
         self.user
             .write()
@@ -469,10 +485,14 @@ impl Engine {
             return Vec::new();
         }
         self.hl = index;
-        let mut events = self
-            .commit_highlighted()
-            .map(|text| vec![Event::Commit(text)])
-            .unwrap_or_default();
+        // 点选动作候选执行命令,不上屏文字。
+        let mut events = match self.take_action(index) {
+            Some(id) => vec![Event::Action(id)],
+            None => self
+                .commit_highlighted()
+                .map(|text| vec![Event::Commit(text)])
+                .unwrap_or_default(),
+        };
         self.apply_output(self.mode, &mut events);
         self.note_events(&events);
         events
@@ -490,6 +510,18 @@ impl Engine {
         } else {
             self.page = 0;
             self.hl = 0;
+        }
+    }
+
+    /// 宿主绑定表把当前整串输入映射到一个动作;不匹配时传 `None`。
+    /// 动作只在整串完全匹配时作为候选出现,组合在时立即重算。
+    pub fn set_action(&mut self, action: Option<Action>) {
+        if self.action == action {
+            return;
+        }
+        self.action = action;
+        if self.comp.is_some() {
+            self.recompute();
         }
     }
 

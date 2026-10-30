@@ -4,6 +4,7 @@
 //! 打字反馈。补丁只在内容变化时重绘一帧;坏源码只废掉自己的槽位,
 //! 高对比度下效果整个关掉,密码/隐私字段不派发。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,7 @@ use lueying_server::services;
 use lueying_server::theme;
 use skia_safe::Shader;
 
-use crate::imp::State;
+use crate::imp::{ExtHub, State};
 use crate::ui_place;
 
 /// 扩展目录的轮询间隔;改完脚本一秒内生效。
@@ -95,6 +96,14 @@ fn worker(
     let hotkey = Arc::new(services::HotkeyProvider::default());
     let mut bindings = BindingTable::default();
     let mut bound: Vec<(String, String)> = Vec::new();
+    // 动作候选:请求线程按完整命令 id 投递,这里执行;
+    // 标题表同时供请求线程判断命令是否存在。
+    let (action_tx, action_rx) = mpsc::channel::<String>();
+    let titles: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    *state.ext_hub.lock().unwrap_or_else(|p| p.into_inner()) = Some(ExtHub {
+        invoke: action_tx,
+        titles: Arc::clone(&titles),
+    });
     let mut reported: Option<String> = None;
     let mut last_seq = 0;
     let mut next_config = Instant::now();
@@ -120,6 +129,8 @@ fn worker(
                 bound = want_binds;
                 bindings = bind_rows(&state, runtime.as_ref(), &hotkey);
             }
+            // 扩展重载会换掉命令集;标题表每轮刷新,触发词不会指向已卸载的命令。
+            refresh_titles(&titles, runtime.as_ref());
         }
         if now >= next_poll {
             next_poll = now + POLL;
@@ -142,6 +153,10 @@ fn worker(
             }
         }
         if let Some(current) = runtime.as_mut() {
+            // 动作候选选中的命令:与热键走同一条执行路径,失败只写日志。
+            while let Ok(command) = action_rx.try_recv() {
+                run_command(current, &command, "动作候选");
+            }
             // 热键触发与异步命令推进;没有热键和挂起任务时都是微秒级空检查。
             dispatch_hotkey(&state, current, &hotkey, &bindings);
             let _ = current.pump(unix_ms());
@@ -154,6 +169,17 @@ fn worker(
             .as_mut()
             .and_then(|runtime| runtime.dispatch(&scene));
         let _ = patches.send((seq, patch));
+    }
+}
+
+/// 刷新命令标题表:请求线程据此判断触发词对应的命令是否可执行。
+fn refresh_titles(titles: &Mutex<HashMap<String, String>>, runtime: Option<&Runtime>) {
+    let mut map = titles.lock().unwrap_or_else(|p| p.into_inner());
+    map.clear();
+    if let Some(runtime) = runtime {
+        for info in runtime.commands() {
+            map.insert(info.id, info.title);
+        }
     }
 }
 
@@ -223,23 +249,27 @@ fn dispatch_hotkey(
             println!("热键 {} 跳过:当前输入状态不满足 when", binding.hotkey);
             continue;
         }
-        match runtime.invoke(&binding.command, "{}") {
-            Ok(Invoke::Done(json)) => {
-                println!("热键 {} 执行 {} → {json}", binding.hotkey, binding.command)
-            }
-            Ok(Invoke::Pending(_)) => {
-                println!("热键 {} 触发 {}(异步执行)", binding.hotkey, binding.command)
-            }
-            Err(error) => println!("热键 {} 执行失败:{error}", binding.hotkey),
+        run_command(
+            runtime,
+            &binding.command,
+            &format!("热键 {}", binding.hotkey),
+        );
+    }
+}
+
+/// 执行一条扩展命令并泵几轮:快命令当次结算,等服务与长定时器的由循环节拍收尾。
+fn run_command(runtime: &mut Runtime, command: &str, source: &str) {
+    match runtime.invoke(command, "{}") {
+        Ok(Invoke::Done(json)) => println!("{source} 执行 {command} → {json}"),
+        Ok(Invoke::Pending(_)) => println!("{source} 触发 {command}(异步执行)"),
+        Err(error) => println!("{source} 执行失败:{error}"),
+    }
+    let now_ms = unix_ms();
+    for _ in 0..32 {
+        if runtime.pending() == 0 {
+            break;
         }
-        // 立刻泵几轮,快命令当次结算;等服务与长定时器的由循环节拍收尾。
-        let now_ms = unix_ms();
-        for _ in 0..32 {
-            if runtime.pending() == 0 {
-                break;
-            }
-            let _ = runtime.pump(now_ms);
-        }
+        let _ = runtime.pump(now_ms);
     }
 }
 

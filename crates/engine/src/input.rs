@@ -5,6 +5,10 @@
 
 use super::*;
 
+/// 同一触发词下用户选了这么多次字面原文后,不再注入动作候选。
+/// 计数借用户词库的同键负分,按周衰减,用户改选动作候选即可回落。
+const ACTION_SUPPRESS: u32 = 2;
+
 impl Engine {
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
@@ -82,6 +86,12 @@ impl Engine {
                     self.second_last_word = None;
                 }
                 Event::Passthrough(_) => {
+                    self.after_digit = false;
+                    self.last_word = None;
+                    self.second_last_word = None;
+                }
+                // 命令没有上屏文字,词序在这里断开;左邻上下文保持原样。
+                Event::Action(_) => {
                     self.after_digit = false;
                     self.last_word = None;
                     self.second_last_word = None;
@@ -222,10 +232,18 @@ impl Engine {
                     events
                 }
             }
-            Key::Space => self
-                .commit_highlighted()
-                .map(|t| vec![Event::Commit(t)])
-                .unwrap_or_default(),
+            // 空格确认当前高亮:高亮在动作候选上时执行命令,否则照旧上屏文字。
+            Key::Space => {
+                let idx = self.hl.min(self.cands.len().saturating_sub(1));
+                self.take_action(idx).map_or_else(
+                    || {
+                        self.commit_highlighted()
+                            .map(|t| vec![Event::Commit(t)])
+                            .unwrap_or_default()
+                    },
+                    |id| vec![Event::Action(id)],
+                )
+            }
             Key::Enter => {
                 let raw = self.comp.take().map(|c| c.raw).unwrap_or_default();
                 self.comp_committed = false;
@@ -460,6 +478,10 @@ impl Engine {
         let end = (start + ps).min(self.cands.len());
         if d >= 1 && d as usize <= end - start {
             let idx = start + d as usize - 1;
+            // 数字键选中动作候选:执行命令,不上屏文字,组合清空。
+            if let Some(id) = self.take_action(idx) {
+                return vec![Event::Action(id)];
+            }
             match self.apply_consume(idx) {
                 Some(t) => vec![Event::Commit(t)],
                 None => vec![Event::Passthrough(Key::Digit(d))],
@@ -574,7 +596,8 @@ impl Engine {
         events
     }
 
-    /// 上屏高亮候选;无候选时上屏原文。
+    /// 上屏高亮候选;无候选时上屏原文。动作候选是命令入口:标点、切模式与
+    /// 失焦落定都不执行它,退到第一条文字候选;执行只走空格/数字/点选。
     pub(crate) fn commit_highlighted(&mut self) -> Option<String> {
         self.comp.as_ref()?;
         if self.cands.is_empty() {
@@ -586,7 +609,28 @@ impl Engine {
             self.rev = self.rev.wrapping_add(1);
             return raw;
         }
-        self.apply_consume(self.hl.min(self.cands.len() - 1))
+        let mut idx = self.hl.min(self.cands.len() - 1);
+        if self.cands[idx].action.is_some() {
+            idx = self
+                .cands
+                .iter()
+                .position(|cand| cand.action.is_none())
+                .unwrap_or(idx);
+        }
+        self.apply_consume(idx)
+    }
+
+    /// 选中动作候选:清空组合并返回完整命令 id。命令不上屏文字,组合直接结束。
+    pub(crate) fn take_action(&mut self, idx: usize) -> Option<String> {
+        let id = self.cands.get(idx)?.action.clone()?;
+        self.comp = None;
+        self.comp_committed = false;
+        self.phrase = None;
+        self.cands.clear();
+        self.hl = 0;
+        self.page = 0;
+        self.rev = self.rev.wrapping_add(1);
+        Some(id)
     }
 
     /// 应用第 idx 个候选:上屏文本,吃掉 consume 个音节,剩余留作组合并学习。
@@ -594,6 +638,22 @@ impl Engine {
         let cand = self.cands.get(idx)?.clone();
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
+        // 用户明确选了字面原文而没有选动作候选:对触发词记一次同键负分;
+        // 选够多次后不再注入动作候选,说明用户要的就是这段字母。
+        if self.learning
+            && cand.action.is_none()
+            && cand.text == raw
+            && let Some(action) = self.action.as_ref()
+        {
+            let key = raw.replace('\'', "");
+            if key == action.trigger {
+                let id = format!("!{}", action.id);
+                self.user
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .reject(&key, &id);
+            }
+        }
         // 学习与上下文用规范字形:繁体显示时仍写简体,切回简体不召回繁体词。
         let learn_text = cand
             .learn_text
@@ -1010,6 +1070,7 @@ impl Engine {
             .pinned(&pin_key)
             .or_else(|| user.pinned(&expansion.key))
             .or_else(|| user.pinned(&raw))
+            .filter(|word| !word.starts_with('!'))
         {
             built.cands.retain(|cand| cand.text != word);
             let mut cand = Candidate::whole(raw.len(), word.to_string(), 1.0e12);
@@ -1052,9 +1113,18 @@ impl Engine {
                 }
             }
         }
+        // 动作候选:触发词整串完全匹配时把命令放进候选;默认不进首位,
+        // 字面原文候选补在这一步,空格仍照旧上屏文字。
+        if let Some(action) = self.action.clone() {
+            inject_action(&mut built.cands, &action, &raw, &user);
+        }
         // 显示与上屏用繁体时,候选文本整体换形;学习仍按 learn_text 的简体。
+        // 动作候选的标题是命令名,不随字形切换。
         if self.cfg.script != Script::Simplified {
             for cand in &mut built.cands {
+                if cand.action.is_some() {
+                    continue;
+                }
                 let converted = script::convert(&cand.text, self.cfg.script);
                 if converted != cand.text {
                     let original = std::mem::replace(&mut cand.text, converted);
@@ -1079,5 +1149,40 @@ impl Engine {
         // 旧页号可能已经越界,候选窗会空着并显示 3/1 这样的页码。
         self.hl = 0;
         self.page = 0;
+    }
+}
+
+/// 把动作候选注入当前候选表。触发词必须与整串输入完全一致(隔音符不计);
+/// 用户多次选字面原文后抑制。字面原文候选始终保留,空格照旧上屏文字。
+fn inject_action(cands: &mut Vec<Candidate>, action: &Action, raw: &str, user: &UserDict) {
+    let key = raw.replace('\'', "");
+    if action.trigger != key {
+        return;
+    }
+    let pin = format!("!{}", action.id);
+    if user.reject_effective(&key, &pin) >= ACTION_SUPPRESS {
+        return;
+    }
+    // 没有任何候选等于原文时补一条页尾字面候选:引擎与扩展都跳过了它,
+    // 用户仍有不上屏、直接要字母的退路。
+    if !cands.iter().any(|cand| cand.text == raw) {
+        let mut literal = Candidate::whole(raw.len(), raw.to_string(), -1.0e12);
+        literal.words.clear();
+        literal.no_learn = true;
+        literal.hint = Some("原文".to_string());
+        cands.push(literal);
+    }
+    let mut cand = Candidate::whole(raw.len(), action.title.clone(), 1.0e12);
+    cand.words.clear();
+    cand.no_learn = true;
+    cand.hint = Some("命令".to_string());
+    cand.action = Some(action.id.clone());
+    if user.pinned(&key).is_some_and(|word| word == pin.as_str()) {
+        cand.pinned = true;
+        cands.insert(0, cand);
+    } else {
+        // 默认不进首位;没有其他候选时排页尾。
+        let at = 1.min(cands.len());
+        cands.insert(at, cand);
     }
 }

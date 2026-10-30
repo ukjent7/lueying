@@ -76,6 +76,21 @@ fn bindings_key_parses_pairs_and_skips_bad_items() {
 }
 
 #[test]
+fn triggers_key_normalizes_and_skips_bad_items() {
+    let cfg = load_text(
+        "trigger",
+        "triggers=BC=shot.run, sj=date.now ,bc=dup,中文=x,=empty,x=\n",
+    );
+    assert_eq!(
+        cfg.triggers,
+        vec![
+            ("bc".to_string(), "shot.run".to_string()),
+            ("sj".to_string(), "date.now".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn extensions_key_replaces_legacy_script() {
     let cfg = load_text("both", "script=old-pack\nextensions=new-pack\n");
     assert_eq!(cfg.extensions, vec!["new-pack"]);
@@ -100,6 +115,7 @@ fn save_keeps_extensions_and_round_trips() {
     let path = temp("roundtrip");
     let cfg = AppConfig {
         extensions: vec!["first".to_string(), "second".to_string()],
+        triggers: vec![("bc".to_string(), "shot.run".to_string())],
         ..AppConfig::default()
     };
     save(&path, &cfg).expect("写配置");
@@ -107,5 +123,7 @@ fn save_keeps_extensions_and_round_trips() {
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);
     assert!(text.contains("extensions=first,second\n"), "{text}");
+    assert!(text.contains("triggers=bc=shot.run\n"), "{text}");
+    assert_eq!(loaded.triggers, vec![("bc".to_string(), "shot.run".to_string())]);
     assert_eq!(loaded.extensions, vec!["first", "second"]);
 }

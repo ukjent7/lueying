@@ -69,6 +69,9 @@ pub struct Candidate {
     pub completion: bool,
     /// 用户在当前键下置顶的词:直接放首位,重排与快捷项都让位。
     pub pinned: bool,
+    /// 动作候选要执行的完整命令 id;普通候选为空。动作候选不上屏文字、
+    /// 不学习,选中即执行命令。
+    pub action: Option<String>,
 }
 
 impl Candidate {
@@ -98,6 +101,7 @@ impl Candidate {
             no_learn: false,
             completion: false,
             pinned: false,
+            action: None,
         }
     }
 
