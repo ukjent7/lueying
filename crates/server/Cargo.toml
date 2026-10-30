@@ -30,6 +30,8 @@ serde_json = "1"
 [target."cfg(windows)".dependencies]
 # Skia 候选窗:渲染核心 + Ganesh-D3D12 后端。
 skia-safe = { workspace = true, features = ["d3d"] }
+# 可选 OCR 引擎:PP-OCRv6 det+rec,纯 Rust 推理。
+lueying-ocr.workspace = true
 # 运行期脚本扩展:QuickJS 沙箱,只改候选窗外观。
 lueying-extjs.workspace = true
 windows-registry = "0.100"

@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
+          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
       - name: 下载白霜词库
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_frost.sh data/frost
@@ -71,9 +71,18 @@ jobs:
       - name: 下载精简语法模型
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_gram.sh data
+      - name: 下载 PP-OCRv6 模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_ppocr.sh data/ppocr
       - name: 转换词典
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
+      # 纯 Rust 推理在 Linux 上跑真模型,防止 det/rec 张量形状或后处理在
+      # Windows 之外悄悄退化。
+      - name: OCR 单测与 PP-OCRv6 真模型识别
+        env:
+          LUEYING_PPOCR_DIR: data/ppocr
+        run: cargo test -p lueying-ocr --release --locked -- --include-ignored
       # 全量语料 + 神经重排 + 长期学习 + 共享语料,一次拿到完整报告。
       - name: 主词典 E2E + 全量候选准确率基准
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench --bench-shared

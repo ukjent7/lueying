@@ -125,6 +125,8 @@ const PACK_DATA: &[&str] = &[
     "rerank-4m.safetensors",
     "rerank-25m.safetensors",
 ];
+/// 可选 OCR 引擎的模型;由 `tools/fetch_ppocr.sh` 拉到 `data/ppocr/`。
+const PACK_PPOCR: &[&str] = &["det.onnx", "rec.onnx", "dict.txt"];
 
 fn pack(args: PackArgs) -> Result<(), String> {
     // 只清理自己生成的目录(有 manifest),避免误删用户给的其他路径。
@@ -179,6 +181,25 @@ fn pack(args: PackArgs) -> Result<(), String> {
         } else {
             return Err(format!("缺少数据文件 {}", source.display()));
         }
+    }
+    // PP-OCRv6 是可选引擎;模型在就随包,缺了只警告(默认系统 OCR 不受影响)。
+    let ppocr = args.data.join("ppocr");
+    if ppocr.is_dir() {
+        let target = args.out.join("models/ppocr");
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("创建 {}: {e}", target.display()))?;
+        for name in PACK_PPOCR {
+            let source = ppocr.join(name);
+            if source.exists() {
+                copy_file(&source, &args.out, &format!("models/ppocr/{name}"), &mut files)?;
+            } else if args.allow_missing_data {
+                println!("警告: 缺少 PP-OCR 文件 {}", source.display());
+            } else {
+                return Err(format!("缺少 PP-OCR 文件 {}", source.display()));
+            }
+        }
+    } else {
+        println!("警告: 没有 PP-OCR 模型目录 {},跳过", ppocr.display());
     }
     // TSV 是二进制不可用时的兼容回退,可选。
     if args.data.join("main.tsv").exists() {
@@ -238,6 +259,12 @@ revision e5b1f7e768d7cb2b6ff334db4e34af153920c6ff。
 - pinyin-ime-reranker-25M:Apache-2.0,\
 https://huggingface.co/metasequoiaime/pinyin-ime-reranker-25M,\
 revision 75295b373a7ef0d14e9bebd32c1625c9cfcfea49。
+- PP-OCRv6 small det/rec:Apache-2.0,\
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx (revision \
+28fe5895c24fd108c19eb3e8479f4ab385fbfc62)、\
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx (revision \
+b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
+词表从 rec 仓库的 inference.yml 提取,未修改模型;全文见 Apache-2.0.txt。
 ";
     std::fs::write(licenses.join("README.md"), notice)
         .map_err(|e| format!("写 licenses/README.md: {e}"))?;

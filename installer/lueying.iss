@@ -85,6 +85,9 @@ Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifs
 Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-4m.safetensors"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-25m.safetensors"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; 可选 PP-OCRv6 模型;没有模型时安装包照常工作,截图识别回退系统 OCR。
+Source: "{#PayloadDir}\models\*"; DestDir: "{app}\models"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; 官方起步扩展(截图 OCR 等)随包分发;lueying-user.exe --install 再复制到
 ; 当前用户的 %APPDATA%\lueying\extensions,已存在的目录不覆盖。
 Source: "{#PayloadDir}\extensions\*"; DestDir: "{app}\extensions"; \

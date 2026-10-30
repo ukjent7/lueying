@@ -130,12 +130,47 @@ fn panel_hotkey_defaults_to_three_modifiers() {
 }
 
 #[test]
+fn ocr_engine_parses_aliases() {
+    assert_eq!(load_text("ocr-default", "").ocr_backend, OcrBackend::System);
+    for value in ["ppocr", "pp-ocr", "paddle"] {
+        let cfg = load_text(
+            &format!("ocr-{value}"),
+            &format!("ocr_engine={value}\n"),
+        );
+        assert_eq!(cfg.ocr_backend, OcrBackend::Ppocr, "{value}");
+    }
+    assert_eq!(
+        load_text("ocr-alias", "ocr=ppocr\n").ocr_backend,
+        OcrBackend::Ppocr
+    );
+    assert_eq!(
+        load_text("ocr-unknown", "ocr_engine=magic\n").ocr_backend,
+        OcrBackend::System
+    );
+}
+
+#[test]
+fn ppocr_dir_requires_all_three_files() {
+    let dir = temp("ppocr-dir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("建目录");
+    assert!(!ppocr_complete(&dir));
+    std::fs::write(dir.join("det.onnx"), b"x").unwrap();
+    std::fs::write(dir.join("rec.onnx"), b"x").unwrap();
+    assert!(!ppocr_complete(&dir));
+    std::fs::write(dir.join("dict.txt"), b"x").unwrap();
+    assert!(ppocr_complete(&dir));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn save_keeps_extensions_and_round_trips() {
     let path = temp("roundtrip");
     let cfg = AppConfig {
         extensions: vec!["first".to_string(), "second".to_string()],
         triggers: vec![("bc".to_string(), "shot.run".to_string())],
         panel_hotkey: "Ctrl+Alt+Shift+P".to_string(),
+        ocr_backend: OcrBackend::Ppocr,
         ..AppConfig::default()
     };
     save(&path, &cfg).expect("写配置");
@@ -145,10 +180,12 @@ fn save_keeps_extensions_and_round_trips() {
     assert!(text.contains("extensions=first,second\n"), "{text}");
     assert!(text.contains("triggers=bc=shot.run\n"), "{text}");
     assert!(text.contains("panel_hotkey=Ctrl+Alt+Shift+P\n"), "{text}");
+    assert!(text.contains("ocr_engine=ppocr\n"), "{text}");
     assert_eq!(
         loaded.triggers,
         vec![("bc".to_string(), "shot.run".to_string())]
     );
     assert_eq!(loaded.extensions, vec!["first", "second"]);
     assert_eq!(loaded.panel_hotkey, "Ctrl+Alt+Shift+P");
+    assert_eq!(loaded.ocr_backend, OcrBackend::Ppocr);
 }

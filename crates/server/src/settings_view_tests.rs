@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::OcrBackend;
 use lueying_render::ui::Id;
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
@@ -58,6 +59,36 @@ fn script_buttons_map_to_actions() {
     assert_eq!(
         settings.activate(&Id::new(ids::SCRIPTS_DIR, 0)),
         Some(Action::OpenScripts)
+    );
+}
+
+#[test]
+fn ocr_segment_sets_backend() {
+    let mut settings = Settings::default();
+    assert_eq!(settings.selected(ids::OCR), 0);
+    settings.activate(&Id::new(ids::OCR, 1));
+    assert_eq!(settings.cfg.ocr_backend, OcrBackend::Ppocr);
+    assert_eq!(settings.selected(ids::OCR), 1);
+    settings.activate(&Id::new(ids::OCR, 0));
+    assert_eq!(settings.cfg.ocr_backend, OcrBackend::System);
+}
+
+#[test]
+fn ocr_detail_reports_model_availability() {
+    let mut settings = Settings::default();
+    assert!(settings.ocr_detail().contains("未安装"));
+    settings.ppocr_ready = true;
+    assert!(settings.ocr_detail().contains("PP-OCRv6"));
+    settings.cfg.ocr_backend = OcrBackend::Ppocr;
+    assert!(settings.ocr_detail().contains("首次识别"));
+}
+
+#[test]
+fn ocr_dir_maps_to_action() {
+    let mut settings = Settings::default();
+    assert_eq!(
+        settings.activate(&Id::new(ids::OCR_DIR, 0)),
+        Some(Action::OpenOcrModels)
     );
 }
 

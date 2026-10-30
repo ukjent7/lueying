@@ -165,6 +165,39 @@ impl Channel {
     }
 }
 
+/// 截图 OCR 引擎。系统 OCR 零依赖;PP-OCRv6 随包带模型,首次识别时加载。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OcrBackend {
+    #[default]
+    System,
+    Ppocr,
+}
+
+impl OcrBackend {
+    pub const NAMES: [&'static str; 2] = ["系统", "PP-OCRv6"];
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Ppocr,
+            _ => Self::System,
+        }
+    }
+
+    fn from_str(value: &str) -> Self {
+        match value {
+            "ppocr" | "pp-ocr" | "paddle" => Self::Ppocr,
+            _ => Self::System,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Ppocr => "ppocr",
+        }
+    }
+}
+
 /// 单个应用的覆盖项;`None` 表示跟随全局设置。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AppOverride {
@@ -205,6 +238,8 @@ pub struct AppConfig {
     pub triggers: Vec<(String, String)>,
     /// 命令面板总热键;空串表示关闭。需要两个以上修饰键,保留组合会被拒。
     pub panel_hotkey: String,
+    /// 截图 OCR 引擎;模型缺失时 PP-OCR 会回明确错误。
+    pub ocr_backend: OcrBackend,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -233,6 +268,7 @@ impl Default for AppConfig {
             triggers: Vec::new(),
             // 三个修饰键避开常见应用快捷键;不想要就在配置里写 off。
             panel_hotkey: "Ctrl+Alt+Shift+Space".to_string(),
+            ocr_backend: OcrBackend::System,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -303,6 +339,36 @@ pub fn effects_dir() -> Option<PathBuf> {
 /// 运行期脚本扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
 pub fn extensions_dir() -> Option<PathBuf> {
     user_file("extensions")
+}
+
+/// PP-OCRv6 模型目录:`LUEYING_PPOCR_DIR` 优先,其次用户目录
+/// `%APPDATA%\lueying\models\ppocr`,最后程序目录的 `models/ppocr`。
+/// 用户放的文件可以覆盖随包模型;三件齐全才算可用。
+pub fn ppocr_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::var_os("LUEYING_PPOCR_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Some(dir) = ppocr_user_dir() {
+        candidates.push(dir);
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        candidates.push(parent.join("models").join("ppocr"));
+    }
+    candidates.into_iter().find(|dir| ppocr_complete(dir))
+}
+
+/// 用户放模型的目录;设置页的「目录」按钮打开这里。
+pub fn ppocr_user_dir() -> Option<PathBuf> {
+    user_file("models/ppocr")
+}
+
+fn ppocr_complete(dir: &Path) -> bool {
+    ["det.onnx", "rec.onnx", "dict.txt"]
+        .iter()
+        .all(|name| dir.join(name).is_file())
 }
 
 fn user_file(name: &str) -> Option<PathBuf> {
@@ -410,6 +476,10 @@ pub fn load(path: &Path) -> AppConfig {
                     "" | "off" | "none" => String::new(),
                     combo => combo.to_string(),
                 };
+            }
+            // 截图 OCR:`system`(默认)或 `ppocr`;别名 pp-ocr/paddle。
+            "ocr_engine" | "ocr" => {
+                cfg.ocr_backend = OcrBackend::from_str(value);
             }
             // 旧键:单个扩展 id;空值或 off 表示不启用。
             "script" | "extension" => {
@@ -542,6 +612,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          bindings={}\n\
          triggers={}\n\
          panel_hotkey={}\n\
+         ocr_engine={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -568,6 +639,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
             .collect::<Vec<_>>()
             .join(","),
         cfg.panel_hotkey,
+        cfg.ocr_backend.as_str(),
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");

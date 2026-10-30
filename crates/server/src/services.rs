@@ -11,8 +11,8 @@
 //! 绑定行号回带给调用方派发。
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use lueying_extjs::bindings::Modifier;
 use lueying_extjs::{Done, Provider};
@@ -175,8 +175,45 @@ fn shot_bmp(region: Option<Region>) -> Result<(PathBuf, i32, i32), String> {
     }
 }
 
-/// 文字识别;`lang` 请求的语言不支持时回退用户语言,结果里报实际语言。
-pub struct OcrProvider;
+/// 文字识别;默认系统 OCR,配置 `ocr_engine=ppocr` 或调用参数 `engine` 时
+/// 走随包的 PP-OCRv6。`lang` 只对系统 OCR 有意义,PP-OCR 结果里报 `ppocr`。
+pub struct OcrProvider {
+    cache: Arc<PpOcrCache>,
+}
+
+#[derive(Default)]
+struct PpOcrCache {
+    /// 模型目录与已加载计划;目录换了就重新加载。
+    model: Mutex<Option<(PathBuf, Arc<lueying_ocr::PpOcr>)>>,
+}
+
+impl OcrProvider {
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(PpOcrCache::default()),
+        }
+    }
+}
+
+impl PpOcrCache {
+    fn load(&self, dir: PathBuf) -> Result<Arc<lueying_ocr::PpOcr>, String> {
+        let mut slot = self.model.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((cached, model)) = slot.as_ref()
+            && cached == &dir
+        {
+            return Ok(Arc::clone(model));
+        }
+        let started = std::time::Instant::now();
+        let model = Arc::new(lueying_ocr::PpOcr::open(&dir)?);
+        println!(
+            "PP-OCRv6 模型 ← {}（{} ms）",
+            dir.display(),
+            started.elapsed().as_millis()
+        );
+        *slot = Some((dir, Arc::clone(&model)));
+        Ok(model)
+    }
+}
 
 impl Provider for OcrProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
@@ -189,18 +226,56 @@ impl Provider for OcrProvider {
             .ok_or_else(|| "缺 file".to_string())?
             .to_string();
         let lang = parsed["lang"].as_str().map(str::to_string);
+        let engine = parsed["engine"].as_str().map(str::to_string);
         if std::env::var_os("LUEYING_FAKE_OCR").is_some() {
             done.complete(fake_ocr(&file));
             return Ok(());
         }
+        let cache = Arc::clone(&self.cache);
         std::thread::Builder::new()
             .name("ext-ocr".into())
             .spawn(move || {
-                done.complete(ocr_file(&file, lang));
+                done.complete(recognize_file(&cache, &file, lang, engine));
             })
             .map_err(|e| format!("识别线程启动失败: {e}"))?;
         Ok(())
     }
+}
+
+/// 按调用参数或配置选引擎;参数优先,未知值回配置。
+fn recognize_file(
+    cache: &PpOcrCache,
+    file: &str,
+    lang: Option<String>,
+    engine: Option<String>,
+) -> Result<String, String> {
+    let backend = match engine.as_deref() {
+        Some("ppocr" | "pp-ocr" | "paddle") => crate::config::OcrBackend::Ppocr,
+        Some("system" | "windows") => crate::config::OcrBackend::System,
+        _ => crate::config::path()
+            .map(|path| crate::config::load(&path).ocr_backend)
+            .unwrap_or_default(),
+    };
+    match backend {
+        crate::config::OcrBackend::Ppocr => ppocr_file(cache, file),
+        crate::config::OcrBackend::System => ocr_file(file, lang),
+    }
+}
+
+/// PP-OCRv6 只吃 BMP;截图链路固定产出 BMP,其它格式回明确错误。
+fn ppocr_file(cache: &PpOcrCache, file: &str) -> Result<String, String> {
+    let dir = crate::config::ppocr_dir().ok_or_else(|| {
+        "PP-OCRv6 模型未安装:需要 det.onnx、rec.onnx、dict.txt".to_string()
+    })?;
+    let model = cache.load(dir)?;
+    let image = lueying_ocr::load_bmp(Path::new(file))?;
+    let lines = model.recognize(&image)?;
+    let text = lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    serde_json::to_string(&json!({ "text": text, "lang": "ppocr" })).map_err(|e| e.to_string())
 }
 
 /// Windows E2E 的固定识别结果:CI 镜像不一定带 OCR 语言包,截图与上屏仍是

@@ -6,6 +6,13 @@
 
 ### 新增
 
+- 截图 OCR 可选引擎:设置页「扩展 → 截图识别」在系统 OCR 与 PP-OCRv6
+  small(det+rec ONNX)之间切换;模型随安装包放在 `{app}\models\ppocr`,
+  `%APPDATA%\lueying\models\ppocr` 可覆盖。推理用纯 Rust 的 tract,不随包
+  带 onnxruntime.dll;首次识别加载模型,之后复用。`ocr.recognize` 增加
+  `engine` 参数,配置键 `ocr_engine=system|ppocr`。Linux CI 拉真模型跑
+  det+rec 回归;`tools/fetch_ppocr.sh` 钉住 Hugging Face revision 与
+  sha256,词表从 rec 仓库的 `inference.yml` 提取。
 - 官方扩展·截图 OCR(T6):`extensions/shot-ocr` 用公开接口串起截图 → 识别 →
   上屏,随安装包分发到 `{app}\extensions`,首次安装复制到当前用户的
   `%APPDATA%\lueying\extensions`(已有目录不覆盖)。`output.deliver` 接线:

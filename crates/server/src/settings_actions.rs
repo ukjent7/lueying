@@ -181,6 +181,48 @@ pub fn open_effects(settings: &mut Settings) {
     }
 }
 
+/// PP-OCRv6 模型是否齐全;设置页据此写「可用 / 未安装」。
+pub fn ppocr_ready() -> bool {
+    config::ppocr_dir().is_some()
+}
+
+/// 打开 PP-OCR 模型目录:没有就建,并放一份文件名与下载地址说明。
+pub fn open_ocr_models(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let Some(dir) = config::ppocr_user_dir() else {
+        settings.say(Notice::Error, "没有可写的模型目录");
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        settings.say(Notice::Error, format!("建目录失败: {e}"));
+        return;
+    }
+    let readme = dir.join("README.txt");
+    if !readme.exists() {
+        let _ = std::fs::write(&readme, PPOCR_README);
+    }
+    match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+        Ok(_) => settings.say(Notice::Info, format!("已打开 {}", dir.display())),
+        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
+    }
+}
+
+const PPOCR_README: &str = "\
+掠影 PP-OCRv6 模型目录
+
+需要三个文件(此目录优先于程序目录的随包模型):
+  det.onnx  文字检测模型
+  rec.onnx  文字识别模型
+  dict.txt  词表,一行一个字
+
+下载:
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+  dict.txt 从 rec 仓库的 inference.yml 里提取 character_dict,共 18708 行。
+
+放好后在设置页把「截图识别」切到 PP-OCRv6;首次识别会加载模型。
+";
+
 /// 打开运行期脚本目录:没有就建,再拉起资源管理器。每个包一个子
 /// 目录,启用哪个由配置里的 `script` 决定。
 pub fn open_scripts(settings: &mut Settings) {

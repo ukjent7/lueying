@@ -8,6 +8,7 @@ members = [
     "crates/extmeta",
     "crates/features",
     "crates/lm",
+    "crates/ocr",
     "crates/rerank",
     "crates/protocol",
     # 运行期扩展:场景协议 + QuickJS 宿主,平台无关
@@ -39,6 +40,7 @@ lueying-extjs = { path = "crates/extjs" }
 lueying-extmeta = { path = "crates/extmeta" }
 lueying-extsvc = { path = "crates/extsvc" }
 lueying-features = { path = "crates/features" }
+lueying-ocr = { path = "crates/ocr" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-server = { path = "crates/server" }

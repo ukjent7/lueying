@@ -27,10 +27,12 @@ interface capture {
 }
 
 // 文字识别:输入位图文件路径,输出识别文本。
+// engine 可选 `system` 或 `ppocr`;缺省跟随设置页的「截图识别」。
 interface ocr {
   record recognize-options {
     file: string,
     lang: option<string>,
+    engine: option<string>,
   }
   record recognize-result {
     text: string,

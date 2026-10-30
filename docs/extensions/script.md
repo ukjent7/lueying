@@ -4,9 +4,10 @@
 
 > 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;服务缝
 > capture/ocr/output/hotkey/notify 已接上 Windows 提供者,官方 shot-ocr
-> 随安装包分发。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、隐私、
-> 热重载、卸载回收与官方 shot-ocr 的黄金链路;Windows E2E 覆盖热键 →
-> 截图 → 识别 → 上屏(识别在 CI 上换成固定文本)。
+> 随安装包分发。截图识别可选系统 OCR 或随包的 PP-OCRv6(纯 Rust 推理,
+> 首次识别时加载模型)。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、
+> 隐私、热重载、卸载回收与官方 shot-ocr 的黄金链路;Windows E2E 覆盖热键
+> → 截图 → 识别 → 上屏(识别在 CI 上换成固定文本)。
 
 ## 包结构
 
@@ -22,7 +23,7 @@
 
 ## 启用
 
-打开设置页「候选 → 运行期脚本」,点「选择」挑一个包,保存后生效。多扩展直接编辑 `%APPDATA%\lueying\config.ini`,写一行逗号分隔的列表:
+打开设置页「扩展 → 运行期脚本」,点「选择」挑一个包,保存后生效。多扩展直接编辑 `%APPDATA%\lueying\config.ini`,写一行逗号分隔的列表:
 
 ```ini
 extensions=shot-ocr,clipboard-history
@@ -138,7 +139,7 @@ v1 开放:
 | 服务 | 方法 | 说明 |
 |---|---|---|
 | capture | `shot({region?})` | 截屏,返回 `{file, width, height}` 临时位图路径 |
-| ocr | `recognize({file, lang?})` | 文字识别,返回 `{text, lang}` |
+| ocr | `recognize({file, lang?, engine?})` | 文字识别,返回 `{text, lang}`;`engine` 为 `system` 或 `ppocr`,缺省跟随设置页 |
 | output | `deliver({text})` | 把文本注入当前焦点(Unicode,WM_CHAR),返回 `{delivered}` |
 | panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}`;宿主面板尚未接线,当前报错 |
 | hotkey | `register({id, modifiers, key})` / `unregister({id})` / `press({id})` | 全局热键,冲突报错;`press` 等一次触发,扩展在 async 循环里反复调用 |
@@ -161,7 +162,7 @@ lueying.command("shot-ocr", async () => {
 
 安装包自带 `shot-ocr`(截图 → 识别 → 上屏),安装时复制到
 `%APPDATA%\lueying\extensions\shot-ocr`;已存在的目录不覆盖,升级不会
-冲掉用户改过的脚本。启用方式与普通扩展相同:设置页「候选 → 运行期脚本」
+冲掉用户改过的脚本。启用方式与普通扩展相同:设置页「扩展 → 运行期脚本」
 里选择,或写配置:
 
 ```ini
@@ -174,6 +175,23 @@ bindings=Ctrl+Alt+O=shot-ocr.run
 Unicode 注入当前焦点(WM_CHAR),Electron 与自绘控件适用;前台窗口权限
 更高时返回明确错误。截图的 BMP 落在 `%TEMP%\lueying-capture`,文件名带
 毫秒时间戳。
+
+截图识别在设置页「扩展 → 截图识别」里二选一:
+
+- **系统**:Windows.Media.Ocr,零额外文件,按 `lang` 或用户语言识别。
+- **PP-OCRv6**:PaddlePaddle 的 small det+rec(ONNX),随安装包放在
+  `{app}\models\ppocr`,纯 Rust 推理,不依赖 onnxruntime.dll。首次调用
+  时加载模型,之后复用;只吃 BMP(截图链路固定产出 BMP)。用户把
+  `det.onnx`、`rec.onnx`、`dict.txt` 放进
+  `%APPDATA%\lueying\models\ppocr` 可以覆盖随包模型,设置页「识别模型 →
+  目录」会打开这里。扩展也可以在调用时用 `engine: "ppocr"` 单独指定。
+
+配置键:
+
+```ini
+ocr_engine=system
+# 或 ppocr
+```
 
 ## 场景状态
 

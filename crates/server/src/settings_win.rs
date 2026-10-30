@@ -75,6 +75,7 @@ pub fn run() {
     settings.current = update::current_version();
     settings.effects_detail = effects_detail();
     settings.scripts = settings_actions::installed_scripts();
+    settings.ppocr_ready = settings_actions::ppocr_ready();
 
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
@@ -505,6 +506,7 @@ fn handle_action(hwnd: HWND, action: Action) {
             });
         }
         Action::OpenScripts => with_settings(hwnd, settings_actions::open_scripts),
+        Action::OpenOcrModels => with_settings(hwnd, settings_actions::open_ocr_models),
         Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),
         Action::OpenApps => with_settings(hwnd, settings_actions::open_apps),

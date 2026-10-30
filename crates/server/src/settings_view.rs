@@ -10,7 +10,7 @@ use lueying_protocol::EngineStatus;
 use lueying_render::ui::{Button, ButtonKind, Control, Group, Id, Page, Row, SegmentOption};
 
 use crate::accents::ACCENTS;
-use crate::config::{AppConfig, Channel, Region, UiFont, UiLayout};
+use crate::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
 
 /// 控件 id 的前缀。分段组用「前缀 + 格下标」,其余控件用「前缀 + 0」。
 pub mod ids {
@@ -29,6 +29,8 @@ pub mod ids {
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";
+    pub const OCR: &str = "ocr";
+    pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
     pub const RESET_FUZZY: &str = "reset-fuzzy";
     pub const FUZZY: &str = "fuzzy";
@@ -91,6 +93,7 @@ pub enum Action {
     OpenEffects,
     ChooseScript,
     OpenScripts,
+    OpenOcrModels,
     OpenPhrases,
     OpenPunct,
     OpenApps,
@@ -131,6 +134,8 @@ pub struct Settings {
     pub effects_detail: String,
     /// 已安装的运行期脚本包;平台侧读目录后填入。
     pub scripts: Vec<ScriptEntry>,
+    /// PP-OCRv6 模型是否齐全;平台侧检查目录后填入。
+    pub ppocr_ready: bool,
 }
 
 impl Default for Settings {
@@ -147,6 +152,7 @@ impl Default for Settings {
             updates: UpdateState::Idle,
             effects_detail: "SkSL 装饰层".to_string(),
             scripts: Vec::new(),
+            ppocr_ready: false,
         }
     }
 }
@@ -342,6 +348,33 @@ impl Settings {
                         },
                     },
                     Row {
+                        label: "下一词联想".to_string(),
+                        detail: "按本机上屏词序补全".to_string(),
+                        control: Control::Toggle {
+                            id: Id::new(ids::PREDICT, 0),
+                            on: self.cfg.predict,
+                        },
+                    },
+                    Row {
+                        label: "自动模糊音".to_string(),
+                        detail: self.fuzzy_detail(),
+                        control: Control::ButtonsToggle {
+                            items: vec![Button {
+                                id: Id::new(ids::RESET_FUZZY, 0),
+                                text: "重置".to_string(),
+                                kind: ButtonKind::Ghost,
+                                enabled: self.reset_enabled(),
+                            }],
+                            toggle: Id::new(ids::FUZZY, 0),
+                            toggle_on: !self.cfg.fuzzy.is_off(),
+                        },
+                    },
+                ],
+            },
+            Group {
+                title: "扩展".to_string(),
+                rows: vec![
+                    Row {
                         label: "运行期脚本".to_string(),
                         detail: self.script_detail(),
                         control: Control::Buttons {
@@ -362,25 +395,28 @@ impl Settings {
                         },
                     },
                     Row {
-                        label: "下一词联想".to_string(),
-                        detail: "按本机上屏词序补全".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::PREDICT, 0),
-                            on: self.cfg.predict,
+                        label: "截图识别".to_string(),
+                        detail: self.ocr_detail(),
+                        control: Control::Segment {
+                            id: Id::new(ids::OCR, 0),
+                            options: OcrBackend::NAMES
+                                .iter()
+                                .map(|name| SegmentOption::new(*name))
+                                .collect(),
+                            selected: self.selected(ids::OCR),
+                            width: 60.0,
                         },
                     },
                     Row {
-                        label: "自动模糊音".to_string(),
-                        detail: self.fuzzy_detail(),
-                        control: Control::ButtonsToggle {
+                        label: "识别模型".to_string(),
+                        detail: "放入 det.onnx、rec.onnx、dict.txt".to_string(),
+                        control: Control::Buttons {
                             items: vec![Button {
-                                id: Id::new(ids::RESET_FUZZY, 0),
-                                text: "重置".to_string(),
-                                kind: ButtonKind::Ghost,
-                                enabled: self.reset_enabled(),
+                                id: Id::new(ids::OCR_DIR, 0),
+                                text: "目录".to_string(),
+                                kind: ButtonKind::Secondary,
+                                enabled: true,
                             }],
-                            toggle: Id::new(ids::FUZZY, 0),
-                            toggle_on: !self.cfg.fuzzy.is_off(),
                         },
                     },
                 ],
@@ -593,6 +629,16 @@ impl Settings {
         }
     }
 
+    /// 截图识别那行的说明:选的引擎与模型是否可用。
+    fn ocr_detail(&self) -> String {
+        match (self.cfg.ocr_backend, self.ppocr_ready) {
+            (OcrBackend::Ppocr, true) => "随包 PP-OCRv6 · 首次识别加载".to_string(),
+            (OcrBackend::Ppocr, false) => "模型未安装;点「目录」放入三个文件".to_string(),
+            (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
+            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 模型未安装".to_string(),
+        }
+    }
+
     /// 选择运行期脚本;`None` 关闭。下标越界按关闭处理。
     pub fn select_script(&mut self, index: Option<usize>) {
         match index.and_then(|index| self.scripts.get(index)) {
@@ -698,6 +744,12 @@ impl Settings {
                 self.clear_notice();
                 None
             }
+            ids::OCR => {
+                self.cfg.ocr_backend = OcrBackend::from_index(id.index);
+                self.clear_notice();
+                None
+            }
+            ids::OCR_DIR => Some(Action::OpenOcrModels),
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::EFFECTS => Some(Action::OpenEffects),
             ids::SCRIPTS => Some(Action::ChooseScript),
@@ -772,6 +824,7 @@ impl Settings {
                 .unwrap_or(1),
             ids::ACCENT => self.cfg.ui_accent.min(ACCENTS.len() - 1),
             ids::CHANNEL => usize::from(self.cfg.update_channel == Channel::Beta),
+            ids::OCR => usize::from(self.cfg.ocr_backend == OcrBackend::Ppocr),
             _ => 0,
         }
     }
@@ -794,6 +847,8 @@ impl Settings {
             Id::new(ids::EFFECTS_TOGGLE, 0),
             Id::new(ids::SCRIPTS, 0),
             Id::new(ids::SCRIPTS_DIR, 0),
+            Id::new(ids::OCR, 0),
+            Id::new(ids::OCR_DIR, 0),
             Id::new(ids::PREDICT, 0),
             Id::new(ids::RESET_FUZZY, 0),
             Id::new(ids::FUZZY, 0),

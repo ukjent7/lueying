@@ -69,7 +69,7 @@ fn capture_shots_real_screen() {
 fn ocr_recognizes_captured_shot() {
     let registry = Registry::new();
     registry.set(Service::Capture, Arc::new(CaptureProvider));
-    registry.set(Service::Ocr, Arc::new(OcrProvider));
+    registry.set(Service::Ocr, Arc::new(OcrProvider::new()));
     registry.call("capture", "shot", "", 1).unwrap();
     let shot = wait_completion(&registry, Duration::from_secs(30)).expect("截图未完成");
     let file: String = {

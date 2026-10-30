@@ -374,7 +374,7 @@ fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runt
     };
     let registry = Arc::new(Registry::new());
     registry.set(Service::Capture, Arc::new(services::CaptureProvider));
-    registry.set(Service::Ocr, Arc::new(services::OcrProvider));
+    registry.set(Service::Ocr, Arc::new(services::OcrProvider::new()));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     registry.set(Service::Panel, Arc::new(services::PanelProvider));
     // 热键提供者由 worker 持有共享状态;`set` 收 trait 对象,先落到具体类型再强转。
