@@ -163,9 +163,7 @@ impl CommandPanel {
         if self.selected >= self.offset + max_rows {
             self.offset = self.selected + 1 - max_rows;
         }
-        self.offset = self
-            .offset
-            .min(self.matches.len().saturating_sub(max_rows));
+        self.offset = self.offset.min(self.matches.len().saturating_sub(max_rows));
         let end = (self.offset + max_rows).min(self.matches.len());
         let rows = self.matches[self.offset..end]
             .iter()

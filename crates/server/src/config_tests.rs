@@ -115,7 +115,10 @@ fn panel_hotkey_parses_and_off_values_disable() {
     let cfg = load_text("panel", "panel_hotkey=Ctrl+Alt+Shift+P\n");
     assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+P");
     for (index, value) in ["", "off", "none"].into_iter().enumerate() {
-        let cfg = load_text(&format!("panel-off-{index}"), &format!("panel_hotkey={value}\n"));
+        let cfg = load_text(
+            &format!("panel-off-{index}"),
+            &format!("panel_hotkey={value}\n"),
+        );
         assert!(cfg.panel_hotkey.is_empty(), "{value:?}");
     }
 }

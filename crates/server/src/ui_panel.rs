@@ -26,19 +26,18 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
-    VIRTUAL_KEY, VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN,
-    VK_SHIFT, VK_TAB, VK_UP,
+    GetKeyState, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
+    VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN, VK_SHIFT, VK_TAB,
+    VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
-    GetClassNameW, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
-    GetWindowRect, IDC_ARROW, IsWindow, LoadCursorW, MSG, PostQuitMessage, RegisterClassW,
-    SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW, SetFocus,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP, HWND_TOPMOST,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClassNameW,
+    GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
+    IDC_ARROW, IsWindow, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW, SetFocus, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE, WINDOW_EX_STYLE,
+    WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
@@ -53,10 +52,7 @@ const QUEUE: usize = 1;
 /// 起面板线程;窗口在第一次唤出时创建,空闲线程阻塞在通道上。
 pub(super) fn spawn(state: Arc<State>) {
     let (tx, rx) = mpsc::sync_channel::<Vec<CommandItem>>(QUEUE);
-    *state
-        .panel
-        .lock()
-        .unwrap_or_else(|p| p.into_inner()) = Some(tx);
+    *state.panel.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
     let spawned = std::thread::Builder::new()
         .name("command-panel".into())
         .spawn(move || {
@@ -105,10 +101,7 @@ fn panel_loop(state: Arc<State>, rx: Receiver<Vec<CommandItem>>) {
         let executed = pump_until_hidden(hwnd);
         state.panel_open.store(false, Ordering::Relaxed);
         if let Some(command) = executed {
-            let hub = state
-                .ext_hub
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
+            let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
             match hub.as_ref() {
                 Some(hub) => {
                     let _ = hub.invoke.send(ExtInvoke {
@@ -170,11 +163,7 @@ impl PanelWindow {
         }
         window.reflow();
         unsafe {
-            SetWindowLongPtrW(
-                hwnd,
-                GWLP_USERDATA,
-                (&mut *window as *mut Self) as isize,
-            );
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&mut *window as *mut Self) as isize);
         }
         Ok(window)
     }
@@ -195,16 +184,8 @@ impl PanelWindow {
         let (w, h) = self.size;
         let (x, y) = self.position();
         unsafe {
-            SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOPMOST),
-                x,
-                y,
-                w,
-                h,
-                SWP_SHOWWINDOW,
-            )
-            .map_err(|e| format!("SetWindowPos: {e}"))?;
+            SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_SHOWWINDOW)
+                .map_err(|e| format!("SetWindowPos: {e}"))?;
             let _ = SetForegroundWindow(self.hwnd);
             let _ = SetFocus(Some(self.hwnd));
             let _ = InvalidateRect(Some(self.hwnd), None, false);
@@ -241,15 +222,7 @@ impl PanelWindow {
         let (w, h) = self.size;
         let (x, y) = self.position();
         unsafe {
-            let _ = SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOPMOST),
-                x,
-                y,
-                w,
-                h,
-                SWP_NOACTIVATE,
-            );
+            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
     }

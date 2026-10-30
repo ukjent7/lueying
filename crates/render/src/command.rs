@@ -3,9 +3,7 @@
 //! 只认数据:查询串、可见行与选中下标由服务端的命令搜索模型给出,调色板
 //! 与字型由窗口层传入。绘制与命中共用同一份 [`Layout`],所指即所画。
 
-use skia_safe::{
-    Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect,
-};
+use skia_safe::{Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect};
 
 use crate::panel::{Palette, color};
 
@@ -74,12 +72,7 @@ pub fn layout(spec: &Spec, scale: f32) -> Layout {
     let width = WIDTH * scale;
     let height = (INPUT_H + row_count * ROW_H + FOOTER_H) * scale;
     let input = Rect::from_xywh(0.0, 0.0, width, INPUT_H * scale);
-    let list = Rect::from_xywh(
-        0.0,
-        INPUT_H * scale,
-        width,
-        row_count * ROW_H * scale,
-    );
+    let list = Rect::from_xywh(0.0, INPUT_H * scale, width, row_count * ROW_H * scale);
     let footer = Rect::from_xywh(0.0, height - FOOTER_H * scale, width, FOOTER_H * scale);
     let rows = (0..spec.rows.len())
         .map(|index| {
@@ -101,13 +94,17 @@ pub fn layout(spec: &Spec, scale: f32) -> Layout {
 }
 
 /// 画一帧;调用方按 [`Layout::size`] 准备同样大的画布。
-pub fn draw(canvas: &Canvas, spec: &Spec, layout: &Layout, palette: &Palette, font: &Font, scale: f32) {
+pub fn draw(
+    canvas: &Canvas,
+    spec: &Spec,
+    layout: &Layout,
+    palette: &Palette,
+    font: &Font,
+    scale: f32,
+) {
     let scale = scale.max(0.5);
     let (width, height) = layout.size;
-    canvas.draw_rect(
-        Rect::from_xywh(0.0, 0.0, width, height),
-        &fill(palette.bg),
-    );
+    canvas.draw_rect(Rect::from_xywh(0.0, 0.0, width, height), &fill(palette.bg));
     // 输入框与列表之间的分隔线。
     canvas.draw_rect(
         Rect::from_xywh(0.0, layout.input.bottom - scale, width, scale),
@@ -168,19 +165,20 @@ fn draw_input(
         &shown,
         Some((max_width, size)),
     );
-    caret(canvas, x + query_width + 2.0 * scale, layout.input, palette, scale);
+    caret(
+        canvas,
+        x + query_width + 2.0 * scale,
+        layout.input,
+        palette,
+        scale,
+    );
 }
 
 fn caret(canvas: &Canvas, x: f32, input: Rect, palette: &Palette, scale: f32) {
     let x = x.min(input.right - PAD * scale);
     let height = 18.0 * scale;
     canvas.draw_rect(
-        Rect::from_xywh(
-            x,
-            input.center_y() - height * 0.5,
-            1.5 * scale,
-            height,
-        ),
+        Rect::from_xywh(x, input.center_y() - height * 0.5, 1.5 * scale, height),
         &fill(palette.accent),
     );
 }
