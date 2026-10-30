@@ -20,6 +20,7 @@ use lueying_engine::{Action, CivilTime, Engine, Event, Key, Mode, SharedUser, Us
 use lueying_features::{CustomPhrases, Prediction};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{Model, Rerank};
+use lueying_server::command_panel::CommandItem;
 use lueying_server::config::{self, AppConfig};
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -73,11 +74,17 @@ pub(super) struct ModeHud {
     pub(super) at: Instant,
 }
 
-/// 动作候选执行命令的入口:请求线程投完整命令 id,脚本线程执行。
+/// 动作候选与命令面板执行命令的入口:请求线程投完整命令 id,脚本线程执行。
 pub(super) struct ExtHub {
-    pub(super) invoke: mpsc::Sender<String>,
+    pub(super) invoke: mpsc::Sender<ExtInvoke>,
     /// 完整命令 id → 标题;扩展重载后由脚本线程刷新。
     pub(super) titles: Arc<Mutex<HashMap<String, String>>>,
+}
+
+/// 一次命令执行请求;来源只用于日志。
+pub(super) struct ExtInvoke {
+    pub(super) command: String,
+    pub(super) source: &'static str,
 }
 
 pub(super) struct State {
@@ -116,6 +123,10 @@ pub(super) struct State {
     pub(super) config: RwLock<AppConfig>,
     /// 动作候选执行命令的通道;脚本线程启动时装填。
     pub(super) ext_hub: Mutex<Option<ExtHub>>,
+    /// 命令面板的唤出通道;面板线程启动时装填。
+    pub(super) panel: Mutex<Option<mpsc::SyncSender<Vec<CommandItem>>>>,
+    /// 面板正开着;此时再按总热键直接丢弃,关闭后不补开。
+    pub(super) panel_open: AtomicBool,
     pub(super) config_path: Option<PathBuf>,
     /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
     pub(super) chinese: AtomicBool,
@@ -215,6 +226,17 @@ fn attach_stdio() {
     }
     attach_null_stdio();
     attach_log_stdio();
+}
+
+/// 命令面板自检入口:`lueying-server.exe --panel-selftest <报告>`。
+/// 独立进程跑,不碰单实例锁、管道与 TSF;结论写文件供 win-e2e 断言。
+pub(super) fn panel_selftest() {
+    let report = std::env::args()
+        .nth(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target/panel-selftest.txt"));
+    let result = crate::ui_panel::selftest(&report);
+    std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
 pub(super) fn real_main() {
@@ -319,6 +341,8 @@ pub(super) fn real_main() {
         scheme: RwLock::new(scheme),
         config: RwLock::new(app_config),
         ext_hub: Mutex::new(None),
+        panel: Mutex::new(None),
+        panel_open: AtomicBool::new(false),
         config_path,
         chinese: AtomicBool::new(true),
         fullwidth: AtomicBool::new(false),

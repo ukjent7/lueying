@@ -676,7 +676,10 @@ fn invoke_extension(state: &State, id: &str) {
     let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
     match hub.as_ref() {
         Some(hub) => {
-            let _ = hub.invoke.send(id.to_string());
+            let _ = hub.invoke.send(ExtInvoke {
+                command: id.to_string(),
+                source: "动作候选",
+            });
         }
         None => println!("动作候选跳过:脚本线程未启动({id})"),
     }

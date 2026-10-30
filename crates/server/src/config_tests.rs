@@ -111,11 +111,28 @@ fn valid_script_id_boundaries() {
 }
 
 #[test]
+fn panel_hotkey_parses_and_off_values_disable() {
+    let cfg = load_text("panel", "panel_hotkey=Ctrl+Alt+Shift+P\n");
+    assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+P");
+    for (index, value) in ["", "off", "none"].into_iter().enumerate() {
+        let cfg = load_text(&format!("panel-off-{index}"), &format!("panel_hotkey={value}\n"));
+        assert!(cfg.panel_hotkey.is_empty(), "{value:?}");
+    }
+}
+
+#[test]
+fn panel_hotkey_defaults_to_three_modifiers() {
+    let cfg = load_text("panel-default", "");
+    assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+Space");
+}
+
+#[test]
 fn save_keeps_extensions_and_round_trips() {
     let path = temp("roundtrip");
     let cfg = AppConfig {
         extensions: vec!["first".to_string(), "second".to_string()],
         triggers: vec![("bc".to_string(), "shot.run".to_string())],
+        panel_hotkey: "Ctrl+Alt+Shift+P".to_string(),
         ..AppConfig::default()
     };
     save(&path, &cfg).expect("写配置");
@@ -124,9 +141,11 @@ fn save_keeps_extensions_and_round_trips() {
     let _ = std::fs::remove_file(&path);
     assert!(text.contains("extensions=first,second\n"), "{text}");
     assert!(text.contains("triggers=bc=shot.run\n"), "{text}");
+    assert!(text.contains("panel_hotkey=Ctrl+Alt+Shift+P\n"), "{text}");
     assert_eq!(
         loaded.triggers,
         vec![("bc".to_string(), "shot.run".to_string())]
     );
     assert_eq!(loaded.extensions, vec!["first", "second"]);
+    assert_eq!(loaded.panel_hotkey, "Ctrl+Alt+Shift+P");
 }

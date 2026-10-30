@@ -10,6 +10,7 @@
 //! 效果之上压一层引擎遮罩(`scrim_alpha`),文字对比度因此有下限。
 
 pub mod badge;
+pub mod command;
 pub mod effect;
 pub mod panel;
 pub mod ui;

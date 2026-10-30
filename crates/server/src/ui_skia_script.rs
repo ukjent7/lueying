@@ -16,12 +16,13 @@ use lueying_extjs::{
 };
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
+use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
 use lueying_server::services;
 use lueying_server::theme;
 use skia_safe::Shader;
 
-use crate::imp::{ExtHub, State};
+use crate::imp::{ExtHub, ExtInvoke, State};
 use crate::ui_place;
 
 /// 扩展目录的轮询间隔;改完脚本一秒内生效。
@@ -96,9 +97,11 @@ fn worker(
     let hotkey = Arc::new(services::HotkeyProvider::default());
     let mut bindings = BindingTable::default();
     let mut bound: Vec<(String, String)> = Vec::new();
+    // 命令面板总热键的当前组合;空串表示关闭。
+    let mut panel_bound = String::new();
     // 动作候选:请求线程按完整命令 id 投递,这里执行;
     // 标题表同时供请求线程判断命令是否存在。
-    let (action_tx, action_rx) = mpsc::channel::<String>();
+    let (action_tx, action_rx) = mpsc::channel::<ExtInvoke>();
     let titles: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     *state.ext_hub.lock().unwrap_or_else(|p| p.into_inner()) = Some(ExtHub {
         invoke: action_tx,
@@ -120,6 +123,7 @@ fn worker(
                 order = want;
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
+                panel_bound.clear();
                 runtime = load(&order, &hotkey);
                 reported = None;
                 // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
@@ -128,6 +132,18 @@ fn worker(
             if order_changed || want_binds != bound {
                 bound = want_binds;
                 bindings = bind_rows(&state, runtime.as_ref(), &hotkey);
+            }
+            // 命令面板总热键独立于扩展命令:没有命令时也能唤出空面板。
+            let want_panel = configured_panel_hotkey(&state);
+            if want_panel != panel_bound {
+                hotkey.unbind_panel();
+                if !want_panel.is_empty() {
+                    match hotkey.bind_panel(&want_panel) {
+                        Ok(()) => println!("命令面板热键 {want_panel}"),
+                        Err(error) => println!("命令面板热键 {want_panel} 注册失败:{error}"),
+                    }
+                }
+                panel_bound = want_panel;
             }
             // 扩展重载会换掉命令集;标题表每轮刷新,触发词不会指向已卸载的命令。
             refresh_titles(&titles, runtime.as_ref());
@@ -153,13 +169,24 @@ fn worker(
             }
         }
         if let Some(current) = runtime.as_mut() {
-            // 动作候选选中的命令:与热键走同一条执行路径,失败只写日志。
-            while let Ok(command) = action_rx.try_recv() {
-                run_command(current, &command, "动作候选");
+            // 动作候选与命令面板选中的命令:与热键走同一条执行路径,失败只写日志。
+            while let Ok(invoke) = action_rx.try_recv() {
+                run_command(current, &invoke.command, invoke.source);
             }
             // 热键触发与异步命令推进;没有热键和挂起任务时都是微秒级空检查。
             dispatch_hotkey(&state, current, &hotkey, &bindings);
             let _ = current.pump(unix_ms());
+        } else {
+            // 没有运行期扩展时也要收总热键;用户绑定不存在,只排空消息队列。
+            let _ = hotkey.pump();
+            // 面板在扩展卸载后仍可能投回命令:明确记一笔,不静默丢弃。
+            while let Ok(invoke) = action_rx.try_recv() {
+                println!("{}跳过:扩展未启用({})", invoke.source, invoke.command);
+            }
+        }
+        if hotkey.take_panel() {
+            // 扩展未启用时面板仍可打开,只是没有命令可执行。
+            show_panel(&state, runtime.as_ref());
         }
         let Some((seq, scene)) = latest.lock().unwrap_or_else(|p| p.into_inner()).take() else {
             continue;
@@ -228,8 +255,46 @@ fn bind_rows(
     table
 }
 
+/// 配置里的命令面板总热键;空串表示关闭。
+fn configured_panel_hotkey(state: &State) -> String {
+    state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .panel_hotkey
+        .trim()
+        .to_string()
+}
+
+/// 唤出命令面板:命令表在这里取一次,面板开着时再按热键直接丢弃。
+fn show_panel(state: &State, runtime: Option<&Runtime>) {
+    if state.panel_open.load(Ordering::Relaxed) {
+        return;
+    }
+    let items = runtime
+        .map(|runtime| {
+            runtime
+                .commands()
+                .into_iter()
+                .map(|info| CommandItem {
+                    id: info.id,
+                    title: info.title,
+                    extension: info.extension,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let panel = state.panel.lock().unwrap_or_else(|p| p.into_inner());
+    match panel.as_ref() {
+        Some(sender) => {
+            let _ = sender.try_send(items);
+        }
+        None => println!("命令面板不可用:UI 未启动"),
+    }
+}
+
 /// 收热键触发:扩展 press 已在 pump 里就地兑现;用户绑定行按 when 过滤后
-/// 执行,结果与错误都写日志。破坏性确认与命令面板入口随 T4 后续任务接上。
+/// 执行,结果与错误都写日志。破坏性确认随命令清单标注接上。
 fn dispatch_hotkey(
     state: &State,
     runtime: &mut Runtime,

@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extjs::{Completion, Registry, Service};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU,
+    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT,
+    VK_SPACE,
 };
 
 use crate::services::{
@@ -147,6 +148,31 @@ fn send_combo(key: VIRTUAL_KEY) {
     assert_eq!(sent as usize, inputs.len(), "SendInput 被拦截");
 }
 
+/// 真实注入一次 Ctrl+Alt+Shift+Space;命令面板的默认总热键。
+fn send_panel_combo() {
+    let press = |vk: VIRTUAL_KEY, up: bool| {
+        let mut input = INPUT::default();
+        input.r#type = INPUT_KEYBOARD;
+        input.Anonymous.ki.wVk = vk;
+        if up {
+            input.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+        }
+        input
+    };
+    let inputs = [
+        press(VK_CONTROL, false),
+        press(VK_MENU, false),
+        press(VK_SHIFT, false),
+        press(VK_SPACE, false),
+        press(VK_SPACE, true),
+        press(VK_SHIFT, true),
+        press(VK_MENU, true),
+        press(VK_CONTROL, true),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    assert_eq!(sent as usize, inputs.len(), "SendInput 被拦截");
+}
+
 #[test]
 fn hotkey_user_binding_fires() {
     let hotkey = HotkeyProvider::default();
@@ -156,6 +182,23 @@ fn hotkey_user_binding_fires() {
     assert_eq!(hotkey.pump(), vec![0], "触发行号不符");
     hotkey.reset();
     hotkey.bind(1, "Ctrl+Alt+J").expect("reset 后应可重注册");
+    hotkey.reset();
+}
+
+#[test]
+fn hotkey_panel_binding_fires_and_is_taken_once() {
+    let hotkey = HotkeyProvider::default();
+    assert!(hotkey.bind_panel("Ctrl+O").is_err(), "单修饰键要拒");
+    assert!(hotkey.bind_panel("Ctrl+Alt+Del").is_err(), "保留组合要拒");
+    hotkey
+        .bind_panel("Ctrl+Alt+Shift+Space")
+        .expect("面板热键注册失败");
+    send_panel_combo();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(hotkey.pump().is_empty(), "面板热键不是用户绑定");
+    assert!(hotkey.take_panel(), "面板热键没有触发");
+    assert!(!hotkey.take_panel(), "一次触发只能取走一次");
+    hotkey.unbind_panel();
     hotkey.reset();
 }
 

@@ -6,6 +6,11 @@
 fn main() {
     #[cfg(windows)]
     {
+        // 命令面板自检:独立进程建窗、注入按键、验证焦点归还,不碰管道。
+        if std::env::args().nth(1).as_deref() == Some("--panel-selftest") {
+            imp::panel_selftest();
+            return;
+        }
         // Skia GPU 自检的子进程:只跑 GPU 自检,跑完就退,不碰管道与单实例锁。
         // GPU 管线在驱动异常的机器上会崩,隔离在子进程里,崩了也不影响服务端。
         if std::env::var_os("LUEYING_SKIA_SELFTEST_GPU").is_some() {
@@ -41,6 +46,9 @@ mod ui;
 
 #[cfg(windows)]
 mod ui_hud;
+
+#[cfg(windows)]
+mod ui_panel;
 
 #[cfg(windows)]
 mod ui_place;

@@ -478,7 +478,7 @@ fn deferred(rows: &mut Vec<Row>) {
         "V4",
         "命令面板归还焦点后上屏",
         Verdict::Note,
-        "命令面板在 T4 实现;届时用 Notepad 与自绘窗口先行,Electron 场景需要可下载的测试应用。"
+        "面板已实现;win-e2e 的 `--panel-selftest` 覆盖记录/归还前台窗口、拼音搜索、方向键、Enter 与 Esc。Electron 与自绘控件需要可下载的测试应用,留待手动实测。"
             .to_string(),
     ));
     rows.push((

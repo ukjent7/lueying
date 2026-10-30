@@ -322,6 +322,10 @@ struct HotkeyState {
     map: HashMap<String, i32>,
     /// 用户绑定行号 → 整数 id。
     user: HashMap<usize, i32>,
+    /// 命令面板总热键的整数 id。
+    panel: Option<i32>,
+    /// 面板热键触发过,等 `take_panel` 取走。
+    panel_fired: bool,
     /// 扩展挂起的 press;每个热键事件兑现一个。
     presses: HashMap<String, VecDeque<Done>>,
     next: i32,
@@ -379,6 +383,38 @@ impl HotkeyProvider {
         state.user.clear();
     }
 
+    /// 注册命令面板的总热键;组合串走同一套校验(两个修饰键、保留组合)。
+    pub fn bind_panel(&self, combo: &str) -> Result<(), String> {
+        let (modifiers, key) = parse_combo(combo)?;
+        let mut state = self.state.lock().unwrap();
+        if let Some(old) = state.panel.take() {
+            let _ = unsafe { UnregisterHotKey(None, old) };
+        }
+        let hot_id = state.take_id();
+        match unsafe { RegisterHotKey(None, hot_id, modifiers, key) } {
+            Ok(()) => {
+                state.panel = Some(hot_id);
+                Ok(())
+            }
+            Err(error) => Err(format!("热键注册失败: {error}")),
+        }
+    }
+
+    /// 注销命令面板总热键;配置清空或改组合时先摘旧注册。
+    pub fn unbind_panel(&self) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(old) = state.panel.take() {
+            let _ = unsafe { UnregisterHotKey(None, old) };
+        }
+        state.panel_fired = false;
+    }
+
+    /// 取走一次面板热键触发;没有触发返回 `false`。
+    pub fn take_panel(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        std::mem::take(&mut state.panel_fired)
+    }
+
     /// 注销全部热键并丢弃挂起的 press;运行期换扩展时整表重建。
     pub fn reset(&self) {
         let mut state = self.state.lock().unwrap();
@@ -387,12 +423,15 @@ impl HotkeyProvider {
             .values()
             .copied()
             .chain(state.user.values().copied())
+            .chain(state.panel)
             .collect::<Vec<_>>();
         for hot_id in ids {
             let _ = unsafe { UnregisterHotKey(None, hot_id) };
         }
         state.map.clear();
         state.user.clear();
+        state.panel = None;
+        state.panel_fired = false;
         state.presses.clear();
     }
 
@@ -408,6 +447,10 @@ impl HotkeyProvider {
                 }
                 let hot_id = msg.wParam.0 as i32;
                 let mut state = self.state.lock().unwrap();
+                if state.panel == Some(hot_id) {
+                    state.panel_fired = true;
+                    continue;
+                }
                 if let Some(row) = state
                     .user
                     .iter()

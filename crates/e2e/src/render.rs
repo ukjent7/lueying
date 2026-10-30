@@ -11,6 +11,7 @@
 use std::time::{Duration, Instant};
 
 use lueying_render::badge;
+use lueying_render::command;
 use lueying_render::effect::{self, Uniforms};
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use lueying_render::ui;
@@ -228,6 +229,144 @@ fn ui_font() -> skia_safe::Font {
         Some(face) => skia_safe::Font::from_typeface(face, 17.0),
         None => skia_safe::Font::default(),
     }
+}
+
+/// 命令面板:尺寸、命中、选中行底色、空状态与长标题截断。
+fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
+    let palette = palette();
+    let font = ui_font();
+    let spec = command::Spec {
+        query: "xue".into(),
+        rows: vec![
+            command::Row {
+                title: "OCR 取字".into(),
+                extension: "demo".into(),
+            },
+            command::Row {
+                title: "学习".into(),
+                extension: "demo".into(),
+            },
+            command::Row {
+                title: "工作".into(),
+                extension: "demo".into(),
+            },
+        ],
+        selected: 1,
+        total: 3,
+        above: 0,
+        below: 0,
+    };
+    let layout = command::layout(&spec, 1.0);
+    let expect_h = command::INPUT_H + 3.0 * command::ROW_H + command::FOOTER_H;
+    push(
+        checks,
+        "命令面板尺寸",
+        (layout.size.0 - command::WIDTH).abs() < 0.5 && (layout.size.1 - expect_h).abs() < 0.5,
+        format!("{:?} 期望 ({}, {expect_h})", layout.size, command::WIDTH),
+    );
+    let input_hit = command::hit(&layout, &spec, command::WIDTH / 2.0, command::INPUT_H / 2.0);
+    push(
+        checks,
+        "命令面板输入框命中",
+        input_hit == command::Hit::Input,
+        format!("{input_hit:?}"),
+    );
+    let row = layout.rows[1];
+    let row_hit = command::hit(&layout, &spec, center_x(row), center_y(row));
+    push(
+        checks,
+        "命令面板行命中",
+        row_hit == command::Hit::Row(1),
+        format!("{row_hit:?}"),
+    );
+    let footer_hit = command::hit(
+        &layout,
+        &spec,
+        command::WIDTH / 2.0,
+        layout.footer.center_y(),
+    );
+    push(
+        checks,
+        "命令面板页脚命中",
+        footer_hit == command::Hit::Footer,
+        format!("{footer_hit:?}"),
+    );
+    let outside = command::hit(&layout, &spec, command::WIDTH + 10.0, 10.0);
+    push(
+        checks,
+        "命令面板外部不命中",
+        outside == command::Hit::Nothing,
+        format!("{outside:?}"),
+    );
+
+    let mut surface =
+        surfaces::raster_n32_premul((layout.size.0 as i32, layout.size.1 as i32)).expect("raster");
+    command::draw(surface.canvas(), &spec, &layout, &palette, &font, 1.0);
+    let corner = read_bgra(&mut surface, 2, 2);
+    push(
+        checks,
+        "命令面板底色",
+        corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.bg)),
+        format!("{corner:?} 期望 {:?}", rgb(palette.bg)),
+    );
+    let selected = layout.rows[1];
+    let pixel = read_bgra(
+        &mut surface,
+        selected.left as i32 + 4,
+        selected.center_y() as i32,
+    );
+    push(
+        checks,
+        "命令面板选中行底色",
+        pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.selected_bg)),
+        format!("{pixel:?} 期望 {:?}", rgb(palette.selected_bg)),
+    );
+
+    // 空状态仍占一行高度;提示语画在列表区。
+    let empty = command::Spec {
+        query: "zzz".into(),
+        total: 0,
+        ..command::Spec::default()
+    };
+    let empty_layout = command::layout(&empty, 1.0);
+    let expect_empty = command::INPUT_H + command::ROW_H + command::FOOTER_H;
+    push(
+        checks,
+        "命令面板空状态尺寸",
+        (empty_layout.size.1 - expect_empty).abs() < 0.5,
+        format!("{:.1} 期望 {expect_empty:.1}", empty_layout.size.1),
+    );
+
+    // 长标题按行宽截断,卷动提示不影响几何。
+    let long = command::Spec {
+        query: "a".into(),
+        rows: vec![command::Row {
+            title: "很长的命令标题".repeat(20),
+            extension: "very-long-extension-name".into(),
+        }],
+        selected: 0,
+        total: 9,
+        above: 3,
+        below: 5,
+    };
+    let long_layout = command::layout(&long, 1.5);
+    let mut long_surface =
+        surfaces::raster_n32_premul((long_layout.size.0 as i32, long_layout.size.1 as i32))
+            .expect("raster");
+    command::draw(
+        long_surface.canvas(),
+        &long,
+        &long_layout,
+        &palette,
+        &font,
+        1.5,
+    );
+    push(
+        checks,
+        "命令面板长标题不越界",
+        long_layout.rows.len() == 1 && long_layout.rows[0].right <= long_layout.size.0,
+        format!("{:?}", long_layout.rows),
+    );
 }
 
 pub fn run(report: &mut String) -> usize {
@@ -888,6 +1027,9 @@ pub fn run(report: &mut String) -> usize {
             && (effect_toggle.right - toggle.right).abs() < 0.5,
         format!("开关={hit:?} 按钮={hit_button:?}"),
     );
+
+    // 命令面板:布局、命中、选中行底色、空状态与长标题。
+    command_checks(&mut checks);
 
     report.push_str("\n## Skia 渲染核心\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
     let mut failures = 0;

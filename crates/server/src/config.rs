@@ -203,6 +203,8 @@ pub struct AppConfig {
     pub bindings: Vec<(String, String)>,
     /// 动作候选触发词:(触发词, 完整命令 id);整串完全匹配才出现。
     pub triggers: Vec<(String, String)>,
+    /// 命令面板总热键;空串表示关闭。需要两个以上修饰键,保留组合会被拒。
+    pub panel_hotkey: String,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -229,6 +231,8 @@ impl Default for AppConfig {
             extensions: Vec::new(),
             bindings: Vec::new(),
             triggers: Vec::new(),
+            // 三个修饰键避开常见应用快捷键;不想要就在配置里写 off。
+            panel_hotkey: "Ctrl+Alt+Shift+Space".to_string(),
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
         }
@@ -400,6 +404,13 @@ pub fn load(path: &Path) -> AppConfig {
             "bindings" | "bind" => cfg.bindings = parse_bindings(value),
             // 动作候选触发词:`bc=shot.run`;整串输入完全匹配时把命令放进候选。
             "triggers" | "trigger" => cfg.triggers = parse_triggers(value),
+            // 命令面板总热键;`off`/`none`/空值关闭。
+            "panel_hotkey" | "palette_hotkey" => {
+                cfg.panel_hotkey = match value {
+                    "" | "off" | "none" => String::new(),
+                    combo => combo.to_string(),
+                };
+            }
             // 旧键:单个扩展 id;空值或 off 表示不启用。
             "script" | "extension" => {
                 if matches!(value, "" | "off" | "none") {
@@ -530,6 +541,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
          extensions={}\n\
          bindings={}\n\
          triggers={}\n\
+         panel_hotkey={}\n\
          update_channel={}\n",
         cfg.page_size,
         cfg.chinese_punct,
@@ -555,6 +567,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
             .map(|(trigger, command)| format!("{trigger}={command}"))
             .collect::<Vec<_>>()
             .join(","),
+        cfg.panel_hotkey,
         cfg.update_channel.as_str(),
     );
     let tmp = path.with_extension("ini.tmp");

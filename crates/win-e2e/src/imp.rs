@@ -131,6 +131,34 @@ fn settings_selftest(dir: &std::path::Path) -> Result<String, String> {
     Ok(format!("## 设置窗自检\n\n{text}\n"))
 }
 
+/// 命令面板自检:独立 Server 进程建可获焦窗口、注入按键、验证焦点归还。
+/// 面板会短暂抢前台,放在所有 TSF 文本断言之后跑。
+fn panel_selftest(dir: &std::path::Path) -> Result<String, String> {
+    let exe = dir.join("lueying-server.exe");
+    if !exe.exists() {
+        return Err(format!("没有 {}", exe.display()));
+    }
+    let report = std::env::current_dir()
+        .unwrap_or_default()
+        .join("target")
+        .join("lueying-panel-selftest.txt");
+    let _ = std::fs::create_dir_all("target");
+    let _ = std::fs::remove_file(&report);
+    let output = std::process::Command::new(&exe)
+        .arg("--panel-selftest")
+        .arg(&report)
+        .output()
+        .map_err(|e| format!("启动命令面板自检失败: {e}"))?;
+    let text = std::fs::read_to_string(&report).unwrap_or_default();
+    if !output.status.success() {
+        return Err(format!("命令面板自检失败: {text}"));
+    }
+    if !text.contains("结果:通过") {
+        return Err(format!("命令面板自检没有结论: {text}"));
+    }
+    Ok(format!("## 命令面板自检\n\n{text}\n"))
+}
+
 fn server_log() -> std::path::PathBuf {
     std::env::current_dir()
         .unwrap_or_default()
@@ -493,6 +521,14 @@ fn real_run() -> Result<(String, String), String> {
         let ext_note = check_ext_selftest()?;
         // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
         let settings_note = settings_selftest(&dir)?;
+        // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
+        let panel_note = panel_selftest(&dir)?;
+        // 面板自检把前台还给了它自己的宿主;后面的按键要回到 RichEdit。
+        unsafe {
+            let _ = SetForegroundWindow(hwnd);
+            let _ = SetFocus(Some(edit));
+        }
+        pump_for(Duration::from_millis(300));
         // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
         // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
         let keys = key_latency(edit, &log)?;
@@ -503,7 +539,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{keys}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

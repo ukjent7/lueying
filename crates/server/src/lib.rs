@@ -2,6 +2,8 @@
 
 pub mod accents;
 
+pub mod command_panel;
+
 pub mod config;
 
 pub mod settings_view;
