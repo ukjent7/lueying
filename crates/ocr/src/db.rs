@@ -42,7 +42,12 @@ pub(crate) fn boxes(
     if width == 0 || height == 0 || prob.len() < width * height {
         return Vec::new();
     }
-    let Mapping { scale_x, scale_y, image_width, image_height } = mapping;
+    let Mapping {
+        scale_x,
+        scale_y,
+        image_width,
+        image_height,
+    } = mapping;
     let mut visited = vec![false; width * height];
     let mut found = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
@@ -146,7 +151,12 @@ mod tests {
     }
 
     fn mapping(width: usize, height: usize) -> Mapping {
-        Mapping { scale_x: 1.0, scale_y: 1.0, image_width: width, image_height: height }
+        Mapping {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            image_width: width,
+            image_height: height,
+        }
     }
 
     #[test]
