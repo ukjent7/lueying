@@ -4,8 +4,8 @@
 //! 模型用纯 Rust 的 tract 跑,不随包带 onnxruntime.dll;空闲时不占线程,
 //! 只在 `ocr.recognize` 被调用时进推理。
 //!
-//! 预处理与后处理照 PaddleOCR 的默认值:det 限长 960、DB 阈值 0.2 /
-//! box 阈值 0.45 / unclip 1.4;rec 高 48、宽至少 320、按 CTC 解码。
+//! 预处理与后处理照 PaddleOCR 的默认值:det 固定 960×960 画布、DB 阈值
+//! 0.2 / box 阈值 0.45 / unclip 1.4;rec 高 48、宽至少 320、按 CTC 解码。
 //! 词表从 `dict.txt` 读,顺序必须与模型输出一致(18708 个字 + 空白 +
 //! 空格)。
 
@@ -29,8 +29,6 @@ use model::Plan;
 /// 识别参数;默认值对应 PaddleOCR 的 PP-OCRv6 推理配置。
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
-    /// det 输入的长边上限;超过就等比缩小。
-    pub max_side: usize,
     /// rec 输入的宽度上限;超长行等比压缩。
     pub max_width: usize,
     /// DB 概率图二值化阈值。
@@ -44,7 +42,6 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            max_side: 960,
             max_width: 1280,
             det_threshold: 0.2,
             box_threshold: 0.45,
@@ -66,8 +63,8 @@ impl PpOcr {
     ///
     /// 解析与优化都在这里一次完成;首次识别因此会等几秒,之后复用计划。
     pub fn open(dir: &Path) -> Result<Self, String> {
-        let det = model::load(&dir.join("det.onnx"))?;
-        let rec = model::load(&dir.join("rec.onnx"))?;
+        let det = model::load(&dir.join("det.onnx"), Some(&[1, 3, det::SIDE, det::SIDE]))?;
+        let rec = model::load(&dir.join("rec.onnx"), None)?;
         let dict = dict::load(&dir.join("dict.txt"))?;
         Ok(Self {
             det,
@@ -77,18 +74,12 @@ impl PpOcr {
         })
     }
 
-    /// 换识别参数;模型计划已经按动态尺寸编译,不需要重载。
-    pub fn with_options(mut self, options: Options) -> Self {
-        self.options = options;
-        self
-    }
-
     /// 识别一张 RGB 图;返回按阅读顺序排好的文字行。
     pub fn recognize(&self, image: &RgbImage) -> Result<Vec<TextBox>, String> {
         if image.width == 0 || image.height == 0 {
             return Err("图片为空".to_string());
         }
-        let prepared = det::prepare(image, self.options.max_side);
+        let prepared = det::prepare(image);
         let tensor = Tensor::from_shape(&[1, 3, prepared.height, prepared.width], &prepared.data)
             .map_err(|e| format!("det 输入张量失败: {e}"))?;
         let outputs = self
