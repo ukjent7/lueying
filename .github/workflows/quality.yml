@@ -168,6 +168,8 @@ jobs:
         run: |
           $dir = "target/i686-pc-windows-msvc/release"
           Copy-Item target/release/lueying-server.exe $dir -Force
+          # 设置窗自检从 E2E 同目录拉起独立进程;它是 64 位的,跟 Server 一样拷过来。
+          Copy-Item target/release/lueying-settings.exe $dir -Force
           # 32 位 TSF DLL 从静态 CRT 的独立目录来。
           Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll $dir -Force
           # Server 是 64 位的,依赖的运行时 DLL 也要跟着过去;TSF DLL 保留 32 位。
