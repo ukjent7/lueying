@@ -7,6 +7,7 @@
 //! 4. Tab 走到一半断了,键盘用户够不到后面的控件。
 //! 5. 控件排到卡片外面,点不到也看不见。
 
+use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_features::SchemeId;
 use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
@@ -97,8 +98,21 @@ pub fn run(report: &mut String) -> usize {
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
     let audit = settings.activate(&Id::new(ids::AUDIT, 0));
+    let metrics = settings.activate(&Id::new(ids::EXT_METRICS, 0));
     let consent_row = row_detail(&settings.page(&colors()), "扩展", "扩展授权");
     let audit_row = row_detail(&settings.page(&colors()), "扩展", "审计日志");
+    let stat = ExtStat {
+        id: "demo-pack".to_string(),
+        name: "演示包".to_string(),
+        state: ExtState::Loaded,
+        step_peak_us: 1500,
+        ..ExtStat::default()
+    };
+    settings.ext_metrics = Some(ExtMetrics {
+        extensions: vec![stat],
+        ..ExtMetrics::default()
+    });
+    let metrics_row = row_detail(&settings.page(&colors()), "扩展", "扩展运行");
     settings.select_script(Some(1));
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
@@ -117,19 +131,23 @@ pub fn run(report: &mut String) -> usize {
             && open == Some(Action::OpenScripts)
             && consent == Some(Action::ApproveExtension)
             && audit == Some(Action::OpenExtAudit)
+            && metrics == Some(Action::RefreshExtMetrics)
             && consent_row
                 .as_deref()
                 .is_some_and(|text| text.contains("无需授权"))
             && audit_row
                 .as_deref()
                 .is_some_and(|text| text.contains("截图"))
+            && metrics_row.as_deref().is_some_and(|text| {
+                text.contains("运行 1") && text.contains("步进峰值 1.5 ms")
+            })
             && switched
             && settings.cfg.extensions.is_empty()
             && missing
                 .as_deref()
                 .is_some_and(|text| text.contains("未安装")),
         format!(
-            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{consent:?}/{audit:?} 切换 {switched}"
+            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{consent:?}/{audit:?}/{metrics:?} 切换 {switched}"
         ),
     );
 

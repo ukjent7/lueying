@@ -3,7 +3,7 @@ name = "lueying-extmeta"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "扩展包清单、权限模型与授权记录:外观、逻辑与能力组件共用"
+description = "扩展包清单、权限模型、授权记录与运行指标:外观、逻辑与能力组件共用"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

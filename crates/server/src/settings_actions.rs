@@ -10,6 +10,7 @@ use crate::config;
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use crate::update;
 use lueying_extjs::{ConsentBook, ConsentCheck};
+use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::{Reply, Request, pipe_name};
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -373,6 +374,25 @@ pub fn open_ext_audit(settings: &mut Settings) {
     match std::process::Command::new("notepad.exe").arg(&path).spawn() {
         Ok(_) => settings.say(Notice::Info, format!("已打开 {}", path.display())),
         Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
+    }
+}
+
+/// 读服务端写下的运行指标;服务还没写就返回 `None`。
+pub fn read_ext_metrics() -> Option<ExtMetrics> {
+    let path = config::ext_metrics_path()?;
+    path.exists().then(|| ExtMetrics::load(&path))
+}
+
+/// 刷新设置页的扩展运行摘要;数据在服务端每秒更新。
+pub fn refresh_ext_metrics(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    match read_ext_metrics() {
+        Some(metrics) => {
+            let count = metrics.extensions.len();
+            settings.ext_metrics = Some(metrics);
+            settings.say(Notice::Success, format!("已刷新 {count} 个扩展的运行数据"));
+        }
+        None => settings.say(Notice::Info, "服务还没有写入运行数据"),
     }
 }
 

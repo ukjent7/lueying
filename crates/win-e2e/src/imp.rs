@@ -568,6 +568,8 @@ fn real_run() -> Result<(String, String), String> {
         // 官方 shot-ocr:热键 → 截图 → 识别 → 上屏。识别是固定文本,
         // 截图与上屏走真实现;放最后,它会清空编辑框并再抢一次焦点。
         let shot_note = check_shot_ocr(edit, hwnd)?;
+        // 运行指标:shot-ocr 已加载,快照里要有它的内存与预算。
+        let metrics_note = crate::ext_metrics::check(&data)?;
         let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 扩展平台验证放最后:它会抢焦点建自己的窗口,后面的检查都已完成。
         let verify = crate::verify::section();
@@ -575,7 +577,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

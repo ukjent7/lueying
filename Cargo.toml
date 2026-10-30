@@ -4,6 +4,7 @@ members = [
     # 核心:平台无关的词典、引擎、模型与协议
     "crates/dict",
     "crates/engine",
+    "crates/cli",
     "crates/ext",
     "crates/extmeta",
     "crates/features",
@@ -33,6 +34,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
+lueying-cli = { path = "crates/cli" }
 lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }

@@ -49,8 +49,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use bindings::{Binding, BindingTable, Hotkey, Input, Modifier};
-pub use host::{Host, Invoke, Limits, Settled};
+pub use host::{Host, HostMetrics, Invoke, Limits, Settled};
 pub use lueying_extmeta::consent::{ConsentBook, ConsentCheck, ConsentEntry};
+pub use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
 pub use lueying_extsvc::{
     AuditOutcome, AuditSink, Completion, Done, PrivacyCheck, Provider, Registry,
 };

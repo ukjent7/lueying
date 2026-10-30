@@ -10,6 +10,7 @@ name = "lueying-e2e"
 path = "src/main.rs"
 
 [dependencies]
+lueying-cli.workspace = true
 lueying-dict.workspace = true
 lueying-engine.workspace = true
 lueying-extjs.workspace = true

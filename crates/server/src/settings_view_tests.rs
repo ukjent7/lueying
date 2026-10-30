@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::OcrBackend;
+use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_render::ui::Id;
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
@@ -65,6 +66,30 @@ fn script_buttons_map_to_actions() {
         settings.activate(&Id::new(ids::AUDIT, 0)),
         Some(Action::OpenExtAudit)
     );
+    assert_eq!(
+        settings.activate(&Id::new(ids::EXT_METRICS, 0)),
+        Some(Action::RefreshExtMetrics)
+    );
+}
+
+#[test]
+fn ext_metrics_detail_summarizes_runtime() {
+    let mut settings = Settings::default();
+    assert!(settings.ext_metrics_detail().contains("暂无数据"));
+    let stat = ExtStat {
+        id: "shot".to_string(),
+        name: "截图".to_string(),
+        state: ExtState::Loaded,
+        step_peak_us: 1500,
+        ..ExtStat::default()
+    };
+    settings.ext_metrics = Some(ExtMetrics {
+        extensions: vec![stat],
+        ..ExtMetrics::default()
+    });
+    let detail = settings.ext_metrics_detail();
+    assert!(detail.contains("运行 1"));
+    assert!(detail.contains("步进峰值 1.5 ms"));
 }
 
 #[test]
@@ -139,7 +164,8 @@ fn focus_order_follows_extension_group() {
     assert!(at(ids::FUZZY) < at(ids::SCRIPTS));
     assert!(at(ids::SCRIPTS_DIR) < at(ids::CONSENT));
     assert!(at(ids::CONSENT) < at(ids::AUDIT));
-    assert!(at(ids::AUDIT) < at(ids::OCR));
+    assert!(at(ids::AUDIT) < at(ids::EXT_METRICS));
+    assert!(at(ids::EXT_METRICS) < at(ids::OCR));
     assert!(at(ids::OCR) < at(ids::OCR_DIR));
     assert!(at(ids::OCR_DIR) < at(ids::PHRASES));
 }

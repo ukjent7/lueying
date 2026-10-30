@@ -89,6 +89,25 @@ impl Default for Limits {
     }
 }
 
+/// 一个宿主的运行指标快照;运行期汇总成 [`ExtStat`](lueying_extmeta::metrics::ExtStat)。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostMetrics {
+    /// QuickJS 当前占用(字节)。
+    pub memory_used: u64,
+    /// 派发次数。
+    pub dispatches: u64,
+    /// 作业步数。
+    pub steps: u64,
+    /// 单次派发最慢耗时(微秒)。
+    pub dispatch_peak_us: u64,
+    /// 单个作业步最慢耗时(微秒)。
+    pub step_peak_us: u64,
+    /// 派发/步进超时次数。
+    pub timeouts: u64,
+    /// 内存超限次数。
+    pub ooms: u64,
+}
+
 /// 一个扩展包的 JS 宿主。
 pub struct Host {
     context: Context,
@@ -100,6 +119,12 @@ pub struct Host {
     services: Arc<Registry>,
     /// 已挂起、尚未结算的任务数。
     pending: u64,
+    dispatches: u64,
+    steps: u64,
+    dispatch_peak_us: u64,
+    step_peak_us: u64,
+    timeouts: u64,
+    ooms: u64,
 }
 
 impl Host {
@@ -159,6 +184,12 @@ impl Host {
             limits,
             services,
             pending: 0,
+            dispatches: 0,
+            steps: 0,
+            dispatch_peak_us: 0,
+            step_peak_us: 0,
+            timeouts: 0,
+            ooms: 0,
         };
         host.arm(limits.init_ms);
         let needs_json = serde_json::to_string(needs).unwrap_or_else(|_| "[]".into());
@@ -224,6 +255,7 @@ impl Host {
     pub fn dispatch(&mut self, state_json: &str) -> Result<String, String> {
         let budget = self.limits.dispatch_ms;
         self.arm(budget);
+        let started = Instant::now();
         let result = self.context.with(|ctx| -> Result<String, String> {
             let dispatch: Function = ctx
                 .globals()
@@ -234,6 +266,7 @@ impl Host {
                 .map_err(|e| js_error(&ctx, e))
         });
         self.disarm();
+        self.note_dispatch(started);
         self.finish(result, "执行", budget)
     }
 
@@ -245,6 +278,7 @@ impl Host {
     pub fn invoke(&mut self, command: &str, args_json: &str) -> Result<Invoke, String> {
         let budget = self.limits.dispatch_ms;
         self.arm(budget);
+        let started = Instant::now();
         let result = self.context.with(|ctx| -> Result<String, String> {
             let invoke: Function = ctx
                 .globals()
@@ -255,6 +289,7 @@ impl Host {
                 .map_err(|e| js_error(&ctx, e))
         });
         self.disarm();
+        self.note_dispatch(started);
         let text = self.finish(result, "命令执行", budget)?;
         match text.strip_prefix("__pending:") {
             Some(token) => {
@@ -273,6 +308,35 @@ impl Host {
         self.pending
     }
 
+    /// 当前占用与耗时指标;读内存统计不触发 GC,也不跑用户代码。
+    pub fn metrics(&self) -> HostMetrics {
+        HostMetrics {
+            memory_used: self.memory_used(),
+            dispatches: self.dispatches,
+            steps: self.steps,
+            dispatch_peak_us: self.dispatch_peak_us,
+            step_peak_us: self.step_peak_us,
+            timeouts: self.timeouts,
+            ooms: self.ooms,
+        }
+    }
+
+    /// QuickJS 报告的内存占用(字节)。
+    pub fn memory_used(&self) -> u64 {
+        let used = self.context.runtime().memory_usage().memory_used_size;
+        u64::try_from(used).unwrap_or(0)
+    }
+
+    /// 超时与内存超限的累计次数;包用它把泵里的超限也计成失败。
+    pub fn violations(&self) -> u64 {
+        self.timeouts.saturating_add(self.ooms)
+    }
+
+    fn note_dispatch(&mut self, started: Instant) {
+        self.dispatches = self.dispatches.saturating_add(1);
+        self.dispatch_peak_us = self.dispatch_peak_us.max(micros(started.elapsed()));
+    }
+
     /// 推进异步任务:按宿主时钟兑现到点定时器,送出服务完成结果,跑一轮
     /// 作业队列,收走结算结果。
     ///
@@ -286,6 +350,9 @@ impl Host {
         let services = Arc::clone(&self.services);
         let mut pending = self.pending;
         let mut out = Vec::new();
+        let mut steps_now = 0u64;
+        let mut step_peak_now = 0u64;
+        let mut killed_any = false;
         // 闭包只拿局部克隆,避免与 self.pending 的写冲突。
         self.context.with(|ctx| {
             if let Ok(tick) = ctx.globals().get::<_, Function>("__lueying_tick") {
@@ -316,9 +383,17 @@ impl Host {
                     .saturating_add(nanos)
                     .min(u128::from(u64::MAX)) as u64;
                 deadline_ns.store(at, Ordering::Relaxed);
+                let started = Instant::now();
                 let ran = ctx.execute_pending_job();
+                if ran {
+                    steps_now = steps_now.saturating_add(1);
+                    step_peak_now = step_peak_now.max(micros(started.elapsed()));
+                }
                 deadline_ns.store(u64::MAX, Ordering::Relaxed);
                 killed = tripped.swap(false, Ordering::Relaxed);
+                if killed {
+                    killed_any = true;
+                }
                 if !ran || killed {
                     break;
                 }
@@ -341,6 +416,11 @@ impl Host {
             }
         });
         self.pending = pending;
+        self.steps = self.steps.saturating_add(steps_now);
+        self.step_peak_us = self.step_peak_us.max(step_peak_now);
+        if killed_any {
+            self.timeouts = self.timeouts.saturating_add(1);
+        }
         out
     }
 
@@ -364,11 +444,17 @@ impl Host {
         let timed_out = self.tripped.swap(false, Ordering::Relaxed);
         match result {
             Ok(text) => Ok(text),
-            Err(_) if timed_out => Err(format!("{what}超时({budget} ms)")),
-            Err(error) if is_oom(&error) => Err(format!(
-                "内存超出上限({} MiB)",
-                self.limits.memory_bytes >> 20
-            )),
+            Err(_) if timed_out => {
+                self.timeouts = self.timeouts.saturating_add(1);
+                Err(format!("{what}超时({budget} ms)"))
+            }
+            Err(error) if is_oom(&error) => {
+                self.ooms = self.ooms.saturating_add(1);
+                Err(format!(
+                    "内存超出上限({} MiB)",
+                    self.limits.memory_bytes >> 20
+                ))
+            }
             Err(error) => Err(error),
         }
     }
@@ -388,6 +474,10 @@ impl Host {
     fn disarm(&mut self) {
         self.deadline_ns.store(u64::MAX, Ordering::Relaxed);
     }
+}
+
+fn micros(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// 把 QuickJS 异常转成一行可读文本;栈信息压成一行,避免日志刷屏。

@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
+use lueying_extmeta::metrics::{ExtState, ExtStat};
 use lueying_extsvc::Registry;
 
 use crate::MAX_FAULTS;
@@ -150,6 +151,32 @@ impl Pack {
         self.manifest.commands()
     }
 
+    /// 当前运行指标;`top` 与设置页用。
+    pub fn stat(&self) -> ExtStat {
+        let host = self.host.metrics();
+        ExtStat {
+            id: self.manifest.id.clone(),
+            name: self.manifest.name.clone(),
+            version: self.manifest.version.clone(),
+            state: if self.disabled.is_some() {
+                ExtState::Disabled
+            } else {
+                ExtState::Loaded
+            },
+            memory_used: host.memory_used,
+            memory_limit: self.limits.memory_bytes as u64,
+            dispatches: host.dispatches,
+            steps: host.steps,
+            dispatch_peak_us: host.dispatch_peak_us,
+            step_peak_us: host.step_peak_us,
+            timeouts: host.timeouts,
+            ooms: host.ooms,
+            faults: self.faults,
+            pending: self.host.pending(),
+            last_error: self.disabled.clone().or_else(|| self.last_error.clone()),
+        }
+    }
+
     /// 执行一条已声明的命令;参数与返回值都是 JSON 文本。
     ///
     /// 未声明的命令直接拒绝,JS 侧即使注册了同名函数也调不到;命令失败
@@ -185,7 +212,12 @@ impl Pack {
         if self.removed || self.disabled.is_some() {
             return Vec::new();
         }
+        let before = self.host.violations();
         let settled = self.host.pump(now_ms);
+        // 作业被步进预算打断也算一次失败;反复超限与命令失败同样会停用。
+        if self.host.violations() > before {
+            self.fault(format!("扩展 {} 作业步超出预算", self.manifest.id));
+        }
         for item in &settled {
             if item.ok {
                 self.faults = 0;

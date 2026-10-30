@@ -5,6 +5,7 @@
 //! 设置页的结构与交互结果。
 
 use lueying_engine::Fuzzy;
+use lueying_extmeta::metrics::ExtMetrics;
 use lueying_features::SchemeId;
 use lueying_protocol::EngineStatus;
 use lueying_render::ui::{Button, ButtonKind, Control, Group, Id, Page, Row, SegmentOption};
@@ -33,6 +34,7 @@ pub mod ids {
     pub const SCRIPTS_DIR: &str = "scripts-dir";
     pub const CONSENT: &str = "consent";
     pub const AUDIT: &str = "audit";
+    pub const EXT_METRICS: &str = "ext-metrics";
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
@@ -99,6 +101,7 @@ pub enum Action {
     OpenScripts,
     ApproveExtension,
     OpenExtAudit,
+    RefreshExtMetrics,
     OpenOcrModels,
     OpenPhrases,
     OpenPunct,
@@ -135,6 +138,8 @@ pub struct Settings {
     pub scripts: Vec<ScriptEntry>,
     /// PP-OCRv6 模型是否齐全;平台侧检查目录后填入。
     pub ppocr_ready: bool,
+    /// 服务端写下的扩展运行指标;服务未运行时是 None。
+    pub ext_metrics: Option<ExtMetrics>,
 }
 
 impl Default for Settings {
@@ -152,6 +157,7 @@ impl Default for Settings {
             effects_detail: "SkSL 装饰层".to_string(),
             scripts: Vec::new(),
             ppocr_ready: false,
+            ext_metrics: None,
         }
     }
 }
@@ -424,6 +430,18 @@ impl Settings {
                         },
                     },
                     Row {
+                        label: "扩展运行".to_string(),
+                        detail: self.ext_metrics_detail(),
+                        control: Control::Buttons {
+                            items: vec![Button {
+                                id: Id::new(ids::EXT_METRICS, 0),
+                                text: "刷新".to_string(),
+                                kind: ButtonKind::Secondary,
+                                enabled: true,
+                            }],
+                        },
+                    },
+                    Row {
                         label: "截图识别".to_string(),
                         detail: self.ocr_detail(),
                         control: Control::Segment {
@@ -670,6 +688,14 @@ impl Settings {
         crate::settings_consent::selected(&self.cfg.extensions, &self.scripts)
     }
 
+    /// 扩展运行那行的说明:状态计数、步进峰值与超限次数。
+    fn ext_metrics_detail(&self) -> String {
+        match &self.ext_metrics {
+            Some(metrics) => metrics.summary(),
+            None => "暂无数据;服务启动后写入".to_string(),
+        }
+    }
+
     /// 截图识别那行的说明:选的引擎与模型是否可用。
     fn ocr_detail(&self) -> String {
         match (self.cfg.ocr_backend, self.ppocr_ready) {
@@ -797,6 +823,7 @@ impl Settings {
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
             ids::CONSENT => Some(Action::ApproveExtension),
             ids::AUDIT => Some(Action::OpenExtAudit),
+            ids::EXT_METRICS => Some(Action::RefreshExtMetrics),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),
@@ -895,6 +922,7 @@ impl Settings {
             Id::new(ids::SCRIPTS_DIR, 0),
             Id::new(ids::CONSENT, 0),
             Id::new(ids::AUDIT, 0),
+            Id::new(ids::EXT_METRICS, 0),
             Id::new(ids::OCR, 0),
             Id::new(ids::OCR_DIR, 0),
             Id::new(ids::PHRASES, 0),

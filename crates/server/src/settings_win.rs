@@ -76,6 +76,7 @@ pub fn run() {
     settings.effects_detail = effects_detail();
     settings.scripts = settings_actions::installed_scripts();
     settings.ppocr_ready = settings_actions::ppocr_ready();
+    settings.ext_metrics = settings_actions::read_ext_metrics();
 
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
@@ -508,6 +509,7 @@ fn handle_action(hwnd: HWND, action: Action) {
         Action::OpenScripts => with_settings(hwnd, settings_actions::open_scripts),
         Action::ApproveExtension => with_settings(hwnd, settings_actions::approve_extension),
         Action::OpenExtAudit => with_settings(hwnd, settings_actions::open_ext_audit),
+        Action::RefreshExtMetrics => with_settings(hwnd, settings_actions::refresh_ext_metrics),
         Action::OpenOcrModels => with_settings(hwnd, settings_actions::open_ocr_models),
         Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),

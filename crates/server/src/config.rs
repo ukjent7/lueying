@@ -394,6 +394,12 @@ pub fn ext_audit_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("logs").join("ext-audit.log"))
 }
 
+/// 扩展运行指标快照(`%LOCALAPPDATA%\lueying\logs\ext-metrics.json`)。
+pub fn ext_metrics_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    Some(base.join("lueying").join("logs").join("ext-metrics.json"))
+}
+
 /// 读配置;文件缺失或坏行都退回默认值。自定义标点从 `punct.txt` 并入。
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();

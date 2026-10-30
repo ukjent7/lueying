@@ -307,9 +307,35 @@ esbuild src/index.ts --bundle --format=iife --minify --outfile="%APPDATA%\lueyin
 | 命令包空闲卸载 | 30 s |
 
 - 初始化与每次派发都有指令时限,超时由 QuickJS 中断打断,不会拖住击键。
-- 连续 3 次失败停用该扩展;热重载成功后计数清零。
+- 作业步超出 8 ms 预算也计一次失败;连续 3 次失败停用该扩展,热重载成功后计数清零。
 - 热重载按内容哈希轮询,写坏时保留上一版可用的宿主;把文件改回来就恢复。
 - 删除 `manifest.json` 视为卸载;Scope 里的命令、触发词与热键一起消失。
+
+## 运行指标
+
+常驻服务每秒把运行数据写到 `%LOCALAPPDATA%\lueying\logs\ext-metrics.json`,
+内容不变时只按 30 秒心跳重写;配置里启用但待同意或清单损坏的包也会列出。
+
+| 字段 | 说明 |
+|---|---|
+| `state` | `idle` / `loaded` / `disabled` / `error` / `unapproved` |
+| `memory_used` / `memory_limit` | QuickJS 当前占用与上限(字节) |
+| `dispatches` / `steps` | 命令派发次数与作业步数 |
+| `dispatch_peak_us` / `step_peak_us` | 单次派发、单个作业步的最慢耗时(微秒) |
+| `timeouts` / `ooms` | 超时与内存超限次数 |
+| `faults` / `last_error` | 连续失败计数与停用或最近一次失败的原因 |
+| `pending` | 尚未结算的 Promise 数 |
+
+查看方式:
+
+- 设置页「扩展 → 扩展运行」显示状态计数、步进峰值与超限次数;「刷新」
+  重新读一次文件,数据由服务端每秒更新。
+- 工作区里的 `lueying ext top` 打印表格;`--json` 输出原格式,`--watch`
+  每秒刷新,`--file` 指定快照路径。它只读文件,不连管道,也不会唤起扩展。
+
+作业步被预算打断时,该命令按失败丢弃,并计入 `faults`;连续 3 次失败或
+超限后扩展停用,`state` 变成 `disabled`,原因留在 `last_error`。等待原生
+服务的 Promise 不计时,只有真正跑在 JS 里的作业步受预算限制。
 
 ## 不支持
 

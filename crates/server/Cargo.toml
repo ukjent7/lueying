@@ -20,6 +20,8 @@ path = "src/update_main.rs"
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
+# 扩展运行指标快照:设置页与 `lueying ext top` 读同一份格式。
+lueying-extmeta.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:设置页的控件层在平台无关的部分,Windows 与 Linux E2E 共用。

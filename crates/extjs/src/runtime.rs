@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use lueying_extmeta::metrics::{ExtState, ExtStat};
 use lueying_extsvc::Registry;
 
 use crate::host::{Invoke, Limits, Settled};
@@ -175,6 +176,29 @@ impl Runtime {
             }
         }
         out
+    }
+
+    /// 所有槽位的运行指标;未加载的包也有状态与内存上限。
+    pub fn stats(&self) -> Vec<ExtStat> {
+        self.slots
+            .iter()
+            .map(|slot| match &slot.pack {
+                Some(pack) => pack.stat(),
+                None => ExtStat {
+                    id: slot.id.clone(),
+                    name: slot.manifest.name.clone(),
+                    version: slot.manifest.version.clone(),
+                    state: if slot.error.is_some() {
+                        ExtState::Error
+                    } else {
+                        ExtState::Idle
+                    },
+                    memory_limit: self.limits.memory_bytes as u64,
+                    last_error: slot.error.clone(),
+                    ..ExtStat::default()
+                },
+            })
+            .collect()
     }
 
     /// 某个扩展声明的注册物;卸载后返回 `None`。

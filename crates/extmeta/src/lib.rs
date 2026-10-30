@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 pub mod consent;
+pub mod metrics;
 mod sha256;
 
 /// 清单文件的大小上限。清单只放元数据,超过这个数说明放错了东西。

@@ -12,6 +12,10 @@ fn main() {
 #[cfg(windows)]
 mod imp;
 
+/// 扩展运行指标快照:服务端写入后检查 shot-ocr 的内存与派发。
+#[cfg(windows)]
+mod ext_metrics;
+
 /// 扩展平台验证(任务书 V1–V8):OCR、体积、UIA 可编辑、热键,报告进 artifact。
 #[cfg(windows)]
 mod verify;

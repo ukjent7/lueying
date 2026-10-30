@@ -450,6 +450,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lueying-cli"
+version = "0.1.0"
+dependencies = [
+ "lueying-extmeta",
+ "serde_json",
+]
+
+[[package]]
 name = "lueying-dict"
 version = "0.1.0"
 dependencies = [
@@ -460,6 +468,7 @@ dependencies = [
 name = "lueying-e2e"
 version = "0.1.0"
 dependencies = [
+ "lueying-cli",
  "lueying-dict",
  "lueying-engine",
  "lueying-extjs",
@@ -575,6 +584,7 @@ dependencies = [
  "lueying-dict",
  "lueying-engine",
  "lueying-extjs",
+ "lueying-extmeta",
  "lueying-features",
  "lueying-ocr",
  "lueying-protocol",

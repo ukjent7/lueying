@@ -1,0 +1,18 @@
+[package]
+name = "lueying-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影命令行:查看扩展运行指标"
+
+[[bin]]
+name = "lueying"
+path = "src/main.rs"
+
+[lib]
+name = "lueying_cli"
+path = "src/lib.rs"
+
+[dependencies]
+lueying-extmeta.workspace = true
+serde_json = "1"

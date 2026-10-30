@@ -8,6 +8,7 @@ mod consent;
 mod extensions;
 mod extjs;
 mod features;
+mod metrics;
 mod modules;
 mod quick;
 mod render;
@@ -181,6 +182,9 @@ fn main() {
 
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);
+
+    // 预算与可见性:运行指标、超限停用、快照与 CLI。
+    failures += metrics::run(&mut report);
 
     // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
     failures += render::run(&mut report);

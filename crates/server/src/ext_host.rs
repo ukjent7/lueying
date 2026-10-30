@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extjs::bindings::BindingTable;
 use lueying_extjs::{
-    ConsentBook, ConsentGate, Invoke, Limits, PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch,
-    Service,
+    Budgets, ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, Invoke, Limits,
+    METRICS_VERSION, PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch, Service,
 };
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
@@ -26,6 +26,10 @@ use crate::imp::{ExtHub, ExtInvoke, State};
 const POLL: Duration = Duration::from_millis(1000);
 /// 生效扩展 id 的检查间隔;设置窗保存后不用重启。
 const CONFIG: Duration = Duration::from_millis(500);
+/// 指标快照的检查间隔;内容不变时不重写。
+const METRICS: Duration = Duration::from_secs(1);
+/// 指标内容长时间不变时也重写一次,让 `top` 看到新鲜时间。
+const METRICS_HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// 窗口线程持有的脚本通道。
 pub(super) struct Script {
@@ -108,6 +112,12 @@ fn worker(
     };
     // 同意记录的最后指纹;用户同意后不重启进程,整表重建运行期。
     let mut consent_stamp: Option<u64> = None;
+    // 配置里启用但没进运行期的包(待同意/坏包);指标里也要列出来。
+    let mut skipped: Vec<ExtStat> = Vec::new();
+    let mut next_metrics = Instant::now();
+    let mut last_metrics: Option<String> = None;
+    let mut last_metrics_write = Instant::now();
+    let mut metrics_failed = false;
     // 动作候选:请求线程按完整命令 id 投递,这里执行;
     // 标题表同时供请求线程判断命令是否存在。
     let (action_tx, action_rx) = mpsc::channel::<ExtInvoke>();
@@ -136,7 +146,10 @@ fn worker(
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
                 panel_bound.clear();
-                runtime = load(&order, &hotkey, &privacy);
+                let loaded = load(&order, &hotkey, &privacy);
+                runtime = loaded.runtime;
+                skipped = loaded.skipped;
+                next_metrics = Instant::now();
                 reported = None;
                 // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
                 let _ = patches.send((last_seq, None));
@@ -199,6 +212,16 @@ fn worker(
         if hotkey.take_panel() {
             // 扩展未启用时面板仍可打开,只是没有命令可执行。
             show_panel(&state, runtime.as_ref(), &privacy);
+        }
+        if now >= next_metrics {
+            next_metrics = now + METRICS;
+            publish_metrics(
+                runtime.as_ref(),
+                &skipped,
+                &mut last_metrics,
+                &mut last_metrics_write,
+                &mut metrics_failed,
+            );
         }
         let Some((seq, scene)) = latest.lock().unwrap_or_else(|p| p.into_inner()).take() else {
             continue;
@@ -413,6 +436,12 @@ fn consent_fingerprint() -> Option<u64> {
     Some(hash)
 }
 
+/// 一次重建的结果:运行期,以及配置里启用但没进来的包。
+struct Loaded {
+    runtime: Option<Runtime>,
+    skipped: Vec<ExtStat>,
+}
+
 /// 按配置顺序打开扩展;坏包只记日志,不影响其他扩展。
 /// 只加载已同意的包,热重载前再由 [`ConsentGate`] 复核一次。
 /// 服务缝装上 Windows 提供者;热键提供者由 worker 持有,换扩展时其注册整表重建。
@@ -420,13 +449,21 @@ fn load(
     order: &[String],
     hotkey: &Arc<services::HotkeyProvider>,
     privacy: &PrivacyCheck,
-) -> Option<Runtime> {
+) -> Loaded {
+    let limits = Limits::default();
+    let mut skipped = Vec::new();
     if order.is_empty() {
-        return None;
+        return Loaded {
+            runtime: None,
+            skipped,
+        };
     }
     let Some(root) = config::extensions_dir() else {
         println!("扩展不可用:APPDATA 缺失");
-        return None;
+        return Loaded {
+            runtime: None,
+            skipped,
+        };
     };
     let consent_path = config::extensions_consent_path();
     let book = consent_path
@@ -440,6 +477,7 @@ fn load(
             Ok(manifest) => manifest,
             Err(error) => {
                 println!("扩展 {id} 未加载: {error}");
+                skipped.push(error_stat(id, error, limits));
                 continue;
             }
         };
@@ -448,13 +486,20 @@ fn load(
             Ok(check) => {
                 let sensitive = if check.sensitive { "敏感组合;" } else { "" };
                 println!("扩展 {id} 待同意({sensitive}{})", check.items.join("、"));
+                skipped.push(base_stat(&manifest, ExtState::Unapproved, limits, None));
             }
-            Err(error) => println!("扩展 {id} 同意检查失败: {error}"),
+            Err(error) => {
+                println!("扩展 {id} 同意检查失败: {error}");
+                skipped.push(base_stat(&manifest, ExtState::Error, limits, Some(error)));
+            }
         }
     }
     if approved.is_empty() {
         println!("运行期扩展:没有已同意的包");
-        return None;
+        return Loaded {
+            runtime: None,
+            skipped,
+        };
     }
     let registry = Arc::new(Registry::new());
     registry.set_privacy(Arc::clone(privacy));
@@ -492,10 +537,89 @@ fn load(
         })
     };
     let (runtime, errors) =
-        Runtime::open_with_gate(&root, &approved, Limits::default(), registry, Some(gate));
+        Runtime::open_with_gate(&root, &approved, limits, registry, Some(gate));
     for error in errors {
         println!("{error}");
     }
     println!("运行期扩展:{} 个槽位(已过同意)", approved.len());
-    Some(runtime)
+    Loaded {
+        runtime: Some(runtime),
+        skipped,
+    }
+}
+
+/// 清单已知但没进运行期的包:状态与预算可展示,指标都从零开始。
+fn base_stat(
+    manifest: &lueying_extjs::Manifest,
+    state: ExtState,
+    limits: Limits,
+    last_error: Option<String>,
+) -> ExtStat {
+    ExtStat {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        state,
+        memory_limit: limits.memory_bytes as u64,
+        last_error,
+        ..ExtStat::default()
+    }
+}
+
+/// 清单都读不出来的包只留 id 与错误。
+fn error_stat(id: &str, error: String, limits: Limits) -> ExtStat {
+    ExtStat {
+        id: id.to_string(),
+        state: ExtState::Error,
+        memory_limit: limits.memory_bytes as u64,
+        last_error: Some(error),
+        ..ExtStat::default()
+    }
+}
+
+/// 写一份运行时快照;内容没变时只在心跳到期后重写。
+fn publish_metrics(
+    runtime: Option<&Runtime>,
+    skipped: &[ExtStat],
+    last: &mut Option<String>,
+    last_write: &mut Instant,
+    failed: &mut bool,
+) {
+    let mut extensions = runtime.map(Runtime::stats).unwrap_or_default();
+    extensions.extend_from_slice(skipped);
+    extensions.sort_by(|a, b| a.id.cmp(&b.id));
+    let content = serde_json::to_string(&extensions).unwrap_or_default();
+    let heartbeat = last_write.elapsed() >= METRICS_HEARTBEAT;
+    if last.as_deref() == Some(content.as_str()) && !heartbeat {
+        return;
+    }
+    let Some(path) = config::ext_metrics_path() else {
+        return;
+    };
+    let limits = Limits::default();
+    let metrics = ExtMetrics {
+        version: METRICS_VERSION,
+        updated_ms: unix_ms(),
+        budgets: Budgets {
+            memory_bytes: limits.memory_bytes as u64,
+            stack_bytes: limits.stack_bytes as u64,
+            init_ms: limits.init_ms,
+            dispatch_ms: limits.dispatch_ms,
+            max_faults: lueying_extjs::MAX_FAULTS,
+        },
+        extensions,
+    };
+    match metrics.save(&path) {
+        Ok(()) => {
+            *last = Some(content);
+            *last_write = Instant::now();
+            *failed = false;
+        }
+        Err(error) => {
+            if !*failed {
+                println!("扩展指标写入失败: {error}");
+                *failed = true;
+            }
+        }
+    }
 }
