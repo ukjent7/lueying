@@ -23,7 +23,10 @@ pub(crate) fn load(path: &Path, fixed_shape: Option<&[usize]>) -> Result<Plan, S
         .map_err(|e| format!("解析 {} 失败: {e:?}", path.display()))?;
     if let Some(shape) = fixed_shape {
         model = model
-            .with_input_fact(0, InferenceFact::dt_shape(f32::datum_type(), shape.to_vec()))
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(f32::datum_type(), shape.to_vec()),
+            )
             .map_err(|e| format!("固定 {} 输入形状失败: {e:?}", path.display()))?;
     }
     let model = model
