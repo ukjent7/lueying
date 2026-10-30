@@ -63,12 +63,12 @@ pub fn run(report: &mut String) -> usize {
     ];
     let page = settings.page(&colors());
 
-    // 四个分组,顺序固定。
+    // 五个分组,顺序固定。
     let titles: Vec<&str> = page.groups.iter().map(|g| g.title.as_str()).collect();
     push(
         &mut checks,
         "设置分组齐全",
-        titles == ["输入", "候选", "词库", "关于"],
+        titles == ["输入", "候选", "扩展", "词库", "关于"],
         format!("{titles:?}"),
     );
     // 每组都有行,每行都有标题。
@@ -96,16 +96,16 @@ pub fn run(report: &mut String) -> usize {
 
     // 运行期脚本行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
     // 「目录」交给平台侧;模型本身负责切换与关闭。
-    let idle = row_detail(&page, "候选", "运行期脚本");
+    let idle = row_detail(&page, "扩展", "运行期脚本");
     settings.cfg.extensions = vec!["demo-pack".to_string()];
-    let active = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
+    let active = row_detail(&settings.page(&colors()), "扩展", "运行期脚本");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     settings.select_script(Some(1));
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
     settings.cfg.extensions = vec!["gone".to_string()];
-    let missing = row_detail(&settings.page(&colors()), "候选", "运行期脚本");
+    let missing = row_detail(&settings.page(&colors()), "扩展", "运行期脚本");
     settings.select_script(None);
     push(
         &mut checks,
