@@ -18,7 +18,7 @@ jobs:
         run: bash tools/fetch_ppocr.sh data/ppocr
       - name: 生成锁文件、编译并跑真模型
         env:
-          LUEYING_PPOCR_DIR: data/ppocr
+          LUEYING_PPOCR_DIR: ${{ github.workspace }}/data/ppocr
         run: cargo test -p lueying-ocr --release -- --include-ignored
       - name: 上传 Cargo.lock
         if: always()

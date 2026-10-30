@@ -72,6 +72,7 @@ pub fn decode_bmp(bytes: &[u8]) -> Result<RgbImage, String> {
     if width <= 0 || height == 0 {
         return Err(format!("BMP 尺寸无效({width}x{height})"));
     }
+    let top_down = height < 0;
     let width = width as usize;
     let height = height.unsigned_abs() as usize;
     let Some(count) = width.checked_mul(height) else {
@@ -90,7 +91,6 @@ pub fn decode_bmp(bytes: &[u8]) -> Result<RgbImage, String> {
             bytes.len()
         ));
     }
-    let top_down = height < 0;
     let mut out = vec![0u8; count * 3];
     for y in 0..height {
         let source_y = if top_down { y } else { height - 1 - y };
@@ -163,7 +163,7 @@ mod tests {
         );
         let image = decode_bmp(&data).unwrap();
         assert_eq!((image.width, image.height), (2, 2));
-        assert_eq!(image.pixels, vec![7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(image.pixels, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     }
 
     #[test]

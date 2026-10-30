@@ -93,6 +93,16 @@ fn ocr_dir_maps_to_action() {
 }
 
 #[test]
+fn focus_order_follows_extension_group() {
+    let order = Settings::focus_order();
+    let at = |base: &str| order.iter().position(|id| id.base == base).unwrap();
+    assert!(at(ids::FUZZY) < at(ids::SCRIPTS));
+    assert!(at(ids::SCRIPTS_DIR) < at(ids::OCR));
+    assert!(at(ids::OCR) < at(ids::OCR_DIR));
+    assert!(at(ids::OCR_DIR) < at(ids::PHRASES));
+}
+
+#[test]
 fn focus_order_lists_script_buttons_once() {
     let order = Settings::focus_order();
     let choose = order.iter().filter(|id| id.base == ids::SCRIPTS).count();
