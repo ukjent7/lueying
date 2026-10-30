@@ -103,20 +103,23 @@ pub(super) fn run() {
 
 /// 把官方 shot-ocr 扩展装进隔离的 APPDATA,并写一份启用它的配置。
 /// 清单与脚本用仓库 `extensions/shot-ocr` 的同一份文件(编译期嵌入),
-/// 发布包里随安装包分发。
+/// 发布包里随安装包分发。安装器会写同意记录;E2E 直接搭目录,这里补上。
 fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
-    let dir = data.join("lueying").join("extensions").join("shot-ocr");
+    const MANIFEST: &str = include_str!("../../../extensions/shot-ocr/manifest.json");
+    const SCRIPT: &str = include_str!("../../../extensions/shot-ocr/index.js");
+    let extensions = data.join("lueying").join("extensions");
+    let dir = extensions.join("shot-ocr");
     std::fs::create_dir_all(&dir).map_err(|e| format!("建扩展目录: {e}"))?;
-    std::fs::write(
-        dir.join("manifest.json"),
-        include_str!("../../../extensions/shot-ocr/manifest.json"),
-    )
-    .map_err(|e| format!("写扩展清单: {e}"))?;
-    std::fs::write(
-        dir.join("index.js"),
-        include_str!("../../../extensions/shot-ocr/index.js"),
-    )
-    .map_err(|e| format!("写扩展脚本: {e}"))?;
+    std::fs::write(dir.join("manifest.json"), MANIFEST)
+        .and_then(|()| std::fs::write(dir.join("index.js"), SCRIPT))
+        .map_err(|e| format!("写扩展文件: {e}"))?;
+    let manifest =
+        lueying_extmeta::Manifest::parse(MANIFEST.as_bytes()).map_err(|e| format!("解析清单: {e}"))?;
+    let mut book = lueying_extmeta::consent::ConsentBook::default();
+    book.approve(&dir, &manifest, 0)
+        .map_err(|e| format!("写同意记录: {e}"))?;
+    book.save(&extensions.join("consent.json"))
+        .map_err(|e| format!("保存同意记录: {e}"))?;
     std::fs::write(
         data.join("lueying").join("config.ini"),
         "extensions=shot-ocr\nbindings=Ctrl+Alt+F9=shot-ocr.run\npanel_hotkey=off\n",

@@ -1,10 +1,11 @@
 //! 服务缝的回归网:IDL 与方法白名单一致、调用路由与完成队列。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use lueying_extmeta::Service;
 
-use crate::{Done, Provider, Registry, WIT, methods};
+use crate::{AuditOutcome, AuditSink, Done, Provider, Registry, WIT, methods};
 
 /// 把结果原样回传的假提供者;记录收到的调用供断言。
 struct Fake {
@@ -172,4 +173,61 @@ fn set_replaces_provider() {
         .unwrap();
     let completions = registry.take_completions();
     assert_eq!(completions[0].result.as_deref(), Ok(r#"{"text":"二"}"#));
+}
+
+/// 审计接收端:只记调用方、服务、方法与结果。
+struct Recorder {
+    lines: std::sync::Mutex<Vec<String>>,
+}
+
+impl AuditSink for Recorder {
+    fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str) {
+        self.lines.lock().unwrap().push(format!(
+            "{caller} {service}.{method} {outcome:?} {note}"
+        ));
+    }
+}
+
+#[test]
+fn calls_are_audited_with_caller() {
+    let registry = Registry::new();
+    registry.set(Service::Capture, fake(true, "{}"));
+    let recorder = Arc::new(Recorder {
+        lines: std::sync::Mutex::new(Vec::new()),
+    });
+    registry.set_audit(recorder.clone());
+    registry.call_as("shot-ocr", "capture", "shot", "{}", 1).unwrap();
+    let lines = recorder.lines.lock().unwrap();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].starts_with("shot-ocr capture.shot Allowed"));
+}
+
+#[test]
+fn privacy_blocks_before_provider_and_is_audited() {
+    let registry = Registry::new();
+    let provider = fake(true, "{}");
+    registry.set(Service::Capture, provider.clone());
+    let recorder = Arc::new(Recorder {
+        lines: std::sync::Mutex::new(Vec::new()),
+    });
+    registry.set_audit(recorder.clone());
+    let private = Arc::new(AtomicBool::new(true));
+    let flag = Arc::clone(&private);
+    registry.set_privacy(Arc::new(move || flag.load(Ordering::Relaxed)));
+
+    let error = registry
+        .call_as("shot-ocr", "capture", "shot", "{}", 1)
+        .unwrap_err();
+    assert!(error.contains("隐私字段"));
+    assert!(provider.seen.lock().unwrap().is_empty());
+    assert!(
+        recorder.lines.lock().unwrap()[0].contains("Denied"),
+        "拒绝也要进审计"
+    );
+
+    private.store(false, Ordering::Relaxed);
+    registry
+        .call_as("shot-ocr", "capture", "shot", "{}", 2)
+        .unwrap();
+    assert_eq!(provider.seen.lock().unwrap().len(), 1);
 }

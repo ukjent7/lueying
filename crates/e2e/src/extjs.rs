@@ -881,7 +881,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     let shots = temp.root.join("shots");
     std::fs::create_dir_all(&shots).expect("建截图目录");
     let svc_manifest = r#"{"id":"svc","name":"服务","version":"1.0.0","api":2,"main":"index.js","needs":["capture","ocr","output","panel","hotkey","notify"],"activate":{"commands":[{"id":"chain","title":"链"},{"id":"panel","title":"板"},{"id":"hk","title":"键"},{"id":"notify","title":"告"}]}}"#;
-    let gate_manifest = r#"{"id":"gate","name":"门","version":"1.0.0","api":2,"main":"index.js","needs":[],"activate":{"commands":[{"id":"try_ocr","title":"试"}]}}"#;
+    let gate_manifest = r#"{"id":"gate","name":"门","version":"1.0.0","api":2,"main":"index.js","needs":[],"activate":{"commands":[{"id":"try_ocr","title":"试"},{"id":"raw","title":"裸调"}]}}"#;
     const SVC: &str = r#"
 lueying.command("chain", function () {
   return lueying.capture.shot({}).then(function (shot) {
@@ -905,6 +905,9 @@ lueying.command("notify", function () {
     const GATE: &str = r#"
 lueying.command("try_ocr", function () {
   return lueying.ocr.recognize({ file: "x" });
+});
+lueying.command("raw", function () {
+  return __lueying_service_call("notify", "show", "{}", 77);
 });
 "#;
     let svc_dir = temp.pack("svc");
@@ -1017,6 +1020,15 @@ lueying.command("try_ocr", function () {
                 .as_deref()
                 .is_some_and(|error| error.contains("未在 needs 声明")),
         format!("{denied:?} {settled:?}"),
+    );
+
+    // 引导层的 serviceFn 挡一次;直接调宿主全局入口也必须被 Rust 侧挡住。
+    let raw = runtime.invoke("gate.raw", "");
+    push(
+        checks,
+        "裸调服务入口也过 needs 门",
+        matches!(&raw, Ok(Invoke::Done(text)) if text.contains("未在 needs 声明")),
+        format!("{raw:?}"),
     );
 
     push(

@@ -10,6 +10,8 @@ name = "lueying-win-e2e"
 path = "src/main.rs"
 
 [dependencies]
+# 官方扩展装进隔离 APPDATA 后直接写入同意记录,与服务端共用同一份格式。
+lueying-extmeta.workspace = true
 
 [target."cfg(windows)".dependencies]
 windows-core = "0.62.2"

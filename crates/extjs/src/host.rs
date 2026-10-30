@@ -120,6 +120,17 @@ impl Host {
         needs: &[&str],
         services: Arc<Registry>,
     ) -> Result<Self, String> {
+        Self::new_with_caller(source, limits, needs, services, "")
+    }
+
+    /// 同上,另带调用方 id;服务缝用它写审计与隐私拒绝的记录。
+    pub fn new_with_caller(
+        source: &str,
+        limits: Limits,
+        needs: &[&str],
+        services: Arc<Registry>,
+        caller: &str,
+    ) -> Result<Self, String> {
         let runtime = rquickjs::Runtime::new().map_err(|e| format!("创建 JS 运行时失败: {e}"))?;
         runtime.set_memory_limit(limits.memory_bytes);
         runtime.set_max_stack_size(limits.stack_bytes);
@@ -153,7 +164,10 @@ impl Host {
         let needs_json = serde_json::to_string(needs).unwrap_or_else(|_| "[]".into());
         let ready = host.context.with(|ctx| -> Result<bool, String> {
             // 服务调用的 Rust 入口;用户脚本运行前就位,引导层包成 Promise。
+            // needs 门控放在这里,脚本直接调 `__lueying_service_call` 也绕不过。
             let registry = Arc::clone(&host.services);
+            let caller = caller.to_string();
+            let allowed: Vec<String> = needs.iter().map(|need| (*need).to_string()).collect();
             ctx.globals()
                 .set(
                     "__lueying_service_call",
@@ -163,7 +177,16 @@ impl Host {
                               args: String,
                               token: f64|
                               -> String {
-                            match registry.call(&service, &method, &args, token as u64) {
+                            if !allowed.iter().any(|need| need == &service) {
+                                return format!("__error:服务 {service} 未在 needs 声明");
+                            }
+                            match registry.call_as(
+                                &caller,
+                                &service,
+                                &method,
+                                &args,
+                                token as u64,
+                            ) {
                                 Ok(()) => String::new(),
                                 Err(text) => format!("__error:{text}"),
                             }

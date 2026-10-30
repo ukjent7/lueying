@@ -18,6 +18,7 @@ use crate::host::{Invoke, Limits, Settled};
 use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
 use crate::pack::{Pack, Poll};
 use crate::scene::{SceneIn, ScenePatch};
+use crate::ConsentGate;
 
 const MANIFEST: &str = "manifest.json";
 
@@ -86,6 +87,8 @@ pub struct Runtime {
     limits: Limits,
     /// 服务缝注册表;所有槽位共享,提供者由宿主进程装填。
     services: Arc<Registry>,
+    /// 同意检查;装到每个包的加载与热重载路径上。
+    gate: Option<ConsentGate>,
     slots: Vec<Slot>,
     idle: Duration,
 }
@@ -105,6 +108,17 @@ impl Runtime {
         order: &[String],
         limits: Limits,
         services: Arc<Registry>,
+    ) -> (Self, Vec<String>) {
+        Self::open_with_gate(root, order, limits, services, None)
+    }
+
+    /// 同上,另带同意检查;热重载前也要先过同一道门。
+    pub fn open_with_gate(
+        root: &Path,
+        order: &[String],
+        limits: Limits,
+        services: Arc<Registry>,
+        gate: Option<ConsentGate>,
     ) -> (Self, Vec<String>) {
         let mut slots = Vec::new();
         let mut errors = Vec::new();
@@ -133,6 +147,7 @@ impl Runtime {
             Self {
                 limits,
                 services,
+                gate,
                 slots,
                 idle: IDLE_UNLOAD,
             },
@@ -233,12 +248,13 @@ impl Runtime {
         }
         let mut merged: Option<ScenePatch> = None;
         let services = Arc::clone(&self.services);
+        let gate = self.gate.clone();
         for slot in self.slots.iter_mut() {
             if slot.pack.is_none() {
                 if !slot.resident || slot.manifest.script_main().is_none() {
                     continue;
                 }
-                match Pack::load_with_services(&slot.dir, self.limits, &services) {
+                match Pack::load_with_gate(&slot.dir, self.limits, &services, gate.clone()) {
                     Ok(pack) => {
                         slot.pack = Some(pack);
                         slot.error = None;
@@ -387,8 +403,9 @@ impl Runtime {
         }
         let limits = self.limits;
         let services = Arc::clone(&self.services);
+        let gate = self.gate.clone();
         let slot = &mut self.slots[index];
-        match Pack::load_with_services(&slot.dir, limits, &services) {
+        match Pack::load_with_gate(&slot.dir, limits, &services, gate) {
             Ok(pack) => {
                 slot.pack = Some(pack);
                 slot.error = None;
@@ -422,6 +439,11 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
         ));
     }
     Ok(manifest)
+}
+
+/// 只读一个包目录的清单并核对目录名;设置页与同意检查用,不建 JS 运行时。
+pub fn manifest_at(dir: &Path) -> Result<Manifest, String> {
+    read_manifest(dir)
 }
 
 /// 完整命令 id。

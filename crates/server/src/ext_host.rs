@@ -11,11 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lueying_extjs::bindings::BindingTable;
-use lueying_extjs::{Invoke, Limits, Registry, Runtime, SceneIn, ScenePatch, Service};
+use lueying_extjs::{
+    ConsentBook, ConsentGate, Invoke, Limits, PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch,
+    Service,
+};
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
 use lueying_server::services;
 
+use crate::ext_audit::FileAudit;
 use crate::imp::{ExtHub, ExtInvoke, State};
 
 /// 扩展目录的轮询间隔;改完脚本一秒内生效。
@@ -92,6 +96,18 @@ fn worker(
     let mut bound: Vec<(String, String)> = Vec::new();
     // 命令面板总热键的当前组合;空串表示关闭。
     let mut panel_bound = String::new();
+    // 当前活动会话是否在密码/隐私字段里;服务缝与热键派发都按它停用。
+    let privacy: PrivacyCheck = {
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            sessions
+                .get(&state.active.load(Ordering::Relaxed))
+                .is_some_and(|session| session.private)
+        })
+    };
+    // 同意记录的最后指纹;用户同意后不重启进程,整表重建运行期。
+    let mut consent_stamp: Option<u64> = None;
     // 动作候选:请求线程按完整命令 id 投递,这里执行;
     // 标题表同时供请求线程判断命令是否存在。
     let (action_tx, action_rx) = mpsc::channel::<ExtInvoke>();
@@ -111,13 +127,16 @@ fn worker(
             next_config = now + CONFIG;
             let want = configured(&state);
             let want_binds = configured_bindings(&state);
-            let order_changed = want != order;
+            let stamp = consent_fingerprint();
+            let consent_changed = stamp != consent_stamp;
+            consent_stamp = stamp;
+            let order_changed = want != order || consent_changed;
             if order_changed {
                 order = want;
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
                 panel_bound.clear();
-                runtime = load(&order, &hotkey);
+                runtime = load(&order, &hotkey, &privacy);
                 reported = None;
                 // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
                 let _ = patches.send((last_seq, None));
@@ -164,10 +183,10 @@ fn worker(
         if let Some(current) = runtime.as_mut() {
             // 动作候选与命令面板选中的命令:与热键走同一条执行路径,失败只写日志。
             while let Ok(invoke) = action_rx.try_recv() {
-                run_command(current, &invoke.command, invoke.source);
+                run_command(current, &invoke.command, invoke.source, &privacy);
             }
             // 热键触发与异步命令推进;没有热键和挂起任务时都是微秒级空检查。
-            dispatch_hotkey(&state, current, &hotkey, &bindings);
+            dispatch_hotkey(&state, current, &hotkey, &bindings, &privacy);
             let _ = current.pump(unix_ms());
         } else {
             // 没有运行期扩展时也要收总热键;用户绑定不存在,只排空消息队列。
@@ -179,7 +198,7 @@ fn worker(
         }
         if hotkey.take_panel() {
             // 扩展未启用时面板仍可打开,只是没有命令可执行。
-            show_panel(&state, runtime.as_ref());
+            show_panel(&state, runtime.as_ref(), &privacy);
         }
         let Some((seq, scene)) = latest.lock().unwrap_or_else(|p| p.into_inner()).take() else {
             continue;
@@ -261,8 +280,12 @@ fn configured_panel_hotkey(state: &State) -> String {
 }
 
 /// 唤出命令面板:命令表在这里取一次,面板开着时再按热键直接丢弃。
-fn show_panel(state: &State, runtime: Option<&Runtime>) {
+fn show_panel(state: &State, runtime: Option<&Runtime>, privacy: &PrivacyCheck) {
     if state.panel_open.load(Ordering::Relaxed) {
+        return;
+    }
+    if privacy() {
+        println!("命令面板跳过:当前是密码/隐私字段");
         return;
     }
     let items = runtime
@@ -288,14 +311,25 @@ fn show_panel(state: &State, runtime: Option<&Runtime>) {
 }
 
 /// 收热键触发:扩展 press 已在 pump 里就地兑现;用户绑定行按 when 过滤后
-/// 执行,结果与错误都写日志。破坏性确认随命令清单标注接上。
+/// 执行,结果与错误都写日志。隐私字段下热键直接丢弃,挂起的 press 收到拒绝。
 fn dispatch_hotkey(
     state: &State,
     runtime: &mut Runtime,
     hotkey: &services::HotkeyProvider,
     bindings: &BindingTable,
+    privacy: &PrivacyCheck,
 ) {
+    let private = privacy();
+    if private {
+        hotkey.cancel_presses("隐私字段下已停用扩展热键");
+    }
     let fired = hotkey.pump();
+    if private {
+        if !fired.is_empty() {
+            println!("热键跳过:当前是密码/隐私字段");
+        }
+        return;
+    }
     if fired.is_empty() {
         return;
     }
@@ -312,12 +346,17 @@ fn dispatch_hotkey(
             runtime,
             &binding.command,
             &format!("热键 {}", binding.hotkey),
+            privacy,
         );
     }
 }
 
 /// 执行一条扩展命令并泵几轮:快命令当次结算,等服务与长定时器的由循环节拍收尾。
-fn run_command(runtime: &mut Runtime, command: &str, source: &str) {
+fn run_command(runtime: &mut Runtime, command: &str, source: &str, privacy: &PrivacyCheck) {
+    if privacy() {
+        println!("{source} 跳过 {command}:当前是密码/隐私字段");
+        return;
+    }
     match runtime.invoke(command, "{}") {
         Ok(Invoke::Done(json)) => println!("{source} 执行 {command} → {json}"),
         Ok(Invoke::Pending(_)) => println!("{source} 触发 {command}(异步执行)"),
@@ -362,9 +401,26 @@ fn configured(state: &State) -> Vec<String> {
         .clone()
 }
 
+/// 同意记录的轻量指纹:文件出现或重写就重建运行期,不用重启进程。
+fn consent_fingerprint() -> Option<u64> {
+    let path = config::extensions_consent_path()?;
+    let bytes = std::fs::read(path).ok()?;
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Some(hash)
+}
+
 /// 按配置顺序打开扩展;坏包只记日志,不影响其他扩展。
+/// 只加载已同意的包,热重载前再由 [`ConsentGate`] 复核一次。
 /// 服务缝装上 Windows 提供者;热键提供者由 worker 持有,换扩展时其注册整表重建。
-fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runtime> {
+fn load(
+    order: &[String],
+    hotkey: &Arc<services::HotkeyProvider>,
+    privacy: &PrivacyCheck,
+) -> Option<Runtime> {
     if order.is_empty() {
         return None;
     }
@@ -372,7 +428,41 @@ fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runt
         println!("扩展不可用:APPDATA 缺失");
         return None;
     };
+    let consent_path = config::extensions_consent_path();
+    let book = consent_path
+        .as_deref()
+        .map(ConsentBook::load)
+        .unwrap_or_default();
+    let mut approved = Vec::new();
+    for id in order {
+        let dir = root.join(id);
+        let manifest = match lueying_extjs::manifest_at(&dir) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                println!("扩展 {id} 未加载: {error}");
+                continue;
+            }
+        };
+        match book.check(&dir, &manifest) {
+            Ok(check) if !check.required || check.approved => approved.push(id.clone()),
+            Ok(check) => {
+                let sensitive = if check.sensitive { "敏感组合;" } else { "" };
+                println!("扩展 {id} 待同意({sensitive}{})", check.items.join("、"));
+            }
+            Err(error) => println!("扩展 {id} 同意检查失败: {error}"),
+        }
+    }
+    if approved.is_empty() {
+        println!("运行期扩展:没有已同意的包");
+        return None;
+    }
     let registry = Arc::new(Registry::new());
+    registry.set_privacy(Arc::clone(privacy));
+    if let Some(path) = config::ext_audit_path() {
+        let audit = Arc::new(FileAudit::open(path));
+        println!("扩展审计 ← {}", audit.path().display());
+        registry.set_audit(audit);
+    }
     registry.set(Service::Capture, Arc::new(services::CaptureProvider));
     registry.set(Service::Ocr, Arc::new(services::OcrProvider::new()));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
@@ -381,10 +471,31 @@ fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runt
     let hotkey: Arc<services::HotkeyProvider> = Arc::clone(hotkey);
     registry.set(Service::Hotkey, hotkey);
     registry.set(Service::Notify, Arc::new(services::NotifyProvider));
-    let (runtime, errors) = Runtime::open_with(&root, order, Limits::default(), registry);
+    let gate: ConsentGate = {
+        let path = consent_path;
+        Arc::new(move |manifest, dir| {
+            let Some(path) = &path else {
+                return Ok(());
+            };
+            let book = ConsentBook::load(path);
+            let check = book
+                .check(dir, manifest)
+                .map_err(|error| format!("同意检查失败: {error}"))?;
+            if check.required && !check.approved {
+                let sensitive = if check.sensitive { "敏感组合;" } else { "" };
+                return Err(format!(
+                    "{sensitive}需在设置里同意: {}",
+                    check.items.join("、")
+                ));
+            }
+            Ok(())
+        })
+    };
+    let (runtime, errors) =
+        Runtime::open_with_gate(&root, &approved, Limits::default(), registry, Some(gate));
     for error in errors {
         println!("{error}");
     }
-    println!("运行期扩展:{} 个槽位", order.len());
+    println!("运行期扩展:{} 个槽位(已过同意)", approved.len());
     Some(runtime)
 }

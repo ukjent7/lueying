@@ -648,6 +648,11 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
 /// 当前组合的整串输入命中用户触发表时,把动作交给引擎注入候选。
 /// 标题表由脚本线程维护:命令不存在(扩展没启用或已卸载)就不出动作候选。
 fn sync_action(state: &State, s: &mut Session) {
+    // 隐私字段下扩展层整个停用:不注入动作候选,也不给执行入口。
+    if s.private {
+        s.engine.set_action(None);
+        return;
+    }
     let action = s.engine.composition().and_then(|comp| {
         let raw = comp.raw.replace('\'', "");
         let command = state

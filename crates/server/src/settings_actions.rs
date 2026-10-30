@@ -7,8 +7,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use crate::config;
-use crate::settings_view::{Notice, ScriptEntry, Settings, status_detail};
+use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use crate::update;
+use lueying_extjs::{ConsentBook, ConsentCheck};
 use lueying_protocol::{Reply, Request, pipe_name};
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -18,8 +19,8 @@ use windows::Win32::UI::Controls::Dialogs::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, IDOK, MB_DEFBUTTON2, MB_ICONQUESTION,
-    MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW, SetForegroundWindow,
-    TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
+    MB_ICONWARNING, MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW,
+    SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -241,8 +242,8 @@ pub fn open_scripts(settings: &mut Settings) {
     }
 }
 
-/// 读扩展目录里的包清单;坏包跳过,按显示名排序。设置页只读清单,
-/// 不加载 JS,所以坏脚本也能先选上,由服务端记失败原因。
+/// 读扩展目录里的包清单与同意状态;坏包跳过,按显示名排序。设置页只读
+/// 清单与哈希,不加载 JS,所以坏脚本也能先选上,由服务端记失败原因。
 pub fn installed_scripts() -> Vec<ScriptEntry> {
     let Some(root) = config::extensions_dir() else {
         return Vec::new();
@@ -250,6 +251,10 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
     let Ok(entries) = std::fs::read_dir(&root) else {
         return Vec::new();
     };
+    let book = config::extensions_consent_path()
+        .as_deref()
+        .map(ConsentBook::load)
+        .unwrap_or_default();
     let mut scripts = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -275,13 +280,100 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
             continue;
         }
+        let (consent, items, sensitive) = match book.check(&path, &manifest) {
+            Ok(check) => {
+                let state = if check.approved {
+                    ConsentState::Approved
+                } else if check.changed {
+                    ConsentState::Changed {
+                        added: check.added,
+                    }
+                } else {
+                    ConsentState::Missing
+                };
+                (state, check.items, check.sensitive)
+            }
+            Err(_) => (ConsentState::Missing, Vec::new(), false),
+        };
         scripts.push(ScriptEntry {
             id: manifest.id,
             name: manifest.name,
+            items,
+            consent,
+            sensitive,
         });
     }
     scripts.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
     scripts
+}
+
+/// 同意配置里启用的扩展;单项列表与多项有序列表用同一条路径。
+pub fn approve_extension(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let ids = settings.cfg.extensions.clone();
+    if ids.is_empty() {
+        settings.say(Notice::Error, "先在「运行期脚本」选择要启用的扩展");
+        return;
+    }
+    let mut approved = 0usize;
+    let mut failed = Vec::new();
+    for id in &ids {
+        match approve_package(id) {
+            Ok(check) if check.required && !check.approved => approved += 1,
+            Ok(_) => {}
+            Err(error) => failed.push(format!("{id}: {error}")),
+        }
+    }
+    settings.scripts = installed_scripts();
+    if failed.is_empty() {
+        settings.say(
+            Notice::Success,
+            format!("已同意 {approved} 个扩展(共启用 {} 个)", ids.len()),
+        );
+    } else {
+        settings.say(Notice::Error, format!("同意失败:{}", failed.join(";")));
+    }
+}
+
+/// 同意一个包:清单、哈希与能力写进记录;服务端下一拍重建运行期。
+fn approve_package(id: &str) -> Result<ConsentCheck, String> {
+    let root = config::extensions_dir().ok_or("没有扩展目录")?;
+    let dir = root.join(id);
+    let manifest = lueying_extjs::manifest_at(&dir)?;
+    let path = config::extensions_consent_path().ok_or("没有同意记录路径")?;
+    let mut book = ConsentBook::load(&path);
+    let check = book.check(&dir, &manifest)?;
+    if check.required && !check.approved {
+        book.approve(&dir, &manifest, now_ms())?;
+        book.save(&path)?;
+    }
+    Ok(check)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 打开审计日志;没有就建一份空的。
+pub fn open_ext_audit(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let Some(path) = config::ext_audit_path() else {
+        settings.say(Notice::Error, "没有可写的审计日志路径");
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if !path.exists() {
+        let _ = std::fs::write(&path, "");
+    }
+    match std::process::Command::new("notepad.exe").arg(&path).spawn() {
+        Ok(_) => settings.say(Notice::Info, format!("已打开 {}", path.display())),
+        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
+    }
 }
 
 /// 弹出扩展选择菜单:关闭,或启用某个已安装的包。选择只改配置,
@@ -345,8 +437,32 @@ pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
         }
         command => {
             let index = command - 2;
-            if let Some(script) = settings.scripts.get(index) {
-                let name = script.name.clone();
+            let Some(script) = settings.scripts.get(index) else {
+                return;
+            };
+            let id = script.id.clone();
+            let name = script.name.clone();
+            if script.consent != ConsentState::Approved {
+                let text = crate::settings_consent::prompt(script);
+                let confirmed = unsafe {
+                    MessageBoxW(
+                        None,
+                        &HSTRING::from(text),
+                        &HSTRING::from("扩展授权"),
+                        MB_OKCANCEL | MB_ICONWARNING,
+                    ) == IDOK
+                };
+                if !confirmed {
+                    settings.say(Notice::Info, format!("未同意 {name},扩展保持停用"));
+                    return;
+                }
+                if let Err(error) = approve_package(&id) {
+                    settings.say(Notice::Error, format!("同意失败: {error}"));
+                    return;
+                }
+                settings.scripts = installed_scripts();
+            }
+            if let Some(index) = settings.scripts.iter().position(|item| item.id == id) {
                 settings.select_script(Some(index));
                 settings.say(Notice::Info, format!("已选择 {name},保存后生效"));
             }

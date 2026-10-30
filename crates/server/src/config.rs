@@ -341,6 +341,11 @@ pub fn extensions_dir() -> Option<PathBuf> {
     user_file("extensions")
 }
 
+/// 扩展同意记录(`%APPDATA%\lueying\extensions\consent.json`)。
+pub fn extensions_consent_path() -> Option<PathBuf> {
+    Some(extensions_dir()?.join("consent.json"))
+}
+
 /// PP-OCRv6 模型目录:`LUEYING_PPOCR_DIR` 优先,其次用户目录
 /// `%APPDATA%\lueying\models\ppocr`,最后程序目录的 `models/ppocr`。
 /// 用户放的文件可以覆盖随包模型;三件齐全才算可用。
@@ -381,6 +386,12 @@ fn user_file(name: &str) -> Option<PathBuf> {
 pub fn log_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
     Some(base.join("lueying").join("logs").join("server.log"))
+}
+
+/// 能力调用审计(`%LOCALAPPDATA%\lueying\logs\ext-audit.log`)。
+pub fn ext_audit_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
+    Some(base.join("lueying").join("logs").join("ext-audit.log"))
 }
 
 /// 读配置;文件缺失或坏行都退回默认值。自定义标点从 `punct.txt` 并入。

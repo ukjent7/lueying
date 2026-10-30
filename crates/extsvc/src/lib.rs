@@ -14,6 +14,32 @@ use lueying_extmeta::Service;
 /// 服务缝 IDL 原文;测试按它核对方法白名单。
 pub const WIT: &str = include_str!("../lueying.wit");
 
+/// 隐私字段检查:返回 `true` 时所有扩展服务调用都拒绝。
+pub type PrivacyCheck = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// 一次服务调用的结果;审计日志只记发起与拒绝,不记异步完成。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuditOutcome {
+    /// 已交给提供者。
+    Allowed,
+    /// 在注册表这一层被拒绝。
+    Denied,
+}
+
+/// 审计接收端。实现方自己决定写文件、内存或日志。
+///
+/// `caller` 是扩展 id;参数文本可能含用户内容,这里只给服务名与方法名。
+pub trait AuditSink: Send + Sync {
+    fn record(
+        &self,
+        caller: &str,
+        service: &str,
+        method: &str,
+        outcome: AuditOutcome,
+        note: &str,
+    );
+}
+
 /// 一次服务调用的回传:发起时的序号与结果。
 ///
 /// 序号由扩展引导层分配,宿主拿它把结果路由回对应的 Promise;成功分支是
@@ -56,6 +82,10 @@ pub trait Provider: Send + Sync {
 pub struct Registry {
     providers: Mutex<Vec<(Service, Arc<dyn Provider>)>>,
     completions: Arc<Mutex<VecDeque<Completion>>>,
+    /// 隐私字段检查;装有闭包时每次调用前问一次。
+    privacy: Mutex<Option<PrivacyCheck>>,
+    /// 审计接收端;没有时装不记。
+    audit: Mutex<Option<Arc<dyn AuditSink>>>,
 }
 
 impl Default for Registry {
@@ -70,6 +100,8 @@ impl Registry {
         Self {
             providers: Mutex::new(Vec::new()),
             completions: Arc::new(Mutex::new(VecDeque::new())),
+            privacy: Mutex::new(None),
+            audit: Mutex::new(None),
         }
     }
 
@@ -80,6 +112,16 @@ impl Registry {
             Some(slot) => slot.1 = provider,
             None => providers.push((service, provider)),
         }
+    }
+
+    /// 装隐私检查;密码/隐私字段出现时闭包返回 `true`。
+    pub fn set_privacy(&self, check: PrivacyCheck) {
+        *self.privacy.lock().expect("隐私检查锁") = Some(check);
+    }
+
+    /// 装审计接收端。
+    pub fn set_audit(&self, sink: Arc<dyn AuditSink>) {
+        *self.audit.lock().expect("审计锁") = Some(sink);
     }
 
     /// 是否装了某服务的提供者。
@@ -94,8 +136,42 @@ impl Registry {
     /// 发起一次调用;结果经完成队列异步回传。
     ///
     /// 服务名与方法名在这里核死:未知服务、没开放的接口、没装提供者
-    /// 都当场拒绝,提供者只面对合法方法。
-    pub fn call(&self, service: &str, method: &str, args: &str, token: u64) -> Result<(), String> {
+    /// 都当场拒绝,提供者只面对合法方法。`caller` 是扩展 id,只给审计用。
+    pub fn call(
+        &self,
+        service: &str,
+        method: &str,
+        args: &str,
+        token: u64,
+    ) -> Result<(), String> {
+        self.call_as("", service, method, args, token)
+    }
+
+    /// 带调用方的调用;隐私字段与审计都在这一层生效。
+    ///
+    /// needs 门控在扩展宿主里(调用方只把声明过的服务放进来),这里只保证
+    /// 已声明的服务也要经过隐私检查。
+    pub fn call_as(
+        &self,
+        caller: &str,
+        service: &str,
+        method: &str,
+        args: &str,
+        token: u64,
+    ) -> Result<(), String> {
+        match self.dispatch(service, method, args, token) {
+            Ok(()) => {
+                self.record(caller, service, method, AuditOutcome::Allowed, "发起");
+                Ok(())
+            }
+            Err(error) => {
+                self.record(caller, service, method, AuditOutcome::Denied, &error);
+                Err(error)
+            }
+        }
+    }
+
+    fn dispatch(&self, service: &str, method: &str, args: &str, token: u64) -> Result<(), String> {
         let service = Service::ALL
             .iter()
             .copied()
@@ -107,6 +183,15 @@ impl Registry {
                 "服务 {} 没有方法 {method:?}(可用: {known})",
                 service.key()
             ));
+        }
+        let privacy = self
+            .privacy
+            .lock()
+            .expect("隐私检查锁")
+            .as_ref()
+            .map(Arc::clone);
+        if privacy.is_some_and(|check| check()) {
+            return Err("隐私字段下已停用扩展服务".to_string());
         }
         let provider = self
             .providers
@@ -121,6 +206,23 @@ impl Registry {
             completions: Arc::clone(&self.completions),
         };
         provider.call(method, args, done)
+    }
+
+    fn record(
+        &self,
+        caller: &str,
+        service: &str,
+        method: &str,
+        outcome: AuditOutcome,
+        note: &str,
+    ) {
+        if caller.is_empty() {
+            return;
+        }
+        let audit = self.audit.lock().expect("审计锁");
+        if let Some(sink) = audit.as_ref() {
+            sink.record(caller, service, method, outcome, note);
+        }
     }
 
     /// 是否有待抽干的完成结果;泵任务用它决定要不要空转。

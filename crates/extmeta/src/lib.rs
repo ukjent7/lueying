@@ -10,6 +10,9 @@
 
 use serde::Deserialize;
 
+pub mod consent;
+mod sha256;
+
 /// 清单文件的大小上限。清单只放元数据,超过这个数说明放错了东西。
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 
@@ -151,6 +154,32 @@ impl Service {
             Self::Notify => "notify",
         }
     }
+
+    /// 授权页上的人话;与能力名重复的由 [`Service::permission`] 合并。
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Capture => "截取屏幕(高敏感)",
+            Self::Ocr => "识别文字",
+            Self::Clipboard => "读写剪贴板(高敏感)",
+            Self::Panel => "显示扩展面板",
+            Self::Output => "写入当前输入框",
+            Self::Hotkey => "注册全局热键",
+            Self::Net => "访问网络(外发)",
+            Self::Store => "读写扩展存储",
+            Self::Notify => "系统通知",
+        }
+    }
+
+    /// 这个服务对应的权限;没有对应权限的服务单独列进授权说明。
+    pub fn permission(self) -> Option<Permission> {
+        match self {
+            Self::Capture => Some(Permission::ScreenCapture),
+            Self::Ocr => Some(Permission::Ocr),
+            Self::Clipboard => Some(Permission::Clipboard),
+            Self::Net => Some(Permission::Network),
+            Self::Panel | Self::Output | Self::Hotkey | Self::Store | Self::Notify => None,
+        }
+    }
 }
 
 /// 候选窗外观组件:入口是一段 JS。
@@ -225,6 +254,25 @@ impl Permission {
             Self::Network => "network",
             Self::Clipboard => "clipboard",
         }
+    }
+
+    /// 授权页上的人话与敏感级别。读拼音原文是低敏感,读左邻/屏幕内容是高敏感。
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::CandidateText => "读取候选与上下文文字(高敏感)",
+            Self::ScreenCapture => "截取屏幕(高敏感)",
+            Self::Ocr => "识别文字",
+            Self::Network => "访问网络(外发)",
+            Self::Clipboard => "读写剪贴板(高敏感)",
+        }
+    }
+
+    /// 会读到用户内容、需要和「外发」组合时强提示。
+    pub fn reads_user_content(self) -> bool {
+        matches!(
+            self,
+            Self::CandidateText | Self::ScreenCapture | Self::Ocr | Self::Clipboard
+        )
     }
 
     /// 这个权限是否属于该组件。

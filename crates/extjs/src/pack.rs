@@ -13,6 +13,7 @@ use crate::MAX_FAULTS;
 use crate::host::{Host, Invoke, Limits, Settled};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
 use crate::scene::{SceneIn, ScenePatch};
+use crate::ConsentGate;
 
 const MANIFEST: &str = "manifest.json";
 
@@ -48,6 +49,8 @@ pub struct Pack {
     limits: Limits,
     /// 服务注册表;热重载时重建宿主要原样带上。
     services: Arc<Registry>,
+    /// 同意检查;装了它以后清单/脚本变化都要先获同意才重载。
+    gate: Option<ConsentGate>,
     faults: u32,
     disabled: Option<String>,
     last_error: Option<String>,
@@ -73,18 +76,37 @@ impl Pack {
         limits: Limits,
         services: &Arc<Registry>,
     ) -> Result<Self, String> {
+        Self::load_with_gate(dir, limits, services, None)
+    }
+
+    /// 同上,另带同意检查;加载与热重载都先问它。
+    pub fn load_with_gate(
+        dir: &Path,
+        limits: Limits,
+        services: &Arc<Registry>,
+        gate: Option<ConsentGate>,
+    ) -> Result<Self, String> {
         let manifest_bytes = read_capped(&dir.join(MANIFEST), MAX_MANIFEST_BYTES)
             .map_err(|e| format!("读扩展清单失败: {e}"))?;
         let manifest = Manifest::parse(&manifest_bytes)?;
         check_dir(dir, &manifest)?;
+        if let Some(gate) = &gate {
+            gate(&manifest, dir)?;
+        }
         let main = manifest
             .script_main()
             .ok_or_else(|| format!("扩展 {} 没有脚本入口", manifest.id))?;
         let source = read_text(&dir.join(main), MAX_SOURCE_BYTES)
             .map_err(|e| format!("读入口脚本 {main} 失败: {e}"))?;
         let needs: Vec<&str> = manifest.needs.iter().map(|service| service.key()).collect();
-        let host = Host::new_with(&source, limits, &needs, Arc::clone(services))
-            .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
+        let host = Host::new_with_caller(
+            &source,
+            limits,
+            &needs,
+            Arc::clone(services),
+            &manifest.id,
+        )
+        .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             stamp: Stamp {
@@ -95,6 +117,7 @@ impl Pack {
             host,
             limits,
             services: Arc::clone(services),
+            gate,
             faults: 0,
             disabled: None,
             last_error: None,
@@ -255,6 +278,21 @@ impl Pack {
         if manifest_hash == self.stamp.manifest && source_hash == self.stamp.source {
             return Poll::Unchanged;
         }
+        // 新内容先过同意检查;不同意就不换宿主,旧版本继续跑。stamp 已经
+        // 记到新内容,用户同意后由宿主重建 Runtime,不会每秒重试刷日志。
+        let denied = self
+            .gate
+            .as_ref()
+            .and_then(|gate| gate(&manifest, &self.dir).err());
+        if let Some(error) = denied {
+            self.stamp = Stamp {
+                manifest: manifest_hash,
+                source: source_hash,
+            };
+            let error = format!("扩展 {} 更新未生效: {error}", manifest.id);
+            self.last_error = Some(error.clone());
+            return Poll::Failed(error);
+        }
         let source = match String::from_utf8(bytes) {
             Ok(source) => source,
             Err(e) => {
@@ -266,7 +304,13 @@ impl Pack {
             }
         };
         let needs: Vec<&str> = manifest.needs.iter().map(|service| service.key()).collect();
-        match Host::new_with(&source, self.limits, &needs, Arc::clone(&self.services)) {
+        match Host::new_with_caller(
+            &source,
+            self.limits,
+            &needs,
+            Arc::clone(&self.services),
+            &manifest.id,
+        ) {
             Ok(host) => {
                 self.host = host;
                 self.manifest = manifest;

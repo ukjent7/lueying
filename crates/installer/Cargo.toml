@@ -10,6 +10,8 @@ name = "lueying-user"
 path = "src/main.rs"
 
 [dependencies]
+# 随包扩展装进用户目录时写入同意记录,升级后不会被同意门控挡住。
+lueying-extmeta.workspace = true
 lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 

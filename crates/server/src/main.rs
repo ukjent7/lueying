@@ -24,6 +24,9 @@ fn main() {
 }
 
 #[cfg(windows)]
+mod ext_audit;
+
+#[cfg(windows)]
 mod ext_host;
 
 #[cfg(windows)]

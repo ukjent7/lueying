@@ -6,6 +6,8 @@ pub mod command_panel;
 
 pub mod config;
 
+pub mod settings_consent;
+
 pub mod settings_view;
 
 #[cfg(windows)]

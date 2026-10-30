@@ -506,6 +506,8 @@ fn handle_action(hwnd: HWND, action: Action) {
             });
         }
         Action::OpenScripts => with_settings(hwnd, settings_actions::open_scripts),
+        Action::ApproveExtension => with_settings(hwnd, settings_actions::approve_extension),
+        Action::OpenExtAudit => with_settings(hwnd, settings_actions::open_ext_audit),
         Action::OpenOcrModels => with_settings(hwnd, settings_actions::open_ocr_models),
         Action::OpenPhrases => with_settings(hwnd, settings_actions::open_phrases),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),

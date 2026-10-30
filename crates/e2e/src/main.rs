@@ -4,6 +4,7 @@
 mod actions;
 mod address;
 mod bench;
+mod consent;
 mod extensions;
 mod extjs;
 mod features;
@@ -177,6 +178,9 @@ fn main() {
 
     // 运行期脚本扩展:包校验、场景协议、预算、隐私与热重载。
     failures += extjs::run(&mut report);
+
+    // 扩展授权:同意记录、升级重新同意与热重载门控。
+    failures += consent::run(&mut report);
 
     // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
     failures += render::run(&mut report);

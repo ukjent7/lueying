@@ -595,6 +595,16 @@ impl HotkeyProvider {
         state.presses.clear();
     }
 
+    /// 隐私字段出现时丢弃挂起的 press;扩展拿到明确拒绝,不留悬空 Promise。
+    pub fn cancel_presses(&self, reason: &str) {
+        let mut state = self.state.lock().unwrap();
+        for (_, queued) in state.presses.drain() {
+            for done in queued {
+                done.complete(Err(reason.to_string()));
+            }
+        }
+    }
+
     /// 收一次消息队列:扩展挂起的 press 就地兑现,用户绑定行号回带给
     /// 调用方派发。扩展线程每轮循环调一次;没有热键时只有一次 PeekMessage。
     pub fn pump(&self) -> Vec<usize> {

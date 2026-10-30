@@ -45,15 +45,24 @@ mod pack;
 mod runtime;
 mod scene;
 
+use std::path::Path;
+use std::sync::Arc;
+
 pub use bindings::{Binding, BindingTable, Hotkey, Input, Modifier};
 pub use host::{Host, Invoke, Limits, Settled};
-pub use lueying_extsvc::{Completion, Done, Provider, Registry};
+pub use lueying_extmeta::consent::{ConsentBook, ConsentCheck, ConsentEntry};
+pub use lueying_extsvc::{
+    AuditOutcome, AuditSink, Completion, Done, PrivacyCheck, Provider, Registry,
+};
 pub use manifest::{
     Activate, Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest, Permission, Service, When,
 };
 pub use pack::{Pack, Poll};
-pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope};
+pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope, manifest_at};
 pub use scene::{EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, SceneIn, ScenePatch};
+
+/// 热加载前的同意检查;返回 `Err` 时新内容不生效,旧版本继续跑。
+pub type ConsentGate = Arc<dyn Fn(&Manifest, &Path) -> Result<(), String> + Send + Sync>;
 
 /// 场景协议版本。脚本在清单里声明依赖的版本,高于本值拒绝加载。
 pub const SCENE_API: u32 = 1;

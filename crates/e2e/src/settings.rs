@@ -52,14 +52,8 @@ pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
     let mut settings = settings();
     settings.scripts = vec![
-        ScriptEntry {
-            id: "demo-pack".to_string(),
-            name: "演示包".to_string(),
-        },
-        ScriptEntry {
-            id: "other-pack".to_string(),
-            name: "另一个包".to_string(),
-        },
+        ScriptEntry::new("demo-pack", "演示包"),
+        ScriptEntry::new("other-pack", "另一个包"),
     ];
     let page = settings.page(&colors());
 
@@ -101,6 +95,10 @@ pub fn run(report: &mut String) -> usize {
     let active = row_detail(&settings.page(&colors()), "扩展", "运行期脚本");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
+    let consent = settings.activate(&Id::new(ids::CONSENT, 0));
+    let audit = settings.activate(&Id::new(ids::AUDIT, 0));
+    let consent_row = row_detail(&settings.page(&colors()), "扩展", "扩展授权");
+    let audit_row = row_detail(&settings.page(&colors()), "扩展", "审计日志");
     settings.select_script(Some(1));
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
@@ -117,13 +115,21 @@ pub fn run(report: &mut String) -> usize {
                 .is_some_and(|text| text.contains("演示包") && text.contains("demo-pack"))
             && choose == Some(Action::ChooseScript)
             && open == Some(Action::OpenScripts)
+            && consent == Some(Action::ApproveExtension)
+            && audit == Some(Action::OpenExtAudit)
+            && consent_row
+                .as_deref()
+                .is_some_and(|text| text.contains("无需授权"))
+            && audit_row
+                .as_deref()
+                .is_some_and(|text| text.contains("截图"))
             && switched
             && settings.cfg.extensions.is_empty()
             && missing
                 .as_deref()
                 .is_some_and(|text| text.contains("未安装")),
         format!(
-            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?} 切换 {switched}"
+            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{consent:?}/{audit:?} 切换 {switched}"
         ),
     );
 

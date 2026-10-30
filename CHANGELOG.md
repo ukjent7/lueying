@@ -6,6 +6,16 @@
 
 ### 新增
 
+- 扩展授权与审计(T7):声明了 `needs`/`capabilities` 的扩展首次启用前
+  要在设置页「扩展 → 扩展授权」里同意,能力翻成人话并标注高敏感/外发;
+  读屏或读剪贴板同时申请网络的组合单独强提示。同意记录
+  `%APPDATA%\lueying\extensions\consent.json` 固定包内容哈希(清单 +
+  入口脚本)、版本与能力,清单/脚本/能力变化后新内容不生效、重新同意
+  才热加载,旧版本在此之前继续可用。密码/隐私字段下热键、命令与全部服务调用
+  被拒绝;每次服务调用写 `%LOCALAPPDATA%\lueying\logs\ext-audit.log`。
+  随包官方扩展由安装器代为同意;`needs` 门控同时加固到 Rust 侧,脚本
+  直接调宿主入口也绕不过。E2E 覆盖首次拦截、升级重新同意、热重载门控
+  与敏感组合标记。
 - 截图 OCR 可选引擎:设置页「扩展 → 截图识别」在系统 OCR 与 PP-OCRv6
   small(det+rec ONNX)之间切换;模型随安装包放在 `{app}\models\ppocr`,
   `%APPDATA%\lueying\models\ppocr` 可覆盖。推理用纯 Rust 的 tract,不随包

@@ -12,6 +12,8 @@ use lueying_render::ui::{Button, ButtonKind, Control, Group, Id, Page, Row, Segm
 use crate::accents::ACCENTS;
 use crate::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
 
+pub use crate::settings_consent::{ConsentState, ScriptEntry};
+
 /// 控件 id 的前缀。分段组用「前缀 + 格下标」,其余控件用「前缀 + 0」。
 pub mod ids {
     pub const UPDATE: &str = "update";
@@ -29,6 +31,8 @@ pub mod ids {
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";
+    pub const CONSENT: &str = "consent";
+    pub const AUDIT: &str = "audit";
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
@@ -93,6 +97,8 @@ pub enum Action {
     OpenEffects,
     ChooseScript,
     OpenScripts,
+    ApproveExtension,
+    OpenExtAudit,
     OpenOcrModels,
     OpenPhrases,
     OpenPunct,
@@ -104,13 +110,6 @@ pub enum Action {
     ClearUser,
     Diagnostics,
     ResetFuzzy,
-}
-
-/// 已安装的运行期脚本包;设置页只读清单,不加载 JS。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScriptEntry {
-    pub id: String,
-    pub name: String,
 }
 
 /// 设置窗的状态:配置 + 服务端回来的东西 + 提示。
@@ -395,6 +394,36 @@ impl Settings {
                         },
                     },
                     Row {
+                        label: "扩展授权".to_string(),
+                        detail: crate::settings_consent::detail(
+                            &self.cfg.extensions,
+                            &self.scripts,
+                        ),
+                        control: Control::Buttons {
+                            items: vec![Button {
+                                id: Id::new(ids::CONSENT, 0),
+                                text: "同意".to_string(),
+                                kind: ButtonKind::Primary,
+                                enabled: crate::settings_consent::approve_enabled(
+                                    &self.cfg.extensions,
+                                    &self.scripts,
+                                ),
+                            }],
+                        },
+                    },
+                    Row {
+                        label: "审计日志".to_string(),
+                        detail: "谁在什么时候调用了截图、识别与上屏".to_string(),
+                        control: Control::Buttons {
+                            items: vec![Button {
+                                id: Id::new(ids::AUDIT, 0),
+                                text: "查看".to_string(),
+                                kind: ButtonKind::Secondary,
+                                enabled: true,
+                            }],
+                        },
+                    },
+                    Row {
                         label: "截图识别".to_string(),
                         detail: self.ocr_detail(),
                         control: Control::Segment {
@@ -622,11 +651,23 @@ impl Settings {
                 }
             }
             [id] => match self.scripts.iter().find(|script| &script.id == id) {
-                Some(script) => format!("{} · {}", script.name, script.id),
+                Some(script) => {
+                    let pending = if script.consent == ConsentState::Approved {
+                        ""
+                    } else {
+                        " · 待同意"
+                    };
+                    format!("{} · {}{pending}", script.name, script.id)
+                }
                 None => format!("{id} · 未安装"),
             },
             ids => format!("已启用 {} 个 · {}", ids.len(), ids.join(", ")),
         }
+    }
+
+    /// 当前选中的包;没启用或启用了多个返回 None。
+    pub fn selected_script(&self) -> Option<&ScriptEntry> {
+        crate::settings_consent::selected(&self.cfg.extensions, &self.scripts)
     }
 
     /// 截图识别那行的说明:选的引擎与模型是否可用。
@@ -754,6 +795,8 @@ impl Settings {
             ids::EFFECTS => Some(Action::OpenEffects),
             ids::SCRIPTS => Some(Action::ChooseScript),
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
+            ids::CONSENT => Some(Action::ApproveExtension),
+            ids::AUDIT => Some(Action::OpenExtAudit),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),
@@ -850,6 +893,8 @@ impl Settings {
             Id::new(ids::FUZZY, 0),
             Id::new(ids::SCRIPTS, 0),
             Id::new(ids::SCRIPTS_DIR, 0),
+            Id::new(ids::CONSENT, 0),
+            Id::new(ids::AUDIT, 0),
             Id::new(ids::OCR, 0),
             Id::new(ids::OCR_DIR, 0),
             Id::new(ids::PHRASES, 0),
