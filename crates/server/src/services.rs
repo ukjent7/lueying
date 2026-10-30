@@ -212,26 +212,30 @@ fn ocr_file(file: &str, lang: Option<String>) -> Result<String, String> {
 
 fn ocr_inner(file: &str, lang: Option<String>) -> Result<String, String> {
     let path = HSTRING::from(file);
-    let storage = unsafe { StorageFile::GetFileFromPathAsync(&path) }
+    let storage = StorageFile::GetFileFromPathAsync(&path)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("GetFileFromPathAsync: {e}"))?;
-    let stream = unsafe { storage.OpenAsync(FileAccessMode::Read) }
+    let stream = storage
+        .OpenAsync(FileAccessMode::Read)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("OpenAsync: {e}"))?;
-    let decoder = unsafe { BitmapDecoder::CreateAsync(&stream) }
+    let decoder = BitmapDecoder::CreateAsync(&stream)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("BitmapDecoder: {e}"))?;
-    let bitmap = unsafe { decoder.GetSoftwareBitmapAsync() }
+    let bitmap = decoder
+        .GetSoftwareBitmapAsync()
         .and_then(|operation| operation.join())
         .map_err(|e| format!("GetSoftwareBitmapAsync: {e}"))?;
     let engine = match lang {
         Some(tag) => requested_engine(&tag)?,
         None => fallback_engine()?,
     };
-    let recognized = unsafe { engine.RecognizeAsync(&bitmap) }
+    let recognized = engine
+        .RecognizeAsync(&bitmap)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("RecognizeAsync: {e}"))?;
-    let text = unsafe { recognized.Text() }
+    let text = recognized
+        .Text()
         .map_err(|e| format!("OcrResult.Text: {e}"))?
         .to_string();
     let actual = engine
@@ -576,4 +580,5 @@ fn parse_combo(combo: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
 }
 
 #[cfg(test)]
+#[path = "services_tests.rs"]
 mod services_tests;
