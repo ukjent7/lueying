@@ -2,6 +2,7 @@
 //! 请求-应答串行,调试器可直接抓管道看明文)。
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[cfg(windows)]
 mod spawn;
@@ -172,6 +173,14 @@ pub enum Request {
     Page { session: u64, delta: i32 },
     /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
     UiMode { session: u64, host_draws: bool },
+    /// 通用扩展请求:`id` 是扩展,`method` 由宿主分派,`params` 原样透传。
+    /// 目前宿主提供 `settings.get` / `settings.set`(声明式设置的读写)。
+    Ext {
+        id: String,
+        method: String,
+        #[serde(default)]
+        params: Value,
+    },
     /// 会话下线。
     Goodbye { session: u64 },
 }
@@ -214,6 +223,19 @@ pub struct Reply {
     /// 全局候选序号中的高亮项。
     #[serde(default)]
     pub highlight: usize,
+    /// 通用扩展请求的应答(仅 `Ext` 使用)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ext: Option<ExtReply>,
+}
+
+/// 通用扩展请求的结果:成功带值,失败带人话原因。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExtReply {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub value: Value,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
 }
 
 /// 引擎资源加载状态;设置窗展示与诊断导出用。

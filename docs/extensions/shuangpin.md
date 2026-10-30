@@ -12,10 +12,10 @@
 | `mspy` | 微软双拼 | `nihk` | `;=ing` |
 | `sogou` | 搜狗双拼 | `nihk` | `;=ing` |
 
-在设置页「输入方案」里选择,或编辑 `%APPDATA%\lueying\config.ini`:
+在设置页「输入方案」里选择,或编辑 `%APPDATA%\lueying\config.toml`:
 
-```ini
-scheme=xiaohe
+```toml
+scheme = "xiaohe"
 ```
 
 ## 行为

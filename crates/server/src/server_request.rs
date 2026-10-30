@@ -31,8 +31,12 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             // 不能继承上一个线程留下的组合与待办。
             sessions.remove(&session);
             crate::settle::cancel(state, session);
-            // 按应用覆盖:apps.ini 里写了的键盖过全局设置。
-            let app = config::app_overrides(&host);
+            // 按应用覆盖:apps.toml 已经并进配置层,这里只查表。
+            let app = state
+                .config
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .app_override(&host);
             let mut engine = {
                 let mut cfg = state
                     .config
@@ -604,6 +608,31 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             }),
             ..Reply::default()
         },
+        Request::Ext { id, method, params } => {
+            let result = match method.as_str() {
+                "settings.get" => settings_get(state, &id),
+                "settings.set" => settings_set(state, &mut sessions, &id, params),
+                _ => Err(format!(
+                    "扩展方法 {method:?} 不存在;宿主提供 settings.get / settings.set"
+                )),
+            };
+            let ext = match result {
+                Ok(value) => lueying_protocol::ExtReply {
+                    ok: true,
+                    value,
+                    error: String::new(),
+                },
+                Err(error) => lueying_protocol::ExtReply {
+                    ok: false,
+                    value: serde_json::Value::Null,
+                    error,
+                },
+            };
+            Reply {
+                ext: Some(ext),
+                ..Reply::default()
+            }
+        }
         Request::ResetFuzzy => {
             state
                 .user
@@ -688,4 +717,69 @@ fn invoke_extension(state: &State, id: &str) {
         }
         None => println!("动作候选跳过:脚本线程未启动({id})"),
     }
+}
+
+/// `Ext` 的 `settings.get`:清单默认值 + 配置里的当前值。
+fn settings_get(state: &State, id: &str) -> Result<serde_json::Value, String> {
+    let settings = lueying_server::settings_ext::manifest_settings(id)
+        .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
+    if settings.is_empty() {
+        return Err(format!("扩展 {id} 没有声明式设置"));
+    }
+    let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
+    Ok(lueying_server::settings_ext::values(
+        &settings,
+        cfg.ext_settings.get(id),
+    ))
+}
+
+/// `Ext` 的 `settings.set`:逐键校验 schema,合并后落盘并下发。
+fn settings_set(
+    state: &State,
+    sessions: &mut std::collections::HashMap<u64, Session>,
+    id: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let settings = lueying_server::settings_ext::manifest_settings(id)
+        .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
+    if settings.is_empty() {
+        return Err(format!("扩展 {id} 没有声明式设置"));
+    }
+    let serde_json::Value::Object(object) = params else {
+        return Err("params 必须是对象,键是设置键".into());
+    };
+    if object.is_empty() {
+        return Err("params 为空".into());
+    }
+    let mut table = state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .ext_settings
+        .get(id)
+        .cloned()
+        .unwrap_or_default();
+    for (key, value) in &object {
+        let Some(setting) = settings.iter().find(|setting| setting.key() == key.as_str()) else {
+            return Err(format!("扩展 {id} 没有设置 {key:?}"));
+        };
+        if !setting.accepts(value) {
+            return Err(format!("设置 {key} 的值 {value} 不符合清单 schema"));
+        }
+        table.insert(key.clone(), value.clone());
+    }
+    let full = lueying_server::settings_ext::values(&settings, Some(&table));
+    let mut cfg = state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    cfg.ext_settings.insert(id.to_string(), table);
+    if let Some(path) = &state.config_path
+        && let Err(error) = config::save(path, &cfg)
+    {
+        return Err(format!("保存配置失败: {error}"));
+    }
+    apply_config(state, sessions, cfg);
+    Ok(full)
 }

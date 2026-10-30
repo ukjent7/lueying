@@ -6,9 +6,17 @@ pub mod command_panel;
 
 pub mod config;
 
+mod config_file;
+
 pub mod settings_consent;
 
+pub mod settings_ext;
+
+mod settings_focus;
+
 pub mod settings_view;
+
+mod settings_text;
 
 #[cfg(windows)]
 pub mod blit;

@@ -14,6 +14,8 @@ pub struct ScriptEntry {
     pub consent: ConsentState,
     /// 同时申请「读用户内容」与「访问网络」。
     pub sensitive: bool,
+    /// 清单里的声明式设置;设置页按它渲染。
+    pub settings: Vec<lueying_extmeta::Setting>,
 }
 
 impl ScriptEntry {
@@ -25,6 +27,7 @@ impl ScriptEntry {
             items: Vec::new(),
             consent: ConsentState::Approved,
             sensitive: false,
+            settings: Vec::new(),
         }
     }
 }

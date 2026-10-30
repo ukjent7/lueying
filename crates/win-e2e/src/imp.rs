@@ -121,8 +121,8 @@ fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
     book.save(&extensions.join("consent.json"))
         .map_err(|e| format!("保存同意记录: {e}"))?;
     std::fs::write(
-        data.join("lueying").join("config.ini"),
-        "extensions=shot-ocr\nbindings=Ctrl+Alt+F9=shot-ocr.run\npanel_hotkey=off\n",
+        data.join("lueying").join("config.toml"),
+        "extensions = [\"shot-ocr\"]\npanel_hotkey = \"off\"\n\n[bindings]\n\"Ctrl+Alt+F9\" = \"shot-ocr.run\"\n",
     )
     .map_err(|e| format!("写 E2E 配置: {e}"))?;
     Ok(())
@@ -518,7 +518,7 @@ fn real_run() -> Result<(String, String), String> {
             return Err("候选 UI 元素在组合结束后没有 EndUIElement".into());
         }
 
-        // 4b. 保留键 Ctrl+.:切换中文标点并持久化到 Server 的 config.ini。
+        // 4b. 保留键 Ctrl+.:切换中文标点并持久化到 Server 的 config.toml。
         check_preserved_punct(&data)?;
 
         // 5. 单击 Shift 切英文,字母应原样进入 RichEdit;再切回中文验证全局模式。

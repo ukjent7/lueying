@@ -180,3 +180,63 @@ fn focus_order_lists_script_buttons_once() {
         .count();
     assert_eq!((choose, dir), (1, 1));
 }
+
+fn ext_entry() -> ScriptEntry {
+    use lueying_extmeta::{Setting, SettingValue};
+    let mut script = ScriptEntry::new("shot", "截图");
+    script.settings = vec![
+        Setting {
+            key: "notify".to_string(),
+            title: "完成后通知".to_string(),
+            detail: String::new(),
+            kind: "toggle".to_string(),
+            default: Some(SettingValue::Bool(true)),
+            options: Vec::new(),
+        },
+        Setting {
+            key: "quality".to_string(),
+            title: "识别质量".to_string(),
+            detail: "慢一点更准".to_string(),
+            kind: "choice".to_string(),
+            default: Some(SettingValue::Text("high".to_string())),
+            options: vec!["fast".to_string(), "high".to_string()],
+        },
+    ];
+    script
+}
+
+#[test]
+fn extension_settings_render_and_activate() {
+    let mut settings = Settings {
+        scripts: vec![ext_entry()],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["shot".to_string()];
+    let toggle = ids::ext_field(0);
+    let choice = ids::ext_field(1);
+    assert!(Settings::is_segment(toggle));
+    assert_eq!(settings.selected(choice), 1);
+
+    assert_eq!(settings.activate(&Id::new(toggle, 0)), None);
+    assert_eq!(
+        settings.cfg.ext_settings["shot"]["notify"],
+        serde_json::json!(false)
+    );
+    settings.activate(&Id::new(choice, 0));
+    assert_eq!(
+        settings.cfg.ext_settings["shot"]["quality"],
+        serde_json::json!("fast")
+    );
+    assert!(settings.shift(&Id::new(choice, 0), 1));
+    assert_eq!(
+        settings.cfg.ext_settings["shot"]["quality"],
+        serde_json::json!("high"),
+        "左右键在选项里绕回"
+    );
+    assert!(!settings.shift(&Id::new(toggle, 0), 1), "开关不吃左右键");
+
+    let focus = settings.focus_ids();
+    let at = |base: &str| focus.iter().position(|id| id.base == base).unwrap();
+    assert!(at(toggle) < at(choice));
+    assert!(at(choice) < at(ids::PHRASES), "扩展字段排在扩展分组后面");
+}

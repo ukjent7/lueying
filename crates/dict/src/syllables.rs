@@ -106,7 +106,7 @@ pub fn is_abbrev(s: &str) -> bool {
 }
 
 /// 模糊音开关集合。引擎默认用 [`Self::auto`] 全开核心组;`off` 只留给
-/// `config.ini` 的排障开关与自动化测试。
+/// `config.toml` 的排障开关与自动化测试。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fuzzy {
     pub zcs: bool,    // z↔zh、c↔ch、s↔sh

@@ -13,10 +13,10 @@
 
 ## 开关
 
-设置页「下一词联想」默认开启;也可以编辑 `%APPDATA%\lueying\config.ini`:
+设置页「下一词联想」默认开启;也可以编辑 `%APPDATA%\lueying\config.toml`:
 
-```ini
-predict=false
+```toml
+predict = false
 ```
 
 开关只影响后续候选,已经形成的词序保留;重新开启后立即恢复。

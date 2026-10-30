@@ -58,10 +58,19 @@ pub fn save(settings: &mut Settings) {
         settings.say(Notice::Error, "没有可写的配置路径");
         return;
     };
+    let dropped = crate::settings_ext::normalize(&mut settings.cfg, &settings.scripts);
     match config::save(&path, &settings.cfg) {
         Ok(()) => {
+            settings.cfg.config_issues.clear();
             reload();
-            settings.say(Notice::Success, "已保存");
+            if dropped == 0 {
+                settings.say(Notice::Success, "已保存");
+            } else {
+                settings.say(
+                    Notice::Info,
+                    format!("已保存;丢弃 {dropped} 个清单外的扩展设置"),
+                );
+            }
         }
         Err(e) => settings.say(Notice::Error, format!("保存失败: {e}")),
     }
@@ -302,6 +311,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
             items,
             consent,
             sensitive,
+            settings: manifest.settings,
         });
     }
     scripts.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
@@ -549,10 +559,10 @@ pub fn backup_export(settings: &mut Settings) {
     };
     let mut files: Vec<(String, String)> = Vec::new();
     for (name, path) in [
-        ("config.ini", config::path()),
+        ("config.toml", config::path()),
         ("phrases.txt", config::phrases_path()),
         ("punct.txt", config::punct_path()),
-        ("apps.ini", config::apps_path()),
+        ("apps.toml", config::apps_path()),
     ] {
         if let Some(path) = path
             && let Ok(text) = std::fs::read_to_string(&path)
@@ -610,12 +620,22 @@ pub fn backup_import(settings: &mut Settings) {
     let files = unpack_backup(&text);
     let mut written = 0usize;
     let mut imported_user = false;
+    let mut legacy_config = false;
+    let mut legacy_apps = false;
     for (name, content) in &files {
-        let target = match name.as_str() {
-            "config.ini" => config::path(),
-            "phrases.txt" => config::phrases_path(),
-            "punct.txt" => config::punct_path(),
-            "apps.ini" => config::apps_path(),
+        match name.as_str() {
+            // 旧备份里的 INI 块先并进内存,循环结束后按 TOML 落盘。
+            "config.ini" => {
+                let _ = config::apply_legacy(content, &mut settings.cfg);
+                legacy_config = true;
+                continue;
+            }
+            "apps.ini" => {
+                settings.cfg.apps = config::apps_from_legacy(content);
+                legacy_apps = true;
+                continue;
+            }
+            "config.toml" | "phrases.txt" | "punct.txt" | "apps.toml" => {}
             "user.tsv" => {
                 if send(&Request::ImportUser {
                     text: content.clone(),
@@ -624,6 +644,13 @@ pub fn backup_import(settings: &mut Settings) {
                 }
                 continue;
             }
+            _ => continue,
+        }
+        let target = match name.as_str() {
+            "config.toml" => config::path(),
+            "phrases.txt" => config::phrases_path(),
+            "punct.txt" => config::punct_path(),
+            "apps.toml" => config::apps_path(),
             _ => continue,
         };
         if let Some(path) = target {
@@ -636,6 +663,15 @@ pub fn backup_import(settings: &mut Settings) {
                 written += 1;
             }
         }
+    }
+    if legacy_config
+        && let Some(path) = config::path()
+        && config::save(&path, &settings.cfg).is_ok()
+    {
+        written += 1;
+    }
+    if legacy_apps && config::save_apps(&settings.cfg.apps).is_ok() {
+        written += 1;
     }
     reload();
     if let Some(path) = settings.path.clone() {

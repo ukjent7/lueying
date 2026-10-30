@@ -1,8 +1,9 @@
-//! 用户配置:`%APPDATA%\lueying\config.ini`,设置窗与常驻服务共用。
+//! 用户配置:`%APPDATA%\lueying\config.toml`,设置窗与常驻服务共用。
 //!
-//! 行式 `键=值`,未知键和坏值跳过;保存先写临时文件再改名。
-//! 自定义标点(`punct.txt`)、按应用覆盖(`apps.ini`)是独立文件,
-//! 读取时并入配置,保存只写 `config.ini` 本身。
+//! 顶层是用户层,`[ext.<id>]` 是扩展命名空间;按应用覆盖在 `apps.toml`。
+//! schema 与合并逻辑在 `config_file`,未知键在读取时拒绝;坏值收集成
+//! [`ConfigIssue`],设置页与日志按层展示。保存先写临时文件再改名。
+//! 自定义标点(`punct.txt`)是独立数据文件,读取时并入配置。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,8 +11,24 @@ use std::path::{Path, PathBuf};
 use lueying_engine::{Config, Fuzzy, Script};
 use lueying_features::SchemeId;
 
+/// 一处配置问题:出错的文件层 + 人话。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigIssue {
+    pub layer: &'static str,
+    pub message: String,
+}
+
+impl ConfigIssue {
+    pub fn new(layer: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            layer,
+            message: message.into(),
+        }
+    }
+}
+
 /// 主题色名转下标;表在 `accents` 里,Windows 与否都能解析。
-fn accent_by_name(value: &str) -> Option<usize> {
+pub(crate) fn accent_by_name(value: &str) -> Option<usize> {
     crate::accents::accent_index(value)
 }
 
@@ -36,11 +53,13 @@ impl Region {
         }
     }
 
-    fn from_str(value: &str) -> Self {
-        match value {
-            "tw" | "taiwan" => Self::Taiwan,
-            "hk" | "hongkong" => Self::HongKong,
-            _ => Self::General,
+    /// 配置值转枚举;未知值返回 None,由调用方记一条 issue。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "general" => Some(Self::General),
+            "tw" | "taiwan" => Some(Self::Taiwan),
+            "hk" | "hongkong" => Some(Self::HongKong),
+            _ => None,
         }
     }
 
@@ -71,10 +90,12 @@ impl UiLayout {
         }
     }
 
-    fn from_str(value: &str) -> Self {
-        match value {
-            "vertical" | "v" => Self::Vertical,
-            _ => Self::Horizontal,
+    /// 配置值转枚举;未知值返回 None。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "horizontal" | "h" => Some(Self::Horizontal),
+            "vertical" | "v" => Some(Self::Vertical),
+            _ => None,
         }
     }
 
@@ -115,11 +136,13 @@ impl UiFont {
         }
     }
 
-    fn from_str(value: &str) -> Self {
-        match value {
-            "small" => Self::Small,
-            "large" => Self::Large,
-            _ => Self::Standard,
+    /// 配置值转枚举;未知值返回 None。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "small" => Some(Self::Small),
+            "standard" => Some(Self::Standard),
+            "large" => Some(Self::Large),
+            _ => None,
         }
     }
 
@@ -150,10 +173,12 @@ impl Channel {
         }
     }
 
-    fn from_str(value: &str) -> Self {
-        match value {
-            "beta" | "test" => Self::Beta,
-            _ => Self::Stable,
+    /// 配置值转枚举;未知值返回 None。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "stable" => Some(Self::Stable),
+            "beta" | "test" => Some(Self::Beta),
+            _ => None,
         }
     }
 
@@ -183,10 +208,12 @@ impl OcrBackend {
         }
     }
 
-    fn from_str(value: &str) -> Self {
-        match value {
-            "ppocr" | "pp-ocr" | "paddle" => Self::Ppocr,
-            _ => Self::System,
+    /// 配置值转枚举;未知值返回 None。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "system" => Some(Self::System),
+            "ppocr" | "pp-ocr" | "paddle" => Some(Self::Ppocr),
+            _ => None,
         }
     }
 
@@ -244,6 +271,12 @@ pub struct AppConfig {
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
     pub punct: BTreeMap<char, String>,
+    /// 按应用覆盖层,来自 `apps.toml`;键是宿主 exe 名小写。
+    pub apps: BTreeMap<String, AppOverride>,
+    /// 扩展命名空间 `[ext.<id>]`,声明式设置与 `Request::Ext` 共用。
+    pub ext_settings: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    /// 读取时收集的问题;保存成功后清空。
+    pub config_issues: Vec<ConfigIssue>,
 }
 
 impl Default for AppConfig {
@@ -271,6 +304,9 @@ impl Default for AppConfig {
             ocr_backend: OcrBackend::System,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
+            apps: BTreeMap::new(),
+            ext_settings: BTreeMap::new(),
+            config_issues: Vec::new(),
         }
     }
 }
@@ -295,6 +331,14 @@ impl AppConfig {
             punct: self.punct.clone(),
         }
     }
+
+    /// 取出宿主进程的覆盖项;没有就跟随全局。
+    pub fn app_override(&self, host: &str) -> AppOverride {
+        self.apps
+            .get(&host.trim().to_ascii_lowercase())
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 /// 配置文件路径(`%APPDATA%` 优先,退回 `%LOCALAPPDATA%`)。
@@ -302,16 +346,57 @@ pub fn path() -> Option<PathBuf> {
     let base =
         PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
     let dir = base.join("lueying");
-    let path = dir.join("config.ini");
-    // 一次性接走改名前的配置,升级后用户不必重设。
+    let path = dir.join("config.toml");
     if !path.exists() {
-        let old = base.join("pinyin-ime").join("config.ini");
-        if old.is_file() {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::copy(&old, &path);
-        }
+        migrate_legacy(&base, &dir, &path);
     }
     Some(path)
+}
+
+/// 一次性把旧 `config.ini`/`apps.ini` 转成 TOML;迁移失败就留空配置。
+fn migrate_legacy(base: &Path, dir: &Path, path: &Path) {
+    let config_candidates = [
+        dir.join("config.ini"),
+        base.join("pinyin-ime").join("config.ini"),
+    ];
+    let apps_candidates = [
+        dir.join("apps.ini"),
+        base.join("pinyin-ime").join("apps.ini"),
+    ];
+    let config_text = config_candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .and_then(|old| std::fs::read_to_string(old).ok());
+    let apps_text = apps_candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .and_then(|old| std::fs::read_to_string(old).ok());
+    if config_text.is_none() && apps_text.is_none() {
+        return;
+    }
+    let mut cfg = AppConfig::default();
+    if let Some(text) = config_text {
+        crate::config_file::apply(
+            &mut cfg,
+            crate::config_file::from_ini(&text),
+            "config.ini",
+            &mut Vec::new(),
+        );
+    }
+    if let Some(text) = apps_text {
+        cfg.apps = crate::config_file::apps_from_ini(&text)
+            .into_iter()
+            .map(|(host, layer)| (host, layer.into()))
+            .collect();
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let _ = save(path, &cfg);
+    let _ = save_apps(&cfg.apps);
+}
+
+/// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.toml`)。
+pub fn apps_path() -> Option<PathBuf> {
+    user_file("apps.toml")
 }
 
 /// 自定义短语文件路径(`%APPDATA%\lueying\phrases.txt`)。
@@ -322,11 +407,6 @@ pub fn phrases_path() -> Option<PathBuf> {
 /// 自定义标点文件路径(`%APPDATA%\lueying\punct.txt`)。
 pub fn punct_path() -> Option<PathBuf> {
     user_file("punct.txt")
-}
-
-/// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.ini`)。
-pub fn apps_path() -> Option<PathBuf> {
-    user_file("apps.ini")
 }
 
 /// 用户效果目录(`%APPDATA%\lueying\effects`);每个槽位一个 `.sksl` 文件。
@@ -400,117 +480,58 @@ pub fn ext_metrics_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("logs").join("ext-metrics.json"))
 }
 
-/// 读配置;文件缺失或坏行都退回默认值。自定义标点从 `punct.txt` 并入。
+/// 读配置。文件缺失用默认值;TOML/值域错误收集进 `config_issues`,不阻断
+/// 其余键。自定义标点从 `punct.txt` 并入,按应用层从 `apps.toml` 并入。
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return cfg;
+    let mut issues = Vec::new();
+    // `.ini` 只给旧测试与迁移读;正式路径永远是 `config.toml`。
+    let legacy = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ini"));
+    match std::fs::read_to_string(path) {
+        Ok(text) if legacy => crate::config_file::apply(
+            &mut cfg,
+            crate::config_file::from_ini(&text),
+            "config.ini",
+            &mut issues,
+        ),
+        Ok(text) => match toml::from_str::<crate::config_file::FileConfig>(&text) {
+            Ok(file) => crate::config_file::apply(&mut cfg, file, "config.toml", &mut issues),
+            Err(error) => issues.push(ConfigIssue::new(
+                "config.toml",
+                format!("TOML 解析失败: {error}"),
+            )),
+        },
+        Err(_) => {}
+    }
+    cfg.apps = load_apps(&mut issues);
+    cfg.punct = load_punct(punct_path().as_deref());
+    for issue in &issues {
+        eprintln!("配置问题({}): {}", issue.layer, issue.message);
+    }
+    cfg.config_issues = issues;
+    cfg
+}
+
+/// 读按应用层;缺文件就是空层,坏文件记 issue 后返回空层。
+fn load_apps(issues: &mut Vec<ConfigIssue>) -> BTreeMap<String, AppOverride> {
+    let Some(path) = apps_path() else {
+        return BTreeMap::new();
     };
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let value = value.trim();
-        match key.trim() {
-            "page_size" => {
-                if let Ok(n) = value.parse::<usize>() {
-                    cfg.page_size = n.clamp(3, 9);
-                }
-            }
-            "chinese_punct" => {
-                if let Some(on) = flag(value) {
-                    cfg.chinese_punct = on;
-                }
-            }
-            "shift_toggle" => {
-                if let Some(on) = flag(value) {
-                    cfg.shift_toggle = on;
-                }
-            }
-            "traditional" => {
-                if let Some(on) = flag(value) {
-                    cfg.traditional = on;
-                }
-            }
-            "traditional_region" => {
-                cfg.region = Region::from_str(value);
-            }
-            "scheme" => {
-                cfg.scheme = SchemeId::parse(value);
-            }
-            "aux_code" | "aux" => {
-                if let Some(on) = flag(value) {
-                    cfg.aux = on;
-                }
-            }
-            "predict" | "prediction" => {
-                if let Some(on) = flag(value) {
-                    cfg.predict = on;
-                }
-            }
-            // 隐藏逃生口:默认 auto;排障或极端用户可写 off。
-            // 旧版 fuzzy_zcs/fuzzy_ln/... 逐项键不再读取,按默认自动召回。
-            "fuzzy" => match value {
-                "off" | "0" | "false" | "no" => cfg.fuzzy = Fuzzy::off(),
-                "auto" | "1" | "true" | "on" | "yes" => cfg.fuzzy = Fuzzy::auto(),
-                _ => {}
-            },
-            "ui_layout" | "layout" => {
-                cfg.ui_layout = UiLayout::from_str(value);
-            }
-            "ui_font" | "font" => {
-                cfg.ui_font = UiFont::from_str(value);
-            }
-            "ui_accent" | "accent" => {
-                if let Ok(index) = value.parse::<usize>() {
-                    cfg.ui_accent = index;
-                } else if let Some(index) = accent_by_name(value) {
-                    cfg.ui_accent = index;
-                }
-            }
-            "update_channel" | "channel" => {
-                cfg.update_channel = Channel::from_str(value);
-            }
-            // 用户效果开关:默认开(目录里没文件就是素色),关掉就整目录忽略。
-            "effects" | "effect" => {
-                if let Some(on) = flag(value) {
-                    cfg.effects = on;
-                }
-            }
-            // 运行期脚本扩展:逗号分隔的有序列表,顺序即组合顺序。
-            "extensions" => cfg.extensions = parse_extensions(value),
-            // 扩展命令热键:`Ctrl+Alt+O=shot.run,Ctrl+Shift+L=clip.search`。
-            "bindings" | "bind" => cfg.bindings = parse_bindings(value),
-            // 动作候选触发词:`bc=shot.run`;整串输入完全匹配时把命令放进候选。
-            "triggers" | "trigger" => cfg.triggers = parse_triggers(value),
-            // 命令面板总热键;`off`/`none`/空值关闭。
-            "panel_hotkey" | "palette_hotkey" => {
-                cfg.panel_hotkey = match value {
-                    "" | "off" | "none" => String::new(),
-                    combo => combo.to_string(),
-                };
-            }
-            // 截图 OCR:`system`(默认)或 `ppocr`;别名 pp-ocr/paddle。
-            "ocr_engine" | "ocr" => {
-                cfg.ocr_backend = OcrBackend::from_str(value);
-            }
-            // 旧键:单个扩展 id;空值或 off 表示不启用。
-            "script" | "extension" => {
-                if matches!(value, "" | "off" | "none") {
-                    cfg.extensions.clear();
-                } else if valid_script_id(value) {
-                    cfg.extensions = vec![value.to_string()];
-                }
-            }
-            _ => {}
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return BTreeMap::new();
+    };
+    match crate::config_file::apps_from_toml(&text) {
+        Ok(layers) => layers
+            .into_iter()
+            .map(|(host, layer)| (host, layer.into()))
+            .collect(),
+        Err(error) => {
+            issues.push(ConfigIssue::new("apps.toml", error));
+            BTreeMap::new()
         }
     }
-    cfg.punct = load_punct(punct_path().as_deref());
-    cfg
 }
 
 /// 自定义标点文件模板;写进新文件,示例去掉行首 `#` 生效。
@@ -553,127 +574,58 @@ pub fn load_punct(path: Option<&Path>) -> BTreeMap<char, String> {
     map
 }
 
-/// 按应用覆盖文件模板;节名是宿主进程 exe 名(小写)。
-pub const APPS_TEMPLATE: &str = "\
-# 掠影按应用配置:节名是宿主进程的 exe 名(小写,如 notepad.exe)。
-# 可用键:
-#   punct=off     本应用关闭中文标点(直出半角)
-#   punct=on      本应用开启中文标点
-#   learning=off  本应用不写入学习记录
-#   learning=on   本应用正常学习
-# 没写的键跟随全局设置。示例(去掉行首 # 生效):
-#[notepad.exe]
-#punct=off
-";
+/// 按应用覆盖模板;实际文件是 `apps.toml`。
+pub use crate::config_file::APPS_TEMPLATE;
 
-/// 解析按应用覆盖;`host` 需已小写。坏值与未知键跳过。
-pub fn app_override(text: &str, host: &str) -> AppOverride {
-    let mut current: Option<String> = None;
-    let mut matched = AppOverride::default();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            current = Some(name.trim().to_ascii_lowercase());
-            continue;
-        }
-        if current.as_deref() != Some(host) {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let flag = flag(value.trim());
-        match key.trim() {
-            "punct" => matched.punct = flag,
-            "learning" => matched.learning = flag,
-            _ => {}
-        }
-    }
-    matched
+/// 把一份旧 `config.ini` 文本合并进现有配置;返回收集到的问题。
+pub fn apply_legacy(text: &str, cfg: &mut AppConfig) -> Vec<ConfigIssue> {
+    let mut issues = Vec::new();
+    crate::config_file::apply(
+        cfg,
+        crate::config_file::from_ini(text),
+        "config.ini",
+        &mut issues,
+    );
+    issues
 }
 
-/// 读宿主进程的覆盖项;文件缺失时全部跟随全局。host 统一转小写。
-pub fn app_overrides(host: &str) -> AppOverride {
-    let Some(path) = apps_path() else {
-        return AppOverride::default();
-    };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return AppOverride::default();
-    };
-    app_override(&text, &host.trim().to_ascii_lowercase())
+/// 把一份旧 `apps.ini` 文本转成按应用层。
+pub fn apps_from_legacy(text: &str) -> BTreeMap<String, AppOverride> {
+    crate::config_file::apps_from_ini(text)
+        .into_iter()
+        .map(|(host, layer)| (host, layer.into()))
+        .collect()
 }
 
-/// 保存配置;目录不存在就创建。
+/// 保存用户配置;目录不存在就创建。扩展命名空间原样写回。
 pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let text = format!(
-        "page_size={}\n\
-         chinese_punct={}\n\
-         shift_toggle={}\n\
-         traditional={}\n\
-         traditional_region={}\n\
-         scheme={}\n\
-         aux_code={}\n\
-         predict={}\n\
-         fuzzy={}\n\
-         ui_layout={}\n\
-         ui_font={}\n\
-         ui_accent={}\n\
-         effects={}\n\
-         extensions={}\n\
-         bindings={}\n\
-         triggers={}\n\
-         panel_hotkey={}\n\
-         ocr_engine={}\n\
-         update_channel={}\n",
-        cfg.page_size,
-        cfg.chinese_punct,
-        cfg.shift_toggle,
-        cfg.traditional,
-        cfg.region.as_str(),
-        cfg.scheme.as_str(),
-        cfg.aux,
-        cfg.predict,
-        if cfg.fuzzy.is_off() { "off" } else { "auto" },
-        cfg.ui_layout.as_str(),
-        cfg.ui_font.as_str(),
-        cfg.ui_accent,
-        if cfg.effects { "on" } else { "off" },
-        cfg.extensions.join(","),
-        cfg.bindings
-            .iter()
-            .map(|(combo, command)| format!("{combo}={command}"))
-            .collect::<Vec<_>>()
-            .join(","),
-        cfg.triggers
-            .iter()
-            .map(|(trigger, command)| format!("{trigger}={command}"))
-            .collect::<Vec<_>>()
-            .join(","),
-        cfg.panel_hotkey,
-        cfg.ocr_backend.as_str(),
-        cfg.update_channel.as_str(),
-    );
-    let tmp = path.with_extension("ini.tmp");
+    let text = crate::config_file::render(cfg)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)
 }
 
-fn flag(value: &str) -> Option<bool> {
-    match value {
-        "1" | "true" | "on" | "yes" => Some(true),
-        "0" | "false" | "off" | "no" => Some(false),
-        _ => None,
+/// 保存按应用层(迁移或未来的设置页写入用)。
+pub fn save_apps(apps: &BTreeMap<String, AppOverride>) -> std::io::Result<()> {
+    let Some(path) = apps_path() else {
+        return Ok(());
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
     }
+    let text = crate::config_file::render_apps(apps)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// 运行期脚本扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。
-fn valid_script_id(id: &str) -> bool {
+pub(crate) fn valid_script_id(id: &str) -> bool {
     let mut chars = id.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -681,70 +633,6 @@ fn valid_script_id(id: &str) -> bool {
     (first.is_ascii_lowercase() || first.is_ascii_digit())
         && id.len() <= 48
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-}
-
-/// 逗号分隔的扩展列表:逐项校验、去重,坏项直接丢掉。
-fn parse_extensions(value: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for item in value.split(',') {
-        let id = item.trim();
-        if valid_script_id(id) && !out.iter().any(|existing| existing == id) {
-            out.push(id.to_string());
-        }
-    }
-    out
-}
-
-/// `组合串=命令 id` 列表:逐项 trim、按组合去重,坏项直接丢掉。
-/// 组合与命令的严格校验在建绑定表时做,这里只保证格式可拆。
-fn parse_bindings(value: &str) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    for item in value.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let Some((combo, command)) = item.split_once('=') else {
-            continue;
-        };
-        let (combo, command) = (combo.trim(), command.trim());
-        if combo.is_empty() || command.is_empty() {
-            continue;
-        }
-        if out.iter().any(|(existing, _)| existing == combo) {
-            continue;
-        }
-        out.push((combo.to_string(), command.to_string()));
-    }
-    out
-}
-
-/// `触发词=命令 id` 列表:触发词归一为小写字母串(整串匹配用),按触发词
-/// 去重,坏项直接丢掉。命令是否存在由脚本线程的标题表把关。
-fn parse_triggers(value: &str) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    for item in value.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let Some((trigger, command)) = item.split_once('=') else {
-            continue;
-        };
-        let trigger = trigger.trim().to_ascii_lowercase();
-        let command = command.trim();
-        if trigger.is_empty()
-            || command.is_empty()
-            || !trigger.bytes().all(|b| b.is_ascii_lowercase())
-        {
-            continue;
-        }
-        if out.iter().any(|(existing, _)| existing == &trigger) {
-            continue;
-        }
-        out.push((trigger, command.to_string()));
-    }
-    out
 }
 
 #[cfg(test)]

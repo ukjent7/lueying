@@ -49,23 +49,26 @@ QuickJS 沙箱里同步派发场景状态,脚本只回主题色与三个 SkSL �
 声明入口、激活方式(触发词/建议热键/命令)、需要的宿主服务与权限;分层设计见
 `docs/extensions/layers.md`。状态不含候选文字与宿主名,密码/隐私字段不派发,
 内存、栈、初始化与单次派发都有上限;热重载保留上一版可用的宿主。服务端按
-`config.ini` 的 `extensions` 键按序加载多个扩展,命令包按激活事件懒加载、
+`config.toml` 的 `extensions = ["a", "b"]` 按序加载多个扩展,命令包按激活事件懒加载、
 空闲 30 秒卸载;派发在独立线程里,候选窗线程只收补丁并编译 SkSL;补丁没给的
 槽位继续用用户效果目录。设置页只读清单列出已安装的包,选择结果写回
-`extensions` 键;它不改音节切分,也不碰候选,只画装饰层。
+`extensions` 键;它不改音节切分,也不碰候选,只画装饰层。清单里的声明式
+`settings` 由宿主渲染成设置页控件,值存 `[ext.<id>]`;外部调用走通用
+`Request::Ext { id, method, params }`,宿主目前提供 `settings.get` 与
+`settings.set`。
 
 ## 用户数据
 
 | 文件 | 内容 |
 |---|---|
-| `%APPDATA%\lueying\config.ini` | 全部设置(键=值,未知键跳过) |
+| `%APPDATA%\lueying\config.toml` | 全部设置(TOML;未知键拒绝,坏值记日志) |
 | `%APPDATA%\lueying\phrases.txt` | 自定义短语(`短语<TAB>编码`) |
 | `%APPDATA%\lueying\punct.txt` | 自定义标点(`键=输出`) |
-| `%APPDATA%\lueying\apps.ini` | 按应用覆盖(`[exe]` 节 + `punct`/`learning`) |
+| `%APPDATA%\lueying\apps.toml` | 按应用覆盖(`[exe]` 节 + `punct`/`learning`) |
 | `%LOCALAPPDATA%\lueying\user.tsv` | 用户词库(选词、造词、搭配、置顶) |
 | `%LOCALAPPDATA%\lueying\logs\server.log` | 服务日志(超 1MB 滚动) |
 
-设置窗保存 `config.ini` 后发 `ReloadConfig`,Server 重读全部文件并把新配置
+设置窗保存 `config.toml` 后发 `ReloadConfig`,Server 重读全部文件并把新配置
 下发给所有会话;按应用覆盖在会话上线(`Hello`)时套用。设置里的「配置备份」
 把上述文件打包成单份文本(按行数声明块长度),导入时逐块写回、词库走管道合并。
 

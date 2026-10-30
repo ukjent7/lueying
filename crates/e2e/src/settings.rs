@@ -8,6 +8,7 @@
 //! 5. 控件排到卡片外面,点不到也看不见。
 
 use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
+use lueying_extmeta::{Setting, SettingValue};
 use lueying_features::SchemeId;
 use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
@@ -274,24 +275,31 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 配置往返:extensions 键要能读、能原样存回;路径分隔符不能当扩展 id。
-    let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}", std::process::id()));
-    let _ = std::fs::write(&path, "extensions=my-pack,other-pack\n");
+    let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}.toml", std::process::id()));
+    let _ = std::fs::write(
+        &path,
+        "extensions = [\"my-pack\", \"other-pack\"]\n",
+    );
     let cfg = lueying_server::config::load(&path);
     let loaded = cfg.extensions == vec!["my-pack", "other-pack"];
     let saved =
         lueying_server::config::save(&path, &cfg).and_then(|()| std::fs::read_to_string(&path));
+    let reloaded = lueying_server::config::load(&path);
     let _ = std::fs::remove_file(&path);
     push(
         &mut checks,
         "配置保留扩展列表与顺序",
         loaded
-            && saved
-                .as_deref()
-                .is_ok_and(|text| text.contains("extensions=my-pack,other-pack")),
+            && reloaded.extensions == vec!["my-pack", "other-pack"]
+            && saved.as_deref().is_ok_and(|text| {
+                text.contains("extensions")
+                    && text.contains("\"my-pack\"")
+                    && text.contains("\"other-pack\"")
+            }),
         format!("读取 {loaded} 存回 {:?}", saved.as_deref().map(str::len)),
     );
-    let path = std::env::temp_dir().join(format!("lueying-config-e2e-bad-{}", std::process::id()));
-    let _ = std::fs::write(&path, "extensions=../evil,ok-pack\n");
+    let path = std::env::temp_dir().join(format!("lueying-config-e2e-bad-{}.toml", std::process::id()));
+    let _ = std::fs::write(&path, "extensions = [\"../evil\", \"ok-pack\"]\n");
     let cfg = lueying_server::config::load(&path);
     let rejected = cfg.extensions == vec!["ok-pack"];
     let _ = std::fs::remove_file(&path);
@@ -299,7 +307,63 @@ pub fn run(report: &mut String) -> usize {
         &mut checks,
         "扩展 id 拒绝路径",
         rejected,
-        "config.ini 的 extensions=../evil 应被忽略".into(),
+        "config.toml 的 extensions=[\"../evil\"] 应被忽略".into(),
+    );
+
+    // 声明式扩展设置:清单 schema 铺成一组,点一下写进 [ext.<id>]。
+    let mut ext_script = ScriptEntry::new("shot-ocr", "截图 OCR");
+    ext_script.settings = vec![
+        Setting {
+            key: "notify".to_string(),
+            title: "完成后通知".to_string(),
+            detail: String::new(),
+            kind: "toggle".to_string(),
+            default: Some(SettingValue::Bool(true)),
+            options: Vec::new(),
+        },
+        Setting {
+            key: "quality".to_string(),
+            title: "识别质量".to_string(),
+            detail: "慢一点更准".to_string(),
+            kind: "choice".to_string(),
+            default: Some(SettingValue::Text("high".to_string())),
+            options: vec!["fast".to_string(), "high".to_string()],
+        },
+    ];
+    let mut ext_settings = Settings {
+        scripts: vec![ext_script],
+        ..Settings::default()
+    };
+    ext_settings.cfg.extensions = vec!["shot-ocr".to_string()];
+    let ext_page = ext_settings.page(&colors());
+    let ext_group = ext_page
+        .groups
+        .iter()
+        .find(|group| group.title == "扩展 · 截图 OCR");
+    let rows: Vec<&str> = ext_group
+        .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
+        .unwrap_or_default();
+    let toggle = ids::ext_field(0);
+    let choice = ids::ext_field(1);
+    ext_settings.activate(&Id::new(toggle, 0));
+    ext_settings.activate(&Id::new(choice, 0));
+    let values = ext_settings.cfg.ext_settings.get("shot-ocr");
+    let focus = ext_settings.focus_ids();
+    let toggle_at = focus.iter().position(|id| id.base == toggle);
+    let choice_at = focus.iter().position(|id| id.base == choice);
+    let phrases_at = focus.iter().position(|id| id.base == ids::PHRASES);
+    push(
+        &mut checks,
+        "扩展声明式设置",
+        rows == ["完成后通知", "识别质量"]
+            && values.is_some_and(|table| {
+                table.get("notify") == Some(&serde_json::json!(false))
+                    && table.get("quality") == Some(&serde_json::json!("fast"))
+            })
+            && toggle_at.is_some()
+            && choice_at.is_some()
+            && phrases_at.is_some_and(|at| toggle_at < Some(at) && choice_at < Some(at)),
+        format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{phrases_at:?}"),
     );
 
     report.push_str("\n## 设置页模型\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");

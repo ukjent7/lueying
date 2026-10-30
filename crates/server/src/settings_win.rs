@@ -71,6 +71,15 @@ pub fn run() {
         .as_ref()
         .map_or_else(AppConfig::default, |path| config::load(path));
     let mut settings = Settings::with_config(cfg);
+    if let Some(issue) = settings.cfg.config_issues.first() {
+        let message = format!(
+            "配置有 {} 处问题:{} ({})",
+            settings.cfg.config_issues.len(),
+            issue.message,
+            issue.layer
+        );
+        settings.say(Notice::Error, message);
+    }
     settings.path = path;
     settings.groups = settings_actions::call(&Request::FuzzyStats)
         .map(|reply| reply.groups)
@@ -433,7 +442,7 @@ impl Window {
 
     /// Tab 走一圈。
     fn focus_step(&mut self, delta: isize) {
-        let order = Settings::focus_order();
+        let order = self.settings.focus_ids();
         if order.is_empty() {
             return;
         }

@@ -1,6 +1,6 @@
 # 设置
 
-从开始菜单的「掠影设置」或语言栏菜单打开。设置写入 `%APPDATA%\lueying\config.ini`,保存后立即生效,不需要重启输入法。
+从开始菜单的「掠影设置」或语言栏菜单打开。设置写入 `%APPDATA%\lueying\config.toml`,保存后立即生效,不需要重启输入法。
 
 | 分组 | 设置 | 说明 |
 |---|---|---|
@@ -14,12 +14,13 @@
 | 候选 | 候选字号 | 小、标准、大;只缩放候选行,拼音行不变 |
 | 候选 | 主题色 | 六种强调色预设;高对比度主题跟随系统色 |
 | 候选 | 用户效果 | 打开 `%APPDATA%\lueying\effects` 目录,写 SkSL 装饰候选窗;见[用户效果](effects.md) |
-| 候选 | 运行期脚本 | 「选择」列出已安装的包,可启用、切换或关闭;「目录」打开 `%APPDATA%\lueying\extensions`;多个扩展用 `config.ini` 的 `extensions=逗号分隔列表` 按序启用,见[运行期脚本扩展](extensions/script.md) |
+| 扩展 | 运行期脚本 | 「选择」列出已安装的包,可启用、切换或关闭;「目录」打开 `%APPDATA%\lueying\extensions`;多个扩展用 `config.toml` 的 `extensions = ["a", "b"]` 按序启用,见[运行期脚本扩展](extensions/script.md) |
+| 扩展 | 扩展设置 | 已启用扩展在清单里声明的开关与单选,由宿主渲染;值写入 `config.toml` 的 `[ext.<id>]` |
 | 候选 | 下一词联想 | 按本机上屏词序补全 |
 | 候选 | 自动模糊音 | 默认开启;「重置」清空模糊组的使用统计 |
 | 词库 | 自定义短语 | 在窗口内的编辑器里改 `phrases.txt`,保存后自动重载 |
 | 词库 | 自定义标点 | 打开 `punct.txt`,把半角符号映射成任意输出 |
-| 词库 | 按应用配置 | 打开 `apps.ini`,单个应用关中文标点或不学习 |
+| 词库 | 按应用配置 | 打开 `apps.toml`,单个应用关中文标点或不学习 |
 | 词库 | 配置备份 | 配置、短语、标点、按应用与词库打包导出,导入时恢复 |
 | 词库 | 用户词库 | 导入、导出或清空本机学习记录 |
 | 关于 | 引擎状态 | 词典来源与规模,语法模型、4M/25M 重排是否加载 |
@@ -39,28 +40,37 @@
 
 ## 配置文件
 
-`config.ini` 是行式 `键=值`,不解析行尾注释,未知键与坏值会被跳过。常用键:
+`config.toml` 是 TOML,未知键在读取时拒绝并记日志,值域错误在设置页页脚提示,坏值不阻断其余键。分层顺序是内置默认值 → 用户 `config.toml` → 按应用 `apps.toml` → 扩展命名空间 `[ext.<id>]`。常用键:
 
-```ini
-page_size=5
-scheme=full
-aux_code=false
-predict=true
-fuzzy=auto
-chinese_punct=true
-shift_toggle=true
-traditional=false
-traditional_region=general
-ui_layout=horizontal
-ui_font=standard
-ui_accent=0
-effects=on
-update_channel=stable
+```toml
+page_size = 5
+scheme = "full"
+aux_code = false
+predict = true
+fuzzy = "auto"
+chinese_punct = true
+shift_toggle = true
+traditional = false
+traditional_region = "general"
+ui_layout = "horizontal"
+ui_font = "standard"
+ui_accent = 0
+effects = true
+update_channel = "stable"
+extensions = ["shot-ocr"]
 ```
 
-`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `auto` 或 `off`(关掉自动模糊音);`traditional_region` 取 `general`、`tw`、`hk`;`ui_layout` 取 `horizontal`、`vertical`;`ui_font` 取 `small`、`standard`、`large`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `蓝`、`青`、`绿`、`紫`、`红`、`橙`;`effects` 取 `on` 或 `off`(关掉用户效果);`update_channel` 取 `stable`、`beta`。
+`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `"auto"` 或 `"off"`(也可以写布尔值);`traditional_region` 取 `"general"`、`"tw"`、`"hk"`;`ui_layout` 取 `"horizontal"`、`"vertical"`;`ui_font` 取 `"small"`、`"standard"`、`"large"`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `"蓝"`、`"青"`、`"绿"`、`"紫"`、`"红"`、`"橙"`;`effects` 取布尔值;`update_channel` 取 `"stable"`、`"beta"`。
 
-直接编辑文件也可以;改动会在设置窗保存时或服务下次读取时生效。
+扩展设置写在 `[ext.<id>]` 表里,键与类型由扩展清单的声明式 schema 决定:
+
+```toml
+[ext.shot-ocr]
+notify = true
+quality = "high"
+```
+
+旧版 `config.ini`/`apps.ini` 在首次启动时自动转成 TOML。直接编辑文件也可以;改动会在设置窗保存时或服务下次读取时生效。
 
 ## 自定义标点与按应用配置
 
@@ -71,16 +81,16 @@ update_channel=stable
 ^=………
 ```
 
-`apps.ini` 节名是宿主进程的 exe 名(小写),可用键 `punct` 与 `learning`:
+`apps.toml` 节名是宿主进程的 exe 名(小写),可用键 `punct` 与 `learning`:
 
-```ini
+```toml
 [notepad.exe]
-punct=off
-learning=off
+punct = false
+learning = false
 ```
 
 没写的键跟随全局设置;覆盖在应用会话上线时生效,改完文件后点一次设置「保存」即可。
 
 ## 配置备份
 
-「导出」把 `config.ini`、`phrases.txt`、`punct.txt`、`apps.ini` 与用户词库打包成一份文本;「导入」逐块写回文件、词库按合并方式恢复,最后自动重载。备份文件是普通文本,可以直接读;换机或重装时先装掠影,再导入一次即可。
+「导出」把 `config.toml`、`phrases.txt`、`punct.txt`、`apps.toml` 与用户词库打包成一份文本;「导入」逐块写回文件、词库按合并方式恢复,最后自动重载。旧备份里的 `config.ini`/`apps.ini` 块会先转成 TOML。备份文件是普通文本,可以直接读;换机或重装时先装掠影,再导入一次即可。

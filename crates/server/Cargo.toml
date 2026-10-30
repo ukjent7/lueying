@@ -27,7 +27,10 @@ lueying-rerank.workspace = true
 # 渲染核心:设置页的控件层在平台无关的部分,Windows 与 Linux E2E 共用。
 lueying-render.workspace = true
 lueying-protocol = { path = "../protocol" }
+# 配置 schema:typed TOML,未知键在读取时拒绝。
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "1.1"
 
 [target."cfg(windows)".dependencies]
 # 设置窗无障碍:AccessKit 把页面模型暴露成 UIA 树,读屏软件才能操作自绘控件。

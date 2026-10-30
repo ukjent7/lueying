@@ -26,7 +26,7 @@
 | 内容 | 位置 |
 |---|---|
 | 程序与词典 | `%ProgramFiles%\lueying` |
-| 配置 | `%APPDATA%\lueying\config.ini` |
+| 配置 | `%APPDATA%\lueying\config.toml` |
 | 自定义短语 | `%APPDATA%\lueying\phrases.txt` |
 | 用户词库 | `%LOCALAPPDATA%\lueying\user.tsv` |
 

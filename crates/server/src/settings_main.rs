@@ -2,7 +2,7 @@
 //!
 //! 窗口是原生 Win32 窗,画面走 Skia 光栅;页面模型在
 //! `lueying_server::settings_view`,平台侧动作在 `settings_actions`。
-//! 保存写 `config.ini`,再经命名管道让常驻 Server 立即重载。
+//! 保存写 `config.toml`,再经命名管道让常驻 Server 立即重载。
 //!
 //! `--selftest <报告路径>` 跑一遍自检:建窗、画一帧、贴一次、读回像素,
 //! Windows CI 用它确认原生设置窗这条链路没断。

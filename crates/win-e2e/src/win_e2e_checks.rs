@@ -279,22 +279,22 @@ pub(super) fn check_ext_selftest() -> Result<String, String> {
     Ok(format!("## 运行期脚本\n\nPASS,{line}"))
 }
 
-/// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.ini。
+/// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.toml。
 pub(super) fn check_preserved_punct(data: &std::path::Path) -> Result<(), String> {
     const VK_CONTROL: u16 = 0x11;
     const VK_OEM_PERIOD: u16 = 0xBE;
-    let config = data.join("lueying").join("config.ini");
+    let config = data.join("lueying").join("config.toml");
     let expect = |want: &str| -> Result<(), String> {
         // 配置在 Server 线程写完才改名,给 CI 磁盘留足时间。
         let deadline = Instant::now() + Duration::from_millis(1500);
         loop {
             let text = std::fs::read_to_string(&config).unwrap_or_default();
-            if text.contains(&format!("chinese_punct={want}")) {
+            if text.contains(&format!("chinese_punct = {want}")) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
                 return Err(format!(
-                    "{} 不含 chinese_punct={want}: `{text}`",
+                    "{} 不含 chinese_punct = {want}: `{text}`",
                     config.display()
                 ));
             }

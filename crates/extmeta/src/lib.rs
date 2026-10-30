@@ -51,6 +51,9 @@ pub struct Manifest {
     /// 申请的权限;API 1 必须为空。
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// 声明式设置:宿主渲染设置页,值存在 `[ext.<id>]`。
+    #[serde(default)]
+    pub settings: Vec<Setting>,
     /// 候选窗外观组件(API 1)。
     #[serde(default)]
     pub appearance: Option<Appearance>,
@@ -60,6 +63,114 @@ pub struct Manifest {
     /// 进程外能力组件(API 1)。
     #[serde(default)]
     pub panel: Option<Panel>,
+}
+
+/// 一条声明式设置。设置页按 `type` 渲染,值落在 `config.toml` 的
+/// `[ext.<id>]` 表;扩展脚本不直接画控件。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Setting {
+    /// 配置键;在扩展命名空间里唯一。
+    pub key: String,
+    /// 设置页显示的文字。
+    pub title: String,
+    /// 设置页的说明;可空。
+    #[serde(default)]
+    pub detail: String,
+    /// `toggle` 或 `choice`。
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// 默认值:toggle 为布尔,choice 为选项文本。
+    #[serde(default)]
+    pub default: Option<SettingValue>,
+    /// choice 的选项;toggle 必须为空。
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+/// 设置值。JSON 里就是布尔或字符串,配置里也是这两种。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SettingValue {
+    Bool(bool),
+    Text(String),
+}
+
+impl SettingValue {
+    /// 从配置里的 JSON 值取;数字、数组、null 都不算设置值。
+    pub fn from_json(value: &serde_json::Value) -> Option<Self> {
+        value
+            .as_bool()
+            .map(Self::Bool)
+            .or_else(|| value.as_str().map(|text| Self::Text(text.to_string())))
+    }
+
+    /// 写进配置值的 JSON 形态。
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Bool(on) => serde_json::Value::Bool(*on),
+            Self::Text(text) => serde_json::Value::String(text.clone()),
+        }
+    }
+}
+
+impl Setting {
+    /// 配置键。
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// 是否是开关。
+    pub fn is_toggle(&self) -> bool {
+        self.kind == "toggle"
+    }
+
+    /// 单选选项;开关为空。
+    pub fn options(&self) -> &[String] {
+        &self.options
+    }
+
+    /// 清单声明的默认值;写错的值在加载期已被拒绝,这里只兜底。
+    pub fn default_value(&self) -> SettingValue {
+        if self.is_toggle() {
+            return match &self.default {
+                Some(SettingValue::Bool(on)) => SettingValue::Bool(*on),
+                _ => SettingValue::Bool(false),
+            };
+        }
+        match &self.default {
+            Some(SettingValue::Text(text)) if self.options.contains(text) => {
+                SettingValue::Text(text.clone())
+            }
+            _ => SettingValue::Text(self.options.first().cloned().unwrap_or_default()),
+        }
+    }
+
+    /// 配置里的当前值;缺失或类型/选项不符时退回默认值。
+    pub fn resolve(&self, stored: Option<&serde_json::Value>) -> SettingValue {
+        let value = stored.and_then(SettingValue::from_json);
+        if self.is_toggle() {
+            return match value {
+                Some(SettingValue::Bool(on)) => SettingValue::Bool(on),
+                _ => self.default_value(),
+            };
+        }
+        match value {
+            Some(SettingValue::Text(text)) if self.options.contains(&text) => {
+                SettingValue::Text(text)
+            }
+            _ => self.default_value(),
+        }
+    }
+
+    /// 值是否符合这条设置的 schema。
+    pub fn accepts(&self, value: &serde_json::Value) -> bool {
+        match SettingValue::from_json(value) {
+            Some(SettingValue::Bool(_)) => self.is_toggle(),
+            Some(SettingValue::Text(text)) => !self.is_toggle() && self.options.contains(&text),
+            None => false,
+        }
+    }
 }
 
 /// API 2 的激活声明。三种入口都只是声明,按键绑定仍归用户。
@@ -340,6 +451,7 @@ impl Manifest {
         if !valid_version(&self.version) {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
+        check_settings(&self.settings)?;
 
         let components = self.appearance.is_some() || self.logic.is_some() || self.panel.is_some();
         match self.api {
@@ -480,6 +592,89 @@ impl Activate {
         }
         Ok(())
     }
+}
+
+/// 声明式设置:键、标题、类型与默认值都要能直接渲染。
+fn check_settings(settings: &[Setting]) -> Result<(), String> {
+    if settings.len() > 32 {
+        return Err(format!("声明了 {} 个设置,上限 32 个", settings.len()));
+    }
+    let mut keys: Vec<&str> = Vec::new();
+    for setting in settings {
+        if !valid_id(&setting.key) {
+            return Err(format!(
+                "设置键 {:?} 不合法:只允许小写字母、数字、- 与 _,且以字母或数字开头",
+                setting.key
+            ));
+        }
+        if keys.contains(&setting.key.as_str()) {
+            return Err(format!("设置键 {} 重复声明", setting.key));
+        }
+        keys.push(&setting.key);
+        let title_len = setting.title.trim().chars().count();
+        if title_len == 0 || setting.title.chars().count() > 80 {
+            return Err(format!("设置 {} 的标题为空或超过 80 字", setting.key));
+        }
+        if setting.title.chars().any(char::is_control)
+            || setting.detail.chars().count() > 200
+            || setting.detail.chars().any(char::is_control)
+        {
+            return Err(format!("设置 {} 的标题或说明含控制字符/说明超过 200 字", setting.key));
+        }
+        match setting.kind.as_str() {
+            "toggle" => {
+                if !setting.options.is_empty() {
+                    return Err(format!("开关设置 {} 不能声明 options", setting.key));
+                }
+                if matches!(&setting.default, Some(SettingValue::Text(_))) {
+                    return Err(format!("开关设置 {} 的默认值必须是布尔", setting.key));
+                }
+            }
+            "choice" => {
+                if setting.options.is_empty() || setting.options.len() > 8 {
+                    return Err(format!(
+                        "单选设置 {} 的选项数必须在 1..=8",
+                        setting.key
+                    ));
+                }
+                let mut seen: Vec<&str> = Vec::new();
+                for option in &setting.options {
+                    if option.is_empty()
+                        || option.chars().count() > 32
+                        || option.chars().any(char::is_control)
+                    {
+                        return Err(format!(
+                            "单选设置 {} 的选项 {option:?} 为空、超过 32 字或含控制字符",
+                            setting.key
+                        ));
+                    }
+                    if seen.contains(&option.as_str()) {
+                        return Err(format!("单选设置 {} 的选项 {option:?} 重复", setting.key));
+                    }
+                    seen.push(option);
+                }
+                match &setting.default {
+                    Some(SettingValue::Bool(_)) => {
+                        return Err(format!("单选设置 {} 的默认值必须是文本", setting.key));
+                    }
+                    Some(SettingValue::Text(text)) if !setting.options.contains(text) => {
+                        return Err(format!(
+                            "单选设置 {} 的默认值 {text:?} 不在选项里",
+                            setting.key
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            other => {
+                return Err(format!(
+                    "设置 {} 的 type {other:?} 不支持,只能是 toggle 或 choice",
+                    setting.key
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// id 只允许小写字母、数字、`-`、`_`,以字母或数字开头,最长 48 字节。

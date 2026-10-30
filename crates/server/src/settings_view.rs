@@ -52,6 +52,31 @@ pub mod ids {
     pub const CHANNEL: &str = "channel";
     pub const CLOSE: &str = "close";
     pub const SAVE: &str = "save";
+    /// 扩展声明式设置最多渲染多少个字段。
+    pub const EXT_FIELDS: usize = 16;
+
+    /// 第 `slot` 个扩展设置字段的控件前缀。
+    pub fn ext_field(slot: usize) -> &'static str {
+        match slot {
+            0 => "ext-0",
+            1 => "ext-1",
+            2 => "ext-2",
+            3 => "ext-3",
+            4 => "ext-4",
+            5 => "ext-5",
+            6 => "ext-6",
+            7 => "ext-7",
+            8 => "ext-8",
+            9 => "ext-9",
+            10 => "ext-10",
+            11 => "ext-11",
+            12 => "ext-12",
+            13 => "ext-13",
+            14 => "ext-14",
+            15 => "ext-15",
+            _ => "ext-0",
+        }
+    }
 }
 
 /// 提示的种类:决定页脚那行字是什么颜色。
@@ -213,9 +238,9 @@ impl Settings {
         }
     }
 
-    /// 四个分组。
+    /// 固定分组 + 扩展声明的设置分组。
     fn groups_page(&self, colors: &PageColors) -> Vec<Group> {
-        vec![
+        let mut groups = vec![
             Group {
                 title: "输入".to_string(),
                 rows: vec![
@@ -497,7 +522,7 @@ impl Settings {
                     },
                     Row {
                         label: "按应用配置".to_string(),
-                        detail: "编辑 apps.ini，单个应用关标点或学习".to_string(),
+                        detail: "在 apps.toml 里按应用关标点或学习".to_string(),
                         control: Control::Buttons {
                             items: vec![Button {
                                 id: Id::new(ids::APPS, 0),
@@ -599,7 +624,20 @@ impl Settings {
                     },
                 ],
             },
-        ]
+        ];
+        // 声明式扩展设置紧跟在「扩展」分组后面。
+        groups.splice(3..3, self.ext_setting_groups());
+        groups
+    }
+
+    /// 扩展声明式设置展开成的分组。
+    fn ext_setting_groups(&self) -> Vec<Group> {
+        crate::settings_ext::groups(&self.cfg.extensions, &self.scripts, &self.cfg)
+    }
+
+    /// 当前页面上实际渲染的扩展字段。
+    pub(crate) fn ext_fields(&self) -> Vec<crate::settings_ext::Field> {
+        crate::settings_ext::fields(&self.cfg.extensions, &self.scripts, &self.cfg)
     }
 
     /// 头部右侧的更新按钮。
@@ -730,6 +768,17 @@ impl Settings {
 
     /// 点一下控件:能改配置的直接改,改不了的交给平台侧。
     pub fn activate(&mut self, id: &Id) -> Option<Action> {
+        if let Some(slot) = crate::settings_ext::slot(id.base) {
+            if let Some(field) = self
+                .ext_fields()
+                .into_iter()
+                .find(|field| field.slot == slot)
+                && crate::settings_ext::apply(&mut self.cfg, &field, id.index)
+            {
+                self.clear_notice();
+            }
+            return None;
+        }
         match id.base {
             ids::AUX => {
                 self.cfg.aux = !self.cfg.aux;
@@ -845,6 +894,25 @@ impl Settings {
         if !Self::is_segment(id.base) {
             return false;
         }
+        if let Some(slot) = crate::settings_ext::slot(id.base) {
+            let Some(field) = self
+                .ext_fields()
+                .into_iter()
+                .find(|field| field.slot == slot)
+            else {
+                return false;
+            };
+            let crate::settings_ext::Kind::Choice { options, selected } = &field.kind else {
+                return false;
+            };
+            if options.is_empty() {
+                return false;
+            }
+            let next = (*selected as isize + delta).rem_euclid(options.len() as isize) as usize;
+            crate::settings_ext::apply(&mut self.cfg, &field, next);
+            self.clear_notice();
+            return true;
+        }
         let count = match id.base {
             ids::SCHEME => SchemeId::ALL.len(),
             ids::REGION => Region::NAMES.len(),
@@ -872,11 +940,18 @@ impl Settings {
                 | ids::FONT
                 | ids::ACCENT
                 | ids::CHANNEL
-        )
+        ) || crate::settings_ext::slot(base).is_some()
     }
 
     /// 分段组当前选中的是第几格。
     pub fn selected(&self, base: &str) -> usize {
+        if let Some(slot) = crate::settings_ext::slot(base) {
+            return self
+                .ext_fields()
+                .into_iter()
+                .find(|field| field.slot == slot)
+                .map_or(0, |field| field.selected());
+        }
         match base {
             ids::SCHEME => SchemeId::ALL
                 .iter()
@@ -898,82 +973,9 @@ impl Settings {
             _ => 0,
         }
     }
-
-    /// Tab 走一圈的次序:头部 → 卡片 → 页脚。
-    pub fn focus_order() -> Vec<Id> {
-        let mut order = vec![Id::new(ids::UPDATE, 0)];
-        order.extend([
-            Id::new(ids::SCHEME, 0),
-            Id::new(ids::AUX, 0),
-            Id::new(ids::CHINESE_PUNCT, 0),
-            Id::new(ids::SHIFT_TOGGLE, 0),
-            Id::new(ids::TRADITIONAL, 0),
-            Id::new(ids::REGION, 0),
-            Id::new(ids::PAGE_SIZE, 0),
-            Id::new(ids::LAYOUT, 0),
-            Id::new(ids::FONT, 0),
-            Id::new(ids::ACCENT, 0),
-            Id::new(ids::EFFECTS, 0),
-            Id::new(ids::EFFECTS_TOGGLE, 0),
-            Id::new(ids::PREDICT, 0),
-            Id::new(ids::RESET_FUZZY, 0),
-            Id::new(ids::FUZZY, 0),
-            Id::new(ids::SCRIPTS, 0),
-            Id::new(ids::SCRIPTS_DIR, 0),
-            Id::new(ids::CONSENT, 0),
-            Id::new(ids::AUDIT, 0),
-            Id::new(ids::EXT_METRICS, 0),
-            Id::new(ids::OCR, 0),
-            Id::new(ids::OCR_DIR, 0),
-            Id::new(ids::PHRASES, 0),
-            Id::new(ids::PUNCT, 0),
-            Id::new(ids::APPS, 0),
-            Id::new(ids::BACKUP_EXPORT, 0),
-            Id::new(ids::BACKUP_IMPORT, 0),
-            Id::new(ids::IMPORT_USER, 0),
-            Id::new(ids::EXPORT_USER, 0),
-            Id::new(ids::CLEAR_USER, 0),
-            Id::new(ids::DIAGNOSTICS, 0),
-            Id::new(ids::CHANNEL, 0),
-        ]);
-        order.push(Id::new(ids::CLOSE, 0));
-        order.push(Id::new(ids::SAVE, 0));
-        order
-    }
 }
 
-/// 「关于」里的状态行:词典来源与规模、模型是否加载。
-pub fn status_detail(status: &Option<EngineStatus>) -> String {
-    match status {
-        Some(s) => format!(
-            "词典 {}({}) · 语法模型{} · 重排 4M{} / 25M{}",
-            word_count(s.dict_words),
-            s.dict_source,
-            mark(s.gram),
-            mark(s.rerank4m),
-            mark(s.rerank25m),
-        ),
-        None => "服务未运行,按任意键后再看".to_string(),
-    }
-}
-
-/// 词条数的人类读法:上万用「万」,否则原样。
-fn word_count(words: usize) -> String {
-    if words >= 10_000 {
-        let w = words as f32 / 10_000.0;
-        if (w * 10.0).round() as i32 % 10 == 0 {
-            format!("{w:.0} 万")
-        } else {
-            format!("{w:.1} 万")
-        }
-    } else {
-        format!("{words} 词条")
-    }
-}
-
-fn mark(on: bool) -> &'static str {
-    if on { "✓" } else { "✗" }
-}
+pub use crate::settings_text::status_detail;
 
 #[cfg(test)]
 #[path = "settings_view_tests.rs"]

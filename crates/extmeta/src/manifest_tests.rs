@@ -360,3 +360,76 @@ fn rejects_oversized_manifest() {
     let text = "x".repeat(MAX_MANIFEST_BYTES + 1);
     assert!(Manifest::parse(text.as_bytes()).is_err());
 }
+
+#[test]
+fn parses_declarative_settings() {
+    let mut value = script_v2();
+    value["settings"] = json!([
+        {
+            "key": "notify",
+            "title": "完成后通知",
+            "detail": "识别完成弹系统通知",
+            "type": "toggle",
+            "default": true
+        },
+        {
+            "key": "quality",
+            "title": "识别质量",
+            "type": "choice",
+            "options": ["fast", "high"],
+            "default": "high"
+        }
+    ]);
+    let manifest = parse(value).expect("声明式设置应通过");
+    let notify = &manifest.settings[0];
+    assert!(notify.is_toggle());
+    assert_eq!(
+        notify.resolve(None),
+        SettingValue::Bool(true),
+        "缺省用清单默认值"
+    );
+    assert_eq!(
+        notify.resolve(Some(&json!(false))),
+        SettingValue::Bool(false)
+    );
+    assert_eq!(
+        notify.resolve(Some(&json!("yes"))),
+        SettingValue::Bool(true),
+        "类型不符退回默认值"
+    );
+    let quality = &manifest.settings[1];
+    assert_eq!(quality.default_value(), SettingValue::Text("high".into()));
+    assert_eq!(
+        quality.resolve(Some(&json!("ultra"))),
+        SettingValue::Text("high".into()),
+        "选项外的值退回默认值"
+    );
+    assert!(quality.accepts(&json!("fast")));
+    assert!(!quality.accepts(&json!("ultra")));
+    assert!(!quality.accepts(&json!(1)));
+}
+
+#[test]
+fn rejects_bad_settings() {
+    let mut value = script_v2();
+    let check = |setting: serde_json::Value| {
+        let mut value = value.clone();
+        value["settings"] = json!([setting]);
+        assert!(parse(value).is_err());
+    };
+    check(json!({"key": "Bad Key", "title": "x", "type": "toggle"}));
+    check(json!({"key": "ok", "title": "", "type": "toggle"}));
+    check(json!({"key": "ok", "title": "x", "type": "switch"}));
+    check(json!({"key": "ok", "title": "x", "type": "toggle", "options": ["a"]}));
+    check(json!({"key": "ok", "title": "x", "type": "choice", "options": []}));
+    check(json!({"key": "ok", "title": "x", "type": "choice", "options": ["a"], "default": "b"}));
+    check(json!({"key": "ok", "title": "x", "type": "choice", "options": ["a", "a"]}));
+    check(json!({"key": "ok", "title": "x", "type": "toggle", "extra": 1}));
+    // 重复键。
+    let mut value = script_v2();
+    value["settings"] = json!([
+        {"key": "same", "title": "一", "type": "toggle"},
+        {"key": "same", "title": "二", "type": "toggle"}
+    ]);
+    assert!(parse(value).is_err());
+}

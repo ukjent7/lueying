@@ -5,7 +5,7 @@ use lueying_engine::{Key, Mode};
 
 pub struct Scenario {
     pub name: &'static str,
-    /// 该场景显式关闭自动模糊音(`config.ini` 的 `fuzzy=off`)。
+    /// 该场景显式关闭自动模糊音(`config.toml` 的 `fuzzy = "off"`)。
     pub fuzzy_off: bool,
     /// 场景开始时打开全角模式。
     pub fullwidth: bool,

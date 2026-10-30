@@ -23,13 +23,13 @@
 
 ## 启用
 
-打开设置页「扩展 → 运行期脚本」,点「选择」挑一个包,保存后生效。多扩展直接编辑 `%APPDATA%\lueying\config.ini`,写一行逗号分隔的列表:
+打开设置页「扩展 → 运行期脚本」,点「选择」挑一个包,保存后生效。多扩展直接编辑 `%APPDATA%\lueying\config.toml`:
 
-```ini
-extensions=shot-ocr,clipboard-history
+```toml
+extensions = ["shot-ocr", "clipboard-history"]
 ```
 
-顺序即组合顺序:后面的扩展返回的非空补丁字段覆盖前面的。空值、`off`、`none` 表示不启用;旧键 `script=my-pack` 仍可读,等价于只有一个扩展。改完脚本不用重启,服务每秒按内容哈希检查一次热重载。
+顺序即组合顺序:后面的扩展返回的非空补丁字段覆盖前面的。空数组表示不启用;旧键 `script=my-pack` 仍可读,等价于只有一个扩展。改完脚本不用重启,服务每秒按内容哈希检查一次热重载。
 
 ## manifest.json
 
@@ -50,7 +50,18 @@ API 2 的脚本清单:
     ]
   },
   "needs": ["notify"],
-  "capabilities": []
+  "capabilities": [],
+  "settings": [
+    { "key": "notify", "title": "完成后通知", "type": "toggle", "default": true },
+    {
+      "key": "quality",
+      "title": "识别质量",
+      "detail": "慢一点更准",
+      "type": "choice",
+      "options": ["fast", "high"],
+      "default": "high"
+    }
+  ]
 }
 ```
 
@@ -64,6 +75,36 @@ API 2 的脚本清单:
 | `activate` | 否 | 激活声明;`triggers`、`hotkeys`、`commands` 至少一项 |
 | `needs` | 否 | 需要的宿主服务:capture、ocr、clipboard、panel、output、hotkey、net、store、notify |
 | `capabilities` | 否 | 申请的权限;API 1 必须为空 |
+| `settings` | 否 | 声明式设置,最多 32 项;宿主渲染,值存 `[ext.<id>]` |
+
+### 声明式设置
+
+每项设置只有两种类型,设置页由宿主画,扩展脚本不用碰 UI:
+
+| 字段 | 说明 |
+|---|---|
+| `key` | 配置键,字符规则同扩展 id,最多 48 字节;在 `[ext.<id>]` 下唯一 |
+| `title` | 设置页行标题,1–80 字 |
+| `detail` | 行说明,可空,最多 200 字 |
+| `type` | `toggle`(开关)或 `choice`(单选) |
+| `default` | 开关写布尔,单选写选项文本;缺省时开关为 `false`,单选为第一项 |
+| `options` | 仅 `choice`:1–8 个不重复选项,每个最多 32 字 |
+
+键重复、选项越界、默认值不在选项里都会让清单加载失败。启用扩展后,设置页
+在「扩展」分组后多出一组「扩展 · <名称>」;点控件直接改配置,保存
+`config.toml` 时写入:
+
+```toml
+[ext.my-pack]
+notify = true
+quality = "high"
+```
+
+外部程序可以经命名管道用 `Request::Ext { id, method, params }` 读写同一份值:
+`settings.get` 在应答的 `value` 里返回 `{key: value}`(缺失项补默认值),
+`settings.set` 的 `params` 是一个键值对象,逐键按清单校验后合并、保存并
+立即生效;未知键或类型不符整次请求失败,配置不改。失败时 `ok = false`,
+`error` 写原因。
 
 旧版外观包继续可用:
 
@@ -99,10 +140,10 @@ lueying.command("run", (args) => {
 - `when` 可选 `any`、`editable`、`composing`,由宿主在绑定时过滤。
 
 全局热键由宿主的用户绑定表管理,扩展清单里的 `activate.hotkeys` 只是建议。
-`config.ini` 写 `bindings=Ctrl+Alt+O=my-pack.run,...` 把组合串映射到完整
-命令 id;宿主强制至少两个修饰键、拒绝系统保留组合,同组合冲突时报已绑定的
-命令。命中后按命令的 `when` 与当前输入状态过滤,再执行命令并写日志。Scope
-随扩展卸载整体回收。异步示例:
+`config.toml` 的 `[bindings]` 表把组合串映射到完整命令 id;宿主强制至少
+两个修饰键、拒绝系统保留组合,同组合冲突时报已绑定的命令。命中后按命令的
+`when` 与当前输入状态过滤,再执行命令并写日志。Scope 随扩展卸载整体回收。
+异步示例:
 
 ```js
 lueying.command("later", async (args) => {
@@ -113,15 +154,15 @@ lueying.command("later", async (args) => {
 
 宿主拿到 `Invoke::Pending` 后按宿主时钟泵作业队列;等待期间扩展照常参与空闲卸载计时。
 
-命令面板由总热键唤出:`config.ini` 的 `panel_hotkey=Ctrl+Alt+Shift+Space`
-(写 `off` 关闭)。面板自带输入框,不经过 TSF 会话:输入拼音时用同一台引擎
+命令面板由总热键唤出:`config.toml` 的 `panel_hotkey = "Ctrl+Alt+Shift+Space"`
+(写 `"off"` 关闭)。面板自带输入框,不经过 TSF 会话:输入拼音时用同一台引擎
 的候选匹配命令标题,拉丁标题按子串直接匹配;上下键选择、Enter 执行、Esc
 取消,点行也能执行。唤出前记录前台窗口,面板关闭后归还焦点;面板是独立的
 可获焦窗口,与无焦点候选窗分开。面板列出全部已声明命令,显式唤出不按
 `when` 过滤。没有启用任何扩展时面板照常打开,只是没有命令可执行。
 
-输入内触发(动作候选)用同一份用户绑定表的另一种行:
-`triggers=bc=my-pack.run,...`。整串输入与触发词完全一致时,命令以候选形式
+输入内触发(动作候选)用同一份用户配置的 `[triggers]` 表:
+`"bc" = "my-pack.run"`。整串输入与触发词完全一致时,命令以候选形式
 出现,带「命令」提示,默认排第 2 位,不做前缀匹配;数字键、方向键+空格或
 点选执行命令,不上屏文字,组合清空。空格与 Enter 照旧上屏文字:原文候选
 始终可达(缺了就补在页尾,带「原文」提示)。用户连续两次选字面原文后该
@@ -186,13 +227,15 @@ lueying.command("shot-ocr", async () => {
 冲掉用户改过的脚本。随包内容一致时安装器会补写同意记录。启用方式与普通
 扩展相同:设置页「扩展 → 运行期脚本」里选择,或写配置:
 
-```ini
-extensions=shot-ocr
-bindings=Ctrl+Alt+O=shot-ocr.run
+```toml
+extensions = ["shot-ocr"]
+
+[bindings]
+"Ctrl+Alt+O" = "shot-ocr.run"
 ```
 
-清单里的 `Ctrl+Alt+O` 只是建议,实际组合由用户的 `bindings` 行决定。
-命令默认无绑定,也不进动作候选;触发词同样由 `triggers=` 决定。上屏走
+清单里的 `Ctrl+Alt+O` 只是建议,实际组合由用户的 `[bindings]` 表决定。
+命令默认无绑定,也不进动作候选;触发词同样由 `[triggers]` 决定。上屏走
 Unicode 注入当前焦点(WM_CHAR),Electron 与自绘控件适用;前台窗口权限
 更高时返回明确错误。截图的 BMP 落在 `%TEMP%\lueying-capture`,文件名带
 毫秒时间戳。

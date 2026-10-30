@@ -6,6 +6,17 @@
 
 ### 新增
 
+- 配置统一为 TOML(T10):`%APPDATA%\lueying\config.toml` 是类型化 schema,
+  未知键在读取时拒绝,坏值收集成「文件层 + 原因」写进日志并在设置页页脚
+  提示;按应用覆盖独立到 `apps.toml`,扩展设置进 `[ext.<id>]` 命名空间。
+  旧 `config.ini`/`apps.ini` 首次启动自动转成 TOML,备份导入兼容旧块。
+- 通用扩展请求(T10):协议新增 `Request::Ext { id, method, params }` 与
+  `Reply.ext`,宿主提供 `settings.get` / `settings.set`;读写逐个键按清单
+  schema 校验,`settings.set` 合并后保存并立即下发给现有会话。
+- 扩展声明式设置(T10):清单 API 2 可声明 `settings`(开关或单选),宿主在
+  设置页「扩展 · <名称>」分组里渲染,值存 `[ext.<id>]`;每包最多 32 项,
+  键、标题、选项、默认值与未知字段在加载期校验。
+
 - 设置窗无障碍(T9):设置窗接入 AccessKit,把 `settings_view` 的稳定控件 ID
   映射成 UI Automation 树,读屏软件能读到分组、开关、单选、按钮与状态提示,
   并通过 `Click` / `Focus` 操作,与鼠标走同一条处理路径;焦点移动、滚动与

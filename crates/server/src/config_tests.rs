@@ -5,12 +5,17 @@ fn temp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("lueying-config-unit-{}-{name}", std::process::id()))
 }
 
-fn load_text(name: &str, text: &str) -> AppConfig {
-    let path = temp(name);
-    std::fs::write(&path, text).expect("写临时配置");
-    let cfg = load(&path);
-    let _ = std::fs::remove_file(&path);
-    cfg
+fn load_text(_name: &str, text: &str) -> AppConfig {
+    // 旧 INI 用例直接走迁移解析器;正式入口只读 config.toml。
+    let mut merged = AppConfig::default();
+    let mut issues = Vec::new();
+    crate::config_file::apply(
+        &mut merged,
+        crate::config_file::from_ini(text),
+        "config.ini",
+        &mut issues,
+    );
+    merged
 }
 
 #[test]
@@ -162,7 +167,7 @@ fn ppocr_dir_requires_all_three_files() {
 
 #[test]
 fn save_keeps_extensions_and_round_trips() {
-    let path = temp("roundtrip");
+    let path = temp("roundtrip.toml");
     let cfg = AppConfig {
         extensions: vec!["first".to_string(), "second".to_string()],
         triggers: vec![("bc".to_string(), "shot.run".to_string())],
@@ -174,10 +179,11 @@ fn save_keeps_extensions_and_round_trips() {
     let text = std::fs::read_to_string(&path).expect("读配置");
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);
-    assert!(text.contains("extensions=first,second\n"), "{text}");
-    assert!(text.contains("triggers=bc=shot.run\n"), "{text}");
-    assert!(text.contains("panel_hotkey=Ctrl+Alt+Shift+P\n"), "{text}");
-    assert!(text.contains("ocr_engine=ppocr\n"), "{text}");
+    assert!(text.contains("extensions"), "{text}");
+    assert!(text.contains("\"first\"") && text.contains("\"second\""), "{text}");
+    assert!(text.contains("bc = \"shot.run\""), "{text}");
+    assert!(text.contains("panel_hotkey = \"Ctrl+Alt+Shift+P\""), "{text}");
+    assert!(text.contains("ocr_engine = \"ppocr\""), "{text}");
     assert_eq!(
         loaded.triggers,
         vec![("bc".to_string(), "shot.run".to_string())]
@@ -185,4 +191,72 @@ fn save_keeps_extensions_and_round_trips() {
     assert_eq!(loaded.extensions, vec!["first", "second"]);
     assert_eq!(loaded.panel_hotkey, "Ctrl+Alt+Shift+P");
     assert_eq!(loaded.ocr_backend, OcrBackend::Ppocr);
+}
+
+#[test]
+fn toml_schema_merges_core_apps_and_extension_namespace() {
+    let text = r#"
+page_size = 9
+ui_accent = "青"
+extensions = ["shot-ocr", "../evil", "shot-ocr"]
+[bindings]
+"Ctrl+Alt+O" = "shot.run"
+[triggers]
+BC = "shot.run"
+[ext.shot-ocr]
+model = "ppocr"
+limit = 3
+"#;
+    let mut cfg = AppConfig::default();
+    let mut issues = Vec::new();
+    let file: crate::config_file::FileConfig = toml::from_str(text).expect("解析 TOML");
+    crate::config_file::apply(&mut cfg, file, "config.toml", &mut issues);
+    assert_eq!(cfg.page_size, 9);
+    assert_eq!(cfg.ui_accent, 1);
+    assert_eq!(cfg.extensions, vec!["shot-ocr"]);
+    assert_eq!(
+        cfg.bindings,
+        vec![
+            ("Ctrl+Alt+O".to_string(), "shot.run".to_string())
+        ]
+    );
+    assert_eq!(
+        cfg.triggers,
+        vec![("bc".to_string(), "shot.run".to_string())]
+    );
+    assert_eq!(
+        cfg.ext_settings["shot-ocr"]["model"],
+        serde_json::Value::String("ppocr".into())
+    );
+    assert!(issues.iter().any(|issue| issue.message.contains("../evil")));
+}
+
+#[test]
+fn toml_schema_rejects_unknown_keys() {
+    assert!(toml::from_str::<crate::config_file::FileConfig>("nope = 1").is_err());
+    assert!(toml::from_str::<crate::config_file::FileConfig>("page_size = \"big\"").is_err());
+}
+
+#[test]
+fn apps_toml_lowercases_hosts_and_skips_nodes() {
+    let text = r#"
+["NotePad.exe"]
+punct = false
+learning = true
+["other.exe"]
+learning = false
+"#;
+    let layers = crate::config_file::apps_from_toml(text).expect("解析 apps.toml");
+    let mut config = AppConfig::default();
+    config.apps = layers
+        .into_iter()
+        .map(|(host, layer)| (host, layer.into()))
+        .collect();
+    assert_eq!(
+        config.app_override("notepad.exe"),
+        AppOverride {
+            punct: Some(false),
+            learning: Some(true),
+        }
+    );
 }
