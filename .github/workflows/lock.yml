@@ -14,8 +14,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: 生成锁文件并编译 OCR
-        run: cargo test -p lueying-ocr --release
+      - name: 下载 PP-OCRv6 模型
+        run: bash tools/fetch_ppocr.sh data/ppocr
+      - name: 生成锁文件、编译并跑真模型
+        env:
+          LUEYING_PPOCR_DIR: data/ppocr
+        run: cargo test -p lueying-ocr --release -- --include-ignored
       - name: 上传 Cargo.lock
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
