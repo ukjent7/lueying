@@ -15,11 +15,14 @@ pub(crate) fn load(path: &Path) -> Result<Plan, String> {
         return Err(format!("模型缺失:{}", path.display()));
     }
     let model = tract_onnx::onnx()
+        // 模型自带的中间张量形状来自 Paddle2ONNX 导出时的推断,Resize
+        // 这类节点的声明和实际不一致;交给 tract 自己推。
+        .with_ignore_value_info(true)
         .model_for_path(path)
-        .map_err(|e| format!("解析 {} 失败: {e}", path.display()))?
+        .map_err(|e| format!("解析 {} 失败: {e:?}", path.display()))?
         .into_optimized()
-        .map_err(|e| format!("优化 {} 失败: {e}", path.display()))?;
+        .map_err(|e| format!("优化 {} 失败: {e:?}", path.display()))?;
     model
         .into_runnable()
-        .map_err(|e| format!("编译 {} 失败: {e}", path.display()))
+        .map_err(|e| format!("编译 {} 失败: {e:?}", path.display()))
 }
