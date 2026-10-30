@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extjs::bindings::BindingTable;
 use lueying_extjs::{
-    EffectSlot, EffectsPatch, Invoke, Limits, Registry, Runtime, SceneIn, ScenePatch, Service,
+    EffectSlot, EffectsPatch, Invoke, Limits, Provider, Registry, Runtime, SceneIn, ScenePatch,
+    Service,
 };
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
@@ -319,7 +320,9 @@ fn load(order: &[String], hotkey: &Arc<services::HotkeyProvider>) -> Option<Runt
     registry.set(Service::Ocr, Arc::new(services::OcrProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     registry.set(Service::Panel, Arc::new(services::PanelProvider));
-    registry.set(Service::Hotkey, Arc::clone(hotkey));
+    // 热键提供者由 worker 持有共享状态;`set` 收 trait 对象,先做一次强转。
+    let hotkey: Arc<dyn Provider> = Arc::clone(hotkey);
+    registry.set(Service::Hotkey, hotkey);
     registry.set(Service::Notify, Arc::new(services::NotifyProvider));
     let (runtime, errors) = Runtime::open_with(&root, order, Limits::default(), registry);
     for error in errors {

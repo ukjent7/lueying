@@ -131,10 +131,17 @@ pub fn parse(hotkey: &str) -> Result<Hotkey, String> {
     if modifiers.len() < 2 {
         return Err(format!("热键 {hotkey:?} 至少要两个修饰键"));
     }
+    // 归一修饰键顺序,结构体比较与规范串一致;canonical 也按这个顺序输出。
+    modifiers.sort_by_key(|modifier| match modifier {
+        Modifier::Ctrl => 0,
+        Modifier::Alt => 1,
+        Modifier::Shift => 2,
+        Modifier::Win => 3,
+    });
     let parsed = Hotkey { modifiers, key };
     let canonical = parsed.canonical();
     if RESERVED.contains(&canonical.as_str()) {
-        return Err(format!("热键 {canonical} 是系统保留组合"));
+        return Err(format!("热键 {canonical:?} 是系统保留组合"));
     }
     Ok(parsed)
 }
