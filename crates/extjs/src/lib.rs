@@ -38,7 +38,7 @@
 
 #![deny(missing_docs)]
 
-mod bindings;
+pub mod bindings;
 mod host;
 mod manifest;
 mod pack;

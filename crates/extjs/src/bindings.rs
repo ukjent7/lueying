@@ -233,4 +233,5 @@ impl BindingTable {
 }
 
 #[cfg(test)]
+#[path = "bindings_tests.rs"]
 mod bindings_tests;

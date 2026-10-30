@@ -1030,7 +1030,9 @@ lueying.command("try_ocr", function () {
 /// 用户绑定表(T4 入口):解析归一、语法与保留组合拒绝、表内冲突、when 过滤。
 fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
     let parse = |combo: &str| lueying_extjs::bindings::parse(combo);
-    let canonical = parse("alt+CTRL+o").map(|hotkey| hotkey.canonical());
+    let canonical = parse("alt+CTRL+o")
+        .map(|hotkey| hotkey.canonical())
+        .ok();
     push(
         checks,
         "组合串归一",
