@@ -388,8 +388,7 @@ fn copy_tree(
     files: &mut Vec<(String, u64)>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
-    let entries =
-        std::fs::read_dir(source).map_err(|e| format!("读 {}: {e}", source.display()))?;
+    let entries = std::fs::read_dir(source).map_err(|e| format!("读 {}: {e}", source.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("读 {}: {e}", source.display()))?;
         let name = entry.file_name().to_string_lossy().into_owned();

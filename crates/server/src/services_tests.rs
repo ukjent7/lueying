@@ -288,10 +288,7 @@ fn notify_ok_empty_deliver_and_panel_stub() {
         .call("output", "deliver", r#"{"text":""}"#, 2)
         .unwrap();
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("output 未回传");
-    assert_eq!(
-        completion.result.as_deref(),
-        Ok(r#"{"delivered":false}"#)
-    );
+    assert_eq!(completion.result.as_deref(), Ok(r#"{"delivered":false}"#));
 
     registry
         .call("panel", "show", r#"{"title":"板","items":["甲"]}"#, 3)

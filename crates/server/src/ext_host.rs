@@ -11,9 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lueying_extjs::bindings::BindingTable;
-use lueying_extjs::{
-    Invoke, Limits, Registry, Runtime, SceneIn, ScenePatch, Service,
-};
+use lueying_extjs::{Invoke, Limits, Registry, Runtime, SceneIn, ScenePatch, Service};
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
 use lueying_server::services;
