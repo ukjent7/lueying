@@ -12,10 +12,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use lueying_dict::Dictionary;
-use lueying_render::command::{self, CommandView};
+use lueying_render::command;
 use lueying_render::panel::Palette;
 use lueying_server::blit::Layer;
-use lueying_server::command_panel::{CommandItem, CommandPanel};
+use lueying_server::command_panel::{CommandItem, CommandPanel, CommandView};
 use lueying_server::font;
 use lueying_server::theme;
 use skia_safe::Font;
@@ -26,15 +26,15 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
-    VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN, VK_SHIFT, VK_TAB,
-    VK_UP,
+    GetKeyState, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, SetFocus,
+    VIRTUAL_KEY, VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN,
+    VK_SHIFT, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClassNameW,
     GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
     IDC_ARROW, IsWindow, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOW,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW, SetFocus, SetForegroundWindow,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW, SetForegroundWindow,
     SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE, WINDOW_EX_STYLE,
     WM_ACTIVATE, WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN,
     WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -736,6 +736,16 @@ fn foreground_class() -> String {
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
+/// 自检宿主的窗口过程;`DefWindowProcW` 是 Rust ABI,不能直接当 `WNDPROC`。
+unsafe extern "system" fn host_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
 /// 自检宿主窗口:面板要把焦点还到这里。
 fn create_host_window() -> Result<HWND, String> {
     unsafe {
@@ -745,7 +755,7 @@ fn create_host_window() -> Result<HWND, String> {
         let mut result = Ok(());
         ONCE.call_once(|| unsafe {
             let wc = WNDCLASSW {
-                lpfnWndProc: Some(DefWindowProcW),
+                lpfnWndProc: Some(host_proc),
                 hInstance: hinstance,
                 lpszClassName: w!("lueying-panel-selftest-host"),
                 ..Default::default()
