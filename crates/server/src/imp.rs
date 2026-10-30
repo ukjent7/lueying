@@ -366,6 +366,10 @@ pub(super) fn real_main() {
     }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
+        // 扩展宿主平时跟着候选窗起;无 UI 时单独开一个(Windows E2E 用),
+        // 默认不开,空闲成本仍然为零。
+        let _host = std::env::var_os("LUEYING_EXT_HOST")
+            .map(|_| crate::ext_host::Script::spawn(Arc::clone(&state)));
         loop {
             std::thread::park();
         }

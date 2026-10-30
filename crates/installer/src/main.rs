@@ -99,12 +99,58 @@ mod imp {
         remove_old_uninstall_key();
         remove_legacy_registry();
         remove_shortcuts();
+        install_bundled_extensions(&target);
         if let Err(error) =
             lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
         {
             trace(&format!("install: spawn server failed: {error}"));
         }
         trace("install: done");
+        Ok(())
+    }
+
+    /// 官方起步扩展:安装包放在 `{app}\extensions`,复制到当前用户的
+    /// `%APPDATA%\lueying\extensions`。已存在的目录不覆盖,用户改过的包保留。
+    fn install_bundled_extensions(target: &Path) {
+        let Some(appdata) = std::env::var_os("APPDATA") else {
+            return;
+        };
+        let source = target.join("extensions");
+        let dest = PathBuf::from(appdata).join("lueying").join("extensions");
+        let Ok(entries) = std::fs::read_dir(&source) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let into = dest.join(&name);
+            if into.exists() {
+                continue;
+            }
+            if let Err(error) = copy_tree(&path, &into) {
+                trace(&format!(
+                    "install: 复制扩展 {} 失败: {error}",
+                    name.to_string_lossy()
+                ));
+            }
+        }
+    }
+
+    /// 递归复制;扩展包只有清单与脚本,不需要保留属性。
+    fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let into = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy_tree(&entry.path(), &into)?;
+            } else {
+                std::fs::copy(entry.path(), into)?;
+            }
+        }
         Ok(())
     }
 

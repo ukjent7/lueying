@@ -101,6 +101,30 @@ pub(super) fn run() {
     }
 }
 
+/// 把官方 shot-ocr 扩展装进隔离的 APPDATA,并写一份启用它的配置。
+/// 清单与脚本用仓库 `extensions/shot-ocr` 的同一份文件(编译期嵌入),
+/// 发布包里随安装包分发。
+fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
+    let dir = data.join("lueying").join("extensions").join("shot-ocr");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建扩展目录: {e}"))?;
+    std::fs::write(
+        dir.join("manifest.json"),
+        include_str!("../../../extensions/shot-ocr/manifest.json"),
+    )
+    .map_err(|e| format!("写扩展清单: {e}"))?;
+    std::fs::write(
+        dir.join("index.js"),
+        include_str!("../../../extensions/shot-ocr/index.js"),
+    )
+    .map_err(|e| format!("写扩展脚本: {e}"))?;
+    std::fs::write(
+        data.join("lueying").join("config.ini"),
+        "extensions=shot-ocr\nbindings=Ctrl+Alt+F9=shot-ocr.run\npanel_hotkey=off\n",
+    )
+    .map_err(|e| format!("写 E2E 配置: {e}"))?;
+    Ok(())
+}
+
 /// 设置窗自检:原生窗口这条链路(CI 里没人点窗口,只能这样确认它活着)。
 ///
 /// 设置窗是独立进程,自检建窗、画一帧、贴一次位图,再读回像素确认
@@ -243,6 +267,8 @@ fn real_run() -> Result<(String, String), String> {
     // 用户词库与配置指向本目录,重复运行不受上一轮学习结果影响。
     let data = dir.join("e2e-data");
     std::fs::create_dir_all(&data).map_err(|e| format!("创建 E2E 数据目录: {e}"))?;
+    // 官方 shot-ocr 扩展装进隔离的 APPDATA;发布包带的是同一份文件。
+    install_shot_ocr(&data)?;
     // TSF 在断线时可能懒拉起 Server;测试进程本身也指向隔离目录,
     // 避免清理阶段复活的 Server 读到 runner 的真实配置。
     unsafe {
@@ -265,6 +291,10 @@ fn real_run() -> Result<(String, String), String> {
         .env("LUEYING_SKIA_SELFTEST", "1")
         // UIA 回退的运行痕迹默认静默;E2E 要断言这条链路真的在跑。
         .env("LUEYING_DEBUG_UIA", "1")
+        // 无候选窗时也起扩展宿主:官方 shot-ocr 的命令热键要靠它。
+        .env("LUEYING_EXT_HOST", "1")
+        // CI 镜像不一定有 OCR 语言包;识别换成固定文本,截图与上屏仍是真实现。
+        .env("LUEYING_FAKE_OCR", "1")
         .stdout(std::process::Stdio::from(out))
         .stderr(std::process::Stdio::from(err))
         .spawn()
@@ -532,6 +562,9 @@ fn real_run() -> Result<(String, String), String> {
         // 每键往返与内存基线放在所有文本断言之后:延迟测试会清空编辑框,
         // 放在中间会破坏后续检查依赖的上文(原样落定靠上一轮留下的「你好」)。
         let keys = key_latency(edit, &log)?;
+        // 官方 shot-ocr:热键 → 截图 → 识别 → 上屏。识别是固定文本,
+        // 截图与上屏走真实现;放最后,它会清空编辑框并再抢一次焦点。
+        let shot_note = check_shot_ocr(edit, hwnd)?;
         let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 扩展平台验证放最后:它会抢焦点建自己的窗口,后面的检查都已完成。
         let verify = crate::verify::section();
@@ -539,7 +572,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

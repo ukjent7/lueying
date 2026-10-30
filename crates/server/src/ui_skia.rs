@@ -163,7 +163,7 @@ pub(super) struct WinCtx {
     /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
     effects: ui_skia_effect::Effects,
     /// 运行期脚本:后台线程跑 QuickJS,这里只收补丁。
-    script: ui_skia_script::Script,
+    script: crate::ext_host::Script,
     /// 已应用的脚本补丁;空表示没有扩展生效。
     script_fx: Option<ui_skia_script::ScriptFx>,
     /// 效果帧预算:连续超预算就临时摘掉效果。
@@ -331,7 +331,7 @@ fn window_loop(state: Arc<State>) {
             LoadCursorW(None, IDC_HAND).ok(),
         )
     };
-    let script = ui_skia_script::Script::spawn(Arc::clone(&state));
+    let script = crate::ext_host::Script::spawn(Arc::clone(&state));
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
         hwnd,

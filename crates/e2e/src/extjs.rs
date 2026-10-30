@@ -1133,6 +1133,108 @@ fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
+/// 官方 shot-ocr 包:仓库里随安装包分发的同一份清单与脚本,配假提供者跑一遍。
+/// 断言调用顺序、参数透传与黄金文本(OCR 结果两端空白由扩展自己裁掉)。
+fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
+    const MANIFEST: &str = include_str!("../../../extensions/shot-ocr/manifest.json");
+    const SCRIPT: &str = include_str!("../../../extensions/shot-ocr/index.js");
+    const OCR_TEXT: &str = "  掠影黄金文本\n";
+
+    /// 一个提供者接三路服务;按方法名分派,把调用顺序记下来。
+    struct Chain {
+        dir: PathBuf,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl Provider for Chain {
+        fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+            match method {
+                "shot" => {
+                    let file = self.dir.join("shot.bmp");
+                    std::fs::write(&file, b"BMfake").map_err(|e| e.to_string())?;
+                    self.calls.lock().unwrap().push("shot".into());
+                    let payload = serde_json::json!({
+                        "file": file.to_string_lossy(),
+                        "width": 80,
+                        "height": 20,
+                    });
+                    done.complete(Ok(payload.to_string()));
+                }
+                "recognize" => {
+                    let parsed: serde_json::Value =
+                        serde_json::from_str(args).map_err(|e| e.to_string())?;
+                    self.calls.lock().unwrap().push(format!(
+                        "recognize:{}",
+                        parsed["file"].as_str().unwrap_or_default()
+                    ));
+                    let payload = serde_json::json!({ "text": OCR_TEXT, "lang": "fake" });
+                    done.complete(Ok(payload.to_string()));
+                }
+                "deliver" => {
+                    let parsed: serde_json::Value =
+                        serde_json::from_str(args).map_err(|e| e.to_string())?;
+                    self.calls.lock().unwrap().push(format!(
+                        "deliver:{}",
+                        parsed["text"].as_str().unwrap_or_default()
+                    ));
+                    done.complete(Ok(r#"{"delivered":true}"#.into()));
+                }
+                other => return Err(format!("假提供者不认识方法 {other}")),
+            }
+            Ok(())
+        }
+    }
+
+    let temp = Temp::new("shot-ocr");
+    let pack = temp.pack("shot-ocr");
+    write_pack(&pack, MANIFEST, SCRIPT);
+    let chain = Arc::new(Chain {
+        dir: temp.root.clone(),
+        calls: Mutex::new(Vec::new()),
+    });
+    let registry = Arc::new(Registry::new());
+    registry.set(Service::Capture, chain.clone());
+    registry.set(Service::Ocr, chain.clone());
+    registry.set(Service::Output, chain.clone());
+    let order = vec!["shot-ocr".to_string()];
+    let (mut runtime, errors) = Runtime::open_with(&temp.root, &order, Limits::default(), registry);
+    push(
+        checks,
+        "官方 shot-ocr 清单与脚本加载",
+        errors.is_empty(),
+        format!("{errors:?}"),
+    );
+    if !errors.is_empty() {
+        return;
+    }
+
+    let started = runtime.invoke("shot-ocr.run", "");
+    let mut settled = Vec::new();
+    for _ in 0..10 {
+        settled = runtime.pump(0);
+        if !settled.is_empty() {
+            break;
+        }
+    }
+    let shot = temp.root.join("shot.bmp").to_string_lossy().into_owned();
+    let expected = vec![
+        "shot".to_string(),
+        format!("recognize:{shot}"),
+        "deliver:掠影黄金文本".to_string(),
+    ];
+    let calls = chain.calls.lock().unwrap().clone();
+    push(
+        checks,
+        "官方 shot-ocr 截图→识别→上屏",
+        matches!(started, Ok(Invoke::Pending(_)))
+            && settled.len() == 1
+            && settled[0].1.ok
+            && settled[0].1.value.as_deref() == Some(r#"{"chars":6,"lang":"fake"}"#)
+            && calls == expected,
+        format!("{started:?} {settled:?} {calls:?}"),
+    );
+}
+
 /// 运行全部检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
@@ -1141,6 +1243,7 @@ pub fn run(report: &mut String) -> usize {
     runtime(&mut checks);
     async_commands(&mut checks);
     services(&mut checks);
+    official_shot_ocr(&mut checks);
     hotkey_bindings(&mut checks);
     scene(&mut checks);
     patches(&mut checks);

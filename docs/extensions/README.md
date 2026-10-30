@@ -20,6 +20,8 @@
 
 包格式、场景字段、补丁、命令与限额见 [script.md](script.md)。服务端按 `config.ini` 的 `extensions` 键按序加载多个扩展,派发在独立线程里,窗口线程只收主题色与 SkSL 源码;Windows CI 有运行时自检。设置页「运行期脚本 → 选择」列出已安装的包,可直接启用或关闭;「目录」打开扩展目录。
 
+命令还可以调用清单 `needs` 里声明的宿主服务(`capture`、`ocr`、`output`、`hotkey`、`notify`),接口见 [script.md](script.md) 的「服务调用」。官方 `shot-ocr`(截图 → 识别 → 上屏)随安装包分发到 `%APPDATA%\lueying\extensions\shot-ocr`,是这些接口的参考实现。
+
 ## SDK crate
 
 扩展作者依赖 `crates/ext`(`lueying-ext`),不需要直接依赖引擎内部模块:

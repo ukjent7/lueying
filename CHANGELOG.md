@@ -6,6 +6,16 @@
 
 ### 新增
 
+- 官方扩展·截图 OCR(T6):`extensions/shot-ocr` 用公开接口串起截图 → 识别 →
+  上屏,随安装包分发到 `{app}\extensions`,首次安装复制到当前用户的
+  `%APPDATA%\lueying\extensions`(已有目录不覆盖)。`output.deliver` 接线:
+  文本按 Unicode 注入当前焦点,不经过键盘布局与输入法组句,Electron 与
+  自绘控件同样收 WM_CHAR;换行按回车、制表符换空格,系统拦截时返回明确
+  错误。扩展宿主从候选窗线程拆到 `ext_host`,无 UI 的服务也能跑扩展
+  (`LUEYING_EXT_HOST`)。验收:Linux 无头黄金测试用仓库里同一份清单与脚本
+  断言截图 → 识别 → 上屏的调用顺序与裁剪后的黄金文本;Windows E2E 用
+  `Ctrl+Alt+F9` 全局热键跑通真截图与真上屏(CI 镜像缺 OCR 语言包时识别换成
+  固定文本,`LUEYING_FAKE_OCR`),并断言编辑框收到识别结果。
 - 扩展入口·命令面板(T4b):`config.ini` 的 `panel_hotkey=Ctrl+Alt+Shift+Space`
   (默认值,写 `off` 关闭)注册为宿主总热键,唤出独立的可获焦面板。面板自带
   输入框,字母进一台关闭学习的引擎、用候选匹配命令标题,拉丁标题按子串直接

@@ -1,0 +1,16 @@
+{
+  "id": "shot-ocr",
+  "name": "截图 OCR",
+  "version": "0.1.0",
+  "api": 2,
+  "main": "index.js",
+  "activate": {
+    "triggers": ["ocr"],
+    "hotkeys": ["Ctrl+Alt+O"],
+    "commands": [
+      { "id": "run", "title": "截图并识别文字", "when": "any" }
+    ]
+  },
+  "needs": ["capture", "ocr", "output", "notify"],
+  "capabilities": ["screen-capture", "ocr"]
+}

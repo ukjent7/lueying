@@ -85,6 +85,10 @@ Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifs
 Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-4m.safetensors"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-25m.safetensors"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; 官方起步扩展(截图 OCR 等)随包分发;lueying-user.exe --install 再复制到
+; 当前用户的 %APPDATA%\lueying\extensions,已存在的目录不覆盖。
+Source: "{#PayloadDir}\extensions\*"; DestDir: "{app}\extensions"; \
+    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [InstallDelete]
 ; 旧的自建安装器已被 lueying-user.exe 取代,不再随包分发。

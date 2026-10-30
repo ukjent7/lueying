@@ -307,3 +307,95 @@ pub(super) fn check_preserved_punct(data: &std::path::Path) -> Result<(), String
     expect("true")?;
     Ok(())
 }
+
+/// 官方 shot-ocr 全链路:全局热键 → 截图 → 识别 → 上屏。
+/// 识别在 CI 上换成固定文本(`LUEYING_FAKE_OCR`),截图写 BMP 与上屏都是
+/// 真实现;扩展本身用的是仓库 `extensions/shot-ocr` 的同一份脚本。
+pub(super) fn check_shot_ocr(edit: HWND, hwnd: HWND) -> Result<String, String> {
+    const VK_CONTROL: u16 = 0x11;
+    const VK_MENU: u16 = 0x12;
+    const VK_F9: u16 = 0x78;
+    const GOLDEN: &str = "掠影截图识别测试";
+
+    // 热键注册在 Server 的扩展线程上;日志出现绑定行再按键。
+    let log = server_log();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if let Some(line) = text
+            .lines()
+            .find(|line| line.contains("Ctrl+Alt+F9") && !line.contains("→"))
+        {
+            return Err(format!("shot-ocr 热键没有生效:{line}"));
+        }
+        if text.contains("绑定 Ctrl+Alt+F9 → shot-ocr.run") {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err("5 秒内没有看到 shot-ocr 热键绑定日志".into());
+        }
+        pump_for(Duration::from_millis(100));
+    }
+
+    let shots = std::env::temp_dir().join("lueying-capture");
+    let before = shot_files(&shots);
+    unsafe {
+        let _ = SetWindowTextW(edit, &HSTRING::from(""));
+        let _ = SetForegroundWindow(hwnd);
+        let _ = SetFocus(Some(edit));
+    }
+    pump_for(Duration::from_millis(200));
+    // Ctrl+Alt+F9:两个修饰键一起按,热键在 Server 线程上收。
+    let sent = unsafe {
+        SendInput(
+            &[
+                key_input(VK_CONTROL, false),
+                key_input(VK_MENU, false),
+                key_input(VK_F9, false),
+                key_input(VK_F9, true),
+                key_input(VK_MENU, true),
+                key_input(VK_CONTROL, true),
+            ],
+            std::mem::size_of::<INPUT>() as i32,
+        )
+    };
+    if sent != 6 {
+        return Err(format!("SendInput 只发出 {sent} 个事件"));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut text = String::new();
+    loop {
+        text = edit_text(edit);
+        if text.contains(GOLDEN) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("5 秒内没有上屏,编辑框 `{text}`"));
+        }
+        pump_for(Duration::from_millis(50));
+    }
+    let fresh = shot_files(&shots)
+        .into_iter()
+        .filter(|name| !before.contains(name))
+        .count();
+    if fresh == 0 {
+        return Err("没有新的截图文件,截图链路没跑".into());
+    }
+    Ok(format!(
+        "## 官方 shot-ocr\n\nPASS,热键 Ctrl+Alt+F9 → 截图 {fresh} 个新 BMP → 识别(E2E 固定文本)→ 上屏 `{GOLDEN}`"
+    ))
+}
+
+/// 截图目录里的 BMP 文件名;目录不存在时为空。
+fn shot_files(dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.ends_with(".bmp").then_some(name)
+        })
+        .collect()
+}

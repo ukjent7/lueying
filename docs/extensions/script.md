@@ -2,7 +2,11 @@
 
 候选窗的外观可以交给一段 JS 决定,扩展也可以提供命令。扩展只改主题色与三个 SkSL 槽位,看不到候选文字,也拿不到宿主应用名。
 
-> 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、隐私、热重载与卸载回收。截图、OCR、剪贴板等服务缝与异步步进在后续阶段。
+> 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;服务缝
+> capture/ocr/output/hotkey/notify 已接上 Windows 提供者,官方 shot-ocr
+> 随安装包分发。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、隐私、
+> 热重载、卸载回收与官方 shot-ocr 的黄金链路;Windows E2E 覆盖热键 →
+> 截图 → 识别 → 上屏(识别在 CI 上换成固定文本)。
 
 ## 包结构
 
@@ -135,8 +139,8 @@ v1 开放:
 |---|---|---|
 | capture | `shot({region?})` | 截屏,返回 `{file, width, height}` 临时位图路径 |
 | ocr | `recognize({file, lang?})` | 文字识别,返回 `{text, lang}` |
-| output | `deliver({text})` | 把文本送进当前输入焦点,返回 `{delivered}` |
-| panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}` |
+| output | `deliver({text})` | 把文本注入当前焦点(Unicode,WM_CHAR),返回 `{delivered}` |
+| panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}`;宿主面板尚未接线,当前报错 |
 | hotkey | `register({id, modifiers, key})` / `unregister({id})` / `press({id})` | 全局热键,冲突报错;`press` 等一次触发,扩展在 async 循环里反复调用 |
 | notify | `show({title, body})` | 系统通知 |
 
@@ -152,6 +156,24 @@ lueying.command("shot-ocr", async () => {
 ```
 
 等待提供者不占脚本预算;服务错误文本走 Promise 拒绝,计入连续失败计数。
+
+## 官方扩展
+
+安装包自带 `shot-ocr`(截图 → 识别 → 上屏),安装时复制到
+`%APPDATA%\lueying\extensions\shot-ocr`;已存在的目录不覆盖,升级不会
+冲掉用户改过的脚本。启用方式与普通扩展相同:设置页「候选 → 运行期脚本」
+里选择,或写配置:
+
+```ini
+extensions=shot-ocr
+bindings=Ctrl+Alt+O=shot-ocr.run
+```
+
+清单里的 `Ctrl+Alt+O` 只是建议,实际组合由用户的 `bindings` 行决定。
+命令默认无绑定,也不进动作候选;触发词同样由 `triggers=` 决定。上屏走
+Unicode 注入当前焦点(WM_CHAR),Electron 与自绘控件适用;前台窗口权限
+更高时返回明确错误。截图的 BMP 落在 `%TEMP%\lueying-capture`,文件名带
+毫秒时间戳。
 
 ## 场景状态
 

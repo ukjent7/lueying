@@ -1,9 +1,9 @@
 //! Windows 服务提供者:T3 服务缝的平台实现。
 //!
 //! 提供者从扩展宿主线程被 [`lueying_extjs::Registry::call`] 调进来,慢操作
-//! (截图、识别)在专用线程跑完经完成队列回传,不占派发预算。`output` 的
-//! TSF 提交链路在 T6 接线,`panel` 的宿主面板在 T4 落地,两者当前回错误
-//! 文本,扩展拿到明确原因。
+//! (截图、识别)在专用线程跑完经完成队列回传,不占派发预算。`output` 用
+//! Unicode 注入把文本送进当前焦点,`panel` 的宿主面板还在后续阶段,当前回
+//! 错误文本,扩展拿到明确原因。
 //!
 //! 截图文件落在临时目录 `lueying-capture`,文件名带毫秒时间戳;旧文件的
 //! 清理随 T8 的预算与可见性一起做。热键在扩展线程上注册,WM_HOTKEY 由
@@ -28,8 +28,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
-    VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR,
+    HOT_KEY_MODIFIERS, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOD_ALT,
+    MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, SendInput, UnregisterHotKey, VK_BACK,
+    VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR,
     VK_RETURN, VK_RIGHT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -188,6 +189,10 @@ impl Provider for OcrProvider {
             .ok_or_else(|| "缺 file".to_string())?
             .to_string();
         let lang = parsed["lang"].as_str().map(str::to_string);
+        if std::env::var_os("LUEYING_FAKE_OCR").is_some() {
+            done.complete(fake_ocr(&file));
+            return Ok(());
+        }
         std::thread::Builder::new()
             .name("ext-ocr".into())
             .spawn(move || {
@@ -195,6 +200,20 @@ impl Provider for OcrProvider {
             })
             .map_err(|e| format!("识别线程启动失败: {e}"))?;
         Ok(())
+    }
+}
+
+/// Windows E2E 的固定识别结果:CI 镜像不一定带 OCR 语言包,截图与上屏仍是
+/// 真实现,只有识别这一步换成固定文本;顺带校验截图文件确实是 BMP。
+const FAKE_OCR_TEXT: &str = "掠影截图识别测试";
+
+fn fake_ocr(file: &str) -> Result<String, String> {
+    match std::fs::read(file) {
+        Ok(bytes) if bytes.starts_with(b"BM") => {
+            Ok(json!({ "text": FAKE_OCR_TEXT, "lang": "fake" }).to_string())
+        }
+        Ok(_) => Err("假识别:截图不是 BMP".into()),
+        Err(error) => Err(format!("假识别读截图失败: {error}")),
     }
 }
 
@@ -280,7 +299,7 @@ impl Provider for NotifyProvider {
     }
 }
 
-/// 宿主面板在 T4 落地;当前回错误文本,扩展拿到明确原因。
+/// 宿主面板(声明式列表挑选)在后续阶段;当前回错误文本,扩展拿到明确原因。
 pub struct PanelProvider;
 
 impl Provider for PanelProvider {
@@ -289,23 +308,90 @@ impl Provider for PanelProvider {
         if method != "show" {
             return Err(format!("panel 没有方法 {method:?}"));
         }
-        done.complete(Err("面板在 T4 落地".into()));
+        done.complete(Err("宿主面板在后续阶段".into()));
         Ok(())
     }
 }
 
-/// TSF 提交链路在 T6 接线;当前回错误文本,扩展拿到明确原因。
+/// 上屏:把文本按 Unicode 注入当前焦点。`delivered:false` 只表示没有可送的字。
 pub struct OutputProvider;
 
 impl Provider for OutputProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
-        let _ = args;
         if method != "deliver" {
             return Err(format!("output 没有方法 {method:?}"));
         }
-        done.complete(Err("output 提交链路在 T6 接线".into()));
-        Ok(())
+        let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
+        let text = parsed["text"]
+            .as_str()
+            .ok_or_else(|| "缺 text".to_string())?;
+        match deliver_text(text) {
+            Ok(delivered) => {
+                done.complete(Ok(json!({ "delivered": delivered }).to_string()));
+                Ok(())
+            }
+            Err(error) => {
+                done.complete(Err(error));
+                Ok(())
+            }
+        }
     }
+}
+
+/// 把文本按 Unicode 注入当前焦点。走 `SendInput` 的 VK_PACKET 通道,不经过
+/// 键盘布局与输入法组句;Electron 与自绘控件收 WM_CHAR,不依赖 TSF 会话。
+/// 换行按回车送(编辑控件里就是分段),制表符换成空格,避免焦点在对话框里跳走。
+fn deliver_text(text: &str) -> Result<bool, String> {
+    let units = deliver_units(text);
+    if units.is_empty() {
+        return Ok(false);
+    }
+    // 一次送太多事件会拖住调用线程;256 字一批,失败立即停。
+    for chunk in units.chunks(256) {
+        let mut inputs = Vec::with_capacity(chunk.len() * 2);
+        for &unit in chunk {
+            inputs.push(unicode_input(unit, false));
+            inputs.push(unicode_input(unit, true));
+        }
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
+        if sent != inputs.len() {
+            let error = std::io::Error::last_os_error();
+            return Err(format!("上屏被系统拦截({sent}/{}):{error}", inputs.len()));
+        }
+    }
+    Ok(true)
+}
+
+/// 文本 → 要注入的 UTF-16 单元:换行按回车、制表符换空格,孤立 CR 丢弃
+/// (CRLF 先归一,避免一个换行变成两个空行);代理对保持两个单元。
+fn deliver_units(text: &str) -> Vec<u16> {
+    let normalized = text.replace("\r\n", "\n");
+    let mut units = Vec::with_capacity(normalized.len());
+    for ch in normalized.chars() {
+        match ch {
+            '\n' => units.push('\r' as u16),
+            '\t' => units.push(' ' as u16),
+            '\r' => {}
+            _ => {
+                let mut buf = [0u16; 2];
+                units.extend_from_slice(ch.encode_utf16(&mut buf));
+            }
+        }
+    }
+    units
+}
+
+/// 一个 Unicode 键事件;`up` 决定按下还是抬起。
+fn unicode_input(unit: u16, up: bool) -> INPUT {
+    let mut input = INPUT::default();
+    input.r#type = INPUT_KEYBOARD;
+    input.Anonymous.ki.wScan = unit;
+    input.Anonymous.ki.dwFlags = if up {
+        KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+    } else {
+        KEYEVENTF_UNICODE
+    };
+    input
 }
 
 /// 全局热键:注册/冲突/注销语义不变;`press` 让扩展等一次触发,用户绑定

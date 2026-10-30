@@ -39,7 +39,7 @@ interface ocr {
   recognize: func(options: recognize-options) -> result<recognize-result, string>;
 }
 
-// 上屏:把文本送进当前输入焦点(经 TSF 提交链路)。
+// 上屏:把文本送进当前输入焦点(Unicode 注入,WM_CHAR;不依赖 TSF 会话)。
 interface output {
   record deliver-options {
     text: string,

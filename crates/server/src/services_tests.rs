@@ -258,7 +258,21 @@ fn hotkey_press_resolves_on_fire() {
 }
 
 #[test]
-fn notify_ok_and_stubbed_services_report() {
+fn deliver_units_normalize_lines_and_tabs() {
+    assert!(super::deliver_units("").is_empty());
+    assert_eq!(
+        super::deliver_units("a\r\nb\tc\rd"),
+        "a\rb cd".encode_utf16().collect::<Vec<_>>()
+    );
+    // 代理对按两个 UTF-16 单元送,不能按 char 截断。
+    assert_eq!(
+        super::deliver_units("😀"),
+        "😀".encode_utf16().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn notify_ok_empty_deliver_and_panel_stub() {
     let registry = Registry::new();
     registry.set(Service::Notify, Arc::new(NotifyProvider));
     registry.set(Service::Output, Arc::new(OutputProvider));
@@ -269,13 +283,14 @@ fn notify_ok_and_stubbed_services_report() {
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("通知未回传");
     assert_eq!(completion.result.as_deref(), Ok("{}"));
 
+    // 空文本不注入按键;真上屏由 win-e2e 在 RichEdit 上验证。
     registry
-        .call("output", "deliver", r#"{"text":"你好"}"#, 2)
+        .call("output", "deliver", r#"{"text":""}"#, 2)
         .unwrap();
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("output 未回传");
     assert_eq!(
-        completion.result.as_deref().map_err(String::as_str),
-        Err("output 提交链路在 T6 接线")
+        completion.result.as_deref(),
+        Ok(r#"{"delivered":false}"#)
     );
 
     registry
@@ -284,6 +299,6 @@ fn notify_ok_and_stubbed_services_report() {
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("panel 未回传");
     assert_eq!(
         completion.result.as_deref().map_err(String::as_str),
-        Err("面板在 T4 落地")
+        Err("宿主面板在后续阶段")
     );
 }
