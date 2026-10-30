@@ -22,20 +22,27 @@ pub(crate) struct DetBox {
     pub(crate) score: f32,
 }
 
+/// 概率图坐标换回原图所需的缩放与原图尺寸。
+#[derive(Clone, Copy)]
+pub(crate) struct Mapping {
+    pub(crate) scale_x: f32,
+    pub(crate) scale_y: f32,
+    pub(crate) image_width: usize,
+    pub(crate) image_height: usize,
+}
+
 /// 从概率图找文字框;坐标已经换回原图。
 pub(crate) fn boxes(
     prob: &[f32],
     width: usize,
     height: usize,
-    scale_x: f32,
-    scale_y: f32,
-    image_width: usize,
-    image_height: usize,
+    mapping: Mapping,
     options: &Options,
 ) -> Vec<DetBox> {
     if width == 0 || height == 0 || prob.len() < width * height {
         return Vec::new();
     }
+    let Mapping { scale_x, scale_y, image_width, image_height } = mapping;
     let mut visited = vec![false; width * height];
     let mut found = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
@@ -138,6 +145,10 @@ mod tests {
         Options::default()
     }
 
+    fn mapping(width: usize, height: usize) -> Mapping {
+        Mapping { scale_x: 1.0, scale_y: 1.0, image_width: width, image_height: height }
+    }
+
     #[test]
     fn one_component_becomes_one_box() {
         let mut prob = vec![0.0f32; 40 * 20];
@@ -146,7 +157,7 @@ mod tests {
                 prob[y * 40 + x] = 0.9;
             }
         }
-        let found = boxes(&prob, 40, 20, 1.0, 1.0, 40, 20, &options());
+        let found = boxes(&prob, 40, 20, mapping(40, 20), &options());
         assert_eq!(found.len(), 1);
         let rect = found[0].rect;
         assert!(rect[0] < 10.0 && rect[2] > 30.0, "{rect:?}");
@@ -163,7 +174,7 @@ mod tests {
                 prob[y * 40 + x] = 0.3;
             }
         }
-        assert!(boxes(&prob, 40, 20, 1.0, 1.0, 40, 20, &options()).is_empty());
+        assert!(boxes(&prob, 40, 20, mapping(40, 20), &options()).is_empty());
     }
 
     #[test]
@@ -176,7 +187,7 @@ mod tests {
                 }
             }
         }
-        let found = boxes(&prob, 80, 60, 1.0, 1.0, 80, 60, &options());
+        let found = boxes(&prob, 80, 60, mapping(80, 60), &options());
         assert_eq!(found.len(), 4);
         let xs: Vec<f32> = found.iter().map(|b| b.rect[0]).collect();
         assert!(xs[0] < xs[1] && xs[2] < xs[3], "{xs:?}");

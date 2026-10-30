@@ -100,10 +100,12 @@ impl PpOcr {
             prob,
             map_width,
             map_height,
-            prepared.scale_x,
-            prepared.scale_y,
-            image.width,
-            image.height,
+            db::Mapping {
+                scale_x: prepared.scale_x,
+                scale_y: prepared.scale_y,
+                image_width: image.width,
+                image_height: image.height,
+            },
             &self.options,
         );
         let mut lines = Vec::with_capacity(boxes.len());

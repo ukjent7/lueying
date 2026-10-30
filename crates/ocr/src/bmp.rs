@@ -81,7 +81,7 @@ pub fn decode_bmp(bytes: &[u8]) -> Result<RgbImage, String> {
     if count > 100_000_000 {
         return Err(format!("BMP 过大({width}x{height})"));
     }
-    let stride = (width * (bits as usize / 8) + 3) / 4 * 4;
+    let stride = (width * (bits as usize / 8)).div_ceil(4) * 4;
     let needed = offset
         .checked_add(stride.checked_mul(height).ok_or("BMP 尺寸溢出")?)
         .ok_or("BMP 尺寸溢出")?;
@@ -129,7 +129,7 @@ mod tests {
     use super::*;
 
     fn bmp(width: i32, height: i32, bits: u16, top_down: bool, pixels: &[[u8; 3]]) -> Vec<u8> {
-        let stride = (width as usize * (bits as usize / 8) + 3) / 4 * 4;
+        let stride = (width as usize * (bits as usize / 8)).div_ceil(4) * 4;
         let mut out = vec![0u8; 54 + stride * height.unsigned_abs() as usize];
         let size = out.len() as u32;
         out[0..2].copy_from_slice(b"BM");

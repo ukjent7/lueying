@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(input.data.len(), SIDE * SIDE * 3);
         // 540 行以下都是填充,归一化零值。
         let plane = SIDE * SIDE;
-        assert_eq!(input.data[2 * plane + 959 * SIDE + 0], 0.0);
+        assert_eq!(input.data[2 * plane + 959 * SIDE], 0.0);
     }
 
     #[test]
