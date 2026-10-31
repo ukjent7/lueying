@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use lueying_extjs::bindings::BindingTable;
 use lueying_extjs::{
     Budgets, ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, Invoke, Limits,
-    METRICS_VERSION, PrivacyCheck, Provider, Registry, Runtime, SceneIn, ScenePatch, Service,
+    METRICS_VERSION, PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch, Service,
 };
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
@@ -520,8 +520,9 @@ fn load(
     registry.set(Service::Clipboard, Arc::new(services::ClipboardProvider));
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
-    // `Arc::clone` 不能把具体类型自动收成 trait 对象;先显式转成 `dyn Provider`。
-    let panel: Arc<dyn Provider> = Arc::clone(panel);
+    // `Arc::clone` 不能从 `&Arc<具体类型>` 直接推出 trait 对象;先克隆具体类型,
+    // 再在 `set` 的参数位置做 unsize 转换。
+    let panel: Arc<services::PanelProvider> = Arc::clone(panel);
     registry.set(Service::Panel, panel);
     registry.set(
         Service::Net,

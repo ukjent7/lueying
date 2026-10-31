@@ -516,7 +516,7 @@ pub fn run(
         let snap = snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
         let started = Instant::now();
-        let promote = five.decide(&snap.context, &texts, &snap.facts);
+        let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
         five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
         if let Some(index) = promote {
             full_ok &= engine.candidates_detailed()[index].full;
