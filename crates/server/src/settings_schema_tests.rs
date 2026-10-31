@@ -16,8 +16,11 @@ fn defaults_match_runtime_config() {
             (ControlDef::Toggle { get, .. }, DefaultValue::Bool(expected)) => {
                 assert_eq!(get(&cfg), expected, "{} 默认值不一致", def.key);
             }
-            (ControlDef::Segment { get, .. }, DefaultValue::Int(expected)) => {
-                assert_eq!(get(&cfg) as i64, expected, "{} 默认值不一致", def.key);
+            (ControlDef::Segment { get, choices, .. }, DefaultValue::Int(expected)) => {
+                let actual = choices
+                    .get(get(&cfg))
+                    .and_then(|choice| choice.value.parse::<i64>().ok());
+                assert_eq!(actual, Some(expected), "{} 默认值不一致", def.key);
             }
             (ControlDef::Segment { get, choices, .. }, DefaultValue::Text(expected)) => {
                 let selected = choices.get(get(&cfg)).map(|choice| choice.value);

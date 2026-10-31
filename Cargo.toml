@@ -69,3 +69,6 @@ skia-safe = { version = "0.156", default-features = false, features = [
 
 [profile.release]
 lto = "thin"
+# Windows 的 MSVC 产物默认带符号表,会让发布 exe 比实际代码大数倍;
+# 链接期直接去掉,CI 体积门禁与发布目录量到的就是用户拿到的体积。
+strip = "symbols"

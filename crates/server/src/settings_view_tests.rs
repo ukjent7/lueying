@@ -160,8 +160,11 @@ fn ocr_dir_maps_to_action() {
 
 #[test]
 fn focus_order_follows_extension_group() {
+    let mut script = ext_entry();
+    // 待授权的包才有关闭不了的「同意」按钮,Tab 次序里才有它。
+    script.consent = ConsentState::Missing;
     let mut settings = Settings {
-        scripts: vec![ext_entry()],
+        scripts: vec![script],
         ..Settings::default()
     };
     settings.cfg.extensions = vec!["shot".to_string()];

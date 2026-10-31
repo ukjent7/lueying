@@ -102,7 +102,7 @@ pub fn run(report: &mut String) -> usize {
         format!("辅助码={aux:?} 中文标点={punct:?}"),
     );
     // 左栏点一下切页。
-    let mut nav_settings = settings();
+    let mut nav_settings = Settings::default();
     nav_settings.activate(&Id::new(PageId::Candidate.nav_id(), 0));
     push(
         &mut checks,
