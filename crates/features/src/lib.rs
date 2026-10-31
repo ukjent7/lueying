@@ -106,12 +106,12 @@ pub fn registry_with_prediction(
 /// 只含表情、英文混输与简繁转换的内置模块,按生产注册顺序组合。
 /// 裸引擎构造(基准、主题回归)用它补齐与产品一致的候选装饰。
 pub fn builtins(script: Script) -> Modules {
-    append_builtins(Modules::new(), &ScriptModule::new(script))
+    append_builtins(Modules::new(), &Arc::new(ScriptModule::new(script)))
 }
 
 /// 把表情、英文混输与简繁转换按生产顺序接到现有注册表后面;简繁用宿主
 /// 给出的句柄,设置变更时直接切换,无需重建注册表。
-pub fn append_builtins(modules: Modules, script: &ScriptModule) -> Modules {
+pub fn append_builtins(modules: Modules, script: &Arc<ScriptModule>) -> Modules {
     modules
         .register(Arc::new(EmojiModule) as Arc<dyn Module>)
         .register(Arc::new(EnglishModule) as Arc<dyn Module>)
