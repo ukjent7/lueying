@@ -27,7 +27,7 @@ fn colors() -> PageColors {
 }
 
 /// 设置窗的样例状态。
-fn settings() -> Settings {
+fn sample_settings() -> Settings {
     Settings {
         current: "0.1.0".to_string(),
         ..Settings::default()
@@ -46,7 +46,7 @@ fn row_detail(settings: &Settings, category: PageId, group: &str, label: &str) -
 
 pub fn run(report: &mut String) -> usize {
     let mut checks = Vec::new();
-    let mut settings = settings();
+    let mut settings = sample_settings();
     settings.scripts = vec![
         ScriptEntry::new("demo-pack", "演示包"),
         ScriptEntry::new("other-pack", "另一个包"),
@@ -392,7 +392,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 顶部搜索:跨页命中,标题与计数随搜索词变化;清空后回到原页。
-    let mut search_settings = settings();
+    let mut search_settings = sample_settings();
     search_settings.set_search("辅助码");
     let searched = search_settings.page(&colors());
     let hit = searched
@@ -421,7 +421,7 @@ pub fn run(report: &mut String) -> usize {
         format!("搜索={:?}", search_settings.search),
     );
     // 候选页第一行是实时预览;控件不参与焦点与命中。
-    let candidate = settings().page_view(PageId::Candidate, &colors());
+    let candidate = sample_settings().page_view(PageId::Candidate, &colors());
     let preview = candidate.groups[0].rows.first();
     push(
         &mut checks,
@@ -436,7 +436,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 按应用配置:列表一行一个程序,两个按钮循环「跟随 → 开 → 关」。
-    let mut apps_settings = settings();
+    let mut apps_settings = sample_settings();
     apps_settings.cfg.apps.insert(
         "code.exe".to_string(),
         lueying_server::config::AppOverride::default(),

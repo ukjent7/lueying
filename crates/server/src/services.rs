@@ -21,7 +21,7 @@ use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::{FileAccessMode, StorageFile};
-use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL, GlobalFree};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleDC,
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC, SRCCOPY,
@@ -31,9 +31,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninit
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::Memory::{
-    GMEM_MOVEABLE, GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock,
-};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOD_ALT,
     MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, SendInput, UnregisterHotKey, VK_BACK,
@@ -527,7 +525,7 @@ fn store_save(
 }
 
 fn store_path(ext: &str) -> Option<PathBuf> {
-    Some(config::ext_data_dir()?.join(format!("{ext}.json")))
+    Some(crate::config::ext_data_dir()?.join(format!("{ext}.json")))
 }
 
 /// 剪贴板:纯文本读写。Windows 的剪贴板是进程共享状态,打开期间其它
@@ -565,7 +563,10 @@ fn read_clipboard() -> Result<String, String> {
                 return Ok(String::new());
             };
             let memory = HGLOBAL(handle.0);
-            let pointer = GlobalLock(memory).map_err(|e| format!("锁定剪贴板内存失败: {e}"))?;
+            let pointer = GlobalLock(memory);
+            if pointer.is_null() {
+                return Err("锁定剪贴板内存失败".to_string());
+            }
             let data = pointer as *const u16;
             let mut length = 0usize;
             while *data.add(length) != 0 {
@@ -588,13 +589,17 @@ fn write_clipboard(text: &str) -> Result<(), String> {
             EmptyClipboard().map_err(|e| format!("清空剪贴板失败: {e}"))?;
             let memory = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2)
                 .map_err(|e| format!("分配剪贴板内存失败: {e}"))?;
-            let pointer = GlobalLock(memory).map_err(|e| format!("锁定剪贴板内存失败: {e}"))?;
+            let pointer = GlobalLock(memory);
+            if pointer.is_null() {
+                let _ = GlobalFree(Some(memory));
+                return Err("锁定剪贴板内存失败".to_string());
+            }
             std::ptr::copy_nonoverlapping(units.as_ptr(), pointer as *mut u16, units.len());
             let _ = GlobalUnlock(memory);
             match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(memory.0))) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    let _ = GlobalFree(memory);
+                    let _ = GlobalFree(Some(memory));
                     Err(format!("写入剪贴板失败: {e}"))
                 }
             }
