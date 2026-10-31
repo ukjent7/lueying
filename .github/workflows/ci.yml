@@ -77,6 +77,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
+          prefix-key: linux
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -93,8 +97,8 @@ jobs:
       - name: 扩展层单元测试
         run: cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
 
-  # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准 + 1444 条共享语料。
-  # 全量语料、x86 与安装冒烟成本高,仍在 quality.yml 定时跑。
+  # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准。
+  # 1444 条共享语料逐条重排成本高,拆进下面的 bench job 与场景并行。
   quality:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -112,6 +116,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
+          # Linux 三个 job 共用一份缓存:同一把锁、同一批依赖,谁先跑完谁落地,
+          # 其余 job 恢复同一份,省去各自冷启动全量编译。
+          prefix-key: linux
       # 预编译命中门禁:特性集与 rust-skia 发布的键对不上时,这里几秒就红;
       # 否则会静默退化成十几分钟的本地编 Skia,还把原因埋在日志里。
       - name: Skia 预编译命中
@@ -140,8 +147,8 @@ jobs:
       - name: 转换词典
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      - name: 快速 E2E + 共享语料基准
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench-fast --bench-shared
+      - name: 快速 E2E + 快速候选基准
+        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench-fast
       - name: 报告摘要
         if: always()
         shell: bash
@@ -157,6 +164,62 @@ jobs:
           path: |
             target/e2e-report.md
             target/bench-report.md
+
+  # 共享语料基准独立成 job:1444 条逐条 4M+25M 重排即使按核分片并行也要几分钟,
+  # 与场景 E2E 并行跑,wall 时间不再被它单独拖长。门限与主 E2E 同样阻断。
+  bench:
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 Skia 链接依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
+          prefix-key: linux
+      - name: Skia 预编译命中
+        run: cargo build --release -p lueying-render --features prebuilt-only --locked
+      - name: 缓存词典与模型
+        id: dict-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: data
+          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
+      - name: 下载白霜词库
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_frost.sh data/frost
+      - name: 下载神经重排模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_rerank.sh data/rerank
+      - name: 下载精简语法模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_gram.sh data
+      - name: 下载 PP-OCRv6 模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_ppocr.sh data/ppocr
+      - name: 转换词典
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
+      - name: 共享语料基准
+        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --only-shared
+      - name: 报告摘要
+        if: always()
+        shell: bash
+        run: |
+          if [ -f target/e2e-report.md ]; then cat target/e2e-report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-shared-report
+          path: |
+            target/e2e-report.md
             target/bench-shared.json
             target/bench-shared.tsv
 
@@ -216,8 +279,10 @@ jobs:
         run: cargo build --release --locked -p lueying-server -p lueying-installer
       # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
       # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
+      # 平台无关的服务端单测已在 Linux quality 跑过;Windows 这份只留平台特有
+      # 路径,挂到发版构建,push 门禁省下三分多钟的测试编译。
       - name: 服务端单元测试(Windows)
-        if: steps.build.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success'
         run: cargo test -p lueying-server --lib --release --locked
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
       - name: TSF 构建(静态 CRT)

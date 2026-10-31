@@ -188,25 +188,27 @@ fn rank_after(
 /// 一条候选链路的还原:4M 逐键同步、25M 停顿,与产品里的应用顺序一致。
 /// 同时算出「不经过 4M、25M 直接跑在引擎顺序上」的名次,用来判断同步重排
 /// 是否值得:它换来的即时顺序如果让停顿结果也变差,就该让位。
-/// `ms` 是引擎本身的耗时,模型耗时单独统计,避免把两者混进同一列。
-#[allow(clippy::too_many_arguments)]
+/// 三个模型耗时分开返回,由调用方汇进各自的分位向量。
 fn apply_rerank(
     engine: &mut Engine,
     four: &mut Rerank,
     five: &mut Rerank,
     expected: &str,
-    four_ms: &mut Vec<f64>,
-    five_ms: &mut Vec<f64>,
-    direct_ms: &mut Vec<f64>,
-) -> (Option<usize>, Option<usize>, Option<usize>) {
-    // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排。
+) -> (
+    Option<usize>,
+    Option<usize>,
+    Option<usize>,
+    Option<[f64; 3]>,
+) {
+    // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排;
+    // 没有模型调用,也就没有耗时样本。
     if engine
         .candidates_detailed()
         .iter()
         .any(|cand| cand.quick || cand.pinned)
     {
         let rank = rank_of(engine, expected);
-        return (rank, rank, rank);
+        return (rank, rank, rank, None);
     }
     let snap = crate::rerank::snapshot(engine);
     let kept: Vec<bool> = engine
@@ -217,7 +219,7 @@ fn apply_rerank(
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
     let promote = four.decide(&snap.context, &texts, &snap.facts);
-    four_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    let four_ms = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {
         engine.promote(index);
     }
@@ -232,7 +234,7 @@ fn apply_rerank(
         &snap_after.facts,
         &snap_after.fuzzy,
     );
-    five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    let five_ms = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {
         engine.promote(index);
     }
@@ -242,42 +244,36 @@ fn apply_rerank(
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
     let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
-    direct_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    let direct_ms = started.elapsed().as_secs_f64() * 1000.0;
     let direct = rank_after(&snap.texts, &kept, promote, expected);
-    (rank4, rank5, direct)
+    (rank4, rank5, direct, Some([four_ms, five_ms, direct_ms]))
 }
 
-pub fn run(
-    dict: Arc<Dictionary>,
-    gram: Option<Arc<Gram>>,
+/// 单条用例的评测结果;分片线程各自产出,主线程按原序合并进指标。
+/// 重排部分是 `((4M,25M,仅25M) 名次, 各模型耗时)`;捷径路径没有耗时样本。
+struct Outcome {
+    rank: Option<usize>,
+    ms: f64,
+    top1: String,
+    rerank: Option<(
+        (Option<usize>, Option<usize>, Option<usize>),
+        Option<[f64; 3]>,
+    )>,
+}
+
+/// 一片用例的评测;每片自带引擎与模型句柄,片间无共享可变状态,
+/// 结果与单线程逐条跑完全一致。
+fn run_chunk(
+    chunk: &[Case],
+    dict: &Arc<Dictionary>,
+    gram: &Option<Arc<Gram>>,
     models: Option<&Models>,
-    report: &mut String,
-) -> usize {
-    let (cases, malformed) = cases();
-    let mut failures = (malformed > 0) as usize + cases.is_empty() as usize;
-    let gram_on = gram.is_some();
-    let mut engine = bench::make_engine(&dict, &gram, Fuzzy::auto());
-    let mut by_category: BTreeMap<&str, Metric> = BTreeMap::new();
-    let mut overall = Metric::default();
-    let mut core = Metric::default();
-    let mut items = Vec::with_capacity(cases.len());
-    // 产品链路:4M 逐键同步,25M 停顿。只在提供了模型目录时测量。
+) -> Vec<Outcome> {
+    let mut engine = bench::make_engine(dict, gram, Fuzzy::auto());
     let mut four = models.map(|m| Rerank::new(&m.four));
     let mut five = models.map(|m| Rerank::new(&m.five));
-    let mut four_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
-    let mut five_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
-    let mut direct_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
-    let mut four_overall = Metric::default();
-    let mut five_overall = Metric::default();
-    let mut direct_overall = Metric::default();
-    let mut four_core = Metric::default();
-    let mut five_core = Metric::default();
-    let mut direct_core = Metric::default();
-    let mut four_ms = Vec::new();
-    let mut five_ms = Vec::new();
-    let mut direct_ms = Vec::new();
-
-    for case in &cases {
+    let mut out = Vec::with_capacity(chunk.len());
+    for case in chunk {
         engine.process(Key::Esc);
         engine.clear_context();
         let started = Instant::now();
@@ -293,40 +289,101 @@ pub fn run(
         let top1 = candidates
             .first()
             .map_or(String::new(), |text| (*text).to_string());
+        let rerank = four.as_mut().zip(five.as_mut()).map(|(four, five)| {
+            let (ranks, times) = apply_rerank(&mut engine, four, five, &expected);
+            (ranks, times)
+        });
+        out.push(Outcome {
+            rank,
+            ms,
+            top1,
+            rerank,
+        });
+    }
+    out
+}
+
+pub fn run(
+    dict: Arc<Dictionary>,
+    gram: Option<Arc<Gram>>,
+    models: Option<&Models>,
+    report: &mut String,
+) -> usize {
+    let (cases, malformed) = cases();
+    let mut failures = (malformed > 0) as usize + cases.is_empty() as usize;
+    let gram_on = gram.is_some();
+    let mut by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut overall = Metric::default();
+    let mut core = Metric::default();
+    let mut items = Vec::with_capacity(cases.len());
+    // 产品链路:4M 逐键同步,25M 停顿。只在提供了模型目录时测量。
+    let mut four_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut five_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut direct_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
+    let mut four_overall = Metric::default();
+    let mut five_overall = Metric::default();
+    let mut direct_overall = Metric::default();
+    let mut four_core = Metric::default();
+    let mut five_core = Metric::default();
+    let mut direct_core = Metric::default();
+    let mut four_ms = Vec::new();
+    let mut five_ms = Vec::new();
+    let mut direct_ms = Vec::new();
+
+    // 用例互不依赖,按核数分片并行;每条约 0.8s,单线程 1444 条要近 20 分钟,
+    // 是 CI 的最大单项。模型权重在 Arc 后共享,每线程只多一份轻量句柄。
+    let threads = std::thread::available_parallelism().map_or(1, usize::from).max(1);
+    let chunk_size = cases.len().div_ceil(threads).max(1);
+    let dict_ref = &dict;
+    let gram_ref = &gram;
+    let outcomes: Vec<Vec<Outcome>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = cases
+            .chunks(chunk_size)
+            .map(|chunk| scope.spawn(move || run_chunk(chunk, dict_ref, gram_ref, models)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("共享语料基准分片线程"))
+            .collect()
+    });
+
+    for (case, outcome) in cases.iter().zip(outcomes.into_iter().flatten()) {
+        let Outcome {
+            rank,
+            ms,
+            top1,
+            rerank,
+        } = outcome;
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
         if case.category != "hard" {
             core.add(rank, ms);
         }
-        if let (Some(four), Some(five)) = (four.as_mut(), five.as_mut()) {
-            let (rank4, rank5, direct) = apply_rerank(
-                &mut engine,
-                four,
-                five,
-                &expected,
-                &mut four_ms,
-                &mut five_ms,
-                &mut direct_ms,
-            );
+        if let Some(((r4, r5, direct), times)) = rerank {
             four_by_category
                 .entry(case.category)
                 .or_default()
-                .add(rank4, ms);
+                .add(r4, ms);
             five_by_category
                 .entry(case.category)
                 .or_default()
-                .add(rank5, ms);
+                .add(r5, ms);
             direct_by_category
                 .entry(case.category)
                 .or_default()
                 .add(direct, ms);
-            four_overall.add(rank4, ms);
-            five_overall.add(rank5, ms);
+            four_overall.add(r4, ms);
+            five_overall.add(r5, ms);
             direct_overall.add(direct, ms);
             if case.category != "hard" {
-                four_core.add(rank4, ms);
-                five_core.add(rank5, ms);
+                four_core.add(r4, ms);
+                five_core.add(r5, ms);
                 direct_core.add(direct, ms);
+            }
+            if let Some([t4, t5, td]) = times {
+                four_ms.push(t4);
+                five_ms.push(t5);
+                direct_ms.push(td);
             }
         }
         items.push(Item {

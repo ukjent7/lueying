@@ -124,6 +124,40 @@ fn main() {
         None
     };
     let bench_shared = args.iter().any(|a| a == "--bench-shared");
+    let only_shared = args.iter().any(|a| a == "--only-shared");
+
+    // `--only-shared`:独立基准 job 只跑共享语料,与场景 E2E 并行,互不拖累。
+    if only_shared {
+        let Some(path) = &dict_path else {
+            eprintln!("--only-shared 需要同时提供 --dict 主词典");
+            std::process::exit(2);
+        };
+        let (dict, _) = match Dictionary::from_path(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("词典加载失败 {path:?}: {e}");
+                std::process::exit(2);
+            }
+        };
+        let gram = gram_path.as_deref().and_then(|p| match Gram::open(p) {
+            Ok(g) => Some(Arc::new(g)),
+            Err(e) => {
+                eprintln!("语法模型不可用 {p:?}: {e}");
+                None
+            }
+        });
+        let models = match rerank_dir.as_deref().map(rerank::load) {
+            Some(Ok(models)) => Some(models),
+            Some(Err(e)) => {
+                eprintln!("模型加载失败: {e}");
+                std::process::exit(2);
+            }
+            None => None,
+        };
+        let mut report = String::from("# 跨引擎共享语料基准(shared-v1)\n\n");
+        let failures = shared::run(Arc::new(dict), gram, models.as_ref(), &mut report);
+        finish(&report, failures);
+    }
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
     let mut failures = 0usize;
@@ -410,11 +444,16 @@ fn main() {
         std::process::exit(2);
     }
 
+    finish(&report, failures);
+}
+
+/// 报告落盘、打印并按失败数给退出码;`--only-shared` 的早退分支也走这里。
+fn finish(report: &str, failures: usize) -> ! {
     let out = std::path::Path::new("target/e2e-report.md");
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(out, &report);
+    let _ = std::fs::write(out, report);
     println!("{report}");
     println!("报告已写入 {}", out.display());
     if failures > 0 {

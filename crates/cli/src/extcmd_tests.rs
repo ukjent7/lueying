@@ -122,7 +122,7 @@ fn install_refuses_overwrite_then_force() {
 
     let third = install(&InstallArgs {
         source: pack_path,
-        dir: Some(out_root),
+        dir: Some(out_root.clone()),
         force: true,
     })
     .expect("force 覆盖应成功");
