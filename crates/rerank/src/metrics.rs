@@ -77,7 +77,12 @@ impl LatencyMetrics {
     }
 }
 
-fn percentile(buckets: &[AtomicU64; BOUNDS_US.len()], count: u64, percent: u64, max_us: u64) -> u64 {
+fn percentile(
+    buckets: &[AtomicU64; BOUNDS_US.len()],
+    count: u64,
+    percent: u64,
+    max_us: u64,
+) -> u64 {
     let target = (count.saturating_mul(percent) + 99) / 100;
     let mut seen = 0;
     for (index, bucket) in buckets.iter().enumerate() {

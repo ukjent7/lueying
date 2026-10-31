@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
-use lueying_net::update;
 use lueying_extjs::{ConsentBook, ConsentCheck};
 use lueying_extmeta::metrics::ExtMetrics;
+use lueying_net::update;
 use lueying_protocol::{Reply, Request, pipe_name};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
