@@ -54,7 +54,7 @@ pub fn backup_export(settings: &mut Settings) {
     // 临时文件 + fsync + 改名:失败与断电都不留半截备份。
     let tmp = path.with_extension("bak.tmp");
     let written = std::fs::File::create(&tmp)
-        .and_then(|file| {
+        .and_then(|mut file| {
             file.write_all(out.as_bytes())?;
             file.sync_all()
         })

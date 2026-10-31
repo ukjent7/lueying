@@ -4,7 +4,7 @@
 //! 两条缝都不在按键热路径上:
 //! - 停顿重排(见 `settle`)本来就异步,缝上的提供者阻塞工作线程无妨,
 //!   超时由 [`BypassSettled`] 的调用预算兜住;
-//! - 联想缝在 features 的 [`PredictSource`](lueying_features::PredictSource),
+//! - 联想缝在 features 的 [`PredictSource`](lueying_features::predict::PredictSource),
 //!   契约是亚毫秒级,慢模型自行预取。
 //!
 //! 提供者连续 3 次失败自动停用回落内置,与脚本/Wasm 层同规。
