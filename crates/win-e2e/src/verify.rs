@@ -533,7 +533,7 @@ fn deferred(rows: &mut Vec<Row>) {
         "V4",
         "命令面板归还焦点后上屏",
         Verdict::Note,
-        "面板已实现,`--panel-selftest` 覆盖记录/归还前台窗口、拼音搜索、方向键、Enter 与 Esc;`output.deliver` 已接线为 Unicode 注入,win-e2e 在 RichEdit 上跑通热键 → 截图 → 识别 → 上屏。Electron 与自绘控件需要可下载的测试应用,留待手动实测。"
+        "面板已实现,`--panel-selftest` 覆盖记录/归还前台窗口、拼音搜索、方向键、Enter 与 Esc,并覆盖扩展 `panel.show` 的宿主选择面板(方向键选中与 Esc 取消);`output.deliver` 已接线为 Unicode 注入,win-e2e 在 RichEdit 上跑通热键 → 截图 → 识别 → 上屏。Electron 与自绘控件需要可下载的测试应用,留待手动实测。"
             .to_string(),
     ));
     rows.push((
