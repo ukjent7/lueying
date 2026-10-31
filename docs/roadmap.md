@@ -32,7 +32,8 @@
 - 联网边界:更新/下载移到 `lueying-net`,常驻 Server 的导入表由 CI 断言不含
   `winhttp.dll`;更新器不再链接 Skia。扩展 `net.fetch` 经按需启动的
   `lueying-netproxy.exe`,只放行清单 `network.domains` 白名单。
-- 质量外环:每周 `cargo audit` 依赖审计。
+- 质量外环:每周 `cargo audit` 依赖审计,并检查 `Cargo.lock` 的外部依赖只来自
+  crates.io;许可证检查待接入 cargo-deny。
 
 ## 下一步
 
