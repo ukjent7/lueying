@@ -39,12 +39,10 @@ impl Module for EnglishModule {
         let trusted_full = cands
             .iter()
             .any(|cand| cand.full && cand.trusted && !cand.quick && !cand.no_learn);
-        let Some(text) = match table().get(raw) {
-            Some(text) => Some(*text),
-            None if has_full || !cands.is_empty() => None,
-            None => Some(raw.to_string()),
-        } else {
-            return;
+        let text = match table().get(raw) {
+            Some(text) => text.to_string(),
+            None if has_full || !cands.is_empty() => return,
+            None => raw.to_string(),
         };
         let mut cand = Candidate::whole(raw.len(), text, 0.0);
         cand.words.clear();

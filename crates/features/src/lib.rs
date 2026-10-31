@@ -23,7 +23,7 @@ pub use predict::Prediction;
 pub use script::{ScriptModule, convert};
 pub use shuangpin::Shuangpin;
 
-use lueying_ext::{FullPinyin, Module, Modules, Scheme, Script};
+use lueying_ext::{FullPinyin, Module, Modules, Scheme};
 
 /// 宿主可选输入方案。`Full` 是默认值,其余为双拼。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
