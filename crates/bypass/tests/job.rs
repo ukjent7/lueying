@@ -1,14 +1,22 @@
 //! Job Object 限额只在 Windows 上跑;CI 的 windows job 会执行本文件。
 
+#![cfg(windows)]
+
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{Bypass, BypassConfig, ProcessLimiter};
+use lueying_bypass::job::JobLimiter;
+use lueying_bypass::{Bypass, BypassConfig, ProcessLimiter};
+
+/// `cargo test` 为集成测试构建同包的 `bypass-echo`,并由 Cargo 注入路径。
+fn echo_exe() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_bypass-echo"))
+}
 
 fn echo_config() -> BypassConfig {
     BypassConfig {
-        exe: crate::test_echo_exe(),
+        exe: echo_exe(),
         args: Vec::new(),
         call_timeout: Duration::from_secs(5),
     }
@@ -16,7 +24,7 @@ fn echo_config() -> BypassConfig {
 
 #[test]
 fn job_limiter_allows_healthy_call() {
-    let limiter = crate::job::JobLimiter::new(Some(64 * 1024 * 1024), None);
+    let limiter = JobLimiter::new(Some(64 * 1024 * 1024), None);
     let bypass =
         Bypass::new(echo_config()).with_limiter(Arc::new(limiter) as Arc<dyn ProcessLimiter>);
     let answer = bypass
@@ -50,7 +58,7 @@ fn job_limiter_attaches_plain_child() {
         .stderr(Stdio::null())
         .spawn()
         .expect("cmd 应能启动");
-    let limiter = crate::job::JobLimiter::new(None, Some(5_000));
+    let limiter = JobLimiter::new(None, Some(5_000));
     limiter.attach(&child).expect("挂接应成功");
     let status = child.wait().expect("进程应能回收");
     assert!(status.success());

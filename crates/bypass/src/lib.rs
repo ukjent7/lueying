@@ -228,26 +228,3 @@ impl Provider for BypassProvider {
 
 #[cfg(windows)]
 pub mod job;
-
-#[cfg(test)]
-pub(crate) fn test_echo_exe() -> std::path::PathBuf {
-    // CARGO_BIN_EXE 对 lib 单测不一定注入;退而求其次,从测试二进制
-    // 往上找同包的 bypass-echo(cargo test 总会把包内 bin 一起编出)。
-    if let Some(path) = option_env!("CARGO_BIN_EXE_bypass-echo") {
-        return std::path::PathBuf::from(path);
-    }
-    let bin = format!("bypass-echo{}", std::env::consts::EXE_SUFFIX);
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            exe.ancestors()
-                .skip(1)
-                .map(|dir| dir.join(&bin))
-                .find(|candidate| candidate.is_file())
-        })
-        .expect("bypass-echo 应随测试一起编译")
-}
-
-#[cfg(test)]
-#[path = "bypass_tests.rs"]
-mod tests;

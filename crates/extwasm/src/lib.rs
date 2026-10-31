@@ -27,7 +27,7 @@ pub const PROBE_WAT: &str = r#"
       i32.add))
   (core instance $i (instantiate $m))
   (type (func (param "a" u32) (param "b" u32) (result u32)))
-  (func (export "add") (canon lift (core func $i "add") (type 0)))
+  (func (export "add") (type 0) (canon lift (core func $i "add")))
 )"#;
 
 /// 单模块内存上限,与脚本层一致。
