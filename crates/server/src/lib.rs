@@ -18,6 +18,8 @@ pub mod settings_view;
 
 mod settings_text;
 
+pub mod update_manifest;
+
 #[cfg(windows)]
 pub mod blit;
 

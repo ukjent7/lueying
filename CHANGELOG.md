@@ -181,6 +181,11 @@
 - 更新包校验改为进程内流式 SHA-256(T11 第一步):不再经 `certutil`
   子进程算安装包摘要,百 MB 安装包按 64 KiB 流式计算,失败原因直接可读;
   哈希实现复用扩展内容指纹的零依赖 SHA-256。
+- 签名更新清单(T11):Release 附 `lueying-manifest.json` + `.sig`
+  (Ed25519,客户端内置公钥)时,镜像、大小与哈希以验签后的清单为准,
+  更新器直接拿清单哈希;清单验不过就地停止更新,缺失则退回 `.sha256`
+  流程。新增 `xtask update-manifest` / `sign-manifest`,发布工作流在配置
+  `LUEYING_SIGN_KEY` secret 后自动生成并签名清单。
 - 候选窗默认走 Skia 管线,GPUI 候选窗路径已移除;`ui_backend` 配置键随之
   失效(旧配置里的该键会被忽略)。
 - 模式徽标从 GPUI 浮层换成原生分层窗口:Skia CPU 光栅出帧,

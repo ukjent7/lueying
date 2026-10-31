@@ -1,5 +1,7 @@
 //! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验。
-//! 更新器进程下载 Inno Setup 安装包并静默运行,由安装包完成替换。
+//! Release 里带签名清单(`lueying-manifest.json` + `.sig`)时,镜像与哈希以
+//! 验签后的清单为准(见 [`crate::update_manifest`]);更新器进程下载 Inno
+//! Setup 安装包并静默运行,由安装包完成替换。
 
 use std::ffi::c_void;
 use std::fs::File;
@@ -9,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
+
+use crate::update_manifest::{self, MANIFEST_NAME};
 
 use windows::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0};
 use windows::Win32::Networking::WinHttp::{
@@ -28,6 +32,8 @@ const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/
 const API_RELEASES: &str = "https://api.github.com/repos/ukjent7/lueying/releases?per_page=20";
 const API_LIMIT: u64 = 2 * 1024 * 1024;
 const SHA_LIMIT: u64 = 8 * 1024;
+/// 签名文件是 64 字节 Ed25519 的十六进制,留足余量。
+const SIG_LIMIT: u64 = 4 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Release {
@@ -38,6 +44,8 @@ pub struct Release {
     pub sha_url: String,
     /// GitHub 记录的资源字节数;0 表示不校验大小。
     pub size: u64,
+    /// 签名清单给出的安装包哈希;有值时更新器不再拉 `.sha256` 文件。
+    pub sha256: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,19 +95,21 @@ pub fn install_target() -> PathBuf {
 pub fn check_channel(channel: crate::config::Channel) -> Result<Check, String> {
     match channel {
         crate::config::Channel::Stable => {
-            let Some(release) = latest_release()? else {
+            let Some((release, value)) = latest_release()? else {
                 return Ok(Check::NoRelease);
             };
-            available_or_latest(release)
+            available_or_latest(release, value)
         }
         crate::config::Channel::Beta => {
             let releases = releases_list()?;
             let candidate = releases
                 .iter()
-                .position(|release| is_newer(&release.version, &current_version()))
-                .map(|index| releases[index].clone());
+                .find(|(release, _)| is_newer(&release.version, &current_version()))
+                .map(|(release, value)| (release.clone(), value.clone()));
             Ok(match candidate {
-                Some(release) => Check::Available(release),
+                Some((release, value)) => {
+                    Check::Available(attach_manifest(&value, release)?)
+                }
                 None if releases.is_empty() => Check::NoRelease,
                 None => Check::Latest,
             })
@@ -107,15 +117,15 @@ pub fn check_channel(channel: crate::config::Channel) -> Result<Check, String> {
     }
 }
 
-fn available_or_latest(release: Release) -> Result<Check, String> {
+fn available_or_latest(release: Release, value: serde_json::Value) -> Result<Check, String> {
     if is_newer(&release.version, &current_version()) {
-        Ok(Check::Available(release))
+        Ok(Check::Available(attach_manifest(&value, release)?))
     } else {
         Ok(Check::Latest)
     }
 }
 
-fn latest_release() -> Result<Option<Release>, String> {
+fn latest_release() -> Result<Option<(Release, serde_json::Value)>, String> {
     let (status, body) = fetch(API_LATEST, API_LIMIT)?;
     if status == 404 {
         return Ok(None);
@@ -125,11 +135,11 @@ fn latest_release() -> Result<Option<Release>, String> {
     }
     let json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("解析 GitHub 响应: {e}"))?;
-    release_from_value(&json).map(Some)
+    release_from_value(&json).map(|release| release.map(|release| (release, json)))
 }
 
 /// 最近 20 条 Release;没有 setup.exe 资源的条目(纯源码发布)跳过。
-fn releases_list() -> Result<Vec<Release>, String> {
+fn releases_list() -> Result<Vec<(Release, serde_json::Value)>, String> {
     let (status, body) = fetch(API_RELEASES, API_LIMIT)?;
     if !(200..300).contains(&status) {
         return Err(http_error(status));
@@ -141,7 +151,7 @@ fn releases_list() -> Result<Vec<Release>, String> {
         .cloned()
         .unwrap_or_default()
         .iter()
-        .filter_map(|value| release_from_value(value).ok())
+        .filter_map(|value| release_from_value(value).ok().map(|release| (release, value.clone())))
         .collect();
     Ok(list)
 }
@@ -216,6 +226,56 @@ fn release_from_value(json: &serde_json::Value) -> Result<Release, String> {
             .ok_or("校验文件缺少下载地址")?
             .to_string(),
         size: installer["size"].as_u64().unwrap_or(0),
+        sha256: None,
+    })
+}
+
+/// Release 资源里有签名清单时改用它:镜像、大小与哈希都来自验签后的内容,
+/// 不再单独拉 `.sha256` 文件。清单在但验不过属于硬错误(被篡改或损坏的
+/// 已签名资源,静默降级等于没签);清单缺失或拉取失败退回旧流程,
+/// 兼容还没签名的历史 Release。
+fn attach_manifest(value: &serde_json::Value, release: Release) -> Result<Release, String> {
+    let assets = value["assets"].as_array().cloned().unwrap_or_default();
+    let asset_url = |name: &str| {
+        assets
+            .iter()
+            .find(|asset| {
+                asset
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|asset| asset.eq_ignore_ascii_case(name))
+            })
+            .and_then(|asset| asset["browser_download_url"].as_str())
+            .map(str::to_string)
+    };
+    let (Some(manifest_url), Some(sig_url)) = (
+        asset_url(MANIFEST_NAME),
+        asset_url(&format!("{MANIFEST_NAME}.sig")),
+    ) else {
+        return Ok(release);
+    };
+    let (status, manifest_body) = fetch(&manifest_url, update_manifest::MAX_MANIFEST_BYTES as u64)?;
+    if !(200..300).contains(&status) {
+        return Ok(release);
+    }
+    let (status, sig_body) = fetch(&sig_url, SIG_LIMIT)?;
+    if !(200..300).contains(&status) {
+        return Ok(release);
+    }
+    let signature = String::from_utf8(sig_body).map_err(|_| "签名文件不是 UTF-8 文本".to_string())?;
+    let manifest = update_manifest::verify(&manifest_body, &signature)?;
+    if manifest.release != release.version {
+        return Err(format!(
+            "清单版本 {} 与 Release 版本 {} 不一致",
+            manifest.release, release.version
+        ));
+    }
+    let file = manifest.installer(&release.version)?;
+    Ok(Release {
+        sha256: Some(file.sha256.clone()),
+        size: file.size,
+        installer_url: file.mirror()?.to_string(),
+        ..release
     })
 }
 
@@ -238,22 +298,32 @@ pub fn launch_updater(release: &Release, settings_pid: u32) -> Result<(), String
     // 更新器从临时目录运行,不能靠 current_exe 找安装目录;把设置窗所在
     // 目录显式传过去,自定义安装位置也能正确校验。
     let target = install_dir();
+    // 签名清单验过时直接带哈希,更新器少拉一次 .sha256 文件。
+    let mut args = vec![
+        "--url".to_string(),
+        release.installer_url.clone(),
+        "--version".to_string(),
+        release.version.clone(),
+        "--size".to_string(),
+        size,
+        "--wait-pid".to_string(),
+        pid,
+    ];
+    match &release.sha256 {
+        Some(sha) => {
+            args.push("--sha256".to_string());
+            args.push(sha.clone());
+        }
+        None => {
+            args.push("--sha-url".to_string());
+            args.push(release.sha_url.clone());
+        }
+    }
     let spawned = Command::new(&exe)
         .current_dir(&dir)
         .arg("--install-dir")
         .arg(&target)
-        .args([
-            "--url",
-            release.installer_url.as_str(),
-            "--sha-url",
-            release.sha_url.as_str(),
-            "--version",
-            release.version.as_str(),
-            "--size",
-            size.as_str(),
-            "--wait-pid",
-            pid.as_str(),
-        ])
+        .args(&args)
         .spawn();
     if let Err(error) = spawned {
         let _ = std::fs::remove_dir_all(&dir);

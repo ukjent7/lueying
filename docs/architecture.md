@@ -121,6 +121,13 @@ GPU,在没有硬件 D3D12 的机器上也照样开。页面模型在平台无关
 发布目录的 `version.txt` 是版本权威。代码签名:CI 配好证书 secret 后自动签
 setup.exe,未配置时发布未签名包。
 
+安装包的完整性链分两层:`.sha256` 只防损坏;Release 里带
+`lueying-manifest.json` + `.sig`(Ed25519,客户端内置公钥)时,镜像、大小与
+哈希以验签后的清单为准,更新器直接拿清单里的哈希,不再单独拉 `.sha256`。
+清单在但验不过属于硬错误,更新就地停止;清单缺失退回 `.sha256` 流程。发布
+私钥是 64 位十六进制的 Ed25519 种子,存 GitHub secret,由
+`cargo xtask update-manifest` + `sign-manifest` 在发布工作流里生成并签名。
+
 ## 质量门禁
 
 - `ci.yml`:fmt 回推、clippy `-D warnings`、rustdoc 断链检查、protocol/extjs
