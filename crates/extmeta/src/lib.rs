@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 pub mod consent;
 pub mod metrics;
-mod sha256;
+pub mod sha256;
 
 /// 清单文件的大小上限。清单只放元数据,超过这个数说明放错了东西。
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
@@ -678,7 +678,7 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
 }
 
 /// id 只允许小写字母、数字、`-`、`_`,以字母或数字开头,最长 48 字节。
-fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     let mut chars = id.chars();
     let Some(first) = chars.next() else {
         return false;

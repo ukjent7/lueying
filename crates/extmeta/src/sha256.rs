@@ -1,10 +1,10 @@
-//! 最小 SHA-256:扩展包内容指纹用。
+//! 最小 SHA-256:扩展包内容指纹与安装包校验用。
 //!
-//! 只做完整性固定,不做签名。输入是清单与入口脚本,长度已知;实现按
+//! 只做完整性固定,不做签名。扩展侧输入是清单与入口脚本,长度已知;
+//! 更新器拿它算安装包摘要,替代 `certutil` 子进程,大文件走流式接口。
+//!
+//! 不引第三方 crate 是为了让 `lueying-extmeta` 保持零依赖:实现按
 //! FIPS 180-4,已知答案在文件末尾的测试里。
-//!
-//! 不引第三方 crate 是为了让 `lueying-extmeta` 保持零依赖:这个哈希只在
-//! 扩展加载与同意检查时算两份小文件,性能不重要。
 
 const INITIAL: [u32; 8] = [
     0x6a09_e667,
@@ -85,7 +85,7 @@ const K: [u32; 64] = [
 ];
 
 /// 增量 SHA-256。
-pub(crate) struct Sha256 {
+pub struct Sha256 {
     state: [u32; 8],
     buffer: [u8; 64],
     filled: usize,
@@ -93,7 +93,7 @@ pub(crate) struct Sha256 {
 }
 
 impl Sha256 {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: INITIAL,
             buffer: [0; 64],
@@ -102,7 +102,7 @@ impl Sha256 {
         }
     }
 
-    pub(crate) fn update(&mut self, mut data: &[u8]) {
+    pub fn update(&mut self, mut data: &[u8]) {
         self.length = self.length.wrapping_add(data.len() as u64);
         if self.filled > 0 {
             let take = (64 - self.filled).min(data.len());
@@ -126,7 +126,7 @@ impl Sha256 {
         }
     }
 
-    pub(crate) fn finish(mut self) -> [u8; 32] {
+    pub fn finish(mut self) -> [u8; 32] {
         let bit_length = self.length.wrapping_mul(8);
         let mut padding = [0u8; 64];
         padding[0] = 0x80;
@@ -197,7 +197,7 @@ pub(crate) fn hex_digest(bytes: &[u8]) -> String {
     hex(&hasher.finish())
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for &byte in bytes {
@@ -205,6 +205,19 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
         out.push(DIGITS[usize::from(byte & 0x0f)] as char);
     }
     out
+}
+
+/// 流式算完一个 `Read`(安装包可能上百 MB,不整块进内存)。
+pub fn sha256_reader(mut reader: impl std::io::Read) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(hex(&hasher.finish()));
+        }
+        hasher.update(&buffer[..read]);
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,6 @@ use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
 use std::mem::size_of;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,7 +28,6 @@ const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/
 const API_RELEASES: &str = "https://api.github.com/repos/ukjent7/lueying/releases?per_page=20";
 const API_LIMIT: u64 = 2 * 1024 * 1024;
 const SHA_LIMIT: u64 = 8 * 1024;
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Clone, Debug)]
 pub struct Release {
@@ -321,22 +319,10 @@ pub fn fetch_sha256(url: &str) -> Result<String, String> {
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
-    let output = Command::new(system32("certutil.exe"))
-        .arg("-hashfile")
-        .arg(path)
-        .arg("SHA256")
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("运行 certutil: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "certutil 退出码 {:?}: {}",
-            output.status.code(),
-            tail(&output.stderr)
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    parse_sha256(&text).ok_or_else(|| "certutil 输出里没有 SHA-256".into())
+    let file = File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    lueying_extmeta::sha256::sha256_reader(&mut reader)
+        .map_err(|e| format!("计算 SHA-256: {e}"))
 }
 
 fn normalize_version(tag: &str) -> String {
@@ -349,19 +335,6 @@ fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
     let status = response.status()?;
     let body = response.bytes(limit)?;
     Ok((status, body))
-}
-
-fn system32(name: &str) -> PathBuf {
-    std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("System32")
-        .join(name)
-}
-
-fn tail(bytes: &[u8]) -> String {
-    let start = bytes.len().saturating_sub(600);
-    String::from_utf8_lossy(&bytes[start..]).trim().to_string()
 }
 
 fn last_error(what: &str) -> String {
