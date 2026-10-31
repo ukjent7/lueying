@@ -310,15 +310,27 @@ jobs:
         run: |
           cargo build --release --locked -p lueying-tsf
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
-      # 运行时体积基线:0.1.0 实测 server 12.2 + settings 10.5 + update 0.5 +
-      # user 0.4 + TSF 0.6 ≈ 25 MiB。40 MiB 门限抓依赖/特性膨胀,发布包另有总门禁。
+      # 运行时体积基线:发布目录里 0.1.0 实测 server 12.2 + settings 10.5 +
+      # update 0.5 + user 0.4 + TSF 0.6 ≈ 25 MiB。cargo 产出的 exe 带符号表,
+      # 直接量会比发布包大数倍;按发布前同样 strip 过的副本计。40 MiB 门限抓
+      # 依赖/特性膨胀,发布包另有总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |
           $names = "lueying-server.exe", "lueying-settings.exe", "lueying-update.exe", "lueying-user.exe", "lueying_tsf.dll"
-          $files = $names | ForEach-Object { Get-Item "target/release/$_" -ErrorAction Stop }
-          $bytes = ($files | Measure-Object -Property Length -Sum).Sum
-          $files | ForEach-Object { "{0} {1:N1} MiB" -f $_.Name, ($_.Length / 1MB) }
+          $stage = Join-Path $env:RUNNER_TEMP "lueying-size-gate"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $strip = "C:\Program Files\LLVM\bin\llvm-strip.exe"
+          $bytes = 0
+          foreach ($name in $names) {
+            $target = Join-Path $stage $name
+            Copy-Item "target/release/$name" $target -Force
+            & $strip --strip-all $target
+            if ($LASTEXITCODE -ne 0) { throw "strip 失败: $name" }
+            $length = (Get-Item $target).Length
+            $bytes += $length
+            "{0} {1:N1} MiB" -f $name, ($length / 1MB)
+          }
           "{0:N1} MiB / 40 MiB" -f ($bytes / 1MB)
           if ($bytes -gt 40MB) { throw "运行时体积超过 40 MiB" }
       - name: Build Windows E2E harness

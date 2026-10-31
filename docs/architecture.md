@@ -129,15 +129,18 @@ Skia 体积裁剪评估(2026-10-31,结论:维持现键,不再投入):预编译�
 
 ## 设置窗
 
-设置窗是独立的 `lueying-settings.exe`:普通不透明 Win32 窗(客户区 460×650
-逻辑像素),Skia 在 CPU 上光栅出帧,再经 GDI `BitBlt` 贴到客户区——它不需要
+设置窗是独立的 `lueying-settings.exe`:普通不透明 Win32 窗(客户区 760×650
+逻辑像素),左侧分类导航(输入、候选、扩展、词库、关于),右侧是当前分类的
+设置卡片。Skia 在 CPU 上光栅出帧,再经 GDI `BitBlt` 贴到客户区——它不需要
 GPU,在没有硬件 D3D12 的机器上也照样开。页面模型在平台无关的
-`lueying-server::settings_view`:配置铺成一页(分组、设置行、开关、分段组、
-按钮),点一下改配置、左右键改分段值、Tab 走焦点顺序,都在这一层;画面与命中
-在 `lueying-render::ui`,与候选窗共用同一套排版与像素断言,Linux E2E 因此
-能直接断言设置页的结构与交互结果。平台侧只剩「要动文件系统或常驻服务」的
-动作(备份、导入导出、词库、自动更新),在 `settings_actions`。
-窗口自检 `--selftest` 建窗、画一帧、贴一次、读回像素,Windows E2E 跑它。
+`lueying-server::settings_view`:设置行由 `settings_schema` 的单一元数据表
+生成(键、类型、默认值、文案、可见条件与控件),点一下改配置、左右键改分段值、
+Tab 走当前页的焦点顺序,都在这一层;`lueying-settings --dump-config-schema`
+输出同一份表的 JSON Schema。画面与命中在 `lueying-render::ui`,与候选窗共用
+同一套排版与像素断言,Linux E2E 因此能直接断言设置页的结构与交互结果。平台侧
+只剩「要动文件系统或常驻服务」的动作(备份、导入导出、词库、自动更新),
+在 `settings_actions`。窗口自检 `--selftest` 建窗、画一帧、贴一次、读回像素,
+Windows E2E 跑它。
 
 ## 更新
 
@@ -161,7 +164,7 @@ setup.exe,未配置时发布未签名包。
   (TSF 真实链接,x86 定时跑)。
 - `quality.yml`(定时):全量语料准确率门限(clean 92% / top-5 95%)、
   x86 全链路、Inno 安装/卸载冒烟。
-- 体积与延迟基线:Windows job 卡运行时二进制合计 ≤ 40 MiB,Windows 全链路
+- 体积与延迟基线:Windows job 卡运行时二进制 strip 后合计 ≤ 40 MiB,Windows 全链路
   E2E 卡 Server 峰值工作集 ≤ 128 MB、提交 p95 ≤ 60 ms、每键 p95 ≤ 60 ms;
   `xtask pack` 卡发布目录 ≤ 200 MiB、安装包 ≤ 85 MiB。
 - `audit.yml`(定时):`cargo audit` 依赖漏洞审计。
