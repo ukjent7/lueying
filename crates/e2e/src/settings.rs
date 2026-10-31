@@ -408,7 +408,10 @@ pub fn run(report: &mut String) -> usize {
             && searched.subtitle.contains("项")
             && hit
             && searched.active_nav == usize::MAX,
-        format!("标题={} 副标题={} 命中={hit}", searched.title, searched.subtitle),
+        format!(
+            "标题={} 副标题={} 命中={hit}",
+            searched.title, searched.subtitle
+        ),
     );
     search.set_search("");
     push(
@@ -418,15 +421,17 @@ pub fn run(report: &mut String) -> usize {
         format!("搜索={:?}", search.search),
     );
     // 候选页第一行是实时预览;控件不参与焦点与命中。
-    let candidate = settings()
-        .page_view(PageId::Candidate, &colors());
+    let candidate = settings().page_view(PageId::Candidate, &colors());
     let preview = candidate.groups[0].rows.first();
     push(
         &mut checks,
         "设置候选预览行",
         preview.is_some_and(|row| {
             row.label == "候选窗预览" && matches!(row.control, ui::Control::Preview { .. })
-        }) && !candidate.focus_ids().iter().any(|id| id.base == "candidate-preview"),
+        }) && !candidate
+            .focus_ids()
+            .iter()
+            .any(|id| id.base == "candidate-preview"),
         format!("首行={:?}", preview.map(|row| row.label.as_str())),
     );
 
@@ -461,7 +466,10 @@ pub fn run(report: &mut String) -> usize {
             && over.punct == Some(true)
             && over2.learning == Some(true)
             && add == Some(Action::AddApp),
-        format!("行 {app_rows:?} 标点={:?} 学习={:?}", over.punct, over2.learning),
+        format!(
+            "行 {app_rows:?} 标点={:?} 学习={:?}",
+            over.punct, over2.learning
+        ),
     );
 
     crate::harness::write(report, "设置页模型", checks)

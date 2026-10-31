@@ -667,8 +667,7 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
                     return Err(format!("密钥设置 {} 的默认值必须是文本", setting.key));
                 }
                 if let Some(SettingValue::Text(text)) = &setting.default
-                    && (text.chars().count() > MAX_TEXT_CHARS
-                        || text.chars().any(char::is_control))
+                    && (text.chars().count() > MAX_TEXT_CHARS || text.chars().any(char::is_control))
                 {
                     return Err(format!("密钥设置 {} 的默认值过长或含控制字符", setting.key));
                 }

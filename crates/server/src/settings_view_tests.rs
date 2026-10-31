@@ -166,20 +166,29 @@ fn search_spans_pages_and_clears_on_navigation() {
     let page = settings.page(&crate::settings_view::PageColors::default());
     assert_eq!(page.title, "搜索");
     assert!(page.active_nav == usize::MAX);
-    assert!(page
-        .groups
-        .iter()
-        .flat_map(|group| &group.rows)
-        .any(|row| row.label == "辅助码"));
+    assert!(
+        page.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .any(|row| row.label == "辅助码")
+    );
     settings.set_page(PageId::Candidate);
     assert!(!settings.searching());
-    assert_eq!(settings.page(&crate::settings_view::PageColors::default()).active_nav, 1);
+    assert_eq!(
+        settings
+            .page(&crate::settings_view::PageColors::default())
+            .active_nav,
+        1
+    );
 }
 
 #[test]
 fn candidate_page_starts_with_preview() {
     let settings = Settings::default();
-    let page = settings.page_view(PageId::Candidate, &crate::settings_view::PageColors::default());
+    let page = settings.page_view(
+        PageId::Candidate,
+        &crate::settings_view::PageColors::default(),
+    );
     let first = &page.groups[0].rows[0];
     assert_eq!(first.label, "候选窗预览");
     assert!(matches!(
@@ -191,10 +200,10 @@ fn candidate_page_starts_with_preview() {
 #[test]
 fn app_override_buttons_cycle_three_states() {
     let mut settings = Settings::default();
-    settings
-        .cfg
-        .apps
-        .insert("code.exe".to_string(), crate::config::AppOverride::default());
+    settings.cfg.apps.insert(
+        "code.exe".to_string(),
+        crate::config::AppOverride::default(),
+    );
     let punct = Id::new(ids::app_punct(0), 0);
     let learning = Id::new(ids::app_learning(0), 0);
     settings.activate(&punct);

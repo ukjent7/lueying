@@ -390,10 +390,7 @@ impl Settings {
             return None;
         }
         if let Some(slot) = ids::official_slot(id.base) {
-            let Some(extension) = crate::official_extensions::catalog()
-                .extensions
-                .get(slot)
-            else {
+            let Some(extension) = crate::official_extensions::catalog().extensions.get(slot) else {
                 return None;
             };
             let installed = if extension.is_model() {

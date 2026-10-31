@@ -176,11 +176,7 @@ impl Settings {
 
     /// 候选窗实时预览:同一份配置直接渲染样例候选。
     fn candidate_preview_row(&self, colors: &PageColors) -> Row {
-        let accent = colors
-            .accents
-            .get(self.cfg.ui_accent)
-            .copied()
-            .unwrap_or(0);
+        let accent = colors.accents.get(self.cfg.ui_accent).copied().unwrap_or(0);
         Row {
             label: "候选窗预览".to_string(),
             detail: "改字号、排列或主题色会实时反映".to_string(),

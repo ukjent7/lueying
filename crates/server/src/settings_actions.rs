@@ -129,7 +129,9 @@ pub fn open_apps(settings: &mut Settings) {
 }
 
 /// 正在运行、有可见窗口且尚未配置的应用:exe 名 → 窗口标题。
-fn running_apps(configured: &std::collections::BTreeMap<String, AppOverride>) -> Vec<(String, String)> {
+fn running_apps(
+    configured: &std::collections::BTreeMap<String, AppOverride>,
+) -> Vec<(String, String)> {
     struct Found {
         configured: *const std::collections::BTreeMap<String, AppOverride>,
         apps: Vec<(String, String)>,
@@ -171,7 +173,9 @@ fn running_apps(configured: &std::collections::BTreeMap<String, AppOverride>) ->
             return BOOL(1);
         }
         let image = std::path::Path::new(&String::from_utf16_lossy(&path[..size as usize]));
-        let Some(exe) = image.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase())
+        let Some(exe) = image
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
         else {
             return BOOL(1);
         };
@@ -193,7 +197,9 @@ fn running_apps(configured: &std::collections::BTreeMap<String, AppOverride>) ->
     unsafe {
         let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut Found as isize));
     }
-    found.apps.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    found
+        .apps
+        .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
     found.apps.truncate(40);
     found.apps
 }
@@ -203,7 +209,10 @@ pub fn add_app(hwnd: HWND, settings: &mut Settings) {
     settings.confirm_clear = false;
     let apps = running_apps(&settings.cfg.apps);
     if apps.is_empty() {
-        settings.say(Notice::Info, "没有可添加的运行中程序;可打开「配置文件」手动添加");
+        settings.say(
+            Notice::Info,
+            "没有可添加的运行中程序;可打开「配置文件」手动添加",
+        );
         return;
     }
     let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
@@ -235,9 +244,9 @@ pub fn add_app(hwnd: HWND, settings: &mut Settings) {
     unsafe {
         let _ = DestroyMenu(menu);
     }
-    let chosen = usize::try_from(command.0).ok().filter(|index| {
-        *index > 0 && *index <= apps.len()
-    });
+    let chosen = usize::try_from(command.0)
+        .ok()
+        .filter(|index| *index > 0 && *index <= apps.len());
     let Some(index) = chosen else {
         return;
     };
@@ -246,10 +255,7 @@ pub fn add_app(hwnd: HWND, settings: &mut Settings) {
         .cfg
         .apps
         .insert(exe.clone(), AppOverride::default());
-    settings.say(
-        Notice::Info,
-        format!("已添加 {title} ({exe});保存后生效"),
-    );
+    settings.say(Notice::Info, format!("已添加 {title} ({exe});保存后生效"));
 }
 
 /// 打开一份用户数据文件;缺失时先写模板。保存后由 Server 在下次

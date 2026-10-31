@@ -55,10 +55,7 @@ pub fn install(id: &str) -> Result<String, String> {
         return Ok(format!("{} 已安装;启用前需要同意权限", extension.name));
     }
     install_model(extension)?;
-    Ok(format!(
-        "{} 已下载并校验;重启输入法后生效",
-        extension.name
-    ))
+    Ok(format!("{} 已下载并校验;重启输入法后生效", extension.name))
 }
 
 fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
@@ -79,10 +76,14 @@ fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
     copy_tree(&source, &target)?;
     let manifest = target.join("manifest.json");
     let bytes = std::fs::read(&manifest).map_err(|e| format!("读清单: {e}"))?;
-    let parsed = lueying_extmeta::Manifest::parse(&bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    let parsed =
+        lueying_extmeta::Manifest::parse(&bytes).map_err(|e| format!("清单不合法: {e}"))?;
     if parsed.id != extension.id {
         let _ = std::fs::remove_dir_all(&target);
-        return Err(format!("包 id {} 与目录项 {} 不一致", parsed.id, extension.id));
+        return Err(format!(
+            "包 id {} 与目录项 {} 不一致",
+            parsed.id, extension.id
+        ));
     }
     Ok(())
 }
@@ -147,7 +148,8 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .unwrap_or("tmp")
     ));
     {
-        let mut file = std::fs::File::create(&tmp).map_err(|e| format!("创建 {}: {e}", tmp.display()))?;
+        let mut file =
+            std::fs::File::create(&tmp).map_err(|e| format!("创建 {}: {e}", tmp.display()))?;
         file.write_all(bytes)
             .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
         file.sync_all()
@@ -188,8 +190,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
         if path.is_dir() {
             copy_tree(&path, &into)?;
         } else {
-            std::fs::copy(&path, &into)
-                .map_err(|e| format!("复制 {}: {e}", path.display()))?;
+            std::fs::copy(&path, &into).map_err(|e| format!("复制 {}: {e}", path.display()))?;
         }
     }
     Ok(())

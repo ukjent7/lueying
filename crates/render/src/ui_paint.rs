@@ -412,12 +412,7 @@ impl<'a> Painter<'a> {
             let line_h = 22.0 * s * text_scale;
             let mut y = rect.top + 22.0 * s;
             for index in 0..count {
-                let item = Rect::from_xywh(
-                    rect.left + pad,
-                    y,
-                    rect.width() - pad * 2.0,
-                    line_h,
-                );
+                let item = Rect::from_xywh(rect.left + pad, y, rect.width() - pad * 2.0, line_h);
                 self.preview_candidate(style, index, item, text_scale);
                 y += line_h;
             }

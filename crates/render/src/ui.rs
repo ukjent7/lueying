@@ -157,10 +157,7 @@ pub enum Control {
         toggle_on: bool,
     },
     /// 候选窗预览;只画不点,占用比普通行更高的区域。
-    Preview {
-        id: Id,
-        style: CandidatePreview,
-    },
+    Preview { id: Id, style: CandidatePreview },
     /// 右侧没有控件。
     None,
 }
@@ -438,12 +435,7 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
     let text_left = out.logo.right + 12.0 * scale;
     let search_left = (text_left + 230.0 * scale).min(search_right - 120.0 * scale);
     let search_width = (search_right - search_left).clamp(120.0 * scale, 320.0 * scale);
-    out.search = Rect::from_xywh(
-        search_left,
-        y + 3.0 * scale,
-        search_width,
-        30.0 * scale,
-    );
+    out.search = Rect::from_xywh(search_left, y + 3.0 * scale, search_width, 30.0 * scale);
     y += out.logo.height() + gap;
     let card_top = y;
     let footer_h = BUTTON_H * scale;

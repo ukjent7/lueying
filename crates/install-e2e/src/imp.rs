@@ -622,8 +622,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
         if path.is_dir() {
             copy_tree(&path, &into)?;
         } else {
-            std::fs::copy(&path, &into)
-                .map_err(|e| format!("复制 {}: {e}", path.display()))?;
+            std::fs::copy(&path, &into).map_err(|e| format!("复制 {}: {e}", path.display()))?;
         }
     }
     Ok(())

@@ -54,10 +54,7 @@ pub fn merge(ext: &str, settings: &[lueying_extmeta::Setting], object: &mut Map<
     let values = table(ext);
     for setting in settings.iter().filter(|setting| setting.is_secret()) {
         if let Some(value) = values.get(setting.key()).and_then(Value::as_str) {
-            object.insert(
-                setting.key().to_string(),
-                Value::String(value.to_string()),
-            );
+            object.insert(setting.key().to_string(), Value::String(value.to_string()));
         }
     }
 }
@@ -93,10 +90,12 @@ fn save(ext: &str, values: &Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_vec_pretty(values).map_err(|error| format!("序列化密钥: {error}"))?;
     let tmp = path.with_extension("json.tmp");
     {
-        let mut file = std::fs::File::create(&tmp).map_err(|error| format!("创建密钥文件: {error}"))?;
+        let mut file =
+            std::fs::File::create(&tmp).map_err(|error| format!("创建密钥文件: {error}"))?;
         std::io::Write::write_all(&mut file, &text)
             .map_err(|error| format!("写密钥文件: {error}"))?;
-        file.sync_all().map_err(|error| format!("同步密钥文件: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("同步密钥文件: {error}"))?;
     }
     secure_file(&tmp)?;
     std::fs::rename(&tmp, &path).map_err(|error| format!("替换密钥文件: {error}"))?;
