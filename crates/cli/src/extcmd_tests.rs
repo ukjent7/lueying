@@ -14,7 +14,7 @@ fn temp_root(tag: &str) -> PathBuf {
     base
 }
 
-fn skeleton(root: &PathBuf, id: &str) -> PathBuf {
+fn skeleton(root: &Path, id: &str) -> PathBuf {
     new(&NewArgs {
         id: id.to_string(),
         name: None,

@@ -461,6 +461,7 @@ fn finish(report: &str, failures: usize) -> ! {
         std::process::exit(1);
     }
     println!("全部通过");
+    std::process::exit(0);
 }
 
 /// 整句评测:逐条打进引擎,取候选首位与 top-5。
