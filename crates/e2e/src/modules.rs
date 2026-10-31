@@ -40,7 +40,9 @@ impl Module for Demo {
 }
 
 fn engine(modules: Modules) -> Engine {
-    let script = Arc::new(lueying_features::ScriptModule::new(lueying_features::Script::Simplified));
+    let script = Arc::new(lueying_features::ScriptModule::new(
+        lueying_features::Script::Simplified,
+    ));
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(
         lueying_features::append_builtins(modules, &script),
     ))

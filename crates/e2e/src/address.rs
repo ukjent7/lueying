@@ -24,8 +24,7 @@ fn push(
 }
 
 fn engine() -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_modules(crate::builtins())
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }
 
 /// 按真实按键路径打一段地址:字母走 Letter、数字走 Digit、符号走 Punct。

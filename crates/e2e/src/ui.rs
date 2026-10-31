@@ -22,8 +22,7 @@ use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, MAX_RAW};
 
 fn engine() -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_modules(crate::builtins())
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }
 
 fn type_into(engine: &mut Engine, raw: &str) {

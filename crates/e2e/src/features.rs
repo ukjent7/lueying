@@ -72,8 +72,7 @@ fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
 }
 
 fn mini() -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_modules(crate::builtins())
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }
 
 fn letters(engine: &mut Engine, text: &str) {
@@ -331,7 +330,8 @@ pub fn run(report: &mut String) -> usize {
     // 因此挡掉用户少打末字母时补出的「你好」。
     let (dict, bad) = Dictionary::from_text("你好\t5328\tni'hao\n你好啊\t89\tni'hao'a\n");
     assert_eq!(bad, 0, "简拼撞车测试词库不应有坏行");
-    let mut shortened = Engine::new(Arc::new(dict), Config::default()).with_modules(crate::builtins());
+    let mut shortened =
+        Engine::new(Arc::new(dict), Config::default()).with_modules(crate::builtins());
     letters(&mut shortened, "niha");
     push(
         &mut checks,
@@ -503,7 +503,8 @@ pub fn run(report: &mut String) -> usize {
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert(',', "、".to_string());
     punct_cfg.punct.insert('^', "………".to_string());
-    let mut mapped = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
+    let mut mapped =
+        Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     let events = mapped.process(Key::Punct(','));
     push(
         &mut checks,
@@ -516,7 +517,8 @@ pub fn run(report: &mut String) -> usize {
 
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert(',', "、".to_string());
-    let mut fallback = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
+    let mut fallback =
+        Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     let events = fallback.process(Key::Punct('?'));
     push(
         &mut checks,
@@ -529,7 +531,8 @@ pub fn run(report: &mut String) -> usize {
 
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert('.', ".".to_string());
-    let mut dot = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
+    let mut dot =
+        Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     dot.process(Key::Digit(3));
     let events = dot.process(Key::Punct('.'));
     push(
@@ -541,7 +544,8 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
-    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins());
+    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_modules(crate::builtins());
     plain.process(Key::Digit(3));
     let events = plain.process(Key::Punct('.'));
     push(

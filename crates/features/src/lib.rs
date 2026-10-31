@@ -125,7 +125,10 @@ pub fn registry_with_script(
     prediction: Arc<Prediction>,
     script: Arc<ScriptModule>,
 ) -> Arc<Modules> {
-    Arc::new(append_builtins(registry_inner(phrases, prediction), &script))
+    Arc::new(append_builtins(
+        registry_inner(phrases, prediction),
+        &script,
+    ))
 }
 
 fn registry_inner(phrases: Option<Arc<CustomPhrases>>, prediction: Arc<Prediction>) -> Modules {

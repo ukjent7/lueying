@@ -37,10 +37,9 @@ impl Module for EmojiModule {
             return;
         }
         // 单字/固定候选都不插表情;没有可插的候选就不必加载别名表。
-        let eligible = cands
-            .iter()
-            .take(SCAN)
-            .any(|cand| !cand.quick && !cand.no_learn && cand.text.chars().count() >= MIN_WORD_CHARS);
+        let eligible = cands.iter().take(SCAN).any(|cand| {
+            !cand.quick && !cand.no_learn && cand.text.chars().count() >= MIN_WORD_CHARS
+        });
         if !eligible {
             return;
         }

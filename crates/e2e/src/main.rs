@@ -31,7 +31,9 @@ use scenarios::{Check, Scenario, probes, scenarios};
 /// 生产内置模块(表情、英文混输、简繁转换):核心引擎迁到同一契约后,
 /// 主题回归用它保持与产品一致的候选装饰。
 pub(crate) fn builtins() -> Arc<lueying_engine::module::Modules> {
-    Arc::new(lueying_features::builtins(lueying_features::Script::Simplified))
+    Arc::new(lueying_features::builtins(
+        lueying_features::Script::Simplified,
+    ))
 }
 
 /// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。
@@ -256,7 +258,8 @@ fn main() {
         });
         let dict = Arc::new(dict);
         rerank_inputs = Some((Arc::clone(&dict), gram.clone()));
-        let mut engine = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+        let mut engine =
+            Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
         if let Some(g) = &gram {
             engine = engine.with_gram(Arc::clone(g));
         }

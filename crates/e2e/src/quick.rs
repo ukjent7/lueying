@@ -37,8 +37,7 @@ fn push(
 }
 
 fn engine() -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_modules(crate::builtins())
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }
 
 fn at(now: CivilTime) -> Engine {

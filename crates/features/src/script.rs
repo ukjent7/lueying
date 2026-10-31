@@ -9,8 +9,8 @@
 //! `licenses/Apache-2.0.txt`。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module, Script};
 

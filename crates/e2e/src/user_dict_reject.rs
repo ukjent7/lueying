@@ -17,13 +17,15 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     // 导入足够的跳过次数后,首选必须让给乙乙。甲甲学过的词频不低,
     // 首位的精确/学习保护也必须为负分让位。
     let pair = "jia'jia\t甲甲\t100000\t0\njia'jia\t乙乙\t99000\t0\n";
-    let mut control = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut control =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     control.import_user(pair);
     for ch in "jiajia".chars() {
         control.process(Key::Letter(ch));
     }
     let control_top = control.candidates().first().cloned().unwrap_or_default();
-    let mut disliked = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut disliked =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     disliked.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{now}\n"));
     for ch in "jiajia".chars() {
         disliked.process(Key::Letter(ch));
@@ -38,7 +40,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
 
     // 过期负分自然失效:四十周前的跳过记录按周衰减后归零,不能永久压住候选。
     let stale_ts = now.saturating_sub(40 * 7 * 24 * 3600);
-    let mut stale = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut stale =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     stale.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{stale_ts}\n"));
     for ch in "jiajia".chars() {
         stale.process(Key::Letter(ch));
@@ -52,7 +55,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     );
 
     // 选择后面的候选时,被越过的同键候选写入 @reject;该记录随词库往返。
-    let mut skipped = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut skipped =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     skipped.import_user(pair);
     for ch in "jiajia".chars() {
         skipped.process(Key::Letter(ch));
@@ -64,7 +68,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
         .find(|l| l.starts_with("@reject\tjia'jia\t甲甲\t"))
         .unwrap_or_default()
         .to_string();
-    let mut restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut restored =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     restored.import_user(&skipped_export);
     let restored_export = restored.export_user();
     push(
@@ -77,7 +82,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     );
 
     // 重新选中被跳过的词:旧负分必须清掉,否则下次同键仍被压在后面。
-    let mut forgive = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut forgive =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     forgive.import_user(&format!("{pair}@reject\tjia'jia\t甲甲\t100\t{now}\n"));
     for ch in "jiajia".chars() {
         forgive.process(Key::Letter(ch));
@@ -96,7 +102,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     );
 
     // Shift+Delete 也要忘掉负分:只导入跳过记录,高亮该词删除后导出不再有它。
-    let mut forgotten = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut forgotten =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     forgotten.import_user(&format!("@reject\tni'hao\t你好\t100\t{now}\n"));
     for ch in "nihao".chars() {
         forgotten.process(Key::Letter(ch));
@@ -125,7 +132,8 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     );
 
     // 快捷候选不是词:选第二个日期格式时,排在前面的日期不能被记成被跳过的词。
-    let mut quick_skip = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+    let mut quick_skip =
+        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "rq".chars() {
         quick_skip.process(Key::Letter(ch));
     }
