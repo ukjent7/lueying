@@ -120,6 +120,22 @@ interface hotkey {
   press: func(options: press-options) -> result<string, string>;
 }
 
+// 网络请求:只允许清单 network.domains 里的地址,HTTPS 或本机回环 HTTP。
+// 响应体上限 512 KiB;请求由独立代理进程执行,输入法进程不联网。
+interface net {
+  record fetch-options {
+    url: string,
+    method: option<string>,
+    headers: option<list<tuple<string, string>>>,
+    body: option<string>,
+  }
+  record fetch-result {
+    status: u16,
+    body: string,
+  }
+  fetch: func(options: fetch-options) -> result<fetch-result, string>;
+}
+
 // 系统通知。
 interface notify {
   record show-options {
@@ -137,5 +153,6 @@ world extension {
   import output;
   import panel;
   import hotkey;
+  import net;
   import notify;
 }

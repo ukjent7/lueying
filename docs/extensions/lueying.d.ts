@@ -70,6 +70,18 @@ declare namespace Lueying {
     selected: number | null;
   }
 
+  interface NetFetchOptions {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }
+
+  interface NetFetchResult {
+    status: number;
+    body: string;
+  }
+
   interface HotkeyRegisterOptions {
     id: string;
     modifiers: string[];
@@ -119,6 +131,9 @@ declare namespace Lueying {
     };
     panel: {
       show(options: PanelOptions): Promise<PanelResult>;
+    };
+    net: {
+      fetch(options: NetFetchOptions): Promise<NetFetchResult>;
     };
     hotkey: {
       register(options: HotkeyRegisterOptions): Promise<unknown>;

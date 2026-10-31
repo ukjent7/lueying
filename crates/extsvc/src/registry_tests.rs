@@ -54,8 +54,8 @@ fn wit_lists_every_open_method() {
 
 /// 没开放的接口(网络)没有方法,声明了也调不到。
 #[test]
-fn closed_services_have_no_methods() {
-    assert!(methods(Service::Net).is_empty(), "net 应该没开放");
+fn net_exposes_only_fetch() {
+    assert_eq!(methods(Service::Net), &["fetch"]);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn call_rejects_unknown_service_and_method() {
     );
     assert!(
         registry
-            .call("net", "fetch", "", 1)
+            .call("net", "post", "", 1)
             .err()
             .unwrap()
             .contains("没有方法")

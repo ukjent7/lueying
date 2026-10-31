@@ -3,10 +3,8 @@
 //! 验签后的清单为准(见 [`crate::update_manifest`]);更新器进程下载 Inno
 //! Setup 安装包并静默运行,由安装包完成替换。
 
-use std::ffi::c_void;
 use std::fs::File;
 use std::io::Write;
-use std::mem::size_of;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,17 +12,8 @@ use lueying_protocol::version::{is_newer, parse_sha256};
 
 use crate::update_manifest::{self, MANIFEST_NAME};
 
-use windows::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0};
-use windows::Win32::Networking::WinHttp::{
-    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_ADDREQ_FLAG_ADD, WINHTTP_FLAG_SECURE,
-    WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP,
-    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE, WinHttpAddRequestHeaders,
-    WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders,
-    WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
-    WinHttpSetTimeouts,
-};
+use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
-use windows::core::{HSTRING, PWSTR};
 
 /// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
 const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/latest";
@@ -420,169 +409,19 @@ fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
 }
 
 fn fetch_with(url: &str, limit: u64, download: bool) -> Result<(u16, Vec<u8>), String> {
-    let response = Response::open(url, download)?;
-    let status = response.status()?;
-    let body = response.bytes(limit)?;
-    Ok((status, body))
-}
-
-fn last_error(what: &str) -> String {
-    let code = unsafe { GetLastError() };
-    format!("{what}(Win32 错误 {})", code.0)
-}
-
-/// 一条 GET 请求的 WinHTTP 句柄;Drop 按请求、连接、会话顺序关闭。
-struct Response {
-    session: *mut c_void,
-    connect: *mut c_void,
-    request: *mut c_void,
-}
-
-impl Response {
-    fn open(url: &str, download: bool) -> Result<Self, String> {
-        let (host, path) = split_https(url)?;
-        let agent = HSTRING::from(format!("lueying-update/{}", env!("CARGO_PKG_VERSION")));
-        let host = HSTRING::from(host);
-        let object = HSTRING::from(path);
-        let verb = HSTRING::from("GET");
-        // User-Agent 由 WinHttpOpen 的 agent 统一发送,请求头里不再重复加。
-        let headers: Vec<u16> = concat!(
-            "Accept: application/vnd.github+json\r\n",
-            "Accept-Encoding: identity\r\n",
-            "X-GitHub-Api-Version: 2022-11-28\r\n",
-        )
-        .encode_utf16()
-        .collect();
-        unsafe {
-            let session = WinHttpOpen(
-                &agent,
-                WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                PWSTR::null(),
-                PWSTR::null(),
-                0,
-            );
-            if session.is_null() {
-                return Err(last_error("创建 WinHTTP 会话失败"));
-            }
-            let mut response = Self {
-                session,
-                connect: std::ptr::null_mut(),
-                request: std::ptr::null_mut(),
-            };
-            let receive_timeout = if download { 60_000 } else { 15_000 };
-            WinHttpSetTimeouts(session, 5_000, 5_000, 10_000, receive_timeout)
-                .map_err(|e| format!("设置网络超时: {e}"))?;
-            response.connect = WinHttpConnect(session, &host, 443, 0);
-            if response.connect.is_null() {
-                return Err(last_error("连接 GitHub 失败"));
-            }
-            response.request = WinHttpOpenRequest(
-                response.connect,
-                &verb,
-                &object,
-                PWSTR::null(),
-                PWSTR::null(),
-                std::ptr::null(),
-                WINHTTP_FLAG_SECURE,
-            );
-            if response.request.is_null() {
-                return Err(last_error("创建 HTTP 请求失败"));
-            }
-            let policy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP.to_ne_bytes();
-            let policy: &[u8] = &policy;
-            WinHttpSetOption(
-                Some(response.request as *const c_void),
-                WINHTTP_OPTION_REDIRECT_POLICY,
-                Some(policy),
-            )
-            .map_err(|e| format!("设置重定向策略: {e}"))?;
-            WinHttpAddRequestHeaders(response.request, &headers, WINHTTP_ADDREQ_FLAG_ADD)
-                .map_err(|e| format!("设置请求头: {e}"))?;
-            WinHttpSendRequest(response.request, None, None, 0, 0, 0)
-                .map_err(|e| format!("发送请求: {e}"))?;
-            WinHttpReceiveResponse(response.request, std::ptr::null_mut())
-                .map_err(|e| format!("读取响应: {e}"))?;
-            Ok(response)
-        }
-    }
-
-    fn status(&self) -> Result<u16, String> {
-        let mut status = 0u32;
-        let mut length = size_of::<u32>() as u32;
-        let buffer: *mut c_void = (&mut status as *mut u32).cast();
-        unsafe {
-            WinHttpQueryHeaders(
-                self.request,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                PWSTR::null(),
-                Some(buffer),
-                &mut length,
-                std::ptr::null_mut(),
-            )
-            .map_err(|e| format!("读取 HTTP 状态码: {e}"))?;
-        }
-        Ok(status as u16)
-    }
-
-    fn bytes(&self, limit: u64) -> Result<Vec<u8>, String> {
-        let mut out = Vec::new();
-        self.read_chunks(|chunk| {
-            let total = out.len() as u64 + chunk.len() as u64;
-            if total > limit {
-                return Err("响应内容过大".into());
-            }
-            out.extend_from_slice(chunk);
-            Ok(())
-        })?;
-        Ok(out)
-    }
-
-    fn read_chunks(
-        &self,
-        mut sink: impl FnMut(&[u8]) -> Result<(), String>,
-    ) -> Result<u64, String> {
-        let mut buffer = vec![0u8; 64 * 1024];
-        let mut total = 0u64;
-        loop {
-            let mut read = 0u32;
-            let pointer: *mut c_void = buffer.as_mut_ptr().cast();
-            unsafe { WinHttpReadData(self.request, pointer, buffer.len() as u32, &mut read) }
-                .map_err(|e| format!("读取下载数据: {e}"))?;
-            if read == 0 {
-                return Ok(total);
-            }
-            total += u64::from(read);
-            sink(&buffer[..read as usize])?;
-        }
-    }
-}
-
-impl Drop for Response {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.request.is_null() {
-                let _ = WinHttpCloseHandle(self.request);
-            }
-            if !self.connect.is_null() {
-                let _ = WinHttpCloseHandle(self.connect);
-            }
-            if !self.session.is_null() {
-                let _ = WinHttpCloseHandle(self.session);
-            }
-        }
-    }
-}
-
-fn split_https(url: &str) -> Result<(&str, &str), String> {
-    let rest = url
-        .strip_prefix("https://")
-        .ok_or_else(|| format!("只支持 HTTPS 地址: {url}"))?;
-    let (host, path) = match rest.find('/') {
-        Some(index) => (&rest[..index], &rest[index..]),
-        None => (rest, "/"),
-    };
-    if host.is_empty() {
-        return Err(format!("地址缺少主机名: {url}"));
-    }
-    Ok((host, path))
+    let response = crate::http::send(&crate::http::Request {
+        method: "GET".to_string(),
+        url: url.to_string(),
+        headers: vec![
+            (
+                "Accept".to_string(),
+                "application/vnd.github+json".to_string(),
+            ),
+            ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string()),
+        ],
+        body: None,
+        limit,
+        timeout_ms: if download { 60_000 } else { 15_000 },
+    })?;
+    Ok((response.status, response.body))
 }

@@ -65,6 +65,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "{#PayloadDir}\lueying-server.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-update.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\lueying-netproxy.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; PrepareToInstall 在复制文件前就要停掉旧服务,所以再嵌一份临时副本。
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{tmp}"; Flags: dontcopy noencryption

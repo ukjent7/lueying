@@ -471,6 +471,7 @@ fn load(
         .map(ConsentBook::load)
         .unwrap_or_default();
     let mut approved = Vec::new();
+    let mut net_domains = HashMap::new();
     for id in order {
         let dir = root.join(id);
         let manifest = match lueying_extjs::manifest_at(&dir) {
@@ -482,7 +483,12 @@ fn load(
             }
         };
         match book.check(&dir, &manifest) {
-            Ok(check) if !check.required || check.approved => approved.push(id.clone()),
+            Ok(check) if !check.required || check.approved => {
+                if let Some(policy) = &manifest.network {
+                    net_domains.insert(id.clone(), policy.domains.clone());
+                }
+                approved.push(id.clone());
+            }
             Ok(check) => {
                 let sensitive = if check.sensitive { "敏感组合;" } else { "" };
                 println!("扩展 {id} 待同意({sensitive}{})", check.items.join("、"));
@@ -514,6 +520,7 @@ fn load(
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     registry.set(Service::Panel, Arc::new(services::PanelProvider));
+    registry.set(Service::Net, Arc::new(services::NetProvider::new(net_domains)));
     // 热键提供者由 worker 持有共享状态;`set` 收 trait 对象,先落到具体类型再强转。
     let hotkey: Arc<services::HotkeyProvider> = Arc::clone(hotkey);
     registry.set(Service::Hotkey, hotkey);

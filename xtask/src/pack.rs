@@ -47,6 +47,7 @@ const PACK_BINS: &[&str] = &[
     "lueying-settings.exe",
     "lueying-user.exe",
     "lueying-update.exe",
+    "lueying-netproxy.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
 /// 默认包带精确词典、4M 同步重排模型与精简语法模型。`main.gram` 缺失时引擎

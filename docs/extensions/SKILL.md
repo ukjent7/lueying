@@ -42,7 +42,7 @@ my-pack/
 ```
 
 - `activate` 至少要有 `triggers`、`hotkeys`、`commands` 之一。
-- `needs` 只填用到的服务:`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`。
+- `needs` 只填用到的服务:`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`net`、`notify`;`net` 还要在清单顶层写 `network.domains` 白名单。
 - `capabilities` 是权限声明,不是服务声明;读用户内容与外发同时出现时会触发强提示。
 - 设置项最多 32 个,类型只有 `toggle`、`choice`、`secureText`;密钥不会写进 `config.toml`。
 
@@ -92,7 +92,7 @@ lueying ext logs
 
 - [ ] 目录名 = `id`,`manifest.json` 能被 `lueying ext pack` 解析。
 - [ ] 只声明实际使用的 `needs` 与 `capabilities`。
-- [ ] 没有 `eval`、动态 `import`、网络直连或读取候选文字。
+- [ ] 没有 `eval`、动态 `import`、绕过 `lueying.net` 的网络直连或读取候选文字。
 - [ ] 命令在 `activate.commands` 里有标题与 `when`。
 - [ ] 设置项有默认值,密钥项使用 `secureText`。
 - [ ] 用户文档写清数据用途、存储位置与卸载后是否保留。

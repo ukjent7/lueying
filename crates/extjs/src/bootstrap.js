@@ -75,6 +75,7 @@
     },
     output: { deliver: serviceFn("lueying.output.deliver", "output", "deliver") },
     panel: { show: serviceFn("lueying.panel.show", "panel", "show") },
+    net: { fetch: serviceFn("lueying.net.fetch", "net", "fetch") },
     hotkey: {
       register: serviceFn("lueying.hotkey.register", "hotkey", "register"),
       unregister: serviceFn(

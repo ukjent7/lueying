@@ -30,7 +30,8 @@
 - 可观测性:服务日志落盘与滚动、慢请求记录、设置里的引擎状态与诊断导出;
   4M 按键重排与 25M 停顿重排的 p50/p95/p99 直方图随状态上报。
 - 联网边界:更新/下载移到 `lueying-net`,常驻 Server 的导入表由 CI 断言不含
-  `winhttp.dll`;更新器不再链接 Skia。
+  `winhttp.dll`;更新器不再链接 Skia。扩展 `net.fetch` 经按需启动的
+  `lueying-netproxy.exe`,只放行清单 `network.domains` 白名单。
 - 质量外环:每周 `cargo audit` 依赖审计。
 
 ## 下一步

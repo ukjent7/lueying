@@ -99,7 +99,7 @@ lueying ext replay --config /tmp/config.toml script.txt
 - 扩展跑在 QuickJS 沙箱:内存 8 MiB、栈 256 KiB、初始化 100 ms、单次派发
   8 ms,连续 3 次失败停用。等原生服务返回的 Promise 不占派发预算,只有真
   正跑在 JS 里的作业步受预算限制。
-- 没有 `import`、定时器、DOM;联网不是默认能力,不要把网络请求放进输入
+- 没有 `import`、定时器、DOM;联网需要 `network.domains` 白名单并经独立代理进程,不要把网络请求放进输入
   热路径。
 - 隐私字段(密码框等)不调用脚本、不注入动作候选、不派发热键,这是宿主强
   制的,脚本无法绕过。

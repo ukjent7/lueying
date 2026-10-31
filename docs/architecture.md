@@ -17,6 +17,7 @@ lueying-server.exe(常驻)
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
 lueying-settings.exe(设置窗:原生窗口 + Skia 光栅,经管道与 Server 通信)
 lueying-update.exe(更新器:来自 lueying-net,下载 setup.exe 并校验后静默安装)
+lueying-netproxy.exe(扩展网络代理:按需启动,执行清单域名白名单)
 lueying-user.exe(安装期用户状态:输入法列表、HKCU Run、清理)
 ```
 
@@ -24,7 +25,8 @@ TSF DLL 只带 `lueying-protocol`;`KeyMsg → Key` 的转换放在 Server 边界
 引擎与 GUI 依赖不进宿主进程。`lueying-engine::types` 是宿主与模块共享的 DTO。
 联网代码只在 `lueying-net`:常驻 Server 是独立二进制,不引用该 crate;CI 还会
 用 `llvm-objdump` 断言它的导入表没有 `winhttp.dll`。设置窗与更新器按需联网;
-扩展的网络服务仍未开放,开放时由独立代理进程执行域名白名单。
+扩展的网络服务由 `lueying-netproxy.exe` 代理进程执行,只放行清单
+`network.domains` 里的地址。
 
 ## 引擎
 

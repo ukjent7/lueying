@@ -9,6 +9,10 @@ description = "联网边界:更新检查、签名清单与下载,只被设置窗
 name = "lueying-update"
 path = "src/bin/lueying-update.rs"
 
+[[bin]]
+name = "lueying-netproxy"
+path = "src/bin/lueying-netproxy.rs"
+
 [dependencies]
 # 文件 SHA-256 与协议版本比较;两者都是平台无关的小工具。
 lueying-extmeta.workspace = true

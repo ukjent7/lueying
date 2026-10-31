@@ -187,10 +187,13 @@ v1 开放:
 | store | `get({key})` / `set({key, value})` / `remove({key})` / `list()` | 扩展私有 JSON 存储,键规则同扩展 id,单值 ≤64 KiB、整份 ≤256 KiB |
 | output | `deliver({text})` | 把文本注入当前焦点(Unicode,WM_CHAR),返回 `{delivered}` |
 | panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}`;宿主面板尚未接线,当前报错 |
+| net | `fetch({url, method?, headers?, body?})` | 经独立代理进程请求,返回 `{status, body}`;域名必须在清单 `network.domains` 里,HTTPS 或本机回环 HTTP,响应 ≤512 KiB |
 | hotkey | `register({id, modifiers, key})` / `unregister({id})` / `press({id})` | 全局热键,冲突报错;`press` 等一次触发,扩展在 async 循环里反复调用 |
 | notify | `show({title, body})` | 系统通知 |
 
-网络在 v1 没有开放接口;声明了也调不到。
+网络调用需要同时声明 `needs: ["net"]`、`capabilities: ["network"]` 和
+`network.domains`;没有白名单时宿主直接拒绝。常驻 Server 不链接 WinHTTP,
+请求由按需拉起的 `lueying-netproxy.exe` 执行。
 
 ```js
 lueying.command("shot-ocr", async () => {
@@ -386,4 +389,4 @@ esbuild src/index.ts --bundle --format=iife --minify --outfile="%APPDATA%\lueyin
 
 ## 不支持
 
-`import`、定时器(`setTimeout` 用 `lueying.timeout` 代替)、DOM、运行期加载 DLL。网络、剪贴板、截图、OCR 等能力要等宿主服务缝接线,并且只按清单声明授权。外观 handler 保持同步;只有命令可以返回 Promise。
+`import`、定时器(`setTimeout` 用 `lueying.timeout` 代替)、DOM、运行期加载 DLL。网络、剪贴板、截图、OCR 等能力只按清单声明授权;网络还要域名白名单。外观 handler 保持同步;只有命令可以返回 Promise。

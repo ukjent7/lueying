@@ -7,4 +7,8 @@
 pub mod update_manifest;
 
 #[cfg(windows)]
+pub mod http;
+#[cfg(windows)]
+pub mod proxy;
+#[cfg(windows)]
 pub mod update;

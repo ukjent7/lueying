@@ -44,6 +44,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
+#[path = "services_net.rs"]
+mod net;
+pub use net::NetProvider;
+
 /// 单方法服务的入口守卫:方法名不符时回 provider 侧错误,与 [`Provider`] 约定一致。
 fn one_method(provider: &str, method: &str, expected: &str) -> Result<(), String> {
     if method == expected {

@@ -51,6 +51,9 @@ pub struct Manifest {
     /// 申请的权限;API 1 必须为空。
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// 网络白名单;声明 `network` 能力后由扩展网络代理执行。
+    #[serde(default)]
+    pub network: Option<NetworkPolicy>,
     /// 声明式设置:宿主渲染设置页,值存在 `[ext.<id>]`。
     #[serde(default)]
     pub settings: Vec<Setting>,
@@ -63,6 +66,15 @@ pub struct Manifest {
     /// 进程外能力组件(API 1)。
     #[serde(default)]
     pub panel: Option<Panel>,
+}
+
+/// API 2 的网络白名单。域名写 `host` 或 `host:port`;不写端口时只匹配
+/// 该协议的默认端口(HTTPS 443、本机 HTTP 80)。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPolicy {
+    #[serde(default)]
+    pub domains: Vec<String>,
 }
 
 /// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
@@ -483,6 +495,9 @@ impl Manifest {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
         check_settings(&self.settings)?;
+        if let Some(network) = &self.network {
+            check_network(network)?;
+        }
 
         let components = self.appearance.is_some() || self.logic.is_some() || self.panel.is_some();
         match self.api {
@@ -770,6 +785,38 @@ fn check_capabilities(capabilities: &[String]) -> Result<(), String> {
             return Err(format!("能力 {capability:?} 重复声明"));
         }
         seen.push(permission);
+    }
+    Ok(())
+}
+
+/// 网络白名单:最多 32 项,只收主机名或 `主机:端口`,不收协议与路径。
+fn check_network(network: &NetworkPolicy) -> Result<(), String> {
+    if network.domains.len() > 32 {
+        return Err("network.domains 最多 32 项".into());
+    }
+    for domain in &network.domains {
+        if domain.is_empty() || domain.len() > 253 {
+            return Err(format!("网络域名 {domain:?} 长度不合法"));
+        }
+        if domain.contains("://") || domain.contains('/') || domain.chars().any(char::is_whitespace) {
+            return Err(format!("网络域名只写 host 或 host:port: {domain:?}"));
+        }
+        let (host, port) = match domain.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (domain.as_str(), None),
+        };
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+        {
+            return Err(format!("网络域名 {domain:?} 不合法"));
+        }
+        if let Some(port) = port {
+            if port.is_empty() || !matches!(port.parse::<u16>(), Ok(value) if value != 0) {
+                return Err(format!("网络端口 {port:?} 不合法"));
+            }
+        }
     }
     Ok(())
 }
