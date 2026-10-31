@@ -257,7 +257,10 @@ impl Settings {
                 return None;
             };
             match &ui.control {
-                ControlDef::Toggle { get, set, .. } => set(&mut self.cfg, !get(&self.cfg)),
+                ControlDef::Toggle { get, set, .. } => {
+                    let next = !get(&self.cfg);
+                    set(&mut self.cfg, next);
+                }
                 ControlDef::Segment { choices, set, .. } => {
                     if id.index < choices.len() {
                         set(&mut self.cfg, id.index);

@@ -502,7 +502,7 @@ const CHANNEL_CHOICES: &[Choice] = &[
     },
 ];
 
-fn toggle(
+const fn toggle(
     id: &'static str,
     get: fn(&AppConfig) -> bool,
     set: fn(&mut AppConfig, bool),
@@ -510,7 +510,7 @@ fn toggle(
     ControlDef::Toggle { id, get, set }
 }
 
-fn segment(
+const fn segment(
     id: &'static str,
     choices: &'static [Choice],
     width: f32,
