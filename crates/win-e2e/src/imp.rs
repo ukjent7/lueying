@@ -706,9 +706,7 @@ fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, Strin
         "## 全链路提交延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ {COMMIT_P95_LIMIT_MS:.0} |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
     );
     if p95 > COMMIT_P95_LIMIT_MS {
-        return Err(format!(
-            "{summary}\n\np95 超过 {COMMIT_P95_LIMIT_MS:.0}ms"
-        ));
+        return Err(format!("{summary}\n\np95 超过 {COMMIT_P95_LIMIT_MS:.0}ms"));
     }
     Ok(summary)
 }
