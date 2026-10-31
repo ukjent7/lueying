@@ -52,6 +52,7 @@ lueying-bypass = { path = "crates/bypass" }
 lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }
 lueying-ocr = { path = "crates/ocr" }
+lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-server = { path = "crates/server" }
