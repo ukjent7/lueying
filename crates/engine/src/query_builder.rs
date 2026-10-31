@@ -116,6 +116,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         cache: HashMap::new(),
         user_cache: HashMap::new(),
         exp_cache: HashMap::new(),
+        expanded_cache: HashMap::new(),
         long: raw.len() > LONG_INPUT_BYTES,
     };
     let edges = segment::edges(raw);
@@ -183,7 +184,13 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         }
         for node in &by_end[j] {
             for st in &best[node.start] {
-                let tail = context_tail(&st.path);
+                // 没有语法模型时不必为每条路径拼前文;生产默认有模型,这里只是
+                // 让无模型基线不为一次用不到的分配买单。
+                let tail = if gram.gram.is_some() && !st.path.is_empty() {
+                    context_tail(&st.path)
+                } else {
+                    String::new()
+                };
                 let mut path = st.path.clone();
                 path.push((node.word.clone(), node.spans.clone()));
                 cands.push(State {

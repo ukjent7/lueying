@@ -15,7 +15,6 @@ use lueying_render::effect::{self, Slot, Uniforms};
 use lueying_render::panel::{self, Effects, Metrics, Palette, PanelSpec};
 use lueying_server::theme;
 use skia_safe::Shader;
-use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::GetCurrentProcess;

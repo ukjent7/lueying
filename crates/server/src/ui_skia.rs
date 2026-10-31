@@ -644,6 +644,8 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     // 高对比度下 with_skin 原样返回。
     let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
     let palette = theme::palette(theme::with_skin(colors, appearance, &skin));
+    // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
+    drop(skin);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
         Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),

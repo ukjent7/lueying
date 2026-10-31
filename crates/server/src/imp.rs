@@ -444,7 +444,7 @@ fn dict_path(name: &str) -> Option<std::path::PathBuf> {
 }
 
 fn load_model(name: &str) -> Option<Model> {
-    let path = crate::config::model_path(name)?;
+    let path = config::model_path(name)?;
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(e) => {

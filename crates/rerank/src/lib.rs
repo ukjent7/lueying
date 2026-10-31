@@ -61,6 +61,13 @@ pub struct Fact {
 /// 只让上下文明确的模糊候选小幅领先时才改首选,快速连打时仍保持稳定。
 pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
 
+/// 4M 同步重排的最小领先幅度(每字符平均对数概率)。
+///
+/// 4M 比 25M 小,分数更容易被噪声拉平;共享语料上它在小分差时改首选,
+/// top-1 反而低于引擎原序。只让模型明确领先的候选越过首位,把即时排序
+/// 留给词频与语法模型,停顿后再由 25M 做更细的判断。
+pub const SYNC_PROMOTE_MARGIN: f32 = 0.05;
+
 /// 一个会话独享的推理状态:跨按键前缀缓存和候选续算都放在这里。
 pub struct Rerank {
     inner: Reranker,
@@ -100,10 +107,15 @@ impl Rerank {
             return None;
         }
         self.inner
-            .best_where(context, texts, |index| CandidateFacts {
-                answers_key: facts[index].answers_key,
-                trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
-            })
+            .best_where_margin(
+                context,
+                texts,
+                |index| CandidateFacts {
+                    answers_key: facts[index].answers_key,
+                    trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
+                },
+                SYNC_PROMOTE_MARGIN,
+            )
     }
 
     /// 停顿重排:精确首位在上下文明确时给模糊候选让位。

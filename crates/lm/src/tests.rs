@@ -502,6 +502,26 @@ fn best_where_keeps_original_candidate_indices() {
 }
 
 #[test]
+fn a_positive_margin_can_decline_a_promotion() {
+    let texts = ["吗我", "你吗", "你好", "你很"];
+    let facts = answering(&[true, false, true, true]);
+    // An unreachable margin leaves the engine order alone.
+    let mut reranker = super::Reranker::new(cache_test_model());
+    assert_eq!(
+        reranker.best_where_margin("我", &texts, &facts, f32::INFINITY),
+        None
+    );
+    // A zero margin is exactly the old behavior.
+    let mut reference = super::Reranker::new(cache_test_model());
+    let expected = reference.best_where("我", &texts, &facts);
+    let mut reranker = super::Reranker::new(cache_test_model());
+    assert_eq!(
+        reranker.best_where_margin("我", &texts, &facts, 0.0),
+        expected
+    );
+}
+
+#[test]
 fn a_trusted_dictionary_hit_in_the_lead_declines_the_decision() {
     let facts = |index: usize| CandidateFacts {
         answers_key: true,

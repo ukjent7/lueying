@@ -114,11 +114,12 @@ impl Querier<'_> {
                 }
             }
         } else if fuzzy_on {
-            for (variant, edits, groups) in self.expanded_keys(sylls) {
-                if variant == key {
+            let keys = self.expanded_keys(sylls);
+            for (variant, edits, groups) in keys.iter() {
+                if variant == &key {
                     continue;
                 }
-                for e in self.dict.lookup_exact(&variant) {
+                for e in self.dict.lookup_exact(variant) {
                     if !seen.insert((e.word.to_string(), e.key.to_string())) {
                         continue;
                     }
@@ -127,9 +128,9 @@ impl Querier<'_> {
                         e.freq,
                         user_freq(&users, e.word),
                         self.total,
-                        edits,
+                        *edits,
                         false,
-                        groups,
+                        *groups,
                         Some(e.key.replace('\'', " ")),
                     ));
                 }
@@ -209,9 +210,17 @@ impl Querier<'_> {
     /// 只做字符串组合与二分,不像签名扫描那样把同首字母的整段词条都读一遍。
     /// 组合数超过 [`MAX_FUZZY_KEYS`] 时按改动处数从少到多截断,保证原键与
     /// 单点模糊仍在。
-    pub(crate) fn expanded_keys(&mut self, sylls: &[Syll]) -> Vec<(String, usize, u8)> {
+    pub(crate) fn expanded_keys(&mut self, sylls: &[Syll]) -> Rc<Vec<(String, usize, u8)>> {
         if sylls.iter().any(|s| s.abbrev) {
-            return vec![(typed_key(sylls), 0, 0)];
+            return Rc::new(vec![(typed_key(sylls), 0, 0)]);
+        }
+        let typed = typed_key(sylls);
+        if let Some(cached) = self.expanded_cache.get(&typed) {
+            return Rc::clone(cached);
+        }
+        // 一次构建里不同起点的子串也可能很多;上限防止长输入把缓存撑大。
+        if self.expanded_cache.len() >= 256 {
+            self.expanded_cache.clear();
         }
         let fuzzy = self.fuzzy;
         let cap = if self.long {
@@ -252,6 +261,8 @@ impl Querier<'_> {
                 false
             }
         });
+        let out = Rc::new(out);
+        self.expanded_cache.insert(typed, Rc::clone(&out));
         out
     }
 

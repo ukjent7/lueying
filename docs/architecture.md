@@ -33,7 +33,7 @@ TSF DLL 只带 `lueying-protocol`;`KeyMsg → Key` 的转换放在 Server 边界
 音节图 + 词图 Viterbi,同一输入的所有切分并存(`query_builder`,束宽 7)。
 排序层次:词典权重 → `.gram` 搭配分(`weight × (命中 − baseline)`,W=0.35)→
 用户词库提频/负分 → 字级搭配(`@context`)与词级转移(`@transition`)→
-4M 模型每键同步重排(有左邻上下文时)→ 25M 模型静默 120ms 后异步重排。
+4M 模型每键同步重排(有左邻上下文时,且只有明确领先才改首位)→ 25M 模型静默 120ms 后异步重排。
 手误纠正只在精确/模糊都出不了整句时运行,6ms 预算。
 
 词典由白霜(rime-frost)五表生成,`xtask` 物化为 mmap 二进制 `main.pyd`,

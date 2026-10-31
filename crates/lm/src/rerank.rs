@@ -95,6 +95,23 @@ impl Reranker {
         texts: &[&str],
         facts: impl Fn(usize) -> CandidateFacts,
     ) -> Option<usize> {
+        self.best_where_margin(context, texts, facts, 0.0)
+    }
+
+    /// [`Reranker::best_where`] with a minimum lead. A promotion is declined unless the model's
+    /// preferred candidate beats the engine's leader by at least `min_margin` in mean
+    /// log-probability per character. A zero margin reproduces `best_where`.
+    ///
+    /// Small score gaps are noise: the shared benchmark showed the 4M model lowering top-1 when it
+    /// was allowed to act on them, while clear leads still help. The caller picks the margin because
+    /// it knows which model and latency budget the decision belongs to.
+    pub fn best_where_margin(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: impl Fn(usize) -> CandidateFacts,
+        min_margin: f32,
+    ) -> Option<usize> {
         let considered = comparable(texts.len(), &facts)?;
         let mut scores = std::mem::take(&mut self.scores_scratch);
         self.score_indices_into(
@@ -109,7 +126,8 @@ impl Reranker {
                 best = index;
             }
         }
-        let promoted = (best != 0).then(|| considered.as_slice()[best]);
+        let promoted = (best != 0 && scores[best] - scores[0] >= min_margin)
+            .then(|| considered.as_slice()[best]);
         self.scores_scratch = scores;
         promoted
     }
