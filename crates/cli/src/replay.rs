@@ -205,7 +205,7 @@ fn describe(out: &mut String, engine: &Engine) {
 /// 一行按键:字母数字逐键进;`<名字>` 是功能键;分号、引号与常用标点作标点键。
 fn parse_line(line: &str) -> Result<Vec<Key>, String> {
     let mut keys = Vec::new();
-    let mut chars = line.chars().peekable();
+    let mut chars = line.chars();
     while let Some(c) = chars.next() {
         match c {
             '<' => {
