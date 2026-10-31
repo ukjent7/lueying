@@ -167,12 +167,15 @@ impl WasmModule {
     }
 }
 
+/// 一个实例的存储与导出函数;trap 后由宿主重建。
+type ProbeInstance = (Store<Guest>, TypedFunc<(u32, u32), (u32,)>);
+
 /// 建一个可调用的组件实例。trap 后 Wasm 实例不可再进入,调用方据此重建。
 fn instantiate_probe(
     host: &Arc<WasmHost>,
     component: &Component,
     export: &str,
-) -> Result<(Store<Guest>, TypedFunc<(u32, u32), (u32,)>), String> {
+) -> Result<ProbeInstance, String> {
     let mut store = Store::new(
         &host.engine,
         Guest {
