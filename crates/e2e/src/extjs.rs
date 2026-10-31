@@ -14,7 +14,7 @@
 
 use std::time::{Duration, Instant};
 
-use lueying_extjs::{Done, Invoke, Limits, Pack, Poll, Runtime, SceneIn};
+use lueying_extjs::{Invoke, Limits, Pack, Poll, Runtime, SceneIn};
 
 use crate::extjs_harness::{load_or_fail, manifest, manifest_extra, write_pack};
 use crate::harness::{Temp, push};
