@@ -73,7 +73,7 @@ pub fn run(report: &mut String) -> usize {
 
     // 1. 未加载、加载、卸载三种状态与内存/耗时指标。
     let temp = Temp::new("stats");
-    let dir = temp.pack(SCRIPT);
+    let _dir = temp.pack(SCRIPT);
     let order = vec!["demo".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
     checks.push(("指标包打开", errors.is_empty(), format!("{errors:?}")));

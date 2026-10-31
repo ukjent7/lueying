@@ -458,13 +458,16 @@ pub fn run(report: &mut String) -> usize {
         format!("{:?}", canonical.candidates()),
     );
 
-    // 组合中切换:候选与内联显示同时换字形。
+    // 组合中切换:候选与内联显示同时换字形。模块句柄翻动后,引擎要靠
+    // 宿主下发配置来重算(与服务端 apply_config 的路径一致)。
     let (mut switch, script_handle) = custom(Script::Simplified);
     letters(&mut switch, "toufa");
     let simplified = top(&switch) == "头发";
     script_handle.set_script(Script::Traditional);
+    switch.set_config(Config::default());
     let traditional = top(&switch) == "頭髮" && display(&switch) == "頭髮";
     script_handle.set_script(Script::Simplified);
+    switch.set_config(Config::default());
     push(
         &mut checks,
         "组合中切换简繁",

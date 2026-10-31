@@ -194,12 +194,7 @@ fn apply_rerank(
     four: &mut Rerank,
     five: &mut Rerank,
     expected: &str,
-) -> (
-    Option<usize>,
-    Option<usize>,
-    Option<usize>,
-    Option<[f64; 3]>,
-) {
+) -> RerankSample {
     // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排;
     // 没有模型调用,也就没有耗时样本。
     if engine
@@ -208,7 +203,7 @@ fn apply_rerank(
         .any(|cand| cand.quick || cand.pinned)
     {
         let rank = rank_of(engine, expected);
-        return (rank, rank, rank, None);
+        return ((rank, rank, rank), None);
     }
     let snap = crate::rerank::snapshot(engine);
     let kept: Vec<bool> = engine
@@ -246,19 +241,20 @@ fn apply_rerank(
     let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
     let direct_ms = started.elapsed().as_secs_f64() * 1000.0;
     let direct = rank_after(&snap.texts, &kept, promote, expected);
-    (rank4, rank5, direct, Some([four_ms, five_ms, direct_ms]))
+    ((rank4, rank5, direct), Some([four_ms, five_ms, direct_ms]))
 }
 
+/// 重排名次与耗时样本:`(4M,25M,仅25M) 名次` 与各模型耗时;捷径路径没有样本。
+type Ranks = (Option<usize>, Option<usize>, Option<usize>);
+type RerankSample = (Ranks, Option<[f64; 3]>);
+
 /// 单条用例的评测结果;分片线程各自产出,主线程按原序合并进指标。
-/// 重排部分是 `((4M,25M,仅25M) 名次, 各模型耗时)`;捷径路径没有耗时样本。
+/// 重排部分见 [`RerankSample`]。
 struct Outcome {
     rank: Option<usize>,
     ms: f64,
     top1: String,
-    rerank: Option<(
-        (Option<usize>, Option<usize>, Option<usize>),
-        Option<[f64; 3]>,
-    )>,
+    rerank: Option<RerankSample>,
 }
 
 /// 一片用例的评测;每片自带引擎与模型句柄,片间无共享可变状态,
@@ -289,10 +285,10 @@ fn run_chunk(
         let top1 = candidates
             .first()
             .map_or(String::new(), |text| (*text).to_string());
-        let rerank = four.as_mut().zip(five.as_mut()).map(|(four, five)| {
-            let (four, five, direct, times) = apply_rerank(&mut engine, four, five, &expected);
-            ((four, five, direct), times)
-        });
+        let rerank = four
+            .as_mut()
+            .zip(five.as_mut())
+            .map(|(four, five)| apply_rerank(&mut engine, four, five, &expected));
         out.push(Outcome {
             rank,
             ms,
