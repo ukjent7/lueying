@@ -79,23 +79,21 @@ fn modules() -> Arc<Modules> {
 /// config.toml 的 `[triggers]` 加命令行旗标;同名词命令行覆盖配置。
 fn load_triggers(args: &ReplayArgs) -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
-    if let Some(path) = args.config.clone().or_else(default_config_path) {
-        if path.exists() {
-            let text =
-                fs::read_to_string(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-            let table: toml::Table = text
-                .parse()
-                .map_err(|e| format!("解析 {}: {e}", path.display()))?;
-            if let Some(map) = table.get("triggers").and_then(|item| item.as_table()) {
-                for (trigger, command) in map {
-                    let Some(command) = command.as_str() else {
-                        continue;
-                    };
-                    out.push((
-                        trigger.trim().to_ascii_lowercase(),
-                        command.trim().to_string(),
-                    ));
-                }
+    if let Some(path) = args.config.clone().or_else(default_config_path)
+        && path.exists()
+    {
+        let text = fs::read_to_string(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
+        let table: toml::Table =
+            text.parse().map_err(|e| format!("解析 {}: {e}", path.display()))?;
+        if let Some(map) = table.get("triggers").and_then(|item| item.as_table()) {
+            for (trigger, command) in map {
+                let Some(command) = command.as_str() else {
+                    continue;
+                };
+                out.push((
+                    trigger.trim().to_ascii_lowercase(),
+                    command.trim().to_string(),
+                ));
             }
         }
     }

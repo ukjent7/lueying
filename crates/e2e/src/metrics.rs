@@ -197,8 +197,8 @@ pub fn run(report: &mut String) -> usize {
     let summary = loaded.as_ref().map(ExtMetrics::summary).unwrap_or_default();
     let json = loaded
         .as_ref()
-        .map(render_json)
-        .and_then(|result| result.ok());
+        .ok()
+        .and_then(|metrics| render_json(metrics).ok());
     checks.push((
         "快照往返与 CLI 表格",
         loaded.as_ref().is_ok_and(|loaded| loaded == &metrics)
