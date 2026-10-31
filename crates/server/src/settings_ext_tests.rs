@@ -52,8 +52,8 @@ fn fields_resolve_defaults_and_stored_values() {
         .entry("shot-ocr".to_string())
         .or_default()
         .insert("quality".to_string(), Value::String("fast".to_string()));
-    let fields = fields(&extensions, &scripts, &cfg);
-    assert_eq!(fields[1].selected(), 0);
+    let stored = fields(&extensions, &scripts, &cfg);
+    assert_eq!(stored[1].selected(), 0);
 }
 
 #[test]

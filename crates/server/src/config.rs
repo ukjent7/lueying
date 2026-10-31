@@ -63,7 +63,7 @@ impl Region {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::General => "general",
             Self::Taiwan => "tw",
@@ -99,7 +99,7 @@ impl UiLayout {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Horizontal => "horizontal",
             Self::Vertical => "vertical",
@@ -146,7 +146,7 @@ impl UiFont {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Small => "small",
             Self::Standard => "standard",
@@ -182,7 +182,7 @@ impl Channel {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Stable => "stable",
             Self::Beta => "beta",
@@ -217,7 +217,7 @@ impl OcrBackend {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Ppocr => "ppocr",

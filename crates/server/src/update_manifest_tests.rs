@@ -3,7 +3,7 @@
 //! 向量由仓库外的发布种子(node WebCrypto 同款 Ed25519)签出;清单字节
 //! 一字不差地嵌在这里,防止常量与签名错位。
 
-use super::update_manifest::{self, MANIFEST_NAME, MAX_MANIFEST_BYTES};
+use super::{MANIFEST_NAME, MAX_MANIFEST_BYTES};
 
 const SAMPLE: &str = r#"{
   "version": 1,
@@ -30,7 +30,7 @@ const SAMPLE_SIG: &str = "6d3907111ec06cbed18efd855a6927b13096ac1d19281a9719bd94
 #[test]
 fn verifies_known_answer_vector() {
     assert_eq!(SAMPLE.len(), 438, "向量字节必须与签名时一致");
-    let manifest = update_manifest::verify(SAMPLE.as_bytes(), SAMPLE_SIG)
+    let manifest = verify(SAMPLE.as_bytes(), SAMPLE_SIG)
         .expect("内置公钥必须验过发布种子的签名");
     assert_eq!(manifest.release, "0.2.0");
     assert_eq!(manifest.version, 1);
@@ -50,26 +50,26 @@ fn verifies_known_answer_vector() {
 fn rejects_tampered_manifest() {
     let tampered = SAMPLE.replace("0.2.0", "0.2.1");
     assert_ne!(tampered, SAMPLE);
-    let error = update_manifest::verify(tampered.as_bytes(), SAMPLE_SIG)
+    let error = verify(tampered.as_bytes(), SAMPLE_SIG)
         .expect_err("改过字节的清单必须验不过");
     assert!(error.contains("签名验证失败"), "{error}");
 }
 
 #[test]
 fn rejects_bad_signature_text() {
-    let short = update_manifest::verify(SAMPLE.as_bytes(), "abcd");
+    let short = verify(SAMPLE.as_bytes(), "abcd");
     assert!(short.is_err(), "长度不对的签名要被拒绝");
     let junk = "g".repeat(128);
-    let error = update_manifest::verify(SAMPLE.as_bytes(), &junk).expect_err("非十六进制要被拒绝");
+    let error = verify(SAMPLE.as_bytes(), &junk).expect_err("非十六进制要被拒绝");
     assert!(error.contains("十六进制"), "{error}");
     let zeros = "0".repeat(128);
-    let error = update_manifest::verify(SAMPLE.as_bytes(), &zeros).expect_err("全零签名必须验不过");
+    let error = verify(SAMPLE.as_bytes(), &zeros).expect_err("全零签名必须验不过");
     assert!(error.contains("签名验证失败"), "{error}");
 }
 
 #[test]
 fn parses_rejects_bad_fields() {
-    let parse = |text: &str| update_manifest::parse(text.as_bytes());
+    let parse = |text: &str| parse(text.as_bytes());
     assert!(
         parse(r#"{"version":2,"release":"0.2.0","files":[]}"#).is_err(),
         "版本要校验"
@@ -110,7 +110,7 @@ fn parses_rejects_bad_fields() {
 
 #[test]
 fn installer_reports_missing_entry() {
-    let manifest = update_manifest::parse(SAMPLE.as_bytes()).expect("样例可解析");
+    let manifest = parse(SAMPLE.as_bytes()).expect("样例可解析");
     let error = manifest
         .installer("9.9.9")
         .expect_err("版本对不上要报可读原因");
@@ -120,7 +120,7 @@ fn installer_reports_missing_entry() {
 #[test]
 fn parse_rejects_oversize() {
     let big = vec![b'{'; MAX_MANIFEST_BYTES + 1];
-    let error = update_manifest::parse(&big).expect_err("超大清单要被拒绝");
+    let error = parse(&big).expect_err("超大清单要被拒绝");
     assert!(error.contains("超过"), "{error}");
 }
 

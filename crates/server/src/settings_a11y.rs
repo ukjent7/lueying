@@ -408,7 +408,7 @@ fn segment_bounds(layout: &Layout, id: Id, scroll: f32) -> Option<Rect> {
         .map(|rect| card_rect(layout, rect, scroll))
 }
 
-fn page_rect(rect: lueying_render::ui::Rect) -> Rect {
+fn page_rect(rect: skia_safe::Rect) -> Rect {
     Rect::new(
         f64::from(rect.left),
         f64::from(rect.top),
@@ -417,7 +417,7 @@ fn page_rect(rect: lueying_render::ui::Rect) -> Rect {
     )
 }
 
-fn card_rect(layout: &Layout, rect: lueying_render::ui::Rect, scroll: f32) -> Rect {
+fn card_rect(layout: &Layout, rect: skia_safe::Rect, scroll: f32) -> Rect {
     Rect::new(
         f64::from(layout.card.left + rect.left),
         f64::from(layout.card.top + rect.top - scroll),

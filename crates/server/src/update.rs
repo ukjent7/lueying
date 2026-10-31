@@ -133,7 +133,7 @@ fn latest_release() -> Result<Option<(Release, serde_json::Value)>, String> {
     }
     let json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("解析 GitHub 响应: {e}"))?;
-    release_from_value(&json).map(|release| release.map(|release| (release, json)))
+    release_from_value(&json).map(|release| Some((release, json)))
 }
 
 /// 最近 20 条 Release;没有 setup.exe 资源的条目(纯源码发布)跳过。

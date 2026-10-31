@@ -101,7 +101,15 @@ impl Sha256 {
             length: 0,
         }
     }
+}
 
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256 {
     pub fn update(&mut self, mut data: &[u8]) {
         self.length = self.length.wrapping_add(data.len() as u64);
         if self.filled > 0 {
@@ -139,7 +147,7 @@ impl Sha256 {
         self.update(&padding[..pad]);
         self.update(&bit_length.to_be_bytes());
         let mut out = [0u8; 32];
-        for (chunk, word) in out.chunks_exact_mut(4).zip(self.state) {
+        for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
             chunk.copy_from_slice(&word.to_be_bytes());
         }
         out
@@ -147,8 +155,8 @@ impl Sha256 {
 
     fn compress(&mut self, block: &[u8; 64]) {
         let mut words = [0u32; 64];
-        for (word, chunk) in words.iter_mut().zip(block.chunks_exact(4)) {
-            *word = u32::from_be_bytes(chunk.try_into().expect("四字节"));
+        for (word, chunk) in words.iter_mut().zip(block.as_chunks::<4>().0) {
+            *word = u32::from_be_bytes(*chunk);
         }
         for i in 16..64 {
             let s0 = words[i - 15].rotate_right(7)
