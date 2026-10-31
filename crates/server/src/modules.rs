@@ -8,11 +8,12 @@
 use std::sync::Arc;
 
 use lueying_engine::module::Modules;
-use lueying_features::{CustomPhrases, Prediction};
+use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 
 pub(super) fn registry(
     phrases: Option<Arc<CustomPhrases>>,
     prediction: Arc<Prediction>,
+    script: Arc<ScriptModule>,
 ) -> Arc<Modules> {
-    lueying_features::registry_with_prediction(phrases, prediction)
+    lueying_features::registry_with_script(phrases, prediction, script)
 }

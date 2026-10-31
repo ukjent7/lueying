@@ -23,6 +23,7 @@ use lueying_engine::{Config, Engine, Event, Key, MAX_RAW};
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_modules(crate::builtins())
 }
 
 fn type_into(engine: &mut Engine, raw: &str) {
@@ -393,7 +394,8 @@ pub fn run(report: &mut String) -> usize {
             chinese_punct: false,
             ..Config::default()
         },
-    );
+    )
+    .with_modules(crate::builtins());
     type_into(&mut e, "ni");
     let best = e.candidates().first().cloned().unwrap_or_default();
     let events = e.process(Key::Punct(','));

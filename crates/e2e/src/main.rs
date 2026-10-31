@@ -28,6 +28,12 @@ use lueying_dict::gram::Gram;
 use lueying_engine::{Config, Engine, Event, Fuzzy, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
+/// 生产内置模块(表情、英文混输、简繁转换):核心引擎迁到同一契约后,
+/// 主题回归用它保持与产品一致的候选装饰。
+pub(crate) fn builtins() -> Arc<lueying_engine::module::Modules> {
+    Arc::new(lueying_features::builtins(lueying_features::Script::Simplified))
+}
+
 /// 二进制物化 → 重新加载 → 查询结果逐条一致;字段/查询三条路径都要对上。
 fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
     let mut out = Vec::new();
@@ -250,7 +256,7 @@ fn main() {
         });
         let dict = Arc::new(dict);
         rerank_inputs = Some((Arc::clone(&dict), gram.clone()));
-        let mut engine = Engine::new(Arc::clone(&dict), Config::default());
+        let mut engine = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
         if let Some(g) = &gram {
             engine = engine.with_gram(Arc::clone(g));
         }
@@ -521,7 +527,7 @@ fn run_scenario(sc: &Scenario, dict: &Arc<Dictionary>) -> Result<(), String> {
     if sc.fuzzy_off {
         cfg.fuzzy = Fuzzy::off();
     }
-    let mut engine = Engine::new(Arc::clone(dict), cfg);
+    let mut engine = Engine::new(Arc::clone(dict), cfg).with_modules(crate::builtins());
     engine.set_fullwidth(sc.fullwidth);
     let mut modes = vec![engine.mode()];
     for (si, stage) in sc.stages.iter().enumerate() {

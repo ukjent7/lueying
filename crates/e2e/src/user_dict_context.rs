@@ -11,7 +11,7 @@ pub(super) fn commit_and_context(shared: &Arc<Dictionary>, checks: &mut Checks, 
     let dict = Arc::clone(shared);
 
     // 上屏路径:整键选词后导出应出现该键与该词。
-    let mut e = Engine::new(Arc::clone(&dict), Config::default());
+    let mut e = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for c in "nihao".chars() {
         e.process(Key::Letter(c));
     }
@@ -37,7 +37,7 @@ pub(super) fn commit_and_context(shared: &Arc<Dictionary>, checks: &mut Checks, 
             .unwrap_or_default()
             .to_string(),
     );
-    let mut roundtrip = Engine::new(Arc::clone(&dict), Config::default());
+    let mut roundtrip = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     roundtrip.import_user(&exported);
     let reexported = roundtrip.export_user();
     push(
@@ -56,14 +56,14 @@ pub(super) fn commit_and_context(shared: &Arc<Dictionary>, checks: &mut Checks, 
     // 字级搭配真正参与排序:导入「最→先」后,输入 `xian` 的首选应从更高频的
     // 「现」切到「先」。时间戳用当前时间,避免导入的数据被判为过期而衰减掉。
     let context_line = format!("@context\t最\t先\t100\t{now}\n");
-    let mut ranked = Engine::new(Arc::clone(&dict), Config::default());
+    let mut ranked = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     ranked.import_user(&context_line);
     ranked.set_context("最");
     for ch in "xian".chars() {
         ranked.process(Key::Letter(ch));
     }
     let biased = ranked.candidates().first().cloned().unwrap_or_default();
-    let mut plain = Engine::new(Arc::clone(&dict), Config::default());
+    let mut plain = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     plain.set_context("最");
     for ch in "xian".chars() {
         plain.process(Key::Letter(ch));
@@ -77,7 +77,7 @@ pub(super) fn commit_and_context(shared: &Arc<Dictionary>, checks: &mut Checks, 
     );
 
     // 标点把前后字隔开:同样的搭配不能跨过逗号生效。
-    let mut cut = Engine::new(Arc::clone(&dict), Config::default());
+    let mut cut = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     cut.import_user(&context_line);
     cut.set_context("最，");
     for ch in "xian".chars() {
@@ -93,7 +93,7 @@ pub(super) fn commit_and_context(shared: &Arc<Dictionary>, checks: &mut Checks, 
 
     // 分段上屏后剩余拼音立即重算:刚上屏的「好」必须参与下一段排序。
     let segmented_line = format!("@context\t好\t以\t100\t{now}\n");
-    let mut segmented = Engine::new(Arc::clone(&dict), Config::default());
+    let mut segmented = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     segmented.import_user(&segmented_line);
     for ch in "haoyi".chars() {
         segmented.process(Key::Letter(ch));
@@ -121,7 +121,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     let dict = Arc::clone(shared);
 
     // 词级转移:分段上屏「你」「好」后应记下 你→好,并随词库往返。
-    let mut word_flow = Engine::new(Arc::clone(&dict), Config::default());
+    let mut word_flow = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "nihao".chars() {
         word_flow.process(Key::Letter(ch));
     }
@@ -141,7 +141,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
             .unwrap_or_default()
             .to_string(),
     );
-    let mut flow_restored = Engine::new(Arc::clone(&dict), Config::default());
+    let mut flow_restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     flow_restored.import_user(&flow_export);
     let flow_reexport = flow_restored.export_user();
     push(
@@ -159,7 +159,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
 
     // 词级转移参与排序:先上屏「最」,再输入 xian,应从「现」偏向「先」。
     let flow_line = format!("zui\t最\t100000\t0\n@transition\t最\t先\t100\t{now}\n");
-    let mut flow = Engine::new(Arc::clone(&dict), Config::default());
+    let mut flow = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     flow.import_user(&flow_line);
     for ch in "zui".chars() {
         flow.process(Key::Letter(ch));
@@ -169,7 +169,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
         flow.process(Key::Letter(ch));
     }
     let flow_top = flow.candidates().first().cloned().unwrap_or_default();
-    let mut no_flow = Engine::new(Arc::clone(&dict), Config::default());
+    let mut no_flow = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     no_flow.import_user("zui\t最\t100000\t0\n");
     for ch in "zui".chars() {
         no_flow.process(Key::Letter(ch));
@@ -187,7 +187,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     );
 
     // 三词窗口:分段上屏「你」「好」后选「先」,应记下 你/好→先 并随词库往返。
-    let mut tri_flow = Engine::new(Arc::clone(&dict), Config::default());
+    let mut tri_flow = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "nihao".chars() {
         tri_flow.process(Key::Letter(ch));
     }
@@ -212,7 +212,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
             .unwrap_or_default()
             .to_string(),
     );
-    let mut tri_restored = Engine::new(Arc::clone(&dict), Config::default());
+    let mut tri_restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     tri_restored.import_user(&tri_export);
     let tri_reexport = tri_restored.export_user();
     push(
@@ -238,14 +238,14 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
         engine.process(Key::Space);
         engine.process(Key::Space);
     };
-    let mut tri_ranked = Engine::new(Arc::clone(&dict), Config::default());
+    let mut tri_ranked = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     tri_ranked.import_user(&tri_line);
     seed(&mut tri_ranked);
     for ch in "xian".chars() {
         tri_ranked.process(Key::Letter(ch));
     }
     let tri_top = tri_ranked.candidates().first().cloned().unwrap_or_default();
-    let mut tri_plain = Engine::new(Arc::clone(&dict), Config::default());
+    let mut tri_plain = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     seed(&mut tri_plain);
     for ch in "xian".chars() {
         tri_plain.process(Key::Letter(ch));
@@ -259,7 +259,7 @@ pub(super) fn word_sequences(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     );
 
     // 标点切断词序:同样的三词窗口不能跨过逗号生效。
-    let mut tri_cut = Engine::new(Arc::clone(&dict), Config::default());
+    let mut tri_cut = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     tri_cut.import_user(&tri_line);
     seed(&mut tri_cut);
     tri_cut.process(Key::Punct(','));

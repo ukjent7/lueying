@@ -60,20 +60,20 @@ fn push(
     checks.push((name, ok, note));
 }
 
-fn custom(script: Script) -> Engine {
+/// 引擎 + 简繁模块句柄:组合中切换字形的用例直接翻句柄。
+fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
     let (dict, bad) = Dictionary::from_text(TEST_DICT);
     assert_eq!(bad, 0, "测试词库不应有坏行");
-    Engine::new(
-        Arc::new(dict),
-        Config {
-            script,
-            ..Config::default()
-        },
-    )
+    let script_module = Arc::new(lueying_features::ScriptModule::new(script));
+    let engine = Engine::new(Arc::new(dict), Config::default()).with_modules(Arc::new(
+        lueying_features::append_builtins(Default::default(), &script_module),
+    ));
+    (engine, script_module)
 }
 
 fn mini() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_modules(crate::builtins())
 }
 
 fn letters(engine: &mut Engine, text: &str) {
@@ -175,7 +175,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 表情:词候选后紧跟表情,不抢词本身的首选;选中表情不写词库。
-    let mut emoji = custom(Script::Simplified);
+    let (mut emoji, _) = custom(Script::Simplified);
     letters(&mut emoji, "weixiao");
     let list = emoji.candidates();
     let emoji_at = list.iter().position(|text| text == "😊");
@@ -214,7 +214,7 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?} 词库 {} 行", exported.lines().count()),
     );
 
-    let mut promoted = custom(Script::Simplified);
+    let (mut promoted, _) = custom(Script::Simplified);
     letters(&mut promoted, "weixiao");
     let emoji_at = promoted.candidates().iter().position(|text| text == "😊");
     push(
@@ -331,7 +331,7 @@ pub fn run(report: &mut String) -> usize {
     // 因此挡掉用户少打末字母时补出的「你好」。
     let (dict, bad) = Dictionary::from_text("你好\t5328\tni'hao\n你好啊\t89\tni'hao'a\n");
     assert_eq!(bad, 0, "简拼撞车测试词库不应有坏行");
-    let mut shortened = Engine::new(Arc::new(dict), Config::default());
+    let mut shortened = Engine::new(Arc::new(dict), Config::default()).with_modules(crate::builtins());
     letters(&mut shortened, "niha");
     push(
         &mut checks,
@@ -369,10 +369,10 @@ pub fn run(report: &mut String) -> usize {
     let (readings, bad) = Dictionary::from_text(READINGS_DICT);
     assert_eq!(bad, 0, "异读测试词库不应有坏行");
     let readings = Arc::new(readings);
-    let mut zhei = Engine::new(readings.clone(), Config::default());
+    let mut zhei = Engine::new(readings.clone(), Config::default()).with_modules(crate::builtins());
     letters(&mut zhei, "zheige");
     let zhei_top = top(&zhei);
-    let mut nei = Engine::new(readings, Config::default());
+    let mut nei = Engine::new(readings, Config::default()).with_modules(crate::builtins());
     letters(&mut nei, "neige");
     let nei_top = top(&nei);
     push(
@@ -400,7 +400,7 @@ pub fn run(report: &mut String) -> usize {
         ("miantiao", "麪條"),
     ];
     for (raw, want) in cases {
-        let mut engine = custom(Script::Traditional);
+        let (mut engine, _) = custom(Script::Traditional);
         letters(&mut engine, raw);
         let actual = top(&engine);
         push(
@@ -420,7 +420,7 @@ pub fn run(report: &mut String) -> usize {
         ("houtai", Script::HongKong, "後台"),
     ];
     for (raw, script, want) in variants {
-        let mut engine = custom(script);
+        let (mut engine, _) = custom(script);
         letters(&mut engine, raw);
         let actual = top(&engine);
         push(
@@ -432,7 +432,7 @@ pub fn run(report: &mut String) -> usize {
     }
 
     // 繁体显示、简体学习:词库保持简体,切回简体不召回繁体词。
-    let mut canonical = custom(Script::Traditional);
+    let (mut canonical, script_handle) = custom(Script::Traditional);
     letters(&mut canonical, "toufa");
     let events = canonical.process(Key::Space);
     let exported = canonical.export_user();
@@ -449,7 +449,7 @@ pub fn run(report: &mut String) -> usize {
         format!("词库 {}", exported.lines().count()),
     );
 
-    canonical.set_config(Config::default());
+    script_handle.set_script(Script::Simplified);
     letters(&mut canonical, "toufa");
     push(
         &mut checks,
@@ -459,15 +459,12 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 组合中切换:候选与内联显示同时换字形。
-    let mut switch = custom(Script::Simplified);
+    let (mut switch, script_handle) = custom(Script::Simplified);
     letters(&mut switch, "toufa");
     let simplified = top(&switch) == "头发";
-    switch.set_config(Config {
-        script: Script::Traditional,
-        ..Config::default()
-    });
+    script_handle.set_script(Script::Traditional);
     let traditional = top(&switch) == "頭髮" && display(&switch) == "頭髮";
-    switch.set_config(Config::default());
+    script_handle.set_script(Script::Simplified);
     push(
         &mut checks,
         "组合中切换简繁",
@@ -476,7 +473,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 繁体模式不碰 ASCII:英文候选与回车原样上屏都保持原样。
-    let mut ascii = custom(Script::Traditional);
+    let (mut ascii, _) = custom(Script::Traditional);
     letters(&mut ascii, "hello");
     let ascii_top = top(&ascii);
     let events = ascii.process(Key::Space);
@@ -490,7 +487,7 @@ pub fn run(report: &mut String) -> usize {
         format!("{ascii_top:?} {events:?}"),
     );
 
-    let mut raw = custom(Script::Traditional);
+    let (mut raw, _) = custom(Script::Traditional);
     letters(&mut raw, "toufa");
     let events = raw.process(Key::Enter);
     push(
@@ -506,7 +503,7 @@ pub fn run(report: &mut String) -> usize {
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert(',', "、".to_string());
     punct_cfg.punct.insert('^', "………".to_string());
-    let mut mapped = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    let mut mapped = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     let events = mapped.process(Key::Punct(','));
     push(
         &mut checks,
@@ -519,7 +516,7 @@ pub fn run(report: &mut String) -> usize {
 
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert(',', "、".to_string());
-    let mut fallback = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    let mut fallback = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     let events = fallback.process(Key::Punct('?'));
     push(
         &mut checks,
@@ -532,7 +529,7 @@ pub fn run(report: &mut String) -> usize {
 
     let mut punct_cfg = Config::default();
     punct_cfg.punct.insert('.', ".".to_string());
-    let mut dot = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg);
+    let mut dot = Engine::new(Arc::new(Dictionary::builtin()), punct_cfg).with_modules(crate::builtins());
     dot.process(Key::Digit(3));
     let events = dot.process(Key::Punct('.'));
     push(
@@ -544,7 +541,7 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
-    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default());
+    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins());
     plain.process(Key::Digit(3));
     let events = plain.process(Key::Punct('.'));
     push(

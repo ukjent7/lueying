@@ -14,7 +14,9 @@ use lueying_dict::Dictionary;
 use lueying_engine::module::Modules;
 use lueying_engine::{Action, Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_extmeta::Manifest;
-use lueying_features::{Prediction, SchemeId, registry_with_prediction, scheme};
+use lueying_features::{
+    Prediction, SchemeId, Script, ScriptModule, registry_with_script, scheme,
+};
 
 /// `replay` 的参数。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -73,7 +75,11 @@ pub fn replay_with(args: &ReplayArgs, ext_root: Option<&Path>) -> Result<String,
 
 /// 功能模块注册表:与服务端同构,短语留空、联想关闭,保证输出确定。
 fn modules() -> Arc<Modules> {
-    registry_with_prediction(None, Arc::new(Prediction::with_enabled(false)))
+    registry_with_script(
+        None,
+        Arc::new(Prediction::with_enabled(false)),
+        Arc::new(ScriptModule::new(Script::Simplified)),
+    )
 }
 
 /// config.toml 的 `[triggers]` 加命令行旗标;同名词命令行覆盖配置。

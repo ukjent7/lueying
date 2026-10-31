@@ -13,7 +13,7 @@ pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
     let dict = Arc::clone(shared);
 
     // 置顶:把页内第二条钉到首位;导出往返与新会话都要保住。
-    let mut e = Engine::new(Arc::clone(&dict), Config::default());
+    let mut e = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "tianqi".chars() {
         e.process(Key::Letter(ch));
     }
@@ -46,7 +46,7 @@ pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
             .unwrap_or_default()
             .to_string(),
     );
-    let mut restored = Engine::new(Arc::clone(&dict), Config::default());
+    let mut restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     restored.import_user(&exported);
     for ch in "tianqi".chars() {
         restored.process(Key::Letter(ch));
@@ -59,7 +59,7 @@ pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // Shift+Delete:置顶连同学习记录一起取消,回到词典顺序。
-    let mut f = Engine::new(Arc::clone(&dict), Config::default());
+    let mut f = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     f.import_user(&exported);
     for ch in "tianqi".chars() {
         f.process(Key::Letter(ch));
@@ -75,7 +75,7 @@ pub(super) fn pin_and_demote(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 降权:第一条记一次跳过负分,词库出现 @reject 行。
-    let mut d = Engine::new(Arc::clone(&dict), Config::default());
+    let mut d = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "tianqi".chars() {
         d.process(Key::Letter(ch));
     }
@@ -106,7 +106,7 @@ pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     let dict = Arc::clone(shared);
 
     // 按应用偏好:Code.exe 里选「先」后应记下宿主(小写),并随词库往返。
-    let mut app_flow = Engine::new(Arc::clone(&dict), Config::default());
+    let mut app_flow = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     app_flow.set_host("Code.exe");
     for ch in "xian".chars() {
         app_flow.process(Key::Letter(ch));
@@ -126,7 +126,7 @@ pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now:
             .unwrap_or_default()
             .to_string(),
     );
-    let mut app_restored = Engine::new(Arc::clone(&dict), Config::default());
+    let mut app_restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     app_restored.import_user(&app_export);
     let app_reexport = app_restored.export_user();
     push(
@@ -145,21 +145,21 @@ pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     // 应用偏好参与排序:同一份词库在 Code.exe 下偏向「先」,换宿主或无宿主回到「现」。
     // 导入行故意用大写宿主名,验证导入与查询都会归一到小写。
     let app_line = format!("@app\tCODE.EXE\t先\t100\t{now}\n");
-    let mut app_code = Engine::new(Arc::clone(&dict), Config::default());
+    let mut app_code = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     app_code.import_user(&app_line);
     app_code.set_host("Code.exe");
     for ch in "xian".chars() {
         app_code.process(Key::Letter(ch));
     }
     let app_top = app_code.candidates().first().cloned().unwrap_or_default();
-    let mut app_chrome = Engine::new(Arc::clone(&dict), Config::default());
+    let mut app_chrome = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     app_chrome.import_user(&app_line);
     app_chrome.set_host("chrome.exe");
     for ch in "xian".chars() {
         app_chrome.process(Key::Letter(ch));
     }
     let app_other = app_chrome.candidates().first().cloned().unwrap_or_default();
-    let mut app_none = Engine::new(Arc::clone(&dict), Config::default());
+    let mut app_none = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     app_none.import_user(&app_line);
     for ch in "xian".chars() {
         app_none.process(Key::Letter(ch));
@@ -189,7 +189,7 @@ pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now:
     );
 
     // 导入合并:同键同词只留一条,频次取最大。
-    let mut c = Engine::new(Arc::clone(&dict), Config::default());
+    let mut c = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     c.import_user("shi\t十\t2\t0\n");
     c.import_user("shi\t十\t3\t0\n");
     let exported = c.export_user();
@@ -206,7 +206,7 @@ pub(super) fn app_and_shared(shared: &Arc<Dictionary>, checks: &mut Checks, now:
 
     // 导出再导入(Server 落盘用的就是这份文本),词与频次都要还在。
     let text = a.export_user();
-    let mut d = Engine::new(Arc::clone(&dict), Config::default());
+    let mut d = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     d.import_user(&text);
     for ch in "shi".chars() {
         d.process(Key::Letter(ch));
@@ -297,7 +297,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 坏行、空键、坏频次都跳过,其余词条照常导入。
-    let mut f = Engine::new(Arc::clone(&dict), Config::default());
+    let mut f = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     f.import_user("坏行\nshi\t十\tx\t0\n\tshi\t十\t1\t0\nshi\t十\t4\t0\n");
     let exported = f.export_user();
     let lines: Vec<_> = exported.lines().collect();
@@ -309,7 +309,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 分段上屏:选「你」只吃 ni,学习键也应是 ni。
-    let mut g = Engine::new(Arc::clone(&dict), Config::default());
+    let mut g = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "nihao".chars() {
         g.process(Key::Letter(ch));
     }
@@ -331,7 +331,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 连续分段上屏自动造词:先选「你」再选「好」,整串键与整词一起学。
-    let mut phrase = Engine::new(Arc::clone(&dict), Config::default());
+    let mut phrase = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for ch in "nihao".chars() {
         phrase.process(Key::Letter(ch));
     }
@@ -351,7 +351,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 组级适应:连续选两次模糊词后计数应随导出/导入保留。
-    let mut group = Engine::new(Arc::clone(&dict), Config::default());
+    let mut group = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     for _ in 0..2 {
         for c in "zongguo".chars() {
             group.process(Key::Letter(c));
@@ -359,7 +359,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
         group.process(Key::Space);
     }
     let saved = group.export_user();
-    let mut restored = Engine::new(Arc::clone(&dict), Config::default());
+    let mut restored = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     restored.import_user(&saved);
     let count = restored
         .group_stats()
@@ -374,7 +374,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 设置窗「清空用户词库」:所有会话共用的那份立即变空。
-    let mut cleared = Engine::new(Arc::clone(&dict), Config::default());
+    let mut cleared = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     cleared.import_user("shi\t十\t9\t0\n");
     cleared.clear_user();
     push(
@@ -385,7 +385,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 上限:导入 20100 条后只保留 18000 条,低频先淘汰。
-    let mut h = Engine::new(Arc::clone(&dict), Config::default());
+    let mut h = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     let bulk: String = (0..20_100)
         .map(|i| format!("k{i}\tw{i}\t{}\t0\n", i + 1))
         .collect();
@@ -402,7 +402,7 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 
     // 私密输入范围:关闭学习后上屏不得写入词库;切回普通字段恢复学习。
-    let mut private = Engine::new(Arc::clone(&dict), Config::default());
+    let mut private = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
     private.set_learning(false);
     for c in "nihao".chars() {
         private.process(Key::Letter(c));

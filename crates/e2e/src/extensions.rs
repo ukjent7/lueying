@@ -14,9 +14,13 @@ use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_features::{AuxCode, CustomPhrases, SchemeId};
 
 fn engine(scheme: SchemeId, aux: bool, modules: Arc<Modules>, user: SharedUser) -> Engine {
+    let script = lueying_features::ScriptModule::new(lueying_features::Script::Simplified);
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
         .with_user(user)
-        .with_modules(modules)
+        .with_modules(Arc::new(lueying_features::append_builtins(
+            (*modules).clone(),
+            &script,
+        )))
         .with_scheme(lueying_features::scheme(scheme, aux))
 }
 

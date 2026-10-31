@@ -218,7 +218,8 @@ pub(crate) fn make_engine(
             fuzzy,
             ..Config::default()
         },
-    );
+    )
+    .with_modules(crate::builtins());
     if let Some(gram) = gram {
         engine = engine.with_gram(Arc::clone(gram));
     }

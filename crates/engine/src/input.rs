@@ -1077,12 +1077,14 @@ impl Engine {
             cand.pinned = true;
             built.cands.insert(0, cand);
         }
-        // 可选模块在核心候选与快捷输入之后运行;默认空注册表不进入这个分支。
+        // 内置与宿主模块在核心候选与快捷输入之后运行:短语、联想、表情、
+        // 英文混输、简繁转换按注册顺序增删改候选。默认空注册表不进这个分支。
         if !self.modules.is_empty() {
             let module_ctx = module::CandidateContext {
                 raw: &raw,
                 query: &expansion.query,
                 scheme: self.scheme.manifest().id,
+                quick_trigger: quick::is_trigger(&raw),
                 context: &context,
                 host: &self.host,
                 now,
@@ -1092,47 +1094,10 @@ impl Engine {
             };
             self.modules.candidates(&module_ctx, &mut built.cands);
         }
-        // 表情跟随词候选;英文只在非快速触发串上补一条。两者都不改中文排序。
-        emoji::inject(&mut built.cands);
-        if !quick::is_trigger(&raw) {
-            let has_full = built
-                .cands
-                .iter()
-                .any(|cand| cand.full && !cand.quick && !cand.no_learn);
-            // 模糊纠正出的整句也算 full,但它不是用户要打中文的证据。`hello`
-            // 这种完整英文词只在有可信整词时才让位,否则会被「和你你」压到页尾。
-            let trusted_full = built
-                .cands
-                .iter()
-                .any(|cand| cand.full && cand.trusted && !cand.quick && !cand.no_learn);
-            if let Some(cand) = english::candidate(&raw, has_full, !built.cands.is_empty()) {
-                if trusted_full {
-                    built.cands.push(cand);
-                } else {
-                    built.cands.insert(0, cand);
-                }
-            }
-        }
         // 动作候选:触发词整串完全匹配时把命令放进候选;默认不进首位,
         // 字面原文候选补在这一步,空格仍照旧上屏文字。
         if let Some(action) = self.action.clone() {
             inject_action(&mut built.cands, &action, &raw, &user);
-        }
-        // 显示与上屏用繁体时,候选文本整体换形;学习仍按 learn_text 的简体。
-        // 动作候选的标题是命令名,不随字形切换。
-        if self.cfg.script != Script::Simplified {
-            for cand in &mut built.cands {
-                if cand.action.is_some() {
-                    continue;
-                }
-                let converted = script::convert(&cand.text, self.cfg.script);
-                if converted != cand.text {
-                    let original = std::mem::replace(&mut cand.text, converted);
-                    if cand.learn_text.is_none() {
-                        cand.learn_text = Some(original);
-                    }
-                }
-            }
         }
         comp.display = built
             .cands

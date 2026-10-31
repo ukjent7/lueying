@@ -40,7 +40,10 @@ impl Module for Demo {
 }
 
 fn engine(modules: Modules) -> Engine {
-    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(modules))
+    let script = lueying_features::ScriptModule::new(lueying_features::Script::Simplified);
+    Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(
+        lueying_features::append_builtins(modules, &script),
+    ))
 }
 
 fn type_hao(engine: &mut Engine) {

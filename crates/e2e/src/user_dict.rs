@@ -47,7 +47,9 @@ fn push(checks: &mut Checks, name: &'static str, ok: bool, note: String) {
 }
 
 fn engine(dict: &Arc<Dictionary>, user: &SharedUser) -> Engine {
-    Engine::new(Arc::clone(dict), Config::default()).with_user(Arc::clone(user))
+    Engine::new(Arc::clone(dict), Config::default())
+        .with_user(Arc::clone(user))
+        .with_modules(crate::builtins())
 }
 
 /// 翻到候选所在页并点选;用于重复学习同一个词。

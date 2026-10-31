@@ -135,7 +135,7 @@ pub fn run(
 ) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     let fresh = || {
-        let mut engine = Engine::new(Arc::clone(&dict), Config::default());
+        let mut engine = Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
         if let Some(gram) = &gram {
             engine = engine.with_gram(Arc::clone(gram));
         }

@@ -38,6 +38,7 @@ fn push(
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_modules(crate::builtins())
 }
 
 fn at(now: CivilTime) -> Engine {
@@ -52,7 +53,9 @@ fn with_word(word: &str, key: &str, now: CivilTime) -> Engine {
     user.write()
         .unwrap_or_else(|p| p.into_inner())
         .learn(key, word);
-    let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_user(user);
+    let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default())
+        .with_user(user)
+        .with_modules(crate::builtins());
     e.set_now(now);
     e
 }

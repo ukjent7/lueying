@@ -312,22 +312,24 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// 转成引擎配置。
-    pub fn engine(&self) -> Config {
-        let script = match self.region {
+    /// 目标输出字形;`traditional` 关闭时保持简体。
+    pub fn script(&self) -> Script {
+        if !self.traditional {
+            return Script::Simplified;
+        }
+        match self.region {
             Region::General => Script::Traditional,
             Region::Taiwan => Script::Taiwan,
             Region::HongKong => Script::HongKong,
-        };
+        }
+    }
+
+    /// 转成引擎配置。
+    pub fn engine(&self) -> Config {
         Config {
             fuzzy: self.fuzzy,
             chinese_punct: self.chinese_punct,
             page_size: self.page_size,
-            script: if self.traditional {
-                script
-            } else {
-                Script::Simplified
-            },
             punct: self.punct.clone(),
         }
     }
