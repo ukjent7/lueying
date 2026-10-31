@@ -18,7 +18,7 @@ fn skeleton(root: &Path, id: &str) -> PathBuf {
     new(&NewArgs {
         id: id.to_string(),
         name: None,
-        dir: Some(root.clone()),
+        dir: Some(root.to_path_buf()),
     })
     .expect("new 应成功")
 }
