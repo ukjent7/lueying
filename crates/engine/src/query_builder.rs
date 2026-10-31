@@ -105,6 +105,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         previous2,
         previous,
         raw,
+        quick_trigger: _,
     } = args;
     let total = dict.total_weight() as f64;
     let mut q = Querier {
