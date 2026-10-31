@@ -10,7 +10,7 @@ use std::process::Command;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
 
-use crate::http::Response;
+use crate::http::Stream;
 use crate::update_manifest::{self, MANIFEST_NAME};
 
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
@@ -350,14 +350,20 @@ pub fn wait_for_process(pid: u32, timeout_ms: u32) -> Result<(), String> {
 }
 
 pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
-    let response = Response::open(url, true)?;
-    let status = response.status()?;
+    let stream = Stream::open(url, 60_000)?;
+    let status = stream.status();
     if !(200..300).contains(&status) {
         return Err(format!("下载更新包返回 HTTP {status}"));
     }
+    // 清单带大小时按它卡上限;没带就给安装包留足余量。
+    let limit = if expected > 0 {
+        expected
+    } else {
+        512 * 1024 * 1024
+    };
     let written = (|| -> Result<u64, String> {
         let mut file = File::create(dest).map_err(|e| format!("创建 {}: {e}", dest.display()))?;
-        let written = response.read_chunks(|chunk| {
+        let written = stream.read_chunks(limit, |chunk| {
             file.write_all(chunk)
                 .map_err(|e| format!("写入更新包: {e}"))
         })?;

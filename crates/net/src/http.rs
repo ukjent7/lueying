@@ -45,6 +45,43 @@ pub fn send(request: &Request) -> Result<Response, String> {
     Ok(Response { status, body })
 }
 
+/// 流式响应:边收边处理,不把整个响应体读进内存。给更新包这类大文件用。
+pub struct Stream {
+    handle: ResponseHandle,
+    status: u16,
+}
+
+impl Stream {
+    /// 发出 GET 并等响应头;响应体上限在 [`Stream::read_chunks`] 里给。
+    pub fn open(url: &str, timeout_ms: u32) -> Result<Self, String> {
+        let request = Request {
+            method: "GET".to_string(),
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: None,
+            limit: 0,
+            timeout_ms,
+        };
+        let (secure, host, port, path) = split_url(url)?;
+        let handle = ResponseHandle::open(&request, secure, &host, port, &path)?;
+        let status = handle.status()?;
+        Ok(Self { handle, status })
+    }
+
+    /// 非 2xx 也照常打开,由调用方判断。
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// 逐块交给 `on_chunk`,返回总字节数;超过 `limit` 立即失败。
+    pub fn read_chunks<F>(&self, limit: u64, on_chunk: F) -> Result<u64, String>
+    where
+        F: FnMut(&[u8]) -> Result<(), String>,
+    {
+        self.handle.read_chunks(limit, on_chunk)
+    }
+}
+
 /// 解析 URL 并做协议约束;返回 (是否 HTTPS, 主机, 端口, 路径)。
 pub fn split_url(url: &str) -> Result<(bool, String, u16, String), String> {
     let (secure, rest) = if let Some(rest) = url.strip_prefix("https://") {
@@ -227,6 +264,18 @@ impl ResponseHandle {
 
     fn bytes(&self, limit: u64) -> Result<Vec<u8>, String> {
         let mut out = Vec::new();
+        self.read_chunks(limit, |chunk| {
+            out.extend_from_slice(chunk);
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    fn read_chunks<F>(&self, limit: u64, mut on_chunk: F) -> Result<u64, String>
+    where
+        F: FnMut(&[u8]) -> Result<(), String>,
+    {
+        let mut total = 0u64;
         let mut buffer = vec![0u8; 64 * 1024];
         loop {
             let mut read = 0u32;
@@ -234,12 +283,13 @@ impl ResponseHandle {
             unsafe { WinHttpReadData(self.request, pointer, buffer.len() as u32, &mut read) }
                 .map_err(|error| format!("读取响应数据: {error}"))?;
             if read == 0 {
-                return Ok(out);
+                return Ok(total);
             }
-            if out.len() as u64 + u64::from(read) > limit {
+            if total + u64::from(read) > limit {
                 return Err(format!("响应内容超过 {limit} 字节"));
             }
-            out.extend_from_slice(&buffer[..read as usize]);
+            on_chunk(&buffer[..read as usize])?;
+            total += u64::from(read);
         }
     }
 }
