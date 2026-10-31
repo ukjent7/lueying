@@ -27,7 +27,10 @@ use lueying_protocol::Request;
 use lueying_render::panel::Palette;
 use lueying_render::ui::{self, Id};
 use skia_safe::Font;
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{
+    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE, DwmSetWindowAttribute,
+};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, EndPaint, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT, SetBkColor, SetTextColor,
     UpdateWindow,
@@ -119,6 +122,8 @@ pub fn run() {
             return;
         }
     };
+    // 标题栏跟随系统深浅色;客户区配色由 Window::new 里的 Appearance 决定。
+    apply_dark_title_bar(hwnd, window.appearance);
     unsafe {
         window.scale = dpi_of(hwnd);
         window.size = client_size(hwnd);
@@ -708,6 +713,21 @@ fn system_scale() -> f32 {
     unsafe { GetDpiForSystem().max(96) as f32 / 96.0 }
 }
 
+/// 让 DWM 画深色标题栏;窗口客户区由 Skia 自绘,标题栏跟着系统走。
+///
+/// 20 是 Windows 10 2004+ 的属性值;1809/1903 只认 19,20 失败时再试一次。
+/// 高对比度不强制深色,交给系统主题。
+fn apply_dark_title_bar(hwnd: HWND, appearance: theme::Appearance) {
+    let dark = BOOL(if matches!(appearance, theme::Appearance::Dark) { 1 } else { 0 });
+    let ptr = &dark as *const _ as *const std::ffi::c_void;
+    let size = std::mem::size_of_val(&dark) as u32;
+    unsafe {
+        if DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ptr, size).is_err() {
+            let _ = DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE(19), ptr, size);
+        }
+    }
+}
+
 /// lparam 里的低 16 位(鼠标坐标)。
 fn low_word(lparam: LPARAM) -> i32 {
     (lparam.0 & 0xffff) as i16 as i32
@@ -745,9 +765,10 @@ unsafe extern "system" fn wnd_proc(
                 LRESULT(0)
             }
             WM_SETTINGCHANGE => {
-                // 系统主题变了就换配色。
+                // 系统主题变了就换配色,标题栏也跟着换。
                 if let Some(window) = state_of(hwnd) {
                     window.appearance = theme::Appearance::of_system();
+                    apply_dark_title_bar(hwnd, window.appearance);
                     window.relayout();
                 }
                 LRESULT(0)

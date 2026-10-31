@@ -19,8 +19,8 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
-    RegisterClassW, TranslateMessage, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow, TranslateMessage, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::w;
 
@@ -83,6 +83,8 @@ fn hud_loop(state: Arc<State>) {
     let font = crate::ui_skia::panel_font();
     let mut serial = 0u64;
     let mut current: Option<HudView> = None;
+    // 首帧上屏后再显示,避免从停靠点挪到光标处时闪一帧旧徽标。
+    let mut visible = false;
     // 外观、主题色与动效开关按事件取一次:系统主题切得很慢,每帧读注册表
     // 与系统参数纯属浪费。
     let mut appearance = theme::Appearance::of_system();
@@ -134,12 +136,17 @@ fn hud_loop(state: Arc<State>) {
                     }
                     if let Err(e) = layer.present(hwnd, x, y, w, h) {
                         println!("模式徽标上屏失败: {e}");
+                    } else if !visible {
+                        unsafe {
+                            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                        }
+                        visible = true;
                     }
                 } else {
-                    park(hwnd);
+                    park(hwnd, &mut visible);
                 }
             }
-            None => park(hwnd),
+            None => park(hwnd, &mut visible),
         }
         std::thread::sleep(POLL);
     }
@@ -276,7 +283,8 @@ fn create_window() -> Result<HWND, String> {
             WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
             w!("lueying-mode-hud"),
             w!("lueying-hud"),
-            WS_POPUP | WS_VISIBLE,
+            // 先隐藏建在停靠点;首帧经 UpdateLayeredWindow 上屏后再显示。
+            WS_POPUP,
             park_x,
             park_y,
             badge::WIDTH as i32,
@@ -318,8 +326,14 @@ unsafe extern "system" fn wnd_proc(
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// 挪出虚拟桌面;徽标不显示时停在这里,避免在任务栏里露脸。
-fn park(hwnd: HWND) {
+/// 挪出虚拟桌面并隐藏;徽标不显示时停在这里,避免在任务栏里露脸。
+fn park(hwnd: HWND, visible: &mut bool) {
+    if *visible {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        *visible = false;
+    }
     let (x, y) = ui_place::park_point();
     ui_place::park(hwnd, x, y);
 }

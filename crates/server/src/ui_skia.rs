@@ -26,11 +26,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GWLP_USERDATA,
     GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG, PM_REMOVE,
-    PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SWP_NOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SystemParametersInfoW,
-    TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR,
-    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WS_VISIBLE,
+    PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{BOOL, w};
 
@@ -168,6 +168,8 @@ pub(super) struct WinCtx {
     script_fx: Option<ui_skia_script::ScriptFx>,
     /// 效果帧预算:连续超预算就临时摘掉效果。
     budget: BudgetGuard,
+    /// 首帧真正呈现前窗口保持隐藏,避免从停靠点挪到光标处时闪一帧旧内容。
+    visible: bool,
     /// 出帧路径彻底走不通(设备被摘掉且 CPU 兜底也建不起来):候选窗停用。
     dead: bool,
 }
@@ -297,6 +299,8 @@ fn ensure_presenter(ctx: &mut WinCtx) -> Ready {
     match swap_window(ctx.hwnd, &mut ctx.pipe) {
         Ok(hwnd) => {
             ctx.hwnd = hwnd;
+            // 新窗口是隐藏建的;这一帧提交后再显示。
+            ctx.visible = false;
             // 窗口过程靠这个指针反查上下文;新窗口也要挂上。
             unsafe {
                 let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as *mut WinCtx as isize);
@@ -345,6 +349,7 @@ fn window_loop(state: Arc<State>) {
         script,
         script_fx: None,
         budget: BudgetGuard::new(Budget::default()),
+        visible: false,
         dead: false,
     }));
     unsafe {
@@ -769,7 +774,9 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     }
     if let Err(e) = ctx.pipe.present() {
         println!("Skia 呈现失败: {e}");
+        return;
     }
+    show(ctx);
 }
 
 /// 鼠标/菜单变化后的重绘;淡出窗口不接鼠标,内容与位置都不动。
@@ -889,7 +896,8 @@ pub(super) fn create_window() -> Result<HWND, String> {
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
             class,
             w!("lueying"),
-            WS_POPUP | WS_VISIBLE,
+            // 先隐藏建在停靠点;首帧真正提交后再显示,避免闪一帧旧内容。
+            WS_POPUP,
             park_x,
             park_y,
             360,
@@ -915,7 +923,8 @@ pub(super) fn create_layered_window() -> Result<HWND, String> {
             WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             w!("lueying-skia-candidate"),
             w!("lueying"),
-            WS_POPUP | WS_VISIBLE,
+            // 同上:首帧经 UpdateLayeredWindow 上屏后再显示。
+            WS_POPUP,
             park_x,
             park_y,
             360,
@@ -955,8 +964,25 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
     result
 }
 
-/// 挪到虚拟桌面之外并保持尺寸;停靠点按当前虚拟桌面算。
+/// 首帧真正提交后再显示;无焦点显示,不抢宿主焦点。
+fn show(ctx: &mut WinCtx) {
+    if ctx.visible {
+        return;
+    }
+    unsafe {
+        let _ = ShowWindow(ctx.hwnd, SW_SHOWNOACTIVATE);
+    }
+    ctx.visible = true;
+}
+
+/// 挪到虚拟桌面之外并隐藏;停靠点按当前虚拟桌面算。
 fn park(ctx: &mut WinCtx) {
+    if ctx.visible {
+        unsafe {
+            let _ = ShowWindow(ctx.hwnd, SW_HIDE);
+        }
+        ctx.visible = false;
+    }
     let (x, y) = ui_place::park_point();
     ui_place::park(ctx.hwnd, x, y);
 }
