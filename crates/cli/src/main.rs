@@ -1,10 +1,11 @@
-//! `lueying` 命令行入口。当前只有 `ext top`;T12 的开发回路沿用这一层。
+//! `lueying` 命令行入口:扩展开发回路(new/pack/install/reload/logs/replay)与运行指标(top)。
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use lueying_cli::{
-    Invocation, USAGE, default_metrics_path, parse_args, read_metrics, render_json, render_table,
+    Invocation, TopOptions, USAGE, default_metrics_path, extcmd, parse_args, read_metrics,
+    render_json, render_table, replay,
 };
 
 fn main() -> ExitCode {
@@ -18,11 +19,40 @@ fn main() -> ExitCode {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
-    let invocation = parse_args(args)?;
-    let Invocation::Top(options) = invocation else {
-        println!("{USAGE}");
-        return Ok(());
-    };
+    match parse_args(args)? {
+        Invocation::Help => println!("{USAGE}"),
+        Invocation::New(args) => {
+            let dir = extcmd::new(&args)?;
+            println!(
+                "已创建 {};下一步:lueying ext pack {}",
+                dir.display(),
+                dir.display()
+            );
+        }
+        Invocation::Pack(args) => {
+            let path = extcmd::pack(&args)?;
+            println!(
+                "已打包 {};下一步:lueying ext install {}",
+                path.display(),
+                path.display()
+            );
+        }
+        Invocation::Install(args) => {
+            let dir = extcmd::install(&args)?;
+            println!("已安装 {};启用后 lueying ext reload 生效", dir.display());
+        }
+        Invocation::Reload => {
+            extcmd::reload()?;
+            println!("已重载");
+        }
+        Invocation::Logs(args) => println!("{}", extcmd::logs(&args)?),
+        Invocation::Replay(args) => print!("{}", replay::run(&args)?),
+        Invocation::Top(options) => top(options)?,
+    }
+    Ok(())
+}
+
+fn top(options: TopOptions) -> Result<(), String> {
     let path = options
         .file
         .or_else(default_metrics_path)

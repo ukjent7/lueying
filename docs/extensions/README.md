@@ -119,3 +119,10 @@ impl Scheme for Uppercase {
 - 从按键序列走到候选、上屏、学习与跨方案召回。
 - 覆盖错误路径:辅码无匹配、短语坏行、方案切换后的组合清理。
 - 产出可复查的 Markdown 报告,由 CI artifact 保留。
+
+## 开发回路
+
+`lueying ext` 命令行覆盖扩展的建包、打包、安装、重载、日志与运行指标;
+`lueying ext replay` 在 Linux 无头环境回放按键脚本(按键序列进,候选列表
+出),用来验证拼音行为与触发词,输出确定性、可直接当回归用例。面向
+coding agent 的完整流程见 [agent-guide.md](agent-guide.md)。
