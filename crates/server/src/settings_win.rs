@@ -43,12 +43,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
-    WM_CTLCOLOREDIT, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW,
-    WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, MoveWindow, PostMessageW,
+    PostQuitMessage, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS,
+    WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, w};
 

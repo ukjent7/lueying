@@ -7,7 +7,9 @@ use super::*;
 use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, GetStockObject, HGDIOBJ,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_DOWN, VK_ESCAPE, VK_TAB};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, SetFocus, VK_DOWN, VK_ESCAPE, VK_TAB,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, WM_SETFONT,
 };

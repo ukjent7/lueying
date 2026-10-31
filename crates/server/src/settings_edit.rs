@@ -398,7 +398,8 @@ fn text_of(edit: HWND) -> String {
 fn write_text(path: &std::path::Path, text: &str) -> Result<(), String> {
     use std::io::Write;
     let tmp = path.with_extension("txt.tmp");
-    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("创建 {}: {e}", tmp.display()))?;
+    let mut file =
+        std::fs::File::create(&tmp).map_err(|e| format!("创建 {}: {e}", tmp.display()))?;
     file.write_all(text.as_bytes())
         .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
     file.sync_all()
