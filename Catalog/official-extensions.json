@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "extensions": [
+    {
+      "id": "shot-ocr",
+      "name": "截图 OCR",
+      "version": "0.1.0",
+      "kind": "extension",
+      "description": "截图后识别文字并上屏；先装扩展，再按需装识别模型",
+      "size": "12 KB",
+      "bundled": "extensions/shot-ocr"
+    },
+    {
+      "id": "ppocr",
+      "name": "PP-OCRv6 模型",
+      "version": "2026-10",
+      "kind": "model",
+      "description": "本地文字识别模型；装好后识别不联网",
+      "size": "约 31 MB",
+      "files": [
+        {
+          "name": "det.onnx",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx",
+          "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+          "bytes": 9880512
+        },
+        {
+          "name": "rec.onnx",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx",
+          "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+          "bytes": 21159378
+        }
+      ]
+    },
+    {
+      "id": "rerank-25m",
+      "name": "25M 停顿重排模型",
+      "version": "2026-10",
+      "kind": "model",
+      "description": "停顿后异步重排的更大模型；缺失时继续用 4M 与词频",
+      "size": "约 25 MB",
+      "files": [
+        {
+          "name": "rerank-25m.safetensors",
+          "url": "https://huggingface.co/metasequoiaime/pinyin-ime-reranker-25M/resolve/75295b373a7ef0d14e9bebd32c1625c9cfcfea49/sentence-model.safetensors",
+          "sha256": "0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469",
+          "bytes": 25480184
+        }
+      ]
+    }
+  ]
+}

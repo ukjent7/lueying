@@ -94,7 +94,7 @@ fn normalize_drops_unknown_and_bad_values() {
 #[test]
 fn values_merge_defaults() {
     let stored = BTreeMap::from([("notify".to_string(), Value::Bool(false))]);
-    let value = values(&[toggle(), choice()], Some(&stored));
+    let value = values("shot-ocr", &[toggle(), choice()], Some(&stored));
     assert_eq!(
         value,
         serde_json::json!({"notify": false, "quality": "high"})

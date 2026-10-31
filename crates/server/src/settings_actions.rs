@@ -6,21 +6,25 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use crate::config;
+use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use crate::update;
 use lueying_extjs::{ConsentBook, ConsentCheck};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::{Reply, Request, pipe_name};
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
     OPENFILENAMEW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, IDOK, MB_DEFBUTTON2, MB_ICONQUESTION,
-    MB_ICONWARNING, MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, EnumWindows, GetCursorPos, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IDOK, IsWindowVisible, MB_DEFBUTTON2,
+    MB_ICONQUESTION, MB_ICONWARNING, MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW,
     SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
@@ -121,6 +125,130 @@ pub fn open_apps(settings: &mut Settings) {
         config::apps_path(),
         config::APPS_TEMPLATE,
         "没有可写的应用配置路径",
+    );
+}
+
+/// 正在运行、有可见窗口且尚未配置的应用:exe 名 → 窗口标题。
+fn running_apps(configured: &std::collections::BTreeMap<String, AppOverride>) -> Vec<(String, String)> {
+    struct Found {
+        configured: *const std::collections::BTreeMap<String, AppOverride>,
+        apps: Vec<(String, String)>,
+    }
+    unsafe extern "system" fn visit(window: HWND, state: LPARAM) -> BOOL {
+        let found = unsafe { &mut *(state.0 as *mut Found) };
+        if !unsafe { IsWindowVisible(window) }.as_bool() {
+            return BOOL(1);
+        }
+        let length = unsafe { GetWindowTextLengthW(window) };
+        if length <= 0 {
+            return BOOL(1);
+        }
+        let mut title = vec![0u16; length as usize + 1];
+        let read = unsafe { GetWindowTextW(window, &mut title) };
+        let title = String::from_utf16_lossy(&title[..read.max(0) as usize]);
+        if title.trim().is_empty() {
+            return BOOL(1);
+        }
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+        let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+        else {
+            return BOOL(1);
+        };
+        let mut path = [0u16; 1024];
+        let mut size = path.len() as u32;
+        let ok = unsafe {
+            QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                PWSTR(path.as_mut_ptr()),
+                &mut size,
+            )
+        }
+        .is_ok();
+        let _ = unsafe { CloseHandle(process) };
+        if !ok {
+            return BOOL(1);
+        }
+        let image = std::path::Path::new(&String::from_utf16_lossy(&path[..size as usize]));
+        let Some(exe) = image.file_name().map(|name| name.to_string_lossy().to_ascii_lowercase())
+        else {
+            return BOOL(1);
+        };
+        if exe == "explorer.exe" || exe == "lueying-settings.exe" {
+            return BOOL(1);
+        }
+        if unsafe { &*found.configured }.contains_key(&exe)
+            || found.apps.iter().any(|(known, _)| *known == exe)
+        {
+            return BOOL(1);
+        }
+        found.apps.push((exe, title));
+        BOOL(1)
+    }
+    let mut found = Found {
+        configured,
+        apps: Vec::new(),
+    };
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut Found as isize));
+    }
+    found.apps.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    found.apps.truncate(40);
+    found.apps
+}
+
+/// 从正在运行的程序里挑一个加入按应用配置。
+pub fn add_app(hwnd: HWND, settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let apps = running_apps(&settings.cfg.apps);
+    if apps.is_empty() {
+        settings.say(Notice::Info, "没有可添加的运行中程序;可打开「配置文件」手动添加");
+        return;
+    }
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        settings.say(Notice::Error, "建菜单失败");
+        return;
+    };
+    for (index, (exe, title)) in apps.iter().enumerate() {
+        let label = HSTRING::from(format!("{}  {}", escape_menu(title), exe));
+        unsafe {
+            let _ = AppendMenuW(menu, MF_STRING, index + 1, &label);
+        }
+    }
+    let mut point = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut point);
+        let _ = SetForegroundWindow(hwnd);
+    }
+    let command = unsafe {
+        TrackPopupMenu(
+            menu,
+            TPM_NONOTIFY | TPM_RETURNCMD,
+            point.x,
+            point.y,
+            None,
+            hwnd,
+            None,
+        )
+    };
+    unsafe {
+        let _ = DestroyMenu(menu);
+    }
+    let chosen = usize::try_from(command.0).ok().filter(|index| {
+        *index > 0 && *index <= apps.len()
+    });
+    let Some(index) = chosen else {
+        return;
+    };
+    let (exe, title) = &apps[index - 1];
+    settings
+        .cfg
+        .apps
+        .insert(exe.clone(), AppOverride::default());
+    settings.say(
+        Notice::Info,
+        format!("已添加 {title} ({exe});保存后生效"),
     );
 }
 

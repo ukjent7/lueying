@@ -438,6 +438,11 @@ pub fn extensions_consent_path() -> Option<PathBuf> {
     Some(extensions_dir()?.join("consent.json"))
 }
 
+/// 扩展密钥目录(`%APPDATA%\lueying\secrets`);每个扩展一个 JSON 文件。
+pub fn secrets_dir() -> Option<PathBuf> {
+    user_file("secrets")
+}
+
 /// PP-OCRv6 模型目录:`LUEYING_PPOCR_DIR` 优先,其次用户目录
 /// `%APPDATA%\lueying\models\ppocr`,最后程序目录的 `models/ppocr`。
 /// 用户放的文件可以覆盖随包模型;三件齐全才算可用。
@@ -460,6 +465,28 @@ pub fn ppocr_dir() -> Option<PathBuf> {
 /// 用户放模型的目录;设置页的「目录」按钮打开这里。
 pub fn ppocr_user_dir() -> Option<PathBuf> {
     user_file("models/ppocr")
+}
+
+/// 按需下载模型的用户目录;`LUEYING_MODEL_DIR` 给自动化测试隔离用。
+pub fn models_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LUEYING_MODEL_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    user_file("models")
+}
+
+/// 模型路径:用户目录优先,其次安装目录。重排模型不随基础安装分发时,
+/// 下载完成后重启 Server 就能从用户目录加载。
+pub fn model_path(name: &str) -> Option<PathBuf> {
+    if let Some(dir) = models_dir() {
+        let path = dir.join(name);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let mut path = std::env::current_exe().ok()?;
+    path.set_file_name(name);
+    path.is_file().then_some(path)
 }
 
 fn ppocr_complete(dir: &Path) -> bool {

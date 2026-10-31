@@ -43,6 +43,9 @@ pub mod ids {
     pub const PHRASES: &str = "phrases";
     pub const PUNCT: &str = "punct";
     pub const APPS: &str = "apps";
+    pub const APPS_ADD: &str = "apps-add";
+    /// 按应用列表最多渲染多少行。
+    pub const APP_SLOTS: usize = 16;
     pub const BACKUP_EXPORT: &str = "backup-export";
     pub const BACKUP_IMPORT: &str = "backup-import";
     pub const IMPORT_USER: &str = "import-user";
@@ -54,6 +57,118 @@ pub mod ids {
     pub const SAVE: &str = "save";
     /// 扩展声明式设置最多渲染多少个字段。
     pub const EXT_FIELDS: usize = 16;
+    /// 官方扩展目录最多渲染多少项。
+    pub const OFFICIAL_SLOTS: usize = 8;
+    /// 已安装扩展列表最多渲染多少项。
+    pub const SCRIPT_SLOTS: usize = 16;
+
+    /// 第 `slot` 个官方扩展的安装按钮前缀。
+    pub fn official_ext(slot: usize) -> &'static str {
+        match slot {
+            0 => "official-0",
+            1 => "official-1",
+            2 => "official-2",
+            3 => "official-3",
+            4 => "official-4",
+            5 => "official-5",
+            6 => "official-6",
+            7 => "official-7",
+            _ => "official-0",
+        }
+    }
+
+    /// 安装按钮前缀 → 目录下标。
+    pub fn official_slot(base: &str) -> Option<usize> {
+        let slot: usize = base.strip_prefix("official-")?.parse().ok()?;
+        (slot < OFFICIAL_SLOTS).then_some(slot)
+    }
+
+    /// 第 `slot` 个已安装扩展的启用开关前缀。
+    pub fn script_toggle(slot: usize) -> &'static str {
+        match slot {
+            0 => "script-0",
+            1 => "script-1",
+            2 => "script-2",
+            3 => "script-3",
+            4 => "script-4",
+            5 => "script-5",
+            6 => "script-6",
+            7 => "script-7",
+            8 => "script-8",
+            9 => "script-9",
+            10 => "script-10",
+            11 => "script-11",
+            12 => "script-12",
+            13 => "script-13",
+            14 => "script-14",
+            15 => "script-15",
+            _ => "script-0",
+        }
+    }
+
+    /// 启用开关前缀 → 已安装列表下标。
+    pub fn script_slot(base: &str) -> Option<usize> {
+        let slot: usize = base.strip_prefix("script-")?.parse().ok()?;
+        (slot < SCRIPT_SLOTS).then_some(slot)
+    }
+
+    /// 按应用列表第 `slot` 行的标点按钮前缀。
+    pub fn app_punct(slot: usize) -> &'static str {
+        const IDS: [&str; APP_SLOTS] = [
+            "app-punct-0",
+            "app-punct-1",
+            "app-punct-2",
+            "app-punct-3",
+            "app-punct-4",
+            "app-punct-5",
+            "app-punct-6",
+            "app-punct-7",
+            "app-punct-8",
+            "app-punct-9",
+            "app-punct-10",
+            "app-punct-11",
+            "app-punct-12",
+            "app-punct-13",
+            "app-punct-14",
+            "app-punct-15",
+        ];
+        IDS.get(slot).copied().unwrap_or(IDS[0])
+    }
+
+    /// 标点按钮前缀 → 按应用列表下标。
+    pub fn app_punct_slot(base: &str) -> Option<usize> {
+        let slot: usize = base.strip_prefix("app-punct-")?.parse().ok()?;
+        (slot < APP_SLOTS).then_some(slot)
+    }
+
+    /// 按应用列表第 `slot` 行的学习按钮前缀。
+    pub fn app_learning(slot: usize) -> &'static str {
+        const IDS: [&str; APP_SLOTS] = [
+            "app-learning-0",
+            "app-learning-1",
+            "app-learning-2",
+            "app-learning-3",
+            "app-learning-4",
+            "app-learning-5",
+            "app-learning-6",
+            "app-learning-7",
+            "app-learning-8",
+            "app-learning-9",
+            "app-learning-10",
+            "app-learning-11",
+            "app-learning-12",
+            "app-learning-13",
+            "app-learning-14",
+            "app-learning-15",
+        ];
+        IDS.get(slot).copied().unwrap_or(IDS[0])
+    }
+
+    /// 学习按钮前缀 → 按应用列表下标。
+    pub fn app_learning_slot(base: &str) -> Option<usize> {
+        let slot: usize = base.strip_prefix("app-learning-")?.parse().ok()?;
+        (slot < APP_SLOTS).then_some(slot)
+    }
 
     /// 第 `slot` 个扩展设置字段的控件前缀。
     pub fn ext_field(slot: usize) -> &'static str {
@@ -101,6 +216,15 @@ pub enum UpdateState {
     Failed(String),
 }
 
+/// 按应用开关的三态循环:跟随全局 → 开 → 关 → 跟随全局。
+fn cycle_override(current: Option<bool>) -> Option<bool> {
+    match current {
+        None => Some(true),
+        Some(true) => Some(false),
+        Some(false) => None,
+    }
+}
+
 /// 页面里要用的颜色,由平台侧按主题算好传进来。
 #[derive(Clone, Debug, Default)]
 pub struct PageColors {
@@ -128,9 +252,15 @@ pub enum Action {
     OpenExtAudit,
     RefreshExtMetrics,
     OpenOcrModels,
+    /// 安装官方目录里的扩展或模型;id 来自目录项。
+    InstallOfficial(String),
+    /// 编辑扩展密钥:扩展 id、设置键、显示标题。
+    EditSecret(String, String, String),
     OpenPhrases,
     OpenPunct,
     OpenApps,
+    /// 从正在运行的程序里挑一个加入按应用配置。
+    AddApp,
     BackupExport,
     BackupImport,
     ImportUser,
@@ -167,6 +297,10 @@ pub struct Settings {
     pub ext_metrics: Option<ExtMetrics>,
     /// 左栏当前打开的页面。
     pub page: PageId,
+    /// 顶部搜索框的文字;非空时右栏显示跨页搜索结果。
+    pub search: String,
+    /// 正在安装的官方扩展/模型 id;下载在后台线程进行。
+    pub installing: Option<String>,
 }
 
 impl Default for Settings {
@@ -186,6 +320,8 @@ impl Default for Settings {
             ppocr_ready: false,
             ext_metrics: None,
             page: PageId::Input,
+            search: String::new(),
+            installing: None,
         }
     }
 }
@@ -249,7 +385,64 @@ impl Settings {
     pub fn activate(&mut self, id: &Id) -> Option<Action> {
         if let Some(page) = PageId::from_nav(id.base) {
             self.page = page;
+            self.search.clear();
             self.clear_notice();
+            return None;
+        }
+        if let Some(slot) = ids::official_slot(id.base) {
+            let Some(extension) = crate::official_extensions::catalog()
+                .extensions
+                .get(slot)
+            else {
+                return None;
+            };
+            let installed = if extension.is_model() {
+                extension.installed_model()
+            } else {
+                self.scripts.iter().any(|script| script.id == extension.id)
+            };
+            if installed || self.installing.is_some() {
+                return None;
+            }
+            self.clear_notice();
+            return Some(Action::InstallOfficial(extension.id.clone()));
+        }
+        if let Some(slot) = ids::script_slot(id.base) {
+            let Some(script) = self.scripts.get(slot) else {
+                return None;
+            };
+            let script_id = script.id.clone();
+            if let Some(index) = self
+                .cfg
+                .extensions
+                .iter()
+                .position(|candidate| candidate == &script_id)
+            {
+                self.cfg.extensions.remove(index);
+            } else {
+                self.cfg.extensions.push(script_id);
+            }
+            self.clear_notice();
+            return None;
+        }
+        if let Some(slot) = ids::app_punct_slot(id.base) {
+            if let Some(host) = self.cfg.apps.keys().nth(slot).cloned() {
+                let current = self.cfg.apps[&host].punct;
+                if let Some(over) = self.cfg.apps.get_mut(&host) {
+                    over.punct = cycle_override(current);
+                }
+                self.clear_notice();
+            }
+            return None;
+        }
+        if let Some(slot) = ids::app_learning_slot(id.base) {
+            if let Some(host) = self.cfg.apps.keys().nth(slot).cloned() {
+                let current = self.cfg.apps[&host].learning;
+                if let Some(over) = self.cfg.apps.get_mut(&host) {
+                    over.learning = cycle_override(current);
+                }
+                self.clear_notice();
+            }
             return None;
         }
         if let Some(def) = crate::settings_schema::find(id.base) {
@@ -271,12 +464,21 @@ impl Settings {
             return None;
         }
         if let Some(slot) = crate::settings_ext::slot(id.base) {
-            if let Some(field) = self
+            let Some(field) = self
                 .ext_fields()
                 .into_iter()
                 .find(|field| field.slot == slot)
-                && crate::settings_ext::apply(&mut self.cfg, &field, id.index)
-            {
+            else {
+                return None;
+            };
+            if field.is_secret() {
+                return Some(Action::EditSecret(
+                    field.ext.clone(),
+                    field.key.clone(),
+                    field.title.clone(),
+                ));
+            }
+            if crate::settings_ext::apply(&mut self.cfg, &field, id.index) {
                 self.clear_notice();
             }
             return None;
@@ -293,6 +495,7 @@ impl Settings {
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),
+            ids::APPS_ADD => Some(Action::AddApp),
             ids::BACKUP_EXPORT => Some(Action::BackupExport),
             ids::BACKUP_IMPORT => Some(Action::BackupImport),
             ids::IMPORT_USER => Some(Action::ImportUser),
@@ -372,9 +575,21 @@ impl Settings {
         0
     }
 
-    /// 切到左栏的某一页。
+    /// 切到左栏的某一页;搜索状态随之清空。
     pub fn set_page(&mut self, page: PageId) {
         self.page = page;
+        self.search.clear();
+    }
+
+    /// 更新顶部搜索词;空串恢复当前页。
+    pub fn set_search(&mut self, text: impl Into<String>) {
+        self.search = text.into();
+        self.clear_notice();
+    }
+
+    /// 搜索是否处于激活状态。
+    pub fn searching(&self) -> bool {
+        !self.search.trim().is_empty()
     }
 }
 

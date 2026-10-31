@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use lueying_extmeta::{Manifest, Setting, SettingValue};
-use lueying_render::ui::{Control, Group, Id, Row, SegmentOption};
+use lueying_render::ui::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
 use serde_json::Value;
 
 use crate::config::AppConfig;
@@ -32,7 +32,7 @@ pub struct Field {
     pub kind: Kind,
 }
 
-/// 宿主支持的控件;schema 在加载期已经限死这两种。
+/// 宿主支持的控件;类型在清单加载期已经限死。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     Toggle {
@@ -42,15 +42,24 @@ pub enum Kind {
         options: Vec<String>,
         selected: usize,
     },
+    /// 密钥文本:设置页显示是否已设置,编辑走原生单行输入窗。
+    Secret {
+        filled: bool,
+    },
 }
 
 impl Field {
-    /// 分段组当前选中的格;开关固定 0。
+    /// 分段组当前选中的格;开关与密钥固定 0。
     pub fn selected(&self) -> usize {
         match &self.kind {
-            Kind::Toggle { .. } => 0,
+            Kind::Toggle { .. } | Kind::Secret { .. } => 0,
             Kind::Choice { selected, .. } => *selected,
         }
+    }
+
+    /// 是否密钥字段;这类字段不进配置文件。
+    pub fn is_secret(&self) -> bool {
+        matches!(&self.kind, Kind::Secret { .. })
     }
 }
 
@@ -81,6 +90,10 @@ fn field(slot: usize, script: &ScriptEntry, setting: &Setting, cfg: &AppConfig) 
         Kind::Toggle {
             on: matches!(&value, SettingValue::Bool(true)),
         }
+    } else if setting.is_secret() {
+        Kind::Secret {
+            filled: crate::settings_secret::has(&script.id, setting.key()),
+        }
     } else {
         let selected = match &value {
             SettingValue::Text(text) => setting
@@ -95,17 +108,25 @@ fn field(slot: usize, script: &ScriptEntry, setting: &Setting, cfg: &AppConfig) 
             selected,
         }
     };
+    let mut detail = if setting.detail.trim().is_empty() {
+        format!("{} 声明的设置", script.name)
+    } else {
+        setting.detail.clone()
+    };
+    if let Kind::Secret { filled } = &kind {
+        detail.push_str(if *filled {
+            " · 已设置(仅本机保存)"
+        } else {
+            " · 未设置(仅本机保存)"
+        });
+    }
     Field {
         slot,
         ext: script.id.clone(),
         name: script.name.clone(),
         key: setting.key().to_string(),
         title: setting.title.clone(),
-        detail: if setting.detail.trim().is_empty() {
-            format!("{} 声明的设置", script.name)
-        } else {
-            setting.detail.clone()
-        },
+        detail,
         kind,
     }
 }
@@ -149,6 +170,18 @@ fn control(field: &Field) -> Control {
             selected: *selected,
             width: 44.0,
         },
+        Kind::Secret { filled } => Control::Buttons {
+            items: vec![Button {
+                id,
+                text: if *filled { "更换" } else { "设置" }.to_string(),
+                kind: if *filled {
+                    ButtonKind::Secondary
+                } else {
+                    ButtonKind::Primary
+                },
+                enabled: true,
+            }],
+        },
     }
 }
 
@@ -167,6 +200,7 @@ pub fn apply(cfg: &mut AppConfig, field: &Field, index: usize) -> bool {
             table.insert(field.key.clone(), Value::String(option.clone()));
             true
         }
+        Kind::Secret { .. } => false,
     }
 }
 
@@ -178,6 +212,13 @@ pub fn normalize(cfg: &mut AppConfig, scripts: &[ScriptEntry]) -> usize {
             continue;
         };
         for setting in &script.settings {
+            // 密钥只进私密存储;配置里旧版本留下的值在保存时清掉。
+            if setting.is_secret() {
+                if table.remove(setting.key()).is_some() {
+                    removed += 1;
+                }
+                continue;
+            }
             let bad = table
                 .get(setting.key())
                 .is_some_and(|value| !setting.accepts(value));
@@ -195,13 +236,14 @@ pub fn normalize(cfg: &mut AppConfig, scripts: &[ScriptEntry]) -> usize {
     removed
 }
 
-/// 扩展设置的完整值:配置里的值,缺省补清单默认值。
-pub fn values(settings: &[Setting], stored: Option<&BTreeMap<String, Value>>) -> Value {
+/// 扩展设置的完整值:配置里的值,缺省补清单默认值;密钥从私密存储并进。
+pub fn values(ext: &str, settings: &[Setting], stored: Option<&BTreeMap<String, Value>>) -> Value {
     let mut object = serde_json::Map::new();
     for setting in settings {
         let value = setting.resolve(stored.and_then(|table| table.get(setting.key())));
         object.insert(setting.key().to_string(), value.to_json());
     }
+    crate::settings_secret::merge(ext, settings, &mut object);
     Value::Object(object)
 }
 

@@ -18,9 +18,9 @@
 
 候选窗外观与命令可以交给一段 JS:包放在 `%APPDATA%\lueying\extensions\<id>\`,输入法在 QuickJS 沙箱里同步派发面板状态,脚本只回主题色与三个 SkSL 槽位。状态里没有候选文字与宿主名,密码/隐私字段不调用脚本,内存、栈、初始化与单次派发都有上限。扩展还可以声明命令(`lueying.command`),宿主按完整 id `<扩展>.<命令>` 调用,卸载时 Scope 整体回收。
 
-包格式、场景字段、补丁、命令与限额见 [script.md](script.md)。服务端按 `config.toml` 的 `extensions` 列表按序加载多个扩展,派发在独立线程里,窗口线程只收主题色与 SkSL 源码;Windows CI 有运行时自检。设置页「扩展 → 运行期脚本」列出已安装的包,可直接启用或关闭;「目录」打开扩展目录。清单里的 `settings` 是声明式设置,由宿主渲染成开关与单选,值存 `[ext.<id>]`。
+包格式、场景字段、补丁、命令与限额见 [script.md](script.md)。服务端按 `config.toml` 的 `extensions` 列表按序加载多个扩展,派发在独立线程里,窗口线程只收主题色与 SkSL 源码;Windows CI 有运行时自检。设置页「扩展 → 运行期脚本」列出已安装的包,可直接启用或关闭;「目录」打开扩展目录。清单里的 `settings` 是声明式设置,由宿主渲染成开关、单选与密钥输入,普通值存 `[ext.<id>]`,`secureText` 存 `%APPDATA%\lueying\secrets`。
 
-命令还可以调用清单 `needs` 里声明的宿主服务(`capture`、`ocr`、`output`、`panel`、`hotkey`、`notify`),接口见 [script.md](script.md) 的「服务调用」。官方 `shot-ocr`(截图 → 识别 → 上屏)随安装包分发到 `%APPDATA%\lueying\extensions\shot-ocr`,是这些接口的参考实现。截图识别可在设置页「扩展 → 截图识别」里选系统 OCR 或随包的 PP-OCRv6;扩展也能在 `ocr.recognize` 调用里用 `engine` 单独指定。
+命令还可以调用清单 `needs` 里声明的宿主服务(`capture`、`ocr`、`output`、`panel`、`hotkey`、`notify`),接口见 [script.md](script.md) 的「服务调用」。官方 `shot-ocr`(截图 → 识别 → 上屏)在设置页「官方扩展」里按需安装,是这些接口的参考实现。截图识别可在设置页「扩展 → 截图识别」里选系统 OCR 或按需安装的 PP-OCRv6;扩展也能在 `ocr.recognize` 调用里用 `engine` 单独指定。
 
 ## SDK crate
 

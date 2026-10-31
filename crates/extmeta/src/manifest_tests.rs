@@ -410,6 +410,26 @@ fn parses_declarative_settings() {
 }
 
 #[test]
+fn parses_secure_text_setting() {
+    let mut value = script_v2();
+    value["settings"] = json!([
+        {
+            "key": "api_key",
+            "title": "API 密钥",
+            "detail": "只保存在本机",
+            "type": "secureText"
+        }
+    ]);
+    let manifest = parse(value).expect("密钥设置应通过");
+    let setting = &manifest.settings[0];
+    assert!(setting.is_secret());
+    assert_eq!(setting.default_value(), SettingValue::Text(String::new()));
+    assert!(setting.accepts(&json!("sk-test")));
+    assert!(!setting.accepts(&json!(true)));
+    assert!(!setting.accepts(&json!("line\nbreak")));
+}
+
+#[test]
 fn rejects_bad_settings() {
     let value = script_v2();
     let check = |setting: serde_json::Value| {

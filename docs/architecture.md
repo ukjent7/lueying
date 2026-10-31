@@ -54,9 +54,12 @@ QuickJS 沙箱里同步派发场景状态,脚本只回主题色与三个 SkSL �
 空闲 30 秒卸载;派发在独立线程里,候选窗线程只收补丁并编译 SkSL;补丁没给的
 槽位继续用用户效果目录。设置页只读清单列出已安装的包,选择结果写回
 `extensions` 键;它不改音节切分,也不碰候选,只画装饰层。清单里的声明式
-`settings` 由宿主渲染成设置页控件,值存 `[ext.<id>]`;外部调用走通用
-`Request::Ext { id, method, params }`,宿主目前提供 `settings.get` 与
-`settings.set`。
+`settings` 由宿主渲染成设置页控件,普通值存 `[ext.<id>]`;`secureText` 值存
+`%APPDATA%\lueying\secrets\<id>.json`(目录/文件 0700/0600 等价权限、原子写、
+日志不回显),设置页用原生单行 `EDIT` 编辑。官方扩展与模型目录由
+`Catalog/official-extensions.json` 描述,下载项带 SHA-256 与字节数,安装器只随包
+分发扩展源。外部调用走通用 `Request::Ext { id, method, params }`,宿主提供
+`settings.get` 与 `settings.set`。
 
 ## 用户数据
 
@@ -66,6 +69,8 @@ QuickJS 沙箱里同步派发场景状态,脚本只回主题色与三个 SkSL �
 | `%APPDATA%\lueying\phrases.txt` | 自定义短语(`短语<TAB>编码`) |
 | `%APPDATA%\lueying\punct.txt` | 自定义标点(`键=输出`) |
 | `%APPDATA%\lueying\apps.toml` | 按应用覆盖(`[exe]` 节 + `punct`/`learning`) |
+| `%APPDATA%\lueying\secrets\<id>.json` | 扩展 `secureText` 设置(私有目录、原子写) |
+| `%APPDATA%\lueying\models` | 按需安装的 25M 重排模型与 PP-OCR 模型 |
 | `%LOCALAPPDATA%\lueying\user.tsv` | 用户词库(选词、造词、搭配、置顶) |
 | `%LOCALAPPDATA%\lueying\logs\server.log` | 服务日志(超 1MB 滚动) |
 
@@ -131,16 +136,19 @@ Skia 体积裁剪评估(2026-10-31,结论:维持现键,不再投入):预编译�
 
 设置窗是独立的 `lueying-settings.exe`:普通不透明 Win32 窗(客户区 760×650
 逻辑像素),左侧分类导航(输入、候选、扩展、词库、关于),右侧是当前分类的
-设置卡片。Skia 在 CPU 上光栅出帧,再经 GDI `BitBlt` 贴到客户区——它不需要
-GPU,在没有硬件 D3D12 的机器上也照样开。页面模型在平台无关的
-`lueying-server::settings_view`:设置行由 `settings_schema` 的单一元数据表
-生成(键、类型、默认值、文案、可见条件与控件),点一下改配置、左右键改分段值、
-Tab 走当前页的焦点顺序,都在这一层;`lueying-settings --dump-config-schema`
-输出同一份表的 JSON Schema。画面与命中在 `lueying-render::ui`,与候选窗共用
-同一套排版与像素断言,Linux E2E 因此能直接断言设置页的结构与交互结果。平台侧
-只剩「要动文件系统或常驻服务」的动作(备份、导入导出、词库、自动更新),
-在 `settings_actions`。窗口自检 `--selftest` 建窗、画一帧、贴一次、读回像素,
-Windows E2E 跑它。
+设置卡片,顶部有跨页搜索框(原生 `EDIT`)。Skia 在 CPU 上光栅出帧,再经 GDI
+`BitBlt` 贴到客户区——它不需要 GPU,在没有硬件 D3D12 的机器上也照样开。
+页面模型在平台无关的 `lueying-server::settings_view`:设置行由
+`settings_schema` 的单一元数据表生成(键、类型、默认值、文案、可见条件与控件),
+点一下改配置、左右键改分段值、Tab 走当前页的焦点顺序,都在这一层;
+`lueying-settings --dump-config-schema` 输出同一份表的 JSON Schema。候选页首行
+是实时候选窗预览,直接用当前字号、排列、主题色渲染样例;扩展页由
+`Catalog/official-extensions.json` 生成「官方扩展 / 已安装扩展」列表,安装动作
+在 `settings_official` 后台线程下载、校验、原子落盘。画面与命中在
+`lueying-render::ui`,与候选窗共用同一套排版与像素断言,Linux E2E 因此能直接
+断言设置页的结构与交互结果。平台侧只剩「要动文件系统或常驻服务」的动作
+(备份、导入导出、词库、按应用、自动更新),在 `settings_actions`。窗口自检
+`--selftest` 建窗、画一帧、贴一次、读回像素,Windows E2E 跑它。
 
 ## 更新
 

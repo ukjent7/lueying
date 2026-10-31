@@ -18,6 +18,8 @@ use crate::font;
 use crate::settings_a11y::{self, A11y, QueuedAction, WM_A11Y};
 use crate::settings_actions;
 use crate::settings_edit::{self, WM_PHRASES_SAVED};
+use crate::settings_official::{self, WM_OFFICIAL_DONE};
+use crate::settings_secret_edit::{self, WM_SECRET_SAVED};
 use crate::settings_view::{Action, Notice, PageColors, PageId, Settings, UpdateState, ids};
 use crate::theme;
 use crate::update::{self, Check, Release};
@@ -25,9 +27,11 @@ use lueying_protocol::Request;
 use lueying_render::panel::Palette;
 use lueying_render::ui::{self, Id};
 use skia_safe::Font;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, GetDC, HDC, InvalidateRect, PAINTSTRUCT, ReleaseDC, UpdateWindow,
+    BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, EndPaint, GetDC, GetStockObject,
+    HBRUSH, HDC, HGDIOBJ, InvalidateRect, PAINTSTRUCT, ReleaseDC, SetBkColor, SetTextColor,
+    UpdateWindow,
 };
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -36,17 +40,20 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VK_CONTROL, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
+    GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT,
+    VK_SHIFT, VK_SPACE, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
-    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage,
-    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-    WM_PAINT, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, GWLP_USERDATA,
+    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextLengthW,
+    GetWindowTextW, MSG, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW, SM_CXSCREEN,
+    SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SendMessageW, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
+    WM_CTLCOLOREDIT, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE,
+    WINDOW_STYLE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
-use windows::core::w;
+use windows::core::{HSTRING, w};
 
 /// 设置窗的逻辑宽(逻辑像素);渲染核心按这个宽度排版。
 const WIDTH: f32 = 760.0;
@@ -56,6 +63,9 @@ const HEIGHT: f32 = 650.0;
 const WM_UPDATE_DONE: u32 = WM_APP + 1;
 /// 一格滚轮滚多远(物理像素)。
 const WHEEL_STEP: f32 = 48.0;
+/// 标准 EDIT 的占位提示消息与内容变化通知。
+const EM_SETCUEBANNER: u32 = 0x1501;
+const EN_CHANGE: u16 = 0x0300;
 
 /// 后台查更新的结果:线程写,窗口线程读。
 static UPDATE_RESULT: Mutex<Option<Result<Check, String>>> = Mutex::new(None);
@@ -108,6 +118,9 @@ pub fn run() {
     unsafe {
         window.scale = dpi_of(hwnd);
         window.size = client_size(hwnd);
+        if let Err(e) = window.create_search_edit(hwnd) {
+            eprintln!("搜索框初始化失败: {e}");
+        }
         window.relayout();
         SetWindowLongPtrW(
             hwnd,
@@ -124,13 +137,61 @@ pub fn run() {
         UpdateWindow(hwnd);
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-            // 短语编辑器没有对话框管理器:Esc 与 Tab 在这里补。
-            if settings_edit::handle_key(&msg) {
+            // 短语编辑器与密钥编辑器没有对话框管理器:Esc 与 Tab 在这里补。
+            if settings_edit::handle_key(&msg) || settings_secret_edit::handle_key(&msg) {
+                continue;
+            }
+            // 搜索框是原生单行 EDIT,同样没有对话框管理器。
+            if handle_search_key(hwnd, &msg) {
                 continue;
             }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+}
+
+/// 搜索框里的键盘循环:Esc 清空或关闭,Tab/↓ 把焦点交给设置页。
+fn handle_search_key(hwnd: HWND, msg: &MSG) -> bool {
+    if msg.message != WM_KEYDOWN {
+        return false;
+    }
+    let Some(window) = state_of(hwnd) else {
+        return false;
+    };
+    let Some(edit) = window.search_edit else {
+        return false;
+    };
+    if msg.hwnd != edit {
+        return false;
+    }
+    let key = msg.wParam.0 as u32;
+    let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 };
+    match key {
+        k if k == u32::from(VK_ESCAPE.0) => {
+            if window.settings.search.is_empty() {
+                unsafe {
+                    let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            } else {
+                window.settings.set_search("");
+                window.sync_search_text();
+                window.relayout();
+            }
+            true
+        }
+        k if k == u32::from(VK_TAB.0) || k == u32::from(VK_DOWN.0) => {
+            unsafe {
+                let _ = SetFocus(Some(hwnd));
+            }
+            window.focus_step(if shift && k == u32::from(VK_TAB.0) {
+                -1
+            } else {
+                1
+            });
+            true
+        }
+        _ => false,
     }
 }
 
@@ -236,6 +297,11 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// 0xRRGGBB 转 COLORREF 的 0x00BBGGRR。
+fn ref_color(rgb: u32) -> COLORREF {
+    COLORREF(((rgb & 0xff) << 16) | (rgb & 0x00ff_00) | ((rgb >> 16) & 0xff))
+}
+
 /// 0xRRGGBB 转成与像素同序的 (R, G, B)。
 fn bgr(rgb: u32) -> (u8, u8, u8) {
     ((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
@@ -269,6 +335,12 @@ struct Window {
     a11y_actions: Arc<Mutex<Vec<QueuedAction>>>,
     /// AccessKit 适配器;自检与无读屏时留空。
     a11y: Option<A11y>,
+    /// 顶部搜索框的原生 EDIT;输入法与读屏由系统控件负责。
+    search_edit: Option<HWND>,
+    /// 搜索框背景画刷;配色变化时重建。
+    search_brush: Option<HBRUSH>,
+    /// 程序写回搜索文字时抑制 EN_CHANGE,避免光标被重置。
+    syncing_search: bool,
 }
 
 impl Window {
@@ -301,6 +373,9 @@ impl Window {
             a11y_ids: snapshot.ids,
             a11y_actions: Arc::new(Mutex::new(Vec::new())),
             a11y: None,
+            search_edit: None,
+            search_brush: None,
+            syncing_search: false,
         })
     }
 
@@ -312,7 +387,114 @@ impl Window {
         self.layout = ui::layout(&self.page, &self.font, self.scale, self.size.1 as f32);
         let max = self.layout.max_scroll();
         self.scroll = self.scroll.clamp(0.0, max);
+        self.refresh_search_brush();
+        self.layout_search();
+        self.sync_search_text();
         self.publish_a11y();
+    }
+
+    /// 建顶部搜索框:标准 EDIT,输入法、选区、读屏与 UIA TextPattern 由系统负责。
+    fn create_search_edit(&mut self, parent: HWND) -> Result<(), String> {
+        unsafe {
+            let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
+            let edit = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("EDIT"),
+                windows::core::PCWSTR::null(),
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                0,
+                0,
+                1,
+                1,
+                Some(parent),
+                None,
+                Some(HINSTANCE(hmodule.0)),
+                None,
+            )
+            .map_err(|e| format!("建搜索框失败: {e}"))?;
+            let font = GetStockObject(DEFAULT_GUI_FONT);
+            SendMessageW(
+                edit,
+                WM_SETFONT,
+                Some(WPARAM(font.0 as usize)),
+                Some(LPARAM(1)),
+            );
+            let cue = HSTRING::from("搜索设置");
+            SendMessageW(
+                edit,
+                EM_SETCUEBANNER,
+                Some(WPARAM(1)),
+                Some(LPARAM(cue.as_ptr() as isize)),
+            );
+            self.search_edit = Some(edit);
+            self.sync_search_text();
+            self.layout_search();
+        }
+        Ok(())
+    }
+
+    /// 搜索框背景画刷跟随主题;旧画刷先删掉。
+    fn refresh_search_brush(&mut self) {
+        if let Some(old) = self.search_brush.take() {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(old.0));
+            }
+        }
+        self.search_brush = Some(unsafe { CreateSolidBrush(COLORREF(self.palette.surface_alt)) });
+    }
+
+    /// 把原生 EDIT 放到页面几何给出的搜索框矩形里。
+    fn layout_search(&self) {
+        let Some(edit) = self.search_edit else {
+            return;
+        };
+        let rect = self.layout.search;
+        let inset = 2.0 * self.scale;
+        unsafe {
+            let _ = MoveWindow(
+                edit,
+                (rect.left + inset) as i32,
+                (rect.top + inset) as i32,
+                (rect.width() - inset * 2.0).max(20.0) as i32,
+                (rect.height() - inset * 2.0).max(16.0) as i32,
+                true,
+            );
+        }
+    }
+
+    /// 程序改搜索词后同步到 EDIT;用户输入触发的 EN_CHANGE 不打断光标。
+    fn sync_search_text(&mut self) {
+        let Some(edit) = self.search_edit else {
+            return;
+        };
+        if self.syncing_search {
+            return;
+        }
+        let current = read_edit_text(edit);
+        if current == self.settings.search {
+            return;
+        }
+        self.syncing_search = true;
+        unsafe {
+            let _ = SetWindowTextW(edit, &HSTRING::from(self.settings.search.as_str()));
+        }
+        self.syncing_search = false;
+    }
+
+    /// 用户改了搜索词:更新页面并重排。
+    fn search_changed(&mut self) {
+        if self.syncing_search {
+            return;
+        }
+        let Some(edit) = self.search_edit else {
+            return;
+        };
+        let text = read_edit_text(edit);
+        if text == self.settings.search {
+            return;
+        }
+        self.settings.set_search(text);
+        self.relayout();
     }
 
     /// 重建无障碍树并下发给读屏软件。
@@ -619,9 +801,22 @@ fn handle_action(hwnd: HWND, action: Action) {
         Action::OpenExtAudit => with_settings(hwnd, settings_actions::open_ext_audit),
         Action::RefreshExtMetrics => with_settings(hwnd, settings_actions::refresh_ext_metrics),
         Action::OpenOcrModels => with_settings(hwnd, settings_actions::open_ocr_models),
+        Action::InstallOfficial(id) => start_official_install(hwnd, id),
+        Action::EditSecret(ext, key, title) => {
+            if let Err(error) = settings_secret_edit::open(hwnd, ext, key, title) {
+                with_settings(hwnd, |settings| {
+                    settings.say(Notice::Error, error);
+                });
+            }
+        }
         Action::OpenPhrases => open_phrase_editor(hwnd),
         Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),
         Action::OpenApps => with_settings(hwnd, settings_actions::open_apps),
+        Action::AddApp => {
+            with_settings(hwnd, |settings| {
+                settings_actions::add_app(hwnd, settings);
+            });
+        }
         Action::BackupExport => with_settings(hwnd, settings_actions::backup_export),
         Action::BackupImport => with_settings(hwnd, settings_actions::backup_import),
         Action::ImportUser => with_settings(hwnd, settings_actions::import_user),
@@ -657,6 +852,17 @@ fn handle_action(hwnd: HWND, action: Action) {
             }
         }
     }
+}
+
+/// 开始安装官方扩展/模型:先显示下载中,完成后由 WM_OFFICIAL_DONE 刷新。
+fn start_official_install(hwnd: HWND, id: String) {
+    let Some(mut settings) = take_settings(hwnd) else {
+        return;
+    };
+    settings.installing = Some(id.clone());
+    settings.say(Notice::Info, "正在下载并校验;界面可以继续使用");
+    put_settings(hwnd, settings);
+    settings_official::start(hwnd, id);
 }
 
 /// 打开窗内短语编辑器:标准 EDIT 控件,读屏软件与输入法都能正常工作。
@@ -726,6 +932,17 @@ fn system_scale() -> f32 {
     unsafe { GetDpiForSystem().max(96) as f32 / 96.0 }
 }
 
+/// 读标准 EDIT 的文字。
+fn read_edit_text(edit: HWND) -> String {
+    let length = unsafe { GetWindowTextLengthW(edit) };
+    if length <= 0 {
+        return String::new();
+    }
+    let mut buffer = vec![0u16; length as usize + 1];
+    let read = unsafe { GetWindowTextW(edit, &mut buffer) };
+    String::from_utf16_lossy(&buffer[..read.max(0) as usize])
+}
+
 /// lparam 里的低 16 位(鼠标坐标)。
 fn low_word(lparam: LPARAM) -> i32 {
     (lparam.0 & 0xffff) as i16 as i32
@@ -789,6 +1006,32 @@ unsafe extern "system" fn wnd_proc(
                 );
                 LRESULT(0)
             }
+            WM_COMMAND => {
+                if let Some(window) = state_of(hwnd) {
+                    let edit = HWND(lparam.0 as *mut std::ffi::c_void);
+                    let notification = (wparam.0 >> 16) as u16;
+                    if window.search_edit == Some(edit) && notification == EN_CHANGE {
+                        window.search_changed();
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_CTLCOLOREDIT => {
+                if let Some(window) = state_of(hwnd) {
+                    let edit = HWND(lparam.0 as *mut std::ffi::c_void);
+                    if window.search_edit == Some(edit)
+                        && let Some(brush) = window.search_brush
+                    {
+                        let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
+                        unsafe {
+                            SetBkColor(hdc, ref_color(window.palette.surface_alt));
+                            SetTextColor(hdc, ref_color(window.palette.text));
+                        }
+                        return LRESULT(brush.0 as isize);
+                    }
+                }
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
             WM_LBUTTONDOWN => {
                 let x = low_word(lparam) as f32;
                 let y = high_word(lparam) as f32;
@@ -837,6 +1080,33 @@ unsafe extern "system" fn wnd_proc(
             WM_PHRASES_SAVED => {
                 if let Some(window) = state_of(hwnd) {
                     window.settings.say(Notice::Success, "短语已保存");
+                    window.relayout();
+                }
+                LRESULT(0)
+            }
+            WM_SECRET_SAVED => {
+                if let Some(window) = state_of(hwnd) {
+                    window.settings.say(Notice::Success, "扩展设置已保存");
+                    window.relayout();
+                }
+                LRESULT(0)
+            }
+            WM_OFFICIAL_DONE => {
+                let result = settings_official::take_result();
+                if let Some(window) = state_of(hwnd)
+                    && let Some(result) = result
+                {
+                    window.settings.installing = None;
+                    match result {
+                        Ok(message) => {
+                            window.settings.scripts = settings_actions::installed_scripts();
+                            window.settings.ppocr_ready = settings_actions::ppocr_ready();
+                            window.settings.say(Notice::Success, message);
+                        }
+                        Err(error) => {
+                            window.settings.say(Notice::Error, format!("安装失败: {error}"));
+                        }
+                    }
                     window.relayout();
                 }
                 LRESULT(0)

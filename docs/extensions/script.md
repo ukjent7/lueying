@@ -4,8 +4,8 @@
 
 > 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;服务缝
 > capture/ocr/output/hotkey/notify 已接上 Windows 提供者,官方 shot-ocr
-> 随安装包分发。截图识别可选系统 OCR 或随包的 PP-OCRv6(纯 Rust 推理,
-> 首次识别时加载模型)。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、
+> 随安装包提供安装源。截图识别可选系统 OCR 或按需安装的 PP-OCRv6(纯 Rust
+> 推理,首次识别时加载模型)。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、
 > 隐私、热重载、卸载回收与官方 shot-ocr 的黄金链路;Windows E2E 覆盖热键
 > → 截图 → 识别 → 上屏(识别在 CI 上换成固定文本)。
 
@@ -75,24 +75,26 @@ API 2 的脚本清单:
 | `activate` | 否 | 激活声明;`triggers`、`hotkeys`、`commands` 至少一项 |
 | `needs` | 否 | 需要的宿主服务:capture、ocr、clipboard、panel、output、hotkey、net、store、notify |
 | `capabilities` | 否 | 申请的权限;API 1 必须为空 |
-| `settings` | 否 | 声明式设置,最多 32 项;宿主渲染,值存 `[ext.<id>]` |
+| `settings` | 否 | 声明式设置,最多 32 项;宿主渲染,普通值存 `[ext.<id>]`,`secureText` 存私密目录 |
 
 ### 声明式设置
 
-每项设置只有两种类型,设置页由宿主画,扩展脚本不用碰 UI:
+每项设置有三种类型,设置页由宿主画,扩展脚本不用碰 UI:
 
 | 字段 | 说明 |
 |---|---|
 | `key` | 配置键,字符规则同扩展 id,最多 48 字节;在 `[ext.<id>]` 下唯一 |
 | `title` | 设置页行标题,1–80 字 |
 | `detail` | 行说明,可空,最多 200 字 |
-| `type` | `toggle`(开关)或 `choice`(单选) |
-| `default` | 开关写布尔,单选写选项文本;缺省时开关为 `false`,单选为第一项 |
+| `type` | `toggle`(开关)、`choice`(单选)或 `secureText`(密钥文本) |
+| `default` | 开关写布尔,单选写选项文本,密钥写文本;缺省时开关为 `false`,单选为第一项,密钥为空 |
 | `options` | 仅 `choice`:1–8 个不重复选项,每个最多 32 字 |
 
-键重复、选项越界、默认值不在选项里都会让清单加载失败。启用扩展后,设置页
-在「扩展」分组后多出一组「扩展 · <名称>」;点控件直接改配置,保存
-`config.toml` 时写入:
+键重复、选项越界、默认值不在选项里都会让清单加载失败。`secureText` 的值
+不写入 `config.toml`,而是存到 `%APPDATA%\lueying\secrets\<id>.json`;设置页
+显示「已设置/未设置」,点按钮在原生单行输入框里修改,日志不会回显密钥。
+启用扩展后,设置页在「扩展」分组后多出一组「扩展 · <名称>」;点控件直接改
+配置,保存 `config.toml` 时写入:
 
 ```toml
 [ext.my-pack]
@@ -101,10 +103,10 @@ quality = "high"
 ```
 
 外部程序可以经命名管道用 `Request::Ext { id, method, params }` 读写同一份值:
-`settings.get` 在应答的 `value` 里返回 `{key: value}`(缺失项补默认值),
-`settings.set` 的 `params` 是一个键值对象,逐键按清单校验后合并、保存并
-立即生效;未知键或类型不符整次请求失败,配置不改。失败时 `ok = false`,
-`error` 写原因。
+`settings.get` 在应答的 `value` 里返回 `{key: value}`(缺失项补默认值,
+`secureText` 从私密存储读取),`settings.set` 的 `params` 是一个键值对象,
+逐键按清单校验后合并、保存并立即生效;未知键或类型不符整次请求失败,配置
+不改。失败时 `ok = false`,`error` 写原因。
 
 旧版外观包继续可用:
 
@@ -222,10 +224,10 @@ lueying.command("shot-ocr", async () => {
 
 ## 官方扩展
 
-安装包自带 `shot-ocr`(截图 → 识别 → 上屏),安装时复制到
-`%APPDATA%\lueying\extensions\shot-ocr`;已存在的目录不覆盖,升级不会
-冲掉用户改过的脚本。随包内容一致时安装器会补写同意记录。启用方式与普通
-扩展相同:设置页「扩展 → 运行期脚本」里选择,或写配置:
+安装包自带 `shot-ocr`(截图 → 识别 → 上屏)的源目录,但不会自动安装;
+在设置页「扩展 → 官方扩展」点「安装」后才复制到
+`%APPDATA%\lueying\extensions\shot-ocr`,再在「已安装扩展」里启用并同意权限。
+启用方式与普通扩展相同:设置页「扩展 → 运行期脚本」里选择,或写配置:
 
 ```toml
 extensions = ["shot-ocr"]
@@ -243,12 +245,12 @@ Unicode 注入当前焦点(WM_CHAR),Electron 与自绘控件适用;前台窗口�
 截图识别在设置页「扩展 → 截图识别」里二选一:
 
 - **系统**:Windows.Media.Ocr,零额外文件,按 `lang` 或用户语言识别。
-- **PP-OCRv6**:PaddlePaddle 的 small det+rec(ONNX),随安装包放在
-  `{app}\models\ppocr`,纯 Rust 推理,不依赖 onnxruntime.dll。首次调用
-  时加载模型,之后复用;只吃 BMP(截图链路固定产出 BMP)。用户把
-  `det.onnx`、`rec.onnx`、`dict.txt` 放进
-  `%APPDATA%\lueying\models\ppocr` 可以覆盖随包模型,设置页「识别模型 →
-  目录」会打开这里。扩展也可以在调用时用 `engine: "ppocr"` 单独指定。
+- **PP-OCRv6**:PaddlePaddle 的 small det+rec(ONNX),在设置页「扩展 →
+  官方扩展」按需下载到 `%APPDATA%\lueying\models\ppocr`,纯 Rust 推理,
+  不依赖 onnxruntime.dll。首次调用时加载模型,之后复用;只吃 BMP(截图
+  链路固定产出 BMP)。词表 `dict.txt` 随程序嵌入,不需要单独下载;用户把
+  `det.onnx`、`rec.onnx`、`dict.txt` 放进同一目录即可覆盖,设置页「识别
+  模型 → 目录」会打开这里。扩展也可以在调用时用 `engine: "ppocr"` 单独指定。
 
 配置键:
 

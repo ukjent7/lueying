@@ -382,6 +382,12 @@ pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
     }
 }
 
+/// 供官方扩展中心读取小文件(目录/校验文件)。返回 HTTP 状态与响应体。
+pub fn fetch_bytes(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
+    // 模型文件可能有几十 MB,用下载档的 60 秒接收超时。
+    fetch_with(url, limit, true)
+}
+
 pub fn fetch_sha256(url: &str) -> Result<String, String> {
     let (status, body) = fetch(url, SHA_LIMIT)?;
     if !(200..300).contains(&status) {
@@ -403,7 +409,11 @@ fn normalize_version(tag: &str) -> String {
 }
 
 fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
-    let response = Response::open(url, false)?;
+    fetch_with(url, limit, false)
+}
+
+fn fetch_with(url: &str, limit: u64, download: bool) -> Result<(u16, Vec<u8>), String> {
+    let response = Response::open(url, download)?;
     let status = response.status()?;
     let body = response.bytes(limit)?;
     Ok((status, body))

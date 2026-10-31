@@ -34,6 +34,8 @@ const SECTION_SIZE: f32 = 11.0;
 const SECTION_LINE: f32 = 15.0;
 /// 设置行的高度与左右留白。
 const ROW_H: f32 = 39.0;
+/// 候选窗预览行比普通行高;上半截留给标题与说明,下半截画候选窗。
+const PREVIEW_ROW_H: f32 = 132.0;
 const ROW_PAD: f32 = 14.0;
 /// 行标题与说明的字号;说明文字的最大宽度。
 const LABEL_SIZE: f32 = 13.5;
@@ -98,6 +100,24 @@ pub struct SegmentOption {
     pub tint: Option<u32>,
 }
 
+/// 候选窗预览的样式与样例候选。设置页改字号、排列或主题色时,
+/// 同一份数据直接重画,不经过真实候选窗进程。
+#[derive(Clone, Debug)]
+pub struct CandidatePreview {
+    /// 强调色。
+    pub accent: u32,
+    /// 候选文字缩放倍数。
+    pub font_scale: f32,
+    /// true 为竖排,false 为横排。
+    pub vertical: bool,
+    /// 每页候选数。
+    pub page_size: usize,
+    /// 预览里的拼音行。
+    pub pinyin: String,
+    /// 样例候选。
+    pub candidates: Vec<String>,
+}
+
 impl SegmentOption {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
@@ -136,6 +156,11 @@ pub enum Control {
         toggle: Id,
         toggle_on: bool,
     },
+    /// 候选窗预览;只画不点,占用比普通行更高的区域。
+    Preview {
+        id: Id,
+        style: CandidatePreview,
+    },
     /// 右侧没有控件。
     None,
 }
@@ -167,6 +192,8 @@ pub struct NavItem {
 pub struct Page {
     pub title: String,
     pub subtitle: String,
+    /// 顶部搜索框里的文字;平台侧用原生 EDIT 显示与编辑。
+    pub search: String,
     /// 头部右侧的按钮(检查更新)。
     pub header_button: Option<Button>,
     /// 左栏分类导航。
@@ -246,7 +273,7 @@ impl Page {
                             return true;
                         }
                     }
-                    Control::None => {}
+                    Control::Preview { .. } | Control::None => {}
                 }
             }
         }
@@ -274,7 +301,7 @@ impl Page {
                         order.extend(items.iter().filter(|b| b.enabled).map(|b| b.id));
                         order.push(*toggle);
                     }
-                    Control::None => {}
+                    Control::Preview { .. } | Control::None => {}
                 }
             }
         }
@@ -303,6 +330,8 @@ pub struct Layout {
     pub footer: Rect,
     /// 品牌图标。
     pub logo: Rect,
+    /// 顶部搜索框;平台侧把原生 EDIT 放到这里。
+    pub search: Rect,
     /// 固定部分(头部、页脚)的可点区域。
     page_hits: Vec<(Id, Rect)>,
     /// 卡片里的可点区域(卡片坐标)。
@@ -392,6 +421,7 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
     // 头部
     let mut y = pad;
     out.logo = Rect::from_xywh(pad, y, LOGO * scale, LOGO * scale);
+    let mut search_right = width - pad;
     if let Some(button) = &page.header_button {
         let w = button_width(button, font, scale);
         let rect = Rect::from_xywh(
@@ -402,7 +432,18 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
         );
         out.page_hits.push((button.id, rect));
         out.page_rings.push((button.id, rect));
+        search_right = rect.left - gap;
     }
+    // 搜索框在标题与更新按钮之间;窄窗口下至少留 120 逻辑像素。
+    let text_left = out.logo.right + 12.0 * scale;
+    let search_left = (text_left + 230.0 * scale).min(search_right - 120.0 * scale);
+    let search_width = (search_right - search_left).clamp(120.0 * scale, 320.0 * scale);
+    out.search = Rect::from_xywh(
+        search_left,
+        y + 3.0 * scale,
+        search_width,
+        30.0 * scale,
+    );
     y += out.logo.height() + gap;
     let card_top = y;
     let footer_h = BUTTON_H * scale;
@@ -433,7 +474,7 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
         for (ri, row) in group.rows.iter().enumerate() {
             let row_top = cy;
             place_control(&mut out, &row.control, content, row_top, font, scale);
-            cy += ROW_H * scale;
+            cy += row_height(&row.control) * scale;
             if !(gi == last_group && ri == last_row) {
                 cy += scale;
             }
@@ -460,6 +501,15 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
         fx -= BUTTON_GAP * scale;
     }
     out
+}
+
+/// 行高:预览行需要单独一块画布。
+fn row_height(control: &Control) -> f32 {
+    if matches!(control, Control::Preview { .. }) {
+        PREVIEW_ROW_H
+    } else {
+        ROW_H
+    }
 }
 
 /// 把行右侧的控件摆到行右边,登记命中区与焦点环。
@@ -555,6 +605,9 @@ fn place_control(
                 out.card_rings.push((button.id, rect));
                 x += w + BUTTON_GAP * scale;
             }
+        }
+        Control::Preview { .. } => {
+            // 预览占满行宽,鼠标与键盘都不参与;它只跟着配置实时重画。
         }
         Control::None => {}
     }

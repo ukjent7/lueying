@@ -391,6 +391,79 @@ pub fn run(report: &mut String) -> usize {
         format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{save_at:?}"),
     );
 
+    // 顶部搜索:跨页命中,标题与计数随搜索词变化;清空后回到原页。
+    let mut search = settings();
+    search.set_search("辅助码");
+    let searched = search.page(&colors());
+    let hit = searched
+        .groups
+        .iter()
+        .flat_map(|group| group.rows.iter())
+        .any(|row| row.label == "辅助码");
+    push(
+        &mut checks,
+        "设置跨页搜索",
+        search.searching()
+            && searched.title == "搜索"
+            && searched.subtitle.contains("项")
+            && hit
+            && searched.active_nav == usize::MAX,
+        format!("标题={} 副标题={} 命中={hit}", searched.title, searched.subtitle),
+    );
+    search.set_search("");
+    push(
+        &mut checks,
+        "设置清空搜索回页",
+        !search.searching() && search.page(&colors()).title == "掠影",
+        format!("搜索={:?}", search.search),
+    );
+    // 候选页第一行是实时预览;控件不参与焦点与命中。
+    let candidate = settings()
+        .page_view(PageId::Candidate, &colors());
+    let preview = candidate.groups[0].rows.first();
+    push(
+        &mut checks,
+        "设置候选预览行",
+        preview.is_some_and(|row| {
+            row.label == "候选窗预览" && matches!(row.control, ui::Control::Preview { .. })
+        }) && !candidate.focus_ids().iter().any(|id| id.base == "candidate-preview"),
+        format!("首行={:?}", preview.map(|row| row.label.as_str())),
+    );
+
+    // 按应用配置:列表一行一个程序,两个按钮循环「跟随 → 开 → 关」。
+    let mut apps = settings();
+    apps.cfg.apps.insert(
+        "code.exe".to_string(),
+        lueying_server::config::AppOverride::default(),
+    );
+    apps.set_page(PageId::Dictionary);
+    let apps_page = apps.page(&colors());
+    let app_group = apps_page
+        .groups
+        .iter()
+        .find(|group| group.title == "按应用配置");
+    let app_rows: Vec<&str> = app_group
+        .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
+        .unwrap_or_default();
+    let punct_button = Id::new(ids::app_punct(0), 0);
+    let learning_button = Id::new(ids::app_learning(0), 0);
+    apps.activate(&punct_button);
+    let over = apps.cfg.apps["code.exe"];
+    apps.activate(&learning_button);
+    let over2 = apps.cfg.apps["code.exe"];
+    let add = apps.activate(&Id::new(ids::APPS_ADD, 0));
+    push(
+        &mut checks,
+        "设置按应用列表",
+        app_rows.first() == Some(&"添加应用")
+            && app_rows.contains(&"code.exe")
+            && app_rows.last() == Some(&"配置文件")
+            && over.punct == Some(true)
+            && over2.learning == Some(true)
+            && add == Some(Action::AddApp),
+        format!("行 {app_rows:?} 标点={:?} 学习={:?}", over.punct, over2.learning),
+    );
+
     crate::harness::write(report, "设置页模型", checks)
 }
 

@@ -24,9 +24,11 @@
 | `main.pyd` | 主词典(二进制) |
 | `main.gram` | 语法模型 |
 | `rerank-4m.safetensors` | 每键同步重排 |
-| `rerank-25m.safetensors` | 停顿重排 |
 
 缺任何一个都能启动,但会退回内置小词库或关闭对应模型。重新安装可以补齐。
+`rerank-25m.safetensors` 与 PP-OCR 模型不再随基础安装包分发:在设置页
+「扩展 → 官方扩展」点安装,分别落到 `%APPDATA%\lueying\models` 和
+`%APPDATA%\lueying\models\ppocr`;下载失败会显示校验或网络错误,可重试。
 
 ## 记录日志
 

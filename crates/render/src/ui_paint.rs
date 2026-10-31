@@ -167,11 +167,48 @@ impl<'a> Painter<'a> {
             subtitle,
             Align::Left,
         );
+        self.search_box(layout.search);
         if let Some(button) = &page.header_button
             && let Some(rect) = layout.ring_page(button.id)
         {
             self.button(button, rect);
         }
+    }
+
+    /// 搜索框底与放大镜。文字由原生 EDIT 画在上面,这里只画容器。
+    fn search_box(&self, rect: Rect) {
+        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            return;
+        }
+        let s = self.scale;
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(rect, &[Vector::new(RADIUS * s, RADIUS * s); 4]),
+            &fill_paint(self.palette.surface_alt),
+        );
+        let mut stroke = Paint::default();
+        stroke.set_anti_alias(true);
+        stroke.set_style(PaintStyle::Stroke);
+        stroke.set_stroke_width(s);
+        stroke.set_color(color(self.palette.border));
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(rect, &[Vector::new(RADIUS * s, RADIUS * s); 4]),
+            &stroke,
+        );
+        // 放大镜:一个小圆加一根斜柄。
+        let cx = rect.left + 12.0 * s;
+        let cy = rect.top + rect.height() / 2.0;
+        let radius = 5.0 * s;
+        let mut lens = Paint::default();
+        lens.set_anti_alias(true);
+        lens.set_style(PaintStyle::Stroke);
+        lens.set_stroke_width(1.5 * s);
+        lens.set_color(color(self.palette.text_tertiary));
+        self.canvas.draw_circle(Point::new(cx, cy), radius, &lens);
+        self.canvas.draw_line(
+            Point::new(cx + radius * 0.7, cy + radius * 0.7),
+            Point::new(cx + radius * 1.8, cy + radius * 1.8),
+            &lens,
+        );
     }
 
     /// 卡片底:圆角矩形加一圈描边。画在卡片坐标里。
@@ -217,7 +254,7 @@ impl<'a> Painter<'a> {
             for (ri, row) in group.rows.iter().enumerate() {
                 let row_top = y;
                 self.row(row, row_top, layout);
-                y += ROW_H * s;
+                y += row_height(&row.control) * s;
                 if !(gi == last_group && ri == last_row) {
                     self.separator(y, layout.card.width());
                     y += s;
@@ -325,8 +362,107 @@ impl<'a> Painter<'a> {
                     self.toggle(*toggle_on, rect);
                 }
             }
+            Control::Preview { style, .. } => {
+                let rect = Rect::from_xywh(
+                    ROW_PAD * s,
+                    row_top + 36.0 * s,
+                    (layout.card.width() - ROW_PAD * 2.0 * s).max(60.0 * s),
+                    (PREVIEW_ROW_H - 46.0) * s,
+                );
+                self.candidate_preview(style, rect);
+            }
             Control::None => {}
         }
+    }
+
+    /// 候选窗预览:拼音行、候选行与选中底;设置改动后下一帧直接反映。
+    fn candidate_preview(&self, style: &CandidatePreview, rect: Rect) {
+        let s = self.scale;
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(rect, &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4]),
+            &fill_paint(self.palette.surface_alt),
+        );
+        let mut stroke = Paint::default();
+        stroke.set_anti_alias(true);
+        stroke.set_style(PaintStyle::Stroke);
+        stroke.set_stroke_width(s);
+        stroke.set_color(color(self.palette.border_strong));
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(rect, &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4]),
+            &stroke,
+        );
+        let pad = 10.0 * s;
+        let pinyin = Rect::from_xywh(
+            rect.left + pad,
+            rect.top + 4.0 * s,
+            rect.width() - pad * 2.0,
+            16.0 * s,
+        );
+        self.label_clipped(
+            &style.pinyin,
+            10.5,
+            false,
+            self.palette.text_tertiary,
+            pinyin,
+            Align::Left,
+        );
+        let text_scale = style.font_scale.clamp(0.8, 1.3);
+        let count = style.page_size.min(style.candidates.len()).max(1);
+        if style.vertical {
+            let line_h = 22.0 * s * text_scale;
+            let mut y = rect.top + 22.0 * s;
+            for index in 0..count {
+                let item = Rect::from_xywh(
+                    rect.left + pad,
+                    y,
+                    rect.width() - pad * 2.0,
+                    line_h,
+                );
+                self.preview_candidate(style, index, item, text_scale);
+                y += line_h;
+            }
+        } else {
+            let cell = (rect.width() - pad * 2.0) / count as f32;
+            for index in 0..count {
+                let item = Rect::from_xywh(
+                    rect.left + pad + index as f32 * cell,
+                    rect.top + 22.0 * s,
+                    cell - 4.0 * s,
+                    26.0 * s * text_scale,
+                );
+                self.preview_candidate(style, index, item, text_scale);
+            }
+        }
+    }
+
+    /// 预览里的一条候选:序号加文字,首条用强调色底。
+    fn preview_candidate(
+        &self,
+        style: &CandidatePreview,
+        index: usize,
+        rect: Rect,
+        text_scale: f32,
+    ) {
+        let s = self.scale;
+        if index == 0 {
+            self.canvas.draw_rrect(
+                RRect::new_rect_radii(rect, &[Vector::new(RADIUS * s, RADIUS * s); 4]),
+                &fill_paint(self.palette.selected_bg),
+            );
+        }
+        let label = format!("{} {}", index + 1, style.candidates[index]);
+        self.label_clipped(
+            &label,
+            13.0 * text_scale,
+            index == 0,
+            if index == 0 {
+                style.accent
+            } else {
+                self.palette.text
+            },
+            rect,
+            Align::Left,
+        );
     }
 
     /// 分组之间与行之间的分隔线。

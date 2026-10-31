@@ -7,7 +7,9 @@ use super::*;
 
 use crate::config::OcrBackend;
 use crate::settings_schema::{self, ControlDef, PageId, SettingDef};
-use lueying_render::ui::{Button, ButtonKind, Control, Group, NavItem, Page, Row, SegmentOption};
+use lueying_render::ui::{
+    Button, ButtonKind, CandidatePreview, Control, Group, NavItem, Page, Row, SegmentOption,
+};
 
 impl Settings {
     /// 当前页面:左栏导航 + 右栏设置卡片。
@@ -24,17 +26,34 @@ impl Settings {
                 text: page.title().to_string(),
             })
             .collect();
-        let active_nav = PageId::ALL
-            .iter()
-            .position(|candidate| *candidate == page)
-            .unwrap_or(0);
+        let searching = self.searching();
+        let active_nav = if searching {
+            usize::MAX
+        } else {
+            PageId::ALL
+                .iter()
+                .position(|candidate| *candidate == page)
+                .unwrap_or(0)
+        };
+        let groups = if searching {
+            self.search_groups(colors)
+        } else {
+            self.groups_page(page, colors)
+        };
+        let matched: usize = groups.iter().map(|group| group.rows.len()).sum();
+        let subtitle = if searching {
+            format!("搜索「{}」· {} 项", self.search.trim(), matched)
+        } else {
+            format!("拼音输入法 · v{}", self.current)
+        };
         Page {
-            title: "掠影".to_string(),
-            subtitle: format!("拼音输入法 · v{}", self.current),
+            title: if searching { "搜索" } else { "掠影" }.to_string(),
+            subtitle,
+            search: self.search.clone(),
             header_button: Some(self.update_button()),
             nav,
             active_nav,
-            groups: self.groups_page(page, colors),
+            groups,
             notice: self.notice_text(),
             notice_tint: self.notice_tint(colors),
             footer_buttons: vec![
@@ -61,11 +80,25 @@ impl Settings {
                 title: PageId::Input.title().to_string(),
                 rows: self.setting_rows(PageId::Input, colors),
             }],
-            PageId::Candidate => vec![Group {
-                title: PageId::Candidate.title().to_string(),
-                rows: self.setting_rows(PageId::Candidate, colors),
-            }],
+            PageId::Candidate => {
+                let mut rows = vec![self.candidate_preview_row(colors)];
+                rows.extend(self.setting_rows(PageId::Candidate, colors));
+                vec![Group {
+                    title: PageId::Candidate.title().to_string(),
+                    rows,
+                }]
+            }
             PageId::Extensions => {
+                let mut groups = vec![Group {
+                    title: "官方扩展".to_string(),
+                    rows: self.official_extension_rows(),
+                }];
+                if !self.scripts.is_empty() {
+                    groups.push(Group {
+                        title: "已安装扩展".to_string(),
+                        rows: self.installed_extension_rows(),
+                    });
+                }
                 let mut rows = vec![
                     self.script_row(),
                     self.consent_row(),
@@ -74,24 +107,29 @@ impl Settings {
                 ];
                 rows.extend(self.setting_rows(PageId::Extensions, colors));
                 rows.push(self.ocr_dir_row());
-                let mut groups = vec![Group {
+                groups.push(Group {
                     title: PageId::Extensions.title().to_string(),
                     rows,
-                }];
+                });
                 // 声明式扩展设置紧跟在「扩展」分组后面。
                 groups.extend(self.ext_setting_groups());
                 groups
             }
-            PageId::Dictionary => vec![Group {
-                title: PageId::Dictionary.title().to_string(),
-                rows: vec![
-                    self.phrases_row(),
-                    self.punct_row(),
-                    self.apps_row(),
-                    self.backup_row(),
-                    self.user_dict_row(),
-                ],
-            }],
+            PageId::Dictionary => vec![
+                Group {
+                    title: PageId::Dictionary.title().to_string(),
+                    rows: vec![
+                        self.phrases_row(),
+                        self.punct_row(),
+                        self.backup_row(),
+                        self.user_dict_row(),
+                    ],
+                },
+                Group {
+                    title: "按应用配置".to_string(),
+                    rows: self.apps_rows(),
+                },
+            ],
             PageId::About => vec![Group {
                 title: PageId::About.title().to_string(),
                 rows: vec![
@@ -110,12 +148,64 @@ impl Settings {
         }
     }
 
+    /// 跨页搜索结果:保留原分组标题,只留标题或说明命中关键词的行。
+    fn search_groups(&self, colors: &PageColors) -> Vec<Group> {
+        let needle = self.search.trim().to_lowercase();
+        let mut out = Vec::new();
+        for page in PageId::ALL {
+            let mut groups = self.groups_page(page, colors);
+            for group in &mut groups {
+                group.rows.retain(|row| {
+                    row.label.to_lowercase().contains(&needle)
+                        || row.detail.to_lowercase().contains(&needle)
+                });
+            }
+            groups.retain(|group| !group.rows.is_empty());
+            out.extend(groups);
+        }
+        out
+    }
+
     /// 一页里由 schema 生成的简单设置行。
     fn setting_rows(&self, page: PageId, colors: &PageColors) -> Vec<Row> {
         settings_schema::on_page(page)
             .filter(|def| def.ui.as_ref().is_none_or(|ui| (ui.visible)(&self.cfg)))
             .map(|def| self.setting_row(def, colors))
             .collect()
+    }
+
+    /// 候选窗实时预览:同一份配置直接渲染样例候选。
+    fn candidate_preview_row(&self, colors: &PageColors) -> Row {
+        let accent = colors
+            .accents
+            .get(self.cfg.ui_accent)
+            .copied()
+            .unwrap_or(0);
+        Row {
+            label: "候选窗预览".to_string(),
+            detail: "改字号、排列或主题色会实时反映".to_string(),
+            control: Control::Preview {
+                id: Id::new("candidate-preview", 0),
+                style: CandidatePreview {
+                    accent,
+                    font_scale: self.cfg.ui_font.factor(),
+                    vertical: self.cfg.ui_layout == crate::config::UiLayout::Vertical,
+                    page_size: self.cfg.page_size,
+                    pinyin: "lue ying".to_string(),
+                    candidates: vec![
+                        "掠影".to_string(),
+                        "略影".to_string(),
+                        "掠应".to_string(),
+                        "月影".to_string(),
+                        "掠映".to_string(),
+                        "略赢".to_string(),
+                        "掠鹰".to_string(),
+                        "略应".to_string(),
+                        "掠缨".to_string(),
+                    ],
+                },
+            },
+        }
     }
 
     /// 把一条 schema 描述变成一行控件。
@@ -185,6 +275,76 @@ impl Settings {
         }
     }
 
+    /// 官方扩展目录:一项一行,已安装的按钮禁用。
+    fn official_extension_rows(&self) -> Vec<Row> {
+        crate::official_extensions::catalog()
+            .extensions
+            .iter()
+            .take(ids::OFFICIAL_SLOTS)
+            .enumerate()
+            .map(|(slot, extension)| {
+                let installed = if extension.is_model() {
+                    extension.installed_model()
+                } else {
+                    self.scripts.iter().any(|script| script.id == extension.id)
+                };
+                let installing = self.installing.as_deref() == Some(extension.id.as_str());
+                let (text, kind, enabled) = if installing {
+                    ("安装中", ButtonKind::Secondary, false)
+                } else if installed {
+                    ("已安装", ButtonKind::Secondary, false)
+                } else {
+                    ("安装", ButtonKind::Primary, self.installing.is_none())
+                };
+                Row {
+                    label: extension.name.clone(),
+                    detail: format!(
+                        "{} · v{} · {}",
+                        extension.description, extension.version, extension.size
+                    ),
+                    control: Control::Buttons {
+                        items: vec![Button {
+                            id: Id::new(ids::official_ext(slot), 0),
+                            text: text.to_string(),
+                            kind,
+                            enabled,
+                        }],
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// 已安装扩展:一行一个开关;权限状态写在说明里。
+    fn installed_extension_rows(&self) -> Vec<Row> {
+        self.scripts
+            .iter()
+            .take(ids::SCRIPT_SLOTS)
+            .enumerate()
+            .map(|(slot, script)| {
+                let enabled = self.cfg.extensions.iter().any(|id| id == &script.id);
+                let consent = match &script.consent {
+                    ConsentState::Approved => "已授权",
+                    ConsentState::Missing => "待同意",
+                    ConsentState::Changed { .. } => "需重新同意",
+                };
+                Row {
+                    label: script.name.clone(),
+                    detail: format!(
+                        "{} · {} · {consent}",
+                        script.id,
+                        if enabled { "已启用" } else { "未启用" }
+                    ),
+                    control: Control::ButtonsToggle {
+                        items: Vec::new(),
+                        toggle: Id::new(ids::script_toggle(slot), 0),
+                        toggle_on: enabled,
+                    },
+                }
+            })
+            .collect()
+    }
+
     fn action_row(&self, label: &str, detail: String, buttons: Vec<Button>) -> Row {
         Row {
             label: label.to_string(),
@@ -248,7 +408,7 @@ impl Settings {
     fn ocr_dir_row(&self) -> Row {
         self.action_row(
             "识别模型",
-            "放入 det.onnx、rec.onnx、dict.txt".to_string(),
+            "在「官方扩展」里按需安装 PP-OCRv6;缺失时可用系统 OCR".to_string(),
             vec![Self::secondary(ids::OCR_DIR, "目录", true)],
         )
     }
@@ -269,12 +429,43 @@ impl Settings {
         )
     }
 
-    fn apps_row(&self) -> Row {
-        self.action_row(
-            "按应用配置",
-            "在 apps.toml 里按应用关标点或学习".to_string(),
-            vec![Self::secondary(ids::APPS, "编辑", true)],
-        )
+    /// 按应用配置:一行一个宿主程序,标点与学习各一个三态按钮。
+    fn apps_rows(&self) -> Vec<Row> {
+        let mut rows = vec![self.action_row(
+            "添加应用",
+            "从正在运行的程序里选择;添加后保存生效".to_string(),
+            vec![Self::secondary(ids::APPS_ADD, "选择", true)],
+        )];
+        for (slot, (host, over)) in self.cfg.apps.iter().take(ids::APP_SLOTS).enumerate() {
+            let punct = override_label(over.punct);
+            let learning = override_label(over.learning);
+            rows.push(Row {
+                label: host.clone(),
+                detail: format!("中文标点 {punct} · 学习 {learning}"),
+                control: Control::Buttons {
+                    items: vec![
+                        Button {
+                            id: Id::new(ids::app_punct(slot), 0),
+                            text: format!("标点:{punct}"),
+                            kind: ButtonKind::Secondary,
+                            enabled: true,
+                        },
+                        Button {
+                            id: Id::new(ids::app_learning(slot), 0),
+                            text: format!("学习:{learning}"),
+                            kind: ButtonKind::Secondary,
+                            enabled: true,
+                        },
+                    ],
+                },
+            });
+        }
+        rows.push(self.action_row(
+            "配置文件",
+            "图形列表之外的读写仍可直接编辑 apps.toml".to_string(),
+            vec![Self::secondary(ids::APPS, "打开", true)],
+        ));
+        rows
     }
 
     fn backup_row(&self) -> Row {
@@ -424,10 +615,19 @@ impl Settings {
     /// 截图识别那行的说明:选的引擎与模型是否可用。
     pub(crate) fn ocr_detail(&self) -> String {
         match (self.cfg.ocr_backend, self.ppocr_ready) {
-            (OcrBackend::Ppocr, true) => "随包 PP-OCRv6 · 首次识别加载".to_string(),
-            (OcrBackend::Ppocr, false) => "模型未安装;点「目录」放入三个文件".to_string(),
+            (OcrBackend::Ppocr, true) => "PP-OCRv6 · 首次识别加载,识别不联网".to_string(),
+            (OcrBackend::Ppocr, false) => "模型未安装;到「官方扩展」里安装".to_string(),
             (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
-            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 模型未安装".to_string(),
+            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 模型可按需安装".to_string(),
         }
+    }
+}
+
+/// 按应用覆盖项的三态文字。
+fn override_label(value: Option<bool>) -> &'static str {
+    match value {
+        None => "跟随",
+        Some(true) => "开",
+        Some(false) => "关",
     }
 }

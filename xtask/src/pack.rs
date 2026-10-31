@@ -49,17 +49,11 @@ const PACK_BINS: &[&str] = &[
     "lueying-update.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包带精确词典、两档重排模型与精简语法模型。`main.gram` 缺失时引擎
+/// 默认包带精确词典、4M 同步重排模型与精简语法模型。`main.gram` 缺失时引擎
 /// 退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
-/// 让 Server 无需配置就能发现它。
-const PACK_DATA: &[&str] = &[
-    "main.pyd",
-    "main.gram",
-    "rerank-4m.safetensors",
-    "rerank-25m.safetensors",
-];
-/// 可选 OCR 引擎的模型;由 `tools/fetch_ppocr.sh` 拉到 `data/ppocr/`。
-const PACK_PPOCR: &[&str] = &["det.onnx", "rec.onnx", "dict.txt"];
+/// 让 Server 无需配置就能发现它。25M 停顿重排与 PP-OCR 模型体积大,
+/// 改为在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
+const PACK_DATA: &[&str] = &["main.pyd", "main.gram", "rerank-4m.safetensors"];
 /// 发布体积门禁:0.1.0 历史发布目录 147.7 MiB、安装包 59.8 MiB。
 /// 上限留约 25% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
 const MAX_PAYLOAD_BYTES: u64 = 200 * 1024 * 1024;
@@ -118,29 +112,6 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
         } else {
             return Err(format!("缺少数据文件 {}", source.display()));
         }
-    }
-    // PP-OCRv6 是可选引擎;模型在就随包,缺了只警告(默认系统 OCR 不受影响)。
-    let ppocr = args.data.join("ppocr");
-    if ppocr.is_dir() {
-        let target = args.out.join("models/ppocr");
-        std::fs::create_dir_all(&target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
-        for name in PACK_PPOCR {
-            let source = ppocr.join(name);
-            if source.exists() {
-                copy_file(
-                    &source,
-                    &args.out,
-                    &format!("models/ppocr/{name}"),
-                    &mut files,
-                )?;
-            } else if args.allow_missing_data {
-                println!("警告: 缺少 PP-OCR 文件 {}", source.display());
-            } else {
-                return Err(format!("缺少 PP-OCR 文件 {}", source.display()));
-            }
-        }
-    } else {
-        println!("警告: 没有 PP-OCR 模型目录 {},跳过", ppocr.display());
     }
     // TSV 是二进制不可用时的兼容回退,可选。
     if args.data.join("main.tsv").exists() {
@@ -211,7 +182,7 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
         .map_err(|e| format!("写 licenses/README.md: {e}"))?;
     files.push(("licenses/README.md".into(), notice.len() as u64));
 
-    // 官方起步扩展随安装包分发(几十 KB 的 JS);首次安装复制到当前用户目录。
+    // 官方起步扩展随安装包分发(几十 KB 的 JS);设置窗按需复制到当前用户目录。
     let extensions = root.join("extensions");
     if extensions.is_dir() {
         copy_tree(
@@ -220,6 +191,12 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
             "extensions",
             &mut files,
         )?;
+    }
+    // 官方扩展目录也放一份在发布目录里,供审计与离线检查;程序运行时用
+    // 编译期嵌入的同一份文件,不依赖这个副本。
+    let catalog = root.join("Catalog");
+    if catalog.is_dir() {
+        copy_tree(&catalog, &args.out.join("Catalog"), "Catalog", &mut files)?;
     }
 
     std::fs::write(args.out.join("version.txt"), format!("{}\n", args.version))

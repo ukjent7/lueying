@@ -10,9 +10,13 @@ pub mod config;
 
 mod config_file;
 
+pub mod official_extensions;
+
 pub mod settings_consent;
 
 pub mod settings_ext;
+
+pub mod settings_secret;
 
 pub mod settings_schema;
 
@@ -45,6 +49,12 @@ pub mod settings_actions;
 
 #[cfg(windows)]
 pub mod settings_edit;
+
+#[cfg(windows)]
+pub mod settings_official;
+
+#[cfg(windows)]
+pub mod settings_secret_edit;
 
 #[cfg(windows)]
 pub mod settings_win;

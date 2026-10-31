@@ -63,17 +63,23 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         }
     }
     lines.push("UIA 树包含保存、关闭、输入、辅助码与检查更新".to_string());
-    let phrase_group = elements
+    // 页面模型按左栏分类分组;「自定义短语」是「词库」组里的一行。
+    let dictionary_group = elements
+        .iter()
+        .find(|element| text(element) == "词库" && kind(element) == Some(UIA_GroupControlTypeId))
+        .ok_or("UIA 树里找不到「词库」分组")?;
+    let dictionary_rows = descendants(&automation, dictionary_group)?;
+    let phrase_group = dictionary_rows
         .iter()
         .find(|element| {
             text(element) == "自定义短语" && kind(element) == Some(UIA_GroupControlTypeId)
         })
-        .ok_or("UIA 树里找不到「自定义短语」分组")?;
+        .ok_or("UIA 树里找不到「自定义短语」行")?;
     let phrase_row = descendants(&automation, phrase_group)?;
     let edit_button = phrase_row
         .iter()
         .find(|element| text(element) == "编辑" && kind(element) == Some(UIA_ButtonControlTypeId))
-        .ok_or("「自定义短语」分组里找不到编辑按钮")?;
+        .ok_or("「自定义短语」行里找不到编辑按钮")?;
     let invoke: IUIAutomationInvokePattern =
         unsafe { edit_button.GetCurrentPatternAs(UIA_InvokePatternId) }
             .map_err(|e| format!("编辑按钮没有 InvokePattern: {e}"))?;

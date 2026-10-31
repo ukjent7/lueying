@@ -99,114 +99,13 @@ mod imp {
         remove_old_uninstall_key();
         remove_legacy_registry();
         remove_shortcuts();
-        install_bundled_extensions(&target);
+        // 扩展不再由安装器自动复制:设置窗的「官方扩展」按需安装并走同意流程。
         if let Err(error) =
             lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
         {
             trace(&format!("install: spawn server failed: {error}"));
         }
         trace("install: done");
-        Ok(())
-    }
-
-    /// 官方起步扩展:安装包放在 `{app}\extensions`,复制到当前用户的
-    /// `%APPDATA%\lueying\extensions`。已存在的目录不覆盖,用户改过的包保留;
-    /// 与随包内容一致的旧安装补写同意记录,升级后不会被授权门控挡住。
-    fn install_bundled_extensions(target: &Path) {
-        let Some(appdata) = std::env::var_os("APPDATA") else {
-            return;
-        };
-        let source = target.join("extensions");
-        let dest = PathBuf::from(appdata).join("lueying").join("extensions");
-        let consent = dest.join("consent.json");
-        let Ok(entries) = std::fs::read_dir(&source) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = entry.file_name();
-            let into = dest.join(&name);
-            if into.exists() {
-                if same_package(&path, &into) {
-                    approve_bundled(&into, &consent);
-                } else {
-                    trace(&format!(
-                        "install: 保留用户修改的扩展 {},需在设置窗同意",
-                        name.to_string_lossy()
-                    ));
-                }
-                continue;
-            }
-            match copy_tree(&path, &into) {
-                Ok(()) => approve_bundled(&into, &consent),
-                Err(error) => trace(&format!(
-                    "install: 复制扩展 {} 失败: {error}",
-                    name.to_string_lossy()
-                )),
-            }
-        }
-    }
-
-    /// 只比较清单与入口脚本;运行期也只读这两个文件。
-    fn same_package(a: &Path, b: &Path) -> bool {
-        let Ok(am) = std::fs::read(a.join("manifest.json")) else {
-            return false;
-        };
-        let Ok(bm) = std::fs::read(b.join("manifest.json")) else {
-            return false;
-        };
-        let (Ok(am), Ok(bm)) = (
-            lueying_extmeta::Manifest::parse(&am),
-            lueying_extmeta::Manifest::parse(&bm),
-        ) else {
-            return false;
-        };
-        let left = lueying_extmeta::consent::package_hash(a, &am);
-        let right = lueying_extmeta::consent::package_hash(b, &bm);
-        left.is_ok() && left == right
-    }
-
-    /// 随包扩展由安装器代为同意;用户改过的包不会走到这里。
-    fn approve_bundled(dir: &Path, consent: &Path) {
-        let Ok(bytes) = std::fs::read(dir.join("manifest.json")) else {
-            return;
-        };
-        let Ok(manifest) = lueying_extmeta::Manifest::parse(&bytes) else {
-            return;
-        };
-        let mut book = lueying_extmeta::consent::ConsentBook::load(consent);
-        let check = book.check(dir, &manifest);
-        if check.as_ref().is_ok_and(|check| check.approved) {
-            return;
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as u64)
-            .unwrap_or(0);
-        match book.approve(dir, &manifest, now) {
-            Ok(_) => match book.save(consent) {
-                Ok(()) => trace(&format!("install: 已同意随包扩展 {}", manifest.id)),
-                Err(error) => trace(&format!("install: 写扩展同意记录失败: {error}")),
-            },
-            Err(error) => trace(&format!("install: 扩展 {} 同意失败: {error}", manifest.id)),
-        }
-    }
-
-    /// 递归复制;扩展包只有清单与脚本,不需要保留属性。
-    fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(to)?;
-        for entry in std::fs::read_dir(from)? {
-            let entry = entry?;
-            let into = to.join(entry.file_name());
-            if entry.path().is_dir() {
-                copy_tree(&entry.path(), &into)?;
-            } else {
-                std::fs::copy(entry.path(), into)?;
-            }
-        }
         Ok(())
     }
 

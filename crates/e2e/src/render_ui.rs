@@ -22,6 +22,7 @@ fn settings_page() -> ui::Page {
     ui::Page {
         title: "掠影".into(),
         subtitle: "拼音输入法 · v0.1.0".into(),
+        search: String::new(),
         header_button: Some(ui::Button {
             id: ui::Id::new("update", 0),
             text: "检查更新".into(),
@@ -59,6 +60,27 @@ fn settings_page() -> ui::Page {
                         ],
                         selected: 0,
                         width: 44.0,
+                    },
+                },
+                ui::Row {
+                    label: "候选窗预览".into(),
+                    detail: "改字号、排列或主题色会实时反映".into(),
+                    control: ui::Control::Preview {
+                        id: ui::Id::new("candidate-preview", 0),
+                        style: ui::CandidatePreview {
+                            accent: 0x2f6fed,
+                            font_scale: 1.0,
+                            vertical: false,
+                            page_size: 5,
+                            pinyin: "lue ying".into(),
+                            candidates: vec![
+                                "掠影".into(),
+                                "略影".into(),
+                                "掠应".into(),
+                                "月影".into(),
+                                "掠映".into(),
+                            ],
+                        },
                     },
                 },
                 ui::Row {
@@ -455,6 +477,43 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             && (effect_button.right <= effect_toggle.left)
             && (effect_toggle.right - toggle.right).abs() < 0.5,
         format!("开关={hit:?} 按钮={hit_button:?}"),
+    );
+
+    // 顶部搜索框:几何留在标题与更新按钮之间,底色与放大镜画出容器。
+    let search = layout.search;
+    push(
+        checks,
+        "设置搜索框几何",
+        search.width() >= 120.0
+            && search.left > layout.logo.right
+            && layout
+                .page_hit(ui::Id::new("update", 0))
+                .is_some_and(|button| search.right <= button.left),
+        format!("search={search:?} logo_right={:.1}", layout.logo.right),
+    );
+    let search_pixel = read_bgra(
+        &mut ui_surface,
+        (search.left + 3.0) as i32,
+        (search.top + search.height() / 2.0) as i32,
+    );
+    push(
+        checks,
+        "设置搜索框底色",
+        search_pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().surface_alt)),
+        format!("{search_pixel:?} 期望 {:?}", rgb(palette().surface_alt)),
+    );
+    // 候选窗预览行比普通行高:去掉预览行后卡片应矮一截。
+    let mut no_preview = page.clone();
+    no_preview.groups[0]
+        .rows
+        .retain(|row| !matches!(row.control, ui::Control::Preview { .. }));
+    let short_layout = ui::layout(&no_preview, &font, 1.0, 650.0);
+    let saved = layout.card.height() - short_layout.card.height();
+    push(
+        checks,
+        "设置候选预览预留画布",
+        saved > 60.0 && layout.height > short_layout.height,
+        format!("预览行高差 {saved:.1}"),
     );
 
     command_checks(checks);

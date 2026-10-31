@@ -28,6 +28,7 @@
 | 程序与词典 | `%ProgramFiles%\lueying` |
 | 配置 | `%APPDATA%\lueying\config.toml` |
 | 自定义短语 | `%APPDATA%\lueying\phrases.txt` |
+| 按需模型 | `%APPDATA%\lueying\models`(设置页「官方扩展」下载) |
 | 用户词库 | `%LOCALAPPDATA%\lueying\user.tsv` |
 
 词典与模型都是可选数据:缺失或损坏时程序仍能启动,主词典退回内置小词库,语法模型与神经重排自动关闭,只是候选质量下降。

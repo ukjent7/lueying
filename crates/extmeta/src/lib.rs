@@ -65,8 +65,12 @@ pub struct Manifest {
     pub panel: Option<Panel>,
 }
 
+/// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
+pub const MAX_TEXT_CHARS: usize = 4096;
+
 /// 一条声明式设置。设置页按 `type` 渲染,值落在 `config.toml` 的
-/// `[ext.<id>]` 表;扩展脚本不直接画控件。
+/// `[ext.<id>]` 表;`secureText` 的值不进配置文件,存到用户私密目录。
+/// 扩展脚本不直接画控件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Setting {
@@ -125,7 +129,17 @@ impl Setting {
         self.kind == "toggle"
     }
 
-    /// 单选选项;开关为空。
+    /// 是否是密钥文本;值存到用户私密目录,不进 `config.toml`。
+    pub fn is_secret(&self) -> bool {
+        self.kind == "secureText"
+    }
+
+    /// 是否是可以自由输入的文本(密钥输入在设置窗里做)。
+    pub fn is_text(&self) -> bool {
+        self.is_secret()
+    }
+
+    /// 单选选项;开关与文本为空。
     pub fn options(&self) -> &[String] {
         &self.options
     }
@@ -136,6 +150,12 @@ impl Setting {
             return match &self.default {
                 Some(SettingValue::Bool(on)) => SettingValue::Bool(*on),
                 _ => SettingValue::Bool(false),
+            };
+        }
+        if self.is_text() {
+            return match &self.default {
+                Some(SettingValue::Text(text)) => SettingValue::Text(text.clone()),
+                _ => SettingValue::Text(String::new()),
             };
         }
         match &self.default {
@@ -155,6 +175,14 @@ impl Setting {
                 _ => self.default_value(),
             };
         }
+        if self.is_text() {
+            return match value {
+                Some(SettingValue::Text(text)) if text.chars().count() <= MAX_TEXT_CHARS => {
+                    SettingValue::Text(text)
+                }
+                _ => self.default_value(),
+            };
+        }
         match value {
             Some(SettingValue::Text(text)) if self.options.contains(&text) => {
                 SettingValue::Text(text)
@@ -167,6 +195,9 @@ impl Setting {
     pub fn accepts(&self, value: &serde_json::Value) -> bool {
         match SettingValue::from_json(value) {
             Some(SettingValue::Bool(_)) => self.is_toggle(),
+            Some(SettingValue::Text(text)) if self.is_text() => {
+                text.chars().count() <= MAX_TEXT_CHARS && !text.chars().any(char::is_control)
+            }
             Some(SettingValue::Text(text)) => !self.is_toggle() && self.options.contains(&text),
             None => false,
         }
@@ -628,6 +659,20 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
                     return Err(format!("开关设置 {} 的默认值必须是布尔", setting.key));
                 }
             }
+            "secureText" => {
+                if !setting.options.is_empty() {
+                    return Err(format!("密钥设置 {} 不能声明 options", setting.key));
+                }
+                if let Some(SettingValue::Bool(_)) = &setting.default {
+                    return Err(format!("密钥设置 {} 的默认值必须是文本", setting.key));
+                }
+                if let Some(SettingValue::Text(text)) = &setting.default
+                    && (text.chars().count() > MAX_TEXT_CHARS
+                        || text.chars().any(char::is_control))
+                {
+                    return Err(format!("密钥设置 {} 的默认值过长或含控制字符", setting.key));
+                }
+            }
             "choice" => {
                 if setting.options.is_empty() || setting.options.len() > 8 {
                     return Err(format!("单选设置 {} 的选项数必须在 1..=8", setting.key));
@@ -663,7 +708,7 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
             }
             other => {
                 return Err(format!(
-                    "设置 {} 的 type {other:?} 不支持,只能是 toggle 或 choice",
+                    "设置 {} 的 type {other:?} 不支持,只能是 toggle、choice 或 secureText",
                     setting.key
                 ));
             }

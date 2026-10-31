@@ -291,7 +291,7 @@ pub fn page_tree(
                     nodes.push((node, group));
                     group_children.push(node);
                 }
-                Control::None => {
+                Control::Preview { .. } | Control::None => {
                     group_children.push(text_node(
                         "@label",
                         row_key,

@@ -107,6 +107,7 @@ pub(crate) fn settings_get(state: &State, id: &str) -> Result<serde_json::Value,
     }
     let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
     Ok(lueying_server::settings_ext::values(
+        id,
         &settings,
         cfg.ext_settings.get(id),
     ))
@@ -146,11 +147,18 @@ pub(crate) fn settings_set(
             return Err(format!("扩展 {id} 没有设置 {key:?}"));
         };
         if !setting.accepts(value) {
-            return Err(format!("设置 {key} 的值 {value} 不符合清单 schema"));
+            return Err(format!("设置 {key} 的值不符合清单 schema"));
         }
-        table.insert(key.clone(), value.clone());
+        if setting.is_secret() {
+            let Some(text) = value.as_str() else {
+                return Err(format!("密钥设置 {key} 必须是文本"));
+            };
+            lueying_server::settings_secret::set(id, key, text)?;
+        } else {
+            table.insert(key.clone(), value.clone());
+        }
     }
-    let full = lueying_server::settings_ext::values(&settings, Some(&table));
+    let full = lueying_server::settings_ext::values(id, &settings, Some(&table));
     let mut cfg = state
         .config
         .read()

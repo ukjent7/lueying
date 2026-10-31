@@ -159,6 +159,87 @@ fn ocr_dir_maps_to_action() {
 }
 
 #[test]
+fn search_spans_pages_and_clears_on_navigation() {
+    let mut settings = Settings::default();
+    settings.set_search("辅助码");
+    assert!(settings.searching());
+    let page = settings.page(&crate::settings_view::PageColors::default());
+    assert_eq!(page.title, "搜索");
+    assert!(page.active_nav == usize::MAX);
+    assert!(page
+        .groups
+        .iter()
+        .flat_map(|group| &group.rows)
+        .any(|row| row.label == "辅助码"));
+    settings.set_page(PageId::Candidate);
+    assert!(!settings.searching());
+    assert_eq!(settings.page(&crate::settings_view::PageColors::default()).active_nav, 1);
+}
+
+#[test]
+fn candidate_page_starts_with_preview() {
+    let settings = Settings::default();
+    let page = settings.page_view(PageId::Candidate, &crate::settings_view::PageColors::default());
+    let first = &page.groups[0].rows[0];
+    assert_eq!(first.label, "候选窗预览");
+    assert!(matches!(
+        first.control,
+        lueying_render::ui::Control::Preview { .. }
+    ));
+}
+
+#[test]
+fn app_override_buttons_cycle_three_states() {
+    let mut settings = Settings::default();
+    settings
+        .cfg
+        .apps
+        .insert("code.exe".to_string(), crate::config::AppOverride::default());
+    let punct = Id::new(ids::app_punct(0), 0);
+    let learning = Id::new(ids::app_learning(0), 0);
+    settings.activate(&punct);
+    assert_eq!(settings.cfg.apps["code.exe"].punct, Some(true));
+    settings.activate(&punct);
+    assert_eq!(settings.cfg.apps["code.exe"].punct, Some(false));
+    settings.activate(&punct);
+    assert_eq!(settings.cfg.apps["code.exe"].punct, None);
+    settings.activate(&learning);
+    assert_eq!(settings.cfg.apps["code.exe"].learning, Some(true));
+    assert_eq!(
+        settings.activate(&Id::new(ids::APPS_ADD, 0)),
+        Some(Action::AddApp)
+    );
+}
+
+#[test]
+fn secret_extension_field_opens_editor() {
+    use lueying_extmeta::Setting;
+    let mut script = ScriptEntry::new("demo", "演示");
+    script.settings = vec![Setting {
+        key: "token".to_string(),
+        title: "访问令牌".to_string(),
+        detail: "只保存在本机".to_string(),
+        kind: "secureText".to_string(),
+        default: None,
+        options: Vec::new(),
+    }];
+    let mut settings = Settings {
+        scripts: vec![script],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["demo".to_string()];
+    settings.set_page(PageId::Extensions);
+    assert_eq!(
+        settings.activate(&Id::new(ids::ext_field(0), 0)),
+        Some(Action::EditSecret(
+            "demo".to_string(),
+            "token".to_string(),
+            "访问令牌".to_string()
+        ))
+    );
+}
+
+#[test]
 fn focus_order_follows_extension_group() {
     let mut script = ext_entry();
     // 待授权的包才有关闭不了的「同意」按钮,Tab 次序里才有它。
