@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::OcrBackend;
+use crate::settings_schema::PageId;
 use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_render::ui::Id;
 
@@ -159,20 +160,28 @@ fn ocr_dir_maps_to_action() {
 
 #[test]
 fn focus_order_follows_extension_group() {
-    let order = Settings::focus_order();
+    let mut settings = Settings {
+        scripts: vec![ext_entry()],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["shot".to_string()];
+    settings.set_page(PageId::Extensions);
+    let order = settings.focus_ids();
     let at = |base: &str| order.iter().position(|id| id.base == base).unwrap();
-    assert!(at(ids::FUZZY) < at(ids::SCRIPTS));
+    assert!(at(ids::SCRIPTS) < at(ids::SCRIPTS_DIR));
     assert!(at(ids::SCRIPTS_DIR) < at(ids::CONSENT));
     assert!(at(ids::CONSENT) < at(ids::AUDIT));
     assert!(at(ids::AUDIT) < at(ids::EXT_METRICS));
     assert!(at(ids::EXT_METRICS) < at(ids::OCR));
     assert!(at(ids::OCR) < at(ids::OCR_DIR));
-    assert!(at(ids::OCR_DIR) < at(ids::PHRASES));
+    assert!(at(ids::OCR_DIR) < at(ids::SAVE));
 }
 
 #[test]
 fn focus_order_lists_script_buttons_once() {
-    let order = Settings::focus_order();
+    let mut settings = Settings::default();
+    settings.set_page(PageId::Extensions);
+    let order = settings.focus_ids();
     let choose = order.iter().filter(|id| id.base == ids::SCRIPTS).count();
     let dir = order
         .iter()
@@ -212,6 +221,7 @@ fn extension_settings_render_and_activate() {
         ..Settings::default()
     };
     settings.cfg.extensions = vec!["shot".to_string()];
+    settings.set_page(PageId::Extensions);
     let toggle = ids::ext_field(0);
     let choice = ids::ext_field(1);
     assert!(Settings::is_segment(toggle));
@@ -238,5 +248,5 @@ fn extension_settings_render_and_activate() {
     let focus = settings.focus_ids();
     let at = |base: &str| focus.iter().position(|id| id.base == base).unwrap();
     assert!(at(toggle) < at(choice));
-    assert!(at(choice) < at(ids::PHRASES), "扩展字段排在扩展分组后面");
+    assert!(at(choice) < at(ids::SAVE), "扩展字段排在扩展页控件之后");
 }

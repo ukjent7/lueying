@@ -5,11 +5,17 @@
 //! 保存写 `config.toml`,再经命名管道让常驻 Server 立即重载。
 //!
 //! `--selftest <报告路径>` 跑一遍自检:建窗、画一帧、贴一次、读回像素,
-//! Windows CI 用它确认原生设置窗这条链路没断。
+//! Windows CI 用它确认原生设置窗这条链路没断。`--dump-config-schema` 输出
+//! 设置 schema 的 JSON,供脚本与 AI agent 读取。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
+    // 平台无关:脚本与 AI agent 读取设置元数据,不需要启动窗口。
+    if std::env::args().nth(1).as_deref() == Some("--dump-config-schema") {
+        println!("{}", lueying_server::settings_schema::config_schema_text());
+        return;
+    }
     #[cfg(windows)]
     {
         let mut args = std::env::args().skip(1);

@@ -5,16 +5,36 @@
 
 use super::*;
 
-use lueying_render::ui::{Button, ButtonKind, Control, Group, Page, Row, SegmentOption};
+use crate::config::OcrBackend;
+use crate::settings_schema::{self, ControlDef, PageId, SettingDef};
+use lueying_render::ui::{Button, ButtonKind, Control, Group, NavItem, Page, Row, SegmentOption};
 
 impl Settings {
-    /// 页面:把配置与服务端状态铺成一页。
+    /// 当前页面:左栏导航 + 右栏设置卡片。
     pub fn page(&self, colors: &PageColors) -> Page {
+        self.page_view(self.page, colors)
+    }
+
+    /// 指定页面渲染;E2E 与无障碍树用它检查非当前页。
+    pub fn page_view(&self, page: PageId, colors: &PageColors) -> Page {
+        let nav = PageId::ALL
+            .iter()
+            .map(|page| NavItem {
+                id: Id::new(page.nav_id(), 0),
+                text: page.title().to_string(),
+            })
+            .collect();
+        let active_nav = PageId::ALL
+            .iter()
+            .position(|candidate| *candidate == page)
+            .unwrap_or(0);
         Page {
             title: "掠影".to_string(),
             subtitle: format!("拼音输入法 · v{}", self.current),
             header_button: Some(self.update_button()),
-            groups: self.groups_page(colors),
+            nav,
+            active_nav,
+            groups: self.groups_page(page, colors),
             notice: self.notice_text(),
             notice_tint: self.notice_tint(colors),
             footer_buttons: vec![
@@ -34,396 +54,279 @@ impl Settings {
         }
     }
 
-    /// 固定分组 + 扩展声明的设置分组。
-    fn groups_page(&self, colors: &PageColors) -> Vec<Group> {
-        let mut groups = vec![
-            Group {
-                title: "输入".to_string(),
+    /// 某一页的分组。
+    fn groups_page(&self, page: PageId, colors: &PageColors) -> Vec<Group> {
+        match page {
+            PageId::Input => vec![Group {
+                title: PageId::Input.title().to_string(),
+                rows: self.setting_rows(PageId::Input, colors),
+            }],
+            PageId::Candidate => vec![Group {
+                title: PageId::Candidate.title().to_string(),
+                rows: self.setting_rows(PageId::Candidate, colors),
+            }],
+            PageId::Extensions => {
+                let mut rows = vec![
+                    self.script_row(),
+                    self.consent_row(),
+                    self.audit_row(),
+                    self.ext_metrics_row(),
+                ];
+                rows.extend(self.setting_rows(PageId::Extensions, colors));
+                rows.push(self.ocr_dir_row());
+                let mut groups = vec![Group {
+                    title: PageId::Extensions.title().to_string(),
+                    rows,
+                }];
+                // 声明式扩展设置紧跟在「扩展」分组后面。
+                groups.extend(self.ext_setting_groups());
+                groups
+            }
+            PageId::Dictionary => vec![Group {
+                title: PageId::Dictionary.title().to_string(),
                 rows: vec![
-                    Row {
-                        label: "输入方案".to_string(),
-                        detail: "全拼或双拼,共享词库".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::SCHEME, 0),
-                            options: SchemeId::ALL
-                                .iter()
-                                .map(|id| SegmentOption::new(id.name()))
-                                .collect(),
-                            selected: self.selected(ids::SCHEME),
-                            width: 44.0,
-                        },
-                    },
-                    Row {
-                        label: "辅助码".to_string(),
-                        detail: "拼音后按 ` 再打 1–2 位五笔码".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::AUX, 0),
-                            on: self.cfg.aux,
-                        },
-                    },
-                    Row {
-                        label: "中文标点".to_string(),
-                        detail: "按中文习惯输出 ，。；：“”".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::CHINESE_PUNCT, 0),
-                            on: self.cfg.chinese_punct,
-                        },
-                    },
-                    Row {
-                        label: "Shift 单击切中英".to_string(),
-                        detail: "按住 Shift 输入大写，单击切换".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::SHIFT_TOGGLE, 0),
-                            on: self.cfg.shift_toggle,
-                        },
-                    },
-                    Row {
-                        label: "输出繁体".to_string(),
-                        detail: "候选与上屏使用繁体".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::TRADITIONAL, 0),
-                            on: self.cfg.traditional,
-                        },
-                    },
-                    Row {
-                        label: "字形地区".to_string(),
-                        detail: "台湾、香港按当地常用字形".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::REGION, 0),
-                            options: Region::NAMES
-                                .iter()
-                                .map(|name| SegmentOption::new(*name))
-                                .collect(),
-                            selected: self.selected(ids::REGION),
-                            width: 44.0,
-                        },
-                    },
+                    self.phrases_row(),
+                    self.punct_row(),
+                    self.apps_row(),
+                    self.backup_row(),
+                    self.user_dict_row(),
                 ],
-            },
-            Group {
-                title: "候选".to_string(),
-                rows: vec![
-                    Row {
-                        label: "每页候选数".to_string(),
-                        detail: "按屏幕宽度选择".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::PAGE_SIZE, 0),
-                            options: [3usize, 5, 9]
-                                .iter()
-                                .map(|n| SegmentOption::new(n.to_string()))
-                                .collect(),
-                            selected: self.selected(ids::PAGE_SIZE),
-                            width: 34.0,
-                        },
-                    },
-                    Row {
-                        label: "候选排列".to_string(),
-                        detail: "横排挤一行,竖排一行一条".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::LAYOUT, 0),
-                            options: UiLayout::NAMES
-                                .iter()
-                                .map(|name| SegmentOption::new(*name))
-                                .collect(),
-                            selected: self.selected(ids::LAYOUT),
-                            width: 44.0,
-                        },
-                    },
-                    Row {
-                        label: "候选字号".to_string(),
-                        detail: "只缩放候选行,拼音行不变".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::FONT, 0),
-                            options: UiFont::NAMES
-                                .iter()
-                                .map(|name| SegmentOption::new(*name))
-                                .collect(),
-                            selected: self.selected(ids::FONT),
-                            width: 44.0,
-                        },
-                    },
-                    Row {
-                        label: "主题色".to_string(),
-                        detail: "候选窗的强调色,高对比度下跟随系统".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::ACCENT, 0),
-                            options: ACCENTS
-                                .iter()
-                                .enumerate()
-                                .map(|(index, accent)| {
-                                    let tint = colors.accents.get(index).copied().unwrap_or(0);
-                                    SegmentOption::tinted(accent.name, tint)
-                                })
-                                .collect(),
-                            selected: self.selected(ids::ACCENT),
-                            width: 34.0,
-                        },
-                    },
-                    Row {
-                        label: "用户效果".to_string(),
-                        detail: self.effects_detail.clone(),
-                        control: Control::ButtonsToggle {
-                            items: vec![Button {
-                                id: Id::new(ids::EFFECTS, 0),
-                                text: "目录".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                            toggle: Id::new(ids::EFFECTS_TOGGLE, 0),
-                            toggle_on: self.cfg.effects,
-                        },
-                    },
-                    Row {
-                        label: "下一词联想".to_string(),
-                        detail: "按本机上屏词序补全".to_string(),
-                        control: Control::Toggle {
-                            id: Id::new(ids::PREDICT, 0),
-                            on: self.cfg.predict,
-                        },
-                    },
-                    Row {
-                        label: "自动模糊音".to_string(),
-                        detail: self.fuzzy_detail(),
-                        control: Control::ButtonsToggle {
-                            items: vec![Button {
-                                id: Id::new(ids::RESET_FUZZY, 0),
-                                text: "重置".to_string(),
-                                kind: ButtonKind::Ghost,
-                                enabled: self.reset_enabled(),
-                            }],
-                            toggle: Id::new(ids::FUZZY, 0),
-                            toggle_on: !self.cfg.fuzzy.is_off(),
-                        },
-                    },
-                ],
-            },
-            Group {
-                title: "扩展".to_string(),
-                rows: vec![
-                    Row {
-                        label: "运行期脚本".to_string(),
-                        detail: self.script_detail(),
-                        control: Control::Buttons {
-                            items: vec![
-                                Button {
-                                    id: Id::new(ids::SCRIPTS, 0),
-                                    text: "选择".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                                Button {
-                                    id: Id::new(ids::SCRIPTS_DIR, 0),
-                                    text: "目录".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                            ],
-                        },
-                    },
-                    Row {
-                        label: "扩展授权".to_string(),
-                        detail: crate::settings_consent::detail(
-                            &self.cfg.extensions,
-                            &self.scripts,
-                        ),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::CONSENT, 0),
-                                text: "同意".to_string(),
-                                kind: ButtonKind::Primary,
-                                enabled: crate::settings_consent::approve_enabled(
-                                    &self.cfg.extensions,
-                                    &self.scripts,
-                                ),
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "审计日志".to_string(),
-                        detail: "谁在什么时候调用了截图、识别与上屏".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::AUDIT, 0),
-                                text: "查看".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "扩展运行".to_string(),
-                        detail: self.ext_metrics_detail(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::EXT_METRICS, 0),
-                                text: "刷新".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "截图识别".to_string(),
-                        detail: self.ocr_detail(),
-                        control: Control::Segment {
-                            id: Id::new(ids::OCR, 0),
-                            options: OcrBackend::NAMES
-                                .iter()
-                                .map(|name| SegmentOption::new(*name))
-                                .collect(),
-                            selected: self.selected(ids::OCR),
-                            width: 60.0,
-                        },
-                    },
-                    Row {
-                        label: "识别模型".to_string(),
-                        detail: "放入 det.onnx、rec.onnx、dict.txt".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::OCR_DIR, 0),
-                                text: "目录".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                ],
-            },
-            Group {
-                title: "词库".to_string(),
-                rows: vec![
-                    Row {
-                        label: "自定义短语".to_string(),
-                        detail: "在设置窗里编辑 phrases.txt，保存后重载".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::PHRASES, 0),
-                                text: "编辑".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "自定义标点".to_string(),
-                        detail: "编辑 punct.txt，映射半角符号的输出".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::PUNCT, 0),
-                                text: "编辑".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "按应用配置".to_string(),
-                        detail: "在 apps.toml 里按应用关标点或学习".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::APPS, 0),
-                                text: "编辑".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
-                    Row {
-                        label: "配置备份".to_string(),
-                        detail: "配置、短语、标点、按应用与词库打包成一份文本".to_string(),
-                        control: Control::Buttons {
-                            items: vec![
-                                Button {
-                                    id: Id::new(ids::BACKUP_EXPORT, 0),
-                                    text: "导出".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                                Button {
-                                    id: Id::new(ids::BACKUP_IMPORT, 0),
-                                    text: "导入".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                            ],
-                        },
-                    },
-                    Row {
-                        label: "用户词库".to_string(),
-                        detail: "导入、导出或清空本机学习记录".to_string(),
-                        control: Control::Buttons {
-                            items: vec![
-                                Button {
-                                    id: Id::new(ids::IMPORT_USER, 0),
-                                    text: "导入".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                                Button {
-                                    id: Id::new(ids::EXPORT_USER, 0),
-                                    text: "导出".to_string(),
-                                    kind: ButtonKind::Secondary,
-                                    enabled: true,
-                                },
-                                Button {
-                                    id: Id::new(ids::CLEAR_USER, 0),
-                                    text: if self.confirm_clear {
-                                        "确认清空"
-                                    } else {
-                                        "清空"
-                                    }
-                                    .to_string(),
-                                    kind: if self.confirm_clear {
-                                        ButtonKind::Danger
-                                    } else {
-                                        ButtonKind::Ghost
-                                    },
-                                    enabled: true,
-                                },
-                            ],
-                        },
-                    },
-                ],
-            },
-            Group {
-                title: "关于".to_string(),
+            }],
+            PageId::About => vec![Group {
+                title: PageId::About.title().to_string(),
                 rows: vec![
                     Row {
                         label: "引擎状态".to_string(),
                         detail: status_detail(&self.status),
                         control: Control::None,
                     },
-                    Row {
-                        label: "更新渠道".to_string(),
-                        detail: "测试版会跟进预发布 Release".to_string(),
-                        control: Control::Segment {
-                            id: Id::new(ids::CHANNEL, 0),
-                            options: Channel::NAMES
-                                .iter()
-                                .map(|name| SegmentOption::new(*name))
-                                .collect(),
-                            selected: self.selected(ids::CHANNEL),
-                            width: 44.0,
-                        },
-                    },
-                    Row {
-                        label: "诊断信息".to_string(),
-                        detail: "版本、配置与服务日志导出成一份文本".to_string(),
-                        control: Control::Buttons {
-                            items: vec![Button {
-                                id: Id::new(ids::DIAGNOSTICS, 0),
-                                text: "导出".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            }],
-                        },
-                    },
+                    self.setting_row(
+                        settings_schema::find(ids::CHANNEL).expect("更新渠道在 schema 里"),
+                        colors,
+                    ),
+                    self.diagnostics_row(),
                 ],
+            }],
+        }
+    }
+
+    /// 一页里由 schema 生成的简单设置行。
+    fn setting_rows(&self, page: PageId, colors: &PageColors) -> Vec<Row> {
+        settings_schema::on_page(page)
+            .filter(|def| {
+                def.ui
+                    .as_ref()
+                    .is_none_or(|ui| (ui.visible)(&self.cfg))
+            })
+            .map(|def| self.setting_row(def, colors))
+            .collect()
+    }
+
+    /// 把一条 schema 描述变成一行控件。
+    fn setting_row(&self, def: &SettingDef, colors: &PageColors) -> Row {
+        let ui = def.ui.as_ref().expect("setting_row 只接受有界面的设置");
+        let control = match &ui.control {
+            ControlDef::Toggle { id, get, .. } => {
+                let control_id = Id::new(*id, 0);
+                let on = get(&self.cfg);
+                match def.key {
+                    "effects" => Control::ButtonsToggle {
+                        items: vec![Button {
+                            id: Id::new(ids::EFFECTS, 0),
+                            text: "目录".to_string(),
+                            kind: ButtonKind::Secondary,
+                            enabled: true,
+                        }],
+                        toggle: control_id,
+                        toggle_on: on,
+                    },
+                    "fuzzy" => Control::ButtonsToggle {
+                        items: vec![Button {
+                            id: Id::new(ids::RESET_FUZZY, 0),
+                            text: "重置".to_string(),
+                            kind: ButtonKind::Ghost,
+                            enabled: self.reset_enabled(),
+                        }],
+                        toggle: control_id,
+                        toggle_on: on,
+                    },
+                    _ => Control::Toggle {
+                        id: control_id,
+                        on,
+                    },
+                }
+            }
+            ControlDef::Segment {
+                id,
+                choices,
+                width,
+                tinted,
+                get,
+                ..
+            } => Control::Segment {
+                id: Id::new(*id, 0),
+                options: choices
+                    .iter()
+                    .enumerate()
+                    .map(|(index, choice)| {
+                        if *tinted {
+                            let tint = colors.accents.get(index).copied().unwrap_or(0);
+                            SegmentOption::tinted(choice.label, tint)
+                        } else {
+                            SegmentOption::new(choice.label)
+                        }
+                    })
+                    .collect(),
+                selected: get(&self.cfg),
+                width: *width,
             },
-        ];
-        // 声明式扩展设置紧跟在「扩展」分组后面。
-        groups.splice(3..3, self.ext_setting_groups());
-        groups
+        };
+        Row {
+            label: def.title.to_string(),
+            detail: match def.key {
+                "fuzzy" => self.fuzzy_detail(),
+                "ocr_engine" => self.ocr_detail(),
+                _ => def.detail.to_string(),
+            },
+            control,
+        }
+    }
+
+    fn action_row(&self, label: &str, detail: String, buttons: Vec<Button>) -> Row {
+        Row {
+            label: label.to_string(),
+            detail,
+            control: Control::Buttons { items: buttons },
+        }
+    }
+
+    fn secondary(id: &'static str, text: &str, enabled: bool) -> Button {
+        Button {
+            id: Id::new(id, 0),
+            text: text.to_string(),
+            kind: ButtonKind::Secondary,
+            enabled,
+        }
+    }
+
+    fn script_row(&self) -> Row {
+        self.action_row(
+            "运行期脚本",
+            self.script_detail(),
+            vec![
+                Self::secondary(ids::SCRIPTS, "选择", true),
+                Self::secondary(ids::SCRIPTS_DIR, "目录", true),
+            ],
+        )
+    }
+
+    fn consent_row(&self) -> Row {
+        self.action_row(
+            "扩展授权",
+            crate::settings_consent::detail(&self.cfg.extensions, &self.scripts),
+            vec![Button {
+                id: Id::new(ids::CONSENT, 0),
+                text: "同意".to_string(),
+                kind: ButtonKind::Primary,
+                enabled: crate::settings_consent::approve_enabled(
+                    &self.cfg.extensions,
+                    &self.scripts,
+                ),
+            }],
+        )
+    }
+
+    fn audit_row(&self) -> Row {
+        self.action_row(
+            "审计日志",
+            "谁在什么时候调用了截图、识别与上屏".to_string(),
+            vec![Self::secondary(ids::AUDIT, "查看", true)],
+        )
+    }
+
+    fn ext_metrics_row(&self) -> Row {
+        self.action_row(
+            "扩展运行",
+            self.ext_metrics_detail(),
+            vec![Self::secondary(ids::EXT_METRICS, "刷新", true)],
+        )
+    }
+
+    fn ocr_dir_row(&self) -> Row {
+        self.action_row(
+            "识别模型",
+            "放入 det.onnx、rec.onnx、dict.txt".to_string(),
+            vec![Self::secondary(ids::OCR_DIR, "目录", true)],
+        )
+    }
+
+    fn phrases_row(&self) -> Row {
+        self.action_row(
+            "自定义短语",
+            "在设置窗里编辑 phrases.txt，保存后重载".to_string(),
+            vec![Self::secondary(ids::PHRASES, "编辑", true)],
+        )
+    }
+
+    fn punct_row(&self) -> Row {
+        self.action_row(
+            "自定义标点",
+            "编辑 punct.txt,映射半角符号的输出".to_string(),
+            vec![Self::secondary(ids::PUNCT, "编辑", true)],
+        )
+    }
+
+    fn apps_row(&self) -> Row {
+        self.action_row(
+            "按应用配置",
+            "在 apps.toml 里按应用关标点或学习".to_string(),
+            vec![Self::secondary(ids::APPS, "编辑", true)],
+        )
+    }
+
+    fn backup_row(&self) -> Row {
+        self.action_row(
+            "配置备份",
+            "配置、短语、标点、按应用与词库打包成一份文本".to_string(),
+            vec![
+                Self::secondary(ids::BACKUP_EXPORT, "导出", true),
+                Self::secondary(ids::BACKUP_IMPORT, "导入", true),
+            ],
+        )
+    }
+
+    fn user_dict_row(&self) -> Row {
+        self.action_row(
+            "用户词库",
+            "导入、导出或清空本机学习记录".to_string(),
+            vec![
+                Self::secondary(ids::IMPORT_USER, "导入", true),
+                Self::secondary(ids::EXPORT_USER, "导出", true),
+                Button {
+                    id: Id::new(ids::CLEAR_USER, 0),
+                    text: if self.confirm_clear {
+                        "确认清空"
+                    } else {
+                        "清空"
+                    }
+                    .to_string(),
+                    kind: if self.confirm_clear {
+                        ButtonKind::Danger
+                    } else {
+                        ButtonKind::Ghost
+                    },
+                    enabled: true,
+                },
+            ],
+        )
+    }
+
+    fn diagnostics_row(&self) -> Row {
+        self.action_row(
+            "诊断信息",
+            "版本、配置与服务日志导出成一份文本".to_string(),
+            vec![Self::secondary(ids::DIAGNOSTICS, "导出", true)],
+        )
     }
 
     /// 扩展声明式设置展开成的分组。

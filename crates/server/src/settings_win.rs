@@ -18,7 +18,7 @@ use crate::font;
 use crate::settings_a11y::{self, A11y, QueuedAction, WM_A11Y};
 use crate::settings_actions;
 use crate::settings_edit::{self, WM_PHRASES_SAVED};
-use crate::settings_view::{Action, Notice, PageColors, Settings, UpdateState, ids};
+use crate::settings_view::{Action, Notice, PageColors, PageId, Settings, UpdateState, ids};
 use crate::theme;
 use crate::update::{self, Check, Release};
 use lueying_protocol::Request;
@@ -49,7 +49,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 /// 设置窗的逻辑宽(逻辑像素);渲染核心按这个宽度排版。
-const WIDTH: f32 = 460.0;
+const WIDTH: f32 = 760.0;
 /// 设置窗的逻辑高;屏幕不够高时按可用高度收缩。
 const HEIGHT: f32 = 650.0;
 /// 后台查更新回来后窗口收到的消息。
@@ -437,8 +437,12 @@ impl Window {
         } else {
             id
         });
+        let switched_page = PageId::from_nav(id.base).is_some();
         let action = self.settings.activate(&id);
         self.relayout();
+        if switched_page {
+            self.scroll = 0.0;
+        }
         action
     }
 

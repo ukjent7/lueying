@@ -13,11 +13,18 @@ mod paint;
 pub use paint::Painter;
 
 /// 页面宽度(逻辑像素)。
-pub const PAGE_WIDTH: f32 = 460.0;
+pub const PAGE_WIDTH: f32 = 760.0;
 /// 页面留白。
 const PAD: f32 = 18.0;
 /// 头部、卡片与页脚之间的间距。
 const GAP: f32 = 10.0;
+/// 左栏宽度与卡片之间的间距。
+const SIDEBAR_W: f32 = 168.0;
+const SIDEBAR_GAP: f32 = 16.0;
+/// 左栏内边距、每项高度与项间距。
+const SIDEBAR_PAD: f32 = 8.0;
+const NAV_H: f32 = 34.0;
+const NAV_GAP: f32 = 2.0;
 /// 品牌图标边长。
 const LOGO: f32 = 36.0;
 /// 分组标题的上下留白、字号与行高。
@@ -148,13 +155,24 @@ pub struct Group {
     pub rows: Vec<Row>,
 }
 
-/// 页面:头部、分组与页脚。
+/// 左栏的一个分类入口。
+#[derive(Clone, Debug)]
+pub struct NavItem {
+    pub id: Id,
+    pub text: String,
+}
+
+/// 页面:头部、左栏导航、分组与页脚。
 #[derive(Clone, Debug)]
 pub struct Page {
     pub title: String,
     pub subtitle: String,
     /// 头部右侧的按钮(检查更新)。
     pub header_button: Option<Button>,
+    /// 左栏分类导航。
+    pub nav: Vec<NavItem>,
+    /// 当前选中的左栏下标。
+    pub active_nav: usize,
     pub groups: Vec<Group>,
     /// 页脚提示文字与颜色。
     pub notice: String,
@@ -201,6 +219,9 @@ impl Page {
         if self.footer_buttons.iter().any(|button| button.id == id) {
             return true;
         }
+        if self.nav.iter().any(|item| item.id == id) {
+            return true;
+        }
         for group in &self.groups {
             for row in &group.rows {
                 match &row.control {
@@ -231,6 +252,40 @@ impl Page {
         }
         false
     }
+
+    /// Tab 次序:头部 → 左栏 → 当前页控件 → 页脚。
+    pub fn focus_ids(&self) -> Vec<Id> {
+        let mut order = Vec::new();
+        if let Some(button) = &self.header_button
+            && button.enabled
+        {
+            order.push(button.id);
+        }
+        order.extend(self.nav.iter().map(|item| item.id));
+        for group in &self.groups {
+            for row in &group.rows {
+                match &row.control {
+                    Control::Toggle { id, .. } => order.push(*id),
+                    Control::Segment { id, .. } => order.push(Id::new(id.base, 0)),
+                    Control::Buttons { items } => {
+                        order.extend(items.iter().filter(|b| b.enabled).map(|b| b.id));
+                    }
+                    Control::ButtonsToggle { items, toggle, .. } => {
+                        order.extend(items.iter().filter(|b| b.enabled).map(|b| b.id));
+                        order.push(*toggle);
+                    }
+                    Control::None => {}
+                }
+            }
+        }
+        order.extend(
+            self.footer_buttons
+                .iter()
+                .filter(|button| button.enabled)
+                .map(|button| button.id),
+        );
+        order
+    }
 }
 
 /// 布局结果:几何都在物理像素里。
@@ -240,6 +295,8 @@ pub struct Layout {
     pub height: f32,
     /// 卡片在页面里的位置(自然位置,还没滚动)。
     pub card: Rect,
+    /// 左栏导航面板的可视区域。
+    pub sidebar: Rect,
     /// 滚动区:视口里露出来的那一段(页面坐标)。
     pub scroll: Rect,
     /// 页脚:视口底部的一条。
@@ -332,7 +389,6 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
     let pad = PAD * scale;
     let gap = GAP * scale;
     let width = PAGE_WIDTH * scale;
-    let content = width - pad * 2.0;
     // 头部
     let mut y = pad;
     out.logo = Rect::from_xywh(pad, y, LOGO * scale, LOGO * scale);
@@ -348,8 +404,23 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
         out.page_rings.push((button.id, rect));
     }
     y += out.logo.height() + gap;
-    // 卡片:内容按卡片坐标排,整体在页面里往下滚。
     let card_top = y;
+    let footer_h = BUTTON_H * scale;
+    let footer_top = (viewport - footer_h - pad).max(card_top + footer_h);
+    // 左栏:高度从卡片顶到页脚上方,导航项自上而下。
+    let sidebar_h = (footer_top - gap - card_top).max(0.0);
+    out.sidebar = Rect::from_xywh(pad, card_top, SIDEBAR_W * scale, sidebar_h);
+    let item_w = (SIDEBAR_W - SIDEBAR_PAD * 2.0) * scale;
+    let mut ny = card_top + SIDEBAR_PAD * scale;
+    for item in &page.nav {
+        let rect = Rect::from_xywh(pad + SIDEBAR_PAD * scale, ny, item_w, NAV_H * scale);
+        out.page_hits.push((item.id, rect));
+        out.page_rings.push((item.id, rect));
+        ny += (NAV_H + NAV_GAP) * scale;
+    }
+    // 卡片:内容按卡片坐标排,整体在页面里往下滚。
+    let card_left = pad + (SIDEBAR_W + SIDEBAR_GAP) * scale;
+    let content = width - pad - card_left;
     let mut cy = scale;
     let last_group = page.groups.len().saturating_sub(1);
     for (gi, group) in page.groups.iter().enumerate() {
@@ -368,13 +439,11 @@ pub fn layout(page: &Page, font: &Font, scale: f32, viewport: f32) -> Layout {
             }
         }
     }
-    out.card = Rect::from_xywh(pad, card_top, content, cy);
+    out.card = Rect::from_xywh(card_left, card_top, content, cy);
     // 页脚贴视口底,滚动区是卡片起点到页脚之间那一条。
-    let footer_h = BUTTON_H * scale;
-    let footer_top = (viewport - footer_h - pad).max(card_top + footer_h);
-    out.footer = Rect::from_xywh(pad, footer_top, content, footer_h);
+    out.footer = Rect::from_xywh(card_left, footer_top, content, footer_h);
     out.scroll = Rect::from_xywh(
-        pad,
+        card_left,
         card_top,
         content,
         (footer_top - gap - card_top).max(0.0),

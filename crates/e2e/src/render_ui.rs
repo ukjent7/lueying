@@ -28,6 +28,15 @@ fn settings_page() -> ui::Page {
             kind: ui::ButtonKind::Ghost,
             enabled: true,
         }),
+        nav: ["输入", "候选", "扩展", "词库", "关于"]
+            .iter()
+            .enumerate()
+            .map(|(index, text)| ui::NavItem {
+                id: ui::Id::new("nav", index),
+                text: text.to_string(),
+            })
+            .collect(),
+        active_nav: 0,
         groups: vec![ui::Group {
             title: "输入".into(),
             rows: vec![
@@ -318,6 +327,16 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let font = ui_font();
     let page = settings_page();
     let layout = ui::layout(&page, &font, 1.0, 650.0);
+    let nav = layout
+        .page_hit(ui::Id::new("nav", 1))
+        .expect("左栏第二项矩形");
+    let nav_hit = layout.hit_page(center_x(nav), center_y(nav));
+    push(
+        checks,
+        "设置左栏命中",
+        nav_hit == Some(ui::Id::new("nav", 1)),
+        format!("{nav_hit:?}"),
+    );
     // 命中:开关、分段格、按钮各归各位;空白处不命中。
     let toggle = layout.card_hit(ui::Id::new("aux", 0)).expect("开关矩形");
     let hit = layout.hit_card(center_x(toggle), center_y(toggle));
@@ -359,7 +378,8 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         format!("右边距={:.1}", layout.card.right - toggle.right),
     );
     // 像素:窗口底色、开关闭合的旋钮、选中分段的底色。
-    let mut ui_surface = surfaces::raster_n32_premul((460, 650)).expect("raster surface");
+    let mut ui_surface =
+        surfaces::raster_n32_premul((ui::PAGE_WIDTH as i32, 650)).expect("raster surface");
     ui::Painter::new(ui_surface.canvas(), &palette(), &font, 1.0).paint(&page, &layout, None, 0.0);
     let corner = read_bgra(&mut ui_surface, 2, 2);
     push(

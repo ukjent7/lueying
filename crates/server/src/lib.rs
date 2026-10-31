@@ -14,6 +14,8 @@ pub mod settings_consent;
 
 pub mod settings_ext;
 
+pub mod settings_schema;
+
 mod settings_focus;
 
 pub mod settings_view;

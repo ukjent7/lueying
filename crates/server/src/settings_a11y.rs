@@ -162,6 +162,24 @@ pub fn page_tree(
         children.push(node);
     }
 
+    // 左栏分类导航:读屏按“按钮”暴露,当前页在说明里写清楚。
+    for (index, item) in page.nav.iter().enumerate() {
+        let node = node_id(item.id.base, item.id.index);
+        let mut nav = Node::new(Role::Button);
+        nav.set_label(item.text.clone());
+        if index == page.active_nav {
+            nav.set_description("当前页面".to_string());
+        }
+        nav.add_action(Action::Click);
+        nav.add_action(Action::Focus);
+        if let Some(bounds) = page_bounds(layout, item.id) {
+            nav.set_bounds(bounds);
+        }
+        nodes.push((node, nav));
+        ids.push((node, item.id));
+        children.push(node);
+    }
+
     for (group_index, group) in page.groups.iter().enumerate() {
         let group_id = node_id("@group", group_index);
         let mut group_children: Vec<NodeId> = Vec::new();

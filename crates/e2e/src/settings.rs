@@ -12,7 +12,7 @@ use lueying_extmeta::{Setting, SettingValue};
 use lueying_features::SchemeId;
 use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
-use lueying_server::settings_view::{Action, PageColors, ScriptEntry, Settings, ids};
+use lueying_server::settings_view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
 
 use crate::harness::push;
 
@@ -34,8 +34,9 @@ fn settings() -> Settings {
     }
 }
 
-/// 找一行的说明文字;行不在就是 None。
-fn row_detail(page: &ui::Page, group: &str, label: &str) -> Option<String> {
+/// 找某一页里一行的说明文字;行不在就是 None。
+fn row_detail(settings: &Settings, category: PageId, group: &str, label: &str) -> Option<String> {
+    let page = settings.page_view(category, &colors());
     page.groups
         .iter()
         .find(|g| g.title == group)
@@ -52,49 +53,73 @@ pub fn run(report: &mut String) -> usize {
     ];
     let page = settings.page(&colors());
 
-    // 五个分组,顺序固定。
-    let titles: Vec<&str> = page.groups.iter().map(|g| g.title.as_str()).collect();
+    // 左栏五个分类,顺序固定;默认停在「输入」页。
+    let nav: Vec<&str> = page.nav.iter().map(|item| item.text.as_str()).collect();
     push(
         &mut checks,
-        "设置分组齐全",
-        titles == ["输入", "候选", "扩展", "词库", "关于"],
-        format!("{titles:?}"),
+        "设置左栏分类齐全",
+        nav == ["输入", "候选", "扩展", "词库", "关于"]
+            && page.active_nav == 0
+            && page.groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>() == ["输入"],
+        format!("{nav:?} 当前 {}", page.active_nav),
     );
-    // 每组都有行,每行都有标题。
-    let empty_rows = page
-        .groups
+    // 每一页都有行,每行都有标题。
+    let empty_rows = PageId::ALL
         .iter()
-        .flat_map(|g| g.rows.iter())
-        .filter(|r| r.label.is_empty())
+        .flat_map(|category| settings.page_view(*category, &colors()).groups)
+        .flat_map(|group| group.rows)
+        .filter(|row| row.label.is_empty())
         .count();
+    let empty_pages: Vec<&str> = PageId::ALL
+        .iter()
+        .filter(|category| {
+            settings
+                .page_view(**category, &colors())
+                .groups
+                .iter()
+                .all(|group| group.rows.is_empty())
+        })
+        .map(|category| category.title())
+        .collect();
     push(
         &mut checks,
         "设置行都有标题",
-        empty_rows == 0 && page.groups.iter().all(|g| !g.rows.is_empty()),
-        format!("空标题 {empty_rows} 行"),
+        empty_rows == 0 && empty_pages.is_empty(),
+        format!("空标题 {empty_rows} 行,空页 {empty_pages:?}"),
     );
     // 关键开关都在。
-    let aux = row_detail(&page, "输入", "辅助码");
-    let punct = row_detail(&page, "输入", "中文标点");
+    let aux = row_detail(&settings, PageId::Input, "输入", "辅助码");
+    let punct = row_detail(&settings, PageId::Input, "输入", "中文标点");
     push(
         &mut checks,
         "设置关键行在位",
         aux.is_some() && punct.is_some(),
         format!("辅助码={aux:?} 中文标点={punct:?}"),
     );
+    // 左栏点一下切页。
+    let mut nav_settings = settings();
+    nav_settings.activate(&Id::new(PageId::Candidate.nav_id(), 0));
+    push(
+        &mut checks,
+        "设置左栏切页",
+        nav_settings.page == PageId::Candidate
+            && nav_settings.page(&colors()).active_nav == 1
+            && nav_settings.page(&colors()).groups[0].title == "候选",
+        format!("页面={:?}", nav_settings.page),
+    );
 
     // 运行期脚本行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
     // 「目录」交给平台侧;模型本身负责切换与关闭。
-    let idle = row_detail(&page, "扩展", "运行期脚本");
+    let idle = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
     settings.cfg.extensions = vec!["demo-pack".to_string()];
-    let active = row_detail(&settings.page(&colors()), "扩展", "运行期脚本");
+    let active = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
     let audit = settings.activate(&Id::new(ids::AUDIT, 0));
     let metrics = settings.activate(&Id::new(ids::EXT_METRICS, 0));
-    let consent_row = row_detail(&settings.page(&colors()), "扩展", "扩展授权");
-    let audit_row = row_detail(&settings.page(&colors()), "扩展", "审计日志");
+    let consent_row = row_detail(&settings, PageId::Extensions, "扩展", "扩展授权");
+    let audit_row = row_detail(&settings, PageId::Extensions, "扩展", "审计日志");
     let stat = ExtStat {
         id: "demo-pack".to_string(),
         name: "演示包".to_string(),
@@ -106,12 +131,12 @@ pub fn run(report: &mut String) -> usize {
         extensions: vec![stat],
         ..ExtMetrics::default()
     });
-    let metrics_row = row_detail(&settings.page(&colors()), "扩展", "扩展运行");
+    let metrics_row = row_detail(&settings, PageId::Extensions, "扩展", "扩展运行");
     settings.select_script(Some(1));
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
     settings.cfg.extensions = vec!["gone".to_string()];
-    let missing = row_detail(&settings.page(&colors()), "扩展", "运行期脚本");
+    let missing = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
     settings.select_script(None);
     push(
         &mut checks,
@@ -213,7 +238,8 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 焦点顺序:每个控件只出现一次,头尾是更新与保存。
-    let order = Settings::focus_order();
+    let page = settings.page(&colors());
+    let order = settings.focus_ids();
     let mut sorted = order.clone();
     sorted.sort_by_key(|id| (id.base, id.index));
     let mut unique = sorted.clone();
@@ -221,7 +247,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "设置焦点顺序不重",
-        unique.len() == order.len() && order.len() > 20,
+        unique.len() == order.len() && order.len() >= 12,
         format!("{} 项,去重后 {}", order.len(), unique.len()),
     );
     push(
@@ -328,6 +354,7 @@ pub fn run(report: &mut String) -> usize {
         ..Settings::default()
     };
     ext_settings.cfg.extensions = vec!["shot-ocr".to_string()];
+    ext_settings.set_page(PageId::Extensions);
     let ext_page = ext_settings.page(&colors());
     let ext_group = ext_page
         .groups
@@ -344,7 +371,7 @@ pub fn run(report: &mut String) -> usize {
     let focus = ext_settings.focus_ids();
     let toggle_at = focus.iter().position(|id| id.base == toggle);
     let choice_at = focus.iter().position(|id| id.base == choice);
-    let phrases_at = focus.iter().position(|id| id.base == ids::PHRASES);
+    let save_at = focus.iter().position(|id| id.base == ids::SAVE);
     push(
         &mut checks,
         "扩展声明式设置",
@@ -355,8 +382,8 @@ pub fn run(report: &mut String) -> usize {
             })
             && toggle_at.is_some()
             && choice_at.is_some()
-            && phrases_at.is_some_and(|at| toggle_at < Some(at) && choice_at < Some(at)),
-        format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{phrases_at:?}"),
+            && save_at.is_some_and(|at| toggle_at < Some(at) && choice_at < Some(at)),
+        format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{save_at:?}"),
     );
 
     crate::harness::write(report, "设置页模型", checks)

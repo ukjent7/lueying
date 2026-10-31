@@ -31,6 +31,7 @@ impl<'a> Painter<'a> {
     pub fn paint(&self, page: &Page, layout: &Layout, focus: Option<Id>, scroll: f32) {
         self.canvas.clear(color(self.palette.window_bg));
         self.header(page, layout);
+        self.sidebar(page, layout, focus);
         // 卡片:裁在滚动区里,内容按滚动量上移。
         self.canvas.save();
         self.canvas
@@ -42,6 +43,65 @@ impl<'a> Painter<'a> {
         self.canvas.restore();
         self.scrollbar(layout, scroll);
         self.footer(page, layout);
+    }
+
+    /// 左栏:一块浅色面板,当前页用主色文字和淡色选中底。
+    fn sidebar(&self, page: &Page, layout: &Layout, focus: Option<Id>) {
+        let s = self.scale;
+        let panel = layout.sidebar;
+        if panel.width() <= 0.0 || panel.height() <= 0.0 {
+            return;
+        }
+        self.canvas.draw_rrect(
+            RRect::new_rect_radii(
+                panel,
+                &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4],
+            ),
+            &fill_paint(self.palette.surface_alt),
+        );
+        for (index, item) in page.nav.iter().enumerate() {
+            let Some(rect) = layout.ring_page(item.id) else {
+                continue;
+            };
+            let selected = index == page.active_nav;
+            if selected {
+                self.canvas.draw_rrect(
+                    RRect::new_rect_radii(rect, &[Vector::new(RADIUS * s, RADIUS * s); 4]),
+                    &fill_paint(self.palette.selected_bg),
+                );
+                let bar = Rect::from_xywh(
+                    rect.left + 4.0 * s,
+                    rect.top + 8.0 * s,
+                    3.0 * s,
+                    rect.height() - 16.0 * s,
+                );
+                self.canvas.draw_rrect(
+                    RRect::new_rect_radii(bar, &[Vector::new(1.5 * s, 1.5 * s); 4]),
+                    &fill_paint(self.palette.accent),
+                );
+            }
+            let text = Rect::from_xywh(
+                rect.left + 14.0 * s,
+                rect.top,
+                rect.width() - 20.0 * s,
+                rect.height(),
+            );
+            self.label_clipped(
+                &item.text,
+                12.5,
+                selected,
+                if selected {
+                    self.palette.accent_text
+                } else {
+                    self.palette.text_secondary
+                },
+                text,
+                Align::Left,
+            );
+            if focus == Some(item.id) {
+                self.focus_ring(rect);
+            }
+        }
     }
 
     /// 滚动条:内容比视口高时,右边画一根细条,滑块按滚动量走。
