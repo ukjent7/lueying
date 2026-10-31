@@ -11,7 +11,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VK_DOWN, VK_ESCAPE, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, WM_SETFONT,
+    ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, SendMessageW, SetWindowTextW, WM_SETFONT,
 };
 
 /// 搜索框里的键盘循环:Esc 清空或关闭,Tab/↓ 把焦点交给设置页。

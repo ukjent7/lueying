@@ -147,7 +147,7 @@ impl Registry {
         args: &str,
         token: u64,
     ) -> Result<(), String> {
-        match self.dispatch(service, method, args, token) {
+        match self.dispatch(caller, service, method, args, token) {
             Ok(()) => {
                 self.record(caller, service, method, AuditOutcome::Allowed, "发起");
                 Ok(())
@@ -159,7 +159,14 @@ impl Registry {
         }
     }
 
-    fn dispatch(&self, service: &str, method: &str, args: &str, token: u64) -> Result<(), String> {
+    fn dispatch(
+        &self,
+        caller: &str,
+        service: &str,
+        method: &str,
+        args: &str,
+        token: u64,
+    ) -> Result<(), String> {
         let service = Service::ALL
             .iter()
             .copied()
