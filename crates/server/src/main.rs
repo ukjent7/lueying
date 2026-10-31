@@ -17,6 +17,11 @@ fn main() {
             ui_skia_selftest::gpu_selftest();
             return;
         }
+        // V3 帧级基准的 GPU 子进程:同一条崩溃隔离;结果打到 stdout 给父进程。
+        if std::env::var_os("LUEYING_SKIA_BENCH_GPU").is_some() {
+            ui_skia_bench::gpu_bench();
+            return;
+        }
         imp::real_main();
     }
     #[cfg(not(windows))]
@@ -64,6 +69,9 @@ mod ui_skia;
 
 #[cfg(windows)]
 mod ui_skia_cpu;
+
+#[cfg(windows)]
+mod ui_skia_bench;
 
 #[cfg(windows)]
 mod ui_skia_effect;

@@ -82,9 +82,43 @@ pub fn colors_with_accent(appearance: Appearance, accent: u32) -> Colors {
     colors
 }
 
+/// 声明式皮肤覆盖:skin.toml 的浅/深表按字段盖到颜色上,缺的键保留
+/// 主题值。高对比度整份忽略——对比度与读屏是宿主不变量,自定义配色
+/// 不能压过它;脚本主题色同理,皮肤在其之上,是用户显式放置的最后一层。
+pub fn with_skin(colors: Colors, appearance: Appearance, skin: &crate::skin::Skin) -> Colors {
+    if matches!(appearance, Appearance::HighContrast) {
+        return colors;
+    }
+    let Some(over) = skin.for_appearance(matches!(appearance, Appearance::Dark)) else {
+        return colors;
+    };
+    let mut c = colors;
+    if let Some(v) = over.bg { c.bg = v; }
+    if let Some(v) = over.surface { c.surface = v; }
+    if let Some(v) = over.surface_alt { c.surface_alt = v; }
+    if let Some(v) = over.segment { c.segment = v; }
+    if let Some(v) = over.border { c.border = v; }
+    if let Some(v) = over.border_strong { c.border_strong = v; }
+    if let Some(v) = over.text { c.text = v; }
+    if let Some(v) = over.text_secondary { c.text_secondary = v; }
+    if let Some(v) = over.text_tertiary { c.text_tertiary = v; }
+    if let Some(v) = over.accent { c.accent = v; }
+    if let Some(v) = over.accent_hover { c.accent_hover = v; }
+    if let Some(v) = over.accent_text { c.accent_text = v; }
+    if let Some(v) = over.on_accent { c.on_accent = v; }
+    if let Some(v) = over.hover { c.hover = v; }
+    if let Some(v) = over.off_bg { c.off_bg = v; }
+    if let Some(v) = over.knob_off { c.knob_off = v; }
+    if let Some(v) = over.success { c.success = v; }
+    if let Some(v) = over.danger { c.danger = v; }
+    if let Some(v) = over.danger_soft { c.danger_soft = v; }
+    if let Some(v) = over.selected_bg { c.selected_bg = v; }
+    if let Some(v) = over.selected_text { c.selected_text = v; }
+    c
+}
+
 /// 按权重把 `tint` 混进 `base`;0 保留底色,1 取满主题色。
-fn blend(base: u32, tint: u32, weight: f32) -> u32 {
-    let mix = |shift: u32| {
+fn blend(base: u32, tint: u32, weight: f32) -> u32 {    let mix = |shift: u32| {
         let base = ((base >> shift) & 0xff) as f32;
         let tint = ((tint >> shift) & 0xff) as f32;
         (base + (tint - base) * weight).round() as u32

@@ -37,6 +37,9 @@ pub struct FileConfig {
     pub triggers: Option<BTreeMap<String, String>>,
     pub panel_hotkey: Option<String>,
     pub ocr_engine: Option<String>,
+    pub commit_channel: Option<bool>,
+    pub settled_rerank_provider: Option<String>,
+    pub bypass_exe: Option<String>,
     pub update_channel: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
@@ -217,6 +220,15 @@ pub fn apply(
             None => note(format!("ocr_engine={value} 不合法")),
         }
     }
+    if let Some(on) = file.commit_channel {
+        cfg.commit_channel = on;
+    }
+    if let Some(provider) = file.settled_rerank_provider {
+        cfg.settled_rerank_provider = Some(provider);
+    }
+    if let Some(exe) = file.bypass_exe {
+        cfg.bypass_exe = Some(exe);
+    }
     if let Some(value) = file.update_channel {
         match Channel::parse(&value) {
             Some(channel) => cfg.update_channel = channel,
@@ -318,6 +330,11 @@ pub fn from_ini(text: &str) -> FileConfig {
             "triggers" | "trigger" => file.triggers = Some(pairs(value)),
             "panel_hotkey" | "palette_hotkey" => file.panel_hotkey = Some(value.to_string()),
             "ocr_engine" | "ocr" => file.ocr_engine = Some(value.to_string()),
+            "commit_channel" => file.commit_channel = bool_value(value),
+            "settled_rerank_provider" | "rerank_provider" => {
+                file.settled_rerank_provider = Some(value.to_string())
+            }
+            "bypass_exe" => file.bypass_exe = Some(value.to_string()),
             "script" | "extension" => {
                 file.extensions = Some(if matches!(value, "" | "off" | "none") {
                     Vec::new()
@@ -399,6 +416,9 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         extensions: &cfg.extensions,
         panel_hotkey: &cfg.panel_hotkey,
         ocr_engine: cfg.ocr_backend.as_str(),
+        commit_channel: cfg.commit_channel,
+        settled_rerank_provider: cfg.settled_rerank_provider.as_deref(),
+        bypass_exe: cfg.bypass_exe.as_deref(),
         update_channel: cfg.update_channel.as_str(),
         bindings,
         triggers,
@@ -450,6 +470,9 @@ struct SaveFile<'a> {
     extensions: &'a [String],
     panel_hotkey: &'a str,
     ocr_engine: &'static str,
+    commit_channel: bool,
+    settled_rerank_provider: Option<&'a str>,
+    bypass_exe: Option<&'a str>,
     update_channel: &'static str,
     bindings: BTreeMap<&'a str, &'a str>,
     triggers: BTreeMap<&'a str, &'a str>,

@@ -1,0 +1,14 @@
+[package]
+name = "lueying-extwasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "运行期 Wasm 扩展原型:Wasmtime 组件宿主与嵌入成本测量"
+
+[dependencies]
+# 组件宿主:cranelift JIT + 组件模型;按任务书钉在支持 WASI 0.3 的版本线。
+# 缓存、池化分配器、并行编译、GC 与 async 对按键路径没有意义,全部关掉,
+# 体积与冷启动是本原型的测量对象,依赖面越小越接近结论。
+wasmtime = { version = "50", default-features = false, features = [
+    "anyhow", "cranelift", "runtime", "component-model", "wat", "std",
+] }

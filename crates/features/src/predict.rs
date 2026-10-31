@@ -5,15 +5,25 @@
 //! 冷启动语料;用户第一次接某个词后,下一次就能命中。
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
 
 /// 每次组合最多补几条联想,避免把首页灌满。
 const MAX_SUGGESTIONS: usize = 3;
 
+/// 外部联想来源:给前词序列,返回 (词, 全拼)。内置(用户词库搭配)是
+/// 默认;外部来源的结果排在内置联想之后,拼音同样要过前缀过滤。同步
+/// 契约:调用发生在按键路径上,实现必须亚毫秒级(本地小表、预取好的
+/// 缓存);慢模型请在旁路进程自己预取,把现成结果放进来。
+pub trait PredictSource: Send + Sync {
+    fn predict(&self, previous: &[&str], limit: usize) -> Vec<(String, String)>;
+}
+
 /// 下一词联想模块。
 pub struct Prediction {
     enabled: AtomicBool,
+    source: Mutex<Option<Arc<dyn PredictSource>>>,
 }
 
 impl Prediction {
@@ -26,6 +36,7 @@ impl Prediction {
     pub fn with_enabled(enabled: bool) -> Self {
         Self {
             enabled: AtomicBool::new(enabled),
+            source: Mutex::new(None),
         }
     }
 
@@ -37,6 +48,11 @@ impl Prediction {
     /// 当前是否启用。
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// 装外部联想来源(提供者缝);`None` 回到纯内置。
+    pub fn set_source(&self, source: Option<Arc<dyn PredictSource>>) {
+        *self.source.lock().unwrap_or_else(|p| p.into_inner()) = source;
     }
 }
 
@@ -96,8 +112,53 @@ impl Module for Prediction {
                 break;
             }
         }
+        // 外部来源(提供者缝)排在内置联想之后,拼音同样要过前缀过滤。
+        if inserted < MAX_SUGGESTIONS {
+            let words: Vec<&str> = [ctx.previous, ctx.previous2]
+                .into_iter()
+                .flatten()
+                .collect();
+            let source = self.source.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(source) = source.as_ref() {
+                let externals = source.predict(&words, MAX_SUGGESTIONS - inserted);
+                inserted = merge_external(cands, ctx.raw.len(), &query, externals, inserted);
+            }
+        }
     }
 }
+
+/// 把外部联想并进候选,返回累计插入条数;`inserted` 是已插入的内置条数。
+/// 同词不重复,拼音要过前缀过滤,分数压在内置联想(1.0e8)之下。
+fn merge_external(
+    cands: &mut Vec<Candidate>,
+    raw_len: usize,
+    query: &str,
+    externals: Vec<(String, String)>,
+    mut inserted: usize,
+) -> usize {
+    for (word, pinyin) in externals {
+        if inserted >= MAX_SUGGESTIONS {
+            break;
+        }
+        if cands.iter().any(|cand| cand.text == word) {
+            continue;
+        }
+        if !matches_key(&pinyin, query) {
+            continue;
+        }
+        let mut cand = Candidate::whole(raw_len, word, 1.0e7 - inserted as f64);
+        cand.completion = true;
+        cand.hint = Some("联想".to_string());
+        let at = (inserted + 1).min(cands.len());
+        cands.insert(at, cand);
+        inserted += 1;
+    }
+    inserted
+}
+
+#[cfg(test)]
+#[path = "predict_tests.rs"]
+mod tests;
 
 /// 当前输入是否是联想词拼音的前缀。全拼按字母前缀,简拼按各音节首字母。
 fn matches_key(key: &str, query: &str) -> bool {

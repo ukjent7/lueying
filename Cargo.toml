@@ -14,6 +14,10 @@ members = [
     "crates/protocol",
     # 运行期扩展:场景协议 + QuickJS 宿主,平台无关
     "crates/extjs",
+    # 运行期扩展:旁路进程层,按需启动、JSON 行协议,平台无关
+    "crates/bypass",
+    # 运行期扩展:Wasm 组件宿主原型(Wasmtime),平台无关
+    "crates/extwasm",
     # 扩展服务缝:提供者契约与完成队列,平台无关
     "crates/extsvc",
     # 渲染核心:候选窗 Skia 出帧,平台无关
@@ -41,6 +45,8 @@ lueying-ext = { path = "crates/ext" }
 lueying-extjs = { path = "crates/extjs" }
 lueying-extmeta = { path = "crates/extmeta" }
 lueying-extsvc = { path = "crates/extsvc" }
+lueying-extwasm = { path = "crates/extwasm" }
+lueying-bypass = { path = "crates/bypass" }
 lueying-features = { path = "crates/features" }
 lueying-ocr = { path = "crates/ocr" }
 lueying-render = { path = "crates/render" }

@@ -317,6 +317,131 @@ pub fn reload() -> Result<(), String> {
     Ok(())
 }
 
+/// 对外 commit 通道的令牌路径,与服务端 `config::commit_token_path` 同址。
+fn commit_token_path() -> Option<PathBuf> {
+    let base = std::env::var_os("APPDATA")?;
+    Some(PathBuf::from(base).join("lueying").join("commit-token"))
+}
+
+fn read_commit_token() -> Option<String> {
+    fs::read_to_string(commit_token_path()?)
+        .ok()
+        .map(|text| text.trim().to_string())
+}
+
+/// 借用输入法的上屏能力:把文本交给常驻服务写进当前输入框(任务书 6.3)。
+/// 服务端开启 commit_channel 后收到第一次请求才生成令牌,所以拿到的令牌
+/// 变了就读回新值重试一次;通道未开时令牌不会变化,不会白重试。
+pub fn commit(text: &str) -> Result<String, String> {
+    let mut token = read_commit_token();
+    let mut reply = send_external_commit(token.as_deref(), text)?;
+    let delivered = matches!(&reply.commit, Some(result) if result.delivered);
+    if !delivered {
+        let fresh = read_commit_token();
+        if fresh != token {
+            token = fresh;
+            reply = send_external_commit(token.as_deref(), text)?;
+        }
+    }
+    match reply.commit {
+        Some(result) if result.delivered => Ok(format!("已上屏: {text}")),
+        Some(result) if result.error.is_empty() => Err("服务没有确认上屏".into()),
+        Some(result) => Err(result.error),
+        None => Err("常驻服务不支持对外 commit;升级输入法后再试".into()),
+    }
+}
+
+fn send_external_commit(token: Option<&str>, text: &str) -> Result<lueying_protocol::Reply, String> {
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(pipe_name())
+        .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
+    let line = serde_json::to_string(&Request::ExternalCommit {
+        token: token.unwrap_or_default().to_string(),
+        text: text.to_string(),
+    })
+    .map_err(|e| format!("序列化请求: {e}"))?;
+    writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
+    file.flush().map_err(|e| format!("写管道: {e}"))?;
+    let mut reply = String::new();
+    BufReader::new(file)
+        .read_line(&mut reply)
+        .map_err(|e| format!("读应答: {e}"))?;
+    if reply.trim().is_empty() {
+        return Err("服务没有应答 ExternalCommit".into());
+    }
+    serde_json::from_str(reply.trim()).map_err(|e| format!("解析应答: {e}"))
+}
+
+/// 发一条请求收一条应答;`what` 只用于空应答的报错。
+fn pipe_call(request: &Request, what: &str) -> Result<lueying_protocol::Reply, String> {
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(pipe_name())
+        .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
+    let line = serde_json::to_string(request).map_err(|e| format!("序列化请求: {e}"))?;
+    writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
+    file.flush().map_err(|e| format!("写管道: {e}"))?;
+    let mut reply = String::new();
+    BufReader::new(file)
+        .read_line(&mut reply)
+        .map_err(|e| format!("读应答: {e}"))?;
+    if reply.trim().is_empty() {
+        return Err(format!("服务没有应答 {what}"));
+    }
+    serde_json::from_str(reply.trim()).map_err(|e| format!("解析应答: {e}"))
+}
+
+/// 取回通用扩展请求的值;服务端报错原样上抛。
+fn ext_value(id: &str, method: &str, what: &str) -> Result<serde_json::Value, String> {
+    let reply = pipe_call(
+        &Request::Ext {
+            id: id.to_string(),
+            method: method.to_string(),
+            params: serde_json::Value::Null,
+        },
+        what,
+    )?;
+    let ext = reply
+        .ext
+        .ok_or_else(|| format!("服务没有返回 {what} 的结果"))?;
+    if ext.ok {
+        Ok(ext.value)
+    } else {
+        Err(ext.error)
+    }
+}
+
+/// 可触发的扩展命令清单;`run` 只接受这里的 id。
+pub fn commands() -> Result<Vec<(String, String)>, String> {
+    let value = ext_value("", "commands.list", "commands.list")?;
+    let Some(list) = value.as_array() else {
+        return Err("命令清单不是数组".into());
+    };
+    Ok(list
+        .iter()
+        .filter_map(|item| {
+            Some((
+                item.get("id")?.as_str()?.to_string(),
+                item.get("title")?.as_str()?.to_string(),
+            ))
+        })
+        .collect())
+}
+
+/// 触发一条扩展命令;与动作候选、热键同一条执行路径,结果落在掠影
+/// 自己的界面与日志,这里只确认已投递。
+pub fn run(id: &str) -> Result<String, String> {
+    let value = ext_value(id, "command.run", "command.run")?;
+    let command = value
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or(id);
+    Ok(format!("已提交 {command};结果看掠影的通知与日志"))
+}
+
 /// 服务日志末尾;`tail` 是行数。
 pub fn logs(args: &LogsArgs) -> Result<String, String> {
     let path = args

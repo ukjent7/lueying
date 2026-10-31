@@ -1,0 +1,24 @@
+[package]
+name = "lueying-bypass"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "旁路进程层:按需启动、JSON 行协议、调用超时即杀与服务提供者替换"
+
+[dependencies]
+# 服务名单沿用清单模型;提供者替换走服务缝的 Provider 槽位。
+lueying-extmeta.workspace = true
+lueying-extsvc.workspace = true
+serde_json = "1"
+
+[target."cfg(windows)".dependencies]
+# Job Object 限额:内存、CPU 速率;沿用宿主同一条 windows-rs 版本线。
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[[bin]]
+name = "bypass-echo"
+path = "src/bin/bypass_echo.rs"

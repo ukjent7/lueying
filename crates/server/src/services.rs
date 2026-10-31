@@ -415,7 +415,8 @@ impl Provider for OutputProvider {
 /// 把文本按 Unicode 注入当前焦点。走 `SendInput` 的 VK_PACKET 通道,不经过
 /// 键盘布局与输入法组句;Electron 与自绘控件收 WM_CHAR,不依赖 TSF 会话。
 /// 换行按回车送(编辑控件里就是分段),制表符换成空格,避免焦点在对话框里跳走。
-fn deliver_text(text: &str) -> Result<bool, String> {
+/// 对外 commit 通道(`Request::ExternalCommit`)复用同一条上屏路径。
+pub fn deliver_text(text: &str) -> Result<bool, String> {
     let units = deliver_units(text);
     if units.is_empty() {
         return Ok(false);

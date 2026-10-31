@@ -74,8 +74,9 @@ pub(super) fn section() -> String {
     text
 }
 
-/// V3(部分):二进制体积。帧级 GPU/CPU 测量要等候选窗渲染核心能独立驱动,
-/// 挂到 T17 之前;体积先给 Skia 裁剪评估一个基线。
+/// V3(部分):二进制体积与帧级测量。帧级数据由服务端按
+/// `LUEYING_SKIA_BENCH` 在启动时产出(报告随 CI artifact 保留),
+/// 「按 V3 数据决定默认渲染路径」的依据见 docs/architecture.md。
 fn v3_sizes(rows: &mut Vec<Row>) {
     let mut parts = Vec::new();
     for name in [
@@ -98,12 +99,61 @@ fn v3_sizes(rows: &mut Vec<Row>) {
         Verdict::Note,
         parts.join(", "),
     ));
-    rows.push((
-        "V3",
-        "候选窗 GPU/CPU 常驻内存与首帧",
-        Verdict::Note,
-        "帧级测量需要候选窗渲染核心可独立驱动(基准模式);挂到 T17 前补。".to_string(),
-    ));
+    rows.push(("V3", "候选窗 GPU/CPU 首帧与稳态帧", v3_frames_verdict(), v3_frames_note()));
+}
+
+/// V3 帧级报告路径;win-e2e 启动服务端时用同一路径设 `LUEYING_SKIA_BENCH`。
+pub(super) fn bench_report_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("target")
+        .join("v3-frames.md")
+}
+
+/// 报告存在与否决定结果行;数据本身是测量,没有通过/失败语义。
+fn v3_frames_verdict() -> Verdict {
+    if bench_report_path().is_file() {
+        Verdict::Note
+    } else {
+        Verdict::Fail
+    }
+}
+
+/// 从报告里抽出两条路的首帧与稳态;抽不到就带整份说明。
+fn v3_frames_note() -> String {
+    let path = bench_report_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(_) => return "报告未生成:服务端没有跑出基准(env LUEYING_SKIA_BENCH)".into(),
+    };
+    let mut parts = Vec::new();
+    for block in text.split("### ") {
+        let Some(title) = block.lines().next() else {
+            continue;
+        };
+        // 导语块没有标题行,跳过;只认两条路径的小节。
+        if !(title.starts_with("CPU") || title.starts_with("GPU")) {
+            continue;
+        }
+        let pick = |label: &str| {
+            block
+                .lines()
+                .find(|line| line.starts_with(&format!("| {label}")))
+                .and_then(|line| line.split('|').nth(2))
+                .map(|value| value.trim().to_string())
+                .unwrap_or_else(|| "缺".into())
+        };
+        parts.push(format!(
+            "{title}: 首帧 {} 稳态 {} SkSL {}",
+            pick("首帧"),
+            pick("稳态均值"),
+            pick("SkSL 稳态均值"),
+        ));
+    }
+    if parts.is_empty() {
+        return format!("报告格式不对:{}", path.display());
+    }
+    format!("{};详见 {}", parts.join(";"), path.display())
 }
 
 /// V8:RegisterHotKey 的注册、冲突与保留键;管理员前台场景在本环境不可复现。

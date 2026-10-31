@@ -101,6 +101,31 @@ Skia 拿着空命令表句柄继续走就崩。建不出设备就退到 CPU 兜�
 驱动异常的机器上 GPU 管线会把进程带崩,隔离在子进程里,崩了也不影响输入法,
 日志如实记下原因。
 
+默认渲染路径按 V3 数据决定,测量先行:服务端按 `LUEYING_SKIA_BENCH` 在启动时
+跑帧级基准(CPU 光栅本进程、Ganesh-D3D12 子进程,崩溃隔离与自检同款),量
+建面、首帧、稳态帧、SkSL 帧增量与基准期间工作集增量,报告落 `target/v3-frames.md`
+随 CI artifact 保留。**决策(2026-10-31):维持「GPU 优先、CPU 光栅兜底」。**
+依据:CPU 光栅稳态帧在毫秒级(基准数据见 artifact),单独当默认完全够用;但
+GPU 存在时它把每帧的栅格化让给硬件,打字热路径少抢 CPU,首帧也更低;CPU 兜底
+只在建不出硬件 D3D12 或设备被摘时启用,画面与上屏已由换手自检验证等价。若
+后续基准显示 CPU 稳态超预算或 GPU 首帧劣化,以数据为准重开这个决策。
+
+配色上有声明式皮肤层:`%APPDATA%\lueying\skin.toml` 浅/深两张表按字段覆盖
+主题色(键名与内部主题字段一致),高对比度下整份忽略;SkSL 用户效果是它之上
+的高级层,只管动效,颜色见 [skin.md](skin.md)、效果见 effects.md。
+
+Skia 体积裁剪评估(2026-10-31,结论:维持现键,不再投入):预编译键
+`d3d-ganesh-jpegd-jpege-pdf-textlayout` 已经是 rust-skia 0.156 发布集里唯一
+同时满足「D3D12 后端 + textlayout」的 x86_64 Windows 资产(压缩包 24.4 MiB);
+该发布集里所有带 `textlayout` 的 Windows 资产都强制捆着 `jpegd-jpege-pdf`,
+没有可命中的「textlayout 不带 pdf」资产——这就是 Cargo.toml 里 jpeg/pdf
+「不是功能需求,是命中预编译键的必要条件」的原因。textlayout 本身不可去:
+形状排版靠它,且只有带它的预编译包才带 `icudtl.dat`(`embed-icudtl` 要用)。
+自建 Skia 理论上可裁:上下界参考是「无 textlayout 资产 9.4 MiB ↔ 现键
+24.4 MiB」,即压缩口径最多省约 15 MiB,静态链接进 exe 后占比更小;代价是
+每次升级都要自编全平台二进制、维护交叉编译与哈希,收益不抵。等上游发布
+`textlayout` 不带 `pdf` 的 Windows 资产、或候选窗改用 graphite 后端时重新评估。
+
 ## 设置窗
 
 设置窗是独立的 `lueying-settings.exe`:普通不透明 Win32 窗(客户区 460×650

@@ -635,7 +635,10 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         Some(rgb) if !high_contrast => theme::colors_with_accent(appearance, rgb),
         _ => theme::colors_with(appearance, accent),
     };
-    let palette = theme::palette(colors);
+    // 皮肤(skin.toml)叠在脚本主题色之上,是用户显式放置的最后一层;
+    // 高对比度下 with_skin 原样返回。
+    let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
+    let palette = theme::palette(theme::with_skin(colors, appearance, &skin));
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
         Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),

@@ -374,6 +374,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2",
  "subtle",
@@ -621,6 +622,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lueying-bypass"
+version = "0.1.0"
+dependencies = [
+ "lueying-extmeta",
+ "lueying-extsvc",
+ "serde_json",
+ "windows",
+]
+
+[[package]]
 name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
@@ -649,6 +660,7 @@ dependencies = [
  "lueying-engine",
  "lueying-extjs",
  "lueying-extmeta",
+ "lueying-extwasm",
  "lueying-features",
  "lueying-render",
  "lueying-rerank",
@@ -695,6 +707,13 @@ name = "lueying-extsvc"
 version = "0.1.0"
 dependencies = [
  "lueying-extmeta",
+]
+
+[[package]]
+name = "lueying-extwasm"
+version = "0.1.0"
+dependencies = [
+ "wasmtime",
 ]
 
 [[package]]
@@ -760,6 +779,7 @@ dependencies = [
  "accesskit",
  "accesskit_windows",
  "ed25519-dalek",
+ "lueying-bypass",
  "lueying-dict",
  "lueying-engine",
  "lueying-extjs",

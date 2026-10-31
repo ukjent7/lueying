@@ -4,6 +4,8 @@ pub mod accents;
 
 pub mod command_panel;
 
+pub mod commit;
+
 pub mod config;
 
 mod config_file;
@@ -17,6 +19,10 @@ mod settings_focus;
 pub mod settings_view;
 
 mod settings_text;
+
+pub mod seam;
+
+pub mod skin;
 
 pub mod update_manifest;
 

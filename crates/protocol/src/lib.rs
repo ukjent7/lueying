@@ -173,14 +173,20 @@ pub enum Request {
     Page { session: u64, delta: i32 },
     /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
     UiMode { session: u64, host_draws: bool },
-    /// 通用扩展请求:`id` 是扩展,`method` 由宿主分派,`params` 原样透传。
-    /// 目前宿主提供 `settings.get` / `settings.set`(声明式设置的读写)。
+    /// 通用扩展请求:`id` 是扩展(命令方法里是完整命令 id),`method`
+    /// 由宿主分派,`params` 原样透传。宿主提供 `settings.get` /
+    /// `settings.set`(声明式设置的读写)与 `commands.list` /
+    /// `command.run`(外部启动器触发扩展命令)。
     Ext {
         id: String,
         method: String,
         #[serde(default)]
         params: Value,
     },
+    /// 对外 commit 通道:本地工具借用上屏能力,不必自己做输入法。令牌
+    /// 来自 `%APPDATA%\lueying\commit-token`,只在配置显式开启后生成;
+    /// 隐私字段下永不注入(任务书 6.3)。
+    ExternalCommit { token: String, text: String },
     /// 会话下线。
     Goodbye { session: u64 },
 }
@@ -226,6 +232,17 @@ pub struct Reply {
     /// 通用扩展请求的应答(仅 `Ext` 使用)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ext: Option<ExtReply>,
+    /// 对外 commit 通道的结果(仅 `ExternalCommit` 使用)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitReply>,
+}
+
+/// 对外 commit 通道的结果;失败带人话原因。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommitReply {
+    pub delivered: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
 }
 
 /// 通用扩展请求的结果:成功带值,失败带人话原因。

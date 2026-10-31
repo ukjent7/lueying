@@ -6,6 +6,37 @@
 
 ### 新增
 
+- 对外 commit 通道(T15):其他本地工具可借用输入法的上屏能力,不必自己
+  做输入法。协议新增 `Request::ExternalCommit { token, text }` 与
+  `Reply.commit`,三道门按「用户确认 → 调用方鉴权 → 隐私」顺序判:
+  配置键 `commit_channel` 默认关,即用户确认;64 位十六进制随机令牌存
+  `%APPDATA%\lueying\commit-token`,只在通道开启后由服务端生成;活动
+  会话是隐私字段时一律拒绝。管道沿用主管道 SDDL,远程客户端连不上。
+  CLI 新增 `lueying ext commit <文本>`;令牌变化时读回重试一次,覆盖
+  开启后的第一次调用。
+- PowerToys 命令面板桥接(T16):扩展命令可以从掠影之外触发。宿主方法
+  新增 `commands.list` / `command.run`,与动作候选、热键走同一条执行
+  路径,隐私字段下拒绝;CLI 新增 `lueying ext run <命令 id>` 与
+  `lueying ext commands`。命令面板用「书签」包住 CLI 即可唤起;原生
+  扩展模型(.NET WinRT + MSIX)评估后不做,接法见 docs/extensions/powertoys.md。
+- 声明式皮肤层(T17):`%APPDATA%\lueying\skin.toml` 浅/深两张表按字段覆盖
+  候选窗配色,缺键用主题默认,高对比度整份忽略;改完 reload 生效。SkSL
+  用户效果是它之上的高级层,见 docs/skin.md。
+- 候选窗 V3 帧级测量(T17):Windows E2E 随服务端跑帧级基准,量两条渲染
+  路径的建面、首帧、稳态帧、SkSL 增量与工作集增量,报告
+  `target/v3-frames.md` 随 CI artifact 保留;默认路径按数据决策并记录在
+  docs/architecture.md(维持 GPU 优先、CPU 兜底)。Skia 体积裁剪同批评估:
+  预编译键已是最小可用组合,维持现键,评估记录同上。
+- 重排/联想服务缝(T18):停顿重排可换提供者——配置
+  `settled_rerank_provider="bypass"` 与 `bypass_exe` 后,静默窗口的置顶
+  建议由旁路进程(本地大模型等)给出,连续 3 次失败自动回落内置 25M,
+  默认关;联想模块开放外部来源缝(`features::PredictSource`,结果排在
+  内置联想之后、拼音过同一道前缀过滤),为本地模型联想预留,默认不装。
+- Wasm 扩展层与旁路进程原型(T14):`crates/extwasm` 用 wasmtime 组件
+  模型跑通 `probe` 世界,燃料、epoch、8 MiB 内存上限与连续 3 次失败停用
+  与脚本层预算对齐;`crates/bypass` 定义 JSON 行协议与 Job Object 限额,
+  按需启动的子进程超时即杀;`BypassProvider` 接进服务缝,服务提供者替换
+  就绪。嵌入成本在 e2e 的 wasm 场景测量,采纳结论与 V3 帧级测量一起定。
 - 扩展开发回路(T12):`lueying ext` 新增 `new` / `pack` / `install` /
   `reload` / `logs` 子命令,覆盖建骨架、打包(`.luext` 行数声明文本块,
   只收 UTF-8 文本)、安装(默认不覆盖,`--force` 覆盖,装完复验清单)、

@@ -126,3 +126,9 @@ impl Scheme for Uppercase {
 `lueying ext replay` 在 Linux 无头环境回放按键脚本(按键序列进,候选列表
 出),用来验证拼音行为与触发词,输出确定性、可直接当回归用例。面向
 coding agent 的完整流程见 [agent-guide.md](agent-guide.md)。
+
+## 外部启动器
+
+扩展命令可以从掠影之外触发:`lueying ext run <命令 id>` 与动作候选、
+热键走同一条执行路径,PowerToys 命令面板用「书签」包住这条命令就能
+唤起。接法与取舍见 [powertoys.md](powertoys.md)。

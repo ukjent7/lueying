@@ -1,0 +1,34 @@
+// 掠影 Wasm 层 WIT 契约(原型)。
+//
+// 与 extsvc 的 lueying.wit 一样是记录文件:Rust 侧宿主按 probe 世界接
+// (平坦标量,线性内存为零),rerank 世界是候选重排的目标形态,等测量
+// 结果决定是否产品化,届时由 wit-parser/bindgen 生成宿主绑定。改接口
+// 先改这里。
+
+package lueying:wasm@1.0.0;
+
+// 原型探针:测量编译、实例化与调用开销。只含平坦标量,宿主侧不需要
+// 结构化解码,任何语言工具链都能编出等价组件。
+world probe {
+  export add: func(a: u32, b: u32) -> u32;
+}
+
+// 候选重排:正式形态。候选模块只能回排序、过滤或分数修正;输入输出走
+// 线性内存里的结构化缓冲,由组件模型的规范 ABI 编码。
+interface rerank {
+  record candidate {
+    text: string,
+    score: f32,
+  }
+  record patch {
+    // 重排后的展示顺序,值是入参下标;缺的候选按原顺序排在其后。
+    order: list<u32>,
+    // 直接过滤掉的候选下标。
+    drop: list<u32>,
+  }
+  rank: func(candidates: list<candidate>, left: string) -> result<patch, string>;
+}
+
+world rerank-module {
+  export rerank;
+}

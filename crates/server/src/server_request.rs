@@ -612,8 +612,10 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             let result = match method.as_str() {
                 "settings.get" => settings_get(state, &id),
                 "settings.set" => settings_set(state, &mut sessions, &id, params),
+                "commands.list" => commands_list(state),
+                "command.run" => command_run(state, &sessions, &id),
                 _ => Err(format!(
-                    "扩展方法 {method:?} 不存在;宿主提供 settings.get / settings.set"
+                    "扩展方法 {method:?} 不存在;宿主提供 settings.get / settings.set / commands.list / command.run"
                 )),
             };
             let ext = match result {
@@ -630,6 +632,83 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             };
             Reply {
                 ext: Some(ext),
+                ..Reply::default()
+            }
+        }
+        Request::ExternalCommit { token, text } => {
+            // 任务书 6.3:用户确认(配置开关)→ 调用方鉴权(令牌)→
+            // 隐私字段。决策逻辑在平台无关的 `commit` 模块,服务端只接线。
+            let enabled = state
+                .config
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .commit_channel;
+            let expected = if enabled {
+                let mut held = state
+                    .commit_token
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                match config::commit_token_path() {
+                    Some(path) => match lueying_server::commit::ensure_token(&path) {
+                        Ok(value) => {
+                            *held = Some(value.clone());
+                            Some(value)
+                        }
+                        Err(error) => {
+                            println!("生成 commit 令牌失败: {error}");
+                            held.clone()
+                        }
+                    },
+                    None => held.clone(),
+                }
+            } else {
+                None
+            };
+            // 隐私状态跟活动会话;没有会话时无法确认目标字段,按拒绝处理。
+            let private = match sessions.get(&state.active.load(Ordering::Relaxed)) {
+                Some(session) => session.private,
+                None => {
+                    println!("对外 commit: 拒绝(没有活动会话,{} 字节)", text.len());
+                    return Reply {
+                        commit: Some(lueying_protocol::CommitReply {
+                            delivered: false,
+                            error: "没有活动会话,无法确认目标字段".to_string(),
+                        }),
+                        ..Reply::default()
+                    };
+                }
+            };
+            let decision =
+                lueying_server::commit::decide(enabled, expected.as_deref(), &token, private);
+            if let Err(error) = decision {
+                println!("对外 commit: 拒绝({error})");
+                return Reply {
+                    commit: Some(lueying_protocol::CommitReply {
+                        delivered: false,
+                        error,
+                    }),
+                    ..Reply::default()
+                };
+            }
+            let delivered = match lueying_server::services::deliver_text(&text) {
+                Ok(delivered) => delivered,
+                Err(error) => {
+                    println!("对外 commit: 上屏失败({error})");
+                    return Reply {
+                        commit: Some(lueying_protocol::CommitReply {
+                            delivered: false,
+                            error,
+                        }),
+                        ..Reply::default()
+                    };
+                }
+            };
+            println!("对外 commit: 已上屏 {} 字节", text.len());
+            Reply {
+                commit: Some(lueying_protocol::CommitReply {
+                    delivered,
+                    error: String::new(),
+                }),
                 ..Reply::default()
             }
         }
@@ -717,6 +796,54 @@ fn invoke_extension(state: &State, id: &str) {
         }
         None => println!("动作候选跳过:脚本线程未启动({id})"),
     }
+}
+
+/// `Ext` 的 `commands.list`:标题表就是已加载命令的权威清单,供外部
+/// 启动器枚举(PowerToys 命令面板书签、脚本、CLI `lueying ext commands`)。
+fn commands_list(state: &State) -> Result<serde_json::Value, String> {
+    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
+    let hub = hub.as_ref().ok_or("扩展线程未启动;先在设置里启用扩展")?;
+    let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
+    let mut list: Vec<(&String, &String)> = titles.iter().collect();
+    list.sort();
+    Ok(serde_json::Value::Array(
+        list.into_iter()
+            .map(|(id, title)| serde_json::json!({ "id": id, "title": title }))
+            .collect(),
+    ))
+}
+
+/// `Ext` 的 `command.run`:外部启动器触发扩展命令。与动作候选、热键走
+/// 同一条执行路径,结果落在掠影自己的界面与日志;执行是异步的,这里只
+/// 确认已投递。隐私字段下拒绝,与热键的门禁一致。
+fn command_run(
+    state: &State,
+    sessions: &std::collections::HashMap<u64, Session>,
+    id: &str,
+) -> Result<serde_json::Value, String> {
+    if sessions
+        .get(&state.active.load(Ordering::Relaxed))
+        .is_some_and(|session| session.private)
+    {
+        return Err("隐私字段下不执行扩展命令".into());
+    }
+    // 清单 id 一律小写;外部调用方大小写混用也认。
+    let id = id.trim().to_ascii_lowercase();
+    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
+    let hub = hub.as_ref().ok_or("扩展线程未启动;先在设置里启用扩展")?;
+    {
+        let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
+        if !titles.contains_key(&id) {
+            return Err(format!("命令 {id} 不存在;用 commands.list 查看可用命令"));
+        }
+    }
+    hub.invoke
+        .send(ExtInvoke {
+            command: id.clone(),
+            source: "外部触发",
+        })
+        .map_err(|_| "扩展线程已退出".to_string())?;
+    Ok(serde_json::json!({ "submitted": true, "command": id }))
 }
 
 /// `Ext` 的 `settings.get`:清单默认值 + 配置里的当前值。

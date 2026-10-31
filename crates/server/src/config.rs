@@ -267,6 +267,12 @@ pub struct AppConfig {
     pub panel_hotkey: String,
     /// 截图 OCR 引擎;模型缺失时 PP-OCR 会回明确错误。
     pub ocr_backend: OcrBackend,
+    /// 对外 commit 通道;默认关。开启后本地工具可凭令牌借用上屏能力。
+    pub commit_channel: bool,
+    /// 停顿重排提供者:`bypass` 走旁路进程,缺省用内置 25M 模型。
+    pub settled_rerank_provider: Option<String>,
+    /// 旁路可执行文件路径;重排缝的提供者从这里拉起。
+    pub bypass_exe: Option<String>,
     /// 更新渠道。
     pub update_channel: Channel,
     /// 自定义标点映射,来自 `punct.txt`。
@@ -302,6 +308,10 @@ impl Default for AppConfig {
             // 三个修饰键避开常见应用快捷键;不想要就在配置里写 off。
             panel_hotkey: "Ctrl+Alt+Shift+Space".to_string(),
             ocr_backend: OcrBackend::System,
+            // 对外 commit 通道默认关;开启在设置里显式做,令牌随后生成。
+            commit_channel: false,
+            settled_rerank_provider: None,
+            bypass_exe: None,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
             apps: BTreeMap::new(),
@@ -476,10 +486,23 @@ pub fn ext_audit_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("logs").join("ext-audit.log"))
 }
 
+/// 对外 commit 通道的鉴权令牌(`%APPDATA%\lueying\commit-token`)。
+/// 只在 `commit_channel` 开启后由常驻服务生成。
+pub fn commit_token_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("APPDATA")?);
+    Some(crate::commit::token_path(&base.join("lueying")))
+}
+
 /// 扩展运行指标快照(`%LOCALAPPDATA%\lueying\logs\ext-metrics.json`)。
 pub fn ext_metrics_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
     Some(base.join("lueying").join("logs").join("ext-metrics.json"))
+}
+
+/// 声明式皮肤(`%APPDATA%\lueying\skin.toml`);缺文件用默认主题。
+pub fn skin_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("APPDATA")?);
+    Some(base.join("lueying").join("skin.toml"))
 }
 
 /// 读配置。文件缺失用默认值;TOML/值域错误收集进 `config_issues`,不阻断

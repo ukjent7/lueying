@@ -94,8 +94,13 @@ jobs:
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
       # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
+      # 旁路与 Wasm 两层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
+      # CLI 的子命令解析同样不进 E2E,在这里跑。
       - name: 扩展层单元测试
-        run: cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
+        run: |
+          cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
+          cargo test -p lueying-bypass -p lueying-extwasm --locked
+          cargo test -p lueying-cli --lib --locked
 
   # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准。
   # 1444 条共享语料逐条重排成本高,拆进下面的 bench job 与场景并行。
@@ -283,7 +288,9 @@ jobs:
       # 路径,挂到发版构建,push 门禁省下三分多钟的测试编译。
       - name: 服务端单元测试(Windows)
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success'
-        run: cargo test -p lueying-server --lib --release --locked
+        run: |
+          cargo test -p lueying-server --lib --release --locked
+          cargo test -p lueying-bypass --release --locked
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
       - name: TSF 构建(静态 CRT)
         env:
@@ -373,6 +380,7 @@ jobs:
           path: |
             target/win-e2e-report.md
             target/ext-verify-report.md
+            target/v3-frames.md
             target/win-e2e-tsf.log
             target/win-e2e-server.log
             target/lueying-settings-selftest.txt

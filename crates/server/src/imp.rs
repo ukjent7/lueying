@@ -111,6 +111,12 @@ pub(super) struct State {
     pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
     /// 所有会话共用一份学习结果。
     pub(super) user: SharedUser,
+    /// 对外 commit 通道的令牌缓存;首次使用时从文件读或生成。
+    pub(super) commit_token: Mutex<Option<String>>,
+    /// 声明式皮肤(skin.toml);重载配置时一并重读。
+    pub(super) skin: Mutex<lueying_server::skin::Skin>,
+    /// 停顿重排的提供者缝;默认空槽走内置模型。
+    pub(super) settled_slot: Mutex<lueying_server::seam::SettledSlot>,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
     pub(super) modules: Arc<Modules>,
     /// 自定义短语模块;设置重载时重新读文件。
@@ -338,6 +344,9 @@ pub(super) fn real_main() {
         settle_tx,
         uia_tx: Some(uia_tx),
         user,
+        commit_token: Mutex::new(None),
+        skin: Mutex::new(load_skin()),
+        settled_slot: Mutex::new(lueying_server::seam::SettledSlot::new()),
         modules: crate::modules::registry(
             phrases.clone(),
             Arc::clone(&prediction),
@@ -371,6 +380,10 @@ pub(super) fn real_main() {
     if std::env::var_os("LUEYING_SKIA_SELFTEST").is_some() {
         crate::ui_skia_selftest::selftest();
         crate::ext_selftest::run();
+    }
+    // V3 帧级基准(E2E 打开):CPU 本进程、GPU 子进程,报告落盘随 artifact 保留。
+    if let Some(report) = std::env::var_os("LUEYING_SKIA_BENCH") {
+        crate::ui_skia_bench::run(&report.to_string_lossy());
     }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
@@ -656,8 +669,45 @@ fn group_reply(user: &SharedUser) -> Reply {
     }
 }
 
+/// 读声明式皮肤;文件缺失或坏键回落默认,问题写日志。
+fn load_skin() -> lueying_server::skin::Skin {
+    let Some(path) = lueying_server::config::skin_path() else {
+        return lueying_server::skin::Skin::default();
+    };
+    let (skin, issues) = lueying_server::skin::Skin::load(&path);
+    for issue in issues {
+        println!("皮肤: {issue}");
+    }
+    skin
+}
+
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
 fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppConfig) {
+    // 皮肤文件跟配置一起重读:改完 skin.toml 一次 reload 生效。
+    *state.skin.lock().unwrap_or_else(|p| p.into_inner()) = load_skin();
+    // 停顿重排缝:配置点名 bypass 且给了 exe 才装;其余情况都是内置(默认关)。
+    let provider = match cfg.settled_rerank_provider.as_deref() {
+        Some("bypass") => match cfg.bypass_exe.as_deref().map(str::trim) {
+            Some(exe) if !exe.is_empty() => {
+                let bypass = lueying_bypass::Bypass::new(lueying_bypass::BypassConfig {
+                    exe: PathBuf::from(exe),
+                    args: Vec::new(),
+                    call_timeout: std::time::Duration::from_secs(1),
+                });
+                println!("停顿重排:提供者=旁路进程({exe})");
+                Some(Arc::new(lueying_server::seam::BypassSettled::new(bypass))
+                    as Arc<dyn lueying_server::seam::SettledRerank>)
+            }
+            _ => {
+                println!("停顿重排:提供者=bypass 但没配 bypass_exe,用内置模型");
+                None
+            }
+        },
+        _ => None,
+    };
+    let mut slot = lueying_server::seam::SettledSlot::new();
+    slot.set(provider);
+    *state.settled_slot.lock().unwrap_or_else(|p| p.into_inner()) = slot;
     let engine_cfg = cfg.engine();
     let old = state
         .config

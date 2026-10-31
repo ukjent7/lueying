@@ -125,10 +125,20 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                 for job in debounce.take_due(now) {
                     // 一次推理 panic 不能让整条 25M 线程退出;丢掉本次结果即可。
                     let _ = catch_unwind(AssertUnwindSafe(|| {
-                        let promote = {
-                            let mut rerank = job.rerank.lock().unwrap_or_else(|p| p.into_inner());
-                            let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
-                            rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
+                        // 缝上先问外部提供者(默认没有);Builtin 或失败都回落内置模型。
+                        let external = {
+                            let mut slot =
+                                state.settled_slot.lock().unwrap_or_else(|p| p.into_inner());
+                            slot.promote(&job.context, &job.texts)
+                        };
+                        let promote = match external {
+                            lueying_server::seam::SeamOutcome::Provider(promote) => promote,
+                            lueying_server::seam::SeamOutcome::Builtin => {
+                                let mut rerank =
+                                    job.rerank.lock().unwrap_or_else(|p| p.into_inner());
+                                let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
+                                rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
+                            }
                         };
                         apply(&state, &job, promote);
                     }));

@@ -56,11 +56,12 @@ ui_layout = "horizontal"
 ui_font = "standard"
 ui_accent = 0
 effects = true
+commit_channel = false
 update_channel = "stable"
 extensions = ["shot-ocr"]
 ```
 
-`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `"auto"` 或 `"off"`(也可以写布尔值);`traditional_region` 取 `"general"`、`"tw"`、`"hk"`;`ui_layout` 取 `"horizontal"`、`"vertical"`;`ui_font` 取 `"small"`、`"standard"`、`"large"`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `"蓝"`、`"青"`、`"绿"`、`"紫"`、`"红"`、`"橙"`;`effects` 取布尔值;`update_channel` 取 `"stable"`、`"beta"`。
+`scheme` 取 `full`、`xiaohe`、`ziranma`、`mspy`、`sogou`;`fuzzy` 取 `"auto"` 或 `"off"`(也可以写布尔值);`traditional_region` 取 `"general"`、`"tw"`、`"hk"`;`ui_layout` 取 `"horizontal"`、`"vertical"`;`ui_font` 取 `"small"`、`"standard"`、`"large"`;`ui_accent` 是主题色预设下标(0 起),也可以写颜色名 `"蓝"`、`"青"`、`"绿"`、`"紫"`、`"红"`、`"橙"`;`effects` 取布尔值;`commit_channel` 取布尔值,默认 `false`,开启后其他本地工具可以经 `lueying ext commit <文本>` 借用输入法的上屏能力(鉴权令牌在 `%APPDATA%\lueying\commit-token`,密码框等隐私字段下一律拒绝);`settled_rerank_provider` 取 `"bypass"` 时停顿重排的置顶建议由 `bypass_exe` 指定的旁路进程给出(连续失败自动回落内置模型),缺省用内置;`update_channel` 取 `"stable"`、`"beta"`。
 
 扩展设置写在 `[ext.<id>]` 表里,键与类型由扩展清单的声明式 schema 决定:
 

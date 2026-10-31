@@ -47,6 +47,17 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         }
         Invocation::Logs(args) => println!("{}", extcmd::logs(&args)?),
         Invocation::Replay(args) => print!("{}", replay::run(&args)?),
+        Invocation::Commit(text) => println!("{}", extcmd::commit(&text)?),
+        Invocation::Run(id) => println!("{}", extcmd::run(&id)?),
+        Invocation::Commands => {
+            let entries = extcmd::commands()?;
+            if entries.is_empty() {
+                println!("没有可触发的命令;先安装并启用扩展,再 lueying ext reload");
+            }
+            for (id, title) in entries {
+                println!("{id:<40}{title}");
+            }
+        }
         Invocation::Top(options) => top(options)?,
     }
     Ok(())

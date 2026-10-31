@@ -63,7 +63,7 @@ pub(super) fn selftest() {
         Err(e) => println!("SKIA 换手自检失败:{e}"),
     }
     // GPU:另起子进程。崩了只影响子进程。
-    match gpu_child() {
+    match gpu_child("LUEYING_SKIA_SELFTEST_GPU") {
         Ok(text) => println!("{text}"),
         Err(e) => println!("SKIA GPU 自检不可用:{e}"),
     }
@@ -131,14 +131,15 @@ pub(super) fn gpu_selftest() {
     }
 }
 
-/// 起子进程跑 GPU 自检。子进程崩了只影响它自己,服务端继续活着。
-fn gpu_child() -> Result<String, String> {
+/// 起子进程跑 GPU 侧任务。子进程崩了只影响它自己,服务端继续活着;
+/// 自检与 V3 基准共用,`env_name` 区分任务。
+pub(super) fn gpu_child(env_name: &str) -> Result<String, String> {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => return Err(format!("取可执行文件路径 {e}")),
     };
     let mut child = std::process::Command::new(exe)
-        .env("LUEYING_SKIA_SELFTEST_GPU", "1")
+        .env(env_name, "1")
         .stdout(std::process::Stdio::piped())
         // 子进程的 stderr 直接进服务端日志:Skia 的报错都在那儿。
         .stderr(std::process::Stdio::inherit())
@@ -332,8 +333,8 @@ fn repaint(
     pipe.present()
 }
 
-/// 建窗 + DComp 交换链;失败时把原因带回去,自检据此决定是否降级。
-fn window_target(w: u32, h: u32) -> Result<(Pipeline, HWND), String> {
+/// 建窗 + DComp 交换链;失败时把原因带回去,自检与 V3 基准据此降级。
+pub(super) fn window_target(w: u32, h: u32) -> Result<(Pipeline, HWND), String> {
     let hwnd = create_window().map_err(|e| format!("建窗 {e}"))?;
     let mut pipe = match Pipeline::new(hwnd) {
         Ok(pipe) => pipe,
@@ -430,7 +431,8 @@ fn check_pixels(
 }
 
 /// 自检用的固定面板;内容与 Linux E2E 的 `render::spec()` 一致。
-fn demo_spec() -> PanelSpec {
+/// V3 基准画同一份,数字才有可比性。
+pub(super) fn demo_spec() -> PanelSpec {
     PanelSpec {
         width: 360.0,
         max_text_width: 490.0,
