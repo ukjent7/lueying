@@ -1,7 +1,7 @@
 //! 管道授权门的 E2E 断言:E2E 进程不是本产品工具,Manage 请求必须被拒,
 //! 只读请求与打字流照常放行。对端是真实常驻服务,授权链路全真。
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::windows::fs::OpenOptionsExt;
 
 use lueying_protocol::{Reply, Request};
@@ -17,7 +17,7 @@ fn round_trip(request: &Request) -> Result<Reply, String> {
         .open(lueying_protocol::pipe_name())
         .map_err(|_| "常驻服务管道连不上".to_string())?;
     let mut writer = file;
-    let mut reader = BufReader::new(file.try_clone().map_err(|e| e.to_string())?);
+    let mut reader = BufReader::new(writer.try_clone().map_err(|e| e.to_string())?);
     let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
     line.push('\n');
     writer
