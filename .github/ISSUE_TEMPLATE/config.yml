@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与排障文档
+    url: https://github.com/ukjent7/lueying/blob/main/docs/troubleshooting.md
+    about: 安装、候选不出现、日志与诊断导出
+  - name: 私密报告安全问题
+    url: https://github.com/ukjent7/lueying/security/advisories/new
+    about: 按键泄露、上屏劫持、扩展越权或更新链问题

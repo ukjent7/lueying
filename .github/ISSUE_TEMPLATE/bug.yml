@@ -1,0 +1,78 @@
+name: 问题报告
+description: 输入、候选窗、设置、安装或升级出错
+title: "[问题] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先查 [排障](https://github.com/ukjent7/lueying/blob/main/docs/troubleshooting.md)。
+        不要粘贴真实输入内容、密码或用户词库；需要日志时只贴相关片段。
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本
+      description: 例如 Windows 11 23H2 x64 或 Windows 10 22H2 x64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 安装方式
+      options:
+        - 官方安装包
+        - 源码构建
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: app
+    attributes:
+      label: 出问题的应用
+      description: 应用名与版本；系统界面也写清具体位置
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动到出错的按键与操作顺序；能用自造文本复现最好
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 有错误码、日志或诊断报告时贴相关片段
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: 设置 → 关于 → 导出；或 `%LOCALAPPDATA%\\lueying\\logs\\server.log` 末尾
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 已经在最新版本上复现
+          required: true
+        - label: 内容里没有真实密码、私密文本或他人信息
+          required: true

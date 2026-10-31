@@ -1,0 +1,54 @@
+name: 功能建议
+description: 输入、候选、设置或扩展能力的改进
+title: "[建议] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        掠影的基础核心聚焦 Windows 全拼。双拼、辅助码、自定义短语、联想与 OCR 等能力按扩展接入，建议里可以说明它属于核心还是扩展。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述具体场景与现在的做法，不必先给方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议做法
+      description: 期望的按键、候选或设置行为
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 能力归属
+      options:
+        - 基础输入核心
+        - 编译期扩展
+        - 运行期脚本扩展
+        - 设置或安装
+        - 不确定
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案
+      description: 其他输入法或工具的做法，和它们的取舍
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认
+      options:
+        - label: 搜索过现有 issue 与文档
+          required: true
