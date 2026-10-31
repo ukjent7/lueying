@@ -71,6 +71,7 @@ impl Module for ScriptModule {
             name: "简繁转换",
             version: "1.0",
             capabilities: &[Capability::Candidates],
+            triggers: &[],
         }
     }
 

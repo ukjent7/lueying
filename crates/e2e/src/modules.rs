@@ -22,6 +22,7 @@ impl Module for Demo {
             name: "E2E 演示模块",
             version: env!("CARGO_PKG_VERSION"),
             capabilities: &[Capability::Candidates, Capability::Commit],
+            triggers: &[],
         }
     }
 
@@ -44,7 +45,7 @@ fn engine(modules: Modules) -> Engine {
         lueying_features::Script::Simplified,
     ));
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(
-        lueying_features::append_builtins(modules, &script),
+        lueying_features::complete_builtins(modules, &script),
     ))
 }
 

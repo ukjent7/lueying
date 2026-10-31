@@ -132,6 +132,7 @@ impl Module for CustomPhrases {
             name: "自定义短语",
             version: env!("CARGO_PKG_VERSION"),
             capabilities: &[Capability::Candidates],
+            triggers: &[],
         }
     }
 

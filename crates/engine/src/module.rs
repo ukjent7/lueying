@@ -1,7 +1,7 @@
 //! 可选功能模块的契约与注册表。
 //!
-//! 核心引擎负责默认全拼/简拼、符号与快捷输入;表情、英文混输、简繁转换与
-//! 自定义短语、下一词联想一样,都是同一契约的功能模块。双拼、辅助码会改变
+//! 核心引擎只负责默认全拼/简拼;符号、快捷输入、表情、英文混输、简繁转换、
+//! 自定义短语与下一词联想,都是同一契约的功能模块。双拼、辅助码会改变
 //! 音节切分,以引擎级方案接口扩展。模块由宿主在启动时组合进 [`Modules`],
 //! 引擎按注册顺序调用,默认注册表为空,现有输入行为与性能不变。
 //!
@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use crate::{Candidate, CivilTime, Mode};
+use crate::{Candidate, CivilTime, Key, Mode};
 
 /// 模块声明。宿主用它展示已接入的能力、诊断冲突或按开关筛选。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +21,9 @@ pub struct Manifest {
     pub version: &'static str,
     /// 模块参与的阶段。注册表只调用声明过的阶段,漏声明等于该阶段不生效。
     pub capabilities: &'static [Capability],
+    /// 触发前缀(如 `v`、`u`):声明了 [`Capability::Key`] 的模块,只有组合
+    /// 以其中之一开头才会被咨询键级钩子。不参与按键的模块留空。
+    pub triggers: &'static [&'static str],
 }
 
 impl Manifest {
@@ -35,6 +38,15 @@ pub enum Capability {
     Candidates,
     /// 上屏前转换文本;偏爱在候选阶段完成转换的模块不需要它。
     Commit,
+    /// 每键拦截:触发会话里把标点/数字/字母当输入组合。只给清单声明了
+    /// [`Manifest::triggers`] 的模块进这条热路径。
+    Key,
+}
+
+/// 键级钩子的只读上下文。
+pub struct KeyContext<'a> {
+    /// 当前组合的原始输入;组合刚开始时是触发前缀本身。
+    pub raw: &'a str,
 }
 
 /// 候选阶段的只读上下文。
@@ -72,12 +84,25 @@ pub struct CommitContext<'a> {
 pub trait Module: Send + Sync {
     fn manifest(&self) -> Manifest;
 
-    /// 核心候选与快捷输入生成后调用。模块可插入、删除或改写候选。
+    /// 核心候选生成后按注册顺序调用。模块可插入、删除或重排候选。
     fn candidates(&self, _ctx: &CandidateContext<'_>, _cands: &mut Vec<Candidate>) {}
 
     /// 上屏事件离开引擎前调用。只在最终事件流上执行一次,不会与候选阶段叠加
     /// 转换;需要让学习与上下文看到同一种写法的模块应在候选阶段完成改写。
     fn commit(&self, _ctx: &CommitContext<'_>, _text: &mut String) {}
+
+    /// 触发会话里的按键咨询:返回 true 表示该键属于本模块的输入串,引擎
+    /// 按组合字符处理,不当标点、翻页或候选序号。只在组合以 [`Manifest::triggers`]
+    /// 中的前缀开头时被调用,未命中触发串的按键不会进入本方法。
+    fn key(&self, _ctx: &KeyContext<'_>, _key: &Key) -> bool {
+        false
+    }
+
+    /// 当前串是否处于本模块的触发会话。引擎在查询构建前问一次,用于跳过
+    /// 错音纠正等工作;同样以触发前缀为闸门。
+    fn trigger(&self, _raw: &str) -> bool {
+        false
+    }
 }
 
 #[derive(Clone)]
@@ -109,6 +134,43 @@ impl Modules {
 
     pub fn manifests(&self) -> impl Iterator<Item = Manifest> + '_ {
         self.entries.iter().map(|entry| entry.manifest)
+    }
+
+    /// 按注册顺序遍历模块本体;宿主重组注册表时用。
+    pub fn modules(&self) -> impl Iterator<Item = Arc<dyn Module>> + '_ {
+        self.entries.iter().map(|entry| Arc::clone(&entry.module))
+    }
+
+    /// 触发会话里的按键认领:任一声明了 [`Capability::Key`] 且触发前缀命中
+    /// 的模块认领即成立。未命中前缀时不进入任何模块,热路径零开销。
+    pub(crate) fn claims_key(&self, raw: &str, key: &Key) -> bool {
+        for entry in &self.entries {
+            if !entry.manifest.has(Capability::Key)
+                || !entry.manifest.triggers.iter().any(|t| raw.starts_with(t))
+            {
+                continue;
+            }
+            let ctx = KeyContext { raw };
+            if entry.module.key(&ctx, key) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 当前串是否处于任一模块的触发会话;查询层据此跳过错音纠正。
+    pub(crate) fn raw_trigger(&self, raw: &str) -> bool {
+        for entry in &self.entries {
+            if !entry.manifest.has(Capability::Key)
+                || !entry.manifest.triggers.iter().any(|t| raw.starts_with(t))
+            {
+                continue;
+            }
+            if entry.module.trigger(raw) {
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn candidates(&self, ctx: &CandidateContext<'_>, cands: &mut Vec<Candidate>) {

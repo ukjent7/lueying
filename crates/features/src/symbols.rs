@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::query::Candidate;
+use lueying_ext::Candidate;
 
 /// 单个分类最多保留的符号数;超出部分对输入法候选窗没有实用价值。
 const MAX_SYMBOLS: usize = 120;

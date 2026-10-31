@@ -1,5 +1,5 @@
-//! 掠影内置扩展:双拼、自定义短语、辅助码、下一词联想,以及表情、英文
-//! 混输与简繁转换。
+//! 掠影内置扩展:双拼、自定义短语、辅助码、下一词联想,以及快捷输入、
+//! 表情、英文混输与简繁转换。
 //!
 //! 这些能力都通过 [`lueying_ext`] 的公开契约接入,核心引擎只保留全拼、
 //! 候选生成与学习。宿主按配置选择方案并注册模块。
@@ -9,8 +9,10 @@ pub mod emoji;
 pub mod english;
 pub mod phrases;
 pub mod predict;
+pub mod quick;
 pub mod script;
 pub mod shuangpin;
+mod symbols;
 
 use std::sync::Arc;
 
@@ -20,6 +22,7 @@ pub use english::EnglishModule;
 pub use lueying_ext::Script;
 pub use phrases::CustomPhrases;
 pub use predict::Prediction;
+pub use quick::QuickModule;
 pub use script::{ScriptModule, convert};
 pub use shuangpin::Shuangpin;
 
@@ -103,29 +106,33 @@ pub fn registry_with_prediction(
     Arc::new(registry_inner(phrases, prediction))
 }
 
-/// 只含表情、英文混输与简繁转换的内置模块,按生产注册顺序组合。
+/// 只含快捷输入、表情、英文混输与简繁转换的内置模块,按生产注册顺序组合。
 /// 裸引擎构造(基准、主题回归)用它补齐与产品一致的候选装饰。
 pub fn builtins(script: Script) -> Modules {
-    append_builtins(Modules::new(), &Arc::new(ScriptModule::new(script)))
+    complete_builtins(Modules::new(), &Arc::new(ScriptModule::new(script)))
 }
 
-/// 把表情、英文混输与简繁转换按生产顺序接到现有注册表后面;简繁用宿主
-/// 给出的句柄,设置变更时直接切换,无需重建注册表。
-pub fn append_builtins(modules: Modules, script: &Arc<ScriptModule>) -> Modules {
-    modules
-        .register(Arc::new(EmojiModule) as Arc<dyn Module>)
+/// 把快捷输入插到宿主模块前、表情/英文/简繁放到后,复现核心时代的阶段
+/// 顺序:快捷候选先于宿主功能生成,装饰在宿主功能之后。简繁用宿主给出
+/// 的句柄,设置变更时直接切换,无需重建注册表。
+pub fn complete_builtins(modules: Modules, script: &Arc<ScriptModule>) -> Modules {
+    let mut all = Modules::new().register(Arc::new(QuickModule) as Arc<dyn Module>);
+    for module in modules.modules() {
+        all = all.register(module);
+    }
+    all.register(Arc::new(EmojiModule) as Arc<dyn Module>)
         .register(Arc::new(EnglishModule) as Arc<dyn Module>)
         .register(Arc::clone(script) as Arc<dyn Module>)
 }
 
-/// 生产注册表:宿主功能(短语、联想)在前,内置候选装饰在后。由宿主持有
-/// 简繁句柄,设置变更时调 [`ScriptModule::set_script`]。
+/// 生产注册表:宿主功能(短语、联想)居中,快捷输入在前、装饰在后。由宿主
+/// 持有简繁句柄,设置变更时调 [`ScriptModule::set_script`]。
 pub fn registry_with_script(
     phrases: Option<Arc<CustomPhrases>>,
     prediction: Arc<Prediction>,
     script: Arc<ScriptModule>,
 ) -> Arc<Modules> {
-    Arc::new(append_builtins(
+    Arc::new(complete_builtins(
         registry_inner(phrases, prediction),
         &script,
     ))

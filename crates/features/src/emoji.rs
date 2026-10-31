@@ -29,6 +29,7 @@ impl Module for EmojiModule {
             name: "表情",
             version: "1.0",
             capabilities: &[Capability::Candidates],
+            triggers: &[],
         }
     }
 

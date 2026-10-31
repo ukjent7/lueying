@@ -14,11 +14,9 @@ mod input;
 pub mod module;
 mod punct;
 mod query;
-mod quick;
 pub mod scheme;
 mod segment;
 mod state;
-mod symbols;
 pub mod types;
 mod typo;
 mod user;
@@ -30,14 +28,13 @@ pub use lueying_dict::Fuzzy;
 use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
-pub use quick::CivilTime;
-pub use types::{Action, Composition, Config, Event, Key, Mode, Script};
+pub use types::{Action, CivilTime, Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;
 
 /// 功能模块与输入方案作者常用的公开类型。
 pub mod prelude {
     pub use crate::module::{
-        CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
+        CandidateContext, Capability, CommitContext, KeyContext, Manifest, Module, Modules,
     };
     pub use crate::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
     pub use crate::{Candidate, Config, Engine, Event, Key, Mode, UserDict};

@@ -488,6 +488,8 @@ pub(crate) struct BuildArgs<'a> {
     pub previous2: Option<&'a str>,
     pub previous: Option<&'a str>,
     pub raw: &'a str,
+    /// 当前串处于快捷模块的触发会话;触发键要秒出,跳过错音纠正。
+    pub quick_trigger: bool,
 }
 
 /// 候选生成入口:正常解码没有整句候选时,尝试一次相邻键/漏键纠正。
@@ -508,6 +510,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         previous2,
         previous,
         raw,
+        quick_trigger,
     } = args;
     let built = builder::build_exact(BuildArgs {
         dict,
@@ -520,6 +523,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         previous2,
         previous,
         raw,
+        quick_trigger,
     });
     // 整句候选只有拆成多个词时才可能是「每个字母都当简拼」拼出来的假整句
     // (如 `hoa` → 好哦啊);完整拼音的整句和单词命中都按正常输入处理。
@@ -529,7 +533,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         || (full_pinyin && built.cands.iter().any(|c| c.full))
         || built.safe_extend
         || built.typing_prefix
-        || crate::quick::is_trigger(raw)
+        || quick_trigger
         || !typo::eligible(raw)
     {
         return built;
@@ -558,6 +562,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             previous2,
             previous,
             raw: &correction,
+            quick_trigger,
         });
         let mut kept = Vec::new();
         for mut cand in fixed.cands.drain(..) {

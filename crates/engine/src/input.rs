@@ -183,7 +183,7 @@ impl Engine {
         match key {
             Key::Letter(c) if c.is_ascii_lowercase() => {
                 // v 表达式里 x 是乘号;组合已满时退回普通字母,先落定再起新组合。
-                if c == 'x' && self.expression_body().is_some() && self.compose_char('x') {
+                if c == 'x' && self.quick_claims(&Key::Letter(c)) && self.compose_char('x') {
                     return Vec::new();
                 }
                 if self
@@ -222,7 +222,7 @@ impl Engine {
                 }
             }
             // 问字的十六进制常写成大写;Shift+字母仍属于码点,不落定组合。
-            Key::Letter(c) if self.unicode_body().is_some() && c.is_ascii_hexdigit() => {
+            Key::Letter(c) if c.is_ascii_hexdigit() && self.quick_claims(&Key::Letter(c)) => {
                 if self.compose_char(c.to_ascii_lowercase()) {
                     Vec::new()
                 } else {
@@ -316,25 +316,15 @@ impl Engine {
                 self.page_by(if key == Key::PageUp { -1 } else { 1 });
                 Vec::new()
             }
-            // v 表达式里的运算符属于输入;组合已满时落定后再上屏。
-            Key::Punct(p) if self.expression_body().is_some() && quick::is_operator(p) => {
+            // 模块触发会话(v 表达式、u 问字)认领的键:当输入组合,不当
+            // 标点。组合已满时落定后再上屏。
+            Key::Punct(p) if self.quick_claims(&Key::Punct(p)) => {
                 if self.compose_char(p) {
                     Vec::new()
                 } else {
                     let mut events = self.commit_all();
                     self.phrase = None;
                     events.push(Event::Commit(p.to_string()));
-                    events
-                }
-            }
-            // u 问字:第一个 + 表示显式码点;之后的 + 恢复普通标点。
-            Key::Punct('+') if self.unicode_body().is_some_and(|body| body.is_empty()) => {
-                if self.compose_char('+') {
-                    Vec::new()
-                } else {
-                    let mut events = self.commit_all();
-                    self.phrase = None;
-                    events.push(Event::Commit("+".to_string()));
                     events
                 }
             }
@@ -378,17 +368,6 @@ impl Engine {
                     events
                 }
             }
-            // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
-            Key::Punct('.') if self.expression_dot_mode() => {
-                if self.compose_char('.') {
-                    Vec::new()
-                } else {
-                    let mut events = self.commit_all();
-                    self.phrase = None;
-                    events.push(Event::Commit(".".to_string()));
-                    events
-                }
-            }
             // 微软拼音习惯:组合中 -/= 翻页;只有一页时退回标点。
             Key::Punct('-') if self.has_pages() => {
                 self.page_by(-1);
@@ -398,10 +377,9 @@ impl Engine {
                 self.page_by(1);
                 Vec::new()
             }
-            // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号;
-            // 地址形态下数字继续筛域名。
-            Key::Digit(d) if self.expression_body().is_some() => self.compose_digit(d),
-            Key::Digit(d) if self.unicode_body().is_some() => self.compose_digit(d),
+            // 快捷会话(v 表达式、u 问字)里数字是输入的一部分,不再当候选
+            // 序号;地址形态下数字继续筛域名。
+            Key::Digit(d) if self.quick_claims(&Key::Digit(d)) => self.compose_digit(d),
             Key::Digit(d) if self.address_mode() => self.compose_digit(d),
             Key::Digit(d) => self.select_digit(d),
             Key::Punct(p) => {
@@ -496,19 +474,6 @@ impl Engine {
         }
     }
 
-    /// 组合是否处于 v 表达式模式:字母 v 后只跟数字、运算符与小数点。
-    pub(crate) fn expression_body(&self) -> Option<&str> {
-        let raw = self.comp.as_ref()?.raw.as_str();
-        let body = raw.strip_prefix('v')?;
-        body.chars().all(quick::is_expression_char).then_some(body)
-    }
-
-    /// 组合是否处于 u 问字模式:字母 u 后是至多六位十六进制,可带前导 `+`。
-    pub(crate) fn unicode_body(&self) -> Option<&str> {
-        let raw = self.comp.as_ref()?.raw.as_str();
-        quick::unicode_body(raw)
-    }
-
     /// 组合是否处于地址形态:邮箱(含 @)或网址(www. 开头)。
     pub(crate) fn address_mode(&self) -> bool {
         let Some(comp) = self.comp.as_ref() else {
@@ -517,35 +482,13 @@ impl Engine {
         address::in_email(&comp.raw) || address::in_url(&comp.raw)
     }
 
-    /// 当前小数点属于表达式里的数字段;这段还没有小数点。
-    ///
-    /// 点分隔的日期例外:`2006.12` 后的点要能补成 `2006.12.25`。普通小数
-    /// 后面再敲点仍恢复标点,避免把句号吞进组合。
-    pub(crate) fn expression_dot_mode(&self) -> bool {
-        let Some(body) = self.expression_body() else {
+    /// 模块触发会话(v 表达式、u 问字)是否认领该键;认领的键按输入组合
+    /// 处理,不当标点、翻页或候选序号。触发前缀未命中时不进入任何模块。
+    fn quick_claims(&self, key: &Key) -> bool {
+        let Some(comp) = self.comp.as_ref() else {
             return false;
         };
-        if body.is_empty() {
-            return false;
-        }
-        let segment = body
-            .rsplit(|c: char| !(c.is_ascii_digit() || c == '.'))
-            .next()
-            .unwrap_or("");
-        if !segment.contains('.') {
-            return true;
-        }
-        let mut parts = body.split('.');
-        let year = parts.next().unwrap_or("");
-        let month = parts.next().unwrap_or("");
-        parts.next().is_none()
-            && year.len() == 4
-            && year.bytes().all(|b| b.is_ascii_digit())
-            && (1..=2).contains(&month.len())
-            && month.bytes().all(|b| b.is_ascii_digit())
-            && month
-                .parse::<u32>()
-                .is_ok_and(|month| (1..=12).contains(&month))
+        self.modules.claims_key(&comp.raw, key)
     }
 
     /// 快捷模式数字键进入组合;组合已满时退回候选序号,不静默吞键。
@@ -991,6 +934,7 @@ impl Engine {
             previous2: self.second_last_word.as_deref(),
             previous: self.last_word.as_deref(),
             raw: &expansion.query,
+            quick_trigger: self.modules.raw_trigger(&expansion.query),
         });
         // 候选的 spans 目前指向查询串;先换回用户实际敲的击键。
         for cand in &mut built.cands {
@@ -1028,24 +972,10 @@ impl Engine {
             }
         }
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
-        // 日期/时间/金额排在「可信的整词」之后,但越过未打完的前缀和
-        // 简拼硬拼出来的整句:`sj` 仍以「时间」为首选,`rq`/`xq` 直接出快捷项。
-        let quick = quick::candidates(&raw, now);
+        // 邮箱/网址候选排在「可信的整词」之后,但越过未打完的前缀和简拼
+        // 硬拼出来的整句;日期/时间等快捷项由快捷模块在模块链里插入。
         let address = address::candidates(&raw);
-        if !quick.is_empty() {
-            built
-                .cands
-                .retain(|cand| !quick.iter().any(|q| q.text == cand.text));
-            let keep_first = built
-                .cands
-                .first()
-                .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
-            let position = if keep_first { 1 } else { 0 };
-            for cand in quick.into_iter().rev() {
-                built.cands.insert(position, cand);
-            }
-        } else if !address.is_empty() {
-            // 邮箱/网址候选同样不抢可信整词的首位;表外域名的原文在末尾。
+        if !address.is_empty() {
             built
                 .cands
                 .retain(|cand| !address.iter().any(|a| a.text == cand.text));
@@ -1057,14 +987,10 @@ impl Engine {
             for cand in address.into_iter().rev() {
                 built.cands.insert(position, cand);
             }
-        } else if let Some((at, quick)) = quick::keyword(&built.cands, &raw, now) {
-            // 全拼打出了「日期/时间/星期」:写法紧跟这个词,不抢它的首选。
-            for cand in quick.into_iter().rev() {
-                built.cands.insert(at + 1, cand);
-            }
         }
-        // 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都让位。
-        // 置顶槽按去掉隔音符的字母串索引;旧版本按原始击键存键,再查两次兼容。
+        // 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都
+        // 让位。置顶槽按去掉隔音符的字母串索引;旧版本按原始击键存键,再查
+        // 两次兼容。
         let pin_key = expansion.key.replace('\'', "");
         if let Some(word) = user
             .pinned(&pin_key)
@@ -1077,14 +1003,15 @@ impl Engine {
             cand.pinned = true;
             built.cands.insert(0, cand);
         }
-        // 内置与宿主模块在核心候选与快捷输入之后运行:短语、联想、表情、
-        // 英文混输、简繁转换按注册顺序增删改候选。默认空注册表不进这个分支。
+        // 内置与宿主模块在核心候选、地址与置顶之后运行:快捷输入、短语、
+        // 联想、表情、英文混输、简繁转换按注册顺序增删改候选。默认空注册表
+        // 不进这个分支。
         if !self.modules.is_empty() {
             let module_ctx = module::CandidateContext {
                 raw: &raw,
                 query: &expansion.query,
                 scheme: self.scheme.manifest().id,
-                quick_trigger: quick::is_trigger(&raw),
+                quick_trigger: self.modules.raw_trigger(&raw),
                 context: &context,
                 host: &self.host,
                 now,

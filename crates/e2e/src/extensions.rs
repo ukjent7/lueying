@@ -19,7 +19,7 @@ fn engine(scheme: SchemeId, aux: bool, modules: Arc<Modules>, user: SharedUser) 
     ));
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
         .with_user(user)
-        .with_modules(Arc::new(lueying_features::append_builtins(
+        .with_modules(Arc::new(lueying_features::complete_builtins(
             (*modules).clone(),
             &script,
         )))

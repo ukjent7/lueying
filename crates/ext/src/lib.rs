@@ -24,6 +24,7 @@
 //!             name: "示例",
 //!             version: "1.0",
 //!             capabilities: &[Capability::Candidates],
+//!             triggers: &[],
 //!         }
 //!     }
 //!
@@ -38,7 +39,7 @@
 #![deny(missing_docs)]
 
 pub use lueying_engine::module::{
-    CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
+    CandidateContext, Capability, CommitContext, KeyContext, Manifest, Module, Modules,
 };
 pub use lueying_engine::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
 pub use lueying_engine::{
@@ -51,8 +52,8 @@ pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 扩展作者常用的导入集合。
 pub mod prelude {
     pub use crate::{
-        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext, Config,
-        Engine, Event, Expansion, FullPinyin, Fuzzy, Key, Manifest, Mode, Module, Modules,
-        SDK_VERSION, Scheme, SchemeManifest, Script, UserDict,
+        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext,
+        Config, Engine, Event, Expansion, FullPinyin, Fuzzy, Key, KeyContext, Manifest, Mode,
+        Module, Modules, SDK_VERSION, Scheme, SchemeManifest, Script, UserDict,
     };
 }

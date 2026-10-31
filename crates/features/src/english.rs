@@ -19,6 +19,7 @@ impl Module for EnglishModule {
             name: "英文混输",
             version: "1.0",
             capabilities: &[Capability::Candidates],
+            triggers: &[],
         }
     }
 

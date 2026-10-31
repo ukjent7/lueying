@@ -53,6 +53,7 @@ impl Module for Prediction {
             name: "下一词联想",
             version: env!("CARGO_PKG_VERSION"),
             capabilities: &[Capability::Candidates],
+            triggers: &[],
         }
     }
 

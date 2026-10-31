@@ -1,11 +1,12 @@
-//! 快捷输入:日期、时间、星期、v 模式符号/数字/金额/日期/算式与 u 问字。
+//! 快捷输入模块:日期、时间、星期、v 模式符号/数字/金额/日期/算式与 u 问字。
 //!
 //! 这些候选只回答当前原始串,不是词典词:上屏时不写用户词库、不学词级转移,
-//! 也不会被第二天的同一触发串召回成旧日期。
+//! 也不会被第二天的同一触发串召回成旧日期。按键侧通过 [`Capability::Key`]
+//! 把触发会话里的运算符、数字、十六进制字母与小数点认领成输入;只有清单
+//! 声明的触发前缀(`v`/`u`/`rq`/`sj`/`xq`)命中时引擎才会咨询本模块。
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use lueying_ext::{Candidate, CandidateContext, Capability, Key, KeyContext, Manifest, Module};
 
-use crate::query::Candidate;
 use crate::symbols;
 
 const LOWER_DIGITS: [&str; 10] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
@@ -19,62 +20,134 @@ const GROUP_UNITS: [&str; 2] = ["", "万"];
 const MAX_INT_DIGITS: usize = 16;
 const MAX_DEC_DIGITS: usize = 12;
 
-/// 本地民用时间。宿主在按键前注入;纯引擎环境退回 UTC。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CivilTime {
-    pub year: i32,
-    pub month: u32,
-    pub day: u32,
-    pub hour: u32,
-    pub minute: u32,
-    pub second: u32,
-    /// ISO 周几:1 = 星期一 … 7 = 星期日。
-    pub weekday: u32,
-}
+/// 内置快捷输入模块。候选阶段插入日期/时间/符号等固定项,键级钩子认领
+/// 触发会话里的输入键。
+#[derive(Default)]
+pub struct QuickModule;
 
-impl CivilTime {
-    /// 没有宿主注入时使用;E2E 全部注入固定时间,不受运行机器时区影响。
-    pub(crate) fn now_utc() -> Self {
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-        Self::from_unix(secs)
-    }
-
-    fn from_unix(secs: i64) -> Self {
-        let days = secs.div_euclid(86_400);
-        let rem = secs.rem_euclid(86_400);
-        let (year, month, day) = civil_from_days(days);
-        Self {
-            year,
-            month,
-            day,
-            hour: (rem / 3_600) as u32,
-            minute: (rem % 3_600 / 60) as u32,
-            second: (rem % 60) as u32,
-            // 1970-01-01 是星期四,加 3 后对 7 取余正好落在 ISO 星期一。
-            weekday: ((days + 3).rem_euclid(7) + 1) as u32,
+impl Module for QuickModule {
+    fn manifest(&self) -> Manifest {
+        Manifest {
+            id: "quick",
+            name: "快捷输入",
+            version: "1.0",
+            capabilities: &[Capability::Candidates, Capability::Key],
+            triggers: &["v", "u", "rq", "sj", "xq"],
         }
     }
+
+    fn candidates(&self, ctx: &CandidateContext<'_>, cands: &mut Vec<Candidate>) {
+        let raw = ctx.raw;
+        // 与核心时代的 else-if 链一致:符号/编码/数字/算式/日期命中,
+        // 就不再看「日期/时间/星期」关键词跟随。
+        let quick = candidates(raw, ctx.now);
+        if !quick.is_empty() {
+            cands.retain(|cand| !quick.iter().any(|q| q.text == cand.text));
+            // 置顶候选由宿主在模块链之前注入;让位但保住它的首位。
+            let skip = cands.iter().take_while(|cand| cand.pinned).count();
+            let keep_first = cands
+                .iter()
+                .nth(skip)
+                .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
+            let position = skip + usize::from(keep_first);
+            for cand in quick.into_iter().rev() {
+                cands.insert(position, cand);
+            }
+        } else if let Some((at, items)) = keyword(cands, raw, ctx.now) {
+            // 全拼打出了「日期/时间/星期」:写法紧跟这个词,不抢它的首选。
+            for cand in items.into_iter().rev() {
+                cands.insert(at + 1, cand);
+            }
+        }
+    }
+
+    fn key(&self, ctx: &KeyContext<'_>, key: &Key) -> bool {
+        let raw = ctx.raw;
+        match key {
+            // v 表达式里 x 是乘号;问字的十六进制字母(含大写)属于码点。
+            Key::Letter('x') => expression_body(raw).is_some(),
+            Key::Letter(c) if c.is_ascii_hexdigit() => unicode_body(raw).is_some(),
+            // v 表达式里的运算符属于输入。
+            Key::Punct(p) if is_operator(*p) => expression_body(raw).is_some(),
+            // u 问字:第一个 + 表示显式码点;之后的 + 恢复普通标点。
+            Key::Punct('+') => unicode_body(raw).is_some_and(|body| body.is_empty()),
+            // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
+            Key::Punct('.') => dot_mode(raw),
+            // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号。
+            Key::Digit(_) => expression_body(raw).is_some() || unicode_body(raw).is_some(),
+            _ => false,
+        }
+    }
+
+    fn trigger(&self, raw: &str) -> bool {
+        is_trigger(raw)
+    }
 }
 
-/// Howard Hinnant 的 civil_from_days:Unix 天数 → 公历年月日。
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = if month <= 2 { year + 1 } else { year };
-    (year as i32, month as u32, day as u32)
+/// 表达式模式允许的字符:十进制数字、四则运算符、括号、小数点和乘号 `x`。
+pub(crate) fn is_expression_char(c: char) -> bool {
+    c.is_ascii_digit() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^' | '.' | 'x')
+}
+
+/// 需要写进组合的运算符;`x` 按字母键处理,小数点单独判断。
+pub(crate) fn is_operator(c: char) -> bool {
+    matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^')
+}
+
+/// 组合是否处于 v 表达式模式:字母 v 后只跟数字、运算符与小数点。
+pub(crate) fn expression_body(raw: &str) -> Option<&str> {
+    let body = raw.strip_prefix('v')?;
+    body.chars().all(is_expression_char).then_some(body)
+}
+
+/// 组合是否处于 u 问字模式:字母 u 后是至多六位十六进制,可带前导 `+`。
+pub(crate) fn unicode_body(raw: &str) -> Option<&str> {
+    let body = raw.strip_prefix('u')?;
+    let hex = body.strip_prefix('+').unwrap_or(body);
+    (hex.len() <= 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(body)
+}
+
+/// 当前小数点是否属于表达式里的数字段;这段还没有小数点。
+///
+/// 点分隔的日期例外:`2006.12` 后的点要能补成 `2006.12.25`。普通小数
+/// 后面再敲点仍恢复标点,避免把句号吞进组合。
+pub(crate) fn dot_mode(raw: &str) -> bool {
+    let Some(body) = expression_body(raw) else {
+        return false;
+    };
+    if body.is_empty() {
+        return false;
+    }
+    let segment = body
+        .rsplit(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .next()
+        .unwrap_or("");
+    if !segment.contains('.') {
+        return true;
+    }
+    let mut parts = body.split('.');
+    let year = parts.next().unwrap_or("");
+    let month = parts.next().unwrap_or("");
+    parts.next().is_none()
+        && year.len() == 4
+        && year.bytes().all(|b| b.is_ascii_digit())
+        && (1..=2).contains(&month.len())
+        && month.bytes().all(|b| b.is_ascii_digit())
+        && month
+            .parse::<u32>()
+            .is_ok_and(|month| (1..=12).contains(&month))
+}
+
+/// 当前串会不会产生快捷候选。查询层用它跳过错音纠正,保证触发键秒出。
+pub(crate) fn is_trigger(raw: &str) -> bool {
+    matches!(raw, "rq" | "sj" | "xq")
+        || symbols::is_trigger(raw)
+        || unicode_body(raw).is_some()
+        || number_body(raw).is_some()
 }
 
 /// 当前原始串对应的快捷候选;没有触发时返回空。
-pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
+pub(crate) fn candidates(raw: &str, now: lueying_ext::CivilTime) -> Vec<Candidate> {
     if let Some(cands) = symbols::candidates(raw) {
         return cands;
     }
@@ -97,23 +170,13 @@ pub fn candidates(raw: &str, now: CivilTime) -> Vec<Candidate> {
     wrap(texts, raw)
 }
 
-/// 表达式模式允许的字符:十进制数字、四则运算符、括号、小数点和乘号 `x`。
-pub(crate) fn is_expression_char(c: char) -> bool {
-    c.is_ascii_digit() || matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^' | '.' | 'x')
-}
-
-/// 需要写进组合的运算符;`x` 按字母键处理,小数点单独判断。
-pub(crate) fn is_operator(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '^')
-}
-
 /// 全拼完整打出「日期/时间/星期」时,把对应写法插在这个词后面。
 ///
 /// 只认整串候选(`full`),并且只扫前五条;匹配词本身仍按正常候选学习。
 pub(crate) fn keyword(
     cands: &[Candidate],
     raw: &str,
-    now: CivilTime,
+    now: lueying_ext::CivilTime,
 ) -> Option<(usize, Vec<Candidate>)> {
     const SCAN: usize = 5;
     let (index, texts) = cands
@@ -151,7 +214,7 @@ fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
         .collect()
 }
 
-fn date_texts(now: CivilTime) -> Vec<String> {
+fn date_texts(now: lueying_ext::CivilTime) -> Vec<String> {
     vec![
         format!("{}年{}月{}日", now.year, now.month, now.day),
         format!("{:04}-{:02}-{:02}", now.year, now.month, now.day),
@@ -160,7 +223,7 @@ fn date_texts(now: CivilTime) -> Vec<String> {
     ]
 }
 
-fn time_texts(now: CivilTime) -> Vec<String> {
+fn time_texts(now: lueying_ext::CivilTime) -> Vec<String> {
     let mut out = vec![
         format!("{:02}:{:02}", now.hour, now.minute),
         format!("{:02}:{:02}:{:02}", now.hour, now.minute, now.second),
@@ -181,7 +244,7 @@ fn time_texts(now: CivilTime) -> Vec<String> {
     out
 }
 
-fn weekday_texts(now: CivilTime) -> Vec<String> {
+fn weekday_texts(now: lueying_ext::CivilTime) -> Vec<String> {
     const NAMES: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
     let index = (now.weekday.clamp(1, 7) - 1) as usize;
     let mut out = vec![
@@ -194,14 +257,6 @@ fn weekday_texts(now: CivilTime) -> Vec<String> {
         out.push("周天".to_string());
     }
     out
-}
-
-/// 当前串会不会产生快捷候选。查询层用它跳过错音纠正,保证触发键秒出。
-pub(crate) fn is_trigger(raw: &str) -> bool {
-    matches!(raw, "rq" | "sj" | "xq")
-        || symbols::is_trigger(raw)
-        || unicode_body(raw).is_some()
-        || number_body(raw).is_some()
 }
 
 /// `v` + 十进制数 → 小写/大写读法、金额与逐位读法。
@@ -284,13 +339,6 @@ fn number_body(raw: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((int_part, dec_part))
-}
-
-/// u 问字模式下的码点正文:至多六位十六进制,可带前导 `+`;空串也算还在输入。
-pub(crate) fn unicode_body(raw: &str) -> Option<&str> {
-    let body = raw.strip_prefix('u')?;
-    let hex = body.strip_prefix('+').unwrap_or(body);
-    (hex.len() <= 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(body)
 }
 
 /// `u4e00` / `u+1f600` → 字符与码点;纯字母不带 `+` 仍留给拼音。
