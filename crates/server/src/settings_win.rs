@@ -718,7 +718,11 @@ fn system_scale() -> f32 {
 /// 20 是 Windows 10 2004+ 的属性值;1809/1903 只认 19,20 失败时再试一次。
 /// 高对比度不强制深色,交给系统主题。
 fn apply_dark_title_bar(hwnd: HWND, appearance: theme::Appearance) {
-    let dark = BOOL(if matches!(appearance, theme::Appearance::Dark) { 1 } else { 0 });
+    let dark = BOOL(if matches!(appearance, theme::Appearance::Dark) {
+        1
+    } else {
+        0
+    });
     let ptr = &dark as *const _ as *const std::ffi::c_void;
     let size = std::mem::size_of_val(&dark) as u32;
     unsafe {
