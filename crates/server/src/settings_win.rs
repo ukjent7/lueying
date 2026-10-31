@@ -27,7 +27,7 @@ use lueying_protocol::Request;
 use lueying_render::panel::Palette;
 use lueying_render::ui::{self, Id};
 use skia_safe::Font;
-use windows::Win32::Foundation::{BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE, DwmSetWindowAttribute,
 };
@@ -53,7 +53,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS,
     WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
-use windows::core::{HSTRING, w};
+use windows::core::{BOOL, HSTRING, w};
 
 #[path = "settings_search.rs"]
 mod search;
