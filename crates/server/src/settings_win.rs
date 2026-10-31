@@ -17,7 +17,7 @@ use crate::config::{self, AppConfig};
 use crate::font;
 use crate::settings_a11y::{self, A11y, QueuedAction, WM_A11Y};
 use crate::settings_actions;
-use crate::settings_edit::{self, WM_PHRASES_SAVED};
+use crate::settings_edit::{self, WM_TEXT_SAVED};
 use crate::settings_official::{self, WM_OFFICIAL_DONE};
 use crate::settings_secret_edit::{self, WM_SECRET_SAVED};
 use crate::settings_view::{Action, Notice, PageColors, PageId, Settings, UpdateState, ids};
@@ -810,8 +810,8 @@ fn handle_action(hwnd: HWND, action: Action) {
                 });
             }
         }
-        Action::OpenPhrases => open_phrase_editor(hwnd),
-        Action::OpenPunct => with_settings(hwnd, settings_actions::open_punct),
+        Action::OpenPhrases => open_text_editor(hwnd, settings_edit::Kind::Phrases),
+        Action::OpenPunct => open_text_editor(hwnd, settings_edit::Kind::Punct),
         Action::OpenApps => with_settings(hwnd, settings_actions::open_apps),
         Action::AddApp => {
             with_settings(hwnd, |settings| {
@@ -867,8 +867,12 @@ fn start_official_install(hwnd: HWND, id: String) {
 }
 
 /// 打开窗内短语编辑器:标准 EDIT 控件,读屏软件与输入法都能正常工作。
-fn open_phrase_editor(hwnd: HWND) {
-    if let Err(error) = settings_edit::open(hwnd) {
+fn open_text_editor(hwnd: HWND, kind: settings_edit::Kind) {
+    let opened = match kind {
+        settings_edit::Kind::Phrases => settings_edit::open_phrases(hwnd),
+        settings_edit::Kind::Punct => settings_edit::open_punct(hwnd),
+    };
+    if let Err(error) = opened {
         with_settings(hwnd, |settings| {
             settings.say(Notice::Error, error);
         });
@@ -1076,9 +1080,14 @@ unsafe extern "system" fn wnd_proc(
                 }
                 LRESULT(0)
             }
-            WM_PHRASES_SAVED => {
+            WM_TEXT_SAVED => {
+                let message = match wparam.0 {
+                    1 => "短语已保存",
+                    2 => "标点已保存",
+                    _ => "已保存",
+                };
                 if let Some(window) = state_of(hwnd) {
-                    window.settings.say(Notice::Success, "短语已保存");
+                    window.settings.say(Notice::Success, message);
                     window.relayout();
                 }
                 LRESULT(0)

@@ -15,7 +15,7 @@ struct Fake {
 }
 
 impl Provider for Fake {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         self.seen
             .lock()
             .unwrap()
@@ -52,12 +52,10 @@ fn wit_lists_every_open_method() {
     }
 }
 
-/// 没开放的接口(剪贴板/网络/存储)没有方法,声明了也调不到。
+/// 没开放的接口(网络)没有方法,声明了也调不到。
 #[test]
 fn closed_services_have_no_methods() {
-    for service in [Service::Clipboard, Service::Net, Service::Store] {
-        assert!(methods(service).is_empty(), "{} 应该没开放", service.key());
-    }
+    assert!(methods(Service::Net).is_empty(), "net 应该没开放");
 }
 
 #[test]
@@ -141,7 +139,7 @@ fn completion_from_another_thread() {
     let registry = Registry::new();
     struct Threaded;
     impl Provider for Threaded {
-        fn call(&self, _method: &str, _args: &str, done: Done) -> Result<(), String> {
+        fn call(&self, _caller: &str, _method: &str, _args: &str, done: Done) -> Result<(), String> {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 done.complete(Ok(r#"{"delivered":true}"#.to_string()));

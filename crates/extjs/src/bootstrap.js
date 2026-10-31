@@ -63,6 +63,16 @@
     // 服务缝:方法都在,调用面按 needs 门控;接口见 extsvc 的 lueying.wit。
     capture: { shot: serviceFn("lueying.capture.shot", "capture", "shot") },
     ocr: { recognize: serviceFn("lueying.ocr.recognize", "ocr", "recognize") },
+    clipboard: {
+      read: serviceFn("lueying.clipboard.read", "clipboard", "read"),
+      write: serviceFn("lueying.clipboard.write", "clipboard", "write"),
+    },
+    store: {
+      get: serviceFn("lueying.store.get", "store", "get"),
+      set: serviceFn("lueying.store.set", "store", "set"),
+      remove: serviceFn("lueying.store.remove", "store", "remove"),
+      list: serviceFn("lueying.store.list", "store", "list"),
+    },
     output: { deliver: serviceFn("lueying.output.deliver", "output", "deliver") },
     panel: { show: serviceFn("lueying.panel.show", "panel", "show") },
     hotkey: {

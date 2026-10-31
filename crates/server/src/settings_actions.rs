@@ -106,17 +106,6 @@ pub fn clear_user(settings: &mut Settings) {
     }
 }
 
-/// 打开自定义标点文件。
-pub fn open_punct(settings: &mut Settings) {
-    settings.confirm_clear = false;
-    open_text_file(
-        settings,
-        config::punct_path(),
-        config::PUNCT_TEMPLATE,
-        "没有可写的标点文件路径",
-    );
-}
-
 /// 打开按应用配置文件。
 pub fn open_apps(settings: &mut Settings) {
     settings.confirm_clear = false;

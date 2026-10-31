@@ -214,7 +214,7 @@ impl BypassProvider {
 }
 
 impl Provider for BypassProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         let bypass = self.bypass.clone();
         let method = method.to_string();
         let args = args.to_string();

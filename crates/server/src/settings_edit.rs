@@ -1,6 +1,6 @@
-//! 短语编辑器:设置窗里的原生文本输入。
+//! 设置里的文本文件编辑器:短语与自定义标点共用原生多行 EDIT。
 //!
-//! AccessKit 只给无障碍树,不给文本控件;短语要能改,就得有一个真的
+//! AccessKit 只给无障碍树,不给文本控件;要改短语或标点,就得有一个真的
 //! EDIT。这里用标准 Win32 控件建一个小窗:EDIT 自己处理输入法、选区、
 //! 读屏与 UIA TextPattern,宿主只负责存盘、Tab 循环与 Esc 关闭。
 
@@ -29,8 +29,46 @@ use windows::core::{HSTRING, PCWSTR, w};
 use crate::config;
 use crate::settings_actions;
 
-/// 短语存盘后通知设置窗刷新提示。
-pub const WM_PHRASES_SAVED: u32 = WM_APP + 3;
+/// 文本保存后通知设置窗刷新提示;wparam 是 [`Kind`] 的编号。
+pub const WM_TEXT_SAVED: u32 = WM_APP + 3;
+
+/// 当前打开的文本编辑器类型:决定路径、标题与模板。
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum Kind {
+    Phrases = 1,
+    Punct = 2,
+}
+
+impl Kind {
+    fn path(self) -> Option<PathBuf> {
+        match self {
+            Self::Phrases => config::phrases_path(),
+            Self::Punct => config::punct_path(),
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Phrases => "自定义短语",
+            Self::Punct => "自定义标点",
+        }
+    }
+
+    fn template(self) -> &'static str {
+        match self {
+            Self::Phrases => lueying_features::phrases::TEMPLATE,
+            Self::Punct => config::PUNCT_TEMPLATE,
+        }
+    }
+
+    fn missing_path(self) -> &'static str {
+        match self {
+            Self::Phrases => "没有可写的短语文件路径",
+            Self::Punct => "没有可写的标点文件路径",
+        }
+    }
+}
 
 /// 窗内编辑器的句柄;同一时间只开一个。
 static EDITOR: Mutex<Option<Handles>> = Mutex::new(None);
@@ -46,6 +84,7 @@ struct Handles {
 /// 编辑器状态挂在窗口的 USERDATA 上。
 struct Editor {
     owner: HWND,
+    kind: Kind,
     path: PathBuf,
     edit: HWND,
     save: HWND,
@@ -53,7 +92,16 @@ struct Editor {
 }
 
 /// 打开短语编辑器;已经开着就把它提到前面。
-pub fn open(owner: HWND) -> Result<(), String> {
+pub fn open_phrases(owner: HWND) -> Result<(), String> {
+    open(owner, Kind::Phrases)
+}
+
+/// 打开自定义标点编辑器。
+pub fn open_punct(owner: HWND) -> Result<(), String> {
+    open(owner, Kind::Punct)
+}
+
+fn open(owner: HWND, kind: Kind) -> Result<(), String> {
     if let Some(handles) = *EDITOR.lock().unwrap_or_else(|poison| poison.into_inner()) {
         let window = HWND(handles.window as *mut c_void);
         let edit = HWND(handles.edit as *mut c_void);
@@ -63,16 +111,17 @@ pub fn open(owner: HWND) -> Result<(), String> {
         }
         return Ok(());
     }
-    let path = config::phrases_path().ok_or("没有可写的短语文件路径")?;
+    let path = kind.path().ok_or(kind.missing_path())?;
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     if !path.exists() {
-        std::fs::write(&path, lueying_features::phrases::TEMPLATE)
-            .map_err(|e| format!("写短语模板失败: {e}"))?;
+        std::fs::write(&path, kind.template())
+            .map_err(|e| format!("写{}模板失败: {e}", kind.title()))?;
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("读短语文件失败: {e}"))?;
-    let (editor, edit) = create(owner, path, &text)?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("读{}文件失败: {e}", kind.title()))?;
+    let (editor, edit) = create(owner, kind, path, &text)?;
     unsafe {
         let _ = EnableWindow(owner, false);
         ShowWindow(editor, SW_SHOW);
@@ -129,7 +178,7 @@ pub fn handle_key(msg: &MSG) -> bool {
     false
 }
 
-fn create(owner: HWND, path: PathBuf, text: &str) -> Result<(HWND, HWND), String> {
+fn create(owner: HWND, kind: Kind, path: PathBuf, text: &str) -> Result<(HWND, HWND), String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         let hinstance = HINSTANCE(hmodule.0);
@@ -155,10 +204,11 @@ fn create(owner: HWND, path: PathBuf, text: &str) -> Result<(HWND, HWND), String
         let height = rect.bottom - rect.top;
         let x = owner_rect.left + ((owner_rect.right - owner_rect.left) - width) / 2;
         let y = owner_rect.top + ((owner_rect.bottom - owner_rect.top) - height) / 2;
+        let window_title = HSTRING::from(format!("编辑{}", kind.title()));
         let editor = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("lueying-settings-edit"),
-            w!("编辑自定义短语"),
+            PCWSTR(window_title.as_ptr()),
             WS_OVERLAPPEDWINDOW,
             x,
             y,
@@ -169,7 +219,7 @@ fn create(owner: HWND, path: PathBuf, text: &str) -> Result<(HWND, HWND), String
             Some(hinstance),
             None,
         )
-        .map_err(|e| format!("建短语编辑窗失败: {e}"))?;
+        .map_err(|e| format!("建文本编辑窗失败: {e}"))?;
         let result = create_children(hinstance, editor, text);
         let (edit, save, cancel) = match result {
             Ok(children) => children,
@@ -180,6 +230,7 @@ fn create(owner: HWND, path: PathBuf, text: &str) -> Result<(HWND, HWND), String
         };
         let state = Box::new(Editor {
             owner,
+            kind,
             path,
             edit,
             save,
@@ -223,7 +274,7 @@ fn create_children(
             Some(hinstance),
             None,
         )
-        .map_err(|e| format!("建短语文本框失败: {e}"))?;
+        .map_err(|e| format!("建文本输入框失败: {e}"))?;
         let save = button(hinstance, editor, w!("保存"))?;
         let cancel = button(hinstance, editor, w!("取消"))?;
         let font = GetStockObject(DEFAULT_GUI_FONT);
@@ -256,7 +307,7 @@ fn button(hinstance: HINSTANCE, parent: HWND, text: PCWSTR) -> Result<HWND, Stri
             Some(hinstance),
             None,
         )
-        .map_err(|e| format!("建短语按钮失败: {e}"))
+        .map_err(|e| format!("建文本按钮失败: {e}"))
     }
 }
 
@@ -314,12 +365,13 @@ fn save_and_close(hwnd: HWND) {
     let text = text_of(editor.edit);
     let path = editor.path.clone();
     let owner = editor.owner;
+    let kind = editor.kind;
     if let Err(e) = std::fs::write(&path, text) {
         unsafe {
             let _ = MessageBoxW(
                 Some(hwnd),
                 &HSTRING::from(format!("写入 {} 失败: {e}", path.display())),
-                w!("保存短语"),
+                w!("保存设置文件"),
                 MB_OK | MB_ICONERROR,
             );
         }
@@ -327,7 +379,12 @@ fn save_and_close(hwnd: HWND) {
     }
     settings_actions::reload();
     unsafe {
-        let _ = PostMessageW(Some(owner), WM_PHRASES_SAVED, WPARAM(0), LPARAM(0));
+        let _ = PostMessageW(
+            Some(owner),
+            WM_TEXT_SAVED,
+            WPARAM(kind as usize),
+            LPARAM(0),
+        );
         let _ = DestroyWindow(hwnd);
     }
 }
@@ -417,7 +474,7 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
             ..Default::default()
         };
         if RegisterClassW(&wc) == 0 {
-            result = Err("RegisterClassW(短语编辑窗) 失败".into());
+            result = Err("RegisterClassW(设置文本编辑窗) 失败".into());
         }
     });
     result

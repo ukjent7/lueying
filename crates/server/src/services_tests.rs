@@ -15,6 +15,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 
 use crate::services::{
     CaptureProvider, HotkeyProvider, NotifyProvider, OcrProvider, OutputProvider, PanelProvider,
+    StoreProvider,
 };
 
 /// 等一个完成结果;提供者都是异步回传。
@@ -255,6 +256,40 @@ fn hotkey_press_resolves_on_fire() {
     let pressed = wait_completion(&registry, Duration::from_secs(5)).expect("press 未回传");
     assert_eq!(pressed.result.as_deref(), Ok(r#"{"pressed":true}"#));
     hotkey.reset();
+}
+
+#[test]
+fn store_isolated_by_caller() {
+    let dir = std::env::temp_dir().join(format!("lueying-store-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // 该环境变量只被 StoreProvider 读取;测试结束前恢复,避免影响其它用例。
+    let previous = std::env::var_os("LUEYING_EXT_DATA_DIR");
+    unsafe { std::env::set_var("LUEYING_EXT_DATA_DIR", &dir) };
+    let registry = Registry::new();
+    registry.set(Service::Store, Arc::new(StoreProvider));
+    let call = |registry: &Registry, caller: &str, method: &str, args: &str, token: u64| {
+        registry.call_as(caller, "store", method, args, token).unwrap();
+        wait_completion(registry, Duration::from_secs(5)).expect("store 未回传")
+    };
+    let set = call(
+        &registry,
+        "demo",
+        "set",
+        r#"{"key":"token","value":"one"}"#,
+        1,
+    );
+    assert_eq!(set.result.as_deref(), Ok("{}"));
+    let get = call(&registry, "demo", "get", r#"{"key":"token"}"#, 2);
+    assert_eq!(get.result.as_deref(), Ok(r#"{"value":"one"}"#));
+    let other = call(&registry, "other", "get", r#"{"key":"token"}"#, 3);
+    assert_eq!(other.result.as_deref(), Ok(r#"{"value":null}"#));
+    let listed = call(&registry, "demo", "list", "", 4);
+    assert_eq!(listed.result.as_deref(), Ok(r#"{"keys":["token"]}"#));
+    let _ = std::fs::remove_dir_all(&dir);
+    match previous {
+        Some(value) => unsafe { std::env::set_var("LUEYING_EXT_DATA_DIR", value) },
+        None => unsafe { std::env::remove_var("LUEYING_EXT_DATA_DIR") },
+    }
 }
 
 #[test]

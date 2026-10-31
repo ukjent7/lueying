@@ -52,6 +52,43 @@ interface output {
   deliver: func(options: deliver-options) -> result<deliver-result, string>;
 }
 
+// 读写剪贴板:只在扩展声明 `clipboard` 服务后可用;读到的文本可能含
+// 用户敏感内容,授权页按高敏感处理。
+interface clipboard {
+  record read-result {
+    text: string,
+  }
+  read: func() -> result<read-result, string>;
+  record write-options {
+    text: string,
+  }
+  write: func(options: write-options) -> result<string, string>;
+}
+
+// 扩展私有存储:每个扩展一个命名空间,宿主只给该扩展自己的数据。
+interface store {
+  record get-options {
+    key: string,
+  }
+  record get-result {
+    value: option<string>,
+  }
+  get: func(options: get-options) -> result<get-result, string>;
+  record set-options {
+    key: string,
+    value: string,
+  }
+  set: func(options: set-options) -> result<string, string>;
+  record remove-options {
+    key: string,
+  }
+  remove: func(options: remove-options) -> result<string, string>;
+  record list-result {
+    keys: list<string>,
+  }
+  list: func() -> result<list-result, string>;
+}
+
 // 宿主绘制的声明式面板:列出候选项,等用户挑选后异步返回。
 interface panel {
   record show-options {
@@ -95,6 +132,8 @@ interface notify {
 world extension {
   import capture;
   import ocr;
+  import clipboard;
+  import store;
   import output;
   import panel;
   import hotkey;

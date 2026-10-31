@@ -19,7 +19,7 @@ struct FakeCapture {
 }
 
 impl Provider for FakeCapture {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         let _ = args;
         if method != "shot" {
             return Err(format!("假 capture 不认识方法 {method}"));
@@ -40,7 +40,7 @@ impl Provider for FakeCapture {
 struct FakeOcr;
 
 impl Provider for FakeOcr {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         if method != "recognize" {
             return Err(format!("假 ocr 不认识方法 {method}"));
         }
@@ -61,7 +61,7 @@ struct FakeOutput {
 }
 
 impl Provider for FakeOutput {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         if method != "deliver" {
             return Err(format!("假 output 不认识方法 {method}"));
         }
@@ -93,7 +93,7 @@ impl FakePanel {
 }
 
 impl Provider for FakePanel {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         let _ = args;
         if method != "show" {
             return Err(format!("假 panel 不认识方法 {method}"));
@@ -110,7 +110,7 @@ struct FakeHotkey {
 }
 
 impl Provider for FakeHotkey {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         if method != "register" {
             return Err(format!("假 hotkey 不认识方法 {method}"));
         }
@@ -412,7 +412,7 @@ fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
     }
 
     impl Provider for Chain {
-        fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+        fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
             match method {
                 "shot" => {
                     let file = self.dir.join("shot.bmp");

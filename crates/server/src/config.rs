@@ -443,6 +443,15 @@ pub fn secrets_dir() -> Option<PathBuf> {
     user_file("secrets")
 }
 
+/// 扩展私有数据目录(`%APPDATA%\lueying\ext-data`);每个扩展一个 JSON 文件。
+/// `LUEYING_EXT_DATA_DIR` 供 E2E 隔离。
+pub fn ext_data_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("LUEYING_EXT_DATA_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    user_file("ext-data")
+}
+
 /// PP-OCRv6 模型目录:`LUEYING_PPOCR_DIR` 优先,其次用户目录
 /// `%APPDATA%\lueying\models\ppocr`,最后程序目录的 `models/ppocr`。
 /// 用户放的文件可以覆盖随包模型;三件齐全才算可用。

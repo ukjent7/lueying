@@ -21,12 +21,19 @@ use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
 use windows::Media::Ocr::OcrEngine;
 use windows::Storage::{FileAccessMode, StorageFile};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPFILEHEADER, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleDC,
     CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, ReleaseDC, SRCCOPY,
     SelectObject,
 };
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Memory::{
+    GMEM_MOVEABLE, GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOD_ALT,
     MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey, SendInput, UnregisterHotKey, VK_BACK,
@@ -52,7 +59,7 @@ fn one_method(provider: &str, method: &str, expected: &str) -> Result<(), String
 pub struct CaptureProvider;
 
 impl Provider for CaptureProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         one_method("capture", method, "shot")?;
         let region = parse_region(args)?;
         std::thread::Builder::new()
@@ -223,7 +230,7 @@ impl PpOcrCache {
 }
 
 impl Provider for OcrProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         one_method("ocr", method, "recognize")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let file = parsed["file"]
@@ -365,7 +372,7 @@ fn fallback_engine() -> Result<OcrEngine, String> {
 pub struct NotifyProvider;
 
 impl Provider for NotifyProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         one_method("notify", method, "show")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let title = parsed["title"].as_str().unwrap_or_default();
@@ -380,7 +387,7 @@ impl Provider for NotifyProvider {
 pub struct PanelProvider;
 
 impl Provider for PanelProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         let _ = args;
         one_method("panel", method, "show")?;
         done.complete(Err("宿主面板在后续阶段".into()));
@@ -392,7 +399,7 @@ impl Provider for PanelProvider {
 pub struct OutputProvider;
 
 impl Provider for OutputProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         one_method("output", method, "deliver")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let text = parsed["text"]
@@ -408,6 +415,193 @@ impl Provider for OutputProvider {
                 Ok(())
             }
         }
+    }
+}
+
+/// 扩展私有存储:每个扩展一个 JSON 文件,调用方由 `Provider::call` 的
+/// `caller` 决定,不能读写其它扩展的数据。键与扩展 id 同一套字符规则,
+/// 单值上限 64 KiB,整份文件上限 256 KiB。
+pub struct StoreProvider;
+
+/// 单个值的上限;扩展存的是设置与缓存,不该把用户磁盘当数据库。
+const STORE_VALUE_LIMIT: usize = 64 * 1024;
+/// 每个扩展整份存储的上限。
+const STORE_FILE_LIMIT: usize = 256 * 1024;
+
+impl Provider for StoreProvider {
+    fn call(&self, caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
+        if !lueying_extmeta::valid_id(caller) {
+            done.complete(Err("扩展 id 不合法".to_string()));
+            return Ok(());
+        }
+        let result = match method {
+            "get" => store_get(caller, args),
+            "set" => store_set(caller, args),
+            "remove" => store_remove(caller, args),
+            "list" => store_list(caller),
+            _ => Err(format!("store 没有方法 {method:?}")),
+        };
+        done.complete(result);
+        Ok(())
+    }
+}
+
+fn store_get(ext: &str, args: &str) -> Result<String, String> {
+    let key = store_key(args)?;
+    let values = store_load(ext);
+    let value = values.get(&key).and_then(serde_json::Value::as_str);
+    Ok(json!({ "value": value }).to_string())
+}
+
+fn store_set(ext: &str, args: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
+    let key = parsed["key"]
+        .as_str()
+        .ok_or_else(|| "缺 key".to_string())?;
+    if !lueying_extmeta::valid_id(key) {
+        return Err("存储键不合法".to_string());
+    }
+    let value = parsed["value"]
+        .as_str()
+        .ok_or_else(|| "缺 value".to_string())?;
+    if value.len() > STORE_VALUE_LIMIT {
+        return Err(format!("存储值超过 {STORE_VALUE_LIMIT} 字节"));
+    }
+    let mut values = store_load(ext);
+    values.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    store_save(ext, &values)?;
+    Ok("{}".to_string())
+}
+
+fn store_remove(ext: &str, args: &str) -> Result<String, String> {
+    let key = store_key(args)?;
+    let mut values = store_load(ext);
+    values.remove(&key);
+    store_save(ext, &values)?;
+    Ok("{}".to_string())
+}
+
+fn store_list(ext: &str) -> Result<String, String> {
+    let keys: Vec<String> = store_load(ext)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    Ok(json!({ "keys": keys }).to_string())
+}
+
+fn store_key(args: &str) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
+    let key = parsed["key"]
+        .as_str()
+        .ok_or_else(|| "缺 key".to_string())?;
+    if !lueying_extmeta::valid_id(key) {
+        return Err("存储键不合法".to_string());
+    }
+    Ok(key.to_string())
+}
+
+fn store_load(ext: &str) -> serde_json::Map<String, serde_json::Value> {
+    let Some(path) = store_path(ext) else {
+        return serde_json::Map::new();
+    };
+    std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn store_save(ext: &str, values: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let path = store_path(ext).ok_or("没有可写的扩展存储目录")?;
+    let Some(dir) = path.parent() else {
+        return Err("扩展存储路径没有父目录".to_string());
+    };
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建扩展存储目录: {e}"))?;
+    let text = serde_json::to_vec(values).map_err(|e| format!("序列化扩展存储: {e}"))?;
+    if text.len() > STORE_FILE_LIMIT {
+        return Err(format!("扩展存储超过 {STORE_FILE_LIMIT} 字节"));
+    }
+    let tmp = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("创建扩展存储: {e}"))?;
+    std::io::Write::write_all(&mut file, &text).map_err(|e| format!("写扩展存储: {e}"))?;
+    file.sync_all().map_err(|e| format!("同步扩展存储: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换扩展存储: {e}"))
+}
+
+fn store_path(ext: &str) -> Option<PathBuf> {
+    Some(config::ext_data_dir()?.join(format!("{ext}.json")))
+}
+
+/// 剪贴板:纯文本读写。Windows 的剪贴板是进程共享状态,打开期间其它
+/// 程序会被挡住;这里只在调用线程上短暂持有,不把锁带进异步线程。
+pub struct ClipboardProvider;
+
+/// `CF_UNICODETEXT` 的标准值;避免为单个常量引入整个剪贴板格式枚举。
+const CF_UNICODETEXT: u32 = 13;
+
+impl Provider for ClipboardProvider {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
+        match method {
+            "read" => {
+                done.complete(read_clipboard().map(|text| json!({ "text": text }).to_string()));
+            }
+            "write" => {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                let text = parsed["text"]
+                    .as_str()
+                    .ok_or_else(|| "缺 text".to_string())?;
+                done.complete(write_clipboard(text).map(|()| "{}".to_string()));
+            }
+            _ => return Err(format!("clipboard 没有方法 {method:?}")),
+        }
+        Ok(())
+    }
+}
+
+fn read_clipboard() -> Result<String, String> {
+    unsafe {
+        OpenClipboard(None).map_err(|e| format!("打开剪贴板失败: {e}"))?;
+        let result = (|| {
+            let Ok(handle) = GetClipboardData(CF_UNICODETEXT) else {
+                return Ok(String::new());
+            };
+            let memory = HGLOBAL(handle.0);
+            let pointer = GlobalLock(memory).map_err(|e| format!("锁定剪贴板内存失败: {e}"))?;
+            let data = pointer as *const u16;
+            let mut length = 0usize;
+            while *data.add(length) != 0 {
+                length += 1;
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(data, length));
+            let _ = GlobalUnlock(memory);
+            Ok(text)
+        })();
+        let _ = CloseClipboard();
+        result
+    }
+}
+
+fn write_clipboard(text: &str) -> Result<(), String> {
+    let units: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        OpenClipboard(None).map_err(|e| format!("打开剪贴板失败: {e}"))?;
+        let result = (|| {
+            EmptyClipboard().map_err(|e| format!("清空剪贴板失败: {e}"))?;
+            let memory = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2)
+                .map_err(|e| format!("分配剪贴板内存失败: {e}"))?;
+            let pointer = GlobalLock(memory).map_err(|e| format!("锁定剪贴板内存失败: {e}"))?;
+            std::ptr::copy_nonoverlapping(units.as_ptr(), pointer as *mut u16, units.len());
+            let _ = GlobalUnlock(memory);
+            match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(memory.0))) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let _ = GlobalFree(memory);
+                    Err(format!("写入剪贴板失败: {e}"))
+                }
+            }
+        })();
+        let _ = CloseClipboard();
+        result
     }
 }
 
@@ -504,7 +698,7 @@ impl HotkeyState {
 }
 
 impl Provider for HotkeyProvider {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         match method {
             "register" => self.register(args, done),
             "unregister" => self.unregister(args, done),

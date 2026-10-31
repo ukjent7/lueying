@@ -65,10 +65,11 @@ impl Done {
 }
 
 /// 一个服务的提供者。方法名已由 [`Registry::call`] 按白名单核过,
-/// `args` 是 IDL record 的 JSON 文本;结果必须经 `done` 回传,返回值只
-/// 表示「调用有没有发出去」(`Err` 表示参数坏到连结果都造不出来)。
+/// `caller` 是发起调用的扩展 id(审计与按扩展隔离的存储用),`args` 是
+/// IDL record 的 JSON 文本;结果必须经 `done` 回传,返回值只表示「调用
+/// 有没有发出去」(`Err` 表示参数坏到连结果都造不出来)。
 pub trait Provider: Send + Sync {
-    fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String>;
+    fn call(&self, caller: &str, method: &str, args: &str, done: Done) -> Result<(), String>;
 }
 
 /// 服务注册表:宿主进程装提供者,扩展宿主发调用、抽完成。
@@ -192,7 +193,7 @@ impl Registry {
             token,
             completions: Arc::clone(&self.completions),
         };
-        provider.call(method, args, done)
+        provider.call(caller, method, args, done)
     }
 
     fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str) {
@@ -222,16 +223,18 @@ impl Registry {
 
 /// 各服务开放的方法;以 `lueying.wit` 为准。
 ///
-/// 没开放的接口(剪贴板、网络、存储)是空表:清单里声明了也调不到。
+/// 没开放的接口(网络)是空表:清单里声明了也调不到。
 pub fn methods(service: Service) -> &'static [&'static str] {
     match service {
         Service::Capture => &["shot"],
         Service::Ocr => &["recognize"],
+        Service::Clipboard => &["read", "write"],
+        Service::Store => &["get", "set", "remove", "list"],
         Service::Output => &["deliver"],
         Service::Panel => &["show"],
         Service::Hotkey => &["register", "unregister", "press"],
         Service::Notify => &["show"],
-        Service::Clipboard | Service::Net | Service::Store => &[],
+        Service::Net => &[],
     }
 }
 
