@@ -268,7 +268,9 @@ fn store_isolated_by_caller() {
     let registry = Registry::new();
     registry.set(Service::Store, Arc::new(StoreProvider));
     let call = |registry: &Registry, caller: &str, method: &str, args: &str, token: u64| {
-        registry.call_as(caller, "store", method, args, token).unwrap();
+        registry
+            .call_as(caller, "store", method, args, token)
+            .unwrap();
         wait_completion(registry, Duration::from_secs(5)).expect("store 未回传")
     };
     let set = call(

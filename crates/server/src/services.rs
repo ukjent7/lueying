@@ -455,9 +455,7 @@ fn store_get(ext: &str, args: &str) -> Result<String, String> {
 
 fn store_set(ext: &str, args: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
-    let key = parsed["key"]
-        .as_str()
-        .ok_or_else(|| "缺 key".to_string())?;
+    let key = parsed["key"].as_str().ok_or_else(|| "缺 key".to_string())?;
     if !lueying_extmeta::valid_id(key) {
         return Err("存储键不合法".to_string());
     }
@@ -468,7 +466,10 @@ fn store_set(ext: &str, args: &str) -> Result<String, String> {
         return Err(format!("存储值超过 {STORE_VALUE_LIMIT} 字节"));
     }
     let mut values = store_load(ext);
-    values.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    values.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
     store_save(ext, &values)?;
     Ok("{}".to_string())
 }
@@ -482,18 +483,13 @@ fn store_remove(ext: &str, args: &str) -> Result<String, String> {
 }
 
 fn store_list(ext: &str) -> Result<String, String> {
-    let keys: Vec<String> = store_load(ext)
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect();
+    let keys: Vec<String> = store_load(ext).into_iter().map(|(key, _)| key).collect();
     Ok(json!({ "keys": keys }).to_string())
 }
 
 fn store_key(args: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
-    let key = parsed["key"]
-        .as_str()
-        .ok_or_else(|| "缺 key".to_string())?;
+    let key = parsed["key"].as_str().ok_or_else(|| "缺 key".to_string())?;
     if !lueying_extmeta::valid_id(key) {
         return Err("存储键不合法".to_string());
     }
@@ -510,7 +506,10 @@ fn store_load(ext: &str) -> serde_json::Map<String, serde_json::Value> {
         .unwrap_or_default()
 }
 
-fn store_save(ext: &str, values: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+fn store_save(
+    ext: &str,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let path = store_path(ext).ok_or("没有可写的扩展存储目录")?;
     let Some(dir) = path.parent() else {
         return Err("扩展存储路径没有父目录".to_string());

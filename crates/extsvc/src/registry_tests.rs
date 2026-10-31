@@ -139,7 +139,13 @@ fn completion_from_another_thread() {
     let registry = Registry::new();
     struct Threaded;
     impl Provider for Threaded {
-        fn call(&self, _caller: &str, _method: &str, _args: &str, done: Done) -> Result<(), String> {
+        fn call(
+            &self,
+            _caller: &str,
+            _method: &str,
+            _args: &str,
+            done: Done,
+        ) -> Result<(), String> {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 done.complete(Ok(r#"{"delivered":true}"#.to_string()));

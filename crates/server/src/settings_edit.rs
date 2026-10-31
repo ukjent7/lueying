@@ -379,12 +379,7 @@ fn save_and_close(hwnd: HWND) {
     }
     settings_actions::reload();
     unsafe {
-        let _ = PostMessageW(
-            Some(owner),
-            WM_TEXT_SAVED,
-            WPARAM(kind as usize),
-            LPARAM(0),
-        );
+        let _ = PostMessageW(Some(owner), WM_TEXT_SAVED, WPARAM(kind as usize), LPARAM(0));
         let _ = DestroyWindow(hwnd);
     }
 }
