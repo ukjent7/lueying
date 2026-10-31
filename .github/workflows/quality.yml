@@ -139,7 +139,7 @@ jobs:
       - name: Build (release)
         id: build
         # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
-        run: cargo build --release --locked -p lueying-server -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+        run: cargo build --release --locked -p lueying-server -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
       # 定时任务不经过 ci.yml 的 ARM64 检查,这里要自己补 i686 target。
       - name: 安装 i686 target
         run: rustup target add i686-pc-windows-msvc

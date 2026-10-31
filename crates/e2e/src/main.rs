@@ -24,7 +24,6 @@ mod settings;
 mod shared;
 mod ui;
 mod user_dict;
-mod wasm;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -237,9 +236,6 @@ fn main() {
 
     // 预算与可见性:运行指标、超限停用、快照与 CLI。
     failures += metrics::run(&mut report);
-
-    // Wasm 层原型:组件宿主的嵌入成本测量与冒烟。
-    failures += wasm::run(&mut report);
 
     // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
     failures += render::run(&mut report);

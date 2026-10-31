@@ -291,6 +291,17 @@ pub struct ExtReply {
     pub error: String,
 }
 
+/// 单阶段重排延迟分布;百分位按固定桶上界给出,count 为 0 时全为 0。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RerankLatency {
+    pub count: u64,
+    pub p50_us: u64,
+    pub p95_us: u64,
+    pub p99_us: u64,
+    pub max_us: u64,
+    pub mean_us: u64,
+}
+
 /// 引擎资源加载状态;设置窗展示与诊断导出用。
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EngineStatus {
@@ -304,6 +315,12 @@ pub struct EngineStatus {
     pub rerank4m: bool,
     /// 25M 停顿重排是否已加载。
     pub rerank25m: bool,
+    /// 4M 按键同步重排的本机耗时分布。
+    #[serde(default)]
+    pub rerank_sync: RerankLatency,
+    /// 25M 停顿重排的本机耗时分布。
+    #[serde(default)]
+    pub rerank_settle: RerankLatency,
     /// 常驻服务版本。
     pub server_version: String,
 }

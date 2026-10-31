@@ -1,9 +1,13 @@
 [package]
 name = "lueying-extwasm"
 version = "0.1.0"
-edition.workspace = true
-license.workspace = true
-description = "运行期 Wasm 扩展原型:Wasmtime 组件宿主与嵌入成本测量"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "运行期 Wasm 扩展原型(冻结):Wasmtime 组件宿主与嵌入成本测量"
+
+# 独立 workspace:原型不在默认构建里,避免 Wasmtime/Cranelift 的
+# 70 个依赖包拖慢每次 CI。评估结论见 docs/roadmap.md。
+[workspace]
 
 [dependencies]
 # 组件宿主:cranelift JIT + 组件模型;按任务书钉在支持 WASI 0.3 的版本线。

@@ -1,4 +1,4 @@
-//! lueying-server 的共享部分:配置读写、主题与自动更新(常驻服务、设置窗与更新器共用)。
+//! lueying-server 的共享部分:配置读写、设置页模型与扩展元数据等。
 
 pub mod accents;
 
@@ -30,8 +30,6 @@ pub mod seam;
 
 pub mod skin;
 
-pub mod update_manifest;
-
 #[cfg(windows)]
 pub mod blit;
 
@@ -61,6 +59,3 @@ pub mod settings_win;
 
 #[cfg(windows)]
 pub mod theme;
-
-#[cfg(windows)]
-pub mod update;

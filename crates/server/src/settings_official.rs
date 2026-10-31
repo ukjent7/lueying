@@ -90,7 +90,7 @@ fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
 
 /// 随包扩展在安装目录的 `extensions/`;开发构建回退仓库根目录。
 fn bundled_source(relative: &str) -> PathBuf {
-    let installed = crate::update::install_dir().join(relative);
+    let installed = lueying_net::update::install_dir().join(relative);
     if installed.exists() {
         return installed;
     }
@@ -119,7 +119,7 @@ fn install_model(extension: &OfficialExtension) -> Result<(), String> {
             continue;
         }
         let limit = file.bytes.saturating_add(1024 * 1024);
-        let (status, bytes) = crate::update::fetch_bytes(&file.url, limit)?;
+        let (status, bytes) = lueying_net::update::fetch_bytes(&file.url, limit)?;
         if !(200..300).contains(&status) {
             return Err(format!("下载 {} 返回 HTTP {status}", file.name));
         }

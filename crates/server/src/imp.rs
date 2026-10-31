@@ -22,7 +22,7 @@ use lueying_engine::scheme::Scheme;
 use lueying_engine::{Action, CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
 use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
-use lueying_rerank::{Model, Rerank};
+use lueying_rerank::{LatencyMetrics, Model, Rerank};
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config::{self, AppConfig};
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
@@ -109,6 +109,10 @@ pub(super) struct State {
     pub(super) dict_source: &'static str,
     pub(super) sync_model: Option<Model>,
     pub(super) settled_model: Option<Model>,
+    /// 4M 按键同步重排的延迟分布;所有会话共享一份。
+    pub(super) rerank_sync_metrics: Arc<LatencyMetrics>,
+    /// 25M 停顿重排的延迟分布;所有会话共享一份。
+    pub(super) rerank_settle_metrics: Arc<LatencyMetrics>,
     pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
     /// TSF 读不到左邻文本时交给 UIA 线程补读;容量 1,忙时丢新任务。
     pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
@@ -344,6 +348,8 @@ pub(super) fn real_main() {
         active: AtomicU64::new(0),
         sync_model,
         settled_model,
+        rerank_sync_metrics: Arc::new(LatencyMetrics::default()),
+        rerank_settle_metrics: Arc::new(LatencyMetrics::default()),
         settle_tx,
         uia_tx: Some(uia_tx),
         user,

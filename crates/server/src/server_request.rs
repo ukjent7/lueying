@@ -1,6 +1,6 @@
 //! 管道请求分发。
 
-use lueying_protocol::EngineStatus;
+use lueying_protocol::{EngineStatus, RerankLatency};
 use lueying_render::effect::{self, Slot};
 
 use super::*;
@@ -82,11 +82,15 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     },
                     pending: None,
                     ui_reply: None,
-                    sync_rerank: state.sync_model.as_ref().map(Rerank::new),
-                    settled_rerank: state
-                        .settled_model
-                        .as_ref()
-                        .map(|m| Arc::new(Mutex::new(Rerank::new(m)))),
+                    sync_rerank: state.sync_model.as_ref().map(|model| {
+                        Rerank::with_metrics(model, Arc::clone(&state.rerank_sync_metrics))
+                    }),
+                    settled_rerank: state.settled_model.as_ref().map(|model| {
+                        Arc::new(Mutex::new(Rerank::with_metrics(
+                            model,
+                            Arc::clone(&state.rerank_settle_metrics),
+                        )))
+                    }),
                     host_draws: false,
                     private: false,
                     context_epoch: 0,
@@ -601,17 +605,37 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             templates: effect_templates(),
             ..Reply::default()
         },
-        Request::Status => Reply {
-            status: Some(EngineStatus {
-                dict_words: state.dict.len(),
-                dict_source: state.dict_source.to_string(),
-                gram: state.gram.is_some(),
-                rerank4m: state.sync_model.is_some(),
-                rerank25m: state.settled_model.is_some(),
-                server_version: env!("CARGO_PKG_VERSION").to_string(),
-            }),
-            ..Reply::default()
-        },
+        Request::Status => {
+            let sync_latency = state.rerank_sync_metrics.snapshot();
+            let settle_latency = state.rerank_settle_metrics.snapshot();
+            Reply {
+                status: Some(EngineStatus {
+                    dict_words: state.dict.len(),
+                    dict_source: state.dict_source.to_string(),
+                    gram: state.gram.is_some(),
+                    rerank4m: state.sync_model.is_some(),
+                    rerank25m: state.settled_model.is_some(),
+                    rerank_sync: RerankLatency {
+                        count: sync_latency.count,
+                        p50_us: sync_latency.p50_us,
+                        p95_us: sync_latency.p95_us,
+                        p99_us: sync_latency.p99_us,
+                        max_us: sync_latency.max_us,
+                        mean_us: sync_latency.mean_us,
+                    },
+                    rerank_settle: RerankLatency {
+                        count: settle_latency.count,
+                        p50_us: settle_latency.p50_us,
+                        p95_us: settle_latency.p95_us,
+                        p99_us: settle_latency.p99_us,
+                        max_us: settle_latency.max_us,
+                        mean_us: settle_latency.mean_us,
+                    },
+                    server_version: env!("CARGO_PKG_VERSION").to_string(),
+                }),
+                ..Reply::default()
+            }
+        }
         Request::Ext { id, method, params } => {
             let result = match method.as_str() {
                 "settings.get" => settings_get(state, &id),

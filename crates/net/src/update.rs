@@ -56,6 +56,13 @@ pub enum Check {
     NoRelease,
 }
 
+/// 更新渠道;设置页的 `Channel` 在调用前映射成这里的两档。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    Stable,
+    Beta,
+}
+
 /// 安装目录里 `version.txt` 的版本;开发构建回退到 Cargo 版本。
 pub fn current_version() -> String {
     std::fs::read_to_string(install_dir().join("version.txt"))
@@ -92,15 +99,15 @@ pub fn install_target() -> PathBuf {
 /// 按渠道查询更新。稳定渠道看 latest(不含预发布);测试渠道看最近
 /// 20 条 Release(含预发布),取首个比当前新的——列表按时间倒序,
 /// 首条就是 GitHub 上的最新版,版本号比较兜底乱序。
-pub fn check_channel(channel: crate::config::Channel) -> Result<Check, String> {
+pub fn check_channel(channel: Channel) -> Result<Check, String> {
     match channel {
-        crate::config::Channel::Stable => {
+        Channel::Stable => {
             let Some((release, value)) = latest_release()? else {
                 return Ok(Check::NoRelease);
             };
             available_or_latest(release, value)
         }
-        crate::config::Channel::Beta => {
+        Channel::Beta => {
             let releases = releases_list()?;
             let candidate = releases
                 .iter()

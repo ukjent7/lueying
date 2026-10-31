@@ -22,7 +22,7 @@ use crate::settings_official::{self, WM_OFFICIAL_DONE};
 use crate::settings_secret_edit::{self, WM_SECRET_SAVED};
 use crate::settings_view::{Action, Notice, PageColors, PageId, Settings, UpdateState, ids};
 use crate::theme;
-use crate::update::{self, Check, Release};
+use lueying_net::update::{self, Check, Release};
 use lueying_protocol::Request;
 use lueying_render::panel::Palette;
 use lueying_render::ui::{self, Id};
@@ -659,8 +659,11 @@ fn with_settings(hwnd: HWND, f: impl FnOnce(&mut Settings)) {
 /// 后台查更新:网络慢不能卡住窗口。
 fn start_update_check(hwnd: HWND) {
     let channel = state_of(hwnd)
-        .map(|window| window.settings.cfg.update_channel)
-        .unwrap_or_default();
+        .map(|window| match window.settings.cfg.update_channel {
+            config::Channel::Beta => update::Channel::Beta,
+            config::Channel::Stable => update::Channel::Stable,
+        })
+        .unwrap_or(update::Channel::Stable);
     if let Some(window) = state_of(hwnd) {
         window.settings.updates = UpdateState::Checking;
         window.relayout();

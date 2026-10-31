@@ -1,0 +1,27 @@
+[package]
+name = "lueying-net"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "联网边界:更新检查、签名清单与下载,只被设置窗与更新器链接"
+
+[[bin]]
+name = "lueying-update"
+path = "src/bin/lueying-update.rs"
+
+[dependencies]
+# 文件 SHA-256 与协议版本比较;两者都是平台无关的小工具。
+lueying-extmeta.workspace = true
+lueying-protocol.workspace = true
+# 签名更新清单的验签;发布侧签名在 xtask,共用同一条 ed25519 实现。
+ed25519-dalek = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinHttp",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

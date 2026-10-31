@@ -1,19 +1,30 @@
 //! Wasm 层原型测量:编译、实例化与调用的嵌入成本。
 //!
-//! 「Wasm 能不能当默认第三方形态」的决策数据就出自这里:冷启动链
-//! (引擎创建 → 探针编译 → 实例化 → 首调)与单次调用开销,数字进 CI
-//! 报告。语义矩阵(燃料停用、内存上限、坏源码)在 crate 单测,这里只
-//! 做成本测量与冒烟;旁路进程的冷启动在 `lueying-bypass` 单测输出。
+//! 原型已冻结在默认 workspace 之外;要重新评估时手动运行:
+//! `cargo run --manifest-path crates/extwasm/Cargo.toml --bin measure`。
+//! 冷启动链(引擎创建 → 探针编译 → 实例化 → 首调)与单次调用开销都
+//! 打到 stdout;语义矩阵(燃料停用、内存上限、坏源码)在 crate 单测。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lueying_extwasm::{CALL_FUEL, PROBE_WAT, WasmHost, WasmModule};
 
-use crate::harness::push;
+fn push(checks: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
+    checks.push((name, ok, note));
+}
 
 fn micros(started: Instant) -> u128 {
     started.elapsed().as_micros()
+}
+
+fn main() {
+    let mut report = String::new();
+    let failures = run(&mut report);
+    print!("{report}");
+    if failures > 0 {
+        std::process::exit(1);
+    }
 }
 
 pub fn run(report: &mut String) -> usize {

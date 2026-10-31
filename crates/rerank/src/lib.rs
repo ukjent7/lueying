@@ -5,11 +5,19 @@
 //! 槽位运行;两者共用同一套 [`Fact`] 契约。
 
 pub mod debounce;
+pub mod metrics;
+
+#[cfg(test)]
+#[path = "metrics_tests.rs"]
+mod metrics_tests;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 pub use chinese_ime_lm::ModelError;
 use chinese_ime_lm::{CandidateFacts, Reranker, SentenceModel};
+
+pub use metrics::{LatencyMetrics, LatencySnapshot};
 
 /// 加载后的模型。权重只读,克隆只增加引用计数,多个会话共享一份。
 #[derive(Clone)]
@@ -56,19 +64,38 @@ pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
 /// 一个会话独享的推理状态:跨按键前缀缓存和候选续算都放在这里。
 pub struct Rerank {
     inner: Reranker,
+    metrics: Arc<LatencyMetrics>,
 }
 
 impl Rerank {
     pub fn new(model: &Model) -> Self {
+        Self::with_metrics(model, Arc::new(LatencyMetrics::default()))
+    }
+
+    /// 会话共享一份延迟直方图;4M 与 25M 各传各的。
+    pub fn with_metrics(model: &Model, metrics: Arc<LatencyMetrics>) -> Self {
         Self {
             inner: Reranker::new(Arc::clone(&model.inner)),
+            metrics,
         }
+    }
+
+    /// 当前会话上报的延迟分布。
+    pub fn metrics(&self) -> Arc<LatencyMetrics> {
+        Arc::clone(&self.metrics)
     }
 
     /// 返回模型建议移到首位的候选下标;`None` 表示保持引擎顺序。
     ///
     /// `texts` 与 `facts` 必须一一对应,长度不一致时放弃决策。
     pub fn decide(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
+        let started = Instant::now();
+        let result = self.decide_inner(context, texts, facts);
+        self.metrics.record(started.elapsed());
+        result
+    }
+
+    fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
         if texts.len() != facts.len() {
             return None;
         }
@@ -91,12 +118,25 @@ impl Rerank {
         facts: &[Fact],
         fuzzy: &[bool],
     ) -> Option<usize> {
+        let started = Instant::now();
+        let result = self.decide_settled_inner(context, texts, facts, fuzzy);
+        self.metrics.record(started.elapsed());
+        result
+    }
+
+    fn decide_settled_inner(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        fuzzy: &[bool],
+    ) -> Option<usize> {
         if texts.len() != facts.len() || texts.len() != fuzzy.len() {
             return None;
         }
         let leader = facts.first()?;
         if !leader.trusted_dictionary_hit || !leader.answers_key {
-            return self.decide(context, texts, facts);
+            return self.decide_inner(context, texts, facts);
         }
         if context.is_empty() {
             return None;

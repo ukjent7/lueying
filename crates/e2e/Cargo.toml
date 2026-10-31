@@ -14,7 +14,6 @@ lueying-cli.workspace = true
 lueying-dict.workspace = true
 lueying-engine.workspace = true
 # Wasm 层原型:组件宿主的嵌入成本测量。
-lueying-extwasm.workspace = true
 lueying-extjs.workspace = true
 lueying-extmeta.workspace = true
 lueying-features.workspace = true

@@ -1,6 +1,6 @@
 //! 独立更新器:等待设置窗退出,下载并校验 GitHub Release 里的 Inno 安装包,
 //! 再静默运行它完成替换。更新器自身从临时副本运行,安装目录里的 exe 才不会被
-//! 自己锁住。
+//! 自己锁住。它是 `lueying-net` 唯一的生产可执行文件。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -19,7 +19,7 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    use lueying_server::update;
+    use lueying_net::update;
     use windows::Win32::UI::WindowsAndMessaging::{
         MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
     };
@@ -100,7 +100,7 @@ mod imp {
     }
 
     fn check(options: &Options) {
-        match update::check_channel(lueying_server::config::Channel::Stable) {
+        match update::check_channel(update::Channel::Stable) {
             Ok(update::Check::Latest) => message(
                 APP,
                 &format!("已是最新版本 {}。", update::current_version()),

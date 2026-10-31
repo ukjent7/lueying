@@ -94,12 +94,13 @@ jobs:
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
       # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
-      # 旁路与 Wasm 两层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
+      # 旁路层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
+      # Wasm 原型已移出默认 workspace,不参与常规门禁。
       # CLI 的子命令解析同样不进 E2E,在这里跑。
       - name: 扩展层单元测试
         run: |
           cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
-          cargo test -p lueying-bypass -p lueying-extwasm --locked
+          cargo test -p lueying-bypass --locked
           cargo test -p lueying-cli --lib --locked
 
   # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准。
@@ -281,7 +282,7 @@ jobs:
         # 只编发版真正用到的包;64 位 E2E 宿主每次 push/PR 都编。
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
-        run: cargo build --release --locked -p lueying-server -p lueying-installer
+        run: cargo build --release --locked -p lueying-server -p lueying-net -p lueying-installer
       # 常驻进程不联网的可证明约束:按键与词库都在 lueying-server 手里,它的
       # 导入表不得出现 winhttp;联网只允许出现在设置窗与更新器的交互路径。
       - name: 常驻进程导入表断言
@@ -313,8 +314,9 @@ jobs:
       # 运行时体积基线:2026-10-31 实测 server 33.6 + settings 22.1 +
       # update 16.8 + user 0.6 + TSF 0.7 ≈ 73.8 MiB。大头是两份静态链接的
       # Skia;旧的 40 MiB 数字来自未链接 Skia 的版本。80 MiB 门限留约 8%
-      # 余量,依赖/特性继续膨胀会先红。后续把 update 从 server crate 拆出,
-      # 可再降到约 58 MiB 后收紧门限。发布包另有总门禁。
+      # 余量,依赖/特性继续膨胀会先红。更新器已拆到独立的 lueying-net
+      # crate,不再链接 Skia;下一次 Windows 实测后收紧门限。发布包另有
+      # 总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |

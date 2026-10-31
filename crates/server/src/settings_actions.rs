@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
-use crate::update;
+use lueying_net::update;
 use lueying_extjs::{ConsentBook, ConsentCheck};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::{Reply, Request, pipe_name};

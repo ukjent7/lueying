@@ -16,12 +16,15 @@ lueying-server.exe(常驻)
     ├─ UIA 左邻文本回退线程 / 25M 停顿重排线程
     └─ 日志(%LOCALAPPDATA%\lueying\logs\server.log)
 lueying-settings.exe(设置窗:原生窗口 + Skia 光栅,经管道与 Server 通信)
-lueying-update.exe(更新器:下载 setup.exe,校验 SHA-256 后静默安装)
+lueying-update.exe(更新器:来自 lueying-net,下载 setup.exe 并校验后静默安装)
 lueying-user.exe(安装期用户状态:输入法列表、HKCU Run、清理)
 ```
 
 TSF DLL 只带 `lueying-protocol`;`KeyMsg → Key` 的转换放在 Server 边界,
 引擎与 GUI 依赖不进宿主进程。`lueying-engine::types` 是宿主与模块共享的 DTO。
+联网代码只在 `lueying-net`:常驻 Server 是独立二进制,不引用该 crate;CI 还会
+用 `llvm-objdump` 断言它的导入表没有 `winhttp.dll`。设置窗与更新器按需联网;
+扩展的网络服务仍未开放,开放时由独立代理进程执行域名白名单。
 
 ## 引擎
 
@@ -152,8 +155,10 @@ Skia 体积裁剪评估(2026-10-31,结论:维持现键,不再投入):预编译�
 
 ## 更新
 
-设置窗按渠道查 GitHub Releases:稳定渠道读 `releases/latest`,测试渠道读
-最近 20 条并取首个比当前新的(含预发布)。资产约定 `lueying-<version>-setup.exe`
+更新检查、签名清单验签与 WinHTTP 下载都在独立 crate `lueying-net`;设置窗
+和 `lueying-update.exe` 链接它,常驻 Server 不链接。设置窗按渠道查 GitHub
+Releases:稳定渠道读 `releases/latest`,测试渠道读最近 20 条并取首个比当前
+新的(含预发布)。资产约定 `lueying-<version>-setup.exe`
 + `.sha256`;更新器复制到 `%TEMP%` 运行,等设置进程退出后静默装包。
 发布目录的 `version.txt` 是版本权威。代码签名:CI 配好证书 secret 后自动签
 setup.exe,未配置时发布未签名包。

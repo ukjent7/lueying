@@ -16,10 +16,10 @@ members = [
     "crates/extjs",
     # 运行期扩展:旁路进程层,按需启动、JSON 行协议,平台无关
     "crates/bypass",
-    # 运行期扩展:Wasm 组件宿主原型(Wasmtime),平台无关
-    "crates/extwasm",
     # 扩展服务缝:提供者契约与完成队列,平台无关
     "crates/extsvc",
+    # 联网边界:更新与下载,常驻 Server 不依赖
+    "crates/net",
     # 渲染核心:候选窗 Skia 出帧,平台无关
     "crates/render",
     # Windows 宿主与安装
@@ -33,6 +33,9 @@ members = [
     "xtask",
 ]
 
+# Wasm 原型独立成 workspace,不进默认构建;需要测量时按 crate 内说明手动跑。
+exclude = ["crates/extwasm"]
+
 [workspace.package]
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -45,8 +48,8 @@ lueying-ext = { path = "crates/ext" }
 lueying-extjs = { path = "crates/extjs" }
 lueying-extmeta = { path = "crates/extmeta" }
 lueying-extsvc = { path = "crates/extsvc" }
-lueying-extwasm = { path = "crates/extwasm" }
 lueying-bypass = { path = "crates/bypass" }
+lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }
 lueying-ocr = { path = "crates/ocr" }
 lueying-render = { path = "crates/render" }

@@ -13,10 +13,6 @@ path = "src/main.rs"
 name = "lueying-settings"
 path = "src/settings_main.rs"
 
-[[bin]]
-name = "lueying-update"
-path = "src/update_main.rs"
-
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
@@ -24,6 +20,8 @@ lueying-engine.workspace = true
 lueying-bypass.workspace = true
 # 扩展运行指标快照:设置页与 `lueying ext top` 读同一份格式。
 lueying-extmeta.workspace = true
+# 联网边界:设置窗的更新检查与官方扩展下载走这里,常驻 Server 不引用。
+lueying-net.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:设置页的控件层在平台无关的部分,Windows 与 Linux E2E 共用。
@@ -33,9 +31,7 @@ lueying-protocol = { path = "../protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
-# 签名更新清单的验签;发布侧签名在 xtask,共用同一条 ed25519 实现。
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-# 令牌生成的 CSPRNG;ed25519-dalek 2.2 没有把 rand_core 再导出,直连同一条 0.6 线。
+# 令牌生成的 CSPRNG。
 rand_core = { version = "0.6", features = ["getrandom"] }
 
 [target."cfg(windows)".dependencies]
@@ -63,7 +59,6 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
-    "Win32_Networking_WinHttp",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Com",
