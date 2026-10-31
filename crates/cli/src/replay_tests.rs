@@ -88,7 +88,7 @@ fn replay_reports_line_numbers_on_bad_input() {
 #[test]
 fn trigger_appears_and_fires_action() {
     let root = temp_root("trigger");
-    let script = write_script(&root, "nihao2\n");
+    let script = write_script(&root, "nihao\nnihao2\n");
     let ext_root = root.join("extensions");
     ext_pack(&ext_root, "demo", "run", "运行一下");
     let out = replay_with(
