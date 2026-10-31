@@ -323,11 +323,7 @@ fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.bg)),
         format!("{corner:?} 期望 {:?}", rgb(palette.bg)),
     );
-    let pixel = read_bgra(
-        &mut surface,
-        row.left as i32 + 4,
-        row.center_y() as i32,
-    );
+    let pixel = read_bgra(&mut surface, row.left as i32 + 4, row.center_y() as i32);
     push(
         checks,
         "选择面板选中行底色",

@@ -216,10 +216,7 @@ fn draw_rows(
             } else {
                 palette.text
             },
-            Point::new(
-                rect.left + PAD * scale,
-                rect.center_y() + size * 0.36,
-            ),
+            Point::new(rect.left + PAD * scale, rect.center_y() + size * 0.36),
             &shown,
             Some((max_width, size)),
         );

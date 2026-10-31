@@ -429,7 +429,8 @@ impl Provider for PanelProvider {
                 Ok(())
             }
             Err(mpsc::TrySendError::Disconnected(job)) => {
-                job.done.complete(Err("宿主面板不可用:窗口线程已退出".into()));
+                job.done
+                    .complete(Err("宿主面板不可用:窗口线程已退出".into()));
                 Ok(())
             }
         }
