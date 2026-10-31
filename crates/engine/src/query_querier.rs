@@ -116,7 +116,7 @@ impl Querier<'_> {
         } else if fuzzy_on {
             let keys = self.expanded_keys(sylls);
             for (variant, edits, groups) in keys.iter() {
-                if variant == &key {
+                if variant.as_str() == key.as_str() {
                     continue;
                 }
                 for e in self.dict.lookup_exact(variant) {
@@ -210,7 +210,7 @@ impl Querier<'_> {
     /// 只做字符串组合与二分,不像签名扫描那样把同首字母的整段词条都读一遍。
     /// 组合数超过 [`MAX_FUZZY_KEYS`] 时按改动处数从少到多截断,保证原键与
     /// 单点模糊仍在。
-    pub(crate) fn expanded_keys(&mut self, sylls: &[Syll]) -> Rc<Vec<(String, usize, u8)>> {
+    pub(crate) fn expanded_keys(&mut self, sylls: &[Syll]) -> Expansions {
         if sylls.iter().any(|s| s.abbrev) {
             return Rc::new(vec![(typed_key(sylls), 0, 0)]);
         }

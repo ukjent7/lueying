@@ -366,7 +366,7 @@ struct Querier<'a> {
     exp_cache: HashMap<String, Expansions>,
     /// 同一音节序列在一次构建里会被查询、前缀判断与扩词各展开一次;
     /// 缓存笛卡尔积结果,避免重复排序与去重。
-    expanded_cache: HashMap<String, Rc<Vec<(String, usize, u8)>>>,
+    expanded_cache: HashMap<String, Expansions>,
     /// 长句只保留单点模糊;短词不受影响。
     long: bool,
 }

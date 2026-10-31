@@ -127,7 +127,7 @@ impl Reranker {
             }
         }
         let promoted = (best != 0 && scores[best] - scores[0] >= min_margin)
-            .then(|| considered.as_slice()[best]);
+            .then_some(considered.as_slice()[best]);
         self.scores_scratch = scores;
         promoted
     }
