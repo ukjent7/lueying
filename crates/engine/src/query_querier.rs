@@ -116,7 +116,7 @@ impl Querier<'_> {
         } else if fuzzy_on {
             let keys = self.expanded_keys(sylls);
             for (variant, edits, groups) in keys.iter() {
-                if variant.as_str() == key.as_str() {
+                if variant.as_str() == key {
                     continue;
                 }
                 for e in self.dict.lookup_exact(variant) {
