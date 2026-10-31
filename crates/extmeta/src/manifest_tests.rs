@@ -411,7 +411,7 @@ fn parses_declarative_settings() {
 
 #[test]
 fn rejects_bad_settings() {
-    let mut value = script_v2();
+    let value = script_v2();
     let check = |setting: serde_json::Value| {
         let mut value = value.clone();
         value["settings"] = json!([setting]);
