@@ -13,7 +13,7 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationValuePattern, TreeScope_Descendants, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
-    UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_InvokePatternId, UIA_ValuePatternId,
+    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_InvokePatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
 use windows::core::{BSTR, PCWSTR, w};
@@ -89,7 +89,13 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
     let controls = descendants(&automation, &editor_root)?;
     let edit = controls
         .iter()
-        .find(|element| kind(element) == Some(UIA_EditControlTypeId))
+        .find(|element| {
+            // 多行 EDIT 在 UIA 代理下是 Document 控件类型;单行才是 Edit。
+            matches!(
+                kind(element),
+                Some(UIA_EditControlTypeId) | Some(UIA_DocumentControlTypeId)
+            )
+        })
         .ok_or("短语编辑器里没有 EDIT 文本控件")?;
     let value: IUIAutomationValuePattern = unsafe { edit.GetCurrentPatternAs(UIA_ValuePatternId) }
         .map_err(|e| format!("EDIT 没有 ValuePattern: {e}"))?;

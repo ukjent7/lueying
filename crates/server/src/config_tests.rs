@@ -251,11 +251,13 @@ learning = true
 learning = false
 "#;
     let layers = crate::config_file::apps_from_toml(text).expect("解析 apps.toml");
-    let mut config = AppConfig::default();
-    config.apps = layers
-        .into_iter()
-        .map(|(host, layer)| (host, layer.into()))
-        .collect();
+    let config = AppConfig {
+        apps: layers
+            .into_iter()
+            .map(|(host, layer)| (host, layer.into()))
+            .collect(),
+        ..AppConfig::default()
+    };
     assert_eq!(
         config.app_override("notepad.exe"),
         AppOverride {
