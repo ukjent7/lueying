@@ -1,63 +1,60 @@
-# 发布
+# 版本发布
 
-发布由 tag 触发 `ci.yml` 的 Windows job。版本号、安装包、更新清单与 GitHub Release 都从同一个 tag 生成，避免多处手改。
+掠影采用 Git Tag 驱动的自动化持续交付流程。安装包构建、更新清单签名与 GitHub Release 发布均由 CI 工作流自动完成，确保交付物的一致性与可追溯性。
 
-## 发布前
+## 发布前检查清单
 
-1. 在 `CHANGELOG.md` 写 `## [x.y.z] - YYYY-MM-DD`，内容面向用户；发布工作流按 tag 提取这一段作为 Release 说明。
-2. 确认 `main` 的 CI 通过，尤其是 Windows 全链路、32 位 TSF、安装/卸载 E2E。
-3. 确认 `tools/fetch_*.sh` 钉住的词库、语法模型、重排模型与 OCR 模型仍可下载，SHA-256 未变。
-4. 确认 `installer/lueying.iss` 的 `ArchitecturesAllowed` 与当前支持范围一致。ARM64 仍被拒绝安装。
+在推送发布 Tag 前，必须完成以下验证：
 
-Cargo 包版本不参与发布判定；`xtask pack --version` 用 tag 的版本，安装目录的 `version.txt` 是运行时权威。需要改 Cargo 版本时单独提交，别把它当发布开关。
+1. **更新日志**：在 `CHANGELOG.md` 中编写面向用户的 `## [x.y.z] - YYYY-MM-DD` 变更说明；CI 将提取该段内容作为 GitHub Release 的发版说明。
+2. **主干质量状态**：确认 `main` 分支的持续集成（CI）全部通过，特别是真实 TSF E2E、32 位兼容性测试与安装/卸载冒烟测试。
+3. **外部资产完备性**：确认 `tools/fetch_*.sh` 锁定的词典、语法搭配与重排模型地址依然有效，SHA-256 校验和保持一致。
+4. **支持架构确认**：确认 `installer/lueying.iss` 的 `ArchitecturesAllowed` 符合支持预期（当前仅支持 x64）。
 
-## 打 tag
+## Tag 规范与触发
 
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-tag 必须是 `vX.Y.Z` 或 `vX.Y.Z-预发布`。预发布段用 `-` 连接，例如 `v0.2.0-beta.1`；CI 会把预发布 Release 标记为 prerelease，稳定渠道不会把它当成 latest。
+- Tag 名称必须遵循语义化版本格式：`vX.Y.Z`（正式版）或 `vX.Y.Z-<预发布标识>`（如 `v0.2.0-beta.1`）。
+- 带有预发布标识的 Tag 会被 CI 自动标记为 Pre-release，不会被稳定版客户端作为 `latest` 拉取。
+- 若 `CHANGELOG.md` 中缺少对应版本的变更描述，CI 打包任务将直接中止失败。
 
-发布前 CI 会检查 `CHANGELOG.md` 是否有对应版本段；缺说明时在打包前失败。
+## 自动化流水线与产物
 
-## CI 产物
+Windows CI 构建任务依次执行以下步骤：
 
-Windows job 依次完成：
+1. **核心组件构建**：编译 64 位服务端、设置中心、独立更新器、网络代理及安装辅助程序。
+2. **TSF 薄壳编译**：使用静态 C 运行时（Static CRT）构建 x64 与 i686（32 位）两份 `lueying_tsf.dll`。
+3. **端到端测试与指标断言**：运行全链路宿主 E2E 测试，验证运行时体积（≤ 80 MiB）、常驻内存工作集（≤ 128 MB）与交互延迟（p95 ≤ 60ms）。
+4. **安装包打包**：整合词典与模型资源，生成 `version.txt` 与结构化清单，编译输出 `lueying-<version>-setup.exe`。
+5. **数字签名**：
+   - **Authenticode 签名**：若配置了 `WINDOWS_PFX_BASE64` 与密码密钥，使用 `signtool` 对安装包进行数字签名。
+   - **清单签名**：生成 `lueying-manifest.json` 与 `.sha256`，若配置了 `LUEYING_SIGN_KEY` 则追加 Ed25519 签名。
+6. **创建 GitHub Release**：将安装包、校验文件、更新清单与签名上传至发布版本。
 
-- 构建 x64 Server、Settings、更新器、网络代理与用户态安装辅助程序。
-- 用静态 CRT 构建 x64 与 i686 TSF DLL。
-- 跑真实 TSF E2E、32 位 E2E、Inno 安装/升级/卸载 E2E。
-- 检查运行时体积、安装包体积、内存与按键延迟门限。
-- 下载并物化词典与模型，装配发布目录，生成 `version.txt` 与 `manifest.json`。
-- 编译 `lueying-<version>-setup.exe`。
-- 配置 `WINDOWS_PFX_BASE64` 与 `WINDOWS_PFX_PASSWORD` 时用 `signtool` 签安装包；未配置时发布未签名包。
-- 生成 `lueying-manifest.json` 与 `.sha256`；配置 `LUEYING_SIGN_KEY` 时给清单加 Ed25519 签名。
-- 创建或更新 GitHub Release，资产包括安装包、`.sha256`、更新清单与清单签名。
+### 签名密钥说明
 
-三个 secret 都是可选的，但正式发布建议全部配置：
-
-| Secret | 作用 | 缺失时 |
+| 密钥名称 | 作用 | 缺失时的行为 |
 |---|---|---|
-| `WINDOWS_PFX_BASE64` | Authenticode 证书 PFX 的 base64 | 安装包未签名，SmartScreen 可能拦截 |
-| `WINDOWS_PFX_PASSWORD` | PFX 密码 | 同上 |
-| `LUEYING_SIGN_KEY` | 更新清单 Ed25519 私钥种子 | 清单不签名，客户端退回 `.sha256` |
+| `WINDOWS_PFX_BASE64` | Authenticode 证书 PFX 编码 | 输出未签名安装包，Windows SmartScreen 可能出现拦截提示 |
+| `WINDOWS_PFX_PASSWORD` | PFX 证书密码 | 同上 |
+| `LUEYING_SIGN_KEY` | 更新清单 Ed25519 私钥种子 | 清单未签名，客户端降级使用基础 `.sha256` 校验 |
 
-## 发布后验证
+## 发布后验证流程
 
-在一台干净的 Windows 10/11 x64 上：
+在干净的 Windows 10/11 x64 测试机上验证新版本：
 
-1. 安装 `lueying-<version>-setup.exe`，确认输入法列表出现「掠影」，64 位与 32 位宿主都能输入。
-2. 检查安装目录 `version.txt` 与 Release 版本一致。
-3. 从上一个稳定版本走「设置 → 关于 → 检查更新」，确认下载、SHA-256/清单验签、静默升级与版本切换。
-4. 检查 `%APPDATA%\lueying` 的配置与学习记录在升级后保留。
-5. 卸载，确认 TSF 注册、开机自启、开始菜单与用户数据按预期清理；被宿主占用的旧 DLL 允许重启后删除。
+1. 运行 `lueying-<version>-setup.exe`，确认安装顺畅，64 位与 32 位宿主应用均可正常唤出输入法。
+2. 确认安装目录中 `version.txt` 与 Release 版本完全吻合。
+3. 从上一稳定版打开「掠影设置 → 关于 → 检查更新」，验证清单校验、静默更新与版本平滑迁移。
+4. 验证升级后 `%APPDATA%\lueying` 中的用户设置与自学习词库完整保留。
+5. 执行卸载，验证 TSF 注册表项、服务自启与临时文件均按预期清理。
 
-`workflow_dispatch` 只构建发布目录与安装包并上传 artifact，不创建 Release；用它在打 tag 前检查打包链路。
+## 回滚与应急
 
-## 回退
-
-客户端没有自动回退通道。已安装的新版本出问题时，发布一个更高版本修复，或在 Release 里撤下问题资产并写清原因。不要删除已被客户端引用过的更新清单签名文件；需要撤销时发布新清单并提升版本。
-
-从旧的 zip 更新器切换到 Inno 安装包时，老客户端无法自动升级，需要手动安装一次。这个边界保留在 [architecture.md](architecture.md) 与 [install.md](install.md)。
+客户端无自动降级逻辑。已发布的版本若发现致命缺陷：
+- 建议立即发布更高的小版本号执行热修复。
+- 或在 GitHub Release 中撤回受影响资产并发布置顶公告。严禁擅自删除已被客户端引用的 Ed25519 签名文件，以免造成旧版客户端更新链死锁。

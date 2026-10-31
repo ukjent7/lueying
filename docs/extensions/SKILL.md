@@ -1,104 +1,103 @@
-# SKILL: 写一个掠影运行期扩展
+# 掠影运行期扩展开发规范（Skill 模板）
 
-这个模板给 coding agent 用:把扩展做成一个可打包、可审计的 `lueying` 运行期脚本扩展。
-交付物是一个目录(`manifest.json` + `index.js`),用户通过设置页「扩展 → 运行期脚本」
-选择并同意权限后启用。
+本模板为开发人员或 Coding Agent 提供创建掠影运行期扩展的标准开发规范与验收标准。最终交付物为符合规范的扩展目录（包含 `manifest.json` 与 `index.js`），支持用户在设置中心授权后即开即用。
 
-## 先确认边界
+## 架构与安全前提
 
-- 脚本是单文件 IIFE,不支持 `import`;先写 TypeScript,再用 esbuild/tsc 打包成一个文件。
-- 不要尝试读候选文字、宿主应用名或键盘内容;场景里没有这些字段。
-- 密码/隐私字段下宿主不会调用脚本,也不会执行命令。
-- 联网、截屏、读剪贴板都属于高敏感能力:只在确实需要时声明,并在界面上向用户说明用途。
-- 扩展随宿主进程运行,不能加载 DLL,也不能绕过宿主服务;所有外部能力走 `lueying.<service>.*`。
+1. **单文件构建**：QuickJS 沙箱不支持运行时 `import`；请先使用 TypeScript 编写源码，再使用 esbuild 等构建工具打包为单文件 IIFE 格式。
+2. **零敏感数据暴露**：外观处理器与命令无法读取用户的输入拼音、候选汉字列表或宿主应用名称。
+3. **隐私模式静默**：密码框与系统隐私字段下宿主自动熔断扩展逻辑，不执行任何扩展命令。
+4. **受控服务原语**：所有涉及截屏、剪贴板、离线 OCR 或网络的外联能力必须通过 `lueying.<service>.*` 原语调用。
 
-## 目录
+## 目录组织标准
 
 ```
-my-pack/
-  manifest.json
-  index.js       # 打包产物
-  README.md      # 给用户看:它做什么、需要什么权限、数据去哪
+my-extension/
+  ├── manifest.json       # 扩展元数据、激活条件、权限与声明式设置
+  ├── index.js            # 打包后的单文件 IIFE 运行代码
+  └── README.md           # 面向用户的扩展说明（用途、权限、数据去向）
 ```
 
-目录名必须等于 `manifest.json` 的 `id`(小写字母、数字、`-`、`_`,≤48 字节)。
+> [!IMPORTANT]
+> 扩展目录名称必须与 `manifest.json` 中的 `id` 字段严格保持一致。
 
-## manifest.json
+## 清单模板 `manifest.json`
 
 ```json
 {
-  "id": "my-pack",
+  "id": "my-extension",
   "name": "我的扩展",
   "version": "1.0.0",
   "api": 2,
   "main": "index.js",
   "activate": {
-    "commands": [{ "id": "run", "title": "执行我的命令", "when": "any" }]
+    "triggers": ["my"],
+    "hotkeys": ["Ctrl+Alt+M"],
+    "commands": [
+      { "id": "run", "title": "执行快捷任务", "when": "any" }
+    ]
   },
-  "needs": [],
-  "capabilities": [],
-  "settings": []
+  "needs": ["clipboard", "notify"],
+  "capabilities": ["clipboard"],
+  "settings": [
+    {
+      "key": "show_notification",
+      "title": "任务完成后提示通知",
+      "type": "toggle",
+      "default": true
+    }
+  ]
 }
 ```
 
-- `activate` 至少要有 `triggers`、`hotkeys`、`commands` 之一。
-- `needs` 只填用到的服务:`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`net`、`notify`;`net` 还要在清单顶层写 `network.domains` 白名单。
-- `capabilities` 是权限声明,不是服务声明;读用户内容与外发同时出现时会触发强提示。
-- 设置项最多 32 个,类型只有 `toggle`、`choice`、`secureText`;密钥不会写进 `config.toml`。
+## 核心实现示例 `index.js`
 
-## index.js
-
-```js
-// 打包后仍是单文件 IIFE;下面是源码形态。
+```javascript
+// 注册命令实现
 lueying.command("run", async () => {
   const { text } = await lueying.clipboard.read();
-  await lueying.store.set({ key: "last", value: text.slice(0, 200) });
-  await lueying.notify.show({ title: "我的扩展", body: "已处理剪贴板" });
-  return { chars: text.length };
+  await lueying.notify.show({
+    title: "扩展执行成功",
+    body: `处理了 ${text.length} 个字符`
+  });
+  return { processed: text.length };
 });
-```
 
-需要候选窗外观时注册场景处理:
-
-```js
+// 可选：注册候选窗动态装饰外观
 lueying.register((scene) => {
-  if (scene.dark) {
-    return { accent: 0x5aa9ff };
-  }
-  return {};
+  if (scene.high_contrast) return null;
+  return {
+    accent: scene.dark ? 0x64b5f6 : 0x1976d2
+  };
 });
 ```
 
-类型定义在同目录 [`lueying.d.ts`](lueying.d.ts);把 `lueying.d.ts` 加进 tsconfig 的
-`include`,即可获得 `lueying` 全局类型。
+全局类型声明参见同目录下的 [`lueying.d.ts`](lueying.d.ts)。
 
-## 开发与打包
+## 构建、打包与验证流程
 
-```bash
-# 用 esbuild 把 TypeScript 打成单文件
-npx esbuild src/index.ts --bundle --format=iife --outfile=index.js
+```sh
+# 1. 使用 esbuild 将 TypeScript 源码打包为单文件 IIFE
+npx esbuild src/index.ts --bundle --format=iife --minify --outfile=index.js
 
-# 本地检查并安装到当前用户扩展目录
-lueying ext pack my-pack
-lueying ext install my-pack.luext
+# 2. 本地打包验证并安装
+lueying ext pack my-extension
+lueying ext install my-extension.luext --force
 lueying ext reload
-lueying ext logs
+
+# 3. 使用回放引擎验证打字交互与动作候选
+lueying ext replay test_script.txt
+
+# 4. 实时监控运行状态与日志
+lueying ext logs --tail 20
+lueying ext top
 ```
 
-`lueying ext replay` 可以在 Linux 无头环境回放按键与命令,输出确定性候选报告;
-提交前至少跑一次,并把报告贴到 PR/说明里。
+## 交付验收清单
 
-## 验收清单
-
-- [ ] 目录名 = `id`,`manifest.json` 能被 `lueying ext pack` 解析。
-- [ ] 只声明实际使用的 `needs` 与 `capabilities`。
-- [ ] 没有 `eval`、动态 `import`、绕过 `lueying.net` 的网络直连或读取候选文字。
-- [ ] 命令在 `activate.commands` 里有标题与 `when`。
-- [ ] 设置项有默认值,密钥项使用 `secureText`。
-- [ ] 用户文档写清数据用途、存储位置与卸载后是否保留。
-- [ ] 在设置页启用、同意权限、执行命令、关闭扩展各走一遍。
-
-## 发布
-
-优先让扩展留在用户自己的目录;需要公开分发时,把源码与打包步骤一起发布,
-让用户能复现 `index.js`。不要把密钥、令牌或本机路径写进包。
+- [ ] 目录名与 `manifest.json` 中的 `id` 严格吻合。
+- [ ] `manifest.json` 格式符合规范，且仅申请业务必需的 `needs` 与 `capabilities`。
+- [ ] 未使用 `eval`、动态导入、原生直连等绕过沙箱的操作。
+- [ ] 所有命令均在 `activate.commands` 中声明了清晰的中文标题。
+- [ ] 提供面向用户的 `README.md`，清楚告知权限用途与数据存储位置。
+- [ ] 本地通过 `lueying ext replay` 验证通过，无未捕获异常。
