@@ -75,3 +75,5 @@ skia-safe = { version = "0.156", default-features = false, features = [
 lto = "thin"
 # 发布产物链接期去掉符号表,CI 体积门禁与发布目录量到的就是用户拿到的文件。
 strip = "symbols"
+# 不开 panic = "abort":TSF DLL 的 catch_unwind 是宿主崩溃前最后一道边界,
+# Server/Settings 的 unwind 也用于线程级兜底;strip 后的体积收益很小。
