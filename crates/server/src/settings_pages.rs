@@ -5,6 +5,8 @@
 
 use super::*;
 
+use lueying_render::ui::{Button, ButtonKind, Control, Group, Page, Row, SegmentOption};
+
 impl Settings {
     /// 页面:把配置与服务端状态铺成一页。
     pub fn page(&self, colors: &PageColors) -> Page {

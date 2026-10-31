@@ -34,8 +34,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
 # 签名更新清单的验签;发布侧签名在 xtask,共用同一条 ed25519 实现。
-# rand_core 特性带出 OsRng,commit 通道的令牌生成复用,不再引随机数依赖。
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+# 令牌生成的 CSPRNG;ed25519-dalek 2.2 没有把 rand_core 再导出,直连同一条 0.6 线。
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 [target."cfg(windows)".dependencies]
 # 设置窗无障碍:AccessKit 把页面模型暴露成 UIA 树,读屏软件才能操作自绘控件。

@@ -59,10 +59,9 @@ pub fn ensure_token(path: &Path) -> Result<String, String> {
     Ok(token)
 }
 
-/// 32 字节 CSPRNG → 64 位十六进制。 randomness 用 ed25519-dalek 复用的
-/// rand_core OsRng,不为此引入新依赖。
+/// 32 字节 CSPRNG → 64 位十六进制。rand_core 的 OsRng(getrandom 后端)。
 pub fn generate_token() -> Result<String, String> {
-    use ed25519_dalek::rand_core::{OsRng, RngCore};
+    use rand_core::{OsRng, RngCore};
     let mut bytes = [0u8; TOKEN_BYTES];
     OsRng
         .try_fill_bytes(&mut bytes)
