@@ -60,7 +60,12 @@ pub fn run(report: &mut String) -> usize {
         "设置左栏分类齐全",
         nav == ["输入", "候选", "扩展", "词库", "关于"]
             && page.active_nav == 0
-            && page.groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>() == ["输入"],
+            && page
+                .groups
+                .iter()
+                .map(|g| g.title.as_str())
+                .collect::<Vec<_>>()
+                == ["输入"],
         format!("{nav:?} 当前 {}", page.active_nav),
     );
     // 每一页都有行,每行都有标题。

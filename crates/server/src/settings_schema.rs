@@ -76,10 +76,7 @@ pub enum DefaultValue {
 #[derive(Clone, Copy, Debug)]
 pub enum ValueType {
     Bool,
-    Int {
-        min: Option<i64>,
-        max: Option<i64>,
-    },
+    Int { min: Option<i64>, max: Option<i64> },
     Text,
     Enum(&'static [&'static str]),
     List,
@@ -190,7 +187,10 @@ pub fn config_schema_json() -> Value {
             }
             ValueType::Table => {
                 property.insert("type".to_string(), json!("object"));
-                property.insert("additionalProperties".to_string(), json!({"type": "string"}));
+                property.insert(
+                    "additionalProperties".to_string(),
+                    json!({"type": "string"}),
+                );
             }
         }
         property.insert("default".to_string(), default_json(def.default));
@@ -539,7 +539,14 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Input,
             keywords: "拼音 全拼 双拼 小鹤 自然码 微软 搜狗",
-            control: segment(ids::SCHEME, SCHEME_CHOICES, 44.0, false, scheme_get, scheme_set),
+            control: segment(
+                ids::SCHEME,
+                SCHEME_CHOICES,
+                44.0,
+                false,
+                scheme_get,
+                scheme_set,
+            ),
             visible: always,
         }),
     },
@@ -604,7 +611,14 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Input,
             keywords: "繁体 字形 台湾 香港",
-            control: segment(ids::REGION, REGION_CHOICES, 44.0, false, region_get, region_set),
+            control: segment(
+                ids::REGION,
+                REGION_CHOICES,
+                44.0,
+                false,
+                region_get,
+                region_set,
+            ),
             visible: when_traditional,
         }),
     },
@@ -640,7 +654,14 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Candidate,
             keywords: "候选 横排 竖排 排列",
-            control: segment(ids::LAYOUT, LAYOUT_CHOICES, 44.0, false, layout_get, layout_set),
+            control: segment(
+                ids::LAYOUT,
+                LAYOUT_CHOICES,
+                44.0,
+                false,
+                layout_get,
+                layout_set,
+            ),
             visible: always,
         }),
     },
@@ -666,7 +687,14 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Candidate,
             keywords: "主题 颜色 强调色 外观",
-            control: segment(ids::ACCENT, ACCENT_CHOICES, 34.0, true, accent_get, accent_set),
+            control: segment(
+                ids::ACCENT,
+                ACCENT_CHOICES,
+                34.0,
+                true,
+                accent_get,
+                accent_set,
+            ),
             visible: always,
         }),
     },

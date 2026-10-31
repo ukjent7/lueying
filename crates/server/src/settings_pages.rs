@@ -113,11 +113,7 @@ impl Settings {
     /// 一页里由 schema 生成的简单设置行。
     fn setting_rows(&self, page: PageId, colors: &PageColors) -> Vec<Row> {
         settings_schema::on_page(page)
-            .filter(|def| {
-                def.ui
-                    .as_ref()
-                    .is_none_or(|ui| (ui.visible)(&self.cfg))
-            })
+            .filter(|def| def.ui.as_ref().is_none_or(|ui| (ui.visible)(&self.cfg)))
             .map(|def| self.setting_row(def, colors))
             .collect()
     }
@@ -150,10 +146,7 @@ impl Settings {
                         toggle: control_id,
                         toggle_on: on,
                     },
-                    _ => Control::Toggle {
-                        id: control_id,
-                        on,
-                    },
+                    _ => Control::Toggle { id: control_id, on },
                 }
             }
             ControlDef::Segment {

@@ -53,10 +53,7 @@ impl<'a> Painter<'a> {
             return;
         }
         self.canvas.draw_rrect(
-            RRect::new_rect_radii(
-                panel,
-                &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4],
-            ),
+            RRect::new_rect_radii(panel, &[Vector::new(CARD_RADIUS * s, CARD_RADIUS * s); 4]),
             &fill_paint(self.palette.surface_alt),
         );
         for (index, item) in page.nav.iter().enumerate() {
