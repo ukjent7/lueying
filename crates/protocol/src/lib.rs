@@ -191,6 +191,42 @@ pub enum Request {
     Goodbye { session: u64 },
 }
 
+/// 请求的特权层级。管道 ACL 必须放行低完整性宿主(UWP 打字所需),分级
+/// 由服务端在处理前按客户端身份校验;键入流永不设限。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Privilege {
+    /// 打字流:任何管道客户端都可发,低完整性宿主靠它打出中文。
+    Host,
+    /// 只读引擎状态:拒绝 AppContainer 客户端。
+    Read,
+    /// 改配置/词库/服务生命周期:拒绝 AppContainer,且只认本产品的工具进程。
+    Manage,
+}
+
+/// [`Privilege::Manage`] 允许的客户端映像名(不带目录:安装器可从任意位置
+/// 运行,CLI 在开发期从 target 目录运行)。AppContainer 拦截才是主闸门,
+/// 名单挡的是误用与沙箱逃逸,不指望同名进程防住同用户攻击者。
+pub const MANAGE_CLIENTS: &[&str] = &["lueying-settings.exe", "lueying.exe", "lueying-user.exe"];
+
+impl Request {
+    /// 请求的特权层级。`ExternalCommit` 自带令牌授权,`TogglePunct` 等
+    /// 是用户按键,都归 [`Privilege::Host`]。
+    pub fn privilege(&self) -> Privilege {
+        match self {
+            Request::Status | Request::EffectTemplates => Privilege::Read,
+            Request::ReloadConfig
+            | Request::ClearUser
+            | Request::ExportUser
+            | Request::ImportUser { .. }
+            | Request::FuzzyStats
+            | Request::ResetFuzzy
+            | Request::Shutdown
+            | Request::Ext { .. } => Privilege::Manage,
+            _ => Privilege::Host,
+        }
+    }
+}
+
 /// Server → DLL。
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Reply {

@@ -1133,6 +1133,8 @@ name = "lueying-win-e2e"
 version = "0.1.0"
 dependencies = [
  "lueying-extmeta",
+ "lueying-protocol",
+ "serde_json",
  "windows",
  "windows-core",
 ]

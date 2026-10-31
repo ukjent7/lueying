@@ -282,6 +282,17 @@ jobs:
         # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
         run: cargo build --release --locked -p lueying-server -p lueying-installer
+      # 常驻进程不联网的可证明约束:按键与词库都在 lueying-server 手里,它的
+      # 导入表不得出现 winhttp;联网只允许出现在设置窗与更新器的交互路径。
+      - name: 常驻进程导入表断言
+        shell: pwsh
+        run: |
+          $imports = & "C:\Program Files\LLVM\bin\llvm-objdump.exe" -x target/release/lueying-server.exe |
+            Select-String -Pattern 'winhttp'
+          if ($imports) {
+            $imports | ForEach-Object { Write-Host $_ }
+            throw "lueying-server.exe 的导入表出现 winhttp,常驻进程联网约束被破坏"
+          }
       # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
       # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
       # 平台无关的服务端单测已在 Linux quality 跑过;Windows 这份只留平台特有

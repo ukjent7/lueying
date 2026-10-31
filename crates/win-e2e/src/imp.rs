@@ -1,5 +1,7 @@
 #[path = "win_e2e_checks.rs"]
 mod checks;
+#[path = "pipe_gate.rs"]
+mod pipe_gate;
 
 use checks::*;
 
@@ -560,6 +562,8 @@ fn real_run() -> Result<(String, String), String> {
         let a11y_note = crate::settings_a11y::check(&dir, &data)?;
         // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
         let panel_note = panel_selftest(&dir)?;
+        // 管道授权门:本进程不是工具进程,特权请求被拒、只读放行。
+        let gate_note = pipe_gate::check()?;
         // 面板自检把前台还给了它自己的宿主;后面的按键要回到 RichEdit。
         unsafe {
             let _ = SetForegroundWindow(hwnd);
@@ -581,7 +585,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

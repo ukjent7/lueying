@@ -4,6 +4,7 @@
 //! 与时间戳助手经 `super::*` 取用。
 
 use super::*;
+use std::io::Write;
 
 /// 导出配置备份:配置、短语、标点、按应用配置与用户词库打包成
 /// 一份文本。文件内容按行数声明长度,文件里出现什么标记都不影响
@@ -50,7 +51,15 @@ pub fn backup_export(settings: &mut Settings) {
         }
         out.push_str(&format!("### end: {name}\n"));
     }
-    match std::fs::write(&path, out) {
+    // 临时文件 + fsync + 改名:失败与断电都不留半截备份。
+    let tmp = path.with_extension("bak.tmp");
+    let written = std::fs::File::create(&tmp)
+        .and_then(|file| {
+            file.write_all(out.as_bytes())?;
+            file.sync_all()
+        })
+        .and_then(|()| std::fs::rename(&tmp, &path));
+    match written {
         Ok(()) => settings.say(Notice::Success, format!("已备份到 {}", path.display())),
         Err(e) => settings.say(Notice::Error, format!("导出失败: {e}")),
     }

@@ -5,3 +5,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Cargo 依赖每周分组升级:一个 PR 一起出,噪声可控;跟进最新稳定版是仓库约定。
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-all:
+        patterns:
+          - "*"

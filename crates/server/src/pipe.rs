@@ -6,22 +6,31 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree,
+};
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+use windows::Win32::Security::{
+    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, GetTokenInformation, OpenProcessToken,
+    TOKEN_QUERY, TokenIsAppContainer,
+};
+use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::core::{HRESULT, HSTRING};
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
+use windows::core::{HRESULT, HSTRING, PWSTR};
 
-use lueying_protocol::Request;
+use lueying_protocol::{MANAGE_CLIENTS, Privilege, Request};
 
 use crate::imp::State;
 
@@ -38,14 +47,28 @@ static NEXT_CONN: AtomicU64 = AtomicU64::new(1);
 /// 阻塞主线程:循环建管道实例并等待连接。永不返回。
 pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
     let wide: HSTRING = name.into();
+    let mut first = true;
     loop {
-        match create_instance(&wide).and_then(wait_client) {
+        match create_instance(&wide, first) {
             Ok(stream) => {
-                let state = Arc::clone(&state);
-                std::thread::spawn(move || serve(stream, state));
+                first = false;
+                match wait_client(stream) {
+                    Ok(file) => {
+                        let state = Arc::clone(&state);
+                        std::thread::spawn(move || serve(file, state));
+                    }
+                    // 客户端在等待中消失;句柄随 File 释放,循环重建实例。
+                    Err(_) => {}
+                }
             }
-            Err(e) => {
-                eprintln!("管道实例建立失败: {e},5 秒后重试");
+            Err(error) if first => {
+                // 首实例要求独占创建:失败说明名字已被占用。重复启动该退出,
+                // 被抢占更该退出——宁可服务不可用,也不把按键送进可疑对端。
+                eprintln!("管道首实例建立失败: {error}。同名管道已被占用(重复启动或被抢占),退出。");
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("管道实例建立失败: {error},5 秒后重试");
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }
@@ -53,16 +76,23 @@ pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
 }
 
 /// 建一个实例。句柄交给 `File` 管:对端关闭时 std 把 `ERROR_BROKEN_PIPE` 当 EOF。
-fn create_instance(name: &HSTRING) -> io::Result<File> {
+/// `first` 要求独占创建(`FILE_FLAG_FIRST_PIPE_INSTANCE`),首实例抢不到名字即失败。
+fn create_instance(name: &HSTRING, first: bool) -> io::Result<File> {
     // 系统应用(UWP/设置/搜索)以低完整性、AppContainer 令牌连管道;默认 DACL
     // 只给当前用户,它们会连不上而变成打不出中文。放行对象所有者(当前用户)、
     // AppContainer 与受限 AppContainer,低完整性标签让低 IL 客户端也能读写;
     // 管道名本身仍带每用户后缀。
     let security = security_attributes();
+    // 首实例独占创建:名字被占即失败;后续实例按普通方式补位。
+    let open_mode = if first {
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE
+    } else {
+        PIPE_ACCESS_DUPLEX
+    };
     let handle = unsafe {
         CreateNamedPipeW(
             name,
-            PIPE_ACCESS_DUPLEX,
+            open_mode,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             BUFFER_SIZE,
@@ -105,6 +135,81 @@ fn security_attributes() -> Option<(SECURITY_ATTRIBUTES, PSECURITY_DESCRIPTOR)> 
     Some((attributes, descriptor))
 }
 
+/// 一次连接识别出来的客户端身份。进程句柄在识别后立即关闭:映像路径
+/// 在进程存活期内不变,读完即走,不钉住对方进程对象。
+struct ClientIdentity {
+    image: String,
+    appcontainer: bool,
+}
+
+/// 识别管道客户端:映像路径 + 是否 AppContainer。查询失败(客户端刚退出、
+/// 权限不足)返回 `None`,调用方对特权请求一律按未授权处理。
+fn client_identity(file: &File) -> Option<ClientIdentity> {
+    let mut pid = 0u32;
+    unsafe { GetNamedPipeClientProcessId(HANDLE(file.as_raw_handle()), &mut pid) }.ok()?;
+    let process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    let imaged = unsafe {
+        QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+    };
+    let image = if imaged.is_ok() {
+        String::from_utf16_lossy(&buf[..len as usize])
+    } else {
+        String::new()
+    };
+    let mut token = HANDLE::default();
+    let tokened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+    let appcontainer = tokened.is_ok() && {
+        let mut value = 0u32;
+        let mut returned = 0u32;
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenIsAppContainer,
+                Some(&mut value as *mut u32 as *mut _),
+                size_of::<u32>() as u32,
+                &mut returned,
+            )
+        }
+        .is_ok_and(|()| value != 0)
+    };
+    if tokened.is_ok() {
+        unsafe { let _ = CloseHandle(token); }
+    }
+    unsafe { let _ = CloseHandle(process); }
+    (imaged.is_ok() && tokened.is_ok()).then_some(ClientIdentity { image, appcontainer })
+}
+
+/// 特权请求的客户端校验;返回拒绝原因。打字流不设限:低完整性的系统
+/// 宿主必须能打中文。AppContainer 进程(浏览器渲染器等)再读文件受限,
+/// 管道是它们逃逸用户词库的缝,一律挡在 Read 与 Manage 之外;Manage
+/// 另要求映像是本产品的工具进程。
+fn deny_reason(identity: Option<&ClientIdentity>, request: &Request) -> Option<&'static str> {
+    let privilege = request.privilege();
+    if privilege == Privilege::Host {
+        return None;
+    }
+    let identity = identity.as_ref()?;
+    if identity.appcontainer {
+        return Some("AppContainer 客户端");
+    }
+    if privilege == Privilege::Manage {
+        let name = Path::new(&identity.image)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let known = MANAGE_CLIENTS
+            .iter()
+            .any(|tool| name.eq_ignore_ascii_case(tool));
+        if !known {
+            return Some("映像不是本产品工具");
+        }
+    }
+    None
+}
+
 /// 阻塞等一个客户端连上这个实例。
 fn wait_client(stream: File) -> io::Result<File> {
     let handle = HANDLE(stream.as_raw_handle());
@@ -118,11 +223,12 @@ fn wait_client(stream: File) -> io::Result<File> {
 }
 
 fn serve(file: File, state: Arc<State>) {
-    // 记录客户端 PID:键盘数据的来源进程,日志排查与后续限权用(mozc 同款)。
+    // 识别客户端:键盘数据的来源进程,日志排查与特权请求分级用。
     let mut pid = 0u32;
     if unsafe { GetNamedPipeClientProcessId(HANDLE(file.as_raw_handle()), &mut pid) }.is_ok() {
         println!("管道客户端 pid={pid}");
     }
+    let identity = client_identity(&file);
     let mut writer = match file.try_clone() {
         Ok(w) => w,
         Err(_) => return,
@@ -167,23 +273,35 @@ fn serve(file: File, state: Arc<State>) {
             }
         }
         let started = std::time::Instant::now();
-        let reply = request
-            .map(|req| {
-                // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
-                catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
-                    |payload| {
-                        // 服务日志已接到文件,panic 内容要落盘,否则只剩一句「出错了」。
-                        let msg = payload
-                            .downcast_ref::<&str>()
-                            .copied()
-                            .or(payload.downcast_ref::<String>().map(String::as_str))
-                            .unwrap_or("<非字符串 panic>");
-                        eprintln!("请求处理 panic,已回中性应答:{msg}");
-                        crate::imp::neutral(&state)
-                    },
-                )
-            })
-            .unwrap_or_else(|| crate::imp::neutral(&state));
+        let denied = request
+            .as_ref()
+            .and_then(|req| deny_reason(identity.as_ref(), req));
+        let reply = if let Some(reason) = denied {
+            let kind = request
+                .as_ref()
+                .map(|req| format!("{:?}", req.privilege()))
+                .unwrap_or_default();
+            println!("拒绝 {kind} 请求({reason}):pid={pid}");
+            crate::imp::neutral(&state)
+        } else {
+            request
+                .map(|req| {
+                    // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
+                    catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
+                        |payload| {
+                            // 服务日志已接到文件,panic 内容要落盘,否则只剩一句「出错了」。
+                            let msg = payload
+                                .downcast_ref::<&str>()
+                                .copied()
+                                .or(payload.downcast_ref::<String>().map(String::as_str))
+                                .unwrap_or("<非字符串 panic>");
+                            eprintln!("请求处理 panic,已回中性应答:{msg}");
+                            crate::imp::neutral(&state)
+                        },
+                    )
+                })
+                .unwrap_or_else(|| crate::imp::neutral(&state))
+        };
         let elapsed = started.elapsed().as_millis();
         if elapsed >= SLOW_REQUEST_MS {
             // 行 JSON 的行首就是变体名;只留名字,别把整条按键灌进日志。
