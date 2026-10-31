@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::harness::push;
 use lueying_extjs::Pack;
 
 pub(crate) fn manifest(id: &str, api: u32) -> String {

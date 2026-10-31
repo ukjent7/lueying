@@ -60,7 +60,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
                 format!("shader_ok={shader_ok} B={blue}"),
             );
         }
-        Err(e) => push(&mut checks, "SkSL 背景效果", false, e),
+        Err(e) => push(checks, "SkSL 背景效果", false, e),
     }
     let bad = effect::compile_background("half4 main(float2 p) { return nonexistent; }");
     push(
@@ -118,10 +118,10 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
                         format!("{pixel:?} 素色 {plain:?} 正文 {body:.2} 弱文字 {weak:.2}"),
                     );
                 }
-                None => push(&mut checks, "效果槽位出图", false, "像素读回失败".into()),
+                None => push(checks, "效果槽位出图", false, "像素读回失败".into()),
             }
         }
-        Err(e) => push(&mut checks, "效果槽位出图", false, e),
+        Err(e) => push(checks, "效果槽位出图", false, e),
     }
 
     // 遮罩不透明度:按渲染层同样的口径解出来(正文与弱文字取更严的一档),

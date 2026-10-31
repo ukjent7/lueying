@@ -8,7 +8,7 @@
 //! 5. 换行/竖排行数与 server 的窗口高度公式不一致。
 //! 6. 用户效果盖过文字:遮罩没把对比度守住。
 
-use crate::harness::Checks;
+use crate::harness::{self, Checks};
 use crate::render_effects::effect_checks;
 use crate::render_panel::{panel_baseline, panel_geometry};
 use crate::render_ui::ui_checks;

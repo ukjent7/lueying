@@ -220,5 +220,5 @@ pub fn run(report: &mut String) -> usize {
 }
 
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
-    crate::harness::write(report, "预算与运行可见性", checks)
+    crate::harness::write(report, "预算与运行可见性", checks.to_vec())
 }

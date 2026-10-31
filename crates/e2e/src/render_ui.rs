@@ -272,7 +272,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel.3 == 255 && (pixel.0, pixel.1, pixel.2) == rgb(palette().bg),
             format!("{pixel:?} 期望 {:?} 全不透明", rgb(palette().bg)),
         ),
-        None => push(&mut checks, "徽标卡片底色", false, "像素读回失败".into()),
+        None => push(checks, "徽标卡片底色", false, "像素读回失败".into()),
     }
     match read_bgra(&mut badge_surface, 0, 0) {
         Some(pixel) => push(
@@ -281,7 +281,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel.3 == 0,
             format!("{pixel:?} 期望 alpha=0"),
         ),
-        None => push(&mut checks, "徽标圆角外透明", false, "像素读回失败".into()),
+        None => push(checks, "徽标圆角外透明", false, "像素读回失败".into()),
     }
     // 字型:系统一个可用字型都没有是环境问题,跳过;有字型却画不出东西才是 bug。
     let mgr = skia_safe::FontMgr::new();

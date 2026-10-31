@@ -19,7 +19,7 @@ pub(crate) fn panel_baseline(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_bg,
             format!("{pixel:?} 期望 {expected_bg:?}"),
         ),
-        None => push(&mut checks, "面板底色", false, "像素读回失败".into()),
+        None => push(checks, "面板底色", false, "像素读回失败".into()),
     }
     match read_bgr(&mut surface, 5, 10) {
         Some(pixel) => push(
@@ -28,7 +28,7 @@ pub(crate) fn panel_baseline(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_bar,
             format!("{pixel:?} 期望 {expected_bar:?}"),
         ),
-        None => push(&mut checks, "预编辑条底色", false, "像素读回失败".into()),
+        None => push(checks, "预编辑条底色", false, "像素读回失败".into()),
     }
 }
 
@@ -193,7 +193,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_hover,
             format!("{pixel:?} 期望 {expected_hover:?}"),
         ),
-        None => push(&mut checks, "悬停底色", false, "像素读回失败".into()),
+        None => push(checks, "悬停底色", false, "像素读回失败".into()),
     }
 
     // 菜单绘制:首行悬停给 hover 底色,次行保持菜单底色;与 menu_hit 同一套行几何。
@@ -216,7 +216,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_menu_hover,
             format!("{pixel:?} 期望 {expected_menu_hover:?}"),
         ),
-        None => push(&mut checks, "菜单悬停底色", false, "像素读回失败".into()),
+        None => push(checks, "菜单悬停底色", false, "像素读回失败".into()),
     }
     let expected_menu_bg = rgb(palette().bg);
     match read_bgr(&mut menu_surface, 10, 45) {
@@ -226,7 +226,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_menu_bg,
             format!("{pixel:?} 期望 {expected_menu_bg:?}"),
         ),
-        None => push(&mut checks, "菜单底色", false, "像素读回失败".into()),
+        None => push(checks, "菜单底色", false, "像素读回失败".into()),
     }
 
     // 翻页箭头悬停:位置由 pager_rects 决定,悬停时垫一层描边色底。
@@ -255,6 +255,6 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
             pixel == expected_pager,
             format!("{pixel:?} 期望 {expected_pager:?}"),
         ),
-        None => push(&mut checks, "箭头悬停底色", false, "像素读回失败".into()),
+        None => push(checks, "箭头悬停底色", false, "像素读回失败".into()),
     }
 }

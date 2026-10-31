@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use super::*;
 
 pub(crate) struct UpdateManifestArgs {
     version: String,

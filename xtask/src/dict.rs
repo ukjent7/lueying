@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use lueying_dict::syllables::is_syllable;
 
-use super::*;
 
 pub(crate) struct Args {
     frost: PathBuf,

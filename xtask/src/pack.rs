@@ -5,7 +5,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::*;
 
 pub(crate) struct PackArgs {
     bin: PathBuf,

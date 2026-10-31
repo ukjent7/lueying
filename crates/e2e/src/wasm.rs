@@ -43,7 +43,7 @@ pub fn run(report: &mut String) -> usize {
     for index in 0..1000u64 {
         let begin = Instant::now();
         let value = probe.call((index % 7) as u32, 3).expect("稳态调用应成功");
-        assert_eq!(value, (index % 7) + 3);
+        assert_eq!(value, ((index % 7) + 3) as u32);
         peak_us = peak_us.max(micros(begin));
         sum += probe.stat().fuel_used;
     }
