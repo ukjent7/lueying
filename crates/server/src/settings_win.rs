@@ -911,7 +911,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-/// 建窗:普通不透明窗,客户区正好是 460×650 逻辑像素。
+/// 建窗:普通不透明窗,客户区正好是 760×650 逻辑像素。
 fn create_window() -> Result<HWND, String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;

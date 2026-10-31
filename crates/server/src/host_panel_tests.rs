@@ -9,9 +9,10 @@ fn panel(items: &[&str]) -> HostPanel {
 
 #[test]
 fn parses_and_trims_title_and_items() {
-    let panel = HostPanel::parse(r#"{"title":" 选择语言 ","items":[" 中文 ","English"]}"#).unwrap();
+    let mut panel =
+        HostPanel::parse(r#"{"title":" 选择语言 ","items":[" 中文 ","English"]}"#).unwrap();
     assert_eq!(panel.title(), "选择语言");
-    let view = panel.clone().view(8);
+    let view = panel.view(8);
     assert_eq!(view.rows, vec!["中文".to_string(), "English".to_string()]);
     assert_eq!(view.selected, 0);
     assert_eq!(view.total, 2);
