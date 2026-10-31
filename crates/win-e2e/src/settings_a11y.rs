@@ -87,7 +87,7 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let dictionary_rows = descendants(&automation, dictionary_group)?;
+    let dictionary_rows = descendants(&automation, &dictionary_group)?;
     let phrase_group = dictionary_rows
         .iter()
         .find(|element| {
