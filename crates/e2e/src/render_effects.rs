@@ -54,7 +54,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             let blue = read_bgr(&mut small, 16, 16).map(|(b, _, _)| b).unwrap_or(0);
             // 模板在中心处 accent × (0.55 + 0.35×smoothstep) ≈ 0.9 × 255 ≈ 230。
             push(
-                &mut checks,
+                checks,
                 "SkSL 背景效果",
                 shader_ok && (200..=255).contains(&blue),
                 format!("shader_ok={shader_ok} B={blue}"),
@@ -64,7 +64,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     }
     let bad = effect::compile_background("half4 main(float2 p) { return nonexistent; }");
     push(
-        &mut checks,
+        checks,
         "坏效果回退",
         bad.is_err(),
         match bad {
@@ -111,7 +111,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
                     let body = contrast(pixel, rgb(palette.text));
                     let weak = contrast(pixel, rgb(palette.text_tertiary));
                     push(
-                        &mut checks,
+                        checks,
                         "效果槽位出图",
                         // 效果确实画上去了(与素色不同),又被遮罩拉回可读区间。
                         pixel != plain && pixel.0 >= 128 && body >= 4.5 && weak >= 3.0,
@@ -148,7 +148,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let weak = contrast(dark, rgb(palette().text_tertiary))
         .min(contrast(light, rgb(palette().text_tertiary)));
     push(
-        &mut checks,
+        checks,
         "遮罩守住对比度",
         alpha > 0.0 && alpha < 1.0 && body >= 4.5 && weak >= 3.0,
         format!("alpha={alpha:.3} 暗端 {dark:?} 亮端 {light:?} 正文 {body:.2} 弱文字 {weak:.2}"),
@@ -173,7 +173,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         });
     if prepared.is_err() {
         push(
-            &mut checks,
+            checks,
             "坏效果只废一个槽位",
             false,
             "临时目录写不了".into(),
@@ -182,7 +182,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         let set = effect::EffectSet::load_dir(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         push(
-            &mut checks,
+            checks,
             "坏效果只废一个槽位",
             set.has(effect::Slot::Background)
                 && !set.has(effect::Slot::Highlight)
@@ -197,7 +197,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             ),
         );
         push(
-            &mut checks,
+            checks,
             "契约版本过高拒绝加载",
             set.errors().iter().any(|e| e.contains("契约版本")),
             format!("{:?}", set.errors()),
@@ -213,7 +213,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         ),
     ]);
     push(
-        &mut checks,
+        checks,
         "源码效果只废坏槽位",
         set.has(effect::Slot::Background)
             && !set.has(effect::Slot::Menu)
@@ -236,7 +236,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let after = now + Duration::from_millis(2500);
     let allowed = guard.allows(after);
     push(
-        &mut checks,
+        checks,
         "帧预算摘效果",
         blocked && allowed,
         format!("冷却内 blocked={blocked} 冷却后 allowed={allowed}"),

@@ -267,7 +267,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     plain_badge(&mut badge_surface, None);
     match read_bgra(&mut badge_surface, bw / 2, bh / 2) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "徽标卡片底色",
             pixel.3 == 255 && (pixel.0, pixel.1, pixel.2) == rgb(palette().bg),
             format!("{pixel:?} 期望 {:?} 全不透明", rgb(palette().bg)),
@@ -276,7 +276,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     }
     match read_bgra(&mut badge_surface, 0, 0) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "徽标圆角外透明",
             pixel.3 == 0,
             format!("{pixel:?} 期望 alpha=0"),
@@ -305,14 +305,14 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             // 一个字体族都没有时,字型画不出东西是环境问题,不算渲染 bug。
             let ok = differs || families == 0;
             push(
-                &mut checks,
+                checks,
                 "徽标字型出图",
                 ok,
                 format!("与无字型画面不同={differs} 字体族={families}"),
             );
         }
         None => push(
-            &mut checks,
+            checks,
             "徽标字型出图",
             true,
             "系统没有可用字型,跳过".into(),
@@ -327,7 +327,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let toggle = layout.card_hit(ui::Id::new("aux", 0)).expect("开关矩形");
     let hit = layout.hit_card(center_x(toggle), center_y(toggle));
     push(
-        &mut checks,
+        checks,
         "设置开关命中",
         hit == Some(ui::Id::new("aux", 0)),
         format!("{hit:?}"),
@@ -337,7 +337,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         .expect("分段格矩形");
     let hit = layout.hit_card(center_x(cell), center_y(cell));
     push(
-        &mut checks,
+        checks,
         "设置分段命中",
         hit == Some(ui::Id::new("scheme", 1)),
         format!("{hit:?}"),
@@ -347,14 +347,14 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         .expect("按钮矩形");
     let hit = layout.hit_card(center_x(button), center_y(button));
     push(
-        &mut checks,
+        checks,
         "设置按钮命中",
         hit == Some(ui::Id::new("open-phrases", 0)),
         format!("{hit:?}"),
     );
     let hit = layout.hit_card(4.0, 4.0);
     push(
-        &mut checks,
+        checks,
         "设置空白不命中",
         hit.is_none(),
         format!("{hit:?}"),
@@ -363,7 +363,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let aligned = (toggle.right - (layout.card.width() - 14.0)).abs() < 0.5;
     let inside = toggle.right <= layout.card.width() && toggle.left >= 0.0;
     push(
-        &mut checks,
+        checks,
         "设置控件右对齐",
         aligned && inside,
         format!("右边距={:.1}", layout.card.right - toggle.right),
@@ -373,7 +373,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     ui::Painter::new(ui_surface.canvas(), &palette(), &font, 1.0).paint(&page, &layout, None, 0.0);
     let corner = read_bgra(&mut ui_surface, 2, 2);
     push(
-        &mut checks,
+        checks,
         "设置窗底色",
         corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().window_bg)),
         format!("{corner:?} 期望 {:?}", rgb(palette().window_bg)),
@@ -382,7 +382,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let knob_y = (layout.card.top + center_y(toggle)) as i32;
     let knob = read_bgra(&mut ui_surface, knob_x, knob_y);
     push(
-        &mut checks,
+        checks,
         "设置开关旋钮",
         knob.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().on_accent)),
         format!("{knob:?} 期望 {:?}", rgb(palette().on_accent)),
@@ -398,7 +398,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     );
     let cell_pixel = read_bgra(&mut ui_surface, cell_x, cell_y);
     push(
-        &mut checks,
+        checks,
         "设置选中分段底色",
         cell_pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette().segment)),
         format!("{cell_pixel:?} 期望 {:?}", rgb(palette().segment)),
@@ -406,7 +406,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     // 页脚贴视口底:内容比视口矮时页脚也在底上。
     let footer_bottom = layout.footer.bottom;
     push(
-        &mut checks,
+        checks,
         "设置页脚贴底",
         (footer_bottom - (650.0 - 18.0)).abs() < 0.5,
         format!("页脚下沿={footer_bottom:.1}"),
@@ -414,7 +414,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     // 视口够高时卡片不滚动。
     let tall = ui::layout(&page, &font, 1.0, 2000.0);
     push(
-        &mut checks,
+        checks,
         "设置视口够高不滚动",
         tall.max_scroll() == 0.0,
         format!("max_scroll={:.1}", tall.max_scroll()),
@@ -423,7 +423,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let short = ui::layout(&page, &font, 1.0, 200.0);
     let expect = (short.card.bottom - short.scroll.bottom).max(0.0);
     push(
-        &mut checks,
+        checks,
         "设置视口矮时可滚动",
         (short.max_scroll() - expect).abs() < 0.5 && expect > 0.0,
         format!("max_scroll={:.1} 期望 {expect:.1}", short.max_scroll()),
@@ -438,7 +438,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let hit = layout.hit_card(center_x(effect_toggle), center_y(effect_toggle));
     let hit_button = layout.hit_card(center_x(effect_button), center_y(effect_button));
     push(
-        &mut checks,
+        checks,
         "设置按钮开关并排",
         hit == Some(ui::Id::new("effects", 0))
             && hit_button == Some(ui::Id::new("open-effects", 0))

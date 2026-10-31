@@ -119,6 +119,13 @@ pub struct WasmModule {
     stat: WasmStat,
 }
 
+/// `expect_err` 一类断言要求成功类型可调试;内部句柄没有可读字段可打。
+impl std::fmt::Debug for WasmModule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmModule").finish_non_exhaustive()
+    }
+}
+
 impl WasmModule {
     /// 编译组件;二进制与 WAT 文本都收(wat 特性)。
     pub fn compile(host: &Arc<WasmHost>, source: &[u8]) -> Result<Self, String> {
@@ -152,7 +159,7 @@ impl WasmModule {
         // epoch_interruption 打开后必须先给截止期;u64::MAX 等于等宿主
         // tick 推进,原型用燃料做确定性兜底。
         store.set_epoch_deadline(u64::MAX);
-        let mut linker = Linker::<Guest>::new(&self.host.engine);
+        let linker = Linker::<Guest>::new(&self.host.engine);
         let instance = linker
             .instantiate(&mut store, &self.component)
             .map_err(|error| format!("组件实例化失败: {error}"))?;
@@ -186,6 +193,12 @@ pub struct Probe {
     export: String,
 }
 
+impl std::fmt::Debug for Probe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Probe").field("export", &self.export).finish_non_exhaustive()
+    }
+}
+
 impl Probe {
     pub fn call(&mut self, a: u32, b: u32) -> Result<u32, String> {
         if self.stat.disabled {
@@ -204,10 +217,6 @@ impl Probe {
         self.stat.fuel_used = CALL_FUEL.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
             Ok(value) => {
-                // 组件 ABI 要求每次调用后收尾,否则下一次调用直接恐慌。
-                self.func
-                    .post_return(&mut self.store)
-                    .map_err(|error| format!("调用收尾失败: {error}"))?;
                 self.stat.faults = 0;
                 self.stat.last_error = None;
                 self.stat.call_peak_us = self.stat.call_peak_us.max(elapsed_us);

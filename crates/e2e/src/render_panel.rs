@@ -14,7 +14,7 @@ pub(crate) fn panel_baseline(checks: &mut Vec<(&'static str, bool, String)>) {
     let expected_bar = rgb(palette().surface_alt);
     match read_bgr(&mut surface, 5, 60) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "面板底色",
             pixel == expected_bg,
             format!("{pixel:?} 期望 {expected_bg:?}"),
@@ -23,7 +23,7 @@ pub(crate) fn panel_baseline(checks: &mut Vec<(&'static str, bool, String)>) {
     }
     match read_bgr(&mut surface, 5, 10) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "预编辑条底色",
             pixel == expected_bar,
             format!("{pixel:?} 期望 {expected_bar:?}"),
@@ -38,7 +38,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
     // 布局:两个短候选一行;长候选换行;竖排一条一行,行数进窗口高度公式。
     let rows = panel::layout_rows(&spec(), &metrics, None);
     push(
-        &mut checks,
+        checks,
         "横排短候选单行",
         rows == 1,
         format!("rows={rows}"),
@@ -53,7 +53,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         .collect();
     let long_rows = panel::layout_rows(&long, &metrics, None);
     push(
-        &mut checks,
+        checks,
         "横排长候选换行",
         long_rows >= 3,
         format!("rows={long_rows}"),
@@ -62,14 +62,14 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
     column.layout = Layout::Column;
     let column_rows = panel::layout_rows(&column, &metrics, None);
     push(
-        &mut checks,
+        checks,
         "竖排一行一条",
         column_rows == column.items.len(),
         format!("rows={column_rows}"),
     );
     let height = panel::panel_height(&spec(), &metrics, None);
     push(
-        &mut checks,
+        checks,
         "窗口高度公式",
         // 拼音条 32 + 列表上边距 4 + 一行 30 + 底边距 6。
         (height - (32.0 + 4.0 + 30.0 + 6.0)).abs() < f32::EPSILON,
@@ -89,14 +89,14 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         first.top + 2.0,
     );
     push(
-        &mut checks,
+        checks,
         "命中候选行",
         hit == panel::Hit::Item(0),
         format!("{hit:?}"),
     );
     let hit = panel::hit_test(&hit_spec, &hit_metrics, None, 5.0, 10.0);
     push(
-        &mut checks,
+        checks,
         "命中拼音条空白",
         hit == panel::Hit::Nothing,
         format!("{hit:?}"),
@@ -111,7 +111,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         (prev.top + prev.bottom) * 0.5,
     );
     push(
-        &mut checks,
+        checks,
         "命中上一页箭头",
         hit == panel::Hit::PrevPage,
         format!("{hit:?}"),
@@ -124,7 +124,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         (next.top + next.bottom) * 0.5,
     );
     push(
-        &mut checks,
+        checks,
         "命中下一页箭头",
         hit == panel::Hit::NextPage,
         format!("{hit:?}"),
@@ -132,19 +132,19 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
 
     // 右键菜单:两行 26px,行间空隙与菜单外都不是菜单项。
     push(
-        &mut checks,
+        checks,
         "菜单首行",
         panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 17.0) == Some(0),
         format!("{:?}", panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 17.0)),
     );
     push(
-        &mut checks,
+        checks,
         "菜单次行",
         panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 45.0) == Some(1),
         format!("{:?}", panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 45.0)),
     );
     push(
-        &mut checks,
+        checks,
         "菜单行间隙与外侧",
         panel::menu_hit(0.0, 0.0, &hit_metrics, 10.0, 31.0).is_none()
             && panel::menu_hit(0.0, 0.0, &hit_metrics, 200.0, 17.0).is_none(),
@@ -188,7 +188,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         second.top as i32 + 6,
     ) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "悬停底色",
             pixel == expected_hover,
             format!("{pixel:?} 期望 {expected_hover:?}"),
@@ -211,7 +211,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
     let expected_menu_hover = rgb(palette().hover);
     match read_bgr(&mut menu_surface, 10, 17) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "菜单悬停底色",
             pixel == expected_menu_hover,
             format!("{pixel:?} 期望 {expected_menu_hover:?}"),
@@ -221,7 +221,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
     let expected_menu_bg = rgb(palette().bg);
     match read_bgr(&mut menu_surface, 10, 45) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "菜单底色",
             pixel == expected_menu_bg,
             format!("{pixel:?} 期望 {expected_menu_bg:?}"),
@@ -250,7 +250,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
     );
     match read_bgr(&mut pager_surface, px, py) {
         Some(pixel) => push(
-            &mut checks,
+            checks,
             "箭头悬停底色",
             pixel == expected_pager,
             format!("{pixel:?} 期望 {expected_pager:?}"),
