@@ -392,9 +392,9 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 顶部搜索:跨页命中,标题与计数随搜索词变化;清空后回到原页。
-    let mut search = settings();
-    search.set_search("辅助码");
-    let searched = search.page(&colors());
+    let mut search_settings = settings();
+    search_settings.set_search("辅助码");
+    let searched = search_settings.page(&colors());
     let hit = searched
         .groups
         .iter()
@@ -403,7 +403,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "设置跨页搜索",
-        search.searching()
+        search_settings.searching()
             && searched.title == "搜索"
             && searched.subtitle.contains("项")
             && hit
@@ -413,12 +413,12 @@ pub fn run(report: &mut String) -> usize {
             searched.title, searched.subtitle
         ),
     );
-    search.set_search("");
+    search_settings.set_search("");
     push(
         &mut checks,
         "设置清空搜索回页",
-        !search.searching() && search.page(&colors()).title == "掠影",
-        format!("搜索={:?}", search.search),
+        !search_settings.searching() && search_settings.page(&colors()).title == "掠影",
+        format!("搜索={:?}", search_settings.search),
     );
     // 候选页第一行是实时预览;控件不参与焦点与命中。
     let candidate = settings().page_view(PageId::Candidate, &colors());
@@ -436,13 +436,13 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 按应用配置:列表一行一个程序,两个按钮循环「跟随 → 开 → 关」。
-    let mut apps = settings();
-    apps.cfg.apps.insert(
+    let mut apps_settings = settings();
+    apps_settings.cfg.apps.insert(
         "code.exe".to_string(),
         lueying_server::config::AppOverride::default(),
     );
-    apps.set_page(PageId::Dictionary);
-    let apps_page = apps.page(&colors());
+    apps_settings.set_page(PageId::Dictionary);
+    let apps_page = apps_settings.page(&colors());
     let app_group = apps_page
         .groups
         .iter()
@@ -452,11 +452,11 @@ pub fn run(report: &mut String) -> usize {
         .unwrap_or_default();
     let punct_button = Id::new(ids::app_punct(0), 0);
     let learning_button = Id::new(ids::app_learning(0), 0);
-    apps.activate(&punct_button);
-    let over = apps.cfg.apps["code.exe"];
-    apps.activate(&learning_button);
-    let over2 = apps.cfg.apps["code.exe"];
-    let add = apps.activate(&Id::new(ids::APPS_ADD, 0));
+    apps_settings.activate(&punct_button);
+    let over = apps_settings.cfg.apps["code.exe"];
+    apps_settings.activate(&learning_button);
+    let over2 = apps_settings.cfg.apps["code.exe"];
+    let add = apps_settings.activate(&Id::new(ids::APPS_ADD, 0));
     push(
         &mut checks,
         "设置按应用列表",

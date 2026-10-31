@@ -614,7 +614,7 @@ impl Settings {
             (OcrBackend::Ppocr, true) => "PP-OCRv6 · 首次识别加载,识别不联网".to_string(),
             (OcrBackend::Ppocr, false) => "模型未安装;到「官方扩展」里安装".to_string(),
             (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
-            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 模型可按需安装".to_string(),
+            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 模型未安装,可按需安装".to_string(),
         }
     }
 }

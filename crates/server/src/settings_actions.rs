@@ -12,7 +12,7 @@ use crate::update;
 use lueying_extjs::{ConsentBook, ConsentCheck};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::{Reply, Request, pipe_name};
-use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, POINT};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -27,7 +27,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MB_ICONQUESTION, MB_ICONWARNING, MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW,
     SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
 };
-use windows::core::{HSTRING, PCWSTR, PWSTR};
+use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR};
 
 /// 给常驻 Server 发一条请求并取回应答;没在运行返回 None。
 pub fn call(request: &Request) -> Option<Reply> {
@@ -172,8 +172,8 @@ fn running_apps(
         if !ok {
             return BOOL(1);
         }
-        let image = std::path::Path::new(&String::from_utf16_lossy(&path[..size as usize]));
-        let Some(exe) = image
+        let image = String::from_utf16_lossy(&path[..size as usize]);
+        let Some(exe) = std::path::Path::new(&image)
             .file_name()
             .map(|name| name.to_string_lossy().to_ascii_lowercase())
         else {

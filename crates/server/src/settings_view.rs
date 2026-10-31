@@ -390,9 +390,7 @@ impl Settings {
             return None;
         }
         if let Some(slot) = ids::official_slot(id.base) {
-            let Some(extension) = crate::official_extensions::catalog().extensions.get(slot) else {
-                return None;
-            };
+            let extension = crate::official_extensions::catalog().extensions.get(slot)?;
             let installed = if extension.is_model() {
                 extension.installed_model()
             } else {
@@ -405,9 +403,7 @@ impl Settings {
             return Some(Action::InstallOfficial(extension.id.clone()));
         }
         if let Some(slot) = ids::script_slot(id.base) {
-            let Some(script) = self.scripts.get(slot) else {
-                return None;
-            };
+            let script = self.scripts.get(slot)?;
             let script_id = script.id.clone();
             if let Some(index) = self
                 .cfg
@@ -461,13 +457,10 @@ impl Settings {
             return None;
         }
         if let Some(slot) = crate::settings_ext::slot(id.base) {
-            let Some(field) = self
+            let field = self
                 .ext_fields()
                 .into_iter()
-                .find(|field| field.slot == slot)
-            else {
-                return None;
-            };
+                .find(|field| field.slot == slot)?;
             if field.is_secret() {
                 return Some(Action::EditSecret(
                     field.ext.clone(),

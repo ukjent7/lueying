@@ -40,7 +40,7 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT,
+    GetKeyState, SetFocus, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT,
     VK_SHIFT, VK_SPACE, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -1024,10 +1024,8 @@ unsafe extern "system" fn wnd_proc(
                         && let Some(brush) = window.search_brush
                     {
                         let hdc = HDC(wparam.0 as *mut std::ffi::c_void);
-                        unsafe {
-                            SetBkColor(hdc, ref_color(window.palette.surface_alt));
-                            SetTextColor(hdc, ref_color(window.palette.text));
-                        }
+                        SetBkColor(hdc, ref_color(window.palette.surface_alt));
+                        SetTextColor(hdc, ref_color(window.palette.text));
                         return LRESULT(brush.0 as isize);
                     }
                 }
