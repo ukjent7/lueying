@@ -813,10 +813,10 @@ fn check_network(network: &NetworkPolicy) -> Result<(), String> {
         {
             return Err(format!("网络域名 {domain:?} 不合法"));
         }
-        if let Some(port) = port {
-            if port.is_empty() || !matches!(port.parse::<u16>(), Ok(value) if value != 0) {
-                return Err(format!("网络端口 {port:?} 不合法"));
-            }
+        if let Some(port) = port
+            && (port.is_empty() || !matches!(port.parse::<u16>(), Ok(value) if value != 0))
+        {
+            return Err(format!("网络端口 {port:?} 不合法"));
         }
     }
     Ok(())

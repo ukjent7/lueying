@@ -83,7 +83,7 @@ fn percentile(
     percent: u64,
     max_us: u64,
 ) -> u64 {
-    let target = (count.saturating_mul(percent) + 99) / 100;
+    let target = count.saturating_mul(percent).div_ceil(100);
     let mut seen = 0;
     for (index, bucket) in buckets.iter().enumerate() {
         seen += bucket.load(Ordering::Relaxed);
