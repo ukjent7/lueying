@@ -16,6 +16,7 @@ serde_json = "1"
 [target."cfg(windows)".dependencies]
 windows-registry = "0.100"
 # `#[implement]` 宏展开引用 `::windows_core`,要直接依赖
+windows-core = "0.62.2"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

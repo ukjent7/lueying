@@ -71,7 +71,7 @@ impl Bypass {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| format!("旁路进程启动失败: {error}"))?;
-        if let Err(error) = self.attach(&child) {
+        if let Err(error) = self.attach(&mut child) {
             kill(&mut child);
             return Err(error);
         }
@@ -221,7 +221,8 @@ impl Provider for BypassProvider {
         std::thread::Builder::new()
             .name("bypass-call".to_string())
             .spawn(move || done.complete(bypass.call(&method, &args)))
-            .map_err(|error| format!("旁路调用线程启动失败: {error}"))
+            .map_err(|error| format!("旁路调用线程启动失败: {error}"))?;
+        Ok(())
     }
 }
 

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::*;
 
-struct UpdateManifestArgs {
+pub(crate) struct UpdateManifestArgs {
     version: String,
     name: String,
     size: u64,
