@@ -30,8 +30,7 @@ const SAMPLE_SIG: &str = "6d3907111ec06cbed18efd855a6927b13096ac1d19281a9719bd94
 #[test]
 fn verifies_known_answer_vector() {
     assert_eq!(SAMPLE.len(), 438, "向量字节必须与签名时一致");
-    let manifest = verify(SAMPLE.as_bytes(), SAMPLE_SIG)
-        .expect("内置公钥必须验过发布种子的签名");
+    let manifest = verify(SAMPLE.as_bytes(), SAMPLE_SIG).expect("内置公钥必须验过发布种子的签名");
     assert_eq!(manifest.release, "0.2.0");
     assert_eq!(manifest.version, 1);
     let installer = manifest.installer("0.2.0").expect("安装包条目");
@@ -50,8 +49,7 @@ fn verifies_known_answer_vector() {
 fn rejects_tampered_manifest() {
     let tampered = SAMPLE.replace("0.2.0", "0.2.1");
     assert_ne!(tampered, SAMPLE);
-    let error = verify(tampered.as_bytes(), SAMPLE_SIG)
-        .expect_err("改过字节的清单必须验不过");
+    let error = verify(tampered.as_bytes(), SAMPLE_SIG).expect_err("改过字节的清单必须验不过");
     assert!(error.contains("签名验证失败"), "{error}");
 }
 
