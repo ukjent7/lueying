@@ -52,8 +52,8 @@ pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 扩展作者常用的导入集合。
 pub mod prelude {
     pub use crate::{
-        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext,
-        Config, Engine, Event, Expansion, FullPinyin, Fuzzy, Key, KeyContext, Manifest, Mode,
-        Module, Modules, SDK_VERSION, Scheme, SchemeManifest, Script, UserDict,
+        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext, Config,
+        Engine, Event, Expansion, FullPinyin, Fuzzy, Key, KeyContext, Manifest, Mode, Module,
+        Modules, SDK_VERSION, Scheme, SchemeManifest, Script, UserDict,
     };
 }

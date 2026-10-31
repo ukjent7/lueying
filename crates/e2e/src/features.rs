@@ -66,10 +66,7 @@ fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
     assert_eq!(bad, 0, "测试词库不应有坏行");
     let script_module = Arc::new(lueying_features::ScriptModule::new(script));
     let engine = Engine::new(Arc::new(dict), Config::default()).with_modules(Arc::new(
-        lueying_features::complete_builtins(
-            lueying_engine::module::Modules::new(),
-            &script_module,
-        ),
+        lueying_features::complete_builtins(lueying_engine::module::Modules::new(), &script_module),
     ));
     (engine, script_module)
 }
