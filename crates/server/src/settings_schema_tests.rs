@@ -16,6 +16,11 @@ fn defaults_match_runtime_config() {
             (ControlDef::Toggle { get, .. }, DefaultValue::Bool(expected)) => {
                 assert_eq!(get(&cfg), expected, "{} 默认值不一致", def.key);
             }
+            // 三态开关:配置里存 "auto"/"off",界面用一个开关表示。
+            (ControlDef::Toggle { get, .. }, DefaultValue::Text(expected)) => {
+                let actual = if get(&cfg) { "auto" } else { "off" };
+                assert_eq!(actual, expected, "{} 默认值不一致", def.key);
+            }
             (ControlDef::Segment { get, choices, .. }, DefaultValue::Int(expected)) => {
                 let actual = choices
                     .get(get(&cfg))

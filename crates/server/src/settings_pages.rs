@@ -123,7 +123,7 @@ impl Settings {
         let ui = def.ui.as_ref().expect("setting_row 只接受有界面的设置");
         let control = match &ui.control {
             ControlDef::Toggle { id, get, .. } => {
-                let control_id = Id::new(*id, 0);
+                let control_id = Id::new(id, 0);
                 let on = get(&self.cfg);
                 match def.key {
                     "effects" => Control::ButtonsToggle {
@@ -157,7 +157,7 @@ impl Settings {
                 get,
                 ..
             } => Control::Segment {
-                id: Id::new(*id, 0),
+                id: Id::new(id, 0),
                 options: choices
                     .iter()
                     .enumerate()

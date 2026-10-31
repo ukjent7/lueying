@@ -310,10 +310,11 @@ jobs:
         run: |
           cargo build --release --locked -p lueying-tsf
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
-      # 运行时体积基线:发布目录里 0.1.0 实测 server 12.2 + settings 10.5 +
-      # update 0.5 + user 0.4 + TSF 0.6 ≈ 25 MiB。release profile 已开
-      # strip="symbols",这里直接量 cargo 产物;符号表若随依赖/特性回来,
-      # 40 MiB 门限会先红。发布包另有总门禁。
+      # 运行时体积基线:2026-10-31 实测 server 33.6 + settings 22.1 +
+      # update 16.8 + user 0.6 + TSF 0.7 ≈ 73.8 MiB。大头是两份静态链接的
+      # Skia;旧的 40 MiB 数字来自未链接 Skia 的版本。80 MiB 门限留约 8%
+      # 余量,依赖/特性继续膨胀会先红。后续把 update 从 server crate 拆出,
+      # 可再降到约 58 MiB 后收紧门限。发布包另有总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |
@@ -324,8 +325,8 @@ jobs:
             $bytes += $length
             "{0} {1:N1} MiB" -f $name, ($length / 1MB)
           }
-          "{0:N1} MiB / 40 MiB" -f ($bytes / 1MB)
-          if ($bytes -gt 40MB) { throw "运行时体积超过 40 MiB" }
+          "{0:N1} MiB / 80 MiB" -f ($bytes / 1MB)
+          if ($bytes -gt 80MB) { throw "运行时体积超过 80 MiB" }
       - name: Build Windows E2E harness
         id: build_e2e
         run: cargo build --release --locked -p lueying-win-e2e

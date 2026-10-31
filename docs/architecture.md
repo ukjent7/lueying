@@ -165,7 +165,8 @@ setup.exe,未配置时发布未签名包。
 - `quality.yml`(定时):全量语料准确率门限(clean 92% / top-5 95%)、
   x86 全链路、Inno 安装/卸载冒烟。
 - 体积与延迟基线:release 构建以 `strip = "symbols"` 去掉符号表,Windows job 卡
-  运行时二进制合计 ≤ 40 MiB,Windows 全链路
+  运行时二进制合计 ≤ 80 MiB(2026-10-31 实测 73.8 MiB,大头是两份静态 Skia),
+  Windows 全链路
   E2E 卡 Server 峰值工作集 ≤ 128 MB、提交 p95 ≤ 60 ms、每键 p95 ≤ 60 ms;
   `xtask pack` 卡发布目录 ≤ 200 MiB、安装包 ≤ 85 MiB。
 - `audit.yml`(定时):`cargo audit` 依赖漏洞审计。
