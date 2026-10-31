@@ -1,7 +1,7 @@
 //! 皮肤解析的边界:缺文件、坏键、坏值、空表与取表规则。
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{Skin, SkinColors};
 

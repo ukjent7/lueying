@@ -493,7 +493,7 @@ impl Settings {
     }
 
     /// 运行期脚本那行的说明:当前包,或者怎么开始。
-    fn script_detail(&self) -> String {
+    pub(crate) fn script_detail(&self) -> String {
         match self.cfg.extensions.as_slice() {
             [] => {
                 if self.scripts.is_empty() {
@@ -518,7 +518,7 @@ impl Settings {
     }
 
     /// 扩展运行那行的说明:状态计数、步进峰值与超限次数。
-    fn ext_metrics_detail(&self) -> String {
+    pub(crate) fn ext_metrics_detail(&self) -> String {
         match &self.ext_metrics {
             Some(metrics) => metrics.summary(),
             None => "暂无数据;服务启动后写入".to_string(),
@@ -526,7 +526,7 @@ impl Settings {
     }
 
     /// 截图识别那行的说明:选的引擎与模型是否可用。
-    fn ocr_detail(&self) -> String {
+    pub(crate) fn ocr_detail(&self) -> String {
         match (self.cfg.ocr_backend, self.ppocr_ready) {
             (OcrBackend::Ppocr, true) => "随包 PP-OCRv6 · 首次识别加载".to_string(),
             (OcrBackend::Ppocr, false) => "模型未安装;点「目录」放入三个文件".to_string(),

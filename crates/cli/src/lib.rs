@@ -183,7 +183,7 @@ where
 
 /// 文本子命令:其余参数按空格合并成待上屏文本。本命令没有旗标,
 /// 以 `-` 开头的词也原样收进文本。
-fn parse_commit<I>(mut args: I) -> Result<Invocation, String>
+fn parse_commit<I>(args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
@@ -195,7 +195,7 @@ where
 }
 
 /// 命令 id 子命令:恰好一个位置参数。清单 id 无空格,多给就报错。
-fn parse_run<I>(mut args: I) -> Result<Invocation, String>
+fn parse_run<I>(args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {

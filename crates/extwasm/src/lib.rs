@@ -35,7 +35,7 @@ pub const PROBE_WAT: &str = r#"
 /// 单模块内存上限,与脚本层一致。
 pub const MEMORY_BYTES: usize = 8 * 1024 * 1024;
 /// 表条目上限;重排模块用不到大表。
-pub const TABLE_ENTRIES: u32 = 10_000;
+pub const TABLE_ENTRIES: usize = 10_000;
 /// 实例化预算:canon lift 与模块初始化的固定开销。
 const INSTANTIATE_FUEL: u64 = 2_000_000;
 /// 单次调用燃料预算;烧完即故障,连续超限停用。
@@ -86,9 +86,9 @@ impl wasmtime::ResourceLimiter for MemLimiter {
 
     fn table_growing(
         &mut self,
-        _current: u32,
-        desired: u32,
-        _maximum: Option<u32>,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
     ) -> Result<bool, wasmtime::Error> {
         Ok(desired <= TABLE_ENTRIES)
     }
@@ -156,7 +156,7 @@ impl WasmModule {
         let instance = linker
             .instantiate(&mut store, &self.component)
             .map_err(|error| format!("组件实例化失败: {error}"))?;
-        let func: TypedFunc<(u32, u32), u32> = instance
+        let func: TypedFunc<(u32, u32), (u32,)> = instance
             .get_typed_func(&mut store, export)
             .map_err(|error| format!("组件没有导出 {export:?}: {error}"))?;
         let mut stat = self.stat.clone();
@@ -181,7 +181,7 @@ impl WasmModule {
 /// 一个可调用的探针实例。按调用计燃料,连续故障停用。
 pub struct Probe {
     store: Store<Guest>,
-    func: TypedFunc<(u32, u32), u32>,
+    func: TypedFunc<(u32, u32), (u32,)>,
     stat: WasmStat,
     export: String,
 }
@@ -211,7 +211,7 @@ impl Probe {
                 self.stat.faults = 0;
                 self.stat.last_error = None;
                 self.stat.call_peak_us = self.stat.call_peak_us.max(elapsed_us);
-                Ok(value)
+                Ok(value.0)
             }
             Err(error) => {
                 self.stat.faults += 1;
