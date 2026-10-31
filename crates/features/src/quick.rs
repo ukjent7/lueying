@@ -46,8 +46,7 @@ impl Module for QuickModule {
             // 置顶候选由宿主在模块链之前注入;让位但保住它的首位。
             let skip = cands.iter().take_while(|cand| cand.pinned).count();
             let keep_first = cands
-                .iter()
-                .nth(skip)
+                .get(skip)
                 .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
             let position = skip + usize::from(keep_first);
             for cand in quick.into_iter().rev() {
@@ -67,12 +66,14 @@ impl Module for QuickModule {
             // v 表达式里 x 是乘号;问字的十六进制字母(含大写)属于码点。
             Key::Letter('x') => expression_body(raw).is_some(),
             Key::Letter(c) if c.is_ascii_hexdigit() => unicode_body(raw).is_some(),
-            // v 表达式里的运算符属于输入。
-            Key::Punct(p) if is_operator(*p) => expression_body(raw).is_some(),
-            // u 问字:第一个 + 表示显式码点;之后的 + 恢复普通标点。
-            Key::Punct('+') => unicode_body(raw).is_some_and(|body| body.is_empty()),
-            // v 模式的小数点属于当前数字段;这一段已有小数点时恢复普通标点。
-            Key::Punct('.') => dot_mode(raw),
+            // v 表达式里的运算符属于输入;u 问字:第一个 + 表示显式码点,
+            // 之后的 + 恢复普通标点;小数点属于当前数字段。三类共用一个
+            // 分支,避免 `+` 被运算符条件抢先截住。
+            Key::Punct(p) => match *p {
+                '+' if unicode_body(raw).is_some_and(|body| body.is_empty()) => true,
+                '.' => dot_mode(raw),
+                _ => is_operator(*p) && expression_body(raw).is_some(),
+            },
             // v 表达式与 u 问字里数字是输入的一部分,不再当候选序号。
             Key::Digit(_) => expression_body(raw).is_some() || unicode_body(raw).is_some(),
             _ => false,
