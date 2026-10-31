@@ -1,7 +1,7 @@
 //! `extcmd` 的回归:骨架、打包、解包、安装与日志切片,全部走临时目录。
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
     InstallArgs, LogsArgs, NewArgs, PACK_HEADER, PackArgs, install, logs, new, pack, unpack,
