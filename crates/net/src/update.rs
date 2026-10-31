@@ -10,6 +10,7 @@ use std::process::Command;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
 
+use crate::http::Response;
 use crate::update_manifest::{self, MANIFEST_NAME};
 
 use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
