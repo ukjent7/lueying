@@ -63,11 +63,30 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         }
     }
     lines.push("UIA 树包含保存、关闭、输入、辅助码与检查更新".to_string());
-    // 页面模型按左栏分类分组;「自定义短语」是「词库」组里的一行。
-    let dictionary_group = elements
+    // UIA 只暴露当前页;先按左栏按钮切到「词库」,再找该页的分组。
+    let dictionary_nav = elements
         .iter()
-        .find(|element| text(element) == "词库" && kind(element) == Some(UIA_GroupControlTypeId))
-        .ok_or("UIA 树里找不到「词库」分组")?;
+        .find(|element| text(element) == "词库" && kind(element) == Some(UIA_ButtonControlTypeId))
+        .ok_or("UIA 树里找不到「词库」导航按钮")?;
+    let invoke: IUIAutomationInvokePattern =
+        unsafe { dictionary_nav.GetCurrentPatternAs(UIA_InvokePatternId) }
+            .map_err(|e| format!("「词库」导航按钮没有 InvokePattern: {e}"))?;
+    unsafe { invoke.Invoke() }.map_err(|e| format!("UIA 切换「词库」页失败: {e}"))?;
+    lines.push("UIA 调用「词库」导航按钮成功".to_string());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let dictionary_group = loop {
+        let current = descendants(&automation, &root)?;
+        if let Some(index) = current.iter().position(|element| {
+            text(element) == "词库" && kind(element) == Some(UIA_GroupControlTypeId)
+        }) {
+            break current.into_iter().nth(index).expect("下标来自 position");
+        }
+        if Instant::now() > deadline {
+            return Err("切换页面后 UIA 树里仍找不到「词库」分组".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
     let dictionary_rows = descendants(&automation, dictionary_group)?;
     let phrase_group = dictionary_rows
         .iter()
