@@ -10,14 +10,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extwasm::{CALL_FUEL, PROBE_WAT, WasmHost, WasmModule};
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
+use crate::harness::push;
+
 
 fn micros(started: Instant) -> u128 {
     started.elapsed().as_micros()
@@ -103,6 +97,7 @@ pub fn run(report: &mut String) -> usize {
         if !ok {
             failures += 1;
         }
+        let note = note.replace('|', "\\|").replace('\n', " ");
         report.push_str(&format!(
             "| {name} | {} | {note} |\n",
             if *ok { "PASS" } else { "FAIL" }

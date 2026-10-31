@@ -157,7 +157,7 @@ fn rank_of(engine: &Engine, expected: &str) -> Option<usize> {
         .position(|text| bench::matches_normalized(text, expected))
 }
 
-fn pct(values: &mut [f64], p: f64) -> f64 {
+pub(crate) fn pct(values: &mut [f64], p: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
     }

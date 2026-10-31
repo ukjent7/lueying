@@ -95,16 +95,6 @@ pub fn is_syllable(s: &str) -> bool {
     set().contains(&s) || matches!(s, "lue" | "nue")
 }
 
-/// 单字母是否可作简拼。
-pub fn is_abbrev_letter(c: char) -> bool {
-    c.is_ascii_lowercase() && ABBREV_LETTERS.contains(c)
-}
-
-/// 字符串是否是简拼单元(单字母或 zh/ch/sh)。
-pub fn is_abbrev(s: &str) -> bool {
-    ABBREV_DIGRAPHS.contains(&s) || (s.chars().count() == 1 && s.chars().all(is_abbrev_letter))
-}
-
 /// 模糊音开关集合。引擎默认用 [`Self::auto`] 全开核心组;`off` 只留给
 /// `config.toml` 的排障开关与自动化测试。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

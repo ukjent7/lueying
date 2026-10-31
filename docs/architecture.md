@@ -40,8 +40,9 @@ SHA-256 钉住;gram 或重排模型缺失时引擎照常出词频候选。
 `lueying-engine::module` 定义 `Module`/`Manifest`/`Capability`,扩展点是
 候选生成后(`candidates`)与上屏前(`commit`);`lueying-engine::scheme` 定义
 `Scheme`,负责「击键 → 音节」。模块编译期注册(`crates/server/src/modules.rs`),
-运行期不加载 DLL。第一批扩展在 `crates/features`:双拼、自定义短语、辅助码、
-下一词联想。
+运行期不加载 DLL。编译期扩展在 `crates/features`:双拼、自定义短语、辅助码、
+下一词联想,以及基础输入缺口的内置模块(表情、英文混输、简繁转换、快捷输入
+与符号表)。
 
 运行期脚本扩展走另一条契约(`lueying-extjs`):包目录 + `manifest.json`,
 QuickJS 沙箱里同步派发场景状态,脚本只回主题色与三个 SkSL 槽位,也可以提供

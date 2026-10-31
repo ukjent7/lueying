@@ -6,12 +6,14 @@
 //! 3. 拒绝更新时旧版本被丢掉,扩展直接失效。
 //! 4. 读屏 + 外发组合没有标记为敏感。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use lueying_extjs::{ConsentGate, Invoke, Limits, Pack, Poll, Registry};
 use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
+
+use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{
   "id":"demo","name":"演示","version":"1.0.0","api":2,
@@ -23,39 +25,6 @@ const MANIFEST: &str = r#"{
 const SCRIPT_V1: &str = "lueying.command('run', function () { return { v: 1 }; });";
 const SCRIPT_V2: &str = "lueying.command('run', function () { return { v: 2 }; });";
 
-struct Temp {
-    root: PathBuf,
-}
-
-impl Temp {
-    fn new() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let root = std::env::temp_dir().join(format!(
-            "lueying-consent-e2e-{}-{nanos}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("建临时目录");
-        Self { root }
-    }
-
-    fn pack(&self) -> PathBuf {
-        let dir = self.root.join("demo");
-        std::fs::create_dir_all(&dir).expect("建包目录");
-        dir
-    }
-
-    fn consent(&self) -> PathBuf {
-        self.root.join("consent.json")
-    }
-}
-
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
 
 fn gate(path: &Path) -> ConsentGate {
     let path = path.to_path_buf();
@@ -92,9 +61,9 @@ fn run_command(pack: &mut Pack) -> String {
 
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
-    let temp = Temp::new();
-    let dir = temp.pack();
-    let consent = temp.consent();
+    let temp = Temp::new("consent");
+    let dir = temp.pack("demo");
+    let consent = temp.root.join("consent.json");
     write_pack(&dir, SCRIPT_V1);
     let registry = Arc::new(Registry::new());
 
@@ -158,17 +127,6 @@ pub fn run(report: &mut String) -> usize {
 }
 
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
-    report.push_str("\n## 扩展授权与审计\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0usize;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {} |\n",
-            if *ok { "PASS" } else { "FAIL" },
-            note.replace('|', "\\|").replace('\n', " ")
-        ));
-    }
-    failures
+    crate::harness::write(report, "扩展授权与审计", checks)
 }
+

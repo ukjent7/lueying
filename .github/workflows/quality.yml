@@ -55,6 +55,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
+          # 与 ci.yml 的 Linux job 共用一份缓存:同一把锁、同一批依赖。
+          prefix-key: linux
       # Skia 预编译二进制静态链进了系统 freetype/fontconfig,链接 E2E 时要 .so
       # 与 pkg-config 头文件;runner 镜像只有运行库。
       - name: 安装 Skia 链接依赖

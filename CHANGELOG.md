@@ -209,6 +209,21 @@
 
 ### 变更
 
+- 结构梳理:全仓单文件压回 1000 行内、目录深度 ≤3,拆、合、挪并举。
+  - 拆:`engine/input` 按键分发/组合编辑/上屏学习/候选重算四份 inherent
+    impl;e2e 渲染族按面板/效果/界面拆三份;server 的页面构建
+    (`settings_pages`)、扩展方法族(`server_ext`)与配置备份
+    (`settings_backup`);`tsf/service` 的键汇与提供者(`keysink`/`providers`);
+    设置窗控件绘制(`ui_paint`);`xtask` 按子命令拆成 dict/pack/manifest;
+    `install-e2e` 的内嵌模块挪出为 `imp.rs`。
+  - 合:e2e 十五份检查表、三份临时目录与像素读回收进 `harness.rs`,报告
+    表格统一转义(此前 11 处 `|` 会撑破 Markdown 表);分位数函数 `pct`
+    收敛为 `shared` 一份;五个单方法 provider 的入口守卫提取为
+    `services::one_method`;`bypass-echo` 挪出 `src/bin`,消除唯一的
+    第四层目录。
+  - 清:删除七处全仓零引用的死代码、三处冗余 `windows-core` 直连依赖、
+    十九处指向已删除 GPUI 路径的注释;OCR 引擎分段控件补进键盘导航
+    (Tab 可达后左右键此前无效);测试挂载统一为 `src/*_tests.rs`。
 - 更新包校验改为进程内流式 SHA-256(T11 第一步):不再经 `certutil`
   子进程算安装包摘要,百 MB 安装包按 64 KiB 流式计算,失败原因直接可读;
   哈希实现复用扩展内容指纹的零依赖 SHA-256。

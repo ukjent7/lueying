@@ -1,7 +1,7 @@
 //! 面板绘制:背景、预编辑条、候选行、右键菜单;命中测试与绘制共用布局。
 //!
-//! 只认数据:令牌、尺寸与内容都由调用方给定,与 GPUI 路径共用同一套
-//! 数值(server 传参),本文件不持主题常量。翻页箭头画在这里、鼠标命中
+//! 只认数据:令牌、尺寸与内容都由调用方给定(server 传参),本文件
+//! 不持主题常量。翻页箭头画在这里、鼠标命中
 //! 判定也在这里,窗口层只把命中结果翻译成协议请求。
 
 use skia_safe::{
@@ -102,7 +102,7 @@ impl Metrics {
 }
 
 /// 全部绘制常量随 `metrics` 线性缩放(候选字号档 × 显示器 DPI);
-/// 标准档 100% 缩放下 s=1,数值与 GPUI 路径的常量一致。
+/// 标准档 100% 缩放下 s=1。
 fn scale_of(metrics: &Metrics) -> f32 {
     metrics.row / 34.0
 }
@@ -168,7 +168,7 @@ pub enum Hit {
     NextPage,
 }
 
-/// 右键菜单项;与 GPUI 路径同一套动作与文案。
+/// 右键菜单项;动作与文案由宿主按同一套语义消费。
 pub const MENU_ITEMS: [&str; 2] = ["置顶", "降权"];
 
 pub(crate) fn color(rgb: u32) -> Color {
@@ -384,7 +384,7 @@ pub fn panel_width(spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> 
 
 /// 窗口高度:预编辑条 + 候选区 + 底边距;公式与 server 一致。
 /// 末行后面没有行间距,所以行区按「行距 ×(行数−1) + 行高」算,
-/// 与 GPUI 路径的 `PREEDIT_H + row × 行数 + PANEL_PAD_B` 对齐。
+/// 高度公式:`PREEDIT_H + row × 行数 + PANEL_PAD_B`。
 pub fn panel_height(spec: &PanelSpec, metrics: &Metrics, font: Option<&Font>) -> f32 {
     let s = scale_of(metrics);
     let rows = layout_rows(spec, metrics, font);
@@ -545,7 +545,7 @@ pub fn draw_chrome(
         ),
         &stroke,
     );
-    // 拼音条满宽;按面板圆角裁掉顶角,与 GPUI 的 overflow_hidden 一致。
+    // 拼音条满宽;按面板圆角裁掉顶角(等价于 overflow_hidden)。
     canvas.save();
     canvas.clip_rrect(rounded, ClipOp::Intersect, true);
     preedit_bar(canvas, width, spec, palette, metrics, font, pager);
@@ -568,7 +568,7 @@ pub fn draw_items(
 ) {
     let s = scale_of(metrics);
     canvas.save();
-    // 翻页滑动会把候选推出面板;裁到描边内侧,与 GPUI 的 overflow_hidden 一致。
+    // 翻页滑动会把候选推出面板;裁到描边内侧(等价于 overflow_hidden)。
     canvas.clip_rect(
         Rect::from_xywh(
             s,
@@ -693,7 +693,7 @@ pub fn draw_menu(
     let s = scale_of(metrics);
     let w = 116.0 * s;
     let h = menu_height(metrics);
-    // 轻投影把菜单从候选层上托起来;与 GPUI 菜单的 shadow_md 同量级。
+    // 轻投影把菜单从候选层上托起来。
     let mut shadow = Paint::default();
     shadow.set_anti_alias(true);
     shadow.set_color(Color::from_argb(28, 0, 0, 0));
@@ -757,7 +757,7 @@ pub fn draw_menu(
     }
 }
 
-/// 菜单高度:上下内边距 4 + 两行 26 + 行间距 2,加边框;与 GPUI 的 MENU_H 一致。
+/// 菜单高度:上下内边距 4 + 两行 26 + 行间距 2,加边框。
 pub fn menu_height(metrics: &Metrics) -> f32 {
     64.0 * scale_of(metrics)
 }
@@ -805,7 +805,7 @@ fn preedit_bar(
     if has_pages {
         for (rect, hit) in [(prev, Hit::PrevPage), (next, Hit::NextPage)] {
             if pager == Some(hit) {
-                // 与 GPUI 的 hover 反馈一致:一层圆角描边色底。
+                // 悬停反馈:一层圆角描边色底。
                 canvas.draw_rrect(
                     RRect::new_rect_radii(rect, &[Vector::new(6.0 * s, 6.0 * s); 4]),
                     &fill_paint(palette.border),

@@ -22,6 +22,8 @@ use std::sync::Arc;
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, Script};
 
+use crate::harness::push;
+
 const TEST_DICT: &str = "\
 微笑\t1000000\twei'xiao
 头发\t1000000\ttou'fa
@@ -51,14 +53,6 @@ const READINGS_DICT: &str = "\
 个\t800000\tge
 ";
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
 
 /// 引擎 + 简繁模块句柄:组合中切换字形的用例直接翻句柄。
 fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
@@ -560,16 +554,6 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
-    report.push_str("\n## 核心输入补齐\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "核心输入补齐", checks)
 }
+

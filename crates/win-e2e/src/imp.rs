@@ -288,7 +288,7 @@ fn real_run() -> Result<(String, String), String> {
     let mut server = match std::process::Command::new(dir.join("lueying-server.exe"))
         .env("LOCALAPPDATA", &data)
         .env("APPDATA", &data)
-        // CI 没有交互桌面,跳过 GPUI 候选窗,只保留管道服务。
+        // CI 没有交互桌面,不建候选窗,只保留管道服务。
         .env("LUEYING_SERVER_NO_UI", "1")
         // Skia 渲染管线自检:建窗、Ganesh-D3D12 出帧、读回像素,结果写日志。
         .env("LUEYING_SKIA_SELFTEST", "1")

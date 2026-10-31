@@ -40,11 +40,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, SharedUser};
 
-type Checks = Vec<(&'static str, bool, String)>;
+use crate::harness::{push, Checks};
 
-fn push(checks: &mut Checks, name: &'static str, ok: bool, note: String) {
-    checks.push((name, ok, note));
-}
 
 fn engine(dict: &Arc<Dictionary>, user: &SharedUser) -> Engine {
     Engine::new(Arc::clone(dict), Config::default())
@@ -93,16 +90,6 @@ pub fn run(report: &mut String) -> usize {
     wordbook::learning_keys(&dict, &mut checks);
     reject::rejection_and_scale(&dict, &mut checks, now);
 
-    report.push_str("\n## 用户词库\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0usize;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "用户词库", checks)
 }
+

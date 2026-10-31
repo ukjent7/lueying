@@ -126,11 +126,6 @@ impl Pack {
         &self.manifest
     }
 
-    /// 包目录。
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// 最近一次失败的原因;成功后清空。
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()

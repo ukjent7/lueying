@@ -6,11 +6,13 @@
 //! 3. 快照写读不成,设置页与 CLI 看到旧值或空值。
 //! 4. 表格丢掉扩展、状态或超限次数。
 
-use std::path::PathBuf;
 
 use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json, render_table};
 use lueying_extjs::{ExtMetrics, ExtState, Invoke, Limits, Pack, Runtime};
 use lueying_extmeta::metrics::{Budgets, ExtStat};
+
+use crate::extjs_harness::write_pack;
+use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{
   "id":"demo","name":"演示","version":"1.0.0","api":2,
@@ -29,37 +31,6 @@ lueying.command("run", function () {
 });
 "#;
 
-struct Temp {
-    root: PathBuf,
-}
-
-impl Temp {
-    fn new(tag: &str) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let root = std::env::temp_dir().join(format!(
-            "lueying-metrics-e2e-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("建临时目录");
-        Self { root }
-    }
-
-    fn pack(&self, script: &str) -> PathBuf {
-        let dir = self.root.join("demo");
-        std::fs::create_dir_all(&dir).expect("建包目录");
-        std::fs::write(dir.join("manifest.json"), MANIFEST).expect("写清单");
-        std::fs::write(dir.join("index.js"), script).expect("写脚本");
-        dir
-    }
-}
-
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
 
 fn invoke(pack: &mut Pack, command: &str) -> String {
     match pack.invoke(command, "{}") {
@@ -73,7 +44,8 @@ pub fn run(report: &mut String) -> usize {
 
     // 1. 未加载、加载、卸载三种状态与内存/耗时指标。
     let temp = Temp::new("stats");
-    let _dir = temp.pack(SCRIPT);
+    let _dir = temp.pack("demo");
+    write_pack(&_dir, MANIFEST, SCRIPT);
     let order = vec!["demo".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
     checks.push(("指标包打开", errors.is_empty(), format!("{errors:?}")));
@@ -120,7 +92,8 @@ pub fn run(report: &mut String) -> usize {
     ));
 
     // 2. 死循环连续超时后停用;状态与超限次数都要能看见。
-    let dir = temp.pack(SCRIPT);
+    let dir = temp.pack("demo");
+    write_pack(&dir, MANIFEST, SCRIPT);
     let mut pack = Pack::load(&dir).expect("加载死循环包");
     for _ in 0..lueying_extjs::MAX_FAULTS {
         let _ = invoke(&mut pack, "spin");
@@ -140,7 +113,8 @@ pub fn run(report: &mut String) -> usize {
     ));
 
     // 3. 作业步超预算也计数并停用。
-    let dir = temp.pack(JOB_SCRIPT);
+    let dir = temp.pack("demo");
+    write_pack(&dir, MANIFEST, JOB_SCRIPT);
     let mut pack = Pack::load(&dir).expect("加载作业包");
     let pending = pack.invoke("run", "{}");
     let settled = pack.pump(0);
@@ -248,17 +222,6 @@ pub fn run(report: &mut String) -> usize {
 }
 
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
-    report.push_str("\n## 预算与运行可见性\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0usize;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {} |\n",
-            if *ok { "PASS" } else { "FAIL" },
-            note.replace('|', "\\|").replace('\n', " ")
-        ));
-    }
-    failures
+    crate::harness::write(report, "预算与运行可见性", checks)
 }
+

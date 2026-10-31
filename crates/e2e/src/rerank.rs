@@ -17,12 +17,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::shared::pct;
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::{Candidate, Config, Engine, Event, Key};
 use lueying_rerank::debounce::Debounce;
 use lueying_rerank::settle::result_is_current;
 use lueying_rerank::{Fact, Model, Rerank};
+
+use crate::harness::push;
 
 pub struct Models {
     pub four: Model,
@@ -114,17 +117,6 @@ fn argmax(scores: &[f32]) -> usize {
     best
 }
 
-fn pct(values: &mut [f64], p: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    values.sort_by(f64::total_cmp);
-    values[((p / 100.0) * (values.len() - 1) as f64).round() as usize]
-}
-
-fn push(check: &mut Vec<(&'static str, bool, String)>, name: &'static str, ok: bool, note: String) {
-    check.push((name, ok, note));
-}
 
 /// 追加 Markdown 报告，返回失败项数。每个用例用新引擎，避免用户词学习污染后续排序。
 pub fn run(

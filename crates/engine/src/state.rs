@@ -52,11 +52,6 @@ impl Engine {
         self
     }
 
-    /// 当前方案声明。
-    pub fn scheme_manifest(&self) -> scheme::SchemeManifest {
-        self.scheme.manifest()
-    }
-
     /// 运行中切换方案。组合尚未落定时直接清掉,避免旧击键按新规则误读。
     pub fn set_scheme(&mut self, scheme: Arc<dyn scheme::Scheme>) {
         if self.scheme.manifest().id == scheme.manifest().id {

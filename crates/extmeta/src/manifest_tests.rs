@@ -172,7 +172,7 @@ fn rejects_v1_activation() {
 #[test]
 fn parses_legacy_appearance() {
     let manifest = parse(legacy()).expect("旧版清单应通过");
-    assert_eq!(manifest.appearance_main(), Some("index.js"));
+    assert_eq!(manifest.script_main(), Some("index.js"));
     assert_eq!(manifest.appearance_api(), Some(1));
     assert!(manifest.is_appearance_only());
 }
@@ -200,7 +200,7 @@ fn parses_multi_component() {
         vec![Permission::ScreenCapture, Permission::Ocr]
     );
     assert!(!manifest.is_appearance_only());
-    assert_eq!(manifest.appearance_main(), Some("index.js"));
+    assert_eq!(manifest.script_main(), Some("index.js"));
 }
 
 #[test]

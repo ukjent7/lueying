@@ -39,14 +39,21 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
+/// 单方法服务的入口守卫:方法名不符时回 provider 侧错误,与 [`Provider`] 约定一致。
+fn one_method(provider: &str, method: &str, expected: &str) -> Result<(), String> {
+    if method == expected {
+        Ok(())
+    } else {
+        Err(format!("{provider} 没有方法 {method:?}"))
+    }
+}
+
 /// 截屏;`region` 缺省是整个虚拟桌面。在调用线程上执行 GDI 全程。
 pub struct CaptureProvider;
 
 impl Provider for CaptureProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
-        if method != "shot" {
-            return Err(format!("capture 没有方法 {method:?}"));
-        }
+        one_method("capture", method, "shot")?;
         let region = parse_region(args)?;
         std::thread::Builder::new()
             .name("ext-capture".into())
@@ -217,9 +224,7 @@ impl PpOcrCache {
 
 impl Provider for OcrProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
-        if method != "recognize" {
-            return Err(format!("ocr 没有方法 {method:?}"));
-        }
+        one_method("ocr", method, "recognize")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let file = parsed["file"]
             .as_str()
@@ -361,9 +366,7 @@ pub struct NotifyProvider;
 
 impl Provider for NotifyProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
-        if method != "show" {
-            return Err(format!("notify 没有方法 {method:?}"));
-        }
+        one_method("notify", method, "show")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let title = parsed["title"].as_str().unwrap_or_default();
         let body = parsed["body"].as_str().unwrap_or_default();
@@ -379,9 +382,7 @@ pub struct PanelProvider;
 impl Provider for PanelProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
         let _ = args;
-        if method != "show" {
-            return Err(format!("panel 没有方法 {method:?}"));
-        }
+        one_method("panel", method, "show")?;
         done.complete(Err("宿主面板在后续阶段".into()));
         Ok(())
     }
@@ -392,9 +393,7 @@ pub struct OutputProvider;
 
 impl Provider for OutputProvider {
     fn call(&self, method: &str, args: &str, done: Done) -> Result<(), String> {
-        if method != "deliver" {
-            return Err(format!("output 没有方法 {method:?}"));
-        }
+        one_method("output", method, "deliver")?;
         let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
         let text = parsed["text"]
             .as_str()

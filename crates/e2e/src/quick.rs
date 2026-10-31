@@ -27,14 +27,8 @@ use std::sync::{Arc, RwLock};
 use lueying_dict::Dictionary;
 use lueying_engine::{CivilTime, Config, Engine, Event, Key, SharedUser, UserDict};
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
+use crate::harness::push;
+
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
@@ -761,16 +755,6 @@ pub fn run(report: &mut String) -> usize {
         format!("{:?}", forget.candidates()),
     );
 
-    report.push_str("\n## 快捷输入\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0;
-    for (name, ok, note) in &checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if *ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "快捷输入", checks)
 }
+
