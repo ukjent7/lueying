@@ -106,16 +106,15 @@ impl Rerank {
         if texts.len() != facts.len() {
             return None;
         }
-        self.inner
-            .best_where_margin(
-                context,
-                texts,
-                |index| CandidateFacts {
-                    answers_key: facts[index].answers_key,
-                    trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
-                },
-                SYNC_PROMOTE_MARGIN,
-            )
+        self.inner.best_where_margin(
+            context,
+            texts,
+            |index| CandidateFacts {
+                answers_key: facts[index].answers_key,
+                trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
+            },
+            SYNC_PROMOTE_MARGIN,
+        )
     }
 
     /// 停顿重排:精确首位在上下文明确时给模糊候选让位。
