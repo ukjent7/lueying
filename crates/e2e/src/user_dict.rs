@@ -40,8 +40,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, SharedUser};
 
-use crate::harness::{push, Checks};
-
+use crate::harness::{Checks, push};
 
 fn engine(dict: &Arc<Dictionary>, user: &SharedUser) -> Engine {
     Engine::new(Arc::clone(dict), Config::default())
@@ -92,4 +91,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "用户词库", checks)
 }
-

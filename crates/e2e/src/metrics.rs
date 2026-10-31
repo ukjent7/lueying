@@ -6,7 +6,6 @@
 //! 3. 快照写读不成,设置页与 CLI 看到旧值或空值。
 //! 4. 表格丢掉扩展、状态或超限次数。
 
-
 use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json, render_table};
 use lueying_extjs::{ExtMetrics, ExtState, Invoke, Limits, Pack, Runtime};
 use lueying_extmeta::metrics::{Budgets, ExtStat};
@@ -30,7 +29,6 @@ lueying.command("run", function () {
   return new Promise(function () {});
 });
 "#;
-
 
 fn invoke(pack: &mut Pack, command: &str) -> String {
     match pack.invoke(command, "{}") {
@@ -224,4 +222,3 @@ pub fn run(report: &mut String) -> usize {
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
     crate::harness::write(report, "预算与运行可见性", checks)
 }
-

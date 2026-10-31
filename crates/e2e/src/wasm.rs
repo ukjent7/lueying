@@ -12,7 +12,6 @@ use lueying_extwasm::{CALL_FUEL, PROBE_WAT, WasmHost, WasmModule};
 
 use crate::harness::push;
 
-
 fn micros(started: Instant) -> u128 {
     started.elapsed().as_micros()
 }

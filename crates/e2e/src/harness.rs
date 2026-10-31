@@ -42,10 +42,8 @@ impl Temp {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let root = std::env::temp_dir().join(format!(
-            "lueying-e2e-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("lueying-e2e-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&root).expect("建临时目录");
         Self { root }
     }

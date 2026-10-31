@@ -472,4 +472,3 @@ impl<'a> Painter<'a> {
         self.canvas.restore();
     }
 }
-

@@ -16,7 +16,6 @@ use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 
 use crate::harness::push;
 
-
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }

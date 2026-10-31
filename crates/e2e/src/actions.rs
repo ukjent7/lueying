@@ -190,6 +190,9 @@ pub fn run(report: &mut String) -> usize {
         format!("置顶 {pinned} 首位 {top:?} → {events:?}"),
     );
 
-    crate::harness::write(report, "动作候选:触发词 / 空格 / 数字 / 负反馈 / 置顶", checks)
+    crate::harness::write(
+        report,
+        "动作候选:触发词 / 空格 / 数字 / 负反馈 / 置顶",
+        checks,
+    )
 }
-

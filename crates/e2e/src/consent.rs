@@ -25,7 +25,6 @@ const MANIFEST: &str = r#"{
 const SCRIPT_V1: &str = "lueying.command('run', function () { return { v: 1 }; });";
 const SCRIPT_V2: &str = "lueying.command('run', function () { return { v: 2 }; });";
 
-
 fn gate(path: &Path) -> ConsentGate {
     let path = path.to_path_buf();
     Arc::new(move |manifest: &Manifest, dir: &Path| {
@@ -129,4 +128,3 @@ pub fn run(report: &mut String) -> usize {
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
     crate::harness::write(report, "扩展授权与审计", checks)
 }
-

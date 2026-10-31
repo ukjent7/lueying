@@ -12,7 +12,7 @@ use lueying_extjs::bindings::{BindingTable, Input};
 use lueying_extjs::{Done, Invoke, Limits, Provider, Registry, Runtime, Service, When};
 
 use crate::extjs_harness::write_pack;
-use crate::harness::{push, Temp};
+use crate::harness::{Temp, push};
 
 struct FakeCapture {
     dir: PathBuf,
@@ -509,4 +509,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "扩展服务缝", checks)
 }
-

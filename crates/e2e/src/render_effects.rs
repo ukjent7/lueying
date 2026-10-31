@@ -241,5 +241,4 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         blocked && allowed,
         format!("冷却内 blocked={blocked} 冷却后 allowed={allowed}"),
     );
-
 }

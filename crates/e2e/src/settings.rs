@@ -16,7 +16,6 @@ use lueying_server::settings_view::{Action, PageColors, ScriptEntry, Settings, i
 
 use crate::harness::push;
 
-
 /// 页面用的颜色:E2E 只关心结构,颜色给固定值。
 fn colors() -> PageColors {
     PageColors {
@@ -362,7 +361,6 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "设置页模型", checks)
 }
-
 
 /// 设置窗用的字型;系统没有字型时退回默认字型(只影响宽度测量)。
 fn ui_font() -> skia_safe::Font {

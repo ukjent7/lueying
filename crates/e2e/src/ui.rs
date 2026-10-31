@@ -33,7 +33,6 @@ fn type_into(engine: &mut Engine, raw: &str) {
     }
 }
 
-
 /// 用户词库导出里是否还有某个词(行格式:`键<TAB>词<TAB>频次<TAB>时间戳`)。
 fn learned(export: &str, word: &str) -> bool {
     export
@@ -538,4 +537,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "候选窗交互", checks)
 }
-

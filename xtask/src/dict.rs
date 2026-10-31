@@ -333,4 +333,3 @@ fn parse_readings(text: &str, best: &mut HashMap<(String, String), u64>) -> (usi
     }
     (added, bad)
 }
-

@@ -187,4 +187,3 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         Ok(handled.into())
     }
 }
-

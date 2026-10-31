@@ -53,7 +53,6 @@ const READINGS_DICT: &str = "\
 个\t800000\tge
 ";
 
-
 /// 引擎 + 简繁模块句柄:组合中切换字形的用例直接翻句柄。
 fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
     let (dict, bad) = Dictionary::from_text(TEST_DICT);
@@ -556,4 +555,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "核心输入补齐", checks)
 }
-

@@ -30,7 +30,6 @@ pub(crate) fn panel_baseline(checks: &mut Vec<(&'static str, bool, String)>) {
         ),
         None => push(&mut checks, "预编辑条底色", false, "像素读回失败".into()),
     }
-
 }
 
 pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
@@ -258,5 +257,4 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
         ),
         None => push(&mut checks, "箭头悬停底色", false, "像素读回失败".into()),
     }
-
 }

@@ -215,12 +215,10 @@ impl Settings {
         self.message = message.into();
     }
 
-
     /// 当前选中的包;没启用或启用了多个返回 None。
     pub fn selected_script(&self) -> Option<&ScriptEntry> {
         crate::settings_consent::selected(&self.cfg.extensions, &self.scripts)
     }
-
 
     /// 选择运行期脚本;`None` 关闭。下标越界按关闭处理。
     pub fn select_script(&mut self, index: Option<usize>) {

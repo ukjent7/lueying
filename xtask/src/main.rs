@@ -35,7 +35,9 @@ fn main() {
             "dict" => task = Some(Task::Dict(dict::parse_dict(&mut it))),
             "pack" => task = Some(Task::Pack(pack::parse_pack(&mut it))),
             "update-manifest" => {
-                task = Some(Task::UpdateManifest(manifest::parse_update_manifest(&mut it)))
+                task = Some(Task::UpdateManifest(manifest::parse_update_manifest(
+                    &mut it,
+                )))
             }
             "sign-manifest" => {
                 task = Some(Task::SignManifest(manifest::parse_sign_manifest(&mut it)))

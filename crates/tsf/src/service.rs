@@ -10,12 +10,12 @@ use lueying_protocol::{Reply, Request};
 use windows::Win32::Foundation::FALSE;
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::TextServices::{
-    ITfComposition, ITfContext, ITfDisplayAttributeProvider, ITfFunctionProvider,
-    ITfKeyEventSink, ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource,
-    ITfSourceSingle, ITfTextInputProcessor, ITfTextInputProcessor_Impl,
-    ITfTextInputProcessorEx, ITfTextInputProcessorEx_Impl, ITfTextLayoutSink,
-    ITfThreadFocusSink, ITfThreadFocusSink_Impl, ITfThreadMgr, ITfUIElementMgr, TF_LBI_ICON,
-    TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL, TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
+    ITfComposition, ITfContext, ITfDisplayAttributeProvider, ITfFunctionProvider, ITfKeyEventSink,
+    ITfKeystrokeMgr, ITfLangBarItemButton, ITfLangBarItemSink, ITfSource, ITfSourceSingle,
+    ITfTextInputProcessor, ITfTextInputProcessor_Impl, ITfTextInputProcessorEx,
+    ITfTextInputProcessorEx_Impl, ITfTextLayoutSink, ITfThreadFocusSink, ITfThreadFocusSink_Impl,
+    ITfThreadMgr, ITfUIElementMgr, TF_LBI_ICON, TF_LBI_TEXT, TF_LBI_TOOLTIP, TF_MOD_CONTROL,
+    TF_PRESERVEDKEY, TF_TMAE_SECUREMODE,
 };
 use windows::core::{BOOL, GUID, IUnknown, IUnknownImpl, Interface, Ref, Result, implement};
 
@@ -70,7 +70,6 @@ pub(crate) struct Shared {
     /// 候选 UI 元素的快照,与 Server 应答同步。
     pub ui_snapshot: RefCell<crate::ui_element::Snapshot>,
 }
-
 
 #[path = "keysink.rs"]
 mod keysink;
@@ -738,4 +737,3 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
         Ok(())
     }
 }
-

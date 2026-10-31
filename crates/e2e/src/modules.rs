@@ -86,4 +86,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "功能模块扩展点", checks)
 }
-

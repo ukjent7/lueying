@@ -117,7 +117,6 @@ fn argmax(scores: &[f32]) -> usize {
     best
 }
 
-
 /// 追加 Markdown 报告，返回失败项数。每个用例用新引擎，避免用户词学习污染后续排序。
 pub fn run(
     dict: Arc<Dictionary>,

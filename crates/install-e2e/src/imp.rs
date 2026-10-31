@@ -65,10 +65,8 @@ fn run_command(name: &str, command: &mut Command, limit: Duration) -> Result<Out
         .collect();
     let out_path = logs.join(format!("{slug}.out"));
     let err_path = logs.join(format!("{slug}.err"));
-    let out =
-        std::fs::File::create(&out_path).map_err(|e| format!("创建{name}输出文件: {e}"))?;
-    let err =
-        std::fs::File::create(&err_path).map_err(|e| format!("创建{name}错误文件: {e}"))?;
+    let out = std::fs::File::create(&out_path).map_err(|e| format!("创建{name}输出文件: {e}"))?;
+    let err = std::fs::File::create(&err_path).map_err(|e| format!("创建{name}错误文件: {e}"))?;
     command.stdin(Stdio::null()).stdout(out).stderr(err);
     let mut child = command.spawn().map_err(|e| format!("启动{name}: {e}"))?;
     let started = Instant::now();
@@ -313,8 +311,7 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     std::fs::write(payload.join("version.txt"), version)
         .map_err(|e| format!("写 version.txt: {e}"))?;
     let license = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../LICENSE");
-    std::fs::copy(&license, payload.join("LICENSE"))
-        .map_err(|e| format!("复制 LICENSE: {e}"))?;
+    std::fs::copy(&license, payload.join("LICENSE")).map_err(|e| format!("复制 LICENSE: {e}"))?;
     let licenses = payload.join("licenses");
     std::fs::create_dir_all(&licenses).map_err(|e| format!("创建 licenses: {e}"))?;
     std::fs::write(licenses.join("README.md"), "第三方许可见此处。\n")
@@ -467,8 +464,7 @@ fn update_installed(
     // 被宿主加载的旧 DLL 允许留到下次,所以用未注册的合成文件验证 --prune。
     let stale = ["lueying_tsf-0.0.1.dll", "lueying_tsf32-0.0.1.dll"];
     for name in stale {
-        std::fs::write(target.join(name), b"stale")
-            .map_err(|e| format!("写旧 DLL {name}: {e}"))?;
+        std::fs::write(target.join(name), b"stale").map_err(|e| format!("写旧 DLL {name}: {e}"))?;
     }
 
     phase("编译 9.9.9 安装包");
@@ -713,10 +709,9 @@ fn profile_enabled_blocking() -> Result<bool, String> {
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
         }
         .map_err(|e| format!("打开 TSF profile 管理器: {e}"))?;
-        let enabled = unsafe {
-            profiles.IsEnabledLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE)
-        }
-        .map_err(|e| format!("查询当前用户输入法列表: {e}"))?;
+        let enabled =
+            unsafe { profiles.IsEnabledLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE) }
+                .map_err(|e| format!("查询当前用户输入法列表: {e}"))?;
         Ok(enabled.as_bool())
     })();
     if initialized {

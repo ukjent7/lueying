@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use lueying_extjs::{Done, Invoke, Limits, Pack, Poll, Runtime, SceneIn};
 
 use crate::extjs_harness::{load_or_fail, manifest, manifest_extra, write_pack};
-use crate::harness::{push, Temp};
+use crate::harness::{Temp, push};
 
 const GOOD: &str = r#"
 lueying.register(function (state) {
@@ -706,4 +706,3 @@ pub fn run(report: &mut String) -> usize {
 
     crate::harness::write(report, "运行期脚本扩展", checks)
 }
-

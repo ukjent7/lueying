@@ -7,7 +7,6 @@
 
 use skia_safe::{Font, Rect};
 
-
 #[path = "ui_paint.rs"]
 mod paint;
 
