@@ -113,8 +113,8 @@ fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
     std::fs::write(dir.join("manifest.json"), MANIFEST)
         .and_then(|()| std::fs::write(dir.join("index.js"), SCRIPT))
         .map_err(|e| format!("写扩展文件: {e}"))?;
-    let manifest =
-        lueying_extmeta::Manifest::parse(MANIFEST.as_bytes()).map_err(|e| format!("解析清单: {e}"))?;
+    let manifest = lueying_extmeta::Manifest::parse(MANIFEST.as_bytes())
+        .map_err(|e| format!("解析清单: {e}"))?;
     let mut book = lueying_extmeta::consent::ConsentBook::default();
     book.approve(&dir, &manifest, 0)
         .map_err(|e| format!("写同意记录: {e}"))?;

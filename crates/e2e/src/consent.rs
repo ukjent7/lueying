@@ -109,14 +109,14 @@ pub fn run(report: &mut String) -> usize {
     ));
 
     approve(&dir, &consent);
-    let mut pack = match Pack::load_with_gate(&dir, Limits::default(), &registry, Some(gate(&consent)))
-    {
-        Ok(pack) => pack,
-        Err(error) => {
-            checks.push(("同意后加载", false, error));
-            return write(report, &checks);
-        }
-    };
+    let mut pack =
+        match Pack::load_with_gate(&dir, Limits::default(), &registry, Some(gate(&consent))) {
+            Ok(pack) => pack,
+            Err(error) => {
+                checks.push(("同意后加载", false, error));
+                return write(report, &checks);
+            }
+        };
     let loaded = run_command(&mut pack);
     checks.push(("同意后加载", loaded == r#"{"v":1}"#, loaded));
 

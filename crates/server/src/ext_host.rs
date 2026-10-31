@@ -536,8 +536,7 @@ fn load(
             Ok(())
         })
     };
-    let (runtime, errors) =
-        Runtime::open_with_gate(&root, &approved, limits, registry, Some(gate));
+    let (runtime, errors) = Runtime::open_with_gate(&root, &approved, limits, registry, Some(gate));
     for error in errors {
         println!("{error}");
     }

@@ -44,8 +44,11 @@ impl Drop for Temp {
 
 fn write_pack(dir: &Path, manifest: &str) {
     std::fs::write(dir.join("manifest.json"), manifest).expect("写清单");
-    std::fs::write(dir.join("index.js"), "lueying.command('run', function () {});\n")
-        .expect("写入口");
+    std::fs::write(
+        dir.join("index.js"),
+        "lueying.command('run', function () {});\n",
+    )
+    .expect("写入口");
 }
 
 fn parse(manifest: &str) -> Manifest {
@@ -82,8 +85,11 @@ fn hash_pins_manifest_and_script() {
     std::fs::write(dir.join("data.txt"), "x").expect("写数据文件");
     assert!(book.check(&dir, &manifest).expect("检查").approved);
 
-    std::fs::write(dir.join("index.js"), "lueying.command('run', function () { return 1; });\n")
-        .expect("改入口");
+    std::fs::write(
+        dir.join("index.js"),
+        "lueying.command('run', function () { return 1; });\n",
+    )
+    .expect("改入口");
     let changed = book.check(&dir, &manifest).expect("检查");
     assert!(changed.changed && !changed.approved);
 
@@ -101,8 +107,14 @@ fn upgrade_reports_added_capabilities() {
     book.approve(&dir, &manifest, 42).expect("同意");
 
     let upgraded = MANIFEST
-        .replace(r#""capabilities":["screen-capture"]"#, r#""capabilities":["screen-capture","network"]"#)
-        .replace(r#""needs":["capture","output"]"#, r#""needs":["capture","output","net"]"#);
+        .replace(
+            r#""capabilities":["screen-capture"]"#,
+            r#""capabilities":["screen-capture","network"]"#,
+        )
+        .replace(
+            r#""needs":["capture","output"]"#,
+            r#""needs":["capture","output","net"]"#,
+        );
     write_pack(&dir, &upgraded);
     let check = book.check(&dir, &parse(&upgraded)).expect("检查");
     assert!(check.changed && !check.approved);

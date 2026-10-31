@@ -15,11 +15,7 @@ pub fn check(data: &std::path::Path) -> Result<String, String> {
         return Err(format!("扩展指标没有写入: {}", path.display()));
     }
     let metrics = lueying_extmeta::metrics::ExtMetrics::load(&path);
-    let Some(stat) = metrics
-        .extensions
-        .iter()
-        .find(|stat| stat.id == "shot-ocr")
-    else {
+    let Some(stat) = metrics.extensions.iter().find(|stat| stat.id == "shot-ocr") else {
         return Err(format!("扩展指标里没有 shot-ocr: {metrics:?}"));
     };
     if stat.state != lueying_extmeta::metrics::ExtState::Loaded {

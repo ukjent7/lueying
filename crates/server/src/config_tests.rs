@@ -180,9 +180,15 @@ fn save_keeps_extensions_and_round_trips() {
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);
     assert!(text.contains("extensions"), "{text}");
-    assert!(text.contains("\"first\"") && text.contains("\"second\""), "{text}");
+    assert!(
+        text.contains("\"first\"") && text.contains("\"second\""),
+        "{text}"
+    );
     assert!(text.contains("bc = \"shot.run\""), "{text}");
-    assert!(text.contains("panel_hotkey = \"Ctrl+Alt+Shift+P\""), "{text}");
+    assert!(
+        text.contains("panel_hotkey = \"Ctrl+Alt+Shift+P\""),
+        "{text}"
+    );
     assert!(text.contains("ocr_engine = \"ppocr\""), "{text}");
     assert_eq!(
         loaded.triggers,
@@ -216,9 +222,7 @@ limit = 3
     assert_eq!(cfg.extensions, vec!["shot-ocr"]);
     assert_eq!(
         cfg.bindings,
-        vec![
-            ("Ctrl+Alt+O".to_string(), "shot.run".to_string())
-        ]
+        vec![("Ctrl+Alt+O".to_string(), "shot.run".to_string())]
     );
     assert_eq!(
         cfg.triggers,

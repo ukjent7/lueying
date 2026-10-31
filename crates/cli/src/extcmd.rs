@@ -97,8 +97,8 @@ pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
 }
 
 fn manifest_text(manifest: &serde_json::Value) -> Result<String, String> {
-    let mut text = serde_json::to_string_pretty(manifest)
-        .map_err(|e| format!("序列化清单: {e}"))?;
+    let mut text =
+        serde_json::to_string_pretty(manifest).map_err(|e| format!("序列化清单: {e}"))?;
     text.push('\n');
     Ok(text)
 }
@@ -109,10 +109,8 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     if !dir.is_dir() {
         return Err(format!("{} 不是目录", dir.display()));
     }
-    let manifest_bytes = fs::read(dir.join("manifest.json"))
-        .map_err(|e| format!("读清单: {e}"))?;
-    let manifest =
-        Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest_bytes = fs::read(dir.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
+    let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
     let dir_name = dir
         .file_name()
         .and_then(|name| name.to_str())
@@ -150,15 +148,17 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
         out.push_str(&format!("### end: {name}\n"));
     }
     let target = args.out.clone().unwrap_or_else(|| {
-        dir.with_file_name(format!("{}.luext", dir.file_name().unwrap_or_default().to_string_lossy()))
+        dir.with_file_name(format!(
+            "{}.luext",
+            dir.file_name().unwrap_or_default().to_string_lossy()
+        ))
     });
     write_file(&target, &out)?;
     Ok(target)
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries =
-        fs::read_dir(dir).map_err(|e| format!("读 {}: {e}", dir.display()))?;
+    let entries = fs::read_dir(dir).map_err(|e| format!("读 {}: {e}", dir.display()))?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -178,9 +178,11 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 
 /// 安装一个 `.luext` 包或目录到扩展目录;默认不覆盖已有包。
 pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
-    let target_root = args.dir.clone().or_else(extensions_dir).ok_or(
-        "找不到扩展目录;用 --dir 指定,或设置 APPDATA/LOCALAPPDATA",
-    )?;
+    let target_root = args
+        .dir
+        .clone()
+        .or_else(extensions_dir)
+        .ok_or("找不到扩展目录;用 --dir 指定,或设置 APPDATA/LOCALAPPDATA")?;
     if !target_root.exists() {
         fs::create_dir_all(&target_root)
             .map_err(|e| format!("建 {}: {e}", target_root.display()))?;
@@ -195,10 +197,7 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
     let target = target_root.join(&id);
     if target.exists() {
         if !args.force {
-            return Err(format!(
-                "{} 已存在;加 --force 覆盖",
-                target.display()
-            ));
+            return Err(format!("{} 已存在;加 --force 覆盖", target.display()));
         }
         fs::remove_dir_all(&target).map_err(|e| format!("清掉旧包: {e}"))?;
     }
@@ -220,16 +219,18 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
 }
 
 fn read_directory(source: &Path) -> Result<(String, Vec<(String, String)>), String> {
-    let manifest_bytes = fs::read(source.join("manifest.json"))
-        .map_err(|e| format!("读清单: {e}"))?;
-    let manifest =
-        Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest_bytes =
+        fs::read(source.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
+    let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
     let name = source
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| format!("{} 目录名不可用", source.display()))?;
     if manifest.id != name {
-        return Err(format!("目录名 {name:?} 与清单 id {:?} 不一致", manifest.id));
+        return Err(format!(
+            "目录名 {name:?} 与清单 id {:?} 不一致",
+            manifest.id
+        ));
     }
     let mut files = Vec::new();
     let mut paths = Vec::new();
@@ -241,8 +242,8 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, String)>), Stri
             .to_string_lossy()
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        let text = String::from_utf8(bytes)
-            .map_err(|_| format!("{} 不是 UTF-8 文本", path.display()))?;
+        let text =
+            String::from_utf8(bytes).map_err(|_| format!("{} 不是 UTF-8 文本", path.display()))?;
         files.push((relative, text));
     }
     Ok((manifest.id, files))
@@ -272,11 +273,15 @@ pub fn unpack(text: &str) -> Result<(String, Vec<(String, String)>), String> {
         }
         let mut content = String::new();
         for _ in 0..count {
-            let body = lines.next().ok_or_else(|| format!("块 {name:?} 提前结束"))?;
+            let body = lines
+                .next()
+                .ok_or_else(|| format!("块 {name:?} 提前结束"))?;
             content.push_str(body);
             content.push('\n');
         }
-        let end = lines.next().ok_or_else(|| format!("块 {name:?} 缺 end 行"))?;
+        let end = lines
+            .next()
+            .ok_or_else(|| format!("块 {name:?} 缺 end 行"))?;
         if end != format!("### end: {name}") {
             return Err(format!("块 {name:?} 的 end 行对不上: {end:?}"));
         }
@@ -286,8 +291,8 @@ pub fn unpack(text: &str) -> Result<(String, Vec<(String, String)>), String> {
         .iter()
         .find(|(name, _)| name == "manifest.json")
         .ok_or("包里没有 manifest.json")?;
-    let manifest = Manifest::parse(manifest.1.as_bytes())
-        .map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest =
+        Manifest::parse(manifest.1.as_bytes()).map_err(|e| format!("清单不合法: {e}"))?;
     Ok((manifest.id, files))
 }
 
@@ -298,8 +303,8 @@ pub fn reload() -> Result<(), String> {
         .write(true)
         .open(pipe_name())
         .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
-    let line = serde_json::to_string(&Request::ReloadConfig)
-        .map_err(|e| format!("序列化请求: {e}"))?;
+    let line =
+        serde_json::to_string(&Request::ReloadConfig).map_err(|e| format!("序列化请求: {e}"))?;
     writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
     file.flush().map_err(|e| format!("写管道: {e}"))?;
     let mut reply = String::new();
@@ -319,8 +324,7 @@ pub fn logs(args: &LogsArgs) -> Result<String, String> {
         .clone()
         .or_else(default_log_path)
         .ok_or("找不到日志路径;用 --file 指定,或设置 LOCALAPPDATA")?;
-    let text =
-        fs::read_to_string(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
+    let text = fs::read_to_string(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(args.tail);
     Ok(lines[start..].join("\n"))
@@ -341,7 +345,9 @@ pub fn default_log_path() -> Option<PathBuf> {
     }
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))?;
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
+        })?;
     Some(base.join("lueying").join("logs").join("server.log"))
 }
 

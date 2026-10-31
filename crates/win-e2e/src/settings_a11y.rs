@@ -12,9 +12,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationValuePattern, TreeScope_Descendants, UIA_ButtonControlTypeId,
-    UIA_CONTROLTYPE_ID, UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_InvokePatternId,
-    UIA_ValuePatternId,
+    IUIAutomationValuePattern, TreeScope_Descendants, UIA_ButtonControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_InvokePatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
 use windows::core::{BSTR, PCWSTR, w};
@@ -53,7 +52,10 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         return Err(format!("设置窗 UIA 名称是 `{name}`"));
     }
     let elements = descendants(&automation, &root)?;
-    let mut lines = vec![format!("设置窗 UIA 名称 `{name}`,节点 {} 个", elements.len())];
+    let mut lines = vec![format!(
+        "设置窗 UIA 名称 `{name}`,节点 {} 个",
+        elements.len()
+    )];
     for required in ["保存", "关闭", "输入", "辅助码", "检查更新"] {
         if !elements.iter().any(|element| text(element) == required) {
             return Err(format!("UIA 树里找不到「{required}」"));
@@ -62,7 +64,9 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
     lines.push("UIA 树包含保存、关闭、输入、辅助码与检查更新".to_string());
     let phrase_group = elements
         .iter()
-        .find(|element| text(element) == "自定义短语" && kind(element) == Some(UIA_GroupControlTypeId))
+        .find(|element| {
+            text(element) == "自定义短语" && kind(element) == Some(UIA_GroupControlTypeId)
+        })
         .ok_or("UIA 树里找不到「自定义短语」分组")?;
     let phrase_row = descendants(&automation, phrase_group)?;
     let edit_button = phrase_row
@@ -87,11 +91,9 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         .iter()
         .find(|element| kind(element) == Some(UIA_EditControlTypeId))
         .ok_or("短语编辑器里没有 EDIT 文本控件")?;
-    let value: IUIAutomationValuePattern =
-        unsafe { edit.GetCurrentPatternAs(UIA_ValuePatternId) }
-            .map_err(|e| format!("EDIT 没有 ValuePattern: {e}"))?;
-    unsafe { value.SetValue(&BSTR::from(PHRASE)) }
-        .map_err(|e| format!("UIA 写入短语失败: {e}"))?;
+    let value: IUIAutomationValuePattern = unsafe { edit.GetCurrentPatternAs(UIA_ValuePatternId) }
+        .map_err(|e| format!("EDIT 没有 ValuePattern: {e}"))?;
+    unsafe { value.SetValue(&BSTR::from(PHRASE)) }.map_err(|e| format!("UIA 写入短语失败: {e}"))?;
     let save = controls
         .iter()
         .find(|element| text(element) == "保存" && kind(element) == Some(UIA_ButtonControlTypeId))

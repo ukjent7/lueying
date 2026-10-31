@@ -128,7 +128,11 @@ impl ConsentBook {
         if let Some(entry) = entry
             && entry.hash != hash
         {
-            let old: Vec<&String> = entry.capabilities.iter().chain(entry.needs.iter()).collect();
+            let old: Vec<&String> = entry
+                .capabilities
+                .iter()
+                .chain(entry.needs.iter())
+                .collect();
             for key in requested(manifest) {
                 if !old.iter().any(|known| **known == key) {
                     push_unique(&mut check.added, label(&key));
@@ -156,8 +160,7 @@ impl ConsentBook {
                 .collect(),
             approved_ms: now_ms,
         };
-        self.extensions
-            .insert(manifest.id.clone(), entry.clone());
+        self.extensions.insert(manifest.id.clone(), entry.clone());
         Ok(entry)
     }
 }

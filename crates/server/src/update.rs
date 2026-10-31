@@ -107,9 +107,7 @@ pub fn check_channel(channel: crate::config::Channel) -> Result<Check, String> {
                 .find(|(release, _)| is_newer(&release.version, &current_version()))
                 .map(|(release, value)| (release.clone(), value.clone()));
             Ok(match candidate {
-                Some((release, value)) => {
-                    Check::Available(attach_manifest(&value, release)?)
-                }
+                Some((release, value)) => Check::Available(attach_manifest(&value, release)?),
                 None if releases.is_empty() => Check::NoRelease,
                 None => Check::Latest,
             })
@@ -151,7 +149,11 @@ fn releases_list() -> Result<Vec<(Release, serde_json::Value)>, String> {
         .cloned()
         .unwrap_or_default()
         .iter()
-        .filter_map(|value| release_from_value(value).ok().map(|release| (release, value.clone())))
+        .filter_map(|value| {
+            release_from_value(value)
+                .ok()
+                .map(|release| (release, value.clone()))
+        })
         .collect();
     Ok(list)
 }
@@ -262,7 +264,8 @@ fn attach_manifest(value: &serde_json::Value, release: Release) -> Result<Releas
     if !(200..300).contains(&status) {
         return Ok(release);
     }
-    let signature = String::from_utf8(sig_body).map_err(|_| "签名文件不是 UTF-8 文本".to_string())?;
+    let signature =
+        String::from_utf8(sig_body).map_err(|_| "签名文件不是 UTF-8 文本".to_string())?;
     let manifest = update_manifest::verify(&manifest_body, &signature)?;
     if manifest.release != release.version {
         return Err(format!(
@@ -391,8 +394,7 @@ pub fn fetch_sha256(url: &str) -> Result<String, String> {
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     let file = File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
-    lueying_extmeta::sha256::sha256_reader(&mut reader)
-        .map_err(|e| format!("计算 SHA-256: {e}"))
+    lueying_extmeta::sha256::sha256_reader(&mut reader).map_err(|e| format!("计算 SHA-256: {e}"))
 }
 
 fn normalize_version(tag: &str) -> String {

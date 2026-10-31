@@ -108,8 +108,7 @@ pub fn run(report: &mut String) -> usize {
     let idle = runtime.stats();
     checks.push((
         "空闲卸载后回到空闲",
-        idle
-            .first()
+        idle.first()
             .is_some_and(|stat| stat.state == ExtState::Idle && stat.memory_used == 0),
         format!("stat={:?}", idle.first()),
     ));

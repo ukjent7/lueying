@@ -619,7 +619,10 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
             || setting.detail.chars().count() > 200
             || setting.detail.chars().any(char::is_control)
         {
-            return Err(format!("设置 {} 的标题或说明含控制字符/说明超过 200 字", setting.key));
+            return Err(format!(
+                "设置 {} 的标题或说明含控制字符/说明超过 200 字",
+                setting.key
+            ));
         }
         match setting.kind.as_str() {
             "toggle" => {
@@ -632,10 +635,7 @@ fn check_settings(settings: &[Setting]) -> Result<(), String> {
             }
             "choice" => {
                 if setting.options.is_empty() || setting.options.len() > 8 {
-                    return Err(format!(
-                        "单选设置 {} 的选项数必须在 1..=8",
-                        setting.key
-                    ));
+                    return Err(format!("单选设置 {} 的选项数必须在 1..=8", setting.key));
                 }
                 let mut seen: Vec<&str> = Vec::new();
                 for option in &setting.options {

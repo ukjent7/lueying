@@ -3,13 +3,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{PACK_HEADER, InstallArgs, LogsArgs, NewArgs, PackArgs, install, logs, new, pack, unpack};
+use super::{
+    InstallArgs, LogsArgs, NewArgs, PACK_HEADER, PackArgs, install, logs, new, pack, unpack,
+};
 
 fn temp_root(tag: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "lueying-extcmd-{tag}-{}",
-        std::process::id()
-    ));
+    let base = std::env::temp_dir().join(format!("lueying-extcmd-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).expect("建临时目录");
     base

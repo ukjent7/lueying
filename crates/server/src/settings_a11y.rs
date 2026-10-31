@@ -228,11 +228,7 @@ pub fn page_tree(
                         let control = node_id(button.id.base, button.id.index);
                         nodes.push((
                             control,
-                            button_node(
-                                button,
-                                &row.label,
-                                card_bounds(layout, button.id, scroll),
-                            ),
+                            button_node(button, &row.label, card_bounds(layout, button.id, scroll)),
                         ));
                         ids.push((control, button.id));
                         items_nodes.push(control);
@@ -255,11 +251,7 @@ pub fn page_tree(
                         let control = node_id(button.id.base, button.id.index);
                         nodes.push((
                             control,
-                            button_node(
-                                button,
-                                &row.label,
-                                card_bounds(layout, button.id, scroll),
-                            ),
+                            button_node(button, &row.label, card_bounds(layout, button.id, scroll)),
                         ));
                         ids.push((control, button.id));
                         items_nodes.push(control);
@@ -397,11 +389,7 @@ fn button_node(button: &Button, description: &str, bounds: Option<Rect>) -> Node
 }
 
 fn toggled(on: bool) -> Toggled {
-    if on {
-        Toggled::True
-    } else {
-        Toggled::False
-    }
+    if on { Toggled::True } else { Toggled::False }
 }
 
 fn page_bounds(layout: &Layout, id: Id) -> Option<Rect> {

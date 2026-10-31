@@ -31,7 +31,9 @@ fn parses_top_and_help() {
 #[test]
 fn parses_new() {
     assert_eq!(
-        parse_args(args(&["ext", "new", "demo", "--name", "示例", "--dir", "/tmp/x"])),
+        parse_args(args(&[
+            "ext", "new", "demo", "--name", "示例", "--dir", "/tmp/x"
+        ])),
         Ok(Invocation::New(NewArgs {
             id: "demo".into(),
             name: Some("示例".into()),
@@ -52,7 +54,10 @@ fn parses_new() {
         parse_args(args(&["ext", "new", "a", "b"])).is_err(),
         "两个位置参数要报错"
     );
-    assert!(parse_args(args(&["ext", "new", "--name"])).is_err(), "--name 缺值");
+    assert!(
+        parse_args(args(&["ext", "new", "--name"])).is_err(),
+        "--name 缺值"
+    );
 }
 
 #[test]
@@ -99,8 +104,14 @@ fn parses_reload_and_logs() {
         }))
     );
     assert!(parse_args(args(&["ext", "logs", "--tail", "行数"])).is_err());
-    assert!(parse_args(args(&["ext", "logs", "--tail"])).is_err(), "--tail 缺值");
-    assert!(parse_args(args(&["ext", "logs", "--wat"])).is_err(), "未知旗标");
+    assert!(
+        parse_args(args(&["ext", "logs", "--tail"])).is_err(),
+        "--tail 缺值"
+    );
+    assert!(
+        parse_args(args(&["ext", "logs", "--wat"])).is_err(),
+        "未知旗标"
+    );
 }
 
 #[test]

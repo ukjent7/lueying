@@ -211,13 +211,8 @@ impl Host {
                             if !allowed.iter().any(|need| need == &service) {
                                 return format!("__error:服务 {service} 未在 needs 声明");
                             }
-                            match registry.call_as(
-                                &caller,
-                                &service,
-                                &method,
-                                &args,
-                                token as u64,
-                            ) {
+                            match registry.call_as(&caller, &service, &method, &args, token as u64)
+                            {
                                 Ok(()) => String::new(),
                                 Err(text) => format!("__error:{text}"),
                             }

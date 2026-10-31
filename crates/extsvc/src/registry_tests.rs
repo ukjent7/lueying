@@ -182,9 +182,10 @@ struct Recorder {
 
 impl AuditSink for Recorder {
     fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str) {
-        self.lines.lock().unwrap().push(format!(
-            "{caller} {service}.{method} {outcome:?} {note}"
-        ));
+        self.lines
+            .lock()
+            .unwrap()
+            .push(format!("{caller} {service}.{method} {outcome:?} {note}"));
     }
 }
 
@@ -196,7 +197,9 @@ fn calls_are_audited_with_caller() {
         lines: std::sync::Mutex::new(Vec::new()),
     });
     registry.set_audit(recorder.clone());
-    registry.call_as("shot-ocr", "capture", "shot", "{}", 1).unwrap();
+    registry
+        .call_as("shot-ocr", "capture", "shot", "{}", 1)
+        .unwrap();
     let lines = recorder.lines.lock().unwrap();
     assert_eq!(lines.len(), 1);
     assert!(lines[0].starts_with("shot-ocr capture.shot Allowed"));

@@ -139,9 +139,9 @@ pub fn run(report: &mut String) -> usize {
             && audit_row
                 .as_deref()
                 .is_some_and(|text| text.contains("截图"))
-            && metrics_row.as_deref().is_some_and(|text| {
-                text.contains("运行 1") && text.contains("步进峰值 1.5 ms")
-            })
+            && metrics_row
+                .as_deref()
+                .is_some_and(|text| text.contains("运行 1") && text.contains("步进峰值 1.5 ms"))
             && switched
             && settings.cfg.extensions.is_empty()
             && missing
@@ -276,10 +276,7 @@ pub fn run(report: &mut String) -> usize {
 
     // 配置往返:extensions 键要能读、能原样存回;路径分隔符不能当扩展 id。
     let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}.toml", std::process::id()));
-    let _ = std::fs::write(
-        &path,
-        "extensions = [\"my-pack\", \"other-pack\"]\n",
-    );
+    let _ = std::fs::write(&path, "extensions = [\"my-pack\", \"other-pack\"]\n");
     let cfg = lueying_server::config::load(&path);
     let loaded = cfg.extensions == vec!["my-pack", "other-pack"];
     let saved =
@@ -298,7 +295,10 @@ pub fn run(report: &mut String) -> usize {
             }),
         format!("读取 {loaded} 存回 {:?}", saved.as_deref().map(str::len)),
     );
-    let path = std::env::temp_dir().join(format!("lueying-config-e2e-bad-{}.toml", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "lueying-config-e2e-bad-{}.toml",
+        std::process::id()
+    ));
     let _ = std::fs::write(&path, "extensions = [\"../evil\", \"ok-pack\"]\n");
     let cfg = lueying_server::config::load(&path);
     let rejected = cfg.extensions == vec!["ok-pack"];

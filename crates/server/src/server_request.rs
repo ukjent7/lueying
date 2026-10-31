@@ -760,7 +760,10 @@ fn settings_set(
         .cloned()
         .unwrap_or_default();
     for (key, value) in &object {
-        let Some(setting) = settings.iter().find(|setting| setting.key() == key.as_str()) else {
+        let Some(setting) = settings
+            .iter()
+            .find(|setting| setting.key() == key.as_str())
+        else {
             return Err(format!("扩展 {id} 没有设置 {key:?}"));
         };
         if !setting.accepts(value) {

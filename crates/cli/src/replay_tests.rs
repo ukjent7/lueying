@@ -8,10 +8,7 @@ use lueying_engine::Key;
 use super::{ReplayArgs, parse_line, replay_with, run};
 
 fn temp_root(tag: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "lueying-replay-{tag}-{}",
-        std::process::id()
-    ));
+    let base = std::env::temp_dir().join(format!("lueying-replay-{tag}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).expect("建临时目录");
     base
@@ -54,12 +51,7 @@ fn parse_line_maps_keys_and_rejects_junk() {
     );
     assert_eq!(
         parse_line("<Space>,5'").expect("混合行"),
-        vec![
-            Key::Space,
-            Key::Punct(','),
-            Key::Digit(5),
-            Key::Punct('\''),
-        ]
+        vec![Key::Space, Key::Punct(','), Key::Digit(5), Key::Punct('\''),]
     );
     assert_eq!(
         parse_line("<esc><back>").expect("功能键行"),

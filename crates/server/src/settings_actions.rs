@@ -295,9 +295,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
                 let state = if check.approved {
                     ConsentState::Approved
                 } else if check.changed {
-                    ConsentState::Changed {
-                        added: check.added,
-                    }
+                    ConsentState::Changed { added: check.added }
                 } else {
                     ConsentState::Missing
                 };

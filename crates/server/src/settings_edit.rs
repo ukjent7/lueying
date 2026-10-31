@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, DEFAULT_GUI_FONT, HBRUSH, GetStockObject};
+use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, DEFAULT_GUI_FONT, GetStockObject, HBRUSH};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -20,9 +20,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, IDC_ARROW, IsChild, LoadCursorW, MB_ICONERROR, MB_OK, MSG, MessageBoxW,
     MoveWindow, PostMessageW, RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    SetWindowLongPtrW, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_KEYDOWN, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE,
+    WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 

@@ -214,8 +214,7 @@ fn update_manifest(args: UpdateManifestArgs) -> Result<(), String> {
             "mirrors": args.mirrors,
         }],
     });
-    let mut text = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("生成清单: {e}"))?;
+    let mut text = serde_json::to_string_pretty(&manifest).map_err(|e| format!("生成清单: {e}"))?;
     text.push('\n');
     let path = args.out.join("lueying-manifest.json");
     std::fs::write(&path, &text).map_err(|e| format!("写 {}: {e}", path.display()))?;
@@ -234,17 +233,15 @@ fn sign_manifest(args: SignArgs) -> Result<(), String> {
         (Some(path), _) => {
             std::fs::read_to_string(path).map_err(|e| format!("读 {}: {e}", path.display()))?
         }
-        (None, Some(name)) => {
-            std::env::var(name).map_err(|_| format!("环境变量 {name} 未设置"))?
-        }
+        (None, Some(name)) => std::env::var(name).map_err(|_| format!("环境变量 {name} 未设置"))?,
         (None, None) => {
             return Err("用 --key <种子文件> 或 --key-env <变量名> 提供签名种子".into());
         }
     };
     let seed = decode_seed(seed_hex.trim())?;
     let key = SigningKey::from_bytes(&seed);
-    let bytes =
-        std::fs::read(&args.manifest).map_err(|e| format!("读 {}: {e}", args.manifest.display()))?;
+    let bytes = std::fs::read(&args.manifest)
+        .map_err(|e| format!("读 {}: {e}", args.manifest.display()))?;
     let signature = key.sign(&bytes);
     key.verifying_key()
         .verify(&bytes, &signature)

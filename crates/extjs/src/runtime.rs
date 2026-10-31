@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lueying_extmeta::metrics::{ExtState, ExtStat};
+use lueying_extmeta::metrics::{ExtStat, ExtState};
 use lueying_extsvc::Registry;
 
+use crate::ConsentGate;
 use crate::host::{Invoke, Limits, Settled};
 use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
 use crate::pack::{Pack, Poll};
 use crate::scene::{SceneIn, ScenePatch};
-use crate::ConsentGate;
 
 const MANIFEST: &str = "manifest.json";
 

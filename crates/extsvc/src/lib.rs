@@ -30,14 +30,7 @@ pub enum AuditOutcome {
 ///
 /// `caller` 是扩展 id;参数文本可能含用户内容,这里只给服务名与方法名。
 pub trait AuditSink: Send + Sync {
-    fn record(
-        &self,
-        caller: &str,
-        service: &str,
-        method: &str,
-        outcome: AuditOutcome,
-        note: &str,
-    );
+    fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str);
 }
 
 /// 一次服务调用的回传:发起时的序号与结果。
@@ -137,13 +130,7 @@ impl Registry {
     ///
     /// 服务名与方法名在这里核死:未知服务、没开放的接口、没装提供者
     /// 都当场拒绝,提供者只面对合法方法。`caller` 是扩展 id,只给审计用。
-    pub fn call(
-        &self,
-        service: &str,
-        method: &str,
-        args: &str,
-        token: u64,
-    ) -> Result<(), String> {
+    pub fn call(&self, service: &str, method: &str, args: &str, token: u64) -> Result<(), String> {
         self.call_as("", service, method, args, token)
     }
 
@@ -208,14 +195,7 @@ impl Registry {
         provider.call(method, args, done)
     }
 
-    fn record(
-        &self,
-        caller: &str,
-        service: &str,
-        method: &str,
-        outcome: AuditOutcome,
-        note: &str,
-    ) {
+    fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str) {
         if caller.is_empty() {
             return;
         }

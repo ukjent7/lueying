@@ -40,7 +40,10 @@ fn verifies_known_answer_vector() {
         installer.mirror().expect("镜像"),
         "https://github.com/ukjent7/lueying/releases/download/v0.2.0/lueying-0.2.0-setup.exe"
     );
-    assert!(installer.matches("LUEYING-0.2.0-SETUP.EXE"), "匹配忽略大小写");
+    assert!(
+        installer.matches("LUEYING-0.2.0-SETUP.EXE"),
+        "匹配忽略大小写"
+    );
 }
 
 #[test]
@@ -60,15 +63,17 @@ fn rejects_bad_signature_text() {
     let error = update_manifest::verify(SAMPLE.as_bytes(), &junk).expect_err("非十六进制要被拒绝");
     assert!(error.contains("十六进制"), "{error}");
     let zeros = "0".repeat(128);
-    let error =
-        update_manifest::verify(SAMPLE.as_bytes(), &zeros).expect_err("全零签名必须验不过");
+    let error = update_manifest::verify(SAMPLE.as_bytes(), &zeros).expect_err("全零签名必须验不过");
     assert!(error.contains("签名验证失败"), "{error}");
 }
 
 #[test]
 fn parses_rejects_bad_fields() {
     let parse = |text: &str| update_manifest::parse(text.as_bytes());
-    assert!(parse(r#"{"version":2,"release":"0.2.0","files":[]}"#).is_err(), "版本要校验");
+    assert!(
+        parse(r#"{"version":2,"release":"0.2.0","files":[]}"#).is_err(),
+        "版本要校验"
+    );
     assert!(
         parse(r#"{"version":1,"release":"","files":[]}"#)
             .err()

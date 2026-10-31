@@ -7,14 +7,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
-use lueying_extmeta::metrics::{ExtState, ExtStat};
+use lueying_extmeta::metrics::{ExtStat, ExtState};
 use lueying_extsvc::Registry;
 
+use crate::ConsentGate;
 use crate::MAX_FAULTS;
 use crate::host::{Host, Invoke, Limits, Settled};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, Manifest};
 use crate::scene::{SceneIn, ScenePatch};
-use crate::ConsentGate;
 
 const MANIFEST: &str = "manifest.json";
 
@@ -100,14 +100,9 @@ impl Pack {
         let source = read_text(&dir.join(main), MAX_SOURCE_BYTES)
             .map_err(|e| format!("读入口脚本 {main} 失败: {e}"))?;
         let needs: Vec<&str> = manifest.needs.iter().map(|service| service.key()).collect();
-        let host = Host::new_with_caller(
-            &source,
-            limits,
-            &needs,
-            Arc::clone(services),
-            &manifest.id,
-        )
-        .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
+        let host =
+            Host::new_with_caller(&source, limits, &needs, Arc::clone(services), &manifest.id)
+                .map_err(|e| format!("扩展 {} 加载失败: {e}", manifest.id))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             stamp: Stamp {

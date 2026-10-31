@@ -90,7 +90,12 @@ where
 }
 
 /// 位置参数加旗标的通用走法:第一个不以 `-` 开头的是位置参数,出现第二个报错。
-fn take_positional(used: &mut bool, slot: &mut Option<PathBuf>, arg: &str, what: &str) -> Result<(), String> {
+fn take_positional(
+    used: &mut bool,
+    slot: &mut Option<PathBuf>,
+    arg: &str,
+    what: &str,
+) -> Result<(), String> {
     if *used {
         return Err(format!("多余的参数 {arg:?};{what} 只接受一个"));
     }
@@ -288,7 +293,9 @@ pub fn default_metrics_path() -> Option<PathBuf> {
     }
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))?;
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
+        })?;
     Some(base.join("lueying").join("logs").join("ext-metrics.json"))
 }
 

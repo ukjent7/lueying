@@ -433,7 +433,8 @@ pub fn render_apps(apps: &BTreeMap<String, AppOverride>) -> Result<String, Strin
 }
 
 #[derive(Serialize)]
-struct SaveFile<'a> {    page_size: usize,
+struct SaveFile<'a> {
+    page_size: usize,
     chinese_punct: bool,
     fuzzy: &'static str,
     shift_toggle: bool,
@@ -493,7 +494,8 @@ fn pairs(value: &str) -> BTreeMap<String, String> {
         if key.is_empty() || value.is_empty() {
             continue;
         }
-        out.entry(key.to_string()).or_insert_with(|| value.to_string());
+        out.entry(key.to_string())
+            .or_insert_with(|| value.to_string());
     }
     out
 }

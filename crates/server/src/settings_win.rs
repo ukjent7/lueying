@@ -358,15 +358,17 @@ impl Window {
     fn a11y_action(&mut self, queued: QueuedAction) -> Option<Action> {
         match queued {
             QueuedAction::Click(node) => {
-                let id = self.a11y_ids.iter().find_map(|(candidate, id)| {
-                    (*candidate == node).then_some(*id)
-                })?;
+                let id = self
+                    .a11y_ids
+                    .iter()
+                    .find_map(|(candidate, id)| (*candidate == node).then_some(*id))?;
                 self.press(id)
             }
             QueuedAction::Focus(node) => {
-                let id = self.a11y_ids.iter().find_map(|(candidate, id)| {
-                    (*candidate == node).then_some(*id)
-                })?;
+                let id = self
+                    .a11y_ids
+                    .iter()
+                    .find_map(|(candidate, id)| (*candidate == node).then_some(*id))?;
                 self.focus = Some(if Settings::is_segment(id.base) {
                     Id::new(id.base, 0)
                 } else {

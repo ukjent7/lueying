@@ -62,10 +62,7 @@ pub fn parse(bytes: &[u8]) -> Result<UpdateManifest, String> {
     let manifest: UpdateManifest =
         serde_json::from_slice(bytes).map_err(|e| format!("清单解析失败: {e}"))?;
     if manifest.version != 1 {
-        return Err(format!(
-            "清单版本 {} 不认识,当前只支持 1",
-            manifest.version
-        ));
+        return Err(format!("清单版本 {} 不认识,当前只支持 1", manifest.version));
     }
     if manifest.release.is_empty() {
         return Err("清单缺少 release 版本号".into());
@@ -74,10 +71,7 @@ pub fn parse(bytes: &[u8]) -> Result<UpdateManifest, String> {
         return Err("清单里没有文件".into());
     }
     if manifest.files.len() > 16 {
-        return Err(format!(
-            "清单最多 16 个文件(实际 {})",
-            manifest.files.len()
-        ));
+        return Err(format!("清单最多 16 个文件(实际 {})", manifest.files.len()));
     }
     for (index, file) in manifest.files.iter().enumerate() {
         file.validate()?;
@@ -114,10 +108,11 @@ impl ManifestFile {
             ));
         }
         for mirror in &self.mirrors {
-            if !mirror.starts_with("https://")
-                || mirror.chars().any(|c| c.is_whitespace())
-            {
-                return Err(format!("文件 {} 的镜像 {:?} 不是 https 地址", self.name, mirror));
+            if !mirror.starts_with("https://") || mirror.chars().any(|c| c.is_whitespace()) {
+                return Err(format!(
+                    "文件 {} 的镜像 {:?} 不是 https 地址",
+                    self.name, mirror
+                ));
             }
         }
         Ok(())

@@ -35,8 +35,13 @@ pub struct Field {
 /// 宿主支持的控件;schema 在加载期已经限死这两种。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Toggle { on: bool },
-    Choice { options: Vec<String>, selected: usize },
+    Toggle {
+        on: bool,
+    },
+    Choice {
+        options: Vec<String>,
+        selected: usize,
+    },
 }
 
 impl Field {
@@ -205,9 +210,13 @@ pub fn manifest_settings(id: &str) -> Option<Vec<Setting>> {
     if !crate::config::valid_script_id(id) {
         return None;
     }
-    let path = crate::config::extensions_dir()?.join(id).join("manifest.json");
+    let path = crate::config::extensions_dir()?
+        .join(id)
+        .join("manifest.json");
     let bytes = std::fs::read(path).ok()?;
-    Manifest::parse(&bytes).ok().map(|manifest| manifest.settings)
+    Manifest::parse(&bytes)
+        .ok()
+        .map(|manifest| manifest.settings)
 }
 
 /// 控件前缀 → 字段下标;与 `ids::ext_field` 互为反查。
