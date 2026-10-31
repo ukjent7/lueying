@@ -45,13 +45,19 @@ fn verify_server(file: &File) -> bool {
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
     let ok = unsafe {
-        QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
     };
-    unsafe { let _ = CloseHandle(process); }
-    ok
-        && Path::new(String::from_utf16_lossy(&buf[..len as usize]).as_str())
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("lueying-server.exe"))
+    unsafe {
+        let _ = CloseHandle(process);
+    }
+    ok && Path::new(String::from_utf16_lossy(&buf[..len as usize]).as_str())
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("lueying-server.exe"))
 }
 
 impl Client {

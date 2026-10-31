@@ -37,12 +37,7 @@ pub(crate) fn panel_geometry(checks: &mut Vec<(&'static str, bool, String)>) {
 
     // 布局:两个短候选一行;长候选换行;竖排一条一行,行数进窗口高度公式。
     let rows = panel::layout_rows(&spec(), &metrics, None);
-    push(
-        checks,
-        "横排短候选单行",
-        rows == 1,
-        format!("rows={rows}"),
-    );
+    push(checks, "横排短候选单行", rows == 1, format!("rows={rows}"));
     let mut long = spec();
     long.items = (0..9)
         .map(|i| Item {

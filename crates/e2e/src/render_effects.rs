@@ -172,12 +172,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             )
         });
     if prepared.is_err() {
-        push(
-            checks,
-            "坏效果只废一个槽位",
-            false,
-            "临时目录写不了".into(),
-        );
+        push(checks, "坏效果只废一个槽位", false, "临时目录写不了".into());
     } else {
         let set = effect::EffectSet::load_dir(&dir);
         let _ = std::fs::remove_dir_all(&dir);

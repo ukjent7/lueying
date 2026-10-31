@@ -311,12 +311,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
                 format!("与无字型画面不同={differs} 字体族={families}"),
             );
         }
-        None => push(
-            checks,
-            "徽标字型出图",
-            true,
-            "系统没有可用字型,跳过".into(),
-        ),
+        None => push(checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
     }
 
     // 设置窗控件层:布局、命中与像素。
@@ -353,12 +348,7 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         format!("{hit:?}"),
     );
     let hit = layout.hit_card(4.0, 4.0);
-    push(
-        checks,
-        "设置空白不命中",
-        hit.is_none(),
-        format!("{hit:?}"),
-    );
+    push(checks, "设置空白不命中", hit.is_none(), format!("{hit:?}"));
     // 控件右对齐在行内,不出卡片(卡片坐标)。
     let aligned = (toggle.right - (layout.card.width() - 14.0)).abs() < 0.5;
     let inside = toggle.right <= layout.card.width() && toggle.left >= 0.0;

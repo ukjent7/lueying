@@ -10,15 +10,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use windows::Win32::Foundation::{
-    CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree,
-};
+use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{
-    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, GetTokenInformation, OpenProcessToken,
-    TOKEN_QUERY, TokenIsAppContainer,
+    GetTokenInformation, OpenProcessToken, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TokenIsAppContainer,
 };
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
@@ -147,12 +145,16 @@ struct ClientIdentity {
 fn client_identity(file: &File) -> Option<ClientIdentity> {
     let mut pid = 0u32;
     unsafe { GetNamedPipeClientProcessId(HANDLE(file.as_raw_handle()), &mut pid) }.ok()?;
-    let process =
-        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
     let imaged = unsafe {
-        QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
     };
     let image = if imaged.is_ok() {
         String::from_utf16_lossy(&buf[..len as usize])
@@ -176,10 +178,17 @@ fn client_identity(file: &File) -> Option<ClientIdentity> {
         .is_ok_and(|()| value != 0)
     };
     if tokened.is_ok() {
-        unsafe { let _ = CloseHandle(token); }
+        unsafe {
+            let _ = CloseHandle(token);
+        }
     }
-    unsafe { let _ = CloseHandle(process); }
-    (imaged.is_ok() && tokened.is_ok()).then_some(ClientIdentity { image, appcontainer })
+    unsafe {
+        let _ = CloseHandle(process);
+    }
+    (imaged.is_ok() && tokened.is_ok()).then_some(ClientIdentity {
+        image,
+        appcontainer,
+    })
 }
 
 /// 特权请求的客户端校验;返回拒绝原因。打字流不设限:低完整性的系统
@@ -287,8 +296,8 @@ fn serve(file: File, state: Arc<State>) {
             request
                 .map(|req| {
                     // 单个坏请求不能带崩常驻服务;回一个不改文档、不改模式的中性应答。
-                    catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req))).unwrap_or_else(
-                        |payload| {
+                    catch_unwind(AssertUnwindSafe(|| crate::imp::handle(&state, req)))
+                        .unwrap_or_else(|payload| {
                             // 服务日志已接到文件,panic 内容要落盘,否则只剩一句「出错了」。
                             let msg = payload
                                 .downcast_ref::<&str>()
@@ -297,8 +306,7 @@ fn serve(file: File, state: Arc<State>) {
                                 .unwrap_or("<非字符串 panic>");
                             eprintln!("请求处理 panic,已回中性应答:{msg}");
                             crate::imp::neutral(&state)
-                        },
-                    )
+                        })
                 })
                 .unwrap_or_else(|| crate::imp::neutral(&state))
         };
