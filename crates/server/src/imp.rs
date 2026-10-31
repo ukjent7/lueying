@@ -6,6 +6,9 @@
 #[path = "server_request.rs"]
 mod request;
 
+#[path = "server_ext.rs"]
+mod ext;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -473,8 +476,6 @@ fn load_dict(path: std::path::PathBuf) -> Option<Dictionary> {
         }
     }
 }
-
-/// 处理一条请求,返回应答。
 
 /// 协议按键转换成引擎按键。转换放在 Server 边界,协议 crate 不依赖引擎,
 /// TSF DLL 也就不会因此链接进整个引擎。

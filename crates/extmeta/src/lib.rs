@@ -534,11 +534,6 @@ impl Manifest {
         }
     }
 
-    /// 旧名保留:外观入口与脚本入口是同一个文件。
-    pub fn appearance_main(&self) -> Option<&str> {
-        self.script_main()
-    }
-
     /// 外观 API 版本:新清单的 `appearance.api`,或旧版顶层 `api`。
     pub fn appearance_api(&self) -> Option<u32> {
         self.appearance.as_ref().map(|a| a.api).or(self.api)

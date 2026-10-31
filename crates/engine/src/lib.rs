@@ -11,6 +11,9 @@
 
 mod address;
 mod input;
+mod input_commit;
+mod input_edit;
+mod input_recompute;
 pub mod module;
 mod punct;
 mod query;

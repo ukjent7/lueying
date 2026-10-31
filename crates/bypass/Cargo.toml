@@ -21,4 +21,4 @@ windows = { version = "0.62.2", features = [
 
 [[bin]]
 name = "bypass-echo"
-path = "src/bin/bypass_echo.rs"
+path = "src/bypass_echo.rs"

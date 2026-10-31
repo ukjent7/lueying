@@ -3,6 +3,7 @@
 //! 写盘在独立线程里按修订号检查,按键路径只碰内存;先写临时文件再改名,
 //! 进程中途退出也不会留下半截词库。
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -94,6 +95,10 @@ fn write_if_current(user: &SharedUser, path: &Path, rev: u64) -> std::io::Result
 
 fn write_unlocked(path: &Path, text: &str) -> std::io::Result<()> {
     let tmp = path.with_extension("tsv.tmp");
-    std::fs::write(&tmp, text)?;
+    // 先 fsync 再改名:断电时最多留下旧词库,不会把空文件或半截文本当词库。
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&tmp, path)
 }

@@ -88,9 +88,10 @@ fn replay_reports_line_numbers_on_bad_input() {
 #[test]
 fn trigger_appears_and_fires_action() {
     let root = temp_root("trigger");
-    let script = write_script(&root, "nihao2\n");
     let ext_root = root.join("extensions");
     ext_pack(&ext_root, "demo", "run", "运行一下");
+
+    let script = write_script(&root, "nihao\n");
     let out = replay_with(
         &ReplayArgs {
             script: Some(script),
@@ -101,6 +102,17 @@ fn trigger_appears_and_fires_action() {
     )
     .expect("回放应成功");
     assert!(out.contains("运行一下"), "动作候选要出现:{out}");
+
+    let script = write_script(&root, "nihao2\n");
+    let out = replay_with(
+        &ReplayArgs {
+            script: Some(script),
+            config: None,
+            triggers: vec![("nihao".into(), "demo.run".into())],
+        },
+        Some(&ext_root),
+    )
+    .expect("回放应成功");
     assert!(out.contains("动作 demo.run"), "数字键要执行命令:{out}");
 }
 

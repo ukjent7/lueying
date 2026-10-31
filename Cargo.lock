@@ -1108,12 +1108,12 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "skia-safe",
  "toml",
  "windows",
- "windows-core",
  "windows-registry",
 ]
 
@@ -1133,6 +1133,8 @@ name = "lueying-win-e2e"
 version = "0.1.0"
 dependencies = [
  "lueying-extmeta",
+ "lueying-protocol",
+ "serde_json",
  "windows",
  "windows-core",
 ]

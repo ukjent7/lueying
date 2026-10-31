@@ -5,7 +5,7 @@
 //! 整串上屏,学习键由纠正后的音节串单独保存,不能从原串的字节区间反推。
 
 /// 纠正只在这段长度内尝试,过长的串通常不是手误。
-const MAX_RAW: usize = 24;
+const MAX_TYPO_LEN: usize = 24;
 /// 一次纠正最多生成多少条候选串,防止极端长串把首键延迟拖长。
 const MAX_CORRECTIONS: usize = 400;
 
@@ -13,7 +13,7 @@ const KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 
 /// 是否值得尝试纠正:至少两键,且全为小写字母。
 pub(super) fn eligible(raw: &str) -> bool {
-    (2..=MAX_RAW).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_lowercase())
+    (2..=MAX_TYPO_LEN).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_lowercase())
 }
 
 /// 按「相邻字母调换 → 相邻键替换 → 漏键插入 → 多余键删除」生成纠正串。

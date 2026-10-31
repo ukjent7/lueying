@@ -129,7 +129,8 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                         let external = {
                             let mut slot =
                                 state.settled_slot.lock().unwrap_or_else(|p| p.into_inner());
-                            slot.promote(&job.context, &job.texts)
+                            let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
+                            slot.promote(&job.context, &texts)
                         };
                         let promote = match external {
                             lueying_server::seam::SeamOutcome::Provider(promote) => promote,

@@ -14,14 +14,7 @@ use lueying_render::ui::{self, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
 use lueying_server::settings_view::{Action, PageColors, ScriptEntry, Settings, ids};
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
+use crate::harness::push;
 
 /// 页面用的颜色:E2E 只关心结构,颜色给固定值。
 fn colors() -> PageColors {
@@ -366,18 +359,7 @@ pub fn run(report: &mut String) -> usize {
         format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{phrases_at:?}"),
     );
 
-    report.push_str("\n## 设置页模型\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "设置页模型", checks)
 }
 
 /// 设置窗用的字型;系统没有字型时退回默认字型(只影响宽度测量)。

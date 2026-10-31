@@ -190,16 +190,9 @@ pub fn run(report: &mut String) -> usize {
         format!("置顶 {pinned} 首位 {top:?} → {events:?}"),
     );
 
-    report.push_str("\n## 动作候选:触发词 / 空格 / 数字 / 负反馈 / 置顶\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0usize;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(
+        report,
+        "动作候选:触发词 / 空格 / 数字 / 负反馈 / 置顶",
+        checks,
+    )
 }

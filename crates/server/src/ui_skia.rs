@@ -42,9 +42,9 @@ use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
 use crate::ui_skia_mouse;
 use crate::ui_skia_script;
 
-/// 会话版本号轮询间隔;与 GPUI 路径一致,对打字反馈无感。
+/// 会话版本号轮询间隔;取值对打字反馈无感。
 const POLL: Duration = Duration::from_millis(15);
-/// 候选文字最大宽度(逻辑像素);与 GPUI 路径的 `MAX_WIDTH - 190` 一致。
+/// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
 const SHOW_FADE: Duration = Duration::from_millis(140);
@@ -783,7 +783,7 @@ pub(super) fn redraw(ctx: &mut WinCtx) {
     draw_view(ctx, &view);
 }
 
-/// 菜单锚点:锚在行下缘,贴近面板底部时翻到行上方;与 GPUI 路径同款规则。
+/// 菜单锚点:锚在行下缘,贴近面板底部时翻到行上方。
 /// 行位置取自 `item_rects`,横排换行时也不会锚错行。
 pub(super) fn menu_origin(
     slot: usize,
@@ -824,7 +824,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-/// 淡出期间点击穿透到宿主;实时组合才接鼠标。与 GPUI 路径同款。
+/// 淡出期间点击穿透到宿主;实时组合才接鼠标。
 fn style_click_through(hwnd: HWND, click_through: bool) {
     let old = ex_style(hwnd);
     let mut style = old;
@@ -866,7 +866,7 @@ fn progress(total: Duration, end: Instant, now: Instant) -> f32 {
     (1.0 - remain.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0)
 }
 
-/// GPUI 同款 ease_out_quint,两条后端的动效曲线一致。
+/// ease_out_quint;GPU 与 CPU 两条渲染后端共用这条曲线。
 fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(5)
 }

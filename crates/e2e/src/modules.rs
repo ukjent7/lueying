@@ -84,16 +84,5 @@ pub fn run(report: &mut String) -> usize {
         && matches!(&plain_commits[0], Event::Commit(text) if text.as_str() == "好");
     checks.push(("默认路径不受影响", untouched, format!("{plain_commits:?}")));
 
-    report.push_str("\n## 功能模块扩展点\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "功能模块扩展点", checks)
 }

@@ -3,14 +3,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use lueying_bypass::{Bypass, BypassConfig, BypassProvider, ProcessLimiter};
 use lueying_extmeta::Service;
 use lueying_extsvc::{Completion, Registry};
 
-use crate::{Bypass, BypassConfig, BypassProvider, ProcessLimiter};
+/// `cargo test` 为集成测试构建同包的 `bypass-echo`,并由 Cargo 注入路径。
+fn echo_exe() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_bypass-echo"))
+}
 
 fn echo() -> Bypass {
     Bypass::new(BypassConfig {
-        exe: crate::test_echo_exe(),
+        exe: echo_exe(),
         args: Vec::new(),
         call_timeout: Duration::from_secs(5),
     })
@@ -58,7 +62,7 @@ fn error_branch_surfaces_text() {
 #[test]
 fn timeout_kills_process() {
     let config = BypassConfig {
-        exe: crate::test_echo_exe(),
+        exe: echo_exe(),
         args: Vec::new(),
         call_timeout: Duration::from_millis(250),
     };

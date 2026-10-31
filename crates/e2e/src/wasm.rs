@@ -10,14 +10,7 @@ use std::time::{Duration, Instant};
 
 use lueying_extwasm::{CALL_FUEL, PROBE_WAT, WasmHost, WasmModule};
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
+use crate::harness::push;
 
 fn micros(started: Instant) -> u128 {
     started.elapsed().as_micros()
@@ -50,7 +43,7 @@ pub fn run(report: &mut String) -> usize {
     for index in 0..1000u64 {
         let begin = Instant::now();
         let value = probe.call((index % 7) as u32, 3).expect("稳态调用应成功");
-        assert_eq!(value, (index % 7) + 3);
+        assert_eq!(value, ((index % 7) + 3) as u32);
         peak_us = peak_us.max(micros(begin));
         sum += probe.stat().fuel_used;
     }
@@ -103,6 +96,7 @@ pub fn run(report: &mut String) -> usize {
         if !ok {
             failures += 1;
         }
+        let note = note.replace('|', "\\|").replace('\n', " ");
         report.push_str(&format!(
             "| {name} | {} | {note} |\n",
             if *ok { "PASS" } else { "FAIL" }

@@ -419,17 +419,6 @@ impl Host {
         out
     }
 
-    /// 命令是否已注册;不跑用户代码,只查引导层里的表。
-    pub fn has_command(&self, command: &str) -> bool {
-        self.context.with(|ctx| {
-            ctx.globals()
-                .get::<_, Function>("__lueying_has_command")
-                .ok()
-                .and_then(|check| check.call::<_, bool>((command,)).ok())
-                .unwrap_or(false)
-        })
-    }
-
     fn finish(
         &mut self,
         result: Result<String, String>,

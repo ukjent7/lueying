@@ -4,13 +4,18 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use lueying_protocol::{Reply, Request};
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
-use windows::Win32::System::Pipes::PeekNamedPipe;
+use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe};
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
+use windows::core::PWSTR;
 
 pub(crate) struct Client {
     reader: File,
@@ -24,6 +29,37 @@ pub(crate) struct Client {
 const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(1500);
 /// 一行协议的上限,防止坏对端把内存撑爆。
 const MAX_LINE: usize = 1024 * 1024;
+
+/// 校验管道对端是 lueying-server:抢占了管道名的进程连按键都拿不到。
+/// 查不到服务端 PID 或映像名不符一律视为假服务。
+fn verify_server(file: &File) -> bool {
+    let mut pid = 0u32;
+    let Ok(()) = (unsafe { GetNamedPipeServerProcessId(HANDLE(file.as_raw_handle()), &mut pid) })
+    else {
+        return false;
+    };
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+    else {
+        return false;
+    };
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    let ok = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+    }
+    .is_ok();
+    unsafe {
+        let _ = CloseHandle(process);
+    }
+    ok && Path::new(String::from_utf16_lossy(&buf[..len as usize]).as_str())
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("lueying-server.exe"))
+}
 
 impl Client {
     pub(crate) fn connect() -> Option<Self> {
@@ -62,6 +98,11 @@ impl Client {
             .custom_flags(SECURITY_SQOS_PRESENT.0 | SECURITY_IDENTIFICATION.0)
             .open(lueying_protocol::pipe_name())
             .ok()?;
+        // 对端身份校验:管道名可被抢先创建,连上后确认服务端真是
+        // lueying-server;不是就当服务不在(按键按断线放行),绝不外发。
+        if !verify_server(&file) {
+            return None;
+        }
         let writer = file.try_clone().ok()?;
         Some(Self {
             reader: file,

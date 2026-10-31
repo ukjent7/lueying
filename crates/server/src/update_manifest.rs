@@ -47,7 +47,7 @@ pub struct ManifestFile {
     pub size: u64,
     /// SHA-256,64 位小写十六进制。
     pub sha256: String,
-    /// 按序尝试的下载地址;全部 https,1 到 8 条。
+    /// 下载地址;全部 https,1 到 8 条。当前实现取首条,其余为多源预留。
     pub mirrors: Vec<String>,
 }
 

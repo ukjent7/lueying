@@ -7,11 +7,17 @@ mod bench;
 mod consent;
 mod extensions;
 mod extjs;
+mod extjs_harness;
+mod extjs_services;
 mod features;
+mod harness;
 mod metrics;
 mod modules;
 mod quick;
 mod render;
+mod render_effects;
+mod render_panel;
+mod render_ui;
 mod rerank;
 mod scenarios;
 mod settings;
@@ -222,6 +228,9 @@ fn main() {
 
     // 运行期脚本扩展:包校验、场景协议、预算、隐私与热重载。
     failures += extjs::run(&mut report);
+
+    // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
+    failures += extjs_services::run(&mut report);
 
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);

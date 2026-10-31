@@ -325,8 +325,7 @@ impl Runtime {
             }
         }
         for index in removed.iter().rev().copied() {
-            let slot = self.slots.remove(index);
-            println!("扩展 {} 已卸载(清单被删)", slot.id);
+            self.slots.remove(index);
         }
         removed.len()
     }

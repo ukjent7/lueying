@@ -121,7 +121,7 @@ impl Module for Prediction {
             let source = self.source.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(source) = source.as_ref() {
                 let externals = source.predict(&words, MAX_SUGGESTIONS - inserted);
-                inserted = merge_external(cands, ctx.raw.len(), &query, externals, inserted);
+                merge_external(cands, ctx.raw.len(), &query, externals, inserted);
             }
         }
     }

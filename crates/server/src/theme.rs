@@ -301,7 +301,7 @@ pub fn high_contrast() -> bool {
         && info.dwFlags.contains(HCF_HIGHCONTRASTON)
 }
 
-/// COLORREF(0x00BBGGRR)→ GPUI 的 0xRRGGBB。
+/// COLORREF(0x00BBGGRR)→ 主题令牌的 0xRRGGBB。
 pub fn system_color(index: SYS_COLOR_INDEX) -> u32 {
     let color = unsafe { GetSysColor(index) };
     ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff)

@@ -21,6 +21,8 @@ use std::sync::Arc;
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, MAX_RAW};
 
+use crate::harness::push;
+
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
 }
@@ -29,15 +31,6 @@ fn type_into(engine: &mut Engine, raw: &str) {
     for c in raw.chars() {
         engine.process(Key::Letter(c));
     }
-}
-
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
 }
 
 /// 用户词库导出里是否还有某个词(行格式:`键<TAB>词<TAB>频次<TAB>时间戳`)。
@@ -542,16 +535,5 @@ pub fn run(report: &mut String) -> usize {
         format!("上限 {at_limit},上屏 {committed},新组合 {restart:?}"),
     );
 
-    report.push_str("\n## 候选窗交互\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    let mut failures = 0usize;
-    for (name, ok, note) in checks {
-        if !ok {
-            failures += 1;
-        }
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    failures
+    crate::harness::write(report, "候选窗交互", checks)
 }

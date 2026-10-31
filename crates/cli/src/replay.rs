@@ -65,6 +65,8 @@ pub fn replay_with(args: &ReplayArgs, ext_root: Option<&Path>) -> Result<String,
         for key in keys {
             sync_action(&mut engine, &triggers, &titles);
             record(&mut out, &engine.process(key));
+            // 最后一个键可能才凑满触发词;再同步一次让动作候选进入本行末的候选快照。
+            sync_action(&mut engine, &triggers, &titles);
         }
         describe(&mut out, &engine);
     }

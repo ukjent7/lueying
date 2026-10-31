@@ -26,16 +26,14 @@ pub const PROBE_WAT: &str = r#"
       local.get 1
       i32.add))
   (core instance $i (instantiate $m))
-  (alias core export $i "add" (core func $core-add))
   (type (func (param "a" u32) (param "b" u32) (result u32)))
-  (canon lift $add (core func $core-add) (type 0))
-  (export "add" (func $add))
+  (func (export "add") (type 0) (canon lift (core func $i "add")))
 )"#;
 
 /// 单模块内存上限,与脚本层一致。
 pub const MEMORY_BYTES: usize = 8 * 1024 * 1024;
 /// 表条目上限;重排模块用不到大表。
-pub const TABLE_ENTRIES: u32 = 10_000;
+pub const TABLE_ENTRIES: usize = 10_000;
 /// 实例化预算:canon lift 与模块初始化的固定开销。
 const INSTANTIATE_FUEL: u64 = 2_000_000;
 /// 单次调用燃料预算;烧完即故障,连续超限停用。
@@ -86,9 +84,9 @@ impl wasmtime::ResourceLimiter for MemLimiter {
 
     fn table_growing(
         &mut self,
-        _current: u32,
-        desired: u32,
-        _maximum: Option<u32>,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
     ) -> Result<bool, wasmtime::Error> {
         Ok(desired <= TABLE_ENTRIES)
     }
@@ -119,6 +117,13 @@ pub struct WasmModule {
     stat: WasmStat,
 }
 
+/// `expect_err` 一类断言要求成功类型可调试;内部句柄没有可读字段可打。
+impl std::fmt::Debug for WasmModule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmModule").finish_non_exhaustive()
+    }
+}
+
 impl WasmModule {
     /// 编译组件;二进制与 WAT 文本都收(wat 特性)。
     pub fn compile(host: &Arc<WasmHost>, source: &[u8]) -> Result<Self, String> {
@@ -139,33 +144,17 @@ impl WasmModule {
     /// 探针实例:按名字取一个 `(u32, u32) -> u32` 的导出。
     pub fn instantiate(&self, export: &str) -> Result<Probe, String> {
         let started = Instant::now();
-        let mut store = Store::new(
-            &self.host.engine,
-            Guest {
-                limiter: MemLimiter,
-            },
-        );
-        store.limiter(|guest: &mut Guest| &mut guest.limiter);
-        store
-            .set_fuel(INSTANTIATE_FUEL)
-            .map_err(|error| format!("燃料初始化失败: {error}"))?;
-        // epoch_interruption 打开后必须先给截止期;u64::MAX 等于等宿主
-        // tick 推进,原型用燃料做确定性兜底。
-        store.set_epoch_deadline(u64::MAX);
-        let mut linker = Linker::<Guest>::new(&self.host.engine);
-        let instance = linker
-            .instantiate(&mut store, &self.component)
-            .map_err(|error| format!("组件实例化失败: {error}"))?;
-        let func: TypedFunc<(u32, u32), u32> = instance
-            .get_typed_func(&mut store, export)
-            .map_err(|error| format!("组件没有导出 {export:?}: {error}"))?;
+        let (store, func) = instantiate_probe(&self.host, &self.component, export)?;
         let mut stat = self.stat.clone();
         stat.instantiate_ms = started.elapsed().as_millis() as u64;
         Ok(Probe {
+            host: Arc::clone(&self.host),
+            component: self.component.clone(),
             store,
             func,
             stat,
             export: export.to_string(),
+            needs_reset: false,
         })
     }
 
@@ -178,12 +167,56 @@ impl WasmModule {
     }
 }
 
+/// 一个实例的存储与导出函数;trap 后由宿主重建。
+type ProbeInstance = (Store<Guest>, TypedFunc<(u32, u32), (u32,)>);
+
+/// 建一个可调用的组件实例。trap 后 Wasm 实例不可再进入,调用方据此重建。
+fn instantiate_probe(
+    host: &Arc<WasmHost>,
+    component: &Component,
+    export: &str,
+) -> Result<ProbeInstance, String> {
+    let mut store = Store::new(
+        &host.engine,
+        Guest {
+            limiter: MemLimiter,
+        },
+    );
+    store.limiter(|guest: &mut Guest| &mut guest.limiter);
+    store
+        .set_fuel(INSTANTIATE_FUEL)
+        .map_err(|error| format!("燃料初始化失败: {error}"))?;
+    // epoch_interruption 打开后必须先给截止期;u64::MAX 等于等宿主
+    // tick 推进,原型用燃料做确定性兜底。
+    store.set_epoch_deadline(u64::MAX);
+    let linker = Linker::<Guest>::new(&host.engine);
+    let instance = linker
+        .instantiate(&mut store, component)
+        .map_err(|error| format!("组件实例化失败: {error}"))?;
+    let func: TypedFunc<(u32, u32), (u32,)> = instance
+        .get_typed_func(&mut store, export)
+        .map_err(|error| format!("组件没有导出 {export:?}: {error}"))?;
+    Ok((store, func))
+}
+
 /// 一个可调用的探针实例。按调用计燃料,连续故障停用。
 pub struct Probe {
+    host: Arc<WasmHost>,
+    component: Component,
     store: Store<Guest>,
-    func: TypedFunc<(u32, u32), u32>,
+    func: TypedFunc<(u32, u32), (u32,)>,
     stat: WasmStat,
     export: String,
+    /// 上一次调用 trap 后实例已不可重入,下次调用前重建。
+    needs_reset: bool,
+}
+
+impl std::fmt::Debug for Probe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Probe")
+            .field("export", &self.export)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Probe {
@@ -193,6 +226,19 @@ impl Probe {
                 "模块已停用(连续 {MAX_FAULTS} 次失败): {}",
                 self.stat.last_error.as_deref().unwrap_or("未知错误")
             ));
+        }
+        if self.needs_reset {
+            match instantiate_probe(&self.host, &self.component, &self.export) {
+                Ok((store, func)) => {
+                    self.store = store;
+                    self.func = func;
+                    self.needs_reset = false;
+                }
+                Err(error) => {
+                    let message = format!("{} 实例重建失败: {error}", self.export);
+                    return Err(self.record_fault(message));
+                }
+            }
         }
         self.store
             .set_fuel(CALL_FUEL)
@@ -204,25 +250,27 @@ impl Probe {
         self.stat.fuel_used = CALL_FUEL.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
             Ok(value) => {
-                // 组件 ABI 要求每次调用后收尾,否则下一次调用直接恐慌。
-                self.func
-                    .post_return(&mut self.store)
-                    .map_err(|error| format!("调用收尾失败: {error}"))?;
                 self.stat.faults = 0;
                 self.stat.last_error = None;
                 self.stat.call_peak_us = self.stat.call_peak_us.max(elapsed_us);
-                Ok(value)
+                Ok(value.0)
             }
             Err(error) => {
-                self.stat.faults += 1;
+                self.needs_reset = true;
                 let message = format!("{} 调用失败: {error}", self.export);
-                self.stat.last_error = Some(message.clone());
-                if self.stat.faults >= MAX_FAULTS {
-                    self.stat.disabled = true;
-                }
-                Err(message)
+                Err(self.record_fault(message))
             }
         }
+    }
+
+    /// 记一次失败;连续失败到阈值即停用。返回同一条错误文本。
+    fn record_fault(&mut self, message: String) -> String {
+        self.stat.faults += 1;
+        self.stat.last_error = Some(message.clone());
+        if self.stat.faults >= MAX_FAULTS {
+            self.stat.disabled = true;
+        }
+        message
     }
 
     pub fn stat(&self) -> &WasmStat {

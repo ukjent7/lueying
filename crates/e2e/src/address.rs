@@ -14,14 +14,7 @@ use std::sync::{Arc, RwLock};
 use lueying_dict::Dictionary;
 use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 
-fn push(
-    checks: &mut Vec<(&'static str, bool, String)>,
-    name: &'static str,
-    ok: bool,
-    note: String,
-) {
-    checks.push((name, ok, note));
-}
+use crate::harness::push;
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())
@@ -181,14 +174,5 @@ pub fn run(report: &mut String) -> usize {
         format!("{events:?}"),
     );
 
-    let failures = checks.iter().filter(|(_, ok, _)| !ok).count();
-    report.push_str("## 邮箱与网址\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n");
-    for (name, ok, note) in &checks {
-        report.push_str(&format!(
-            "| {name} | {} | {note} |\n",
-            if *ok { "PASS" } else { "FAIL" }
-        ));
-    }
-    report.push('\n');
-    failures
+    crate::harness::write(report, "邮箱与网址", checks)
 }
