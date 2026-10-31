@@ -70,7 +70,12 @@ pub fn split_url(url: &str) -> Result<(bool, String, u16, String), String> {
     } else {
         format!("/{rest}")
     };
-    Ok((secure, host, port.unwrap_or(if secure { 443 } else { 80 }), path))
+    Ok((
+        secure,
+        host,
+        port.unwrap_or(if secure { 443 } else { 80 }),
+        path,
+    ))
 }
 
 fn split_authority(authority: &str) -> Result<(String, Option<u16>), String> {

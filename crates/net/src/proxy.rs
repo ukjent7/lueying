@@ -26,9 +26,7 @@ fn handle(line: &str) -> Result<Value, String> {
         return Err(format!("未知方法 {:?}", request["method"]));
     }
     let args = &request["args"];
-    let url = args["url"]
-        .as_str()
-        .ok_or_else(|| "缺 url".to_string())?;
+    let url = args["url"].as_str().ok_or_else(|| "缺 url".to_string())?;
     let domains = args["domains"]
         .as_array()
         .ok_or_else(|| "缺 domains".to_string())?;
@@ -37,18 +35,16 @@ fn handle(line: &str) -> Result<Value, String> {
     if !allowed(&domains, &host, port, secure) {
         return Err(format!("域名不在清单白名单: {host}:{port}"));
     }
-    let method = args["method"].as_str().unwrap_or("GET").to_ascii_uppercase();
+    let method = args["method"]
+        .as_str()
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
     let headers = args["headers"]
         .as_object()
         .map(|table| {
             table
                 .iter()
-                .map(|(name, value)| {
-                    (
-                        name.clone(),
-                        value.as_str().unwrap_or_default().to_string(),
-                    )
-                })
+                .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
                 .collect()
         })
         .unwrap_or_default();

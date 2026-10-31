@@ -798,7 +798,8 @@ fn check_network(network: &NetworkPolicy) -> Result<(), String> {
         if domain.is_empty() || domain.len() > 253 {
             return Err(format!("网络域名 {domain:?} 长度不合法"));
         }
-        if domain.contains("://") || domain.contains('/') || domain.chars().any(char::is_whitespace) {
+        if domain.contains("://") || domain.contains('/') || domain.chars().any(char::is_whitespace)
+        {
             return Err(format!("网络域名只写 host 或 host:port: {domain:?}"));
         }
         let (host, port) = match domain.rsplit_once(':') {

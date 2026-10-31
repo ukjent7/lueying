@@ -520,7 +520,10 @@ fn load(
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     registry.set(Service::Panel, Arc::new(services::PanelProvider));
-    registry.set(Service::Net, Arc::new(services::NetProvider::new(net_domains)));
+    registry.set(
+        Service::Net,
+        Arc::new(services::NetProvider::new(net_domains)),
+    );
     // 热键提供者由 worker 持有共享状态;`set` 收 trait 对象,先落到具体类型再强转。
     let hotkey: Arc<services::HotkeyProvider> = Arc::clone(hotkey);
     registry.set(Service::Hotkey, hotkey);
