@@ -44,6 +44,9 @@ use windows::core::w;
 use crate::imp::{ExtInvoke, State};
 use crate::ui_place;
 
+#[path = "ui_panel_host.rs"]
+mod host;
+
 /// 窗口类名;自检按它确认面板已拿到前台。
 const CLASS: windows::core::PCWSTR = w!("lueying-command-panel");
 /// 命令面板线程的通道容量:面板开着时再按热键直接丢弃,不排队。
@@ -51,6 +54,8 @@ const QUEUE: usize = 1;
 
 /// 起面板线程;窗口在第一次唤出时创建,空闲线程阻塞在通道上。
 pub(super) fn spawn(state: Arc<State>) {
+    // 扩展 panel.show 的宿主选择面板;没有 UI 时提供者装不上通道,明确报错。
+    host::spawn(Arc::clone(&state));
     let (tx, rx) = mpsc::sync_channel::<Vec<CommandItem>>(QUEUE);
     *state.panel.lock().unwrap_or_else(|p| p.into_inner()) = Some(tx);
     let spawned = std::thread::Builder::new()
@@ -621,6 +626,8 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     }
     wait_foreground(host, Duration::from_secs(2))?;
     lines.push("拼音搜索 + Esc 取消,焦点已归还".into());
+
+    host::selftest(host, lines)?;
 
     unsafe {
         let _ = DestroyWindow(host);

@@ -13,6 +13,7 @@ pub mod badge;
 pub mod command;
 pub mod effect;
 pub mod panel;
+pub mod picker;
 pub mod ui;
 
 pub use panel::{

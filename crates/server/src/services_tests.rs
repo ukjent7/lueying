@@ -309,11 +309,11 @@ fn deliver_units_normalize_lines_and_tabs() {
 }
 
 #[test]
-fn notify_ok_empty_deliver_and_panel_stub() {
+fn notify_ok_empty_deliver_and_panel_without_ui() {
     let registry = Registry::new();
     registry.set(Service::Notify, Arc::new(NotifyProvider));
     registry.set(Service::Output, Arc::new(OutputProvider));
-    registry.set(Service::Panel, Arc::new(PanelProvider));
+    registry.set(Service::Panel, Arc::new(PanelProvider::new()));
     registry
         .call("notify", "show", r#"{"title":"标题","body":"正文"}"#, 1)
         .unwrap();
@@ -333,6 +333,6 @@ fn notify_ok_empty_deliver_and_panel_stub() {
     let completion = wait_completion(&registry, Duration::from_secs(5)).expect("panel 未回传");
     assert_eq!(
         completion.result.as_deref().map_err(String::as_str),
-        Err("宿主面板在后续阶段")
+        Err("宿主面板不可用:UI 未启动")
     );
 }

@@ -10,6 +10,8 @@ pub mod config;
 
 mod config_file;
 
+pub mod host_panel;
+
 pub mod official_extensions;
 
 pub mod settings_consent;

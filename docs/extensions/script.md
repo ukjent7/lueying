@@ -186,7 +186,7 @@ v1 开放:
 | clipboard | `read()` / `write({text})` | 读写纯文本剪贴板;读剪贴板按高敏感权限处理 |
 | store | `get({key})` / `set({key, value})` / `remove({key})` / `list()` | 扩展私有 JSON 存储,键规则同扩展 id,单值 ≤64 KiB、整份 ≤256 KiB |
 | output | `deliver({text})` | 把文本注入当前焦点(Unicode,WM_CHAR),返回 `{delivered}` |
-| panel | `show({title, items})` | 宿主面板挑选,返回 `{selected}`;宿主面板尚未接线,当前报错 |
+| panel | `show({title, items})` | 宿主选择面板,返回 `{selected}`(下标)或 `{selected:null}`(取消);标题与条目有长度上限 |
 | net | `fetch({url, method?, headers?, body?})` | 经独立代理进程请求,返回 `{status, body}`;域名必须在清单 `network.domains` 里,HTTPS 或本机回环 HTTP,响应 ≤512 KiB |
 | hotkey | `register({id, modifiers, key})` / `unregister({id})` / `press({id})` | 全局热键,冲突报错;`press` 等一次触发,扩展在 async 循环里反复调用 |
 | notify | `show({title, body})` | 系统通知 |

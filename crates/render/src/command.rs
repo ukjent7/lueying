@@ -351,7 +351,7 @@ pub fn hit(layout: &Layout, spec: &Spec, x: f32, y: f32) -> Hit {
 }
 
 /// 画一段文字;`clip` 给 (最大宽, 字号) 时先裁剪再画。
-fn text(
+pub(crate) fn text(
     canvas: &Canvas,
     font: &Font,
     size: f32,
@@ -384,7 +384,7 @@ fn text(
 }
 
 /// 超宽时截断并加省略号;`max_width` 不够放省略号时返回空串。
-fn ellipsize(font: &Font, size: f32, content: &str, max_width: f32) -> String {
+pub(crate) fn ellipsize(font: &Font, size: f32, content: &str, max_width: f32) -> String {
     let mut text_font = font.clone();
     text_font.set_size(size);
     if text_font.measure_str(content, None).0 <= max_width {
@@ -408,7 +408,7 @@ fn ellipsize(font: &Font, size: f32, content: &str, max_width: f32) -> String {
     out
 }
 
-fn fill(rgb: u32) -> Paint {
+pub(crate) fn fill(rgb: u32) -> Paint {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(color(rgb));

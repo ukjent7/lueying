@@ -146,7 +146,7 @@ fn worker(
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
                 panel_bound.clear();
-                let loaded = load(&order, &hotkey, &privacy);
+                let loaded = load(&order, &hotkey, &privacy, &state.panel_service);
                 runtime = loaded.runtime;
                 skipped = loaded.skipped;
                 next_metrics = Instant::now();
@@ -449,6 +449,7 @@ fn load(
     order: &[String],
     hotkey: &Arc<services::HotkeyProvider>,
     privacy: &PrivacyCheck,
+    panel: &Arc<services::PanelProvider>,
 ) -> Loaded {
     let limits = Limits::default();
     let mut skipped = Vec::new();
@@ -519,7 +520,7 @@ fn load(
     registry.set(Service::Clipboard, Arc::new(services::ClipboardProvider));
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
-    registry.set(Service::Panel, Arc::new(services::PanelProvider));
+    registry.set(Service::Panel, Arc::clone(panel));
     registry.set(
         Service::Net,
         Arc::new(services::NetProvider::new(net_domains)),

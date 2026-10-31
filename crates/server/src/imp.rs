@@ -140,6 +140,8 @@ pub(super) struct State {
     pub(super) ext_hub: Mutex<Option<ExtHub>>,
     /// 命令面板的唤出通道;面板线程启动时装填。
     pub(super) panel: Mutex<Option<mpsc::SyncSender<Vec<CommandItem>>>>,
+    /// 扩展 `panel.show` 的宿主选择面板;窗口线程启动时装填。
+    pub(super) panel_service: Arc<lueying_server::services::PanelProvider>,
     /// 面板正开着;此时再按总热键直接丢弃,关闭后不补开。
     pub(super) panel_open: AtomicBool,
     pub(super) config_path: Option<PathBuf>,
@@ -368,6 +370,7 @@ pub(super) fn real_main() {
         config: RwLock::new(app_config),
         ext_hub: Mutex::new(None),
         panel: Mutex::new(None),
+        panel_service: Arc::new(lueying_server::services::PanelProvider::new()),
         panel_open: AtomicBool::new(false),
         config_path,
         chinese: AtomicBool::new(true),

@@ -2,6 +2,7 @@
 
 use lueying_render::badge;
 use lueying_render::command;
+use lueying_render::picker;
 use lueying_render::ui;
 use skia_safe::{Surface, surfaces};
 
@@ -277,6 +278,78 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
+/// 宿主选择面板:尺寸、行命中、选中底色与空状态。
+fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
+    let palette = palette();
+    let font = ui_font();
+    let spec = picker::Spec {
+        title: "选择语言".into(),
+        rows: vec!["中文".into(), "English".into(), "日本語".into()],
+        selected: 1,
+        total: 3,
+        above: 0,
+        below: 0,
+    };
+    let layout = picker::layout(&spec, 1.0);
+    let expect_h = picker::TITLE_H + 3.0 * picker::ROW_H + picker::FOOTER_H;
+    push(
+        checks,
+        "选择面板尺寸",
+        (layout.size.0 - picker::WIDTH).abs() < 0.5 && (layout.size.1 - expect_h).abs() < 0.5,
+        format!("{:?} 期望 ({}, {expect_h})", layout.size, picker::WIDTH),
+    );
+    let row = layout.rows[1];
+    let row_hit = picker::hit(&layout, &spec, center_x(row), center_y(row));
+    push(
+        checks,
+        "选择面板行命中",
+        row_hit == picker::Hit::Row(1),
+        format!("{row_hit:?}"),
+    );
+    let outside = picker::hit(&layout, &spec, picker::WIDTH + 10.0, 10.0);
+    push(
+        checks,
+        "选择面板外部不命中",
+        outside == picker::Hit::Nothing,
+        format!("{outside:?}"),
+    );
+    let mut surface =
+        surfaces::raster_n32_premul((layout.size.0 as i32, layout.size.1 as i32)).expect("raster");
+    picker::draw(surface.canvas(), &spec, &layout, &palette, &font, 1.0);
+    let corner = read_bgra(&mut surface, 2, 2);
+    push(
+        checks,
+        "选择面板底色",
+        corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.bg)),
+        format!("{corner:?} 期望 {:?}", rgb(palette.bg)),
+    );
+    let pixel = read_bgra(
+        &mut surface,
+        row.left as i32 + 4,
+        row.center_y() as i32,
+    );
+    push(
+        checks,
+        "选择面板选中行底色",
+        pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.selected_bg)),
+        format!("{pixel:?} 期望 {:?}", rgb(palette.selected_bg)),
+    );
+
+    let empty = picker::Spec {
+        title: "选择".into(),
+        total: 0,
+        ..picker::Spec::default()
+    };
+    let empty_layout = picker::layout(&empty, 1.0);
+    let expect_empty = picker::TITLE_H + picker::ROW_H + picker::FOOTER_H;
+    push(
+        checks,
+        "选择面板空状态尺寸",
+        (empty_layout.size.1 - expect_empty).abs() < 0.5,
+        format!("{:.1} 期望 {expect_empty:.1}", empty_layout.size.1),
+    );
+}
+
 pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     // 模式徽标:卡片底色、圆角外的透明,以及字型有没有真的画出来。
     let (bw, bh) = (badge::WIDTH as i32, badge::HEIGHT as i32);
@@ -517,4 +590,5 @@ pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     command_checks(checks);
+    picker_checks(checks);
 }
