@@ -83,8 +83,9 @@ fn load_triggers(args: &ReplayArgs) -> Result<Vec<(String, String)>, String> {
         && path.exists()
     {
         let text = fs::read_to_string(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        let table: toml::Table =
-            text.parse().map_err(|e| format!("解析 {}: {e}", path.display()))?;
+        let table: toml::Table = text
+            .parse()
+            .map_err(|e| format!("解析 {}: {e}", path.display()))?;
         if let Some(map) = table.get("triggers").and_then(|item| item.as_table()) {
             for (trigger, command) in map {
                 let Some(command) = command.as_str() else {
