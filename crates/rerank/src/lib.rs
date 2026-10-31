@@ -103,6 +103,16 @@ impl Rerank {
     }
 
     fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
+        self.decide_inner_with_margin(context, texts, facts, SYNC_PROMOTE_MARGIN)
+    }
+
+    fn decide_inner_with_margin(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        min_margin: f32,
+    ) -> Option<usize> {
         if texts.len() != facts.len() {
             return None;
         }
@@ -113,7 +123,7 @@ impl Rerank {
                 answers_key: facts[index].answers_key,
                 trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
             },
-            SYNC_PROMOTE_MARGIN,
+            min_margin,
         )
     }
 
@@ -147,7 +157,9 @@ impl Rerank {
         }
         let leader = facts.first()?;
         if !leader.trusted_dictionary_hit || !leader.answers_key {
-            return self.decide_inner(context, texts, facts);
+            // 25M 比 4M 准,首位不是可信整键命中时保留它原有的完整决策,
+            // 不套用同步重排的门槛。
+            return self.decide_inner_with_margin(context, texts, facts, 0.0);
         }
         if context.is_empty() {
             return None;
