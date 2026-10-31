@@ -17,7 +17,8 @@ fn echo_config() -> BypassConfig {
 #[test]
 fn job_limiter_allows_healthy_call() {
     let limiter = crate::job::JobLimiter::new(Some(64 * 1024 * 1024), None);
-    let bypass = Bypass::new(echo_config()).with_limiter(Arc::new(limiter) as Arc<dyn ProcessLimiter>);
+    let bypass =
+        Bypass::new(echo_config()).with_limiter(Arc::new(limiter) as Arc<dyn ProcessLimiter>);
     let answer = bypass
         .call("ping", r#"{"n":1}"#)
         .expect("限额下的调用应成功");

@@ -135,9 +135,7 @@ fn parse_promote(reply: &str) -> Result<Option<usize>, String> {
     if index.is_null() {
         return Ok(None);
     }
-    let index = index
-        .as_u64()
-        .ok_or("result.index 不是下标")? as usize;
+    let index = index.as_u64().ok_or("result.index 不是下标")? as usize;
     Ok(Some(index))
 }
 

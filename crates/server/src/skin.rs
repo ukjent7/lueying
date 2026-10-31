@@ -108,7 +108,11 @@ impl Skin {
 
     /// 对应模式的覆盖表;`dark` 为 true 取深色那张。
     pub fn for_appearance(&self, dark: bool) -> Option<&SkinColors> {
-        if dark { self.dark.as_ref() } else { self.light.as_ref() }
+        if dark {
+            self.dark.as_ref()
+        } else {
+            self.light.as_ref()
+        }
     }
 }
 
@@ -141,7 +145,9 @@ fn clean(raw: SkinColors, table: &str, issues: &mut Vec<String>) -> Option<SkinC
         if let Some(rgb) = *value
             && rgb > 0xff_ff_ff
         {
-            issues.push(format!("skin.toml [{table}] {name}=0x{rgb:x} 不是 0xRRGGBB,已忽略"));
+            issues.push(format!(
+                "skin.toml [{table}] {name}=0x{rgb:x} 不是 0xRRGGBB,已忽略"
+            ));
             *value = None;
         }
     }

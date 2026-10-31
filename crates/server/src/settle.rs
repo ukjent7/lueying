@@ -136,7 +136,8 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                             lueying_server::seam::SeamOutcome::Builtin => {
                                 let mut rerank =
                                     job.rerank.lock().unwrap_or_else(|p| p.into_inner());
-                                let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
+                                let texts: Vec<&str> =
+                                    job.texts.iter().map(String::as_str).collect();
                                 rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
                             }
                         };

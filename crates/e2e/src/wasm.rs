@@ -49,9 +49,7 @@ pub fn run(report: &mut String) -> usize {
     let mut sum: u64 = 0;
     for index in 0..1000u64 {
         let begin = Instant::now();
-        let value = probe
-            .call((index % 7) as u32, 3)
-            .expect("稳态调用应成功");
+        let value = probe.call((index % 7) as u32, 3).expect("稳态调用应成功");
         assert_eq!(value, (index % 7) + 3);
         peak_us = peak_us.max(micros(begin));
         sum += probe.stat().fuel_used;
@@ -62,7 +60,10 @@ pub fn run(report: &mut String) -> usize {
 
     report.push_str("\n## Wasm 原型测量(探针组件,Wasmtime cranelift)\n\n");
     report.push_str("| 阶段 | 耗时 |\n|---|---|\n");
-    report.push_str(&format!("| 引擎创建 | {:.2} ms |\n", engine_us as f64 / 1000.0));
+    report.push_str(&format!(
+        "| 引擎创建 | {:.2} ms |\n",
+        engine_us as f64 / 1000.0
+    ));
     report.push_str(&format!(
         "| 探针编译(WAT→组件) | {:.2} ms |\n",
         compile_us as f64 / 1000.0
@@ -71,15 +72,14 @@ pub fn run(report: &mut String) -> usize {
         "| 实例化 | {:.2} ms |\n",
         instantiate_us as f64 / 1000.0
     ));
-    report.push_str(&format!(
-        "| 首次调用 | {:.1} µs |\n",
-        first_call_us as f64
-    ));
+    report.push_str(&format!("| 首次调用 | {:.1} µs |\n", first_call_us as f64));
     report.push_str(&format!(
         "| 稳态调用均值(1000 次) | {:.1} µs(峰值 {peak_us} µs) |\n",
         steady_us as f64
     ));
-    report.push_str(&format!("| 单次燃料消耗均值 | {fuel_mean} / {CALL_FUEL} |\n"));
+    report.push_str(&format!(
+        "| 单次燃料消耗均值 | {fuel_mean} / {CALL_FUEL} |\n"
+    ));
 
     // 冒烟:测量之外确认宿主语义没有在测量路径上退化。
     push(
@@ -92,7 +92,8 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "稳态调用峰值受预算约束",
-        Duration::from_micros(peak_us as u64) < Duration::from_millis(5) && Instant::now() < deadline,
+        Duration::from_micros(peak_us as u64) < Duration::from_millis(5)
+            && Instant::now() < deadline,
         format!("峰值 {peak_us} µs"),
     );
 

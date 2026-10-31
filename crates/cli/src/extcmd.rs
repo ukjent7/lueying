@@ -351,7 +351,10 @@ pub fn commit(text: &str) -> Result<String, String> {
     }
 }
 
-fn send_external_commit(token: Option<&str>, text: &str) -> Result<lueying_protocol::Reply, String> {
+fn send_external_commit(
+    token: Option<&str>,
+    text: &str,
+) -> Result<lueying_protocol::Reply, String> {
     let mut file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -435,10 +438,7 @@ pub fn commands() -> Result<Vec<(String, String)>, String> {
 /// 自己的界面与日志,这里只确认已投递。
 pub fn run(id: &str) -> Result<String, String> {
     let value = ext_value(id, "command.run", "command.run")?;
-    let command = value
-        .get("command")
-        .and_then(|v| v.as_str())
-        .unwrap_or(id);
+    let command = value.get("command").and_then(|v| v.as_str()).unwrap_or(id);
     Ok(format!("已提交 {command};结果看掠影的通知与日志"))
 }
 

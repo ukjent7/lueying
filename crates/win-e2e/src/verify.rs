@@ -99,7 +99,12 @@ fn v3_sizes(rows: &mut Vec<Row>) {
         Verdict::Note,
         parts.join(", "),
     ));
-    rows.push(("V3", "候选窗 GPU/CPU 首帧与稳态帧", v3_frames_verdict(), v3_frames_note()));
+    rows.push((
+        "V3",
+        "候选窗 GPU/CPU 首帧与稳态帧",
+        v3_frames_verdict(),
+        v3_frames_note(),
+    ));
 }
 
 /// V3 帧级报告路径;win-e2e 启动服务端时用同一路径设 `LUEYING_SKIA_BENCH`。

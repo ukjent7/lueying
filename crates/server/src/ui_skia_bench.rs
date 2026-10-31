@@ -123,11 +123,7 @@ pub(super) fn gpu_bench() {
 }
 
 /// 光栅路径:建面计时 + 测量;CPU 基线不依赖桌面会话,任何环境都能出数。
-fn raster_bench(
-    spec: &PanelSpec,
-    palette: &Palette,
-    metrics: &Metrics,
-) -> Result<Timings, String> {
+fn raster_bench(spec: &PanelSpec, palette: &Palette, metrics: &Metrics) -> Result<Timings, String> {
     let width = panel::panel_width(spec, metrics, None) as u32;
     let height = panel::panel_height(spec, metrics, None) as u32;
     let start = Instant::now();

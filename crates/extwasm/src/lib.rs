@@ -139,9 +139,13 @@ impl WasmModule {
     /// 探针实例:按名字取一个 `(u32, u32) -> u32` 的导出。
     pub fn instantiate(&self, export: &str) -> Result<Probe, String> {
         let started = Instant::now();
-        let mut store = Store::new(&self.host.engine, Guest { limiter: MemLimiter });
-        store
-            .limiter(|guest: &mut Guest| &mut guest.limiter);
+        let mut store = Store::new(
+            &self.host.engine,
+            Guest {
+                limiter: MemLimiter,
+            },
+        );
+        store.limiter(|guest: &mut Guest| &mut guest.limiter);
         store
             .set_fuel(INSTANTIATE_FUEL)
             .map_err(|error| format!("燃料初始化失败: {error}"))?;
@@ -197,8 +201,7 @@ impl Probe {
         let started = Instant::now();
         let outcome = self.func.call(&mut self.store, (a, b));
         let elapsed_us = started.elapsed().as_micros() as u64;
-        self.stat.fuel_used = CALL_FUEL
-            .saturating_sub(self.store.get_fuel().unwrap_or(0));
+        self.stat.fuel_used = CALL_FUEL.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
             Ok(value) => {
                 // 组件 ABI 要求每次调用后收尾,否则下一次调用直接恐慌。

@@ -94,7 +94,10 @@ fn replacing_the_provider_resets_faults() {
 
 #[test]
 fn bypass_promote_parse() {
-    assert_eq!(super::parse_promote(r#"{"result":{"index":1}}"#), Ok(Some(1)));
+    assert_eq!(
+        super::parse_promote(r#"{"result":{"index":1}}"#),
+        Ok(Some(1))
+    );
     assert_eq!(
         super::parse_promote(r#"{"result":{"index":null}}"#),
         Ok(None)
@@ -104,6 +107,9 @@ fn bypass_promote_parse() {
         Err("模型加载失败".into())
     );
     assert!(super::parse_promote("不是 JSON").is_err());
-    assert!(super::parse_promote(r#"{"result":{}}"#).is_err(), "缺 index");
+    assert!(
+        super::parse_promote(r#"{"result":{}}"#).is_err(),
+        "缺 index"
+    );
     assert!(super::parse_promote(r#"{"result":{"index":"x"}}"#).is_err());
 }

@@ -644,10 +644,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 .unwrap_or_else(|p| p.into_inner())
                 .commit_channel;
             let expected = if enabled {
-                let mut held = state
-                    .commit_token
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
+                let mut held = state.commit_token.lock().unwrap_or_else(|p| p.into_inner());
                 match config::commit_token_path() {
                     Some(path) => match lueying_server::commit::ensure_token(&path) {
                         Ok(value) => {

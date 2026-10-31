@@ -137,10 +137,7 @@ fn parses_run_and_commands() {
         parse_args(args(&["ext", "run", "shot-ocr.run"])),
         Ok(Invocation::Run("shot-ocr.run".into()))
     );
-    assert!(
-        parse_args(args(&["ext", "run"])).is_err(),
-        "缺命令 id"
-    );
+    assert!(parse_args(args(&["ext", "run"])).is_err(), "缺命令 id");
     assert!(
         parse_args(args(&["ext", "run", "a", "b"])).is_err(),
         "两个命令 id 要报错"

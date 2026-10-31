@@ -61,8 +61,8 @@ impl Bypass {
     /// 冷启动 + 往返一次调用。同步阻塞;扩展侧的异步语义由
     /// [`BypassProvider`] 在独立线程完成。
     pub fn call(&self, method: &str, args: &str) -> Result<String, String> {
-        let args: serde_json::Value =
-            serde_json::from_str(args).map_err(|error| format!("旁路参数不是合法 JSON: {error}"))?;
+        let args: serde_json::Value = serde_json::from_str(args)
+            .map_err(|error| format!("旁路参数不是合法 JSON: {error}"))?;
         let request = serde_json::json!({ "method": method, "args": args }).to_string();
         let mut child = Command::new(&self.config.exe)
             .args(&self.config.args)

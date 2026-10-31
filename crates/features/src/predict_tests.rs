@@ -19,7 +19,10 @@ fn external_suggestions_land_after_builtin() {
         &mut cands,
         2,
         "ni",
-        vec![("你号".into(), "ni'hao".into()), ("昵称".into(), "nicheng".into())],
+        vec![
+            ("你号".into(), "ni'hao".into()),
+            ("昵称".into(), "nicheng".into()),
+        ],
         0,
     );
     assert_eq!(inserted, 2);
@@ -44,11 +47,19 @@ fn dedupes_against_core_candidates() {
         &mut cands,
         2,
         "ni",
-        vec![("你号".into(), "ni'hao".into()), ("昵称".into(), "nicheng".into())],
+        vec![
+            ("你号".into(), "ni'hao".into()),
+            ("昵称".into(), "nicheng".into()),
+        ],
         0,
     );
     assert_eq!(inserted, 1, "已有的词不再补一条");
-    assert!(!cands.iter().skip(1).any(|cand| cand.text == "你号" && cand.completion));
+    assert!(
+        !cands
+            .iter()
+            .skip(1)
+            .any(|cand| cand.text == "你号" && cand.completion)
+    );
 }
 
 #[test]
@@ -58,7 +69,10 @@ fn pinyin_must_prefix_match_the_query() {
         &mut cands,
         2,
         "ni",
-        vec![("学习".into(), "xuexi".into()), ("那里".into(), "na'li".into())],
+        vec![
+            ("学习".into(), "xuexi".into()),
+            ("那里".into(), "na'li".into()),
+        ],
         0,
     );
     assert_eq!(inserted, 1, "只有 na'li 前缀匹配 ni");

@@ -10,10 +10,8 @@ fn temp_path(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!(
-        "lueying-skin-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("lueying-skin-{tag}-{}-{nanos}", std::process::id()));
     fs::create_dir_all(&dir).expect("临时目录应能创建");
     dir.join("skin.toml")
 }

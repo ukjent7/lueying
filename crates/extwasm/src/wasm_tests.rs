@@ -83,9 +83,7 @@ fn bad_source_is_rejected() {
 #[test]
 fn missing_export_is_rejected() {
     let module = WasmModule::compile(&host(), PROBE_WAT.as_bytes()).expect("探针应编译");
-    let error = module
-        .instantiate("nope")
-        .expect_err("不存在的导出应被拒");
+    let error = module.instantiate("nope").expect_err("不存在的导出应被拒");
     assert!(error.contains("没有导出"));
 }
 

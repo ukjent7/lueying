@@ -10,7 +10,9 @@ fn main() {
     let stdin = std::io::stdin();
     for line in BufReader::new(stdin.lock()).lines() {
         let Ok(line) = line else { break };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { break };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            break;
+        };
         let method = value["method"].as_str().unwrap_or_default().to_string();
         if method == "boom" {
             println!("{{\"error\":\"测试错误\"}}");
