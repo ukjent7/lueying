@@ -91,7 +91,7 @@ pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
          lueying.command(\"hello\", () => ({{ ok: true }}));\n"
     );
     fs::create_dir_all(&dir).map_err(|e| format!("建 {}: {e}", dir.display()))?;
-    write_file(&dir.join("manifest.json"), manifest_text(&manifest)?)?;
+    write_file(&dir.join("manifest.json"), &manifest_text(&manifest)?)?;
     write_file(&dir.join("index.js"), &script)?;
     Ok(dir)
 }

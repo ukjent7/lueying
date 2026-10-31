@@ -3,7 +3,7 @@
 //! 向量由仓库外的发布种子(node WebCrypto 同款 Ed25519)签出;清单字节
 //! 一字不差地嵌在这里,防止常量与签名错位。
 
-use super::{MANIFEST_NAME, MAX_MANIFEST_BYTES};
+use super::{parse, verify, MANIFEST_NAME, MAX_MANIFEST_BYTES};
 
 const SAMPLE: &str = r#"{
   "version": 1,

@@ -250,7 +250,7 @@ where
                 let trigger = trigger.trim().to_ascii_lowercase();
                 let command = command.trim().to_string();
                 if trigger.is_empty() || command.is_empty() {
-                    return Err("--trigger 的词与命令都不能为空");
+                    return Err("--trigger 的词与命令都不能为空".into());
                 }
                 triggers.push((trigger, command));
             }

@@ -34,18 +34,18 @@ fn fields_resolve_defaults_and_stored_values() {
     let scripts = vec![script()];
     let extensions = vec!["shot-ocr".to_string()];
     let cfg = AppConfig::default();
-    let fields = fields(&extensions, &scripts, &cfg);
-    assert_eq!(fields.len(), 2);
-    assert_eq!(fields[0].slot, 0);
-    assert!(matches!(fields[0].kind, Kind::Toggle { on: true }));
+    let resolved = fields(&extensions, &scripts, &cfg);
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved[0].slot, 0);
+    assert!(matches!(resolved[0].kind, Kind::Toggle { on: true }));
     assert_eq!(
-        fields[1].kind,
+        resolved[1].kind,
         Kind::Choice {
             options: vec!["fast".to_string(), "high".to_string()],
             selected: 1
         }
     );
-    assert_eq!(fields[1].detail, "慢一点更准");
+    assert_eq!(resolved[1].detail, "慢一点更准");
 
     let mut cfg = AppConfig::default();
     cfg.ext_settings
