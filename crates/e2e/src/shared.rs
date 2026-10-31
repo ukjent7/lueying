@@ -290,8 +290,7 @@ fn run_chunk(
             .first()
             .map_or(String::new(), |text| (*text).to_string());
         let rerank = four.as_mut().zip(five.as_mut()).map(|(four, five)| {
-            let (four, five, direct, times) =
-                apply_rerank(&mut engine, four, five, &expected);
+            let (four, five, direct, times) = apply_rerank(&mut engine, four, five, &expected);
             ((four, five, direct), times)
         });
         out.push(Outcome {
