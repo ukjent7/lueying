@@ -92,7 +92,11 @@ fn fuel_exhaustion_counts_faults_then_disables() {
         let error = probe.call(0, 0).expect_err("烧燃料应失败");
         assert!(error.contains("调用失败"), "第 {attempt} 次: {error}");
         assert_eq!(probe.stat().faults, attempt);
-        assert!(!probe.stat().disabled, "未到阈值不应停用");
+        assert_eq!(
+            probe.stat().disabled,
+            attempt == MAX_FAULTS,
+            "停用状态应在第 {MAX_FAULTS} 次失败时翻转"
+        );
     }
     // 停用后立即拒绝,不再进入模块。
     let error = probe.call(0, 0).expect_err("停用后应拒绝");
