@@ -16,9 +16,8 @@ const SPIN_WAT: &str = r#"
       (loop (br 0))
       (unreachable)))
   (core instance $i (instantiate $m))
-  (alias core export $i "spin" (core func $core-spin))
   (type (func (param "a" u32) (param "b" u32) (result u32)))
-  (canon lift $spin (core func $core-spin) (type 0))
+  (func $spin (type 0) (canon lift (core func $i "spin")))
   (export "spin" (func $spin))
 )"#;
 
@@ -32,9 +31,8 @@ const MAYBE_WAT: &str = r#"
       local.get 0
       i32.div_u))
   (core instance $i (instantiate $m))
-  (alias core export $i "maybe" (core func $core-maybe))
   (type (func (param "a" u32) (param "b" u32) (result u32)))
-  (canon lift $maybe (core func $core-maybe) (type 0))
+  (func $maybe (type 0) (canon lift (core func $i "maybe")))
   (export "maybe" (func $maybe))
 )"#;
 
@@ -47,9 +45,8 @@ const GROW_WAT: &str = r#"
       local.get 0
       memory.grow))
   (core instance $i (instantiate $m))
-  (alias core export $i "grow" (core func $core-grow))
   (type (func (param "a" u32) (param "b" u32) (result u32)))
-  (canon lift $grow (core func $core-grow) (type 0))
+  (func $grow (type 0) (canon lift (core func $i "grow")))
   (export "grow" (func $grow))
 )"#;
 
