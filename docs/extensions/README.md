@@ -20,7 +20,12 @@
 
 包格式、场景字段、补丁、命令与限额见 [script.md](script.md)。服务端按 `config.toml` 的 `extensions` 列表按序加载多个扩展,派发在独立线程里,窗口线程只收主题色与 SkSL 源码;Windows CI 有运行时自检。设置页「扩展 → 运行期脚本」列出已安装的包,可直接启用或关闭;「目录」打开扩展目录。清单里的 `settings` 是声明式设置,由宿主渲染成开关、单选与密钥输入,普通值存 `[ext.<id>]`,`secureText` 存 `%APPDATA%\lueying\secrets`。
 
-命令还可以调用清单 `needs` 里声明的宿主服务(`capture`、`ocr`、`output`、`panel`、`hotkey`、`notify`),接口见 [script.md](script.md) 的「服务调用」。官方 `shot-ocr`(截图 → 识别 → 上屏)在设置页「官方扩展」里按需安装,是这些接口的参考实现。截图识别可在设置页「扩展 → 截图识别」里选系统 OCR 或按需安装的 PP-OCRv6;扩展也能在 `ocr.recognize` 调用里用 `engine` 单独指定。
+命令还可以调用清单 `needs` 里声明的宿主服务(`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`),接口见 [script.md](script.md) 的「服务调用」。官方 `shot-ocr`(截图 → 识别 → 上屏)在设置页「官方扩展」里按需安装,是这些接口的参考实现。截图识别可在设置页「扩展 → 截图识别」里选系统 OCR 或按需安装的 PP-OCRv6;扩展也能在 `ocr.recognize` 调用里用 `engine` 单独指定。
+
+## SDK 类型与 AI 模板
+
+- [`lueying.d.ts`](lueying.d.ts):运行期脚本的 TypeScript 声明,覆盖 `lueying` 全局对象、场景、补丁与全部宿主服务。
+- [`SKILL.md`](SKILL.md):给 coding agent 的扩展开发模板,包含清单、示例、打包、验收到发布。
 
 ## SDK crate
 

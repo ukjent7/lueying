@@ -3,7 +3,9 @@
 这份文档面向用 AI coding agent(或新接手的开发者)写掠影扩展的人:在
 Linux 无头环境里走完「建包 → 改 → 装 → 回放验证」的整个回路,全程不需要
 Windows。扩展的清单格式、脚本 API、服务调用与限额见
-[script.md](script.md);分层与权限模型见 [layers.md](layers.md)。
+[script.md](script.md);分层与权限模型见 [layers.md](layers.md);可直接
+复制给 agent 的模板见 [SKILL.md](SKILL.md),TypeScript 声明见
+[lueying.d.ts](lueying.d.ts)。
 
 ## 开发回路
 

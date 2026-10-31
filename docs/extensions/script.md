@@ -3,9 +3,9 @@
 候选窗的外观可以交给一段 JS 决定,扩展也可以提供命令。扩展只改主题色与三个 SkSL 槽位,看不到候选文字,也拿不到宿主应用名。
 
 > 状态:脚本宿主、多扩展有序加载、命令声明与 Scope 回收已就绪;服务缝
-> capture/ocr/output/hotkey/notify 已接上 Windows 提供者,官方 shot-ocr
-> 随安装包提供安装源。截图识别可选系统 OCR 或按需安装的 PP-OCRv6(纯 Rust
-> 推理,首次识别时加载模型)。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、
+> capture/ocr/clipboard/store/output/hotkey/notify 已接上 Windows 提供者,
+> 官方 shot-ocr 随安装包提供安装源。截图识别可选系统 OCR 或按需安装的
+> PP-OCRv6(纯 Rust 推理,首次识别时加载模型)。Linux E2E 覆盖坏清单、坏补丁、死循环、内存暴涨、
 > 隐私、热重载、卸载回收与官方 shot-ocr 的黄金链路;Windows E2E 覆盖热键
 > → 截图 → 识别 → 上屏(识别在 CI 上换成固定文本)。
 

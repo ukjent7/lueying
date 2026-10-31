@@ -29,8 +29,7 @@ use lueying_render::ui::{self, Id};
 use skia_safe::Font;
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, EndPaint, GetDC, GetStockObject,
-    HBRUSH, HDC, HGDIOBJ, InvalidateRect, PAINTSTRUCT, ReleaseDC, SetBkColor, SetTextColor,
+    BeginPaint, EndPaint, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT, SetBkColor, SetTextColor,
     UpdateWindow,
 };
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -40,21 +39,25 @@ use windows::Win32::UI::HiDpi::{
     GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SetFocus, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT,
-    VK_SPACE, VK_TAB,
+    GetKeyState, VK_CONTROL, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
-    GWLP_USERDATA, GetClientRect, GetMessageW, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowTextLengthW, GetWindowTextW, MSG, MoveWindow, PostMessageW, PostQuitMessage,
-    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SendMessageW,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_DESTROY, WM_DPICHANGED,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS,
-    WM_SETFONT, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP,
-    WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
+    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, MSG, MoveWindow, PostMessageW, PostQuitMessage,
+    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND,
+    WM_CTLCOLOREDIT, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WNDCLASSW,
+    WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, w};
+
+#[path = "settings_search.rs"]
+mod search;
+#[path = "settings_selftest.rs"]
+mod selfcheck;
+
+pub use selfcheck::selftest;
 
 /// 设置窗的逻辑宽(逻辑像素);渲染核心按这个宽度排版。
 const WIDTH: f32 = 760.0;
@@ -143,7 +146,7 @@ pub fn run() {
                 continue;
             }
             // 搜索框是原生单行 EDIT,同样没有对话框管理器。
-            if handle_search_key(hwnd, &msg) {
+            if search::handle_search_key(hwnd, &msg) {
                 continue;
             }
             let _ = TranslateMessage(&msg);
@@ -152,49 +155,7 @@ pub fn run() {
     }
 }
 
-/// 搜索框里的键盘循环:Esc 清空或关闭,Tab/↓ 把焦点交给设置页。
-fn handle_search_key(hwnd: HWND, msg: &MSG) -> bool {
-    if msg.message != WM_KEYDOWN {
-        return false;
-    }
-    let Some(window) = state_of(hwnd) else {
-        return false;
-    };
-    let Some(edit) = window.search_edit else {
-        return false;
-    };
-    if msg.hwnd != edit {
-        return false;
-    }
-    let key = msg.wParam.0 as u32;
-    let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) < 0 };
-    match key {
-        k if k == u32::from(VK_ESCAPE.0) => {
-            if window.settings.search.is_empty() {
-                unsafe {
-                    let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-                }
-            } else {
-                window.settings.set_search("");
-                window.sync_search_text();
-                window.relayout();
-            }
-            true
-        }
-        k if k == u32::from(VK_TAB.0) || k == u32::from(VK_DOWN.0) => {
-            unsafe {
-                let _ = SetFocus(Some(hwnd));
-            }
-            window.focus_step(if shift && k == u32::from(VK_TAB.0) {
-                -1
-            } else {
-                1
-            });
-            true
-        }
-        _ => false,
-    }
-}
+/// 搜索框里的键盘循环由子模块处理;这里只做消息循环的分发。
 
 /// 效果目录的说明文字。
 fn effects_detail() -> String {
@@ -202,100 +163,6 @@ fn effects_detail() -> String {
         Some(dir) => format!("SkSL 装饰层,{}", dir.display()),
         None => "SkSL 装饰层,没有可写的目录".to_string(),
     }
-}
-
-/// 自检:建窗、画一帧、贴一次,再读回像素确认画面不是空的。
-///
-/// Windows CI 跑这条,证明原生设置窗这条链路没断:窗口、光栅、位图、
-/// GDI 贴图,每一步都得通。报告写到文件里,CI 收进产物。
-pub fn selftest(report: &std::path::Path) -> Result<(), String> {
-    let mut lines: Vec<String> = Vec::new();
-    let result = selftest_run(&mut lines);
-    match &result {
-        Ok(()) => lines.push("结果:通过".to_string()),
-        Err(e) => lines.push(format!("结果:失败 — {e}")),
-    }
-    let _ = std::fs::write(report, lines.join("\n"));
-    result
-}
-
-/// 自检的正文。
-fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
-    let hwnd = create_window()?;
-    let settings = Settings::default();
-    let mut window = Window::new(settings)?;
-    window.scale = dpi_of(hwnd);
-    window.size = client_size(hwnd);
-    window.relayout();
-    let (w, h) = window.size;
-    lines.push(format!("客户区 {w}×{h} 像素"));
-    if w <= 0 || h <= 0 {
-        return Err("客户区没有尺寸".to_string());
-    }
-    // 画一帧。
-    {
-        let surface = window
-            .layer
-            .surface(w as u32, h as u32)
-            .map_err(|e| format!("光栅表面: {e}"))?;
-        let canvas = surface.canvas();
-        ui::Painter::new(canvas, &window.palette, &window.font, window.scale).paint(
-            &window.page,
-            &window.layout,
-            None,
-            0.0,
-        );
-    }
-    // 像素搬进位图,再贴一次:走通 GDI 那一步。
-    if let Err(e) = window.layer.copy_pixels() {
-        return Err(format!("搬像素: {e}"));
-    }
-    unsafe {
-        let hdc = GetDC(Some(hwnd));
-        let blit = window.layer.blit(hdc, w, h);
-        let _ = ReleaseDC(Some(hwnd), hdc);
-        blit.map_err(|e| format!("BitBlt: {e}"))?;
-    }
-    // 读回像素:角落是窗口底色,卡片里是卡片色。
-    let pixels = window.layer.pixels().ok_or("像素读回失败")?;
-    let at = |x: i32, y: i32| -> (u8, u8, u8) {
-        let index = ((y * w + x) * 4) as usize;
-        (pixels[index + 2], pixels[index + 1], pixels[index])
-    };
-    let corner = at(2, 2);
-    let expect_corner = bgr(window.palette.window_bg);
-    if corner != expect_corner {
-        return Err(format!("窗口底色不对: {corner:?} 期望 {expect_corner:?}"));
-    }
-    // 卡片是圆角的,角上那一点落在圆角外,是窗口底色;取上边缘中点
-    // 才是卡片底色。
-    let card_rect = window.layout.card;
-    let card_x = (card_rect.left + card_rect.width() / 2.0) as i32;
-    let card_y = card_rect.top as i32 + 2;
-    let card = at(card_x, card_y);
-    let expect_card = bgr(window.palette.bg);
-    if card != expect_card {
-        return Err(format!("卡片底色不对: {card:?} 期望 {expect_card:?}"));
-    }
-    lines.push(format!("窗口底色 {corner:?} 卡片底色 {card:?}"));
-    // 命中区能对上:第一个开关点得到。
-    let toggle = ui::Id::new(ids::AUX, 0);
-    let rect = window
-        .layout
-        .card_hit(toggle)
-        .ok_or("找不到辅助码开关的命中区")?;
-    let hit = window.layout.hit_card(
-        (rect.left + rect.right) / 2.0,
-        (rect.top + rect.bottom) / 2.0,
-    );
-    if hit != Some(toggle) {
-        return Err(format!("开关命中不对: {hit:?}"));
-    }
-    lines.push("开关命中正常".to_string());
-    unsafe {
-        let _ = DestroyWindow(hwnd);
-    }
-    Ok(())
 }
 
 /// 0xRRGGBB 转 COLORREF 的 0x00BBGGRR。
@@ -396,106 +263,7 @@ impl Window {
 
     /// 建顶部搜索框:标准 EDIT,输入法、选区、读屏与 UIA TextPattern 由系统负责。
     fn create_search_edit(&mut self, parent: HWND) -> Result<(), String> {
-        unsafe {
-            let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
-            let edit = CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                w!("EDIT"),
-                windows::core::PCWSTR::null(),
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-                0,
-                0,
-                1,
-                1,
-                Some(parent),
-                None,
-                Some(HINSTANCE(hmodule.0)),
-                None,
-            )
-            .map_err(|e| format!("建搜索框失败: {e}"))?;
-            let font = GetStockObject(DEFAULT_GUI_FONT);
-            SendMessageW(
-                edit,
-                WM_SETFONT,
-                Some(WPARAM(font.0 as usize)),
-                Some(LPARAM(1)),
-            );
-            let cue = HSTRING::from("搜索设置");
-            SendMessageW(
-                edit,
-                EM_SETCUEBANNER,
-                Some(WPARAM(1)),
-                Some(LPARAM(cue.as_ptr() as isize)),
-            );
-            self.search_edit = Some(edit);
-            self.sync_search_text();
-            self.layout_search();
-        }
-        Ok(())
-    }
-
-    /// 搜索框背景画刷跟随主题;旧画刷先删掉。
-    fn refresh_search_brush(&mut self) {
-        if let Some(old) = self.search_brush.take() {
-            unsafe {
-                let _ = DeleteObject(HGDIOBJ(old.0));
-            }
-        }
-        self.search_brush = Some(unsafe { CreateSolidBrush(COLORREF(self.palette.surface_alt)) });
-    }
-
-    /// 把原生 EDIT 放到页面几何给出的搜索框矩形里。
-    fn layout_search(&self) {
-        let Some(edit) = self.search_edit else {
-            return;
-        };
-        let rect = self.layout.search;
-        let inset = 2.0 * self.scale;
-        unsafe {
-            let _ = MoveWindow(
-                edit,
-                (rect.left + inset) as i32,
-                (rect.top + inset) as i32,
-                (rect.width() - inset * 2.0).max(20.0) as i32,
-                (rect.height() - inset * 2.0).max(16.0) as i32,
-                true,
-            );
-        }
-    }
-
-    /// 程序改搜索词后同步到 EDIT;用户输入触发的 EN_CHANGE 不打断光标。
-    fn sync_search_text(&mut self) {
-        let Some(edit) = self.search_edit else {
-            return;
-        };
-        if self.syncing_search {
-            return;
-        }
-        let current = read_edit_text(edit);
-        if current == self.settings.search {
-            return;
-        }
-        self.syncing_search = true;
-        unsafe {
-            let _ = SetWindowTextW(edit, &HSTRING::from(self.settings.search.as_str()));
-        }
-        self.syncing_search = false;
-    }
-
-    /// 用户改了搜索词:更新页面并重排。
-    fn search_changed(&mut self) {
-        if self.syncing_search {
-            return;
-        }
-        let Some(edit) = self.search_edit else {
-            return;
-        };
-        let text = read_edit_text(edit);
-        if text == self.settings.search {
-            return;
-        }
-        self.settings.set_search(text);
-        self.relayout();
+        self.build_search_edit(parent)
     }
 
     /// 重建无障碍树并下发给读屏软件。
@@ -935,17 +703,6 @@ fn dpi_of(hwnd: HWND) -> f32 {
 /// 系统的 DPI 缩放。
 fn system_scale() -> f32 {
     unsafe { GetDpiForSystem().max(96) as f32 / 96.0 }
-}
-
-/// 读标准 EDIT 的文字。
-fn read_edit_text(edit: HWND) -> String {
-    let length = unsafe { GetWindowTextLengthW(edit) };
-    if length <= 0 {
-        return String::new();
-    }
-    let mut buffer = vec![0u16; length as usize + 1];
-    let read = unsafe { GetWindowTextW(edit, &mut buffer) };
-    String::from_utf16_lossy(&buffer[..read.max(0) as usize])
 }
 
 /// lparam 里的低 16 位(鼠标坐标)。

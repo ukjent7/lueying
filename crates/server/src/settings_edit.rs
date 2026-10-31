@@ -366,7 +366,7 @@ fn save_and_close(hwnd: HWND) {
     let path = editor.path.clone();
     let owner = editor.owner;
     let kind = editor.kind;
-    if let Err(e) = std::fs::write(&path, text) {
+    if let Err(e) = write_text(&path, &text) {
         unsafe {
             let _ = MessageBoxW(
                 Some(hwnd),
@@ -392,6 +392,18 @@ fn text_of(edit: HWND) -> String {
     let mut buffer = vec![0u16; length as usize + 1];
     let read = unsafe { GetWindowTextW(edit, &mut buffer) };
     String::from_utf16_lossy(&buffer[..read.max(0) as usize])
+}
+
+/// 保存用户文本:临时文件、fsync、原子改名;断电不会留下半截短语或标点。
+fn write_text(path: &std::path::Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let tmp = path.with_extension("txt.tmp");
+    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("创建 {}: {e}", tmp.display()))?;
+    file.write_all(text.as_bytes())
+        .map_err(|e| format!("写 {}: {e}", tmp.display()))?;
+    file.sync_all()
+        .map_err(|e| format!("同步 {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("改名 {}: {e}", path.display()))
 }
 
 fn state_of(hwnd: HWND) -> Option<&'static mut Editor> {
