@@ -133,7 +133,7 @@ jobs:
         run: cargo test -p lueying-server --lib --release --locked
       - name: 缓存词典与模型
         id: dict-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: data
           key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
@@ -192,7 +192,7 @@ jobs:
         run: cargo build --release -p lueying-render --features prebuilt-only --locked
       - name: 缓存词典与模型
         id: dict-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: data
           key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
