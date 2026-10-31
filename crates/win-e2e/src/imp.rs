@@ -660,6 +660,15 @@ fn edit_text(edit: HWND) -> String {
 
 /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到组合结束、文本落地。
 /// 只设上限抓卡死/秒级回归,精确引擎耗时由 lueying-e2e 的分位数门禁负责。
+/// 全链路提交 p95 门限:2026-10-31 连续四次 Windows E2E 实测 14.7–15.1 ms。
+/// 留约 4 倍余量覆盖共享 runner 抖动,同时能抓住 TSF/管道/编辑会话的秒级回归。
+const COMMIT_P95_LIMIT_MS: f64 = 60.0;
+/// 每键往返 p95 门限:同期实测 4.6–9.5 ms;60 ms 是用户能感知卡顿的量级。
+const KEY_P95_LIMIT_MS: f64 = 60.0;
+/// Server 峰值工作集门限:同期实测 35.9–36.1 MB;128 MB 覆盖模型与缓存增长,
+/// 又能抓住泄漏或大对象常驻。
+const SERVER_MEMORY_LIMIT_MB: u64 = 128;
+
 fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
     const ROUNDS: usize = 5;
     let mut samples = Vec::with_capacity(ROUNDS);
@@ -694,10 +703,12 @@ fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, Strin
     let (p50, p95) = (pick(0.5), pick(0.95));
     let slowest = samples.last().copied().unwrap_or(0.0);
     let summary = format!(
-        "## 全链路提交延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 250 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
+        "## 全链路提交延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ {COMMIT_P95_LIMIT_MS:.0} |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
     );
-    if p95 > 250.0 {
-        return Err(format!("{summary}\n\np95 超过 250ms"));
+    if p95 > COMMIT_P95_LIMIT_MS {
+        return Err(format!(
+            "{summary}\n\np95 超过 {COMMIT_P95_LIMIT_MS:.0}ms"
+        ));
     }
     Ok(summary)
 }
@@ -750,10 +761,10 @@ fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> 
     let (p50, p95) = (pick(0.5), pick(0.95));
     let slowest = samples.last().copied().unwrap_or(0.0);
     let summary = format!(
-        "## 每键往返延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ 1000 |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
+        "## 每键往返延迟\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 中位 | {p50:.1} ms | 仅诊断 |\n| p95 | {p95:.1} ms | ≤ {KEY_P95_LIMIT_MS:.0} |\n| 最大 | {slowest:.1} ms | 仅诊断 |"
     );
-    if p95 > 1000.0 {
-        return Err(format!("{summary}\n\np95 超过 1000ms"));
+    if p95 > KEY_P95_LIMIT_MS {
+        return Err(format!("{summary}\n\np95 超过 {KEY_P95_LIMIT_MS:.0}ms"));
     }
     Ok(summary)
 }
@@ -816,10 +827,12 @@ fn server_memory(server_pid: u32) -> Result<String, String> {
     };
     let mb = peak as f64 / 1024.0 / 1024.0;
     let summary = format!(
-        "## Server 内存基线\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 峰值工作集(PID {pid}) | {mb:.1} MB | ≤ 512 |"
+        "## Server 内存基线\n\n| 指标 | 实测 | 门限 |\n|---|---|---|\n| 峰值工作集(PID {pid}) | {mb:.1} MB | ≤ {SERVER_MEMORY_LIMIT_MB} |"
     );
-    if peak > 512 * 1024 * 1024 {
-        return Err(format!("{summary}\n\n峰值工作集超过 512MB"));
+    if peak > SERVER_MEMORY_LIMIT_MB * 1024 * 1024 {
+        return Err(format!(
+            "{summary}\n\n峰值工作集超过 {SERVER_MEMORY_LIMIT_MB}MB"
+        ));
     }
     Ok(summary)
 }

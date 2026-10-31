@@ -310,6 +310,17 @@ jobs:
         run: |
           cargo build --release --locked -p lueying-tsf
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
+      # 运行时体积基线:0.1.0 实测 server 12.2 + settings 10.5 + update 0.5 +
+      # user 0.4 + TSF 0.6 ≈ 25 MiB。40 MiB 门限抓依赖/特性膨胀,发布包另有总门禁。
+      - name: 运行时体积门禁
+        shell: pwsh
+        run: |
+          $names = "lueying-server.exe", "lueying-settings.exe", "lueying-update.exe", "lueying-user.exe", "lueying_tsf.dll"
+          $files = $names | ForEach-Object { Get-Item "target/release/$_" -ErrorAction Stop }
+          $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+          $files | ForEach-Object { "{0} {1:N1} MiB" -f $_.Name, ($_.Length / 1MB) }
+          "{0:N1} MiB / 40 MiB" -f ($bytes / 1MB)
+          if ($bytes -gt 40MB) { throw "运行时体积超过 40 MiB" }
       - name: Build Windows E2E harness
         id: build_e2e
         run: cargo build --release --locked -p lueying-win-e2e
@@ -383,6 +394,13 @@ jobs:
               $dir = Split-Path $_.DirectoryName -Leaf
               Copy-Item $_.FullName (Join-Path $dst "$dir-$($_.Name)") -ErrorAction SilentlyContinue
             }
+          }
+      - name: 报告摘要
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path target/win-e2e-report.md) {
+            Get-Content target/win-e2e-report.md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

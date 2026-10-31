@@ -60,6 +60,10 @@ const PACK_DATA: &[&str] = &[
 ];
 /// 可选 OCR 引擎的模型;由 `tools/fetch_ppocr.sh` 拉到 `data/ppocr/`。
 const PACK_PPOCR: &[&str] = &["det.onnx", "rec.onnx", "dict.txt"];
+/// 发布体积门禁:0.1.0 历史发布目录 147.7 MiB、安装包 59.8 MiB。
+/// 上限留约 25% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
+const MAX_PAYLOAD_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_SETUP_BYTES: u64 = 85 * 1024 * 1024;
 
 pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     // 只清理自己生成的目录(有 manifest),避免误删用户给的其他路径。
@@ -234,6 +238,13 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
     .map_err(|e| format!("写 manifest.json: {e}"))?;
 
     let total: u64 = files.iter().map(|(_, bytes)| *bytes).sum();
+    if total > MAX_PAYLOAD_BYTES {
+        return Err(format!(
+            "发布目录 {:.1} MiB 超过体积门禁 {:.1} MiB",
+            total as f64 / (1024.0 * 1024.0),
+            MAX_PAYLOAD_BYTES as f64 / (1024.0 * 1024.0)
+        ));
+    }
     println!(
         "发布目录 {}: {} 个文件, {:.1} MiB",
         args.out.display(),
@@ -280,6 +291,14 @@ fn compile_setup(args: &PackArgs, root: &Path) -> Result<PathBuf, String> {
     let bytes = std::fs::metadata(&setup)
         .map_err(|e| format!("读取安装包 {}: {e}", setup.display()))?
         .len();
+    if bytes > MAX_SETUP_BYTES {
+        return Err(format!(
+            "安装包 {}: {:.1} MiB 超过体积门禁 {:.1} MiB",
+            setup.display(),
+            bytes as f64 / (1024.0 * 1024.0),
+            MAX_SETUP_BYTES as f64 / (1024.0 * 1024.0)
+        ));
+    }
     println!(
         "安装包 {}: {:.1} MiB",
         setup.display(),
