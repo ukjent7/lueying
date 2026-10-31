@@ -332,7 +332,9 @@ pub fn run(
 
     // 用例互不依赖,按核数分片并行;每条约 0.8s,单线程 1444 条要近 20 分钟,
     // 是 CI 的最大单项。模型权重在 Arc 后共享,每线程只多一份轻量句柄。
-    let threads = std::thread::available_parallelism().map_or(1, usize::from).max(1);
+    let threads = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .max(1);
     let chunk_size = cases.len().div_ceil(threads).max(1);
     let dict_ref = &dict;
     let gram_ref = &gram;
