@@ -1113,7 +1113,6 @@ dependencies = [
  "skia-safe",
  "toml",
  "windows",
- "windows-core",
  "windows-registry",
 ]
 
@@ -1124,7 +1123,6 @@ dependencies = [
  "lueying-protocol",
  "serde_json",
  "windows",
- "windows-core",
  "windows-registry",
 ]
 
@@ -1134,7 +1132,6 @@ version = "0.1.0"
 dependencies = [
  "lueying-extmeta",
  "windows",
- "windows-core",
 ]
 
 [[package]]
