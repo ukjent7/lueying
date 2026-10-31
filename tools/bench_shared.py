@@ -6,9 +6,10 @@
 
 子命令:
     build             从 dicts/ 现有外部语料生成共享语料
-    export            导出青简 / 清风评测器可读的输入文件
+    export            导出青简 / 清风 / 水杉评测器可读的输入文件
     import-qingjian   把青简 --eval-details 的 JSONL 转成统一逐条结果
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
+    import-msime      把水杉 convert_eval --dump 的 JSONL 转成统一逐条结果
     compare           并排比较多份统一结果,输出 Markdown
 
 统一结果 TSV 的头部用 `# key=value` 记录 schema/engine/corpus/kind:
@@ -27,8 +28,13 @@ rank 是期望答案在候选里的 0 基下标,-1 表示不在候选里。百�
         python3 tools/bench_shared.py export --engine windinput --out /tmp/wind.tsv
         (cd work/WindInput-main/wind_input && WIND_SENTENCE_EVAL=/tmp/wind.tsv cargo test --release -p wind-engine --test grammar_sentence_eval sentence_eval_file -- --ignored --nocapture > /tmp/wind.txt)
         python3 tools/bench_shared.py import-windinput --stdout /tmp/wind.txt --out /tmp/wind-result.tsv
+    水杉:
+        python3 tools/bench_shared.py export --engine msime --out /tmp/msime.tsv
+        (cd work/msime-develop && cargo run --release -p msime-input-runtime --example convert_eval -- \
+          --resources <已校验资源目录> --set /tmp/msime.tsv --dump /tmp/msime.jsonl)
+        python3 tools/bench_shared.py import-msime --dump /tmp/msime.jsonl --out /tmp/msime-result.tsv
     对比:
-        python3 tools/bench_shared.py compare target/bench-shared.tsv /tmp/qj-result.tsv /tmp/wind-result.tsv
+        python3 tools/bench_shared.py compare target/bench-shared.tsv /tmp/qj-result.tsv /tmp/wind-result.tsv /tmp/msime-result.tsv
 """
 
 from __future__ import annotations
@@ -136,6 +142,16 @@ def cmd_export(args: argparse.Namespace) -> int:
     elif args.engine == "windinput":
         # 清风 sentence_eval_file: 类别<TAB>拼音<TAB>期望
         lines = [f"{row['category']}\t{row['pinyin']}\t{row['expected']}" for row in rows]
+    elif args.engine == "msime":
+        # 水杉 convert_eval: id<TAB>拼音<TAB>期望<TAB>音节数<TAB>标签<TAB>上下文
+        # 全键盘评测不读音节数;九键评测应另用其自带九键集。
+        lines = []
+        for index, row in enumerate(rows):
+            syllables = sum(1 for ch in row["expected"] if "\u4e00" <= ch <= "\u9fff")
+            lines.append(
+                f"{row['category']}-{index}\t{row['pinyin']}\t{row['expected']}\t"
+                f"{max(syllables, 1)}\t{row['category']}\t"
+            )
     else:
         raise SystemExit(f"未知引擎 {args.engine}")
     text = "\n".join(lines) + "\n"
@@ -440,6 +456,39 @@ def cmd_import_windinput(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_msime(args: argparse.Namespace) -> int:
+    rows = []
+    for line in Path(args.dump).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        case = json.loads(line)
+        candidates = []
+        for candidate in case.get("candidates", []):
+            text = candidate.get("text") if isinstance(candidate, dict) else candidate
+            if text is not None:
+                candidates.append(str(text))
+        expected = str(case.get("gold", ""))
+        want = normalize(expected)
+        normalized = [normalize(text) for text in candidates]
+        rank = normalized.index(want) if want in normalized else -1
+        top1 = candidates[0] if candidates else ""
+        category = str(case.get("id", "")).split("-", 1)[0] or "unknown"
+        rows.append((category, str(case.get("input", "")), expected, str(rank), top1, "0.000"))
+
+    lines = [
+        f"# schema={SCHEMA}",
+        f"# engine={args.engine_version}",
+        f"# corpus={CORPUS_NAME}",
+        "# kind=items",
+        "category\tinput\texpected\trank\ttop1\tms",
+    ]
+    lines.extend("\t".join(row) for row in rows)
+    text = "\n".join(lines) + "\n"
+    Path(args.out).write_text(text, encoding="utf-8")
+    print(f"写出 {args.out}: {len(rows)} 条")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -447,8 +496,8 @@ def main() -> int:
     build = sub.add_parser("build", help="从现有外部语料生成共享语料")
     build.set_defaults(func=cmd_build)
 
-    export = sub.add_parser("export", help="导出青简/清风可读的输入文件")
-    export.add_argument("--engine", choices=("qingjian", "windinput"), required=True)
+    export = sub.add_parser("export", help="导出青简/清风/水杉可读的输入文件")
+    export.add_argument("--engine", choices=("qingjian", "windinput", "msime"), required=True)
     export.add_argument("--category", help="只导出某一类")
     export.add_argument("--out", required=True, help="输出路径,- 表示 stdout")
     export.set_defaults(func=cmd_export)
@@ -470,6 +519,12 @@ def main() -> int:
     windinput.add_argument("--engine-version", default="windinput")
     windinput.add_argument("--config", default="基线", help="只取配置名包含该子串的行")
     windinput.set_defaults(func=cmd_import_windinput)
+
+    msime = sub.add_parser("import-msime", help="水杉 convert_eval --dump JSONL → 统一逐条结果")
+    msime.add_argument("--dump", required=True, help="convert_eval --dump 写出的逐条候选 JSONL")
+    msime.add_argument("--out", required=True)
+    msime.add_argument("--engine-version", default="msime")
+    msime.set_defaults(func=cmd_import_msime)
 
     args = parser.parse_args()
     return args.func(args)

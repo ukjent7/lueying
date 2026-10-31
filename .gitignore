@@ -3,4 +3,6 @@
 /edition-guide
 /work/
 /wrok/
+__pycache__/
+*.pyc
 
