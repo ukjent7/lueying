@@ -44,7 +44,6 @@ skia-safe = { workspace = true, features = ["d3d"] }
 lueying-ocr.workspace = true
 # 运行期 Wasm 扩展:wasmi 沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-extwasm.workspace = true
-windows-registry = "0.100"
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Globalization",
@@ -69,6 +68,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
     # V3 帧级基准读进程工作集。
     "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",

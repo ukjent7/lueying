@@ -13,6 +13,7 @@
 - 系统底线收紧为 Windows 11 24H2(0.1.x 仍兼容 Windows 10 1809),后续版本提供 ARM64 原生 DLL。
 - CI 拆快慢关卡:push 只跑构建、静态检查与体积门禁,Windows 全链路 E2E 移到定时任务与发版前。
 - 依赖升级:`ed25519-dalek` 3.0;令牌生成直连 `getrandom`,移除 `rand_core 0.6`。
+- 移除 `windows-registry`,注册表读写统一走 `windows` 的 `Win32_System_Registry`。
 
 ## [0.1.0] - 2026-11-01
 

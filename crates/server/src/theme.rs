@@ -4,11 +4,17 @@
 use std::ffi::c_void;
 
 use lueying_render::panel::Palette;
+use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::Graphics::Gdi::{
     COLOR_3DFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
     COLOR_WINDOWFRAME, COLOR_WINDOWTEXT, GetSysColor, SYS_COLOR_INDEX,
 };
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+    REG_VALUE_TYPE,
+};
 use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
 };
@@ -37,10 +43,29 @@ impl Appearance {
 
 /// `AppsUseLightTheme`:0 表示系统应用走深色;键或值读不到时按浅色处理。
 fn apps_use_light() -> bool {
-    windows_registry::CURRENT_USER
-        .open("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
-        .and_then(|key| key.get_u32("AppsUseLightTheme"))
-        .map_or(true, |value| value != 0)
+    let path = HSTRING::from("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let mut key = HKEY::default();
+    if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(path.as_ptr()), 0, KEY_READ, &mut key) }
+        != ERROR_SUCCESS
+    {
+        return true;
+    }
+    let name = HSTRING::from("AppsUseLightTheme");
+    let mut kind = REG_VALUE_TYPE::default();
+    let mut data = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let queried = unsafe {
+        RegQueryValueExW(
+            key,
+            PCWSTR(name.as_ptr()),
+            None,
+            Some(&mut kind),
+            Some((&mut data as *mut u32).cast()),
+            Some(&mut size),
+        )
+    };
+    let _ = unsafe { RegCloseKey(key) };
+    queried == ERROR_SUCCESS && kind == REG_DWORD && data != 0
 }
 
 /// 候选窗主题色预设在 `accents` 里;这里只转出,免得调用方改 import。

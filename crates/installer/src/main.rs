@@ -23,12 +23,17 @@ mod imp {
     use std::process::{Command, Stdio};
 
     use lueying_protocol::{Request, pipe_name};
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoTaskMemFree, CoUninitialize,
     };
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW,
+        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE,
+        REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
     use windows::Win32::UI::Shell::{FOLDERID_Programs, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
@@ -36,7 +41,7 @@ mod imp {
         CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
         TF_IPPMF_DISABLEPROFILE, TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
     };
-    use windows::core::{GUID, HSTRING, Interface};
+    use windows::core::{GUID, HSTRING, Interface, PCWSTR};
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "Lueying";
@@ -293,30 +298,89 @@ mod imp {
     }
 
     fn set_run_key(server: &Path) -> Result<(), String> {
-        let key = windows_registry::CURRENT_USER
-            .create(RUN_KEY)
+        let key = create_key(HKEY_CURRENT_USER, RUN_KEY)
             .map_err(|e| format!("打开自启动注册表: {e}"))?;
-        key.set_string(RUN_VALUE, format!("\"{}\"", server.display()))
-            .map_err(|e| format!("写自启动: {e}"))
+        set_string(key, RUN_VALUE, &format!("\"{}\"", server.display()))
+            .map_err(|e| format!("写自启动: {e}"))?;
+        let _ = unsafe { RegCloseKey(key) };
+        Ok(())
     }
 
     fn remove_registry() {
         remove_old_uninstall_key();
-        let _ = windows_registry::CURRENT_USER
-            .create(RUN_KEY)
-            .and_then(|key| key.remove_value(RUN_VALUE));
+        delete_value(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE);
         remove_legacy_registry();
     }
 
     fn remove_old_uninstall_key() {
-        let _ = windows_registry::CURRENT_USER.remove_tree(OLD_UNINSTALL_KEY);
+        delete_tree(HKEY_CURRENT_USER, OLD_UNINSTALL_KEY);
     }
 
     fn remove_legacy_registry() {
-        let _ = windows_registry::CURRENT_USER
-            .create(RUN_KEY)
-            .and_then(|key| key.remove_value(LEGACY_RUN_VALUE));
-        let _ = windows_registry::CURRENT_USER.remove_tree(LEGACY_UNINSTALL_KEY);
+        delete_value(HKEY_CURRENT_USER, RUN_KEY, LEGACY_RUN_VALUE);
+        delete_tree(HKEY_CURRENT_USER, LEGACY_UNINSTALL_KEY);
+    }
+
+    fn create_key(parent: HKEY, subkey: &str) -> Result<HKEY, String> {
+        let subkey = HSTRING::from(subkey);
+        let mut key = HKEY::default();
+        let err = unsafe {
+            RegCreateKeyExW(
+                parent,
+                PCWSTR(subkey.as_ptr()),
+                0,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_WRITE,
+                None,
+                &mut key,
+                None,
+            )
+        };
+        if err == ERROR_SUCCESS {
+            Ok(key)
+        } else {
+            Err(format!("注册表错误 0x{:08x}", err.0))
+        }
+    }
+
+    fn set_string(key: HKEY, name: &str, value: &str) -> Result<(), String> {
+        let name = HSTRING::from(name);
+        let data: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+        let err = unsafe {
+            RegSetValueExW(
+                key,
+                PCWSTR(name.as_ptr()),
+                0,
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
+        if err == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!("注册表错误 0x{:08x}", err.0))
+        }
+    }
+
+    /// 清理语义:键打不开就当没有,不报错。
+    fn delete_value(parent: HKEY, subkey: &str, name: &str) {
+        let subkey = HSTRING::from(subkey);
+        let name = HSTRING::from(name);
+        let mut key = HKEY::default();
+        let opened = unsafe {
+            RegOpenKeyExW(parent, PCWSTR(subkey.as_ptr()), 0, KEY_SET_VALUE, &mut key)
+        };
+        if opened == ERROR_SUCCESS {
+            let _ = unsafe { RegDeleteValueW(key, PCWSTR(name.as_ptr())) };
+            let _ = unsafe { RegCloseKey(key) };
+        }
+    }
+
+    fn delete_tree(parent: HKEY, subkey: &str) {
+        let subkey = HSTRING::from(subkey);
+        let _ = unsafe { RegDeleteTreeW(parent, PCWSTR(subkey.as_ptr())) };
     }
 
     /// 旧版把「设置」和「卸载」快捷方式放在当前用户开始菜单;新版由 Inno

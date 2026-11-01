@@ -13,8 +13,12 @@ use windows::Win32::UI::TextServices::{
     GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, ITfCategoryMgr,
     ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
 };
-use windows::core::{GUID, Interface, Result};
-use windows_registry::CLASSES_ROOT;
+use windows::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW, HKEY, HKEY_CLASSES_ROOT,
+    KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+};
+use windows::core::{GUID, HSTRING, Interface, PCWSTR, Result};
 
 use crate::{CLSID_IME, CLSID_STR, GUID_PROFILE, LANGID_ZH_CN, NAME};
 
@@ -36,31 +40,79 @@ fn clsid_key() -> String {
     format!("CLSID\\{CLSID_STR}")
 }
 
-/// windows-registry(0.100 线)与 windows 0.62 分属 windows-rs 两条版本线,错误类型不同,
-/// 按 HRESULT 显式搬运,两个 crate 才能各自用最新稳定版。
 pub(crate) fn register() -> Result<()> {
     let Some(module) = crate::module_path_file() else {
         return Err(windows::core::Error::from(
             windows::Win32::Foundation::E_FAIL,
         ));
     };
-    write_registry(&module)
-        .map_err(|e| windows::core::Error::from_hresult(windows::core::HRESULT(e.code().0)))?;
+    write_registry(&module)?;
     register_profile()
 }
 
-fn write_registry(module: &std::path::Path) -> windows_registry::Result<()> {
-    let base = CLASSES_ROOT.create(clsid_key())?;
-    base.set_string("", NAME)?;
-    let inproc = base.create("InprocServer32")?;
-    inproc.set_string("", module.to_string_lossy())?;
-    inproc.set_string("ThreadingModel", "Apartment")?;
+fn write_registry(module: &std::path::Path) -> Result<()> {
+    let base = create_key(HKEY_CLASSES_ROOT, &clsid_key())?;
+    set_string(base, "", NAME)?;
+    let inproc = create_key(base, "InprocServer32")?;
+    set_string(inproc, "", &module.to_string_lossy())?;
+    set_string(inproc, "ThreadingModel", "Apartment")?;
+    let _ = unsafe { RegCloseKey(inproc) };
+    let _ = unsafe { RegCloseKey(base) };
     Ok(())
+}
+
+fn create_key(parent: HKEY, subkey: &str) -> Result<HKEY> {
+    let subkey = HSTRING::from(subkey);
+    let mut key = HKEY::default();
+    let err = unsafe {
+        RegCreateKeyExW(
+            parent,
+            PCWSTR(subkey.as_ptr()),
+            0,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut key,
+            None,
+        )
+    };
+    if err == ERROR_SUCCESS {
+        Ok(key)
+    } else {
+        Err(win32(err))
+    }
+}
+
+fn set_string(key: HKEY, name: &str, value: &str) -> Result<()> {
+    let name = HSTRING::from(name);
+    let data = wide_z(value);
+    let err = unsafe {
+        RegSetValueExW(
+            key,
+            PCWSTR(name.as_ptr()),
+            0,
+            REG_SZ,
+            data.as_ptr().cast(),
+            (data.len() * 2) as u32,
+        )
+    };
+    if err == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(win32(err))
+    }
+}
+
+/// 注册表调用返回 WIN32_ERROR;转成 crate 统一的 windows Result。
+fn win32(err: WIN32_ERROR) -> windows::core::Error {
+    windows::core::Error::from_hresult(windows::core::HRESULT::from_win32(err.0 as i32))
 }
 
 pub(crate) fn unregister() -> Result<()> {
     let _ = unregister_profile();
-    let _ = CLASSES_ROOT.remove_tree(clsid_key());
+    let clsid = HSTRING::from(clsid_key());
+    let _ = unsafe { RegDeleteTreeW(HKEY_CLASSES_ROOT, PCWSTR(clsid.as_ptr())) };
     Ok(())
 }
 
