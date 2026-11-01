@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use lueying_scene::{parse, Body, EventName, Inputs, Layer, Runtime};
+use lueying_scene::{Body, EventName, Inputs, Layer, Runtime, parse};
 
 const HIGHLIGHT: [f32; 4] = [8.0, 36.0, 100.0, 30.0];
 
@@ -58,7 +58,11 @@ fn official_scenes_are_valid_and_all_present() {
         if path.extension().is_none_or(|ext| ext != "toml") {
             continue;
         }
-        let name = path.file_name().expect("文件名").to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .expect("文件名")
+            .to_string_lossy()
+            .into_owned();
         build(&name);
         checked += 1;
     }

@@ -89,7 +89,9 @@ where
         Some("scene") => return parse_scene(args),
         Some("-h" | "--help") | None => return Ok(Invocation::Help),
         Some(other) => {
-            return Err(format!("未知命令 {other:?};从 `lueying ext` 或 `lueying scene` 开始"))
+            return Err(format!(
+                "未知命令 {other:?};从 `lueying ext` 或 `lueying scene` 开始"
+            ));
         }
     }
     let sub = args
@@ -243,9 +245,7 @@ fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
-    let sub = args
-        .next()
-        .ok_or("缺子命令;用 check 或 schema")?;
+    let sub = args.next().ok_or("缺子命令;用 check 或 schema")?;
     match sub.as_str() {
         "check" => {
             let mut path: Option<PathBuf> = None;
@@ -253,9 +253,7 @@ where
             while let Some(arg) = args.next() {
                 match arg.as_str() {
                     "-h" | "--help" => return Ok(Invocation::Help),
-                    other if other.starts_with('-') => {
-                        return Err(format!("未知参数 {other:?}"))
-                    }
+                    other if other.starts_with('-') => return Err(format!("未知参数 {other:?}")),
                     other => take_positional(&mut used, &mut path, other, "文件或目录")?,
                 }
             }

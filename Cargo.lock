@@ -703,6 +703,7 @@ dependencies = [
  "lueying-extmeta",
  "lueying-features",
  "lueying-protocol",
+ "lueying-scene",
  "serde_json",
  "toml",
 ]

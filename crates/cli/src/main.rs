@@ -84,8 +84,8 @@ fn scene_check(path: &Path) -> Result<(), String> {
     }
     let mut failed = Vec::new();
     for file in &files {
-        let text =
-            std::fs::read_to_string(file).map_err(|error| format!("读 {}: {error}", file.display()))?;
+        let text = std::fs::read_to_string(file)
+            .map_err(|error| format!("读 {}: {error}", file.display()))?;
         match lueying_scene::parse(&file.display().to_string(), &text) {
             Ok(_) => println!("{} 合法", file.display()),
             Err(errors) => failed.extend(errors.iter().map(|error| error.to_string())),
