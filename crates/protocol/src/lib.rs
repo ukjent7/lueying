@@ -143,7 +143,7 @@ pub fn read_frame(reader: &mut impl Read) -> Result<Vec<u8>, CodecError> {
 /// `serde_json::Value` 在 postcard 帧里以 JSON 字符串过桥:postcard 是非自描述
 /// 格式,`Value` 的 `deserialize_any` 走不通;字符串字段畅通。
 mod value_as_json {
-    use serde::{Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
     use serde_json::Value;
 
     pub(super) fn serialize<S: Serializer>(

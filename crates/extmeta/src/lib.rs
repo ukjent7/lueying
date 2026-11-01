@@ -276,7 +276,7 @@ pub enum Service {
 
 impl Service {
     /// 全部服务;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::Capture,
         Self::Ocr,
         Self::Clipboard,
