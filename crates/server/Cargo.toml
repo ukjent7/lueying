@@ -31,8 +31,8 @@ lueying-protocol = { path = "../protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
-# 令牌生成的 CSPRNG。
-rand_core = { version = "0.6", features = ["getrandom"] }
+# 令牌生成的 CSPRNG,直连系统随机源。
+getrandom = "0.4"
 
 [target."cfg(windows)".dependencies]
 # 设置窗无障碍:AccessKit 把页面模型暴露成 UIA 树,读屏软件才能操作自绘控件。

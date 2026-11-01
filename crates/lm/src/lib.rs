@@ -1,5 +1,8 @@
 //! Reranks candidates the pinyin decoder assembled, using a character-level language model.
 //!
+//! Provenance: vendored from the 水杉输入法 project's `chinese-ime-lm` (Apache-2.0) and
+//! maintained in-tree; the 4M/25M rerank model weights share the same origin.
+//!
 //! The model is produced by `neural/`, and the measurements that shaped this crate are recorded in
 //! `docs/measurements.md`. Two of them are load-bearing and are enforced here rather than left to callers:
 //!

@@ -18,7 +18,7 @@ path = "src/bin/lueying-netproxy.rs"
 lueying-extmeta.workspace = true
 lueying-protocol.workspace = true
 # 签名更新清单的验签;发布侧签名在 xtask,共用同一条 ed25519 实现。
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

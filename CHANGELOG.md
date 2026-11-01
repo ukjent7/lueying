@@ -10,6 +10,9 @@
 - 运行期扩展从 QuickJS 脚本切换到 wasmi Wasm 沙箱:扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
 - `lueying ext new` 生成 Rust guest crate 骨架;`lueying ext pack` 要求清单声明的 `extension.wasm` 存在。
 - 官方 `shot-ocr` 改为 Rust guest;CI 增加 wasm32 构建,文档与扩展规范同步更新。
+- 系统底线收紧为 Windows 11 24H2(0.1.x 仍兼容 Windows 10 1809),后续版本提供 ARM64 原生 DLL。
+- CI 拆快慢关卡:push 只跑构建、静态检查与体积门禁,Windows 全链路 E2E 移到定时任务与发版前。
+- 依赖升级:`ed25519-dalek` 3.0;令牌生成直连 `getrandom`,移除 `rand_core 0.6`。
 
 ## [0.1.0] - 2026-11-01
 
