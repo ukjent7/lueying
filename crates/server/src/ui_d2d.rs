@@ -302,8 +302,7 @@ fn place(ctx: &mut WinCtx) {
     match ui_place::snapshot(&ctx.state) {
         None => {
             // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
-            ctx.pending
-                .extend(ctx.scene.observe(None));
+            ctx.pending.extend(ctx.scene.observe(None));
             if ctx.fx.reduce || ctx.fx.last.is_none() {
                 ctx.fx.clear();
                 park(ctx);
@@ -508,7 +507,10 @@ fn animate(ctx: &mut WinCtx) {
         ctx.fx.slide = None;
     }
     let animating = ctx.fx.hide.is_some() || ctx.fx.show.is_some() || ctx.fx.slide.is_some();
-    if let Some(view) = (animating || ctx.scene.live()).then(|| ctx.fx.last.clone()).flatten() {
+    if let Some(view) = (animating || ctx.scene.live())
+        .then(|| ctx.fx.last.clone())
+        .flatten()
+    {
         draw_view(ctx, &view);
     }
 }
@@ -554,7 +556,8 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     // 皮肤(skin.toml)叠在脚本主题色之上,是用户显式放置的最后一层;
     // 高对比度下 with_skin 原样返回。
     let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
-    let palette = lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
+    let palette =
+        lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
     // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
     drop(skin);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
@@ -570,7 +573,8 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     let opacity = if let Some(end) = ctx.fx.hide {
         (1.0 - ease_out_quint(progress(HIDE_FADE, end, now))).max(0.0)
     } else if let Some(end) = ctx.fx.show {
-        SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * ease_out_quint(progress(SHOW_FADE, end, now))
+        SHOW_START_OPACITY
+            + (1.0 - SHOW_START_OPACITY) * ease_out_quint(progress(SHOW_FADE, end, now))
     } else {
         1.0
     };
@@ -632,7 +636,9 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     };
     let started = Instant::now();
     let drawn = match ctx.pipe.as_mut() {
-        Some(pipe) => pipe.paint_frame(&frame, &ctx.text).and_then(|()| pipe.present()),
+        Some(pipe) => pipe
+            .paint_frame(&frame, &ctx.text)
+            .and_then(|()| pipe.present()),
         None => Err("出帧管线不可用".to_string()),
     };
     if let Err(e) = drawn {

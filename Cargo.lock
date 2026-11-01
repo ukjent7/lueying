@@ -888,6 +888,7 @@ dependencies = [
  "skia-safe",
  "toml",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

@@ -238,7 +238,11 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
     };
     let font = text
         .lines()
-        .find(|line| line.contains("DirectWrite 字型已画出") || line.contains("字体自检") || line.contains("自检失败:字体"))
+        .find(|line| {
+            line.contains("DirectWrite 字型已画出")
+                || line.contains("字体自检")
+                || line.contains("自检失败:字体")
+        })
         .unwrap_or("无");
     Ok(format!("## D2D 渲染管线\n\nPASS,{line}\n\n字体:{font}"))
 }

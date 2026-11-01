@@ -14,8 +14,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::imp::State;
-use crate::ui_place;
 use crate::ui_d2d::{WinCtx, menu_origin, redraw};
+use crate::ui_place;
 
 /// 可交互:有激活会话且服务端候选窗在显示(组合中)。
 fn interactive(state: &State) -> bool {
@@ -158,16 +158,13 @@ pub(super) fn on_mouse(
                 return LRESULT(0);
             }
             let target = match ctx.fx.geometry.as_ref() {
-                Some(geom) => {
-                    match panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y) {
-                        panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
-                            let (_, top) =
-                                menu_origin(slot, &geom.spec, &geom.metrics, &ctx.text);
-                            (slot, top, item.text.clone())
-                        }),
-                        _ => None,
-                    }
-                }
+                Some(geom) => match panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y) {
+                    panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
+                        let (_, top) = menu_origin(slot, &geom.spec, &geom.metrics, &ctx.text);
+                        (slot, top, item.text.clone())
+                    }),
+                    _ => None,
+                },
                 None => None,
             };
             if let Some((slot, top, text)) = target {

@@ -41,8 +41,7 @@ pub(super) struct SceneHost {
 impl SceneHost {
     /// 读场景目录;文件不存在或解析失败都不算错误,候选窗照常。
     pub(super) fn new() -> Self {
-        let dir = config::scene_dir()
-            .unwrap_or_else(|| PathBuf::from("lueying-scene"));
+        let dir = config::scene_dir().unwrap_or_else(|| PathBuf::from("lueying-scene"));
         let mut host = Self {
             dir,
             runtime: None,
@@ -129,9 +128,7 @@ impl SceneHost {
                 }
                 if new.raw.len() < old.raw.len() {
                     self.burst += 1;
-                    let until = self
-                        .burst_until
-                        .get_or_insert(now + BURST_WINDOW);
+                    let until = self.burst_until.get_or_insert(now + BURST_WINDOW);
                     if now > *until {
                         self.burst = 1;
                         *until = now + BURST_WINDOW;

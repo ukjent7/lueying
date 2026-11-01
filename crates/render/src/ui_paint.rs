@@ -5,8 +5,8 @@
 
 use skia_safe::{Canvas, ClipOp, Paint, PaintStyle, Point, RRect, Rect, Vector};
 
-use crate::panel::Palette;
 use crate::paint::{color, fill_paint};
+use crate::panel::Palette;
 
 use super::*;
 

@@ -5,8 +5,8 @@
 
 use skia_safe::{Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect};
 
-use crate::panel::Palette;
 use crate::paint::color;
+use crate::panel::Palette;
 
 /// 面板逻辑宽度。
 pub const WIDTH: f32 = 520.0;

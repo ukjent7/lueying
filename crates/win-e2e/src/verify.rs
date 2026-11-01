@@ -91,19 +91,8 @@ fn v3_sizes(rows: &mut Vec<Row>) {
             Err(_) => parts.push(format!("{name}=缺")),
         }
     }
-    rows.push((
-        "V3",
-        "二进制体积",
-        Verdict::Note,
-        parts.join(", "),
-    ));
+    rows.push(("V3", "二进制体积", Verdict::Note, parts.join(", ")));
 }
-
-
-
-
-
-
 
 /// V8:RegisterHotKey 的注册、冲突与保留键;管理员前台场景在本环境不可复现。
 fn v8_hotkey(rows: &mut Vec<Row>) {
