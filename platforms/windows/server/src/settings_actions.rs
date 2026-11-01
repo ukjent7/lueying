@@ -375,10 +375,11 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
             }
             Err(_) => (ConsentState::Missing, Vec::new()),
         };
+        let native = manifest.is_native();
         scripts.push(ScriptEntry {
             id: manifest.id,
             name: manifest.name,
-            native: manifest.is_native(),
+            native,
             items,
             consent,
             settings: manifest.settings,
@@ -479,13 +480,11 @@ const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
 /// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
 fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
     let files = lueying_extmeta::container::decode(bytes)?;
-    let manifest = files
-        .iter()
-        .find(|(name, _)| name == "manifest.json")
-        .ok_or("包里没有 manifest.json")
-        .and_then(|(_, bytes)| {
-            lueying_extmeta::Manifest::parse(bytes).map_err(|e| format!("清单不合法: {e}"))
-        })?;
+    let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
+        return Err("包里没有 manifest.json".to_string());
+    };
+    let manifest = lueying_extmeta::Manifest::parse(manifest_bytes)
+        .map_err(|e| format!("清单不合法: {e}"))?;
     let payload = manifest.payload_file().to_string();
     if !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));

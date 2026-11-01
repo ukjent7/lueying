@@ -49,7 +49,7 @@ fn apps_use_light() -> bool {
         RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(path.as_ptr()),
-            0,
+            Some(0),
             KEY_READ,
             &mut key,
         )

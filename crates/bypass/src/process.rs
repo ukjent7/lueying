@@ -4,7 +4,6 @@
 
 use std::io::{Read, Write};
 use std::process::ExitStatus;
-use std::time::Duration;
 
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -125,7 +124,7 @@ impl Process {
                 if let Some(status) = self.try_wait()? {
                     return Ok(status);
                 }
-                std::thread::sleep(Duration::from_millis(2));
+                std::thread::sleep(std::time::Duration::from_millis(2));
             },
             Inner::Std(child) => child.wait(),
         }
