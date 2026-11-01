@@ -644,9 +644,10 @@ fn emit_nodes(
     items: &mut Vec<Item>,
 ) {
     for node in nodes {
-        let visible = node.visible.as_ref().is_none_or(|expr| {
-            eval(expr, scene, view.vars, inputs, budget, degraded) != 0.0
-        });
+        let visible = node
+            .visible
+            .as_ref()
+            .is_none_or(|expr| eval(expr, scene, view.vars, inputs, budget, degraded) != 0.0);
         if !visible {
             continue;
         }

@@ -32,7 +32,8 @@ impl SentenceModel {
                 "a dimension is larger than any real model".into(),
             ));
         }
-        if config.n_head == 0 || config.n_embd == 0 || !config.n_embd.is_multiple_of(config.n_head) {
+        if config.n_head == 0 || config.n_embd == 0 || !config.n_embd.is_multiple_of(config.n_head)
+        {
             return Err(ModelError::Geometry(format!(
                 "{} channels do not divide into {} heads",
                 config.n_embd, config.n_head

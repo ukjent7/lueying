@@ -604,9 +604,10 @@ pub fn parse(file: &str, text: &str) -> Result<Scene, Vec<LoadError>> {
         }
         let span = signal.span().start;
         let signal = signal.get_ref();
-        let from = signal.from.as_ref().and_then(|text| {
-            builder.expr(text, span, &format!("信号 {name:?} 的 from"))
-        });
+        let from = signal
+            .from
+            .as_ref()
+            .and_then(|text| builder.expr(text, span, &format!("信号 {name:?} 的 from")));
         builder.vars.push(VarDecl {
             name: name.clone(),
             from,
