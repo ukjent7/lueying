@@ -3,13 +3,14 @@ use super::*;
 fn sample() -> Files {
     // 文本块按规范补尾换行;样例自带尾换行才能逐字节 roundtrip。
     let mut manifest =
-        br#"{"id":"demo","name":"演示","version":"0.1.0","api":3,"wasm":"demo.wasm"}"#
+        r#"{"id":"demo","name":"演示","version":"0.1.0","api":3,"wasm":"demo.wasm"}"#
+            .as_bytes()
             .to_vec();
     manifest.push(b'\n');
     vec![
         ("manifest.json".into(), manifest),
         ("demo.wasm".into(), vec![0, 1, 2, 3, 250, 251]),
-        ("docs/说明.md".into(), b"# 标题\n\n正文\n".to_vec()),
+        ("docs/说明.md".into(), "# 标题\n\n正文\n".as_bytes().to_vec()),
     ]
 }
 
@@ -27,7 +28,7 @@ fn round_trips_files() {
 fn keeps_blank_lines_and_empty_files() {
     let files: Files = vec![
         ("empty.txt".into(), Vec::new()),
-        ("gaps.txt".into(), b"第一行\n\n第三行\n".to_vec()),
+        ("gaps.txt".into(), "第一行\n\n第三行\n".as_bytes().to_vec()),
     ];
     assert_eq!(decode(&encode(&files).unwrap()).unwrap(), files);
 }

@@ -53,7 +53,7 @@ fn keeps_subdirectories() {
     let files: Files = vec![
         ("manifest.json".into(), wasm_manifest("demo").into_bytes()),
         ("demo.wasm".into(), b"v1".to_vec()),
-        ("docs/说明.md".into(), b"# 标题\n".to_vec()),
+        ("docs/说明.md".into(), "# 标题\n".as_bytes().to_vec()),
     ];
     install_luext_bytes(&container::encode(&files).unwrap(), &root).unwrap();
     assert_eq!(
