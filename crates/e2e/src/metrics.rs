@@ -108,7 +108,9 @@ pub fn run(report: &mut String) -> usize {
         stat.state == ExtState::Disabled
             && stat.faults >= MAX_FAULTS
             && stat.timeouts >= u64::from(MAX_FAULTS)
-            && stopped.as_ref().is_err_and(|error| error.contains("已停用")),
+            && stopped
+                .as_ref()
+                .is_err_and(|error| error.contains("已停用")),
         format!(
             "state={:?} faults={} timeouts={} stopped={stopped:?}",
             stat.state, stat.faults, stat.timeouts
