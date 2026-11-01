@@ -8,6 +8,7 @@
 ### 变更
 
 - TSF 与服务的管道协议从行 JSON 换成长度前缀 postcard 二进制帧(4 字节小端长度 + 编码体,单帧 1 MiB 上限);管道名升到 `lueying-v2`,两端同包分发,无兼容期。
+- 用户词库落盘从 `user.tsv` 换成 SQLite(`rusqlite` bundled,WAL 模式,单行文档表整份写入);旧 TSV 首次启动自动迁入,文本导入导出与配置备份不变。
 - 运行期扩展从 QuickJS 脚本切换到 wasmi Wasm 沙箱:扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
 - `lueying ext new` 生成 Rust guest crate 骨架;`lueying ext pack` 要求清单声明的 `extension.wasm` 存在。
 - 官方 `shot-ocr` 改为 Rust guest;CI 增加 wasm32 构建,文档与扩展规范同步更新。

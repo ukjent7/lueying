@@ -31,6 +31,8 @@ lueying-protocol = { path = "../protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
+# 用户词库落盘:SQLite(WAL)。
+rusqlite = { version = "0.41", features = ["bundled"] }
 # 令牌生成的 CSPRNG,直连系统随机源。
 getrandom = "0.4"
 
