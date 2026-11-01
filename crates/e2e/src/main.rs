@@ -236,7 +236,7 @@ fn main() {
     // 预算与可见性:运行指标、超限停用、快照与 CLI。
     failures += metrics::run(&mut report);
 
-    // Skia 渲染核心:光栅出帧、SkSL 效果契约与坏效果回退。
+    // 渲染核心:面板布局数学与设置窗光栅绘制。
     failures += render::run(&mut report);
 
     // 设置页模型:页面结构、点击改配置、键盘改值与焦点顺序。

@@ -25,7 +25,7 @@
 
 - **分层与沙箱化扩展体系**
   - **输入方案与辅助码**：内置小鹤、自然码、微软、搜狗主流双拼方案，支持五笔单字辅助码过滤。
-  - **运行期 Wasm 沙箱**：基于 wasmi 的每扩展 worker 沙箱，支持用 Rust 编写动态外观装饰（SkSL 着色器）与功能命令。
+  - **运行期 Wasm 沙箱**：基于 wasmi 的每扩展 worker 沙箱，支持用 Rust 编写外观主题色补丁与功能命令。
   - **受控平台原语**：提供截图、离线 OCR（系统 OCR 或 PP-OCRv6）、剪贴板、私有存储与系统通知等安全原语，外联网络强制域名白名单。
 
 - **纯粹与本地优先的安全隐私**
@@ -98,7 +98,7 @@ page_size = 5              # 每页候选数量: 3, 5, 9
 ui_layout = "horizontal"   # 候选排列: "horizontal" (横排), "vertical" (竖排)
 ui_font = "standard"       # 候选字号: "small", "standard", "large"
 ui_accent = 0              # 主题强调色下标: 0~5 (或 "蓝", "绿" 等)
-effects = true             # 是否启用 SkSL 用户效果装饰
+effects = true             # 是否启用场景装饰层
 
 # 启用的运行期扩展
 extensions = ["shot-ocr"]
@@ -106,7 +106,7 @@ extensions = ["shot-ocr"]
 
 更丰富的个性化定制包括：
 - **界面配色**：编辑 [`%APPDATA%\lueying\skin.toml`](docs/skin.md) 自定义深浅色面板底色与文字颜色。
-- **着色器动效**：在 [`%APPDATA%\lueying\effects\`](docs/effects.md) 编写 SkSL 自定义背景与选中块动态着色。
+- **场景装饰**：在 [`%APPDATA%\lueying\scene\`](docs/scene.md) 用 scene.toml 加装饰层与动效。
 - **自定义短语与标点**：在图形设置中维护 `phrases.txt` 与 `punct.txt`。
 
 ---
@@ -118,7 +118,7 @@ extensions = ["shot-ocr"]
 - [使用指南](docs/usage.md)：基础操作、`v` 模式、`u` 模式与特殊符号输入。
 - [设置中心与配置速查](docs/settings.md)：图形设置功能、`config.toml` 字段全解与按应用隔离。
 - [界面皮肤定制](docs/skin.md)：声明式十六进制色彩定义与字段说明。
-- [用户效果 (SkSL)](docs/effects.md)：着色器槽位契约、Uniform 规范与对比度保护。
+- [场景装饰](docs/scene.md)：scene.toml 装饰层契约、信号与事件、事件模拟器。
 - [故障排查与诊断](docs/troubleshooting.md)：常见问题解决、日志跟踪与问题反馈规范。
 
 ### 架构与开发

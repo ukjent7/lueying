@@ -255,7 +255,7 @@ pub struct AppConfig {
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
     pub ui_accent: usize,
-    /// 是否启用用户效果(SkSL 装饰层);关掉就只画素色。
+    /// 是否启用场景装饰层;关掉就只画素色。
     pub effects: bool,
     /// 启用的运行期扩展 id,按组合顺序排列;空表示不启用。
     pub extensions: Vec<String>,

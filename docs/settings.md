@@ -58,7 +58,7 @@ page_size = 5                   # 每页候选数量: 3, 5, 9
 ui_layout = "horizontal"        # 候选排列: "horizontal" (横排), "vertical" (竖排)
 ui_font = "standard"            # 字号档位: "small", "standard", "large"
 ui_accent = 0                   # 主题强调色下标: 0~5 或颜色名 (如 "蓝", "绿")
-effects = true                  # 是否启用用户 SkSL 装饰效果
+effects = true                  # 是否启用场景装饰层
 
 # 系统与分发
 update_channel = "stable"       # 更新渠道: "stable", "beta"

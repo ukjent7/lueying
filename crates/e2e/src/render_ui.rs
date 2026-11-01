@@ -97,8 +97,8 @@ fn settings_page() -> ui::Page {
                     },
                 },
                 ui::Row {
-                    label: "用户效果".into(),
-                    detail: "SkSL 装饰层,放进去即生效".into(),
+                    label: "场景装饰".into(),
+                    detail: "场景装饰层,放进去即生效".into(),
                     control: ui::Control::ButtonsToggle {
                         items: vec![ui::Button {
                             id: ui::Id::new("open-effects", 0),
