@@ -149,7 +149,11 @@ pub(crate) fn trap_guest() -> String {
 pub(crate) fn loop_guest() -> String {
     format!(
         "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (loop $forever (br $forever))
+    (local $x i32)
+    (loop $forever
+      ;; wasmtime 给 block/loop/br 记 0 燃料,循环体放一条真实指令保证烧燃料。
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $forever))
     (i32.const 0)))",
         preamble(),
     )

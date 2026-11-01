@@ -26,7 +26,7 @@ lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:候选窗/徽标/命令面板的布局与命中;设置窗 UI 已由 Slint 承担。
 lueying-render.workspace = true
-lueying-protocol = { path = "../protocol" }
+lueying-protocol = { path = "../../crates/protocol" }
 # 配置 schema:typed TOML,未知键在读取时拒绝。
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -40,7 +40,7 @@ accesskit = "0.25"
 accesskit_windows = "0.35"
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
 windows-numerics = "0.3.1"
-# 运行期 Wasm 扩展:wasmi 沙箱与每扩展 worker,只改候选窗外观或执行命令。
+# 运行期 Wasm 扩展:wasmtime 沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-extwasm.workspace = true
 # Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
 slint.workspace = true

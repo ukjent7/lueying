@@ -14,8 +14,8 @@ mod metrics_tests;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use chinese_ime_lm::ModelError;
-use chinese_ime_lm::{CandidateFacts, Reranker, SentenceModel};
+pub use lueying_lm::ModelError;
+use lueying_lm::{CandidateFacts, Reranker, SentenceModel};
 
 pub use metrics::{LatencyMetrics, LatencySnapshot};
 

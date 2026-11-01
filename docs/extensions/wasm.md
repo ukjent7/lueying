@@ -1,8 +1,8 @@
 # 运行期 Wasm 扩展规范
 
-运行期扩展是一份 `manifest.json` 加一个核心 Wasm 模块。宿主用 wasmi 在
-常驻服务进程内解释执行:线性内存隔离、燃料计量、资源限额,没有 JIT,
-也没有独立进程。扩展作者用 Rust(或其它能产出 `wasm32-unknown-unknown`
+运行期扩展是一份 `manifest.json` 加一个核心 Wasm 模块。宿主用 wasmtime
+(Cranelift JIT)在常驻服务进程内执行:线性内存隔离、燃料计量、资源限额,
+没有独立进程。扩展作者用 Rust(或其它能产出 `wasm32-unknown-unknown`
 的语言)实现同步的 `Extension` trait,服务调用阻塞的是扩展自己的
 worker 线程,绝不触碰输入热路径。
 

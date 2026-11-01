@@ -1,6 +1,6 @@
 //! 设置窗独立进程:输入方案、候选外观、标点、词库数据与更新。
 //!
-//! 窗口是 Slint(winit 后端 + 软件渲染);页面模型在
+//! 窗口是 Slint(winit 后端 + femtovg GPU 渲染,无头环境回退软件渲染);页面模型在
 //! `lueying_server::settings_view`,宿主接线在 `settings_slint`,
 //! 平台侧动作在 `settings_actions`。保存写 `config.toml`,再经命名
 //! 管道让常驻 Server 立即重载。

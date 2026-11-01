@@ -1,14 +1,9 @@
 [package]
-name = "chinese-ime-lm"
-version = "0.2.0"
-edition = "2021"
-# Verified against this toolchain; nothing here needs anything newer, and a low floor is the point.
-rust-version = "1.75"
+name = "lueying-lm"
+version = "0.3.0"
+edition = "2024"
 license = "Apache-2.0"
-description = "A character-level language model for reranking Chinese input method candidates"
-repository = "https://github.com/metasequoiaime/chinese-ime-lm"
-keywords = ["chinese", "input-method", "pinyin", "language-model"]
-categories = ["text-processing"]
+description = "输入法重排用字符级语言模型;源自 metasequoiaime/chinese-ime-lm (Apache-2.0),树内维护"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -17,11 +12,6 @@ thiserror = "2"
 
 [lints.rust]
 unsafe_code = "forbid"
-# Newer clippy suggests `as_chunks` over `chunks_exact` with a constant size. It does give
-# fixed-size arrays, but it needs a far more recent toolchain than `chunks_exact`, which has been
-# available since 1.31. This crate exists for other input methods to adopt, and raising the minimum
-# compiler for a style preference trades that away for nothing. Declared here rather than in the
-# source so it covers the examples too, which are separate compilation targets.
 unknown_lints = "allow"
 
 [lints.clippy]

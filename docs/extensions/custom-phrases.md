@@ -42,4 +42,4 @@
 ## 源码实现参考
 
 - `crates/features/src/phrases.rs`：短语解析、索引构建与候选注入。
-- `crates/server/src/imp.rs`：短语文件加载与生命周期管理。
+- `platforms/windows/server/src/imp.rs`：短语文件加载与生命周期管理。

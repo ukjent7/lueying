@@ -159,7 +159,7 @@ pub(super) struct WinCtx {
     pub(super) text: Text,
     pub(super) cursor_arrow: Option<HCURSOR>,
     pub(super) cursor_hand: Option<HCURSOR>,
-    /// 运行期扩展:后台 worker 跑 wasmi guest,这里只收主题色补丁。
+    /// 运行期扩展:后台 worker 跑 wasmtime guest,这里只收主题色补丁。
     script: crate::ext_host::Script,
     script_accent: Option<u32>,
     /// 场景层宿主:加载、热重载、信号与事件。

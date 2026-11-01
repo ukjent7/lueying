@@ -3,7 +3,7 @@
 use super::*;
 
 fn dict() -> Arc<Dictionary> {
-    let (dict, _) = Dictionary::from_text(include_str!("../../../dicts/mini.txt"));
+    let (dict, _) = Dictionary::from_text(include_str!("../../../../dicts/mini.txt"));
     Arc::new(dict)
 }
 

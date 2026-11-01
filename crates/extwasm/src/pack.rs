@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use lueying_extmeta::metrics::{ExtStat, ExtState};
 use lueying_extsvc::Registry;
-use wasmi::Engine;
+use wasmtime::Engine;
 
 use crate::ConsentGate;
 use crate::MAX_FAULTS;

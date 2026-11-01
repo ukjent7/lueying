@@ -25,7 +25,7 @@
 
 - **分层与沙箱化扩展体系**
   - **输入方案与辅助码**：内置小鹤、自然码、微软、搜狗主流双拼方案，支持五笔单字辅助码过滤。
-  - **运行期 Wasm 沙箱**：基于 wasmi 的每扩展 worker 沙箱，支持用 Rust 编写外观主题色补丁与功能命令。
+  - **运行期 Wasm 沙箱**：基于 wasmtime 的每扩展 worker 沙箱，支持用 Rust 编写外观主题色补丁与功能命令。
   - **原生扩展宿主**：`kind=native` 的扩展以独立进程运行，AppContainer 沙箱加 Job 限额，同意指纹含可执行文件哈希。
   - **受控平台原语**：提供截图、离线 OCR（系统 OCR 或 PP-OCRv6）、剪贴板、私有存储与系统通知等安全原语，扩展层无网络面。
 
@@ -45,7 +45,7 @@ lueying-server.exe (用户常驻服务)
     ├─ 核心解码引擎 (共享二进制词典、语法搭配与重排模型)
     ├─ 候选窗口 (Direct2D: DirectComposition + WARP 兜底)
     ├─ 状态徽标 (分层窗口 Direct2D 位图)
-    └─ Wasm 扩展沙箱 (wasmi 解释执行，每扩展独立 worker)
+    └─ Wasm 扩展沙箱 (wasmtime JIT 执行，每扩展独立 worker)
 lueying-settings.exe (独立设置中心：Slint 窗口，winit 后端；更新从这里下载安装包)
 ```
 

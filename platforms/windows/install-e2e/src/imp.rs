@@ -303,7 +303,7 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     }
     std::fs::write(payload.join("version.txt"), version)
         .map_err(|e| format!("写 version.txt: {e}"))?;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     // 官方扩展源与目录副本随安装包分发;扩展中心从 {app}\extensions 安装。
     copy_tree(&root.join("extensions"), &payload.join("extensions"))?;
     copy_tree(&root.join("Catalog"), &payload.join("Catalog"))?;
@@ -319,7 +319,7 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
 fn compile_setup(payload: &Path, version: &str, out: &Path) -> Result<PathBuf, String> {
     let iscc = iscc_path()?;
     std::fs::create_dir_all(out).map_err(|e| format!("创建 {}: {e}", out.display()))?;
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../installer/lueying.iss");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../installer/lueying.iss");
     let setup = out.join(format!("lueying-{version}-setup.exe"));
     let _ = std::fs::remove_file(&setup);
     let mut command = Command::new(iscc);

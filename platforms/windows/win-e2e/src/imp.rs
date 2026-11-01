@@ -107,7 +107,7 @@ pub(super) fn run() {
 /// 清单编译期嵌入,Wasm guest 是 CI 构建产物,运行期从仓库路径读;
 /// 发布包里随安装包分发。安装器会写同意记录;E2E 直接搭目录,这里补上。
 fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
-    const MANIFEST: &str = include_str!("../../../extensions/shot-ocr/manifest.json");
+    const MANIFEST: &str = include_str!("../../../../extensions/shot-ocr/manifest.json");
     let wasm = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../extensions/shot-ocr/extension.wasm"

@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 
 /// 目录文件在编译期嵌入,发布目录里也放一份供审计。
-pub const CATALOG_JSON: &str = include_str!("../../../Catalog/official-extensions.json");
+pub const CATALOG_JSON: &str = include_str!("../../../../Catalog/official-extensions.json");
 
 /// 目录里的一个可安装项。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -85,10 +85,10 @@ impl OfficialExtension {
 }
 
 /// PP-OCR 词表:模型下载含权重,词表随程序分发,避免再依赖一个可变的 raw URL。
-pub const PPOCR_DICT: &str = include_str!("../../../Catalog/ppocr-dict.txt");
+pub const PPOCR_DICT: &str = include_str!("../../../../Catalog/ppocr-dict.txt");
 
 /// PP-OCR 原生扩展的清单:随目录分发,与源码 `extensions/ppocr` 同一份。
-pub const PPOCR_MANIFEST: &str = include_str!("../../../extensions/ppocr/manifest.json");
+pub const PPOCR_MANIFEST: &str = include_str!("../../../../extensions/ppocr/manifest.json");
 
 #[cfg(test)]
 #[path = "official_extensions_tests.rs"]

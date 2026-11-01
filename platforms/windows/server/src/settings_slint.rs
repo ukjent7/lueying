@@ -1,4 +1,4 @@
-//! 设置窗:Slint(winit 后端 + 软件渲染)承载页面,视觉对齐 macOS 27
+//! 设置窗:Slint(winit 后端 + femtovg GPU 渲染,软件渲染兜底)承载页面,视觉对齐 macOS 27
 //! 系统设置。页面模型在 `lueying_server::settings_view` 与
 //! `settings_model`,平台侧动作在 `settings_actions`;这里只做三件事:
 //! 把模型灌进 Slint 属性、把回调翻译回 `Settings::activate`、把要碰

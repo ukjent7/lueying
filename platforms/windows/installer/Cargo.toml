@@ -10,7 +10,7 @@ name = "lueying-user"
 path = "src/main.rs"
 
 [dependencies]
-lueying-protocol = { path = "../protocol" }
+lueying-protocol = { path = "../../crates/protocol" }
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = [

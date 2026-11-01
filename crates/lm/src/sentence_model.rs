@@ -217,7 +217,14 @@ impl SentenceModel {
     /// a truncated context only weakens the conditioning.
     pub(crate) fn prefix_tokens(&self, context: &str, longest: usize) -> Vec<u32> {
         let room = self.config.context.saturating_sub(longest + 1);
-        let encoded = self.encode(context);
+        // 词表外的字符(常见的是上一句结尾的标点)对条件没有信息量,只会把
+        // 上文结尾变成 <unk>;剥掉它们,上游横评里 25M 的整句有上文 top-1
+        // 从 87.0% 抬到 89.9%(metasequoiaime/chinese-ime-lm #91,sentences-ctx-v1)。
+        let encoded: Vec<u32> = self
+            .encode(context)
+            .into_iter()
+            .filter(|&token| token != UNK)
+            .collect();
         let start = encoded.len().saturating_sub(room);
         let mut tokens = Vec::with_capacity(encoded.len() - start + 1);
         tokens.push(BOS);

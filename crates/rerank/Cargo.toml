@@ -6,4 +6,4 @@ license.workspace = true
 description = "本地神经重排:4M 同步、25M 停顿门控与去抖"
 
 [dependencies]
-chinese-ime-lm = { path = "../lm" }
+lueying-lm = { path = "../lm" }

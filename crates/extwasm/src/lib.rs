@@ -1,8 +1,8 @@
-//! 运行期 Wasm 扩展:用户写同步 Rust,宿主用 wasmi 在进程内解释执行。
+//! 运行期 Wasm 扩展:用户写同步 Rust,宿主用 wasmtime JIT 在进程内执行。
 //!
 //! 扩展是一个目录(`%APPDATA%\lueying\extensions\<id>\`),里面一份
-//! `manifest.json` 与一个 `.wasm`。运行期不加载 DLL,也没有 JIT:
-//! 线性内存隔离、燃料计量、表与内存上限都在 wasmi 的 `Store` 上生效。
+//! `manifest.json` 与一个 `.wasm`。运行期不加载 DLL:Cranelift 编译、
+//! 线性内存隔离、燃料计量、表与内存上限都在 wasmtime 的 `Store` 上生效。
 //!
 //! 每个已加载扩展占一个 worker 线程,线程内持有 `Store` 与实例。命令在
 //! worker 上串行执行,截图/识别/面板这类宿主服务是阻塞调用:宿主把调用

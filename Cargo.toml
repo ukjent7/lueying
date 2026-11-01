@@ -13,7 +13,7 @@ members = [
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
-    # 运行期扩展:wasmi 宿主与每扩展 worker,平台无关
+    # 运行期扩展:wasmtime JIT 宿主与每扩展 worker,平台无关
     "crates/extwasm",
     # 运行期扩展:旁路进程层,按需启动、JSON 行协议,平台无关
     "crates/bypass",
@@ -25,14 +25,14 @@ members = [
     "crates/net",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
     "crates/render",
-    # Windows 宿主与安装
-    "crates/server",
-    "crates/tsf",
-    "crates/installer",
+    # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
+    "platforms/windows/server",
+    "platforms/windows/tsf",
+    "platforms/windows/installer",
     # 验证与工具
     "crates/e2e",
-    "crates/win-e2e",
-    "crates/install-e2e",
+    "platforms/windows/win-e2e",
+    "platforms/windows/install-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
     "extensions/ppocr",
@@ -60,11 +60,12 @@ lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-scene = { path = "crates/scene" }
-lueying-server = { path = "crates/server" }
+lueying-server = { path = "platforms/windows/server" }
 slint = { version = "1.18.1", default-features = false, features = [
     "std",
     "compat-1-2",
     "backend-winit",
+    "renderer-femtovg",
     "renderer-software",
     "accessibility",
 ] }

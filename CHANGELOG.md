@@ -12,13 +12,16 @@
 - 打字路径:会话独占锁只护引擎状态,候选窗、徽标与扩展宿主只读发布的会话视图;4M 按键重排移到后台线程,按键不再等模型;候选窗与徽标改为事件驱动等待;TSF 管道客户端改重叠 I/O,单次请求 1500 ms 上限。
 - 候选窗、模式徽标与命令面板统一走 Direct2D/DirectWrite,删除 Skia 依赖与预编译命中门禁;候选窗 GPU 管线与 WARP 兜底不变。
 - 运行期扩展外观补丁只保留主题色,删掉三个 SkSL 效果槽位与 `.luext` 的 `.sksl` 白名单。
-- 运行期扩展从 QuickJS 脚本切换到 wasmi Wasm 沙箱:扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
+- 运行期扩展从 QuickJS 脚本切换到 Wasm 沙箱(宿主 wasmtime JIT):扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
 - `lueying ext new` 生成 Rust guest crate 骨架;`lueying ext pack` 要求清单声明的 `extension.wasm` 存在。
 - 官方 `shot-ocr` 改为 Rust guest;CI 增加 wasm32 构建,文档与扩展规范同步更新。
 - 系统底线收紧为 Windows 11 24H2,x64 单架构(ARM64 宿主经 x64 模拟加载);删掉 32 位 TSF DLL 与旧配置迁移。
 - CI 拆快慢关卡:push 只跑构建、静态检查与体积门禁,Windows 全链路 E2E 移到定时任务与发版前。
 - 依赖升级:`ed25519-dalek` 3.0;令牌生成直连 `getrandom`,移除 `rand_core 0.6`、`skia-safe` 与 `rusqlite`。
 - 移除 `windows-registry`,注册表读写统一走 `windows` 的 `Win32_System_Registry`。
+- 工程分层:TSF、常驻服务、安装器与 Windows E2E 挪进 `platforms/windows/`,平台无关的引擎、语言模型与扩展宿主留在 `crates/`。
+- 设置窗 Slint 换 femtovg GPU 渲染(winit 后端,无头与 VM 环境自动回退软件渲染);补全 Cargo.lock 缺失的 slint 闭包。
+- 树内语言模型副本更名 `lueying-lm`(v0.3.0);重排上文剥掉词表外字符,25M 模型整句有上文 top-1 从 87.0% 抬到 89.9%(上游 chinese-ime-lm #91)。
 
 ## [0.1.0] - 2026-11-01
 

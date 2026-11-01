@@ -1,7 +1,7 @@
 //! 扩展宿主与 Wasm guest 共用的协议类型。
 //!
 //! 这个 crate 同时编进宿主与 `wasm32-unknown-unknown`,所以只放数据契约,
-//! 不放 wasmi、Windows 或任何宿主侧实现。场景协议仍然只描述面板状态:
+//! 不放 wasmtime、Windows 或任何宿主侧实现。场景协议仍然只描述面板状态:
 //! 没有候选文字、没有宿主应用名、没有击键历史。
 
 #![deny(missing_docs)]

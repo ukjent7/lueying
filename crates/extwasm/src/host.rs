@@ -1,4 +1,4 @@
-//! wasmi 宿主:一个扩展一个 worker,线程内持有 `Store`、实例与服务导入。
+//! wasmtime 宿主:一个扩展一个 worker,线程内持有 `Store`、实例与服务导入。
 //!
 //! 命令与外观都在 worker 上串行执行;宿主服务调用是阻塞的,但只阻塞这个
 //! worker,不碰引擎线程。trap 后实例不可再进入,下一次调用前重建。
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use lueying_extproto::{MAX_RESULT_BYTES, SceneIn, ScenePatch};
 use lueying_extsvc::Registry;
-use wasmi::{
+use wasmtime::{
     AsContext, Caller, Config, Engine, Linker, Memory, Module, Store, StoreLimits,
     StoreLimitsBuilder, TypedFunc,
 };
@@ -18,8 +18,8 @@ use wasmi::{
 use crate::Manifest;
 use crate::manifest::Service;
 
-/// worker 线程的宿主栈。Wasm 值栈另有 [`Limits::stack_bytes`] 约束;
-/// 这里要容纳 serde 解析与宿主调用,固定 1 MiB。
+/// worker 线程的宿主栈;serde 解析、宿主调用与 wasm 帧(wasmtime 把
+/// [`Limits::stack_bytes`] 当真实线程栈约束)都要装下,固定 1 MiB。
 const WORKER_STACK: usize = 1 << 20;
 
 /// 运行期上限。
@@ -27,7 +27,8 @@ const WORKER_STACK: usize = 1 << 20;
 pub struct Limits {
     /// 线性内存上限(字节)。
     pub memory_bytes: usize,
-    /// Wasm 值栈上限(字节)。
+    /// Wasm 栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
+    /// 必须明显小于 worker 线程栈(`WORKER_STACK`,1 MiB)。
     pub stack_bytes: usize,
     /// 初始化时限(毫秒);指标展示用。
     pub init_ms: u64,
@@ -422,23 +423,23 @@ impl Guest {
                 .map_err(|error| format!("注册服务 {} 失败: {error}", service.key()))?;
         }
         let instance = linker
-            .instantiate_and_start(&mut store, &module)
+            .instantiate(&mut store, &module)
             .map_err(|error| format!("扩展 {} 实例化失败: {error}", manifest.id))?;
         let memory = instance
-            .get_memory(&store, "memory")
+            .get_memory(&mut store, "memory")
             .ok_or_else(|| format!("扩展 {} 没有导出 memory", manifest.id))?;
         let alloc = instance
-            .get_typed_func::<i32, i32>(&store, "lueying_alloc")
+            .get_typed_func::<i32, i32>(&mut store, "lueying_alloc")
             .map_err(|error| format!("扩展 {} 没有导出 lueying_alloc: {error}", manifest.id))?;
         let free = instance
-            .get_typed_func::<(i32, i32), ()>(&store, "lueying_free")
+            .get_typed_func::<(i32, i32), ()>(&mut store, "lueying_free")
             .map_err(|error| format!("扩展 {} 没有导出 lueying_free: {error}", manifest.id))?;
         let result_ptr = instance
-            .get_typed_func::<(), i32>(&store, "lueying_result_ptr")
+            .get_typed_func::<(), i32>(&mut store, "lueying_result_ptr")
             .and_then(|func| func.call(&mut store, ()))
             .map_err(|error| format!("扩展 {} 没有可用的结果缓冲区: {error}", manifest.id))?;
         let result_cap = instance
-            .get_typed_func::<(), i32>(&store, "lueying_result_cap")
+            .get_typed_func::<(), i32>(&mut store, "lueying_result_cap")
             .and_then(|func| func.call(&mut store, ()))
             .map_err(|error| format!("扩展 {} 没有可用的结果容量: {error}", manifest.id))?;
         if result_ptr <= 0 || result_cap <= 0 {
@@ -449,13 +450,13 @@ impl Guest {
         store.data_mut().result_ptr = result_ptr as u32;
         store.data_mut().result_cap = result_cap as u32;
         let init = instance
-            .get_typed_func::<(), i32>(&store, "lueying_init")
+            .get_typed_func::<(), i32>(&mut store, "lueying_init")
             .ok();
         let command = instance
-            .get_typed_func::<(i32, i32, i32, i32), i32>(&store, "lueying_command")
+            .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "lueying_command")
             .ok();
         let appearance = instance
-            .get_typed_func::<(i32, i32), i32>(&store, "lueying_appearance")
+            .get_typed_func::<(i32, i32), i32>(&mut store, "lueying_appearance")
             .ok();
         if manifest.is_appearance() && appearance.is_none() {
             return Err(format!(
@@ -662,13 +663,13 @@ impl Guest {
             .store(self.memory.data_size(&self.store) as u64, Ordering::Relaxed);
     }
 
-    fn record_trap(&mut self, error: &wasmi::Error) {
+    fn record_trap(&mut self, error: &wasmtime::Error) {
         let text = error.to_string().to_ascii_lowercase();
         if text.contains("fuel") {
             self.metrics.timeouts.fetch_add(1, Ordering::Relaxed);
         }
-        // 内存限额触发时 wasmi 报 "growth operation limited" 或内存越界。
-        if text.contains("memory") || text.contains("growth") {
+        // 内存限额触发时 wasmtime 报 "memory ... exceeds memory limits" 或增长失败越界。
+        if text.contains("memory") || text.contains("grow") {
             self.metrics.ooms.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -809,14 +810,15 @@ fn timeout_for(service: Service, method: &str) -> Duration {
     }
 }
 
-/// 创建一个 wasmi 引擎;燃料与资源上限按 [`Limits`] 配。
+/// 创建一个 wasmtime 引擎;燃料与 wasm 栈上限按 [`Limits`] 配。
+///
+/// start 函数随实例化执行,与 `lueying_init` 一样受初始化燃料约束;
+/// 栈溢出与深递归由 [`Limits::stack_bytes`] 在真实线程栈上兜住。
 pub(crate) fn engine(limits: Limits) -> Result<Engine, String> {
     let mut config = Config::default();
     config.consume_fuel(true);
-    config.allow_start_fn(false);
-    config.set_max_stack_height(limits.stack_bytes.max(64 << 10));
-    config.set_max_recursion_depth(128);
-    Ok(Engine::new(&config))
+    config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
+    Engine::new(&config).map_err(|error| format!("Wasm 引擎初始化失败: {error}"))
 }
 
 /// 编译一个模块;二进制与 WAT 文本都收。
