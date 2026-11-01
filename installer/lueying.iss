@@ -1,6 +1,6 @@
 ﻿; 掠影拼音输入法安装包。
 ;
-; 安装包负责机器级动作:复制文件、注册 x64/x86 TSF、写卸载项。
+; 安装包负责机器级动作:复制文件、注册 x64 TSF、写卸载项。
 ; 当前用户状态(输入法列表、自启动、旧版快捷方式)交给 lueying-user.exe:
 ; 安装时用 runasoriginaluser 以原用户身份运行,卸载时随卸载器提权运行。
 ;
@@ -47,7 +47,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern dynamic
 PrivilegesRequired=admin
-; 只有 x64 构建;ARM64 上 TSF 无法被原生宿主加载,直接拒绝安装。
+; 目标系统 Windows 11 24H2(build 26100)起;只有 x64 构建,ARM64 直接拒绝。
+MinVersion=10.0.26100
 ArchitecturesAllowed=x64compatible and not arm64
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName}
@@ -70,8 +71,6 @@ Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{tmp}"; Flags: dontcopy noen
 ; 版本号进 DLL 文件名:升级时新文件不会被宿主加载的旧 DLL 锁住。
 Source: "{#PayloadDir}\lueying_tsf.dll"; DestDir: "{app}"; DestName: "lueying_tsf-{#VersionSafe}.dll"; \
     Flags: ignoreversion regserver 64bit uninsrestartdelete
-Source: "{#PayloadDir}\lueying_tsf32.dll"; DestDir: "{app}"; DestName: "lueying_tsf32-{#VersionSafe}.dll"; \
-    Flags: ignoreversion regserver 32bit uninsrestartdelete skipifsourcedoesntexist
 Source: "{#PayloadDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

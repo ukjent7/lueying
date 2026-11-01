@@ -6,34 +6,27 @@ fn temp(name: &str) -> PathBuf {
 }
 
 fn load_text(_name: &str, text: &str) -> AppConfig {
-    // 旧 INI 用例直接走迁移解析器;正式入口只读 config.toml。
     let mut merged = AppConfig::default();
     let mut issues = Vec::new();
-    crate::config_file::apply(
-        &mut merged,
-        crate::config_file::from_ini(text),
-        "config.ini",
-        &mut issues,
-    );
+    let file: crate::config_file::FileConfig = toml::from_str(text).expect("解析 TOML");
+    crate::config_file::apply(&mut merged, file, "config.toml", &mut issues);
     merged
 }
 
 #[test]
-fn script_key_accepts_valid_id() {
-    let cfg = load_text("valid", "script=my-pack_1\n");
+fn extensions_key_accepts_valid_id() {
+    let cfg = load_text("valid", "extensions = [\"my-pack_1\"]\n");
     assert_eq!(cfg.extensions, vec!["my-pack_1"]);
 }
 
 #[test]
-fn script_key_off_values_disable() {
-    for (index, value) in ["", "off", "none"].into_iter().enumerate() {
-        let cfg = load_text(&format!("off-{index}"), &format!("script={value}\n"));
-        assert!(cfg.extensions.is_empty(), "{value:?}");
-    }
+fn extensions_key_off_values_disable() {
+    let cfg = load_text("off", "extensions = []\n");
+    assert!(cfg.extensions.is_empty());
 }
 
 #[test]
-fn script_key_rejects_paths_and_bad_ids() {
+fn extensions_key_rejects_paths_and_bad_ids() {
     let long = "a".repeat(49);
     let bad = [
         "../evil",
@@ -45,31 +38,28 @@ fn script_key_rejects_paths_and_bad_ids() {
         long.as_str(),
     ];
     for (index, value) in bad.into_iter().enumerate() {
-        let cfg = load_text(&format!("bad-{index}"), &format!("script={value}\n"));
+        let cfg = load_text(
+            &format!("bad-{index}"),
+            &format!("extensions = [{}]\n", toml_string(value)),
+        );
         assert!(cfg.extensions.is_empty(), "{value:?}");
     }
-}
-
-#[test]
-fn script_key_accepts_extension_alias() {
-    let cfg = load_text("alias", "extension=demo-pack\n");
-    assert_eq!(cfg.extensions, vec!["demo-pack"]);
 }
 
 #[test]
 fn extensions_key_keeps_order_and_skips_bad_items() {
     let cfg = load_text(
         "list",
-        "extensions=shot-ocr, clipboard-history,../evil,shot-ocr,,\n",
+        "extensions = [\"shot-ocr\", \"clipboard-history\", \"../evil\", \"shot-ocr\"]\n",
     );
     assert_eq!(cfg.extensions, vec!["shot-ocr", "clipboard-history"]);
 }
 
 #[test]
-fn bindings_key_parses_pairs_and_skips_bad_items() {
+fn bindings_key_skips_empty_items() {
     let cfg = load_text(
         "bind",
-        "bindings=Ctrl+Alt+O=shot.run, bad-item,, Ctrl+Shift+L=clip.search ,Ctrl+Alt+O=dup,=empty,x=\n",
+        "[bindings]\n\"Ctrl+Alt+O\" = \"shot.run\"\n\"Ctrl+Shift+L\" = \"clip.search\"\n\"\" = \"empty\"\n",
     );
     assert_eq!(
         cfg.bindings,
@@ -84,7 +74,7 @@ fn bindings_key_parses_pairs_and_skips_bad_items() {
 fn triggers_key_normalizes_and_skips_bad_items() {
     let cfg = load_text(
         "trigger",
-        "triggers=BC=shot.run, sj=date.now ,bc=dup,中文=x,=empty,x=\n",
+        "[triggers]\nBC = \"shot.run\"\nSJ = \"date.now\"\n\"中文\" = \"x\"\n\"\" = \"empty\"\n",
     );
     assert_eq!(
         cfg.triggers,
@@ -93,12 +83,6 @@ fn triggers_key_normalizes_and_skips_bad_items() {
             ("sj".to_string(), "date.now".to_string()),
         ]
     );
-}
-
-#[test]
-fn extensions_key_replaces_legacy_script() {
-    let cfg = load_text("both", "script=old-pack\nextensions=new-pack\n");
-    assert_eq!(cfg.extensions, vec!["new-pack"]);
 }
 
 #[test]
@@ -117,12 +101,12 @@ fn valid_script_id_boundaries() {
 
 #[test]
 fn panel_hotkey_parses_and_off_values_disable() {
-    let cfg = load_text("panel", "panel_hotkey=Ctrl+Alt+Shift+P\n");
+    let cfg = load_text("panel", "panel_hotkey = \"Ctrl+Alt+Shift+P\"\n");
     assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+P");
     for (index, value) in ["", "off", "none"].into_iter().enumerate() {
         let cfg = load_text(
             &format!("panel-off-{index}"),
-            &format!("panel_hotkey={value}\n"),
+            &format!("panel_hotkey = {}\n", toml_string(value)),
         );
         assert!(cfg.panel_hotkey.is_empty(), "{value:?}");
     }
@@ -138,15 +122,14 @@ fn panel_hotkey_defaults_to_three_modifiers() {
 fn ocr_engine_parses_aliases() {
     assert_eq!(load_text("ocr-default", "").ocr_backend, OcrBackend::System);
     for value in ["ppocr", "pp-ocr", "paddle"] {
-        let cfg = load_text(&format!("ocr-{value}"), &format!("ocr_engine={value}\n"));
+        let cfg = load_text(
+            &format!("ocr-{value}"),
+            &format!("ocr_engine = {}\n", toml_string(value)),
+        );
         assert_eq!(cfg.ocr_backend, OcrBackend::Ppocr, "{value}");
     }
     assert_eq!(
-        load_text("ocr-alias", "ocr=ppocr\n").ocr_backend,
-        OcrBackend::Ppocr
-    );
-    assert_eq!(
-        load_text("ocr-unknown", "ocr_engine=magic\n").ocr_backend,
+        load_text("ocr-unknown", "ocr_engine = \"magic\"\n").ocr_backend,
         OcrBackend::System
     );
 }
@@ -270,4 +253,9 @@ learning = false
             learning: Some(true),
         }
     );
+}
+
+/// TOML 基本字符串转义,测试里嵌任意值用。
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }

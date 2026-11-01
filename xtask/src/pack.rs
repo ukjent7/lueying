@@ -7,8 +7,6 @@ use std::process::Command;
 
 pub(crate) struct PackArgs {
     bin: PathBuf,
-    /// i686 构建目录;提供时打包 32 位 TSF DLL。
-    bin32: Option<PathBuf>,
     data: PathBuf,
     out: PathBuf,
     version: String,
@@ -18,7 +16,6 @@ pub(crate) struct PackArgs {
 pub(crate) fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
     let mut args = PackArgs {
         bin: PathBuf::from("target/release"),
-        bin32: None,
         data: PathBuf::from("data"),
         out: PathBuf::from("dist/lueying"),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -27,7 +24,6 @@ pub(crate) fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--bin" => args.bin = it.next().map(PathBuf::from).unwrap_or(args.bin),
-            "--bin32" => args.bin32 = it.next().map(PathBuf::from),
             "--data" => args.data = it.next().map(PathBuf::from).unwrap_or(args.data),
             "--out" => args.out = it.next().map(PathBuf::from).unwrap_or(args.out),
             "--version" => args.version = it.next().unwrap_or(args.version),
@@ -85,17 +81,6 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     // 版本号由 Inno 在安装时写进目标文件名(见 installer/lueying.iss),
     // 发布目录保持构建产物的原名,便于 E2E 直接复用。
     copy_file(&dll, &args.out, "lueying_tsf.dll", &mut files)?;
-    if let Some(bin32) = &args.bin32 {
-        let dll32 = PACK_DLLS
-            .iter()
-            .map(|name| bin32.join(name))
-            .find(|path| path.exists())
-            .ok_or_else(|| format!("{} 里缺少 32 位 lueying_tsf.dll", bin32.display()))?;
-        copy_file(&dll32, &args.out, "lueying_tsf32.dll", &mut files)?;
-    } else {
-        println!("警告: 未提供 --bin32,发布包只含 x64 TSF DLL");
-    }
-
     for name in PACK_DATA {
         // fetch_rerank.sh 默认下载到 data/rerank/,发布目录却是平铺的;两种布局都接受。
         let flat = args.data.join(name);

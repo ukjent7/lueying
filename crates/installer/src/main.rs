@@ -1,6 +1,6 @@
 //! 当前用户辅助程序。机器级安装(复制文件、注册 TSF、卸载项)由 Inno Setup
-//! 完成;这里只处理必须落在发起安装的用户名下的状态:输入法列表、自启动项、
-//! 旧版快捷方式,以及升级/卸载前停止常驻服务。
+//! 完成;这里只处理必须落在发起安装的用户名下的状态:输入法列表、自启动项,
+//! 以及升级/卸载前停止常驻服务。
 //!
 //! `--install` 由安装包的 `[Run] runasoriginaluser` 调用;`--uninstall` 由卸载器
 //! 提权调用。程序没有控制台输出,失败信息写入 `LUEYING_INSTALL_TRACE`。
@@ -26,17 +26,16 @@ mod imp {
     use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        CoTaskMemFree, CoUninitialize,
+        CoUninitialize,
     };
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
-        RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW,
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW,
         RegSetValueExW,
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
-    use windows::Win32::UI::Shell::{FOLDERID_Programs, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
         TF_IPPMF_DISABLEPROFILE, TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
@@ -45,12 +44,6 @@ mod imp {
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "Lueying";
-    /// 改名前的注册项:升级安装时清掉,避免自启动指向旧目录。
-    const LEGACY_RUN_VALUE: &str = "PinyinIme";
-    const LEGACY_UNINSTALL_KEY: &str =
-        r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinyinIme";
-    /// 旧版自建安装器写的卸载项;Inno 的卸载项在 HKLM,不在这里。
-    const OLD_UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Lueying";
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
@@ -101,9 +94,6 @@ mod imp {
         let listed = set_profile_enabled(true).is_ok();
         trace(&format!("install: profile listed={listed}"));
         set_run_key(&target.join("lueying-server.exe"))?;
-        remove_old_uninstall_key();
-        remove_legacy_registry();
-        remove_shortcuts();
         // 扩展不再由安装器自动复制:设置窗的「官方扩展」按需安装并走同意流程。
         if let Err(error) =
             lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
@@ -121,7 +111,6 @@ mod imp {
         let _ = set_profile_enabled(false);
         trace("uninstall: registry");
         remove_registry();
-        remove_shortcuts();
         trace("uninstall: done");
     }
 
@@ -134,22 +123,17 @@ mod imp {
         let Ok(target) = app_dir() else {
             return;
         };
-        prune_old_dlls(
-            &target,
-            &format!("lueying_tsf-{keep}.dll"),
-            &format!("lueying_tsf32-{keep}.dll"),
-        );
+        prune_old_dlls(&target, &format!("lueying_tsf-{keep}.dll"));
     }
 
-    fn prune_old_dlls(target: &Path, keep64: &str, keep32: &str) {
+    fn prune_old_dlls(target: &Path, keep: &str) {
         let Ok(entries) = std::fs::read_dir(target) else {
             return;
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let lower = name.to_ascii_lowercase();
-            if name.eq_ignore_ascii_case(keep64)
-                || name.eq_ignore_ascii_case(keep32)
+            if name.eq_ignore_ascii_case(keep)
                 || !lower.starts_with("lueying_tsf")
                 || !lower.ends_with(".dll")
             {
@@ -305,18 +289,7 @@ mod imp {
     }
 
     fn remove_registry() {
-        remove_old_uninstall_key();
         delete_value(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE);
-        remove_legacy_registry();
-    }
-
-    fn remove_old_uninstall_key() {
-        delete_tree(HKEY_CURRENT_USER, OLD_UNINSTALL_KEY);
-    }
-
-    fn remove_legacy_registry() {
-        delete_value(HKEY_CURRENT_USER, RUN_KEY, LEGACY_RUN_VALUE);
-        delete_tree(HKEY_CURRENT_USER, LEGACY_UNINSTALL_KEY);
     }
 
     fn create_key(parent: HKEY, subkey: &str) -> Result<HKEY, String> {
@@ -373,43 +346,5 @@ mod imp {
             let _ = unsafe { RegDeleteValueW(key, PCWSTR(name.as_ptr())) };
             let _ = unsafe { RegCloseKey(key) };
         }
-    }
-
-    fn delete_tree(parent: HKEY, subkey: &str) {
-        let subkey = HSTRING::from(subkey);
-        let _ = unsafe { RegDeleteTreeW(parent, PCWSTR(subkey.as_ptr())) };
-    }
-
-    /// 旧版把「设置」和「卸载」快捷方式放在当前用户开始菜单;新版由 Inno
-    /// 写到公共开始菜单,这里清掉旧副本,避免重复。
-    fn remove_shortcuts() {
-        let dir = start_menu();
-        for name in [
-            "掠影设置.lnk",
-            "卸载掠影.lnk",
-            "拼音输入法设置.lnk",
-            "卸载拼音输入法.lnk",
-        ] {
-            let _ = std::fs::remove_file(dir.join(name));
-        }
-    }
-
-    fn start_menu() -> PathBuf {
-        // 企业环境可能重定向开始菜单;按 Known Folder 取,不用拼 APPDATA。
-        if let Ok(path) = unsafe { SHGetKnownFolderPath(&FOLDERID_Programs, KF_FLAG_DEFAULT, None) }
-        {
-            let text = unsafe { path.to_string() }.ok();
-            unsafe { CoTaskMemFree(Some(path.0 as *const core::ffi::c_void)) };
-            if let Some(text) = text {
-                return PathBuf::from(text);
-            }
-        }
-        std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("Microsoft")
-            .join("Windows")
-            .join("Start Menu")
-            .join("Programs")
     }
 }

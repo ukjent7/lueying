@@ -1,7 +1,7 @@
 # 掠影 (Lueying)
 
 <p align="left">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%20(1809+)%20%7C%2011%20(x64)-blue.svg" alt="Platform" />
+  <img src="https://img.shields.io/badge/Platform-Windows%2011%20(24H2+)%20x64-blue.svg" alt="Platform" />
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust" />
   <img src="https://img.shields.io/badge/Architecture-TSF%20Multi--Process-informational.svg" alt="TSF" />
   <img src="https://img.shields.io/badge/License-GPL--3.0--or--later-green.svg" alt="License" />
@@ -19,8 +19,8 @@
   - **个性化自学习**：本地记录选词提频、同键负分抑制、自动造词与上下文搭配学习。
 
 - **现代化自适应渲染管线**
-  - **GPU 渲染优先**：基于 Skia 图形引擎，通过 DirectComposition 交换链与 Ganesh D3D12 后端呈现高帧率无焦点窗口。
-  - **CPU 自动无感兜底**：在无硬件加速（如虚拟机、远程桌面）或显卡驱动重启时，自动换手至分层窗口（`WS_EX_LAYERED`）CPU 光栅化，打字不中断。
+  - **GPU 渲染优先**：基于 Direct2D/DirectWrite，通过 DirectComposition 交换链呈现高帧率无焦点窗口。
+  - **软件适配器兜底**：无可用硬件适配器（虚拟机、远程桌面）时切到 WARP 软件设备，绘制代码不变；设备被摘除时就地重建。
   - **完备的无障碍体验**：完整适配 Windows 高对比度模式、随系统「减少动态效果」平抑动画，并原生暴露 UI Automation 控件树。
 
 - **分层与沙箱化扩展体系**
@@ -43,7 +43,7 @@ lueying_tsf.dll (轻量薄壳，注入宿主进程，仅处理按键协议转发
     ▼
 lueying-server.exe (用户常驻服务)
     ├─ 核心解码引擎 (共享二进制词典、语法搭配与重排模型)
-    ├─ 候选窗口 (Skia: DirectComposition + D3D12，CPU 兜底)
+    ├─ 候选窗口 (Direct2D: DirectComposition + WARP 兜底)
     ├─ 状态徽标 (分层窗口 CPU 光栅化)
     └─ Wasm 扩展沙箱 (wasmi 解释执行，每扩展独立 worker)
 lueying-settings.exe (独立设置中心：Slint 窗口，winit 后端；更新从这里下载安装包)
@@ -55,8 +55,8 @@ lueying-settings.exe (独立设置中心：Slint 窗口，winit 后端；更新�
 
 ### 系统要求
 
-- **操作系统**：Windows 10（1809 及以上）或 Windows 11
-- **架构支持**：x64（64 位，含 32 位应用兼容支持）
+- **操作系统**：Windows 11 24H2（build 26100）及以上
+- **架构支持**：x64
 
 ### 安装与启用
 

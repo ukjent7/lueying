@@ -92,22 +92,8 @@ pub fn backup_import(settings: &mut Settings) {
     let files = unpack_backup(&text);
     let mut written = 0usize;
     let mut imported_user = false;
-    let mut legacy_config = false;
-    let mut legacy_apps = false;
     for (name, content) in &files {
         match name.as_str() {
-            // 旧备份里的 INI 块先并进内存,循环结束后按 TOML 落盘。
-            "config.ini" => {
-                let _ = config::apply_legacy(content, &mut settings.cfg);
-                legacy_config = true;
-                continue;
-            }
-            "apps.ini" => {
-                settings.cfg.apps = config::apps_from_legacy(content);
-                legacy_apps = true;
-                continue;
-            }
-            "config.toml" | "phrases.txt" | "punct.txt" | "apps.toml" => {}
             "user.tsv" => {
                 if send(&Request::ImportUser {
                     text: content.clone(),
@@ -116,6 +102,7 @@ pub fn backup_import(settings: &mut Settings) {
                 }
                 continue;
             }
+            "config.toml" | "phrases.txt" | "punct.txt" | "apps.toml" => {}
             _ => continue,
         }
         let target = match name.as_str() {
@@ -135,15 +122,6 @@ pub fn backup_import(settings: &mut Settings) {
                 written += 1;
             }
         }
-    }
-    if legacy_config
-        && let Some(path) = config::path()
-        && config::save(&path, &settings.cfg).is_ok()
-    {
-        written += 1;
-    }
-    if legacy_apps && config::save_apps(&settings.cfg.apps).is_ok() {
-        written += 1;
     }
     reload();
     if let Some(path) = settings.path.clone() {

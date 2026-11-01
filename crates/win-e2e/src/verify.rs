@@ -82,7 +82,6 @@ fn v3_sizes(rows: &mut Vec<Row>) {
         "lueying-settings.exe",
         "lueying-user.exe",
         "lueying_tsf.dll",
-        "lueying_tsf32.dll",
     ] {
         let path = Path::new("target/release").join(name);
         match std::fs::metadata(&path) {

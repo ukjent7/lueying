@@ -357,53 +357,7 @@ impl AppConfig {
 pub fn path() -> Option<PathBuf> {
     let base =
         PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    let dir = base.join("lueying");
-    let path = dir.join("config.toml");
-    if !path.exists() {
-        migrate_legacy(&base, &dir, &path);
-    }
-    Some(path)
-}
-
-/// 一次性把旧 `config.ini`/`apps.ini` 转成 TOML;迁移失败就留空配置。
-fn migrate_legacy(base: &Path, dir: &Path, path: &Path) {
-    let config_candidates = [
-        dir.join("config.ini"),
-        base.join("pinyin-ime").join("config.ini"),
-    ];
-    let apps_candidates = [
-        dir.join("apps.ini"),
-        base.join("pinyin-ime").join("apps.ini"),
-    ];
-    let config_text = config_candidates
-        .iter()
-        .find(|candidate| candidate.is_file())
-        .and_then(|old| std::fs::read_to_string(old).ok());
-    let apps_text = apps_candidates
-        .iter()
-        .find(|candidate| candidate.is_file())
-        .and_then(|old| std::fs::read_to_string(old).ok());
-    if config_text.is_none() && apps_text.is_none() {
-        return;
-    }
-    let mut cfg = AppConfig::default();
-    if let Some(text) = config_text {
-        crate::config_file::apply(
-            &mut cfg,
-            crate::config_file::from_ini(&text),
-            "config.ini",
-            &mut Vec::new(),
-        );
-    }
-    if let Some(text) = apps_text {
-        cfg.apps = crate::config_file::apps_from_ini(&text)
-            .into_iter()
-            .map(|(host, layer)| (host, layer.into()))
-            .collect();
-    }
-    let _ = std::fs::create_dir_all(dir);
-    let _ = save(path, &cfg);
-    let _ = save_apps(&cfg.apps);
+    Some(base.join("lueying").join("config.toml"))
 }
 
 /// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.toml`)。
@@ -542,17 +496,7 @@ pub fn skin_path() -> Option<PathBuf> {
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
     let mut issues = Vec::new();
-    // `.ini` 只给旧测试与迁移读;正式路径永远是 `config.toml`。
-    let legacy = path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("ini"));
     match std::fs::read_to_string(path) {
-        Ok(text) if legacy => crate::config_file::apply(
-            &mut cfg,
-            crate::config_file::from_ini(&text),
-            "config.ini",
-            &mut issues,
-        ),
         Ok(text) => match toml::from_str::<crate::config_file::FileConfig>(&text) {
             Ok(file) => crate::config_file::apply(&mut cfg, file, "config.toml", &mut issues),
             Err(error) => issues.push(ConfigIssue::new(
@@ -634,26 +578,6 @@ pub fn load_punct(path: Option<&Path>) -> BTreeMap<char, String> {
 /// 按应用覆盖模板;实际文件是 `apps.toml`。
 pub use crate::config_file::APPS_TEMPLATE;
 
-/// 把一份旧 `config.ini` 文本合并进现有配置;返回收集到的问题。
-pub fn apply_legacy(text: &str, cfg: &mut AppConfig) -> Vec<ConfigIssue> {
-    let mut issues = Vec::new();
-    crate::config_file::apply(
-        cfg,
-        crate::config_file::from_ini(text),
-        "config.ini",
-        &mut issues,
-    );
-    issues
-}
-
-/// 把一份旧 `apps.ini` 文本转成按应用层。
-pub fn apps_from_legacy(text: &str) -> BTreeMap<String, AppOverride> {
-    crate::config_file::apps_from_ini(text)
-        .into_iter()
-        .map(|(host, layer)| (host, layer.into()))
-        .collect()
-}
-
 /// 保存用户配置;目录不存在就创建。扩展命名空间原样写回。
 pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
@@ -666,7 +590,7 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// 保存按应用层(迁移或未来的设置页写入用)。
+/// 保存按应用层。
 pub fn save_apps(apps: &BTreeMap<String, AppOverride>) -> std::io::Result<()> {
     let Some(path) = apps_path() else {
         return Ok(());

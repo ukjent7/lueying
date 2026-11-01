@@ -12,7 +12,7 @@ lueying_tsf.dll（轻量薄壳，注入宿主进程）
     ▼
 lueying-server.exe（用户常驻服务）
     ├─ 引擎会话（按宿主线程隔离，共享词典、模型与用户词库）
-    ├─ 候选窗口（Skia 渲染：DirectComposition + Ganesh-D3D12，CPU 兜底）
+    ├─ 候选窗口（Direct2D/DirectWrite：DirectComposition 交换链 + WARP 兜底）
     ├─ 状态徽标（原生分层窗口：CPU 光栅化 + UpdateLayeredWindow）
     ├─ 后台工作线程（UIA 上下文获取、停顿重排等）
     └─ 本地日志（%LOCALAPPDATA%\lueying\logs\server.log）
@@ -43,12 +43,11 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 
 ## 渲染管线
 
-候选窗口基于 Skia 渲染，遵循 **GPU 优先、CPU 自动兜底** 原则：
+全部输入法表面共用同一套 Direct2D/DirectWrite 绘制代码，遵循 **硬件优先、软件设备兜底** 原则：
 
-- **GPU 渲染**：独立无焦点 Win32 窗口（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`），通过 DirectComposition 交换链结合 Ganesh D3D12 后端呈现。仅使用硬件适配器。
-- **CPU 兜底与换手**：在虚拟机、远程桌面或硬件加速不可用时，自动创建分层窗口（`WS_EX_LAYERED`），使用 CPU 光栅化并通过 `UpdateLayeredWindow` 上屏。
-- **异常恢复**：若 GPU 驱动重启或挂起，系统会在放弃 GPU 上下文后平滑重建分层窗口接管，保证打字过程无中断。
-- **状态徽标**：采用原生分层窗口与 CPU 光栅化，不占用 GPU 资源，并在布局上与候选窗口动态避让。
+- **候选窗口**：独立无焦点 Win32 窗口（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`），D3D11 → Direct2D → DirectComposition 交换链呈现；无硬件适配器时用 WARP 软件设备，绘制代码不变。
+- **异常恢复**：设备被摘除或驱动重启时，就地重建交换链与设备上下文，保证打字过程无中断。
+- **状态徽标与面板**：同一绘制层画到 32 位预乘位图，再经分层窗口或 BitBlt 上屏；徽标不占 GPU 资源，并在布局上与候选窗口动态避让。
 - **动效规格**：展开 140ms、淡出 90ms、翻页 90ms 滑动；支持随时被按键打断；系统开启「减少动态效果」时直接呈现终态。
 
 ## 用户数据模型
@@ -96,9 +95,9 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 - **持续集成（CI）**：
   - 静态检查：`cargo fmt --check`、`cargo clippy -- -D warnings`、rustdoc 链接检查。
   - 单元与集成测试：协议序列化、扩展沙箱、配置边界测试。
-  - 真实全链路 E2E：在 Windows 运行环境中验证真实的 TSF 注入、32/64 位宿主交互与安装包生命周期。
+  - 真实全链路 E2E：在 Windows 运行环境中验证真实的 TSF 注入、宿主交互与安装包生命周期。
 - **指标与基线控制**：
-  - **二进制体积**：全套运行时二进制总和 ≤ 80 MiB（含静态链接的 Skia）。
+  - **二进制体积**：全套运行时二进制总和 ≤ 90 MiB。
   - **内存占用**：服务端常驻峰值工作集 ≤ 128 MB。
   - **交互延迟**：按键响应 p95 ≤ 60ms，提交上屏 p95 ≤ 60ms。
   - **准确率门限**：基于固定测试语料，确保日常用例 top-1 准确率高于门限。

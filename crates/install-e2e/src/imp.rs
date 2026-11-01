@@ -171,13 +171,10 @@ fn real_run() -> Result<String, String> {
             checks.push(format!("文件 {name}"));
         }
         let dll64 = format!("lueying_tsf-{}.dll", safe_version(version));
-        let dll32 = format!("lueying_tsf32-{}.dll", safe_version(version));
-        for name in [&dll64, &dll32] {
-            if !target.join(name).is_file() {
-                return Err(format!("安装目录缺少 {name}"));
-            }
-            checks.push(format!("TSF DLL {name}"));
+        if !target.join(&dll64).is_file() {
+            return Err(format!("安装目录缺少 {dll64}"));
         }
+        checks.push(format!("TSF DLL {dll64}"));
 
         if !reg_query(RUN_KEY, Some("Lueying")) {
             return Err("缺少 HKCU 自启动项".into());
@@ -188,16 +185,13 @@ fn real_run() -> Result<String, String> {
         }
         checks.push("卸载项".into());
         let inproc64 = format!(r"HKCR\CLSID\{CLSID}\InprocServer32");
-        let inproc32 = format!(r"HKCR\WOW6432Node\CLSID\{CLSID}\InprocServer32");
         let target_text = target.to_string_lossy().to_ascii_lowercase();
-        for (key, label) in [(&inproc64, "x64"), (&inproc32, "x86")] {
-            let value = reg_read(key, Some(""))
-                .ok_or_else(|| format!("缺少 {label} TSF CLSID InprocServer32"))?;
-            if !value.to_ascii_lowercase().contains(&target_text) {
-                return Err(format!("{label} TSF 注册指向了错误路径: {value}"));
-            }
+        let value = reg_read(&inproc64, Some(""))
+            .ok_or_else(|| "缺少 x64 TSF CLSID InprocServer32".to_string())?;
+        if !value.to_ascii_lowercase().contains(&target_text) {
+            return Err(format!("x64 TSF 注册指向了错误路径: {value}"));
         }
-        checks.push("x64/x86 TSF 注册指向安装目录".into());
+        checks.push("x64 TSF 注册指向安装目录".into());
         // 注册 profile 不等于进入用户输入法列表;辅助程序必须显式启用,
         // 否则装完按 Win+空格 找不到「掠影」。profile 管理器有缓存,短暂重试。
         let mut enabled = false;
@@ -303,7 +297,6 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
         "lueying-server.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
-        "lueying_tsf32.dll",
     ] {
         std::fs::copy(bin.join(name), payload.join(name))
             .map_err(|e| format!("复制 {name}: {e}"))?;
@@ -450,7 +443,6 @@ fn update_installed(
         "lueying-server.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
-        "lueying_tsf32.dll",
         "LICENSE",
     ] {
         std::fs::copy(payload.join(name), package.join(name))
@@ -467,7 +459,7 @@ fn update_installed(
         .map_err(|e| format!("写更新包 version.txt: {e}"))?;
 
     // 被宿主加载的旧 DLL 允许留到下次,所以用未注册的合成文件验证 --prune。
-    let stale = ["lueying_tsf-0.0.1.dll", "lueying_tsf32-0.0.1.dll"];
+    let stale = ["lueying_tsf-0.0.1.dll"];
     for name in stale {
         std::fs::write(target.join(name), b"stale").map_err(|e| format!("写旧 DLL {name}: {e}"))?;
     }
@@ -489,7 +481,7 @@ fn update_installed(
     if installed.trim() != "9.9.9" {
         return Err(format!("更新后版本是 {},期望 9.9.9", installed.trim()));
     }
-    for name in ["lueying_tsf-9.9.9.dll", "lueying_tsf32-9.9.9.dll"] {
+    for name in ["lueying_tsf-9.9.9.dll"] {
         if !target.join(name).is_file() {
             return Err(format!("更新后缺少 {name}"));
         }
@@ -611,8 +603,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 /// 卸载时允许因宿主仍加载而留到重启的只有版本化 TSF DLL。
 fn is_versioned_tsf_dll(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    (lower.starts_with("lueying_tsf-") || lower.starts_with("lueying_tsf32-"))
-        && lower.ends_with(".dll")
+    lower.starts_with("lueying_tsf-") && lower.ends_with(".dll")
 }
 
 /// 文件是否已排进 Windows 的重启删除队列。Inno 对 `uninsrestartdelete`

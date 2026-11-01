@@ -1,6 +1,6 @@
 # push/PR:构建、静态检查、快速 E2E、共享语料基准与 Windows 构建体积门禁;
 # Windows 全链路 E2E 成本高,移到 quality.yml 定时与发版前跑。
-# 全量语料、x86 与安装冒烟在 quality.yml 定时跑。
+# 全量语料与安装冒烟在 quality.yml 定时跑。
 name: ci
 
 on:
@@ -281,7 +281,7 @@ jobs:
           CARGO_TARGET_DIR: target/tsf
           RUSTFLAGS: -C target-feature=+crt-static
         run: |
-          rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
+          rustup target add aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
       # Skia 预编译命中:d3d 特性已随 P2 的 D2D 迁移删除,Windows 侧回归
       # 与 Linux 相同的非 GPU 键;prebuilt-only 让预编译缺失时立刻失败,
@@ -303,7 +303,7 @@ jobs:
       - name: Build (release)
         id: build
         # 只编发版真正用到的包;64 位 E2E 宿主每次 push/PR 都编。
-        # x86 与安装冒烟成本更高,留在 quality.yml 定时跑。
+        # 安装冒烟成本更高,留在 quality.yml 定时跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
         run: cargo build --release --locked -p lueying-server -p lueying-net -p lueying-installer
       # 常驻进程不联网的可证明约束:按键与词库都在 lueying-server 手里,它的
@@ -359,20 +359,6 @@ jobs:
         id: build_install
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo build --release --locked -p lueying-install-e2e
-      - name: Build 32-bit TSF
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        env:
-          CARGO_TARGET_DIR: target/tsf
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
-      - name: Stage 32-bit DLL for install E2E
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
-      - name: Build 32-bit E2E host
-        id: build32
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
       # V1 验证分两种模式:普通 push 只测「语言包缺失时的行为」;手动触发
       # 先装 zh-CN OCR 能力,同一段代码给出中文识别质量。装不上也不挡链路。
       - name: 安装中文 OCR 语言能力
@@ -386,26 +372,6 @@ jobs:
       - name: Windows 全链路 E2E
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
-      - name: 32 位 TSF 全链路 E2E
-        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build32.outcome == 'success'
-        shell: pwsh
-        run: |
-          $dir = "target/i686-pc-windows-msvc/release"
-          Copy-Item target/release/lueying-server.exe $dir -Force
-          # 设置窗是 64 位程序(TSF DLL 才是 32 位),自检要靠它。
-          Copy-Item target/release/lueying-settings.exe $dir -Force
-          # 32 位 TSF DLL 从静态 CRT 的独立目录来(见 TSF 构建步骤)。
-          Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll $dir -Force
-          # Server 是 64 位的,依赖的运行时 DLL 也要跟着过去;TSF DLL 保留 32 位。
-          Get-ChildItem target/release -Filter *.dll -File |
-            Where-Object { $_.Name -notlike "lueying_tsf*" } |
-            Copy-Item -Destination $dir -Force
-          New-Item -ItemType Directory -Force target/x86-e2e | Out-Null
-          Push-Location target/x86-e2e
-          & "..\i686-pc-windows-msvc\release\lueying-win-e2e.exe"
-          $code = $LASTEXITCODE
-          Pop-Location
-          exit $code
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_install.outcome == 'success'
@@ -445,14 +411,6 @@ jobs:
             target/win-e2e-tsf.log
             target/win-e2e-server.log
             target/lueying-settings-selftest.txt
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
-        with:
-          name: x86-e2e-report
-          path: |
-            target/x86-e2e/target/win-e2e-report.md
-            target/x86-e2e/target/win-e2e-tsf.log
-            target/x86-e2e/target/win-e2e-server.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
         with:
@@ -502,7 +460,7 @@ jobs:
         run: |
           version_args=()
           if [ -n "${VERSION:-}" ]; then version_args=(--version "$VERSION"); fi
-          cargo run -p xtask --release --locked -- pack --bin target/release --bin32 target/tsf/i686-pc-windows-msvc/release --data data --out dist/lueying "${version_args[@]}"
+          cargo run -p xtask --release --locked -- pack --bin target/release --data data --out dist/lueying "${version_args[@]}"
       # 签名脚手架:仓库里配 WINDOWS_PFX_BASE64(PFX 证书的 base64)与
       # WINDOWS_PFX_PASSWORD 两个 secret 后,tag 构建自动签 setup.exe 并加
       # RFC3161 时间戳;没配 secret 时跳过,发布物与现状一致。
@@ -534,7 +492,6 @@ jobs:
           test -f dist/lueying/licenses/CC-BY-4.0.txt
           test -f dist/lueying/lueying-user.exe
           test -f dist/lueying/lueying_tsf.dll
-          test -f dist/lueying/lueying_tsf32.dll
           test -f dist/lueying/main.gram
           ls dist/lueying-*-setup.exe >/dev/null
           if [ -n "${VERSION:-}" ]; then

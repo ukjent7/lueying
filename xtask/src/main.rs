@@ -7,7 +7,7 @@
 //!   公钥验签)。
 //!
 //! 用法:`cargo run -p xtask -- dict --frost <白霜cn_dicts目录> --out <输出.tsv>`
-//! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/tsf/i686-pc-windows-msvc/release --data data --out dist/lueying`
+//! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/lueying`
 //! 用法:`cargo run -p xtask -- update-manifest --version 0.2.0 --name lueying-0.2.0-setup.exe --size N --sha256 <hex> --mirror <url> --out dist`
 //! 用法:`cargo run -p xtask -- sign-manifest --manifest dist/lueying-manifest.json --key <种子文件>`
 //! 用法:`cargo run -p xtask -- catalog-exe --exe target/release/ppocr.exe --url <发布资产地址>`

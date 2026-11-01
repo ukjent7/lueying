@@ -1,4 +1,4 @@
-# 全量语料、x86 与安装冒烟的定时检查。每次 push/PR 的快速门禁在 ci.yml;
+# 全量语料与安装冒烟的定时检查。每次 push/PR 的快速门禁在 ci.yml;
 # 这里保留成本更高的全量基准与安装链路,每小时看一次默认分支。
 # 同一提交成功跑过就跳过;需要立刻验证时手动 workflow_dispatch。
 name: quality
@@ -128,7 +128,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 定时跑不区分 PR,恢复并保存缓存;编译大头仍是 GPUI/zed 依赖树。
+      # 定时跑不区分 PR,恢复并保存缓存。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # 官方 guest:win-e2e 装扩展与安装冒烟的发布包都要它;产物拷进仓库路径供运行期读取。
       - name: 构建 shot-ocr guest
@@ -150,9 +150,6 @@ jobs:
         id: build
         # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
         run: cargo build --release --locked -p lueying-server -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
-      # 定时任务不经过 ci.yml 的 ARM64 检查,这里要自己补 i686 target。
-      - name: 安装 i686 target
-        run: rustup target add i686-pc-windows-msvc
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release。
       - name: TSF 构建(静态 CRT)
         id: buildtsf
@@ -162,43 +159,10 @@ jobs:
         run: |
           cargo build --release --locked -p lueying-tsf
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
-      - name: Build 32-bit TSF
-        id: build32tsf
-        env:
-          CARGO_TARGET_DIR: target/tsf
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release -p lueying-tsf --target i686-pc-windows-msvc --locked
-      - name: Stage 32-bit DLL for install E2E
-        id: stage32
-        shell: pwsh
-        run: Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll target/release/lueying_tsf32.dll
-      - name: Build 32-bit E2E host
-        id: build32
-        run: cargo build --release -p lueying-win-e2e --target i686-pc-windows-msvc --locked
       - name: Windows 全链路 E2E
         run: cargo run -p lueying-win-e2e --release --locked
-      - name: 32 位 TSF 全链路 E2E
-        if: always() && steps.build.outcome == 'success' && steps.build32.outcome == 'success'
-        shell: pwsh
-        run: |
-          $dir = "target/i686-pc-windows-msvc/release"
-          Copy-Item target/release/lueying-server.exe $dir -Force
-          # 设置窗自检从 E2E 同目录拉起独立进程;它是 64 位的,跟 Server 一样拷过来。
-          Copy-Item target/release/lueying-settings.exe $dir -Force
-          # 32 位 TSF DLL 从静态 CRT 的独立目录来。
-          Copy-Item target/tsf/i686-pc-windows-msvc/release/lueying_tsf.dll $dir -Force
-          # Server 是 64 位的,依赖的运行时 DLL 也要跟着过去;TSF DLL 保留 32 位。
-          Get-ChildItem target/release -Filter *.dll -File |
-            Where-Object { $_.Name -notlike "lueying_tsf*" } |
-            Copy-Item -Destination $dir -Force
-          New-Item -ItemType Directory -Force target/x86-e2e | Out-Null
-          Push-Location target/x86-e2e
-          & "..\i686-pc-windows-msvc\release\lueying-win-e2e.exe"
-          $code = $LASTEXITCODE
-          Pop-Location
-          exit $code
       - name: 安装/卸载冒烟
-        if: always() && steps.build.outcome == 'success' && steps.buildtsf.outcome == 'success' && steps.build32tsf.outcome == 'success' && steps.stage32.outcome == 'success' && steps.build32.outcome == 'success'
+        if: always() && steps.build.outcome == 'success' && steps.buildtsf.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-install-e2e --release --locked
       # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
@@ -221,7 +185,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $files = @("target/win-e2e-report.md", "target/x86-e2e/target/win-e2e-report.md", "target/install-e2e-report.md")
+          $files = @("target/win-e2e-report.md", "target/install-e2e-report.md")
           foreach ($file in $files) {
             if (Test-Path $file) { Get-Content $file | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
           }
@@ -233,9 +197,6 @@ jobs:
             target/win-e2e-report.md
             target/win-e2e-tsf.log
             target/win-e2e-server.log
-            target/x86-e2e/target/win-e2e-report.md
-            target/x86-e2e/target/win-e2e-tsf.log
-            target/x86-e2e/target/win-e2e-server.log
             target/install-e2e-report.md
             target/install-e2e-trace.log
             target/install-e2e-logs/
