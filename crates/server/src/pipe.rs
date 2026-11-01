@@ -1,8 +1,8 @@
-//! 命名管道监听:多实例阻塞模式,每连接一个线程,行 JSON 请求-应答。
+//! 命名管道监听:多实例阻塞模式,每连接一个线程,长度前缀帧请求-应答。
 //! 建法与青简 server 相同:CreateNamedPipeW + ConnectNamedPipe,句柄交给 `File` 管。
 
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Write};
 use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -34,9 +34,6 @@ use lueying_protocol::{MANAGE_CLIENTS, Privilege, Request};
 use crate::imp::State;
 
 const BUFFER_SIZE: u32 = 64 * 1024;
-/// 一条请求行的上限。DLL 的一行远小于这个数;不发换行的坏对端不能把
-/// 内存撑爆,超限直接断线。
-const MAX_LINE: u64 = 1024 * 1024;
 /// 处理耗时超过这个值的请求记进服务日志。键入路径的常态是 10 ms 上下;
 /// 超过通常是 4M/25M 推理或词典冷页,排障时拿它对齐宿主卡顿。
 const SLOW_REQUEST_MS: u128 = 100;
@@ -244,21 +241,18 @@ fn serve(file: File, state: Arc<State>) {
         Err(_) => return,
     };
     let mut reader = BufReader::new(file);
-    let mut line = Vec::new();
     let conn = NEXT_CONN.fetch_add(1, Ordering::Relaxed);
     let mut session = None;
     loop {
-        line.clear();
-        // 单行上限:对端不发换行也不能把内存撑爆;`take` 读满仍没有换行,
-        // 剩下的半行不能当成下一条请求,直接断线。
-        match reader.by_ref().take(MAX_LINE).read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) if !line.ends_with(b"\n") => break,
-            Ok(_) => {}
-        }
-        let request = std::str::from_utf8(&line)
-            .ok()
-            .and_then(|text| serde_json::from_str::<Request>(text.trim()).ok());
+        // 单帧上限:对端不发完整帧也不能把内存撑爆;半帧不能当成下一条
+        // 请求,直接断线。
+        let body = match lueying_protocol::read_frame(&mut reader) {
+            Ok(body) => body,
+            Err(_) => break,
+        };
+        let request = lueying_protocol::decode::<Request>(&body).ok();
+        // 变体名留作慢请求日志;request 马上要被 handle 消费掉。
+        let kind = request.as_ref().map(|req| req.kind());
         // Hello 与连接绑定:同一会话重连后,旧连接断开不能删掉新会话。
         if let Some(Request::Hello {
             session: hello_session,
@@ -287,11 +281,11 @@ fn serve(file: File, state: Arc<State>) {
             .as_ref()
             .and_then(|req| deny_reason(identity.as_ref(), req));
         let reply = if let Some(reason) = denied {
-            let kind = request
+            let privilege = request
                 .as_ref()
                 .map(|req| format!("{:?}", req.privilege()))
                 .unwrap_or_default();
-            println!("拒绝 {kind} 请求({reason}):pid={pid}");
+            println!("拒绝 {privilege} 请求({reason}):pid={pid}");
             crate::imp::neutral(&state)
         } else {
             request
@@ -313,26 +307,17 @@ fn serve(file: File, state: Arc<State>) {
         };
         let elapsed = started.elapsed().as_millis();
         if elapsed >= SLOW_REQUEST_MS {
-            // 行 JSON 的行首就是变体名;只留名字,别把整条按键灌进日志。
-            let kind = std::str::from_utf8(&line)
-                .map(|text| {
-                    text.trim_start_matches('{')
-                        .split(':')
-                        .next()
-                        .unwrap_or("?")
-                        .trim_matches('"')
-                        .to_string()
-                })
-                .unwrap_or_else(|_| "?".to_string());
-            println!("慢请求 {kind} 用了 {elapsed} ms");
+            // 只留变体名,别把整条按键灌进日志。
+            println!("慢请求 {} 用了 {elapsed} ms", kind.unwrap_or("?"));
         }
-        let mut out = match serde_json::to_string(&reply) {
-            Ok(s) => s,
+        // 坏帧不中断连接:回中性应答,帧界由长度前缀保证,后续帧照常解。
+        match lueying_protocol::encode(&reply) {
+            Ok(frame) => {
+                if writer.write_all(&frame).is_err() || writer.flush().is_err() {
+                    break;
+                }
+            }
             Err(_) => break,
-        };
-        out.push('\n');
-        if writer.write_all(out.as_bytes()).is_err() || writer.flush().is_err() {
-            break;
         }
     }
     // 宿主崩溃/被结束不会发 Goodbye;连接断开即清理会话,词典与重排缓存不常驻。

@@ -19,7 +19,7 @@ use windows::core::PWSTR;
 
 pub(crate) struct Client {
     reader: File,
-    /// 已读到但还没凑成完整行的字节(管道是字节流)。
+    /// 已读到但还没凑成完整帧的字节(管道是字节流)。
     pending: Vec<u8>,
     writer: File,
 }
@@ -27,8 +27,6 @@ pub(crate) struct Client {
 /// 单次请求-应答的上限。Server 卡住时不能让宿主 UI 线程无限等;
 /// 超时按断线处理,下一次按键重新连接。
 const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(1500);
-/// 一行协议的上限,防止坏对端把内存撑爆。
-const MAX_LINE: usize = 1024 * 1024;
 
 /// 校验管道对端是 lueying-server:抢占了管道名的进程连按键都拿不到。
 /// 查不到服务端 PID 或映像名不符一律视为假服务。
@@ -113,20 +111,15 @@ impl Client {
 
     /// 一次请求-应答;任何一步失败或超时都返回 None(上层视作断线)。
     pub(crate) fn round_trip(&mut self, req: &Request) -> Option<Reply> {
-        let mut line = serde_json::to_string(req).ok()?;
-        line.push('\n');
-        self.writer.write_all(line.as_bytes()).ok()?;
+        let frame = lueying_protocol::encode(req).ok()?;
+        self.writer.write_all(&frame).ok()?;
         self.writer.flush().ok()?;
         let deadline = Instant::now() + ROUND_TRIP_TIMEOUT;
         loop {
-            if let Some(line) = take_line(&mut self.pending) {
-                if line.is_empty() {
-                    continue;
-                }
-                return serde_json::from_str(&line).ok();
-            }
-            if self.pending.len() > MAX_LINE {
-                return None;
+            match lueying_protocol::take_frame(&mut self.pending) {
+                Err(_) => return None,
+                Ok(Some(body)) => return lueying_protocol::decode(&body).ok(),
+                Ok(None) => {}
             }
             let now = Instant::now();
             if now >= deadline {
@@ -158,16 +151,6 @@ impl Client {
             self.pending.extend_from_slice(&buf[..read]);
         }
     }
-}
-
-/// 从缓冲区取出一行(不含换行符);没有完整行时返回 None。
-fn take_line(pending: &mut Vec<u8>) -> Option<String> {
-    let end = pending.iter().position(|&byte| byte == b'\n')?;
-    let line: Vec<u8> = pending.drain(..=end).collect();
-    String::from_utf8(line).ok().map(|line| {
-        line.trim_end_matches(|c| c == '\r' || c == '\n')
-            .to_string()
-    })
 }
 
 /// 激活输入法时先拉起 Server,让词典与重排模型在用户敲第一键前开始加载。

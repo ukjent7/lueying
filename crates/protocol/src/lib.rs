@@ -1,5 +1,7 @@
-//! TSF DLL 与 Server 进程间的协议。传输为命名管道上的行 JSON(每行一条,
-//! 请求-应答串行,调试器可直接抓管道看明文)。
+//! TSF DLL 与 Server 进程间的协议。传输为命名管道上的长度前缀 postcard 帧
+//! (4 字节小端长度 + 编码体,请求-应答串行);帧上限与坏对端防护见 [`MAX_FRAME`]。
+
+use std::io::Read;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,8 +12,8 @@ mod spawn;
 pub use spawn::spawn_detached;
 pub mod version;
 
-/// 管道名(版本号入名,协议不兼容时换 v2)。
-pub const PIPE_NAME: &str = r"\\.\pipe\lueying-v1";
+/// 管道名(版本号入名,协议不兼容时换版本号)。
+pub const PIPE_NAME: &str = r"\\.\pipe\lueying-v2";
 
 /// 带每用户、每会话后缀的管道名:用户名哈希 + 登录会话号入名。
 ///
@@ -58,6 +60,100 @@ fn current_session() -> u32 {
     #[cfg(not(windows))]
     {
         0
+    }
+}
+
+/// 单帧上限:一条请求或应答的最大字节数。坏对端不能把内存撑爆,超限断线。
+pub const MAX_FRAME: usize = 1024 * 1024;
+
+/// 编解码失败的人话原因。
+#[derive(Debug)]
+pub enum CodecError {
+    /// 帧体超过 [`MAX_FRAME`]。
+    TooLarge(usize),
+    /// 对端在帧中途关闭或写入截断。
+    Truncated,
+    /// postcard 编解码失败。
+    Format(postcard::Error),
+}
+
+impl std::fmt::Display for CodecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge(len) => write!(f, "帧体 {len} 字节,超过上限 {MAX_FRAME}"),
+            Self::Truncated => f.write_str("对端在帧中途关闭"),
+            Self::Format(error) => write!(f, "编码错误: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CodecError {}
+
+/// 编码一条消息为帧:4 字节小端长度 + postcard 体。
+pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, CodecError> {
+    let body = postcard::to_allocvec(value).map_err(CodecError::Format)?;
+    if body.len() > MAX_FRAME {
+        return Err(CodecError::TooLarge(body.len()));
+    }
+    let mut frame = Vec::with_capacity(4 + body.len());
+    frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&body);
+    Ok(frame)
+}
+
+/// 解码一条帧体(不含长度头)。
+pub fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, CodecError> {
+    postcard::from_bytes(body).map_err(CodecError::Format)
+}
+
+/// 从字节流缓冲里取一条完整帧,返回帧体;不完整返回 `None`。
+/// 头部声明的长度超过 [`MAX_FRAME`] 视为对端损坏,调用方应断线。
+pub fn take_frame(pending: &mut Vec<u8>) -> Result<Option<Vec<u8>>, CodecError> {
+    if pending.len() < 4 {
+        return Ok(None);
+    }
+    let len = u32::from_le_bytes([pending[0], pending[1], pending[2], pending[3]]) as usize;
+    if len > MAX_FRAME {
+        return Err(CodecError::TooLarge(len));
+    }
+    let end = 4 + len;
+    if pending.len() < end {
+        return Ok(None);
+    }
+    Ok(Some(pending.drain(..end).skip(4).collect()))
+}
+
+/// 阻塞读一条完整帧(4 字节头 + 体)。对端关闭或截断时报 [`CodecError::Truncated`]。
+pub fn read_frame(reader: &mut impl Read) -> Result<Vec<u8>, CodecError> {
+    let mut header = [0u8; 4];
+    reader.read_exact(&mut header).map_err(|_| CodecError::Truncated)?;
+    let len = u32::from_le_bytes(header) as usize;
+    if len > MAX_FRAME {
+        return Err(CodecError::TooLarge(len));
+    }
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body).map_err(|_| CodecError::Truncated)?;
+    Ok(body)
+}
+
+/// `serde_json::Value` 在 postcard 帧里以 JSON 字符串过桥:postcard 是非自描述
+/// 格式,`Value` 的 `deserialize_any` 走不通;字符串字段畅通。
+mod value_as_json {
+    use serde::{Deserializer, Serializer};
+    use serde_json::Value;
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Value,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&serde_json::to_string(value).unwrap_or_default())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Value, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        serde_json::from_str(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -180,7 +276,7 @@ pub enum Request {
     Ext {
         id: String,
         method: String,
-        #[serde(default)]
+        #[serde(default, with = "value_as_json")]
         params: Value,
     },
     /// 对外 commit 通道:本地工具借用上屏能力,不必自己做输入法。令牌
@@ -209,6 +305,45 @@ pub enum Privilege {
 pub const MANAGE_CLIENTS: &[&str] = &["lueying-settings.exe", "lueying.exe", "lueying-user.exe"];
 
 impl Request {
+    /// 变体名;慢请求日志与诊断用。
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Hello { .. } => "Hello",
+            Self::Key { .. } => "Key",
+            Self::TakeKey { .. } => "TakeKey",
+            Self::Sync { .. } => "Sync",
+            Self::Context { .. } => "Context",
+            Self::SetMode { .. } => "SetMode",
+            Self::ToggleMode { .. } => "ToggleMode",
+            Self::ToggleFullwidth { .. } => "ToggleFullwidth",
+            Self::SetFullwidth { .. } => "SetFullwidth",
+            Self::ReloadConfig => "ReloadConfig",
+            Self::TogglePunct => "TogglePunct",
+            Self::ClearUser => "ClearUser",
+            Self::ExportUser => "ExportUser",
+            Self::ImportUser { .. } => "ImportUser",
+            Self::FuzzyStats => "FuzzyStats",
+            Self::Status => "Status",
+            Self::EffectTemplates => "EffectTemplates",
+            Self::ResetFuzzy => "ResetFuzzy",
+            Self::Shutdown => "Shutdown",
+            Self::Focus { .. } => "Focus",
+            Self::CompositionTerminated { .. } => "CompositionTerminated",
+            Self::Caret { .. } => "Caret",
+            Self::Pick { .. } => "Pick",
+            Self::Pin { .. } => "Pin",
+            Self::Demote { .. } => "Demote",
+            Self::PickIndex { .. } => "PickIndex",
+            Self::Finalize { .. } => "Finalize",
+            Self::SelectIndex { .. } => "SelectIndex",
+            Self::Page { .. } => "Page",
+            Self::UiMode { .. } => "UiMode",
+            Self::Ext { .. } => "Ext",
+            Self::ExternalCommit { .. } => "ExternalCommit",
+            Self::Goodbye { .. } => "Goodbye",
+        }
+    }
+
     /// 请求的特权层级。`ExternalCommit` 自带令牌授权,`TogglePunct` 等
     /// 是用户按键,都归 [`Privilege::Host`]。
     pub fn privilege(&self) -> Privilege {
@@ -242,20 +377,20 @@ pub struct Reply {
     /// 键应直通给应用。
     pub passthrough: bool,
     /// 模糊组统计(仅设置窗的 `FuzzyStats`/`ResetFuzzy` 应答使用)。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub groups: Vec<(String, u32)>,
     /// 用户词库文本(仅 `ExportUser` 应答使用)。
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub user: String,
     /// 引擎资源状态(仅 `Status` 应答使用)。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub status: Option<EngineStatus>,
     /// 用户效果模板(仅 `EffectTemplates` 应答使用):(文件名, 源码)。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub templates: Vec<(String, String)>,
     /// 全部候选(按页切片由 `page`/`page_size` 决定),供 TSF 的
     /// `ITfCandidateListUIElement` 回答宿主与读屏软件。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub candidates: Vec<String>,
     /// 当前页号与每页候选数(候选 UI 元素的分页信息)。
     #[serde(default)]
@@ -266,10 +401,10 @@ pub struct Reply {
     #[serde(default)]
     pub highlight: usize,
     /// 通用扩展请求的应答(仅 `Ext` 使用)。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub ext: Option<ExtReply>,
     /// 对外 commit 通道的结果(仅 `ExternalCommit` 使用)。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub commit: Option<CommitReply>,
 }
 
@@ -277,7 +412,7 @@ pub struct Reply {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommitReply {
     pub delivered: bool,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub error: String,
 }
 
@@ -285,9 +420,9 @@ pub struct CommitReply {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExtReply {
     pub ok: bool,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
+    #[serde(default, with = "value_as_json")]
     pub value: Value,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
     pub error: String,
 }
 

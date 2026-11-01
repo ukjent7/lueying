@@ -5,7 +5,7 @@
 //! 原样内嵌。
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use lueying_extmeta::Manifest;
@@ -409,18 +409,16 @@ pub fn reload() -> Result<(), String> {
         .write(true)
         .open(pipe_name())
         .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
-    let line =
-        serde_json::to_string(&Request::ReloadConfig).map_err(|e| format!("序列化请求: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
-    file.flush().map_err(|e| format!("写管道: {e}"))?;
-    let mut reply = String::new();
-    BufReader::new(file)
-        .read_line(&mut reply)
-        .map_err(|e| format!("读应答: {e}"))?;
-    if reply.trim().is_empty() {
-        return Err("服务没有应答 ReloadConfig".into());
+    let frame = lueying_protocol::encode(&Request::ReloadConfig).map_err(|e| e.to_string())?;
+    file.write_all(&frame)
+        .and_then(|()| file.flush())
+        .map_err(|e| format!("写管道: {e}"))?;
+    match lueying_protocol::read_frame(&mut BufReader::new(file)) {
+        Ok(body) => lueying_protocol::decode::<lueying_protocol::Reply>(&body)
+            .map(|_| ())
+            .map_err(|e| format!("解析应答: {e}")),
+        Err(_) => Err("服务没有应答 ReloadConfig".into()),
     }
-    Ok(())
 }
 
 /// 对外 commit 通道的令牌路径,与服务端 `config::commit_token_path` 同址。
@@ -466,21 +464,19 @@ fn send_external_commit(
         .write(true)
         .open(pipe_name())
         .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
-    let line = serde_json::to_string(&Request::ExternalCommit {
+    let request = Request::ExternalCommit {
         token: token.unwrap_or_default().to_string(),
         text: text.to_string(),
-    })
-    .map_err(|e| format!("序列化请求: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
-    file.flush().map_err(|e| format!("写管道: {e}"))?;
-    let mut reply = String::new();
-    BufReader::new(file)
-        .read_line(&mut reply)
-        .map_err(|e| format!("读应答: {e}"))?;
-    if reply.trim().is_empty() {
-        return Err("服务没有应答 ExternalCommit".into());
+    };
+    let frame = lueying_protocol::encode(&request).map_err(|e| e.to_string())?;
+    file.write_all(&frame)
+        .and_then(|()| file.flush())
+        .map_err(|e| format!("写管道: {e}"))?;
+    match lueying_protocol::read_frame(&mut BufReader::new(file)) {
+        Ok(body) => lueying_protocol::decode::<lueying_protocol::Reply>(&body)
+            .map_err(|e| format!("解析应答: {e}")),
+        Err(_) => Err("服务没有应答 ExternalCommit".into()),
     }
-    serde_json::from_str(reply.trim()).map_err(|e| format!("解析应答: {e}"))
 }
 
 /// 发一条请求收一条应答;`what` 只用于空应答的报错。
@@ -490,17 +486,15 @@ fn pipe_call(request: &Request, what: &str) -> Result<lueying_protocol::Reply, S
         .write(true)
         .open(pipe_name())
         .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
-    let line = serde_json::to_string(request).map_err(|e| format!("序列化请求: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写管道: {e}"))?;
-    file.flush().map_err(|e| format!("写管道: {e}"))?;
-    let mut reply = String::new();
-    BufReader::new(file)
-        .read_line(&mut reply)
-        .map_err(|e| format!("读应答: {e}"))?;
-    if reply.trim().is_empty() {
-        return Err(format!("服务没有应答 {what}"));
+    let frame = lueying_protocol::encode(request).map_err(|e| e.to_string())?;
+    file.write_all(&frame)
+        .and_then(|()| file.flush())
+        .map_err(|e| format!("写管道: {e}"))?;
+    match lueying_protocol::read_frame(&mut BufReader::new(file)) {
+        Ok(body) => lueying_protocol::decode::<lueying_protocol::Reply>(&body)
+            .map_err(|e| format!("解析应答: {e}")),
+        Err(_) => Err(format!("服务没有应答 {what}")),
     }
-    serde_json::from_str(reply.trim()).map_err(|e| format!("解析应答: {e}"))
 }
 
 /// 取回通用扩展请求的值;服务端报错原样上抛。

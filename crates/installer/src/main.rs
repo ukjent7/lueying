@@ -251,11 +251,9 @@ mod imp {
                 unsafe {
                     let _ = GetNamedPipeServerProcessId(HANDLE(file.as_raw_handle()), &mut pid);
                 }
-                let mut line = serde_json::to_string(&Request::Shutdown).unwrap_or_default();
-                line.push('\n');
-                {
+                if let Ok(frame) = lueying_protocol::encode(&Request::Shutdown) {
                     let mut writer = file;
-                    let _ = writer.write_all(line.as_bytes());
+                    let _ = writer.write_all(&frame);
                     let _ = writer.flush();
                 }
                 trace("stop_server: terminate pipe owner");

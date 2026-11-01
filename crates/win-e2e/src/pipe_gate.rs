@@ -1,7 +1,7 @@
 //! 管道授权门的 E2E 断言:E2E 进程不是本产品工具,Manage 请求必须被拒,
 //! 只读请求与打字流照常放行。对端是真实常驻服务,授权链路全真。
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::os::windows::fs::OpenOptionsExt;
 
 use lueying_protocol::{Reply, Request};
@@ -18,17 +18,13 @@ fn round_trip(request: &Request) -> Result<Reply, String> {
         .map_err(|_| "常驻服务管道连不上".to_string())?;
     let mut writer = file;
     let mut reader = BufReader::new(writer.try_clone().map_err(|e| e.to_string())?);
-    let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
-    line.push('\n');
+    let frame = lueying_protocol::encode(request).map_err(|e| e.to_string())?;
     writer
-        .write_all(line.as_bytes())
+        .write_all(&frame)
         .and_then(|()| writer.flush())
         .map_err(|e| format!("写管道: {e}"))?;
-    let mut reply = String::new();
-    reader
-        .read_line(&mut reply)
-        .map_err(|e| format!("读应答: {e}"))?;
-    serde_json::from_str(reply.trim()).map_err(|e| format!("应答不是合法 Reply: {e}"))
+    let body = lueying_protocol::read_frame(&mut reader).map_err(|e| e.to_string())?;
+    lueying_protocol::decode::<Reply>(&body).map_err(|e| format!("应答不是合法 Reply: {e}"))
 }
 
 /// 非工具进程的特权请求要被拒成中性应答,同用户的只读请求要放行。

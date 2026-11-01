@@ -3,7 +3,7 @@
 //! 页面与配置改动在 [`crate::settings_view`];这里只做「要动文件系统、
 //! 要问常驻服务」的事,以及那些离不开 Windows API 的对话框。
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 
 use crate::config::{self, AppOverride};
@@ -36,13 +36,11 @@ pub fn call(request: &Request) -> Option<Reply> {
         .write(true)
         .open(pipe_name())
         .ok()?;
-    let mut line = serde_json::to_string(request).ok()?;
-    line.push('\n');
-    file.write_all(line.as_bytes()).ok()?;
-    file.flush().ok()?;
-    let mut reply = String::new();
-    BufReader::new(file).read_line(&mut reply).ok()?;
-    serde_json::from_str(&reply).ok()
+    let frame = lueying_protocol::encode(request).ok()?;
+    file.write_all(&frame).and_then(|()| file.flush()).ok()?;
+    let mut reader = BufReader::new(file);
+    let body = lueying_protocol::read_frame(&mut reader).ok()?;
+    lueying_protocol::decode::<Reply>(&body).ok()
 }
 
 /// 给常驻 Server 发一条请求;没在运行返回 false。
