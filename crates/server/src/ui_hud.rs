@@ -1,7 +1,7 @@
 //! 模式徽标:Win32 分层窗口 + Skia 光栅绘制。
 //!
-//! 徽标与候选窗各走各的渲染路径:候选窗在 Ganesh-D3D12 管线里,徽标走 CPU
-//! 光栅——徽标得在没有硬件 D3D12 的机器上也看得见,分层窗口不依赖 GPU。
+//! 徽标与候选窗各走各的渲染路径:候选窗在 D2D 管线里,徽标走 CPU 光栅——
+//! 分层窗口不依赖 GPU,候选窗管线起不来时徽标也照常显示。
 //! 画面是预乘 alpha 的位图,靠 UpdateLayeredWindow 上屏,圆角、描边与淡入
 //! 淡出都是逐像素的。
 
@@ -80,7 +80,7 @@ fn hud_loop(state: Arc<State>) {
             return;
         }
     };
-    let font = crate::ui_skia::panel_font();
+    let font = crate::font::panel_font();
     let mut serial = 0u64;
     let mut current: Option<HudView> = None;
     // 首帧上屏后再显示,避免从停靠点挪到光标处时闪一帧旧徽标。
@@ -106,7 +106,7 @@ fn hud_loop(state: Arc<State>) {
             current = hud_view(&state);
             appearance = theme::Appearance::of_system();
             accent = accent_of(&state);
-            reduce = crate::ui_skia::reduce_motion();
+            reduce = crate::ui_d2d::reduce_motion();
         }
         let expired = current
             .as_ref()

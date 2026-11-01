@@ -700,13 +700,13 @@ pub static SETTINGS: &[SettingDef] = &[
     },
     SettingDef {
         key: "effects",
-        title: "用户效果",
-        detail: "SkSL 装饰层,放进去即生效",
+        title: "场景装饰",
+        detail: "场景装饰层,scene.toml 一秒内热重载",
         value: ValueType::Bool,
         default: DefaultValue::Bool(true),
         ui: Some(UiDef {
             page: PageId::Candidate,
-            keywords: "效果 动画 外观 SkSL",
+            keywords: "效果 动画 外观 场景",
             control: toggle(ids::EFFECTS_TOGGLE, effects_get, effects_set),
             visible: always,
         }),

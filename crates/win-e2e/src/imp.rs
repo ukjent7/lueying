@@ -299,10 +299,8 @@ fn real_run() -> Result<(String, String), String> {
         .env("APPDATA", &data)
         // CI 没有交互桌面,不建候选窗,只保留管道服务。
         .env("LUEYING_SERVER_NO_UI", "1")
-        // Skia 渲染管线自检:建窗、Ganesh-D3D12 出帧、读回像素,结果写日志。
-        .env("LUEYING_SKIA_SELFTEST", "1")
-        // V3 帧级基准:CPU/GPU 首帧、稳态、SkSL 增量与工作集,报告随 artifact 保留。
-        .env("LUEYING_SKIA_BENCH", crate::verify::bench_report_path())
+        // D2D 渲染管线自检:WARP 离屏出帧、读回像素,结果写日志。
+        .env("LUEYING_D2D_SELFTEST", "1")
         // UIA 回退的运行痕迹默认静默;E2E 要断言这条链路真的在跑。
         .env("LUEYING_DEBUG_UIA", "1")
         // 无候选窗时也起扩展宿主:官方 shot-ocr 的命令热键要靠它。

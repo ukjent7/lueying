@@ -15,7 +15,6 @@ mod metrics;
 mod modules;
 mod quick;
 mod render;
-mod render_effects;
 mod render_panel;
 mod render_ui;
 mod rerank;

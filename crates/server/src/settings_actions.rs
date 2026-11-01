@@ -264,32 +264,25 @@ fn open_text_file(settings: &mut Settings, path: Option<PathBuf>, template: &str
     }
 }
 
-/// 打开用户效果目录:先让常驻服务给出三个槽位的模板(缺文件才写),
-/// 再拉起资源管理器。模板是起点,用户改完存盘即生效。
-pub fn open_effects(settings: &mut Settings) {
+/// 打开场景目录:没有 scene.toml 就写一份官方示例当起点,再拉起资源
+/// 管理器。用户改完存盘,候选窗一秒内热重载。
+pub fn open_scene(settings: &mut Settings) {
     settings.confirm_clear = false;
-    let Some(dir) = config::effects_dir() else {
-        settings.say(Notice::Error, "没有可写的效果目录");
-        return;
-    };
-    let Some(reply) = call(&Request::EffectTemplates) else {
-        settings.say(Notice::Error, "输入法服务未运行,启动后再试");
+    let Some(dir) = config::scene_dir() else {
+        settings.say(Notice::Error, "没有可写的场景目录");
         return;
     };
     if let Err(e) = std::fs::create_dir_all(&dir) {
         settings.say(Notice::Error, format!("建目录失败: {e}"));
         return;
     }
-    let mut written = 0;
-    for (name, source) in &reply.templates {
-        let path = dir.join(name);
-        if path.exists() {
-            continue;
-        }
-        match std::fs::write(&path, source) {
-            Ok(()) => written += 1,
+    let starter = dir.join("scene.toml");
+    let mut written = false;
+    if !starter.exists() {
+        match std::fs::write(&starter, SCENE_STARTER) {
+            Ok(()) => written = true,
             Err(e) => {
-                settings.say(Notice::Error, format!("写 {} 失败: {e}", path.display()));
+                settings.say(Notice::Error, format!("写 {} 失败: {e}", starter.display()));
                 return;
             }
         }
@@ -297,8 +290,8 @@ pub fn open_effects(settings: &mut Settings) {
     match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
         Ok(_) => settings.say(
             Notice::Info,
-            if written > 0 {
-                format!("已写入 {written} 个模板,打开 {}", dir.display())
+            if written {
+                format!("已写入示例场景,打开 {}", dir.display())
             } else {
                 format!("已打开 {}", dir.display())
             },
@@ -306,6 +299,25 @@ pub fn open_effects(settings: &mut Settings) {
         Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
     }
 }
+
+/// 场景起步示例:打字光晕,官方示例库的第一个,改完存盘即生效。
+const SCENE_STARTER: &str = r#"# 场景 = 候选窗的装饰层。改完存盘一秒内热重载;字段全表见 docs。
+[signals.energy]
+from = "typing_rate"
+gain = 0.6
+decay = "1.5s"
+
+[[nodes]]
+id = "glow"
+kind = "shape"
+shape = "rrect"
+anchor = "highlight"
+inset = -5
+radius = 6
+fill = "accent"
+opacity = "lerp(0.15, 0.55, energy)"
+effect = { kind = "blur", radius = "lerp(2, 10, energy)" }
+"#;
 
 /// PP-OCRv6 模型是否齐全;设置页据此写「可用 / 未安装」。
 pub fn ppocr_ready() -> bool {

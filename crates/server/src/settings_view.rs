@@ -315,7 +315,7 @@ impl Default for Settings {
             confirm_clear: false,
             current: String::new(),
             updates: UpdateState::Idle,
-            effects_detail: "SkSL 装饰层".to_string(),
+            effects_detail: "场景装饰层".to_string(),
             scripts: Vec::new(),
             ppocr_ready: false,
             ext_metrics: None,

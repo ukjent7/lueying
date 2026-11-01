@@ -6,7 +6,8 @@
 use skia_safe::{Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect};
 
 use crate::command::{ellipsize, fill, text};
-use crate::panel::{Palette, color};
+use crate::panel::Palette;
+use crate::paint::color;
 
 /// 面板逻辑宽度。
 pub const WIDTH: f32 = 440.0;

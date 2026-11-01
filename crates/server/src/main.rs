@@ -11,17 +11,6 @@ fn main() {
             imp::panel_selftest();
             return;
         }
-        // Skia GPU 自检的子进程:只跑 GPU 自检,跑完就退,不碰管道与单实例锁。
-        // GPU 管线在驱动异常的机器上会崩,隔离在子进程里,崩了也不影响服务端。
-        if std::env::var_os("LUEYING_SKIA_SELFTEST_GPU").is_some() {
-            ui_skia_selftest::gpu_selftest();
-            return;
-        }
-        // V3 帧级基准的 GPU 子进程:同一条崩溃隔离;结果打到 stdout 给父进程。
-        if std::env::var_os("LUEYING_SKIA_BENCH_GPU").is_some() {
-            ui_skia_bench::gpu_bench();
-            return;
-        }
         imp::real_main();
     }
     #[cfg(not(windows))]
@@ -65,28 +54,19 @@ mod ui_panel;
 mod ui_place;
 
 #[cfg(windows)]
-mod ui_skia;
+mod ui_d2d;
 
 #[cfg(windows)]
-mod ui_skia_cpu;
+mod ui_d2d_mouse;
 
 #[cfg(windows)]
-mod ui_skia_bench;
+mod ui_d2d_pipe;
 
 #[cfg(windows)]
-mod ui_skia_effect;
+mod ui_d2d_scene;
 
 #[cfg(windows)]
-mod ui_skia_gpu;
-
-#[cfg(windows)]
-mod ui_skia_mouse;
-
-#[cfg(windows)]
-mod ui_skia_script;
-
-#[cfg(windows)]
-mod ui_skia_selftest;
+mod ui_d2d_selftest;
 
 #[cfg(windows)]
 mod user_store;

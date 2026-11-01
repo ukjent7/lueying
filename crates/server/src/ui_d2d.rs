@@ -1,25 +1,21 @@
-//! Skia 候选窗:Win32 无焦点弹出窗 + DirectComposition 交换链 + Ganesh-D3D12。
+//! D2D 候选窗:Win32 无焦点弹出窗 + DirectComposition 合成交换链 + Direct2D。
 //!
 //! 候选窗:独立线程自建消息泵,15ms 轮询会话版本号;摆位、停靠、DPI 与
-//! 全屏避让同 `ui_place` 助手共用。
-//! 交互 parity:淡入/淡出、翻页滑动、点选/滚轮/翻页箭头、右键菜单与悬停,
-//! 动效可被按键打断,「减少动态效果」时全部走终态。D3D12 只用硬件适配器,
-//! 建不出设备时退到 CPU 光栅 + 分层窗口(`ui_skia_cpu`),画面一模一样,
-//! 只是每帧多花一点 CPU;设备中途被系统摘掉(驱动重启、GPU 挂起)也走同一条
-//! 换手路:另建一个分层窗口接着弹,候选窗不会整块消失。
-//! `LUEYING_SKIA_SELFTEST` 供 CI 自检整条管线。模式徽标走原生分层窗口
-//! (`ui_hud`:CPU 光栅 + UpdateLayeredWindow),不在这条管线上。
+//! 全屏避让同 `ui_place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
+//! 滚轮/翻页箭头、右键菜单与悬停,动效可被按键打断,「减少动态效果」时
+//! 全部走终态。管线在 `ui_d2d_pipe`:硬件优先,没有适配器退 WARP;设备
+//! 被系统摘掉就地整条重建,窗口不换。场景层(`ui_d2d_scene`)随帧推进,
+//! 高对比度、隐私字段下整层停用。`LUEYING_D2D_SELFTEST` 供 CI 自检整条
+//! 管线。模式徽标走原生分层窗口(`ui_hud`),不在这条管线上。
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
-use lueying_extwasm::ScenePatch;
+use lueying_extwasm::{SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
-use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
 use lueying_render::panel::{self, Metrics, PanelSpec};
-use lueying_server::theme;
-use skia_safe::Font;
+use lueying_scene::{EventName, Inputs};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -29,18 +25,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_NOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE,
     WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{BOOL, w};
 
 use crate::imp::State;
+use crate::ui_d2d_mouse;
+use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
+use crate::ui_d2d_scene::SceneHost;
 use crate::ui_place::{self, CARET_GAP};
-use crate::ui_skia_cpu::CpuPipeline;
-use crate::ui_skia_effect;
-use crate::ui_skia_gpu::{Frame, FrameTarget, Pipeline};
-use crate::ui_skia_mouse;
-use crate::ui_skia_script;
 
 /// 会话版本号轮询间隔;取值对打字反馈无感。
 const POLL: Duration = Duration::from_millis(15);
@@ -53,22 +47,24 @@ const SHOW_START_OPACITY: f32 = 0.45;
 const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
-/// 效果目录的检查间隔;用户改完 .sksl 一秒内生效。
-const EFFECT_CHECK: Duration = Duration::from_millis(1000);
+/// 场景层的重绘节奏;约 60fps,空闲成本是一帧布局加绘制的电费。
+const SCENE_INTERVAL: Duration = Duration::from_millis(16);
+/// 场景单帧 dt 上限;长时间不画(停靠、后台)后一步跳过,不做慢动作补帧。
+const SCENE_DT_MAX: f64 = 0.1;
 
-/// 启动 Skia 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
+/// 启动 D2D 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
 pub(super) fn spawn(state: Arc<State>) {
     let spawned = std::thread::Builder::new()
-        .name("skia-candidate".into())
+        .name("d2d-candidate".into())
         .spawn(move || {
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| window_loop(state)))
                 .is_err()
             {
-                println!("Skia 候选窗线程崩溃,后续组合不再有候选窗");
+                println!("D2D 候选窗线程崩溃,后续组合不再有候选窗");
             }
         });
     if let Err(e) = spawned {
-        println!("Skia 候选窗线程启动失败: {e}");
+        println!("D2D 候选窗线程启动失败: {e}");
     }
 }
 
@@ -101,9 +97,9 @@ pub(super) struct Fx {
     pub(super) mouse: (f32, f32),
     /// 最近一帧的绘制输入;命中测试用它,保证所指即所画。
     pub(super) geometry: Option<Geom>,
-    /// 新组合的第一帧走素色;之后才上效果,候选一出现就可读。
+    /// 新组合的第一帧走素色;之后才上场景层,候选一出现就可读。
     first_frame: bool,
-    /// 本次组合的起点;效果的动画时钟从这儿算。
+    /// 本次组合的起点;场景的动画时钟从这儿算。
     since: Option<Instant>,
 }
 
@@ -152,183 +148,65 @@ pub(super) struct Geom {
 
 /// 窗口过程持有的上下文;窗口与线程同生命周期,进程退出一起回收。
 pub(super) struct WinCtx {
-    /// 候选窗窗口;换出帧路径时会换成新窗口。
+    /// 候选窗窗口。
     pub(super) hwnd: HWND,
     pub(super) state: Arc<State>,
     pub(super) fx: Fx,
-    pipe: Presenter,
-    pub(super) font: Option<Font>,
+    /// 出帧管线;设备被摘掉时整个换成新的,所以是 Option。
+    pipe: Option<Pipeline>,
+    /// DirectWrite 文字引擎;布局与绘制共用同一份测宽。
+    pub(super) text: Text,
     pub(super) cursor_arrow: Option<HCURSOR>,
     pub(super) cursor_hand: Option<HCURSOR>,
-    /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
-    effects: ui_skia_effect::Effects,
-    /// 运行期扩展:后台 worker 跑 wasmi guest,这里只收补丁。
+    /// 运行期扩展:后台 worker 跑 wasmi guest,这里只收主题色补丁。
     script: crate::ext_host::Script,
-    /// 已应用的脚本补丁;空表示没有扩展生效。
-    script_fx: Option<ui_skia_script::ScriptFx>,
-    /// 效果帧预算:连续超预算就临时摘掉效果。
-    budget: BudgetGuard,
+    script_accent: Option<u32>,
+    /// 场景层宿主:加载、热重载、信号与事件。
+    scene: SceneHost,
+    /// 隐私字段(密码框):整个场景层停用。
+    private: bool,
+    /// 待灌进场景运行时的事件;place 时记账,draw 时消费。
+    pending: Vec<EventName>,
+    /// 上一帧绘制时刻;场景时钟的 dt 从这里算。
+    last_draw: Option<Instant>,
+    /// 窗口左上角(屏幕坐标);场景的光标锚从这儿换算。
+    pos: (i32, i32),
     /// 首帧真正呈现前窗口保持隐藏,避免从停靠点挪到光标处时闪一帧旧内容。
     visible: bool,
-    /// 出帧路径彻底走不通(设备被摘掉且 CPU 兜底也建不起来):候选窗停用。
+    /// 出帧路径彻底走不通:候选窗停用。
     dead: bool,
 }
 
-/// 出帧路径:GPU 优先,没有硬件 D3D12 就退到 CPU 光栅。
-///
-/// 两条路径的画面完全一致(同一套绘制代码),只是上屏方式不同:GPU 走
-/// DirectComposition 交换链,CPU 走 GDI 分层窗口。
-pub(super) enum Presenter {
-    Gpu(Pipeline),
-    Cpu(CpuPipeline),
-}
-
-impl Presenter {
-    pub(super) fn present(&mut self) -> Result<(), String> {
-        match self {
-            Presenter::Gpu(pipe) => pipe.present(),
-            Presenter::Cpu(pipe) => pipe.present(),
-        }
-    }
-
-    pub(super) fn rebuild_surfaces(&mut self, w: u32, h: u32) -> Result<(), String> {
-        match self {
-            Presenter::Gpu(pipe) => pipe.rebuild_surfaces(w, h),
-            Presenter::Cpu(pipe) => pipe.rebuild_surfaces(w, h),
-        }
-    }
-
-    fn device_removed(&self) -> bool {
-        match self {
-            Presenter::Gpu(pipe) => pipe.device_removed(),
-            Presenter::Cpu(_) => false,
-        }
-    }
-}
-
-impl FrameTarget for Presenter {
-    fn draw(&mut self, f: Frame) -> Result<(), String> {
-        match self {
-            Presenter::Gpu(pipe) => pipe.draw(f),
-            Presenter::Cpu(pipe) => pipe.draw(f),
-        }
-    }
-
-    fn pixel(&mut self, x: i32, y: i32) -> Option<(u8, u8, u8)> {
-        match self {
-            Presenter::Gpu(pipe) => pipe.pixel(x, y),
-            Presenter::Cpu(pipe) => pipe.pixel(x, y),
-        }
-    }
-}
-
-/// 建候选窗与出帧路径。GPU 管线建不起来(没有硬件 D3D12、驱动异常)时,
-/// 换一个分层窗口走 CPU 光栅,候选窗照常弹出来。
-fn open() -> Result<(HWND, Presenter), String> {
-    let hwnd = create_window()?;
-    match Pipeline::new(hwnd) {
-        Ok(pipe) => {
-            println!("Skia 候选窗就绪:Ganesh-D3D12 + DirectComposition");
-            Ok((hwnd, Presenter::Gpu(pipe)))
-        }
-        Err(e) => {
-            println!("Skia 候选窗 D3D12 管线不可用: {e};改用 CPU 光栅");
-            // 原来的窗口已经挂了 DComp 目标,换一个新的分层窗口。
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            let (hwnd, pipe) = cpu_presenter()?;
-            println!("Skia 候选窗就绪:CPU 光栅 + 分层窗口");
-            Ok((hwnd, Presenter::Cpu(pipe)))
-        }
-    }
-}
-
-/// CPU 光栅呈现器:分层窗口 + 位图。
-pub(super) fn cpu_presenter() -> Result<(HWND, CpuPipeline), String> {
-    let hwnd = create_layered_window()?;
-    match CpuPipeline::new(hwnd) {
-        Ok(pipe) => Ok((hwnd, pipe)),
-        Err(e) => {
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            Err(e)
-        }
-    }
-}
-
-/// 换一条出帧路径:另建一个分层窗口走 CPU 光栅,旧窗口销毁。
-///
-/// 设备被系统摘掉(驱动重启、GPU 挂起)时用它接手,候选窗不会整块消失。
-pub(super) fn swap_window(old: HWND, pipe: &mut Presenter) -> Result<HWND, String> {
-    let (new_hwnd, cpu) = cpu_presenter()?;
-    // 旧 GPU 管线这就要丢:设备可能已经被摘掉,先让 Skia 放弃上下文,
-    // 析构时就不会再碰后端 API(否则会访问冲突)。
-    if let Presenter::Gpu(gpu) = pipe {
-        gpu.abandon();
-    }
-    *pipe = Presenter::Cpu(cpu);
-    // 淡出期间的点击穿透样式要跟着搬到新窗口。
-    if ex_style(old) & WS_EX_TRANSPARENT.0 != 0 {
-        style_click_through(new_hwnd, true);
-    }
-    unsafe {
-        let _ = DestroyWindow(old);
-    }
-    Ok(new_hwnd)
-}
-
-/// 出帧路径的准备结果。
-enum Ready {
-    /// 路径照旧,直接画。
-    Same,
-    /// 换了路径(设备被摘掉):窗口要重新摆位、重建表面。
-    Switched,
-    /// 这条路彻底走不通:候选窗停用。
-    Dead,
-}
-
-/// 出帧前的准备:设备被系统摘掉就换到 CPU 光栅路径。
-///
-/// 换了路径要重新摆位、重建表面,由调用方接着做。
-fn ensure_presenter(ctx: &mut WinCtx) -> Ready {
-    if !ctx.pipe.device_removed() {
-        return Ready::Same;
-    }
-    match swap_window(ctx.hwnd, &mut ctx.pipe) {
-        Ok(hwnd) => {
-            ctx.hwnd = hwnd;
-            // 新窗口是隐藏建的;这一帧提交后再显示。
-            ctx.visible = false;
-            // 窗口过程靠这个指针反查上下文;新窗口也要挂上。
-            unsafe {
-                let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as *mut WinCtx as isize);
-            }
-            println!("Skia 候选窗:D3D12 设备被摘掉,改走 CPU 光栅");
-            Ready::Switched
-        }
-        Err(e) => {
-            ctx.dead = true;
-            println!("Skia 候选窗:D3D12 设备被摘掉,CPU 兜底也没建起来({e}),候选窗停用");
-            Ready::Dead
-        }
-    }
-}
-
+/// 窗口线程主循环:排干消息、轮询会话、按需重绘。
 fn window_loop(state: Arc<State>) {
     // DComp 与窗口消息都归这条线程;COM 已按别的 apartment 初始化过时忽略。
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
-    let (hwnd, pipe) = match open() {
-        Ok(pair) => pair,
+    let hwnd = match create_window() {
+        Ok(hwnd) => hwnd,
         Err(e) => {
-            println!("Skia 候选窗初始化失败: {e}");
+            println!("D2D 候选窗建窗失败: {e}");
             return;
         }
     };
-    let font = panel_font();
+    let pipe = match Pipeline::new(hwnd) {
+        Ok(pipe) => Some(pipe),
+        Err(e) => {
+            println!("D2D 候选窗管线不可用: {e};候选窗停用");
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            None
+        }
+    };
+    let text = match Text::new() {
+        Ok(text) => text,
+        Err(e) => {
+            println!("D2D 文字引擎起不来: {e}");
+            return;
+        }
+    };
     let (cursor_arrow, cursor_hand) = unsafe {
         (
             LoadCursorW(None, IDC_ARROW).ok(),
@@ -336,28 +214,32 @@ fn window_loop(state: Arc<State>) {
         )
     };
     let script = crate::ext_host::Script::spawn(Arc::clone(&state));
+    let scene = SceneHost::new();
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
         hwnd,
         state: Arc::clone(&state),
         fx: Fx::default(),
         pipe,
-        font,
+        text,
         cursor_arrow,
         cursor_hand,
-        effects: ui_skia_effect::Effects::load(&state),
         script,
-        script_fx: None,
-        budget: BudgetGuard::new(Budget::default()),
+        script_accent: None,
+        scene,
+        private: false,
+        pending: Vec::new(),
+        last_draw: None,
+        pos: (0, 0),
         visible: false,
-        dead: false,
+        dead: pipe.is_none(),
     }));
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
     }
     let mut last_version = 0u64;
     let mut next_poll = Instant::now();
-    let mut next_effect_check = Instant::now();
+    let mut next_scene_frame = Instant::now();
     loop {
         // 无焦点窗口的消息量很小,每轮顺手排干;真正的节奏靠 5ms 睡眠。
         unsafe {
@@ -386,18 +268,23 @@ fn window_loop(state: Arc<State>) {
                 place(ctx);
             }
         }
-        // 效果目录或开关变了就重新加载;编译在加载期做,帧内只打包 uniform。
-        if now >= next_effect_check {
-            next_effect_check = now + EFFECT_CHECK;
-            let ctx = unsafe { &mut *ctx };
-            ctx.effects.refresh(&ctx.state);
-        }
-        // 淡入/淡出/滑动进行中按循环节奏重绘;5ms 粒度足够 90–140ms 的动效。
-        let animating = unsafe {
+        // 场景目录有变化就热重载;一秒一查,成本是一次文件元数据读取。
+        let ctx = unsafe { &mut *ctx };
+        ctx.scene.refresh(now);
+        // 淡入/淡出/滑动进行中按循环节奏重绘;场景活着也按节奏推进。
+        let (animating, scene_live) = unsafe {
             let fx = &(*ctx).fx;
-            fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some()
+            let animating = fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some();
+            let scene_live = (*ctx).scene.live()
+                && scene_enabled(&(*ctx).state)
+                && !(*ctx).private
+                && !fx.reduce
+                && fx.last.is_some()
+                && !(*ctx).dead;
+            (animating, scene_live)
         };
-        if animating {
+        if animating || (scene_live && now >= next_scene_frame) {
+            next_scene_frame = now + SCENE_INTERVAL;
             let ctx = unsafe { &mut *ctx };
             animate(ctx);
         }
@@ -412,116 +299,127 @@ fn place(ctx: &mut WinCtx) {
         park(ctx);
         return;
     }
-    let Some(snap) = ui_place::snapshot(&ctx.state) else {
-        // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
-        if ctx.fx.reduce || ctx.fx.last.is_none() {
-            ctx.fx.clear();
-            park(ctx);
-            return;
+    match ui_place::snapshot(&ctx.state) {
+        None => {
+            // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
+            ctx.pending
+                .extend(ctx.scene.observe(None));
+            if ctx.fx.reduce || ctx.fx.last.is_none() {
+                ctx.fx.clear();
+                park(ctx);
+                return;
+            }
+            if ctx.fx.hide.is_none() {
+                ctx.fx.hide = Some(Instant::now() + HIDE_FADE);
+                ctx.fx.show = None;
+                ctx.fx.slide = None;
+                ctx.fx.menu = None;
+                ctx.fx.menu_hover = None;
+                ctx.fx.hover = None;
+                ctx.fx.pager = None;
+                style_click_through(ctx.hwnd, true);
+            }
         }
-        if ctx.fx.hide.is_none() {
-            ctx.fx.hide = Some(Instant::now() + HIDE_FADE);
-            ctx.fx.show = None;
-            ctx.fx.slide = None;
-            ctx.fx.menu = None;
-            ctx.fx.menu_hover = None;
-            ctx.fx.hover = None;
-            ctx.fx.pager = None;
-            style_click_through(ctx.hwnd, true);
+        Some(snap) => {
+            ctx.pending.extend(ctx.scene.observe(Some(&snap.view)));
+            ctx.private = snap.private;
+            let view = &snap.view;
+            let fresh = ctx.fx.last.is_none() || ctx.fx.hide.is_some();
+            if fresh {
+                // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
+                ctx.fx.above = None;
+                ctx.fx.slide = None;
+                ctx.fx.page = None;
+                ctx.fx.menu = None;
+                ctx.fx.menu_hover = None;
+                ctx.fx.hover = None;
+                ctx.fx.pager = None;
+                // 新组合:第一帧走素色,场景时钟从现在起算。
+                ctx.fx.first_frame = true;
+                ctx.fx.since = Some(Instant::now());
+                ctx.fx.show = if ctx.fx.reduce {
+                    None
+                } else {
+                    Some(Instant::now() + SHOW_FADE)
+                };
+            }
+            ctx.fx.hide = None;
+            style_click_through(ctx.hwnd, false);
+            // 只有翻页才滑动;首次展开和继续打字不横向跳。
+            if !ctx.fx.reduce && ctx.fx.page.is_some_and(|page| page != view.page) {
+                let previous = ctx.fx.page.unwrap_or(view.page);
+                let direction = if view.page > previous { 1.0 } else { -1.0 };
+                ctx.fx.slide = Some((direction, Instant::now() + PAGE_SLIDE));
+                ctx.fx.hover = None;
+                ctx.fx.pager = None;
+            }
+            ctx.fx.page = Some(view.page);
+            let rect = caret_rect(ctx, view);
+            if rect.2 == 0 {
+                // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
+                // 下一次组合按新组合淡入,不会接着上一次的状态。
+                ctx.fx.show = None;
+                ctx.fx.hide = None;
+                ctx.fx.slide = None;
+                ctx.fx.last = None;
+                park(ctx);
+                return;
+            }
+            if let Err(e) = layout_window(ctx, rect) {
+                println!("D2D 候选窗调整失败: {e}");
+                return;
+            }
+            // 先落内容再出帧;淡出期间用的就是这份冻结内容。
+            ctx.fx.last = Some(view.clone());
+            submit_scene(ctx, view, snap.private);
+            draw_view(ctx, view);
         }
-        return;
-    };
-    let view = &snap.view;
-    if snap.private {
-        // 隐私字段整个扩展层停用:不等脚本线程回包,这一帧就回素色。
-        ctx.script_fx = None;
     }
-    let fresh = ctx.fx.last.is_none() || ctx.fx.hide.is_some();
-    if fresh {
-        // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
-        ctx.fx.above = None;
-        ctx.fx.slide = None;
-        ctx.fx.page = None;
-        ctx.fx.menu = None;
-        ctx.fx.menu_hover = None;
-        ctx.fx.hover = None;
-        ctx.fx.pager = None;
-        // 新组合:第一帧走素色,效果时钟从现在起算。
-        ctx.fx.first_frame = true;
-        ctx.fx.since = Some(Instant::now());
-        ctx.fx.show = if ctx.fx.reduce {
-            None
-        } else {
-            Some(Instant::now() + SHOW_FADE)
-        };
-    }
-    ctx.fx.hide = None;
-    style_click_through(ctx.hwnd, false);
-    // 只有翻页才滑动;首次展开和继续打字不横向跳。
-    if !ctx.fx.reduce && ctx.fx.page.is_some_and(|page| page != view.page) {
-        let previous = ctx.fx.page.unwrap_or(view.page);
-        let direction = if view.page > previous { 1.0 } else { -1.0 };
-        ctx.fx.slide = Some((direction, Instant::now() + PAGE_SLIDE));
-        ctx.fx.hover = None;
-        ctx.fx.pager = None;
-    }
-    ctx.fx.page = Some(view.page);
-    let rect = caret_rect(ctx, view);
-    if rect.2 == 0 {
-        // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
-        // 下一次组合按新组合淡入,不会接着上一次的状态。
-        ctx.fx.show = None;
-        ctx.fx.hide = None;
-        ctx.fx.slide = None;
-        ctx.fx.last = None;
-        park(ctx);
-        return;
-    }
-    // 设备被系统摘掉就先换到 CPU 光栅,再摆位出帧。
-    match ensure_presenter(ctx) {
-        Ready::Dead => return,
-        Ready::Same | Ready::Switched => {}
-    }
-    if let Err(e) = layout_window(ctx, rect) {
-        println!("Skia 候选窗调整失败: {e}");
-        return;
-    }
-    // 先落内容再出帧;淡出期间用的就是这份冻结内容。
-    ctx.fx.last = Some(view.clone());
-    submit_scene(ctx, view, snap.private);
-    draw_view(ctx, view);
 }
 
 /// 把当前面板状态交给脚本线程;补丁晚一帧到,不影响这一帧。
 fn submit_scene(ctx: &WinCtx, view: &SessionView, private: bool) {
     let now = Instant::now();
-    let scene = ui_skia_script::scene(
-        &ctx.state,
-        view,
+    let (_, _, accent) = ui_place::ui_options(&ctx.state);
+    let appearance = lueying_server::theme::Appearance::of_system();
+    let colors = lueying_server::theme::colors_with(appearance, accent);
+    let page_size = view.page_size.max(1);
+    let start = view.page * page_size;
+    let candidates = view.candidates.len().saturating_sub(start).min(page_size);
+    let selected = if candidates == 0 {
+        0
+    } else {
+        view.highlight.saturating_sub(start).min(candidates - 1)
+    };
+    let scene = SceneIn {
+        composing: true,
+        page: (view.page + 1) as u32,
+        pages: view.candidates.len().div_ceil(page_size).max(1) as u32,
+        candidates: candidates as u32,
+        selected: selected as u32,
+        accent: colors.accent,
+        dark: matches!(appearance, lueying_server::theme::Appearance::Dark),
+        high_contrast: matches!(appearance, lueying_server::theme::Appearance::HighContrast),
+        reduce_motion: ctx.fx.reduce,
+        time: ctx.fx.clock(now),
+        anim: ctx.fx.anim(now),
         private,
-        ctx.fx.reduce,
-        ctx.fx.clock(now),
-        ctx.fx.anim(now),
-    );
+        ..SceneIn::default()
+    };
     ctx.script.submit(scene);
 }
 
-/// 应用脚本补丁;内容没变就不重绘。
+/// 应用脚本补丁;只有主题色还有效,内容没变就不重绘。
 fn apply_script(ctx: &mut WinCtx, seq: u64, patch: Option<ScenePatch>, redraw_now: bool) {
     // 旧场景的补丁晚到:新一帧或隐私字段已经提交,直接丢弃。
     if seq < ctx.script.seq() {
         return;
     }
-    let unchanged = match (&patch, &ctx.script_fx) {
-        (Some(next), Some(current)) => current.same(next),
-        (None, None) => true,
-        _ => false,
-    };
-    if unchanged {
+    let accent = patch.and_then(|patch| patch.accent);
+    if accent == ctx.script_accent {
         return;
     }
-    let previous = ctx.script_fx.take();
-    ctx.script_fx = patch.map(|patch| ui_skia_script::ScriptFx::update(previous, patch));
+    ctx.script_accent = accent;
     if redraw_now {
         redraw(ctx);
     }
@@ -542,9 +440,9 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
     let metrics = Metrics::scaled(ui_font.factor() * scale);
     let mut spec = ui_place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = ui_place::measure_width(view, layout, &metrics, ctx.font.as_ref());
-    let mut w = panel::panel_width(&spec, &metrics, ctx.font.as_ref()) as i32;
-    let h = panel::panel_height(&spec, &metrics, ctx.font.as_ref()) as i32;
+    spec.width = ui_place::measure_width(view, layout, &metrics, &ctx.text);
+    let mut w = panel::panel_width(&spec, &metrics, &ctx.text) as i32;
+    let h = panel::panel_height(&spec, &metrics, &ctx.text) as i32;
     let work = ui_place::work_area_at(left, b);
     w = w.min((work.right - work.left).max(1));
     // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
@@ -573,19 +471,23 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
     (x, y, w, h)
 }
 
-/// 摆位并把表面尺寸对上;GPU 与 CPU 两条路径同一套。
+/// 摆位并把表面尺寸对上。
 fn layout_window(ctx: &mut WinCtx, rect: (i32, i32, i32, i32)) -> Result<(), String> {
     let (x, y, w, h) = rect;
     if w <= 0 || h <= 0 {
         return Err("候选窗尺寸为空".to_string());
     }
+    ctx.pos = (x, y);
     unsafe {
         let _ = SetWindowPos(ctx.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
     }
-    ctx.pipe.rebuild_surfaces(w as u32, h as u32)
+    let Some(pipe) = ctx.pipe.as_mut() else {
+        return Err("出帧管线不可用".to_string());
+    };
+    pipe.rebuild_surfaces(w as u32, h as u32)
 }
 
-/// 动画帧:淡入/淡出/滑动进行中重绘;淡出到期停靠,其余到期走终态。
+/// 动画帧:淡入/淡出/滑动/场景推进中重绘;淡出到期停靠,其余到期走终态。
 fn animate(ctx: &mut WinCtx) {
     if ctx.dead {
         park(ctx);
@@ -606,44 +508,53 @@ fn animate(ctx: &mut WinCtx) {
         ctx.fx.slide = None;
     }
     let animating = ctx.fx.hide.is_some() || ctx.fx.show.is_some() || ctx.fx.slide.is_some();
-    let last = if animating { ctx.fx.last.clone() } else { None };
-    if let Some(view) = last {
+    if let Some(view) = (animating || ctx.scene.live()).then(|| ctx.fx.last.clone()).flatten() {
         draw_view(ctx, &view);
     }
 }
 
-/// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
+/// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单、场景层,全部换算后交给管线。
 fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     if ctx.dead {
         return;
     }
-    // 设备被系统摘掉(驱动重启、GPU 挂起)后不能再进 Skia:命令表已经建不出来,
-    // Skia 拿着空句柄继续走会崩。换到 CPU 光栅路径接着弹,候选窗不会消失。
-    match ensure_presenter(ctx) {
-        Ready::Dead => return,
-        Ready::Same => {}
-        Ready::Switched => {
-            // 新窗口要重新摆位、重建表面,才能接着画这一帧。
-            let rect = caret_rect(ctx, view);
-            if let Err(e) = layout_window(ctx, rect) {
-                println!("Skia 候选窗调整失败: {e}");
+    // 设备被系统摘掉(驱动重启、GPU 挂起)后整条管线重建,窗口不用换。
+    if let Some(pipe) = ctx.pipe.as_ref()
+        && pipe.device_removed()
+    {
+        println!("D2D 候选窗:设备被摘掉,就地重建管线");
+        ctx.pipe = None;
+        match Pipeline::new(ctx.hwnd) {
+            Ok(pipe) => {
+                ctx.pipe = Some(pipe);
+                ctx.visible = false;
+                // 新表面尺寸跟窗口走,重摆一次把表面上对。
+                let rect = caret_rect(ctx, view);
+                if let Err(e) = layout_window(ctx, rect) {
+                    println!("D2D 候选窗调整失败: {e}");
+                    return;
+                }
+            }
+            Err(e) => {
+                ctx.dead = true;
+                println!("D2D 候选窗:管线重建失败({e}),候选窗停用");
                 return;
             }
         }
     }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
-    let appearance = theme::Appearance::of_system();
-    // 高对比度由系统接管外观,用户效果整个关掉,免得压过系统配色。
-    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+    let appearance = lueying_server::theme::Appearance::of_system();
+    // 高对比度由系统接管外观,场景层整个关掉,免得压过系统配色。
+    let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 脚本主题色只换主色与选中底色;高对比度仍用系统色。
-    let colors = match ctx.script_fx.as_ref().and_then(|fx| fx.accent()) {
-        Some(rgb) if !high_contrast => theme::colors_with_accent(appearance, rgb),
-        _ => theme::colors_with(appearance, accent),
+    let colors = match ctx.script_accent {
+        Some(rgb) if !high_contrast => lueying_server::theme::colors_with_accent(appearance, rgb),
+        _ => lueying_server::theme::colors_with(appearance, accent),
     };
     // 皮肤(skin.toml)叠在脚本主题色之上,是用户显式放置的最后一层;
     // 高对比度下 with_skin 原样返回。
     let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
-    let palette = theme::palette(theme::with_skin(colors, appearance, &skin));
+    let palette = lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
     // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
     drop(skin);
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
@@ -654,13 +565,12 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     let metrics = Metrics::scaled(ui_font.factor() * scale);
     let mut spec = ui_place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = ui_place::measure_width(view, layout, &metrics, ctx.font.as_ref());
+    spec.width = ui_place::measure_width(view, layout, &metrics, &ctx.text);
     let now = Instant::now();
     let opacity = if let Some(end) = ctx.fx.hide {
         (1.0 - ease_out_quint(progress(HIDE_FADE, end, now))).max(0.0)
     } else if let Some(end) = ctx.fx.show {
-        SHOW_START_OPACITY
-            + (1.0 - SHOW_START_OPACITY) * ease_out_quint(progress(SHOW_FADE, end, now))
+        SHOW_START_OPACITY + (1.0 - SHOW_START_OPACITY) * ease_out_quint(progress(SHOW_FADE, end, now))
     } else {
         1.0
     };
@@ -679,7 +589,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         spec.items
             .get(*slot)
             .is_some_and(|item| &item.text == text)
-            .then(|| menu_origin(*slot, &spec, &metrics, ctx.font.as_ref()))
+            .then(|| menu_origin(*slot, &spec, &metrics, &ctx.text))
     });
     if menu.is_none() {
         ctx.fx.menu = None;
@@ -690,95 +600,118 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         metrics,
         menu_xy: menu,
     });
-    // 效果:按 uniform 生成三个槽位的 shader。新组合的第一帧走素色,
-    // 保证候选一出现就可读;帧耗时超预算、开了高对比度时也临时摘掉效果。
-    let width = panel::panel_width(&spec, &metrics, ctx.font.as_ref());
-    let height = panel::panel_height(&spec, &metrics, ctx.font.as_ref());
-    // 画布单位与逻辑单位(设计像素)的比例;效果坐标按它换算。
-    let unit = metrics.scale();
-    let accent = Uniforms::accent_from_rgb(palette.accent);
-    let time = ctx.fx.clock(now);
-    let anim = ctx.fx.anim(now);
-    // 三个槽位各自在自己的区域里作画:坐标从区域左上角起算,单位是逻辑单位。
-    let rects = panel::item_rects(&spec, &metrics, ctx.font.as_ref());
-    let selected = spec
-        .items
-        .iter()
-        .position(|item| item.selected)
-        .and_then(|index| rects.get(index))
-        .copied();
-    let allowed = !ctx.fx.first_frame && !high_contrast && ctx.budget.allows(now);
-    let (background, highlight, menu_effect) = if allowed {
-        let panel_uniforms = Uniforms {
-            size: [width / unit, height / unit],
-            time,
-            anim,
-            accent,
-        };
-        let mut highlight_uniforms = panel_uniforms;
-        if let Some(rect) = selected {
-            highlight_uniforms.size = [rect.width() / unit, rect.height() / unit];
-        }
-        let mut menu_uniforms = panel_uniforms;
-        if menu.is_some() {
-            menu_uniforms.size = [116.0, panel::menu_height(&metrics) / unit];
-        }
-        let script = ctx.script_fx.as_ref();
-        let file = ctx.effects.set();
-        // 脚本补丁优先;没给或编译失败的槽位落到用户效果目录。
-        let shader = |slot: Slot, uniforms: &Uniforms, origin: (f32, f32)| {
-            script
-                .and_then(|fx| fx.shader(slot, uniforms, origin, unit))
-                .or_else(|| file.shader(slot, uniforms, origin, unit))
-        };
-        (
-            shader(Slot::Background, &panel_uniforms, (0.0, 0.0)),
-            shader(
-                Slot::Highlight,
-                &highlight_uniforms,
-                selected.map_or((0.0, 0.0), |rect| (rect.left, rect.top)),
-            ),
-            shader(
-                Slot::Menu,
-                &menu_uniforms,
-                menu.map_or((0.0, 0.0), |(mx, my)| (mx, my)),
-            ),
-        )
+    let width = panel::panel_width(&spec, &metrics, &ctx.text);
+    let height = panel::panel_height(&spec, &metrics, &ctx.text);
+    // 场景层:隐私字段与高对比度下整层停用;新组合第一帧走素色,
+    // 候选一出现就可读,动效从第二帧起才接上。
+    let first = std::mem::replace(&mut ctx.fx.first_frame, false);
+    let scene_frame = if ctx.scene.live()
+        && scene_enabled(&ctx.state)
+        && !ctx.private
+        && !high_contrast
+        && !first
+    {
+        scene_tick(ctx, view, &spec, &metrics, width, height)
     } else {
-        (None, None, None)
+        None
     };
-    ctx.fx.first_frame = false;
+    let scene_dir = ctx.scene.dir().to_path_buf();
+    let empty: Vec<lueying_scene::Item> = Vec::new();
     let frame = Frame {
         spec: &spec,
         palette: &palette,
-        metrics: &metrics,
-        font: ctx.font.as_ref(),
+        metrics,
         opacity,
         list,
         hover: ctx.fx.hover,
         pager: ctx.fx.pager,
         menu,
         menu_hover: ctx.fx.menu_hover,
-        effects: panel::Effects {
-            background: background.as_ref(),
-            highlight: highlight.as_ref(),
-            menu: menu_effect.as_ref(),
-        },
+        scene: scene_frame.as_deref().unwrap_or(&empty),
+        scene_dir: &scene_dir,
     };
     let started = Instant::now();
-    let drawn = ctx.pipe.draw(frame);
-    if allowed {
-        ctx.budget.observe(started.elapsed(), Instant::now());
-    }
+    let drawn = match ctx.pipe.as_mut() {
+        Some(pipe) => pipe.paint_frame(&frame, &ctx.text).and_then(|()| pipe.present()),
+        None => Err("出帧管线不可用".to_string()),
+    };
     if let Err(e) = drawn {
-        println!("Skia 出帧失败,丢帧: {e}");
-        return;
-    }
-    if let Err(e) = ctx.pipe.present() {
-        println!("Skia 呈现失败: {e}");
+        println!("D2D 出帧失败,丢帧: {e}");
         return;
     }
     show(ctx);
+}
+
+/// 推进场景运行时一帧:喂信号与待发事件,拿回本帧图元。
+/// 场景坐标是设计单位:布局矩形按缩放除回去,窗口层画的时候再乘回来。
+fn scene_tick(
+    ctx: &mut WinCtx,
+    view: &SessionView,
+    spec: &PanelSpec,
+    metrics: &Metrics,
+    width: f32,
+    height: f32,
+) -> Option<Vec<lueying_scene::Item>> {
+    let s = metrics.scale();
+    let (rate, idle) = ctx.scene.rate_and_idle();
+    let unit = |rect: &panel::Rect| {
+        [
+            rect.left / s,
+            rect.top / s,
+            rect.width() / s,
+            rect.height() / s,
+        ]
+    };
+    let rects: Vec<[f32; 4]> = panel::item_rects(spec, metrics, &ctx.text)
+        .iter()
+        .map(unit)
+        .collect();
+    let selected = spec.items.iter().position(|item| item.selected);
+    let highlight = selected.and_then(|index| rects.get(index).copied());
+    let page_size = view.page_size.max(1);
+    let inputs = Inputs {
+        typing_rate: rate,
+        candidates: rects.len(),
+        page: view.page,
+        page_count: view.candidates.len().div_ceil(page_size).max(1),
+        mode_chinese: view.chinese,
+        selected: view
+            .highlight
+            .saturating_sub(view.page * page_size)
+            .min(rects.len().saturating_sub(1)),
+        idle,
+        panel: [0.0, 0.0, width / s, height / s],
+        preedit: [0.0, 0.0, width / s, panel::PREEDIT_H],
+        highlight,
+        candidates: &rects,
+        // 组合光标多半在窗外(宿主应用里);诚实换算,画出去会被裁掉。
+        caret: {
+            let (wx, wy) = ctx.pos;
+            match view.caret {
+                Some((l, t, r, b)) => [
+                    (l.min(r) - wx) as f32 / s,
+                    (t - wy) as f32 / s,
+                    (r.saturating_sub(l.min(r))) as f32 / s,
+                    (b.saturating_sub(t)) as f32 / s,
+                ],
+                None => [0.0, 0.0, 0.0, 0.0],
+            }
+        },
+        screen: [0.0, 0.0, width / s, height / s],
+    };
+    let now = Instant::now();
+    let dt = if ctx.fx.reduce {
+        0.0
+    } else {
+        ctx.last_draw
+            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f64())
+            .min(SCENE_DT_MAX)
+    };
+    ctx.last_draw = Some(now);
+    let events = std::mem::take(&mut ctx.pending);
+    ctx.scene
+        .tick(dt, &inputs, &events)
+        .map(|frame| frame.items)
 }
 
 /// 鼠标/菜单变化后的重绘;淡出窗口不接鼠标,内容与位置都不动。
@@ -798,12 +731,12 @@ pub(super) fn menu_origin(
     slot: usize,
     spec: &PanelSpec,
     metrics: &Metrics,
-    font: Option<&Font>,
+    measure: &dyn panel::Measure,
 ) -> (f32, f32) {
     let s = metrics.scale();
-    let panel_h = panel::panel_height(spec, metrics, font);
+    let panel_h = panel::panel_height(spec, metrics, measure);
     let menu_h = panel::menu_height(metrics);
-    let rects = panel::item_rects(spec, metrics, font);
+    let rects = panel::item_rects(spec, metrics, measure);
     let Some(rect) = rects.get(slot).copied() else {
         return (8.0 * s, panel::PREEDIT_H * s);
     };
@@ -827,7 +760,7 @@ unsafe extern "system" fn wnd_proc(
     }
     match msg {
         WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_SETCURSOR => unsafe {
-            ui_skia_mouse::on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
+            ui_d2d_mouse::on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
         },
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
@@ -854,6 +787,15 @@ fn ex_style(hwnd: HWND) -> u32 {
     unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 }
 }
 
+/// 场景层开关;配置重载后立即生效,与旧的装饰层开关同一把。
+fn scene_enabled(state: &State) -> bool {
+    state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .effects
+}
+
 /// 系统「减少动态效果」;开启后动效全部走终态。查询失败按可用处理。
 pub(super) fn reduce_motion() -> bool {
     let mut enabled = BOOL::default();
@@ -875,15 +817,9 @@ fn progress(total: Duration, end: Instant, now: Instant) -> f32 {
     (1.0 - remain.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0)
 }
 
-/// ease_out_quint;GPU 与 CPU 两条渲染后端共用这条曲线。
+/// ease_out_quint;窗口动效与场景缓动共用这条曲线。
 fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(5)
-}
-
-/// DirectWrite 默认字体管理器里取微软雅黑;系统里没有这一族就退回系统默认
-/// 字型——拿不到字型就没有字,候选窗会空成一块底色,比字体难看得多。
-pub(super) fn panel_font() -> Option<Font> {
-    lueying_server::font::panel_font()
 }
 
 /// 无焦点置顶工具窗;样式在创建时给足,停靠点出生,避免 Alt+Tab 里露脸。
@@ -891,7 +827,7 @@ pub(super) fn create_window() -> Result<HWND, String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         ensure_class(HINSTANCE(hmodule.0))?;
-        let class = w!("lueying-skia-candidate");
+        let class = w!("lueying-d2d-candidate");
         let (park_x, park_y) = ui_place::park_point();
         let hwnd = CreateWindowExW(
             // NOREDIRECTIONBITMAP:窗口自身不画,画面由 DComp 视觉树给出。
@@ -899,33 +835,6 @@ pub(super) fn create_window() -> Result<HWND, String> {
             class,
             w!("lueying"),
             // 先隐藏建在停靠点;首帧真正提交后再显示,避免闪一帧旧内容。
-            WS_POPUP,
-            park_x,
-            park_y,
-            360,
-            76,
-            None,
-            None,
-            Some(HINSTANCE(hmodule.0)),
-            None,
-        )
-        .map_err(|e| format!("CreateWindowExW: {e}"))?;
-        Ok(hwnd)
-    }
-}
-
-/// CPU 光栅兜底用的分层窗口:画面由 UpdateLayeredWindow 给,窗口自己不画,
-/// 所以不能带 NOREDIRECTIONBITMAP。
-pub(super) fn create_layered_window() -> Result<HWND, String> {
-    unsafe {
-        let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
-        ensure_class(HINSTANCE(hmodule.0))?;
-        let (park_x, park_y) = ui_place::park_point();
-        let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            w!("lueying-skia-candidate"),
-            w!("lueying"),
-            // 同上:首帧经 UpdateLayeredWindow 上屏后再显示。
             WS_POPUP,
             park_x,
             park_y,
@@ -956,7 +865,7 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
                     return;
                 }
             },
-            lpszClassName: w!("lueying-skia-candidate"),
+            lpszClassName: w!("lueying-d2d-candidate"),
             ..Default::default()
         };
         if RegisterClassW(&wc) == 0 {

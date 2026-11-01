@@ -421,11 +421,11 @@ pub fn punct_path() -> Option<PathBuf> {
     user_file("punct.txt")
 }
 
-/// 用户效果目录(`%APPDATA%\lueying\effects`);每个槽位一个 `.sksl` 文件。
-pub fn effects_dir() -> Option<PathBuf> {
+/// 场景目录(`%APPDATA%\lueying\scene`);scene.toml 与素材都放这里。
+pub fn scene_dir() -> Option<PathBuf> {
     let base =
         PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    Some(base.join("lueying").join("effects"))
+    Some(base.join("lueying").join("scene"))
 }
 
 /// 运行期扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。

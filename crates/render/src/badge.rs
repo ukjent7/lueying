@@ -7,7 +7,8 @@ use skia_safe::{
     BlurStyle, Canvas, Color, Font, MaskFilter, Paint, PaintStyle, Point, RRect, Rect, Vector,
 };
 
-use crate::panel::{Palette, color, fill_paint};
+use crate::panel::Palette;
+use crate::paint::{color, fill_paint};
 
 /// 徽标卡片宽度(逻辑像素)。
 pub const WIDTH: f32 = 46.0;

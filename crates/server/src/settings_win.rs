@@ -103,7 +103,7 @@ pub fn run() {
         .unwrap_or_default();
     settings.status = settings_actions::call(&Request::Status).and_then(|reply| reply.status);
     settings.current = update::current_version();
-    settings.effects_detail = effects_detail();
+    settings.effects_detail = scene_detail();
     settings.scripts = settings_actions::installed_scripts();
     settings.ppocr_ready = settings_actions::ppocr_ready();
     settings.ext_metrics = settings_actions::read_ext_metrics();
@@ -162,11 +162,11 @@ pub fn run() {
 
 /// 搜索框里的键盘循环由子模块处理;这里只做消息循环的分发。
 
-/// 效果目录的说明文字。
-fn effects_detail() -> String {
-    match config::effects_dir() {
-        Some(dir) => format!("SkSL 装饰层,{}", dir.display()),
-        None => "SkSL 装饰层,没有可写的目录".to_string(),
+/// 场景目录的说明文字。
+fn scene_detail() -> String {
+    match config::scene_dir() {
+        Some(dir) => format!("场景装饰层,{}", dir.display()),
+        None => "场景装饰层,没有可写的目录".to_string(),
     }
 }
 
@@ -564,7 +564,7 @@ fn handle_action(hwnd: HWND, action: Action) {
         },
         Action::Save => with_settings(hwnd, settings_actions::save),
         Action::ResetFuzzy => with_settings(hwnd, settings_actions::reset_fuzzy),
-        Action::OpenEffects => with_settings(hwnd, settings_actions::open_effects),
+        Action::OpenEffects => with_settings(hwnd, settings_actions::open_scene),
         Action::ChooseScript => {
             with_settings(hwnd, |settings| {
                 settings_actions::choose_script(hwnd, settings);

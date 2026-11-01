@@ -1,7 +1,7 @@
 //! 候选窗的鼠标交互:悬停、点选、翻页与右键菜单。
 //!
 //! 命中几何由渲染核心给(`lueying_render::panel`),这里只把命中翻译成
-//! 服务端请求;窗口、摆位与绘制都在 `ui_skia`。
+//! 服务端请求;窗口、摆位与绘制都在 `ui_d2d`。
 
 use std::sync::atomic::Ordering;
 
@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::imp::State;
 use crate::ui_place;
-use crate::ui_skia::{WinCtx, menu_origin, redraw};
+use crate::ui_d2d::{WinCtx, menu_origin, redraw};
 
 /// 可交互:有激活会话且服务端候选窗在显示(组合中)。
 fn interactive(state: &State) -> bool {
@@ -28,7 +28,7 @@ fn hand_hit(ctx: &WinCtx, x: f32, y: f32) -> bool {
         return false;
     };
     if !matches!(
-        panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y),
+        panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y),
         panel::Hit::Nothing
     ) {
         return true;
@@ -70,7 +70,7 @@ pub(super) fn on_mouse(
                     let hit = if menu_hover.is_some() {
                         panel::Hit::Nothing
                     } else {
-                        panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y)
+                        panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y)
                     };
                     let item = match hit {
                         panel::Hit::Item(index) => Some(index),
@@ -121,7 +121,7 @@ pub(super) fn on_mouse(
                             slot: ctx.fx.menu.as_ref().map_or(0, |(slot, _, _)| *slot),
                         }
                     } else {
-                        match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y) {
+                        match panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y) {
                             panel::Hit::Item(slot) => Click::Pick(slot),
                             panel::Hit::PrevPage => Click::Page(-1),
                             panel::Hit::NextPage => Click::Page(1),
@@ -159,10 +159,10 @@ pub(super) fn on_mouse(
             }
             let target = match ctx.fx.geometry.as_ref() {
                 Some(geom) => {
-                    match panel::hit_test(&geom.spec, &geom.metrics, ctx.font.as_ref(), x, y) {
+                    match panel::hit_test(&geom.spec, &geom.metrics, &ctx.text, x, y) {
                         panel::Hit::Item(slot) => geom.spec.items.get(slot).map(|item| {
                             let (_, top) =
-                                menu_origin(slot, &geom.spec, &geom.metrics, ctx.font.as_ref());
+                                menu_origin(slot, &geom.spec, &geom.metrics, &ctx.text);
                             (slot, top, item.text.clone())
                         }),
                         _ => None,

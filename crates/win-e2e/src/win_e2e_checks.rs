@@ -225,48 +225,25 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
     Ok(format!("## 全角模式\n\nPASS,文本 `{text}`"))
 }
 
-/// Skia 渲染管线自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 出帧并读回
-/// 像素,结论写进日志;这里读日志断言。光栅路径的像素断言不过就红;
-/// GPU 路径在子进程里跑,没有硬件适配器或驱动异常时不可用——不可用不算失败,
-/// 但原因要带进报告,免得「GPU 没验过」被悄悄咽下去。
+/// D2D 渲染管线自检:Server 启动时按 `LUEYING_D2D_SELFTEST` 离屏出帧并
+/// 读回像素,结论写进日志;这里读日志断言。WARP 软件渲染,没有 GPU 的
+/// CI runner 也跑得出确定性的像素。
 pub(super) fn check_skia_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();
-    if let Some(line) = text.lines().find(|line| line.contains("SKIA 自检失败")) {
-        return Err(format!("Skia 自检失败:{line}"));
+    if let Some(line) = text.lines().find(|line| line.contains("D2D 自检失败")) {
+        return Err(format!("D2D 自检失败:{line}"));
     }
-    let Some(line) = text.lines().find(|line| line.contains("SKIA 自检通过")) else {
-        return Err("Server 日志里没有 Skia 自检记录".into());
+    let Some(line) = text.lines().find(|line| line.contains("D2D 自检通过")) else {
+        return Err("Server 日志里没有 D2D 自检记录".into());
     };
-    let gpu = text
+    let font = text
         .lines()
-        .find(|line| {
-            line.contains("SKIA GPU 自检通过")
-                || line.contains("SKIA GPU 自检不可用")
-                || line.contains("SKIA GPU 自检失败")
-        })
+        .find(|line| line.contains("DirectWrite 字型已画出") || line.contains("字体自检") || line.contains("自检失败:字体"))
         .unwrap_or("无");
-    // CPU 兜底(没有硬件 D3D12 的机器上候选窗走这条路):结论带进报告,
-    // 失败不拖垮整轮 E2E——分层窗口在某些无桌面会话里本来就建不出来。
-    let cpu = text
-        .lines()
-        .find(|line| line.contains("SKIA CPU 自检通过") || line.contains("SKIA CPU 自检失败"))
-        .unwrap_or("无");
-    // 换手(设备被摘掉后换到 CPU 光栅):同样只进报告;GPU 子进程里那条也带上。
-    let swap: Vec<&str> = text
-        .lines()
-        .filter(|line| line.contains("换手自检"))
-        .collect();
-    let swap = if swap.is_empty() {
-        "无".to_string()
-    } else {
-        swap.join("; ")
-    };
-    Ok(format!(
-        "## Skia 渲染管线\n\nPASS,{line}\n\nGPU:{gpu}\n\nCPU:{cpu}\n\n换手:{swap}"
-    ))
+    Ok(format!("## D2D 渲染管线\n\nPASS,{line}\n\n字体:{font}"))
 }
 
-/// 运行期扩展自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建临时扩展包,
+/// 运行期扩展自检:Server 启动时按 `LUEYING_D2D_SELFTEST` 建临时扩展包,
 /// 验证 Wasm 扩展在 Windows 上能加载、派发、拦截隐私场景。
 pub(super) fn check_ext_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();

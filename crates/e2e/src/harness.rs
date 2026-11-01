@@ -62,18 +62,6 @@ impl Drop for Temp {
     }
 }
 
-/// N32 小端内存字节序是 BGRA,读回 (B, G, R)。
-pub fn read_bgr(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8)> {
-    let (w, h) = (surface.width(), surface.height());
-    let info = ImageInfo::new_n32_premul((w, h), None);
-    let mut buf = vec![0u8; (w * h * 4) as usize];
-    if !surface.read_pixels(&info, &mut buf, info.min_row_bytes(), (0, 0)) {
-        return None;
-    }
-    let at = ((y * w + x) * 4) as usize;
-    Some((buf[at], buf[at + 1], buf[at + 2]))
-}
-
 /// 读回一个像素的 (B, G, R, A);N32 预乘,透明处的 alpha 是 0。
 pub fn read_bgra(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8, u8)> {
     let (w, h) = (surface.width(), surface.height());
@@ -86,7 +74,7 @@ pub fn read_bgra(surface: &mut Surface, x: i32, y: i32) -> Option<(u8, u8, u8, u
     Some((buf[at], buf[at + 1], buf[at + 2], buf[at + 3]))
 }
 
-/// 0xRRGGBB 转成与 [`read_bgr`] 同序的 (B, G, R),比较时才不会错位。
+/// 0xRRGGBB 转成读回字节序的 (B, G, R),比较时才不会错位。
 pub fn rgb(rgb: u32) -> (u8, u8, u8) {
     (
         (rgb & 0xff) as u8,

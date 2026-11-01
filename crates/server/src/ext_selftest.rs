@@ -1,15 +1,14 @@
 //! 运行期扩展自检:建一个临时扩展包,验证加载、派发、隐私与高对比度。
 //!
-//! 只在 `LUEYING_SKIA_SELFTEST` 下跑(CI),结论写日志供 win-e2e 断言。
+//! 只在 `LUEYING_D2D_SELFTEST` 下跑(CI),结论写日志供 win-e2e 断言。
 
 use std::path::Path;
 
 use lueying_extwasm::{Pack, SceneIn};
-use lueying_render::effect::{Slot, Uniforms};
 use lueying_server::config;
 
-/// 外观补丁:固定主题色与一条 SkSL 背景,便于断言隐私与高对比度路径。
-const PATCH: &str = r#"{"accent":1056816,"effects":{"background":"half4 main(float2 p) { return half4(0.1, 0.2, 0.3, 1.0); }"}}"#;
+/// 外观补丁:固定主题色,便于断言隐私与高对比度路径。
+const PATCH: &str = r#"{"accent":1056816}"#;
 
 /// 最小 Wasm guest:内存、bump 分配器、结果缓冲区与固定外观。
 fn guest() -> String {
@@ -45,7 +44,7 @@ fn manifest(id: &str) -> String {
 
 pub(super) fn run() {
     match check() {
-        Ok(()) => println!("扩展自检通过:加载、主题色、效果、隐私、高对比度与设置列表"),
+        Ok(()) => println!("扩展自检通过:加载、主题色、隐私、高对比度与设置列表"),
         Err(e) => println!("扩展自检失败:{e}"),
     }
 }
@@ -84,14 +83,6 @@ fn check_pack(dir: &Path) -> Result<(), String> {
     if first.accent != Some(0x10_20_30) {
         return Err(format!("首次派发主题色 {:?}", first.accent));
     }
-    if first
-        .effects
-        .as_ref()
-        .and_then(|e| e.background.as_deref())
-        .is_none()
-    {
-        return Err("首次派发没有背景效果".into());
-    }
     if pack
         .dispatch(&SceneIn {
             private: true,
@@ -113,25 +104,8 @@ fn check_pack(dir: &Path) -> Result<(), String> {
             ..SceneIn::default()
         })
         .ok_or("高对比度场景没有补丁")?;
-    if patch.accent != Some(0x10_20_30) || patch.effects.is_some() {
-        return Err(format!(
-            "高对比度补丁 {:?} / 效果 {:?}",
-            patch.accent, patch.effects
-        ));
-    }
-    // 扩展给的效果源码要真的能编译成 Skia shader,与候选窗同一条路径。
-    let fx = crate::ui_skia_script::ScriptFx::update(None, first);
-    let uniforms = Uniforms {
-        size: [32.0, 32.0],
-        time: 0.0,
-        anim: 1.0,
-        accent: [1.0, 0.0, 0.0, 0.0],
-    };
-    if fx
-        .shader(Slot::Background, &uniforms, (0.0, 0.0), 1.0)
-        .is_none()
-    {
-        return Err("扩展效果没有编译成 shader".into());
+    if patch.accent != Some(0x10_20_30) {
+        return Err(format!("高对比度补丁 {:?}", patch.accent));
     }
     Ok(())
 }
