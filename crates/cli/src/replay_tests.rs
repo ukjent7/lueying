@@ -24,7 +24,7 @@ fn ext_pack(root: &Path, id: &str, command: &str, title: &str) {
     let dir = root.join(id);
     fs::create_dir_all(&dir).expect("建扩展目录");
     let manifest = format!(
-        r#"{{"id":"{id}","name":"演示","version":"1.0.0","api":2,"main":"index.js","activate":{{"commands":[{{"id":"{command}","title":"{title}"}}]}}}}"#
+        r#"{{"id":"{id}","name":"演示","version":"1.0.0","api":3,"wasm":"extension.wasm","activate":{{"commands":[{{"id":"{command}","title":"{title}"}}]}}}}"#
     );
     fs::write(dir.join("manifest.json"), manifest).expect("写清单");
 }

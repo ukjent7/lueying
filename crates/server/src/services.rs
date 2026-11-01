@@ -1,6 +1,6 @@
 //! Windows 服务提供者:T3 服务缝的平台实现。
 //!
-//! 提供者从扩展宿主线程被 [`lueying_extjs::Registry::call`] 调进来,慢操作
+//! 提供者从扩展宿主线程被 [`lueying_extwasm::Registry::call`] 调进来,慢操作
 //! (截图、识别)在专用线程跑完经完成队列回传,不占派发预算。`output` 用
 //! Unicode 注入把文本送进当前焦点,`panel` 由独立的可选焦点窗口显示后回传
 //! 用户选择。
@@ -14,8 +14,8 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
-use lueying_extjs::bindings::Modifier;
-use lueying_extjs::{Done, Provider};
+use lueying_extwasm::bindings::Modifier;
+use lueying_extwasm::{Done, Provider};
 use serde_json::json;
 use windows::Globalization::Language;
 use windows::Graphics::Imaging::BitmapDecoder;
@@ -1020,7 +1020,7 @@ fn single_character(key: &str) -> Option<u32> {
 
 /// `Ctrl+Alt+O` → MOD_* 与虚拟键;语法、修饰键数量与保留组合走绑定表的解析。
 fn parse_combo(combo: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
-    let hotkey = lueying_extjs::bindings::parse(combo)?;
+    let hotkey = lueying_extwasm::bindings::parse(combo)?;
     let mut modifiers = HOT_KEY_MODIFIERS(0);
     for modifier in &hotkey.modifiers {
         modifiers |= match modifier {

@@ -25,7 +25,7 @@
 
 - **分层与沙箱化扩展体系**
   - **输入方案与辅助码**：内置小鹤、自然码、微软、搜狗主流双拼方案，支持五笔单字辅助码过滤。
-  - **运行期脚本沙箱**：基于独立的 QuickJS 沙箱线程，支持使用 JavaScript 编写动态外观装饰（SkSL 着色器）与功能命令。
+  - **运行期 Wasm 沙箱**：基于 wasmi 的每扩展 worker 沙箱，支持用 Rust 编写动态外观装饰（SkSL 着色器）与功能命令。
   - **受控平台原语**：提供截图、离线 OCR（系统 OCR 或 PP-OCRv6）、剪贴板、私有存储与系统通知等安全原语，外联网络强制域名白名单。
 
 - **纯粹与本地优先的安全隐私**
@@ -44,7 +44,7 @@ lueying-server.exe (用户常驻服务)
     ├─ 核心解码引擎 (共享二进制词典、语法搭配与重排模型)
     ├─ 候选窗口 (Skia: DirectComposition + D3D12，CPU 兜底)
     ├─ 状态徽标 (分层窗口 CPU 光栅化)
-    └─ QuickJS 扩展沙箱 (独立工作线程，隔离外部命令与外观脚本)
+    └─ Wasm 扩展沙箱 (wasmi 解释执行，每扩展独立 worker)
 lueying-settings.exe (独立设置中心：原生窗口 + Skia 光栅化)
 lueying-update.exe (独立更新器：Ed25519 签名验签与静默升级)
 lueying-netproxy.exe (扩展网络代理：按需启动，严格限制白名单域名)
@@ -131,9 +131,7 @@ extensions = ["shot-ocr"]
 ### 扩展生态开发
 - [扩展 SDK 概览](docs/extensions/README.md)：扩展分层矩阵、Rust 扩展契约与最小示例。
 - [扩展分层与权限模型](docs/extensions/layers.md)：沙箱资源限额、声明式清单与调用审计机制。
-- [运行期脚本扩展规范](docs/extensions/script.md)：JavaScript 扩展开发、宿主原语 API 与指标监控。
-- [Coding Agent 开发指南](docs/extensions/agent-guide.md)：面向 AI Agent 与 Linux 无头环境的 CLI 工具链。
-- [扩展开发 Skill 模板](docs/extensions/SKILL.md)：符合规范的扩展开发模版与交付清单。
+- [运行期 Wasm 扩展规范](docs/extensions/wasm.md)：Rust guest SDK、清单定义与 ABI。
 - [外部启动器集成](docs/extensions/powertoys.md)：与 PowerToys Command Palette 等启动器联动。
 
 ---

@@ -95,6 +95,10 @@ jobs:
           LUEYING_PPOCR_DIR: ${{ github.workspace }}/data/ppocr
         run: cargo test -p lueying-ocr --release --locked -- --include-ignored
       # 全量语料 + 神经重排 + 长期学习 + 共享语料,一次拿到完整报告。
+      - name: 构建 shot-ocr guest
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
       - name: 主词典 E2E + 全量候选准确率基准
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench --bench-shared
       - name: 报告摘要
@@ -126,6 +130,12 @@ jobs:
           persist-credentials: false
       # 定时跑不区分 PR,恢复并保存缓存;编译大头仍是 GPUI/zed 依赖树。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # 官方 guest:win-e2e 装扩展与安装冒烟的发布包都要它;产物拷进仓库路径供运行期读取。
+      - name: 构建 shot-ocr guest
+        shell: pwsh
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
       # 安装冒烟每次都编译真实安装包,复用与发版相同的 Inno 脚本。
       - name: 安装 Inno Setup
         shell: pwsh

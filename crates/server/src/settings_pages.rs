@@ -360,7 +360,7 @@ impl Settings {
 
     fn script_row(&self) -> Row {
         self.action_row(
-            "运行期脚本",
+            "运行期扩展",
             self.script_detail(),
             vec![
                 Self::secondary(ids::SCRIPTS, "选择", true),
@@ -575,7 +575,7 @@ impl Settings {
         }
     }
 
-    /// 运行期脚本那行的说明:当前包,或者怎么开始。
+    /// 运行期扩展那行的说明:当前包,或者怎么开始。
     pub(crate) fn script_detail(&self) -> String {
         match self.cfg.extensions.as_slice() {
             [] => {

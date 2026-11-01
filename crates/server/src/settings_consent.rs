@@ -3,7 +3,7 @@
 //! 平台无关;设置窗与 Linux E2E 共用。真正的哈希检查与记录读写在
 //! `lueying-extmeta::consent` 与平台侧动作里。
 
-/// 已安装的运行期脚本包;设置页只读清单,不加载 JS。
+/// 已安装的运行期扩展包;设置页只读清单,不加载 Wasm。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScriptEntry {
     pub id: String,
@@ -56,7 +56,7 @@ pub fn selected<'a>(extensions: &[String], scripts: &'a [ScriptEntry]) -> Option
 pub fn detail(extensions: &[String], scripts: &[ScriptEntry]) -> String {
     let Some(script) = selected(extensions, scripts) else {
         if extensions.is_empty() {
-            return "选择运行期脚本后查看能力".to_string();
+            return "选择运行期扩展后查看能力".to_string();
         }
         let mut pending: Vec<String> = Vec::new();
         for id in extensions {

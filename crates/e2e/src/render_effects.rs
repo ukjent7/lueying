@@ -199,7 +199,7 @@ pub(crate) fn effect_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         );
     }
 
-    // 运行期脚本给的源码:好源码编译,坏源码只废自己,与目录加载同一套错误。
+    // 运行期扩展给的源码:好源码编译,坏源码只废自己,与目录加载同一套错误。
     let set = effect::EffectSet::from_sources([
         (effect::Slot::Background, effect::BACKGROUND_TEMPLATE),
         (

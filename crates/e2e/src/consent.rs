@@ -2,28 +2,29 @@
 //!
 //! 失败方式:
 //! 1. 未同意的包被加载,或同意过的包被误拦。
-//! 2. 包内容变了但旧脚本继续热加载,绕过重新同意。
+//! 2. 包内容变了但旧 guest 继续热加载,绕过重新同意。
 //! 3. 拒绝更新时旧版本被丢掉,扩展直接失效。
 //! 4. 读屏 + 外发组合没有标记为敏感。
 
 use std::path::Path;
 use std::sync::Arc;
 
-use lueying_extjs::{ConsentGate, Invoke, Limits, Pack, Poll, Registry};
+use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
 use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
 
+use crate::extwasm_harness::command_guest;
 use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{
-  "id":"demo","name":"演示","version":"1.0.0","api":2,
+  "id":"demo","name":"演示","version":"1.0.0","api":3,"wasm":"extension.wasm",
   "activate":{"commands":[{"id":"run","title":"运行"}]},
   "needs":["capture"],
   "capabilities":["screen-capture"]
 }"#;
 
-const SCRIPT_V1: &str = "lueying.command('run', function () { return { v: 1 }; });";
-const SCRIPT_V2: &str = "lueying.command('run', function () { return { v: 2 }; });";
+const GUEST_V1: &str = r#"{"v":1}"#;
+const GUEST_V2: &str = r#"{"v":2}"#;
 
 fn gate(path: &Path) -> ConsentGate {
     let path = path.to_path_buf();
@@ -39,9 +40,9 @@ fn gate(path: &Path) -> ConsentGate {
     })
 }
 
-fn write_pack(dir: &Path, script: &str) {
+fn write_pack(dir: &Path, guest: &str) {
     std::fs::write(dir.join("manifest.json"), MANIFEST).expect("写清单");
-    std::fs::write(dir.join("index.js"), script).expect("写脚本");
+    std::fs::write(dir.join("extension.wasm"), command_guest(guest)).expect("写 Wasm");
 }
 
 fn approve(dir: &Path, consent: &Path) {
@@ -52,10 +53,8 @@ fn approve(dir: &Path, consent: &Path) {
 }
 
 fn run_command(pack: &mut Pack) -> String {
-    match pack.invoke("run", "{}") {
-        Ok(Invoke::Done(json)) => json,
-        other => format!("{other:?}"),
-    }
+    pack.invoke_wait("run", "{}", std::time::Duration::from_secs(30))
+        .unwrap_or_else(|error| format!("{error:?}"))
 }
 
 pub fn run(report: &mut String) -> usize {
@@ -63,10 +62,10 @@ pub fn run(report: &mut String) -> usize {
     let temp = Temp::new("consent");
     let dir = temp.pack("demo");
     let consent = temp.root.join("consent.json");
-    write_pack(&dir, SCRIPT_V1);
+    write_pack(&dir, GUEST_V1);
     let registry = Arc::new(Registry::new());
 
-    let denied = Pack::load_with_gate(&dir, Limits::default(), &registry, Some(gate(&consent)));
+    let denied = Pack::load_with_gate(&dir, Limits::default(), registry.clone(), Some(gate(&consent)));
     checks.push((
         "未同意不加载",
         denied
@@ -78,7 +77,7 @@ pub fn run(report: &mut String) -> usize {
 
     approve(&dir, &consent);
     let mut pack =
-        match Pack::load_with_gate(&dir, Limits::default(), &registry, Some(gate(&consent))) {
+        match Pack::load_with_gate(&dir, Limits::default(), registry.clone(), Some(gate(&consent))) {
             Ok(pack) => pack,
             Err(error) => {
                 checks.push(("同意后加载", false, error));
@@ -86,11 +85,11 @@ pub fn run(report: &mut String) -> usize {
             }
         };
     let loaded = run_command(&mut pack);
-    checks.push(("同意后加载", loaded == r#"{"v":1}"#, loaded));
+    checks.push(("同意后加载", loaded == GUEST_V1, loaded));
 
-    // 撤销同意并更新脚本:热重载必须拒绝,旧版本继续可用。
+    // 撤销同意并更新模块:热重载必须拒绝,旧版本继续可用。
     ConsentBook::default().save(&consent).expect("清空同意");
-    write_pack(&dir, SCRIPT_V2);
+    write_pack(&dir, GUEST_V2);
     let polled = pack.poll();
     checks.push((
         "更新需重新同意",
@@ -98,13 +97,13 @@ pub fn run(report: &mut String) -> usize {
         format!("{polled:?}"),
     ));
     let old = run_command(&mut pack);
-    checks.push(("拒绝更新保留旧版本", old == r#"{"v":1}"#, old));
+    checks.push(("拒绝更新保留旧版本", old == GUEST_V1, old));
 
     approve(&dir, &consent);
-    match Pack::load_with_gate(&dir, Limits::default(), &registry, Some(gate(&consent))) {
+    match Pack::load_with_gate(&dir, Limits::default(), registry, Some(gate(&consent))) {
         Ok(mut updated) => {
             let version = run_command(&mut updated);
-            checks.push(("重新同意后换新版本", version == r#"{"v":2}"#, version));
+            checks.push(("重新同意后换新版本", version == GUEST_V2, version));
         }
         Err(error) => checks.push(("重新同意后换新版本", false, error)),
     }

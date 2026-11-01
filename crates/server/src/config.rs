@@ -257,7 +257,7 @@ pub struct AppConfig {
     pub ui_accent: usize,
     /// 是否启用用户效果(SkSL 装饰层);关掉就只画素色。
     pub effects: bool,
-    /// 启用的运行期脚本扩展 id,按组合顺序排列;空表示不启用。
+    /// 启用的运行期扩展 id,按组合顺序排列;空表示不启用。
     pub extensions: Vec<String>,
     /// 扩展命令的全局热键绑定:(组合串, 完整命令 id);空表示没有绑定。
     pub bindings: Vec<(String, String)>,
@@ -428,7 +428,7 @@ pub fn effects_dir() -> Option<PathBuf> {
     Some(base.join("lueying").join("effects"))
 }
 
-/// 运行期脚本扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
+/// 运行期扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
 pub fn extensions_dir() -> Option<PathBuf> {
     user_file("extensions")
 }
@@ -685,7 +685,7 @@ pub fn save_apps(apps: &BTreeMap<String, AppOverride>) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// 运行期脚本扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。
+/// 运行期扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。
 pub(crate) fn valid_script_id(id: &str) -> bool {
     let mut chars = id.chars();
     let Some(first) = chars.next() else {

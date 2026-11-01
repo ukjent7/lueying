@@ -1,11 +1,14 @@
-//! 服务缝的回归网:IDL 与方法白名单一致、调用路由与完成队列。
+//! 服务缝的回归网:IDL 与方法白名单一致、阻塞调用、审计与取消。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use lueying_extmeta::Service;
 
 use crate::{AuditOutcome, AuditSink, Done, Provider, Registry, WIT, methods};
+
+const WAIT: Duration = Duration::from_secs(2);
 
 /// 把结果原样回传的假提供者;记录收到的调用供断言。
 struct Fake {
@@ -61,17 +64,23 @@ fn net_exposes_only_fetch() {
 #[test]
 fn call_rejects_unknown_service_and_method() {
     let registry = Registry::new();
-    assert!(registry.call("拍摄", "shot", "", 1).is_err());
     assert!(
         registry
-            .call("capture", "record", "", 1)
+            .call("", "shot", "shot", "", WAIT)
+            .err()
+            .unwrap()
+            .contains("未知服务")
+    );
+    assert!(
+        registry
+            .call("", "capture", "record", "", WAIT)
             .err()
             .unwrap()
             .contains("没有方法")
     );
     assert!(
         registry
-            .call("net", "post", "", 1)
+            .call("", "net", "post", "", WAIT)
             .err()
             .unwrap()
             .contains("没有方法")
@@ -83,7 +92,7 @@ fn call_without_provider_is_rejected() {
     let registry = Registry::new();
     assert!(
         registry
-            .call("capture", "shot", "", 1)
+            .call("", "capture", "shot", "", WAIT)
             .err()
             .unwrap()
             .contains("没有提供者")
@@ -91,7 +100,7 @@ fn call_without_provider_is_rejected() {
 }
 
 #[test]
-fn provider_receives_method_and_completes_queue() {
+fn provider_receives_method_and_result_reaches_caller() {
     let registry = Registry::new();
     let provider = fake(
         true,
@@ -99,8 +108,8 @@ fn provider_receives_method_and_completes_queue() {
     );
     registry.set(Service::Capture, provider.clone());
     assert!(registry.has(Service::Capture));
-    registry
-        .call("capture", "shot", r#"{"region":null}"#, 7)
+    let result = registry
+        .call("", "capture", "shot", r#"{"region":null}"#, WAIT)
         .unwrap();
     assert_eq!(
         provider
@@ -112,28 +121,23 @@ fn provider_receives_method_and_completes_queue() {
             .collect::<Vec<_>>(),
         vec![("shot", r#"{"region":null}"#)]
     );
-    let completions = registry.take_completions();
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].token, 7);
     assert_eq!(
-        completions[0].result.as_deref(),
-        Ok(r#"{"file":"C:\\tmp\\shot.bmp","width":800,"height":200}"#)
+        result,
+        r#"{"file":"C:\\tmp\\shot.bmp","width":800,"height":200}"#
     );
-    assert!(!registry.has_completions());
 }
 
 #[test]
-fn provider_error_text_reaches_queue() {
+fn provider_error_reaches_caller() {
     let registry = Registry::new();
     registry.set(Service::Hotkey, fake(false, "热键已注册: paste"));
-    registry
-        .call("hotkey", "register", r#"{"id":"paste"}"#, 3)
-        .unwrap();
-    let completions = registry.take_completions();
-    assert_eq!(completions[0].result, Err("热键已注册: paste".to_string()));
+    let error = registry
+        .call("", "hotkey", "register", r#"{"id":"paste"}"#, WAIT)
+        .unwrap_err();
+    assert_eq!(error, "热键已注册: paste");
 }
 
-/// 完成可以来自任意线程;泵任务只管抽队列。
+/// 完成可以来自任意线程;调用方阻塞等到结果。
 #[test]
 fn completion_from_another_thread() {
     let registry = Registry::new();
@@ -147,23 +151,17 @@ fn completion_from_another_thread() {
             done: Done,
         ) -> Result<(), String> {
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(10));
                 done.complete(Ok(r#"{"delivered":true}"#.to_string()));
             });
             Ok(())
         }
     }
     registry.set(Service::Output, Arc::new(Threaded));
-    registry
-        .call("output", "deliver", r#"{"text":"你好"}"#, 9)
+    let result = registry
+        .call("", "output", "deliver", r#"{"text":"你好"}"#, WAIT)
         .unwrap();
-    assert!(!registry.has_completions());
-    let completions = registry.take_completions();
-    assert!(completions.is_empty());
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let completions = registry.take_completions();
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0].token, 9);
+    assert_eq!(result, r#"{"delivered":true}"#);
 }
 
 /// 同服务重复装是替换,后装的接活。
@@ -172,11 +170,10 @@ fn set_replaces_provider() {
     let registry = Registry::new();
     registry.set(Service::Ocr, fake(true, r#"{"text":"一"}"#));
     registry.set(Service::Ocr, fake(true, r#"{"text":"二"}"#));
-    registry
-        .call("ocr", "recognize", r#"{"file":"a"}"#, 1)
+    let result = registry
+        .call("", "ocr", "recognize", r#"{"file":"a"}"#, WAIT)
         .unwrap();
-    let completions = registry.take_completions();
-    assert_eq!(completions[0].result.as_deref(), Ok(r#"{"text":"二"}"#));
+    assert_eq!(result, r#"{"text":"二"}"#);
 }
 
 /// 审计接收端:只记调用方、服务、方法与结果。
@@ -202,7 +199,7 @@ fn calls_are_audited_with_caller() {
     });
     registry.set_audit(recorder.clone());
     registry
-        .call_as("shot-ocr", "capture", "shot", "{}", 1)
+        .call("shot-ocr", "capture", "shot", "{}", WAIT)
         .unwrap();
     let lines = recorder.lines.lock().unwrap();
     assert_eq!(lines.len(), 1);
@@ -223,7 +220,7 @@ fn privacy_blocks_before_provider_and_is_audited() {
     registry.set_privacy(Arc::new(move || flag.load(Ordering::Relaxed)));
 
     let error = registry
-        .call_as("shot-ocr", "capture", "shot", "{}", 1)
+        .call("shot-ocr", "capture", "shot", "{}", WAIT)
         .unwrap_err();
     assert!(error.contains("隐私字段"));
     assert!(provider.seen.lock().unwrap().is_empty());
@@ -234,7 +231,54 @@ fn privacy_blocks_before_provider_and_is_audited() {
 
     private.store(false, Ordering::Relaxed);
     registry
-        .call_as("shot-ocr", "capture", "shot", "{}", 2)
+        .call("shot-ocr", "capture", "shot", "{}", WAIT)
         .unwrap();
     assert_eq!(provider.seen.lock().unwrap().len(), 1);
+}
+
+/// 提供者不回传时按超时返回,不把扩展线程永久挂住。
+#[test]
+fn timeout_returns_error() {
+    struct Silent;
+    impl Provider for Silent {
+        fn call(&self, _caller: &str, _method: &str, _args: &str, _done: Done) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let registry = Registry::new();
+    registry.set(Service::Ocr, Arc::new(Silent));
+    let error = registry
+        .call("", "ocr", "recognize", "{}", Duration::from_millis(60))
+        .unwrap_err();
+    assert!(error.contains("超时"), "{error}");
+}
+
+/// 取消标志置位后调用在下一轮检查时返回。
+#[test]
+fn cancellation_returns_error() {
+    struct Silent;
+    impl Provider for Silent {
+        fn call(&self, _caller: &str, _method: &str, _args: &str, _done: Done) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let registry = Arc::new(Registry::new());
+    registry.set(Service::Panel, Arc::new(Silent));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_registry = Arc::clone(&registry);
+    let worker_cancel = Arc::clone(&cancel);
+    let handle = std::thread::spawn(move || {
+        worker_registry.call_cancellable(
+            "",
+            "panel",
+            "show",
+            "{}",
+            Duration::from_secs(10),
+            Some(&worker_cancel),
+        )
+    });
+    std::thread::sleep(Duration::from_millis(20));
+    cancel.store(true, Ordering::Relaxed);
+    let error = handle.join().unwrap().unwrap_err();
+    assert!(error.contains("取消"), "{error}");
 }

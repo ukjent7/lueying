@@ -61,7 +61,7 @@ pub(super) struct Session {
     pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
     pub(super) host_draws: bool,
-    /// 当前输入范围是密码/隐私字段;运行期脚本整个跳过。
+    /// 当前输入范围是密码/隐私字段;运行期扩展整个跳过。
     pub(super) private: bool,
     /// 最近一次 Context 的焦点代次;异步 UIA 结果据此丢弃过期文本。
     pub(super) context_epoch: u64,

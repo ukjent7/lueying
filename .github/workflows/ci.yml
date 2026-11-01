@@ -93,13 +93,15 @@ jobs:
       # 不必为此编译 Windows 原生链路。
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
+      # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
+      - name: Wasm guest 构建
+        run: cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
       # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
       # 旁路层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
-      # Wasm 原型已移出默认 workspace,不参与常规门禁。
       # CLI 的子命令解析同样不进 E2E,在这里跑。
       - name: 扩展层单元测试
         run: |
-          cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
+          cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extsvc -p lueying-extguest --lib --locked
           cargo test -p lueying-bypass --locked
           cargo test -p lueying-cli --lib --locked
 
@@ -153,6 +155,10 @@ jobs:
       - name: 转换词典
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
+      - name: 构建 shot-ocr guest
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
       - name: 快速 E2E + 快速候选基准
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench-fast
       - name: 报告摘要
@@ -246,6 +252,12 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
+      # 官方 guest:win-e2e 装扩展与发布包都要它;产物拷进仓库路径供运行期读取。
+      - name: 构建 shot-ocr guest
+        shell: pwsh
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
       # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。
       - name: 安装 Inno Setup

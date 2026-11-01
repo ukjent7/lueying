@@ -538,9 +538,9 @@ fn deferred(rows: &mut Vec<Row>) {
     ));
     rows.push((
         "V6",
-        "rquickjs Promise 与作业队列",
+        "扩展运行期执行模型",
         Verdict::Note,
-        "已在 crates/e2e/src/extjs.rs 异步命令 E2E 覆盖:同步 Runtime + interrupt handler + execute_pending_job 的步进模型可行,单轮 256 步上限,死循环作业被派发预算打断。"
+        "QuickJS 运行期已被 wasmi 替换:命令在扩展自己的 worker 上同步执行,长计算由燃料上限打断,阻塞服务调用在扩展卸载时取消。原 Promise 步进模型不再适用。"
             .to_string(),
     ));
     rows.push((

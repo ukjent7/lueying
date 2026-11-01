@@ -109,7 +109,7 @@ fn consent_detail_reports_pending_and_sensitive() {
     let enabled = |settings: &Settings| {
         crate::settings_consent::approve_enabled(&settings.cfg.extensions, &settings.scripts)
     };
-    assert!(detail(&settings).contains("选择运行期脚本"));
+    assert!(detail(&settings).contains("选择运行期扩展"));
     settings.cfg.extensions = vec!["shot".to_string()];
     let pending_detail = detail(&settings);
     assert!(pending_detail.contains("敏感组合"));

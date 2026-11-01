@@ -41,7 +41,7 @@ cargo doc --no-deps --workspace --locked
 
 # 核心协议与模块单元测试
 cargo test -p lueying-protocol --lib --locked
-cargo test -p lueying-extjs -p lueying-extmeta --lib --locked
+cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extsvc -p lueying-extguest --lib --locked
 cargo test -p lueying-bypass --locked
 cargo test -p lueying-cli --lib --locked
 cargo test -p lueying-server --lib --release --locked

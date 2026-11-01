@@ -1,8 +1,9 @@
-//! 运行期脚本扩展宿主:独立线程跑 QuickJS、命令、热键与服务缝。
+//! 运行期 Wasm 扩展宿主:独立线程做派发、命令、热键与服务缝。
 //!
 //! 与候选窗解耦:补丁经通道交给窗口线程,窗口线程只做 `submit` 与 `take`;
 //! 没有 UI 时(Windows E2E、无桌面会话)宿主照常跑,补丁直接丢弃。
 //! 扩展目录与生效列表按内容/配置轮询,换扩展或热重载都不重启进程。
+//! 命令在扩展自己的 worker 上跑,派发线程只提交与收结果,不会被长命令卡住。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,10 +11,10 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::bindings::BindingTable;
-use lueying_extjs::{
-    Budgets, ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, Invoke, Limits,
-    METRICS_VERSION, PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch, Service,
+use lueying_extwasm::bindings::BindingTable;
+use lueying_extwasm::{
+    Budgets, ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, Limits, METRICS_VERSION,
+    PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch, Service,
 };
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
@@ -198,9 +199,20 @@ fn worker(
             while let Ok(invoke) = action_rx.try_recv() {
                 run_command(current, &invoke.command, invoke.source, &privacy);
             }
-            // 热键触发与异步命令推进;没有热键和挂起任务时都是微秒级空检查。
+            // 热键触发与命令结果;没有热键和结果时都是微秒级空检查。
             dispatch_hotkey(&state, current, &hotkey, &bindings, &privacy);
-            let _ = current.pump(unix_ms());
+            for (extension, finished) in current.take_results() {
+                match finished.result {
+                    Ok(json) => println!(
+                        "扩展 {extension} 命令 {} → {json}",
+                        finished.command
+                    ),
+                    Err(error) => println!(
+                        "扩展 {extension} 命令 {} 失败:{error}",
+                        finished.command
+                    ),
+                }
+            }
         } else {
             // 没有运行期扩展时也要收总热键;用户绑定不存在,只排空消息队列。
             let _ = hotkey.pump();
@@ -374,31 +386,23 @@ fn dispatch_hotkey(
     }
 }
 
-/// 执行一条扩展命令并泵几轮:快命令当次结算,等服务与长定时器的由循环节拍收尾。
+/// 执行一条扩展命令:交给扩展 worker,结果与错误由循环节拍写日志。
 fn run_command(runtime: &mut Runtime, command: &str, source: &str, privacy: &PrivacyCheck) {
     if privacy() {
         println!("{source} 跳过 {command}:当前是密码/隐私字段");
         return;
     }
     match runtime.invoke(command, "{}") {
-        Ok(Invoke::Done(json)) => println!("{source} 执行 {command} → {json}"),
-        Ok(Invoke::Pending(_)) => println!("{source} 触发 {command}(异步执行)"),
+        Ok(seq) => println!("{source} 触发 {command}(序号 {seq})"),
         Err(error) => println!("{source} 执行失败:{error}"),
-    }
-    let now_ms = unix_ms();
-    for _ in 0..32 {
-        if runtime.pending() == 0 {
-            break;
-        }
-        let _ = runtime.pump(now_ms);
     }
 }
 
 /// 触发时刻的输入状态:活跃会话在即可编辑,其组合在即组句。
-fn session_input(state: &State) -> lueying_extjs::bindings::Input {
+fn session_input(state: &State) -> lueying_extwasm::bindings::Input {
     let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
     let active = sessions.get(&state.active.load(Ordering::Relaxed));
-    lueying_extjs::bindings::Input {
+    lueying_extwasm::bindings::Input {
         editable: active.is_some(),
         composing: active
             .and_then(|session| session.engine.composition())
@@ -475,7 +479,7 @@ fn load(
     let mut net_domains = HashMap::new();
     for id in order {
         let dir = root.join(id);
-        let manifest = match lueying_extjs::manifest_at(&dir) {
+        let manifest = match lueying_extwasm::manifest_at(&dir) {
             Ok(manifest) => manifest,
             Err(error) => {
                 println!("扩展 {id} 未加载: {error}");
@@ -565,7 +569,7 @@ fn load(
 
 /// 清单已知但没进运行期的包:状态与预算可展示,指标都从零开始。
 fn base_stat(
-    manifest: &lueying_extjs::Manifest,
+    manifest: &lueying_extwasm::Manifest,
     state: ExtState,
     limits: Limits,
     last_error: Option<String>,
@@ -620,7 +624,7 @@ fn publish_metrics(
             stack_bytes: limits.stack_bytes as u64,
             init_ms: limits.init_ms,
             dispatch_ms: limits.dispatch_ms,
-            max_faults: lueying_extjs::MAX_FAULTS,
+            max_faults: lueying_extwasm::MAX_FAULTS,
         },
         extensions,
     };

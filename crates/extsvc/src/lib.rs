@@ -1,13 +1,14 @@
-//! 扩展服务缝:宿主原语的注册表与完成队列,平台无关。
+//! 扩展服务缝:宿主原语的注册表与阻塞调用,平台无关。
 //!
 //! 职责边界:这里只定义「扩展怎么调、提供者怎么回」,不含任何平台实现。
-//! 提供者由宿主进程在启动时装进 [`Registry`];扩展侧 JS 只看见
-//! `lueying.capture.shot()` 这类 Promise 接口。调用经 [`Done`] 完成队列
-//! 异步回传,提供者选择同步还是跨线程完成都行,队列由扩展宿主在泵任务时
-//! 抽干。接口的记录文件是 [`crate::WIT`](`lueying.wit`),方法名以它为准。
+//! 提供者由宿主进程在启动时装进 [`Registry`];Wasm guest 通过宿主导入
+//! 发起调用,宿主在这一层阻塞等待结果。提供者可以选择同步完成,也可以
+//! 把 [`Done`] 交给截图/识别/面板线程异步完成;调用方只看见一个
+//! `Result<String, String>`。接口的记录文件是 [`crate::WIT`](`lueying.wit`)。
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use lueying_extmeta::Service;
 
@@ -17,7 +18,7 @@ pub const WIT: &str = include_str!("../lueying.wit");
 /// 隐私字段检查:返回 `true` 时所有扩展服务调用都拒绝。
 pub type PrivacyCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// 一次服务调用的结果;审计日志只记发起与拒绝,不记异步完成。
+/// 一次服务调用的审计结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditOutcome {
     /// 已交给提供者。
@@ -33,49 +34,30 @@ pub trait AuditSink: Send + Sync {
     fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str);
 }
 
-/// 一次服务调用的回传:发起时的序号与结果。
-///
-/// 序号由扩展引导层分配,宿主拿它把结果路由回对应的 Promise;成功分支是
-/// 结果 JSON 文本,失败分支是给用户看的错误文本。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Completion {
-    pub token: u64,
-    pub result: Result<String, String>,
-}
-
 /// 提供者回传结果的句柄;克隆便宜,可跨线程交给异步操作。
 #[derive(Clone)]
 pub struct Done {
-    token: u64,
-    completions: Arc<Mutex<VecDeque<Completion>>>,
+    result: mpsc::Sender<Result<String, String>>,
 }
 
 impl Done {
-    /// 完成一次调用;接收端按 token 找等待中的 Promise,找不到就丢弃,
-    /// 所以重复完成没有效果。
+    /// 完成一次调用。接收端已经超时或取消时静默丢弃。
     pub fn complete(&self, result: Result<String, String>) {
-        self.completions
-            .lock()
-            .expect("完成队列锁")
-            .push_back(Completion {
-                token: self.token,
-                result,
-            });
+        let _ = self.result.send(result);
     }
 }
 
 /// 一个服务的提供者。方法名已由 [`Registry::call`] 按白名单核过,
 /// `caller` 是发起调用的扩展 id(审计与按扩展隔离的存储用),`args` 是
-/// IDL record 的 JSON 文本;结果必须经 `done` 回传,返回值只表示「调用
+/// 服务方法的 JSON 文本;结果必须经 `done` 回传,返回值只表示「调用
 /// 有没有发出去」(`Err` 表示参数坏到连结果都造不出来)。
 pub trait Provider: Send + Sync {
     fn call(&self, caller: &str, method: &str, args: &str, done: Done) -> Result<(), String>;
 }
 
-/// 服务注册表:宿主进程装提供者,扩展宿主发调用、抽完成。
+/// 服务注册表:宿主进程装提供者,扩展宿主发调用并等待结果。
 pub struct Registry {
     providers: Mutex<Vec<(Service, Arc<dyn Provider>)>>,
-    completions: Arc<Mutex<VecDeque<Completion>>>,
     /// 隐私字段检查;装有闭包时每次调用前问一次。
     privacy: Mutex<Option<PrivacyCheck>>,
     /// 审计接收端;没有时装不记。
@@ -93,7 +75,6 @@ impl Registry {
     pub fn new() -> Self {
         Self {
             providers: Mutex::new(Vec::new()),
-            completions: Arc::new(Mutex::new(VecDeque::new())),
             privacy: Mutex::new(None),
             audit: Mutex::new(None),
         }
@@ -127,57 +108,53 @@ impl Registry {
             .any(|(s, _)| *s == service)
     }
 
-    /// 发起一次调用;结果经完成队列异步回传。
+    /// 发起一次调用并等待结果。
     ///
     /// 服务名与方法名在这里核死:未知服务、没开放的接口、没装提供者
     /// 都当场拒绝,提供者只面对合法方法。`caller` 是扩展 id,只给审计用。
-    pub fn call(&self, service: &str, method: &str, args: &str, token: u64) -> Result<(), String> {
-        self.call_as("", service, method, args, token)
-    }
-
-    /// 带调用方的调用;隐私字段与审计都在这一层生效。
-    ///
-    /// needs 门控在扩展宿主里(调用方只把声明过的服务放进来),这里只保证
-    /// 已声明的服务也要经过隐私检查。
-    pub fn call_as(
+    pub fn call(
         &self,
         caller: &str,
         service: &str,
         method: &str,
         args: &str,
-        token: u64,
-    ) -> Result<(), String> {
-        match self.dispatch(caller, service, method, args, token) {
-            Ok(()) => {
-                self.record(caller, service, method, AuditOutcome::Allowed, "发起");
-                Ok(())
-            }
-            Err(error) => {
-                self.record(caller, service, method, AuditOutcome::Denied, &error);
-                Err(error)
-            }
-        }
+        timeout: Duration,
+    ) -> Result<String, String> {
+        self.call_cancellable(caller, service, method, args, timeout, None)
     }
 
-    fn dispatch(
+    /// 同上,另带取消标志;扩展卸载或超时时宿主置位,调用在 50 ms 内返回。
+    pub fn call_cancellable(
         &self,
         caller: &str,
         service: &str,
         method: &str,
         args: &str,
-        token: u64,
-    ) -> Result<(), String> {
-        let service = Service::ALL
+        timeout: Duration,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<String, String> {
+        let service_enum = match Service::ALL
             .iter()
             .copied()
             .find(|s| s.key() == service)
-            .ok_or_else(|| format!("未知服务 {service:?}"))?;
-        if !methods(service).contains(&method) {
-            let known = methods(service).join(", ");
-            return Err(format!(
+        {
+            Some(service) => service,
+            None => return Err(format!("未知服务 {service:?}")),
+        };
+        if !methods(service_enum).contains(&method) {
+            let known = methods(service_enum).join(", ");
+            let error = format!(
                 "服务 {} 没有方法 {method:?}(可用: {known})",
-                service.key()
-            ));
+                service_enum.key()
+            );
+            self.record(
+                caller,
+                service,
+                method,
+                AuditOutcome::Denied,
+                "方法不存在",
+            );
+            return Err(error);
         }
         let privacy = self
             .privacy
@@ -186,6 +163,7 @@ impl Registry {
             .as_ref()
             .map(Arc::clone);
         if privacy.is_some_and(|check| check()) {
+            self.record(caller, service, method, AuditOutcome::Denied, "隐私字段");
             return Err("隐私字段下已停用扩展服务".to_string());
         }
         let provider = self
@@ -193,14 +171,41 @@ impl Registry {
             .lock()
             .expect("提供者表锁")
             .iter()
-            .find(|(s, _)| *s == service)
+            .find(|(s, _)| *s == service_enum)
             .map(|(_, p)| Arc::clone(p))
-            .ok_or_else(|| format!("服务 {} 没有提供者", service.key()))?;
-        let done = Done {
-            token,
-            completions: Arc::clone(&self.completions),
-        };
-        provider.call(caller, method, args, done)
+            .ok_or_else(|| {
+                self.record(
+                    caller,
+                    service,
+                    method,
+                    AuditOutcome::Denied,
+                    "没有提供者",
+                );
+                format!("服务 {} 没有提供者", service_enum.key())
+            })?;
+        let (sender, receiver) = mpsc::channel();
+        if let Err(error) = provider.call(caller, method, args, Done { result: sender }) {
+            self.record(caller, service, method, AuditOutcome::Denied, &error);
+            return Err(error);
+        }
+        self.record(caller, service, method, AuditOutcome::Allowed, "发起");
+        let deadline = Instant::now() + timeout;
+        loop {
+            if cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                return Err(format!("服务 {service} 调用已取消"));
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(format!("服务 {service} 调用超时({} s)", timeout.as_secs()));
+            }
+            match receiver.recv_timeout(left.min(Duration::from_millis(50))) {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!("服务 {service} 没有回传结果"));
+                }
+            }
+        }
     }
 
     fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str) {
@@ -212,25 +217,11 @@ impl Registry {
             sink.record(caller, service, method, outcome, note);
         }
     }
-
-    /// 是否有待抽干的完成结果;泵任务用它决定要不要空转。
-    pub fn has_completions(&self) -> bool {
-        !self.completions.lock().expect("完成队列锁").is_empty()
-    }
-
-    /// 抽干完成队列;扩展宿主在每轮泵任务里调用。
-    pub fn take_completions(&self) -> Vec<Completion> {
-        self.completions
-            .lock()
-            .expect("完成队列锁")
-            .drain(..)
-            .collect()
-    }
 }
 
 /// 各服务开放的方法;以 `lueying.wit` 为准。
 ///
-/// 没开放的接口(网络)是空表:清单里声明了也调不到。
+/// 没开放的接口是空表:清单里声明了也调不到。
 pub fn methods(service: Service) -> &'static [&'static str] {
     match service {
         Service::Capture => &["shot"],
@@ -246,4 +237,5 @@ pub fn methods(service: Service) -> &'static [&'static str] {
 }
 
 #[cfg(test)]
+#[path = "registry_tests.rs"]
 mod registry_tests;

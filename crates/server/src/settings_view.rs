@@ -289,7 +289,7 @@ pub struct Settings {
     pub updates: UpdateState,
     /// 用户效果目录的说明文字。
     pub effects_detail: String,
-    /// 已安装的运行期脚本包;平台侧读目录后填入。
+    /// 已安装的运行期扩展包;平台侧读目录后填入。
     pub scripts: Vec<ScriptEntry>,
     /// PP-OCRv6 模型是否齐全;平台侧检查目录后填入。
     pub ppocr_ready: bool,
@@ -359,7 +359,7 @@ impl Settings {
         crate::settings_consent::selected(&self.cfg.extensions, &self.scripts)
     }
 
-    /// 选择运行期脚本;`None` 关闭。下标越界按关闭处理。
+    /// 选择运行期扩展;`None` 关闭。下标越界按关闭处理。
     pub fn select_script(&mut self, index: Option<usize>) {
         match index.and_then(|index| self.scripts.get(index)) {
             Some(script) => self.cfg.extensions = vec![script.id.clone()],

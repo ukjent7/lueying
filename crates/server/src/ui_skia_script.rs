@@ -4,7 +4,7 @@
 //! 转成不含候选文字的场景,把补丁编译成 Skia 对象。补丁只在内容变化时
 //! 重绘一帧;坏源码只废掉自己的槽位,高对比度下效果整个关掉。
 
-use lueying_extjs::{EffectSlot, EffectsPatch, SceneIn, ScenePatch};
+use lueying_extwasm::{EffectSlot, EffectsPatch, SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
 use lueying_render::effect::{EffectSet, Slot, Uniforms};
 use lueying_server::theme;

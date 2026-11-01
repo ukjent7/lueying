@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
-use lueying_extjs::ScenePatch;
+use lueying_extwasm::ScenePatch;
 use lueying_protocol::SessionView;
 use lueying_render::effect::{Budget, BudgetGuard, Slot, Uniforms};
 use lueying_render::panel::{self, Metrics, PanelSpec};
@@ -162,7 +162,7 @@ pub(super) struct WinCtx {
     pub(super) cursor_hand: Option<HCURSOR>,
     /// 用户效果:加载期编译好,坏文件只废掉自己的槽位。
     effects: ui_skia_effect::Effects,
-    /// 运行期脚本:后台线程跑 QuickJS,这里只收补丁。
+    /// 运行期扩展:后台 worker 跑 wasmi guest,这里只收补丁。
     script: crate::ext_host::Script,
     /// 已应用的脚本补丁;空表示没有扩展生效。
     script_fx: Option<ui_skia_script::ScriptFx>,

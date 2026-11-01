@@ -6,14 +6,16 @@ members = [
     "crates/engine",
     "crates/cli",
     "crates/ext",
+    "crates/extguest",
     "crates/extmeta",
+    "crates/extproto",
     "crates/features",
     "crates/lm",
     "crates/ocr",
     "crates/rerank",
     "crates/protocol",
-    # 运行期扩展:场景协议 + QuickJS 宿主,平台无关
-    "crates/extjs",
+    # 运行期扩展:wasmi 宿主与每扩展 worker,平台无关
+    "crates/extwasm",
     # 运行期扩展:旁路进程层,按需启动、JSON 行协议,平台无关
     "crates/bypass",
     # 扩展服务缝:提供者契约与完成队列,平台无关
@@ -30,11 +32,10 @@ members = [
     "crates/e2e",
     "crates/win-e2e",
     "crates/install-e2e",
+    # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
+    "extensions/shot-ocr",
     "xtask",
 ]
-
-# Wasm 原型独立成 workspace,不进默认构建;需要测量时按 crate 内说明手动跑。
-exclude = ["crates/extwasm"]
 
 [workspace.package]
 edition = "2024"
@@ -45,9 +46,11 @@ lueying-cli = { path = "crates/cli" }
 lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }
-lueying-extjs = { path = "crates/extjs" }
+lueying-extguest = { path = "crates/extguest" }
 lueying-extmeta = { path = "crates/extmeta" }
+lueying-extproto = { path = "crates/extproto" }
 lueying-extsvc = { path = "crates/extsvc" }
+lueying-extwasm = { path = "crates/extwasm" }
 lueying-bypass = { path = "crates/bypass" }
 lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }

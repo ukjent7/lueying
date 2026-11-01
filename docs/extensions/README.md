@@ -8,13 +8,13 @@
 |---|---|---|---|---|
 | **输入方案** | `Scheme` | 核心引擎内（编译期注入） | **是** | 双拼、自定义键位、直接辅助码 |
 | **候选模块** | `Module` | 候选管线中（编译期注入） | **否** | 自定义短语、下一词联想、候选重排 |
-| **运行期脚本** | `QuickJS` 沙箱 | 独立工作线程（动态加载） | **否** | 候选窗动态装饰、命令动作、OCR 截图 |
+| **运行期扩展** | `wasmi` Wasm 沙箱 | 扩展专属工作线程（动态加载） | **否** | 候选窗动态装饰、命令动作、OCR 截图 |
 
 ### 核心分工说明
 
 - **方案层（`Scheme`）**：负责将击键映射为规范全拼，并建立双向区间映射。无论使用何种方案，底层均复用统一的主词典、语言模型与用户词库。
 - **模块层（`Module`）**：在基础候选与快捷输入生成后执行，支持插入、重排、筛选候选词或在上屏阶段改写文本。
-- **脚本层（QuickJS）**：面向动态业务，沙箱运行且无法读取候选汉字与按键历史，确保隐私安全。
+- **运行期扩展层（wasmi）**：面向动态业务，同步 Rust 代码编成 Wasm 后在进程内解释执行；无法读取候选汉字与按键历史，确保隐私安全。
 
 ## 编译期 Rust SDK
 
@@ -80,15 +80,15 @@ impl Scheme for UpperScheme {
 }
 ```
 
-## 运行期脚本与扩展 CLI
+## 运行期扩展与扩展 CLI
 
-运行期脚本存放在 `%APPDATA%\lueying\extensions\<id>\`，通过 `manifest.json` 与 `index.js` 定义。
+运行期扩展存放在 `%APPDATA%\lueying\extensions\<id>\`，通过 `manifest.json` 与 `extension.wasm` 定义。
 
 `lueying ext` 命令行工具提供全生命周期管理，在 Windows 与 Linux 环境下均可无头执行：
 
 ```sh
-lueying ext new <id>           # 创建扩展标准骨架代码
-lueying ext pack <dir>         # 将目录打包为纯文本 .luext 归档
+lueying ext new <id>           # 创建扩展标准骨架(Rust guest crate + 清单)
+lueying ext pack <dir>         # 将目录打包为 .luext 归档(文本块 + Wasm 字节块)
 lueying ext install <file>     # 安装 .luext 扩展包至扩展目录
 lueying ext reload             # 通知常驻服务立即重读配置与扩展
 lueying ext replay <script>    # 无头回放按键序列并输出候选判定
@@ -99,6 +99,5 @@ lueying ext top                # 监视扩展内存占用、派发耗时与故�
 ## 延伸文档
 
 - [扩展分层与权限模型](layers.md)：深入了解沙箱隔离、服务声明与权限审计体系。
-- [运行期脚本规范](script.md)：JavaScript 脚本扩展开发完整 API、清单与服务原语。
-- [Coding Agent 开发指南](agent-guide.md)：面向 AI 与无头终端的扩展自动化开发测试指南。
+- [运行期 Wasm 扩展规范](wasm.md)：guest SDK、清单定义、ABI 与服务原语。
 - [PowerToys 联动集成](powertoys.md)：通过外部启动器无缝调用输入法扩展命令。

@@ -772,7 +772,7 @@ pub static SETTINGS: &[SettingDef] = &[
     },
     SettingDef {
         key: "extensions",
-        title: "运行期脚本",
+        title: "运行期扩展",
         detail: "启用的扩展 id 列表;在「扩展」页选择与排序",
         value: ValueType::List,
         default: DefaultValue::List,

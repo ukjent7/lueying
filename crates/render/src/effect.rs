@@ -215,7 +215,7 @@ impl EffectSet {
 
     /// 从源码编译效果:每个槽位一份源码,没给的槽位保持素色。
     ///
-    /// 运行期脚本给的 SkSL 走这里;坏源码只废掉自己的槽位,错误文本与
+    /// 运行期扩展给的 SkSL 走这里;坏源码只废掉自己的槽位,错误文本与
     /// 目录加载同一套。
     pub fn from_sources<'a>(sources: impl IntoIterator<Item = (Slot, &'a str)>) -> Self {
         let mut set = Self::default();

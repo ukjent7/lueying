@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
-use lueying_extjs::{ConsentBook, ConsentCheck};
+use lueying_extwasm::{ConsentBook, ConsentCheck};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_net::update;
 use lueying_protocol::{Reply, Request, pipe_name};
@@ -351,7 +351,7 @@ const PPOCR_README: &str = "\
 放好后在设置页把「截图识别」切到 PP-OCRv6;首次识别会加载模型。
 ";
 
-/// 打开运行期脚本目录:没有就建,再拉起资源管理器。每个包一个子
+/// 打开运行期扩展目录:没有就建,再拉起资源管理器。每个包一个子
 /// 目录,启用哪个由配置里的 `script` 决定。
 pub fn open_scripts(settings: &mut Settings) {
     settings.confirm_clear = false;
@@ -370,7 +370,7 @@ pub fn open_scripts(settings: &mut Settings) {
 }
 
 /// 读扩展目录里的包清单与同意状态;坏包跳过,按显示名排序。设置页只读
-/// 清单与哈希,不加载 JS,所以坏脚本也能先选上,由服务端记失败原因。
+/// 清单与哈希,不加载 Wasm,所以坏包也能先选上,由服务端记失败原因。
 pub fn installed_scripts() -> Vec<ScriptEntry> {
     let Some(root) = config::extensions_dir() else {
         return Vec::new();
@@ -392,18 +392,15 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         let Ok(meta) = std::fs::metadata(&manifest_path) else {
             continue;
         };
-        if meta.len() > lueying_extjs::MAX_MANIFEST_BYTES as u64 {
+        if meta.len() > lueying_extwasm::MAX_MANIFEST_BYTES as u64 {
             continue;
         }
         let Ok(bytes) = std::fs::read(&manifest_path) else {
             continue;
         };
-        let Ok(manifest) = lueying_extjs::Manifest::parse(&bytes) else {
+        let Ok(manifest) = lueying_extwasm::Manifest::parse(&bytes) else {
             continue;
         };
-        if manifest.script_main().is_none() {
-            continue;
-        }
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
             continue;
         }
@@ -438,7 +435,7 @@ pub fn approve_extension(settings: &mut Settings) {
     settings.confirm_clear = false;
     let ids = settings.cfg.extensions.clone();
     if ids.is_empty() {
-        settings.say(Notice::Error, "先在「运行期脚本」选择要启用的扩展");
+        settings.say(Notice::Error, "先在「运行期扩展」选择要启用的扩展");
         return;
     }
     let mut approved = 0usize;
@@ -465,7 +462,7 @@ pub fn approve_extension(settings: &mut Settings) {
 fn approve_package(id: &str) -> Result<ConsentCheck, String> {
     let root = config::extensions_dir().ok_or("没有扩展目录")?;
     let dir = root.join(id);
-    let manifest = lueying_extjs::manifest_at(&dir)?;
+    let manifest = lueying_extwasm::manifest_at(&dir)?;
     let path = config::extensions_consent_path().ok_or("没有同意记录路径")?;
     let mut book = ConsentBook::load(&path);
     let check = book.check(&dir, &manifest)?;
@@ -536,7 +533,7 @@ pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
         return;
     };
     let selected = settings.script_selected();
-    let off = HSTRING::from("关闭运行期脚本");
+    let off = HSTRING::from("关闭运行期扩展");
     unsafe {
         let flags = if settings.cfg.extensions.is_empty() {
             MF_STRING | MF_CHECKED
@@ -578,7 +575,7 @@ pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
         0 => {}
         1 => {
             settings.select_script(None);
-            settings.say(Notice::Info, "已关闭运行期脚本,保存后生效");
+            settings.say(Notice::Info, "已关闭运行期扩展,保存后生效");
         }
         command => {
             let index = command - 2;

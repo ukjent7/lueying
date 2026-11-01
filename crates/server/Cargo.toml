@@ -42,8 +42,8 @@ accesskit_windows = "0.35"
 skia-safe = { workspace = true, features = ["d3d"] }
 # 可选 OCR 引擎:PP-OCRv6 det+rec,纯 Rust 推理。
 lueying-ocr.workspace = true
-# 运行期脚本扩展:QuickJS 沙箱,只改候选窗外观。
-lueying-extjs.workspace = true
+# 运行期 Wasm 扩展:wasmi 沙箱与每扩展 worker,只改候选窗外观或执行命令。
+lueying-extwasm.workspace = true
 windows-registry = "0.100"
 windows = { version = "0.62.2", features = [
     "Foundation",

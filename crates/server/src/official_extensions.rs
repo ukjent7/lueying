@@ -1,7 +1,7 @@
 //! 官方扩展目录:随程序分发的 `Catalog/official-extensions.json` 是唯一来源。
 //!
 //! 目录只描述"能装什么"与"从哪装",不信任远端清单:每个下载文件都带
-//! SHA-256 与字节数,安装器逐项校验后才落盘。扩展包本身是文本 `.luext`
+//! SHA-256 与字节数,安装器逐项校验后才落盘。扩展包本身是 `.luext` 归档(文本块 + Wasm 字节块)
 //! 或随包的本地目录;模型走 `%APPDATA%\lueying\models`。
 
 use std::sync::LazyLock;

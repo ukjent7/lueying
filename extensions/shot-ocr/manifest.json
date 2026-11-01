@@ -2,8 +2,8 @@
   "id": "shot-ocr",
   "name": "截图 OCR",
   "version": "0.1.0",
-  "api": 2,
-  "main": "index.js",
+  "api": 3,
+  "wasm": "extension.wasm",
   "activate": {
     "triggers": ["ocr"],
     "hotkeys": ["Ctrl+Alt+O"],

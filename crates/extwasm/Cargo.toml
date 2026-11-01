@@ -1,18 +1,23 @@
 [package]
 name = "lueying-extwasm"
 version = "0.1.0"
-edition = "2024"
-license = "GPL-3.0-or-later"
-description = "运行期 Wasm 扩展原型(冻结):Wasmtime 组件宿主与嵌入成本测量"
-
-# 独立 workspace:原型不在默认构建里,避免 Wasmtime/Cranelift 的
-# 70 个依赖包拖慢每次 CI。评估结论见 docs/roadmap.md。
-[workspace]
+edition.workspace = true
+license.workspace = true
+description = "运行期 Wasm 扩展宿主:wasmi 2.x、每扩展 worker、阻塞服务调用"
 
 [dependencies]
-# 组件宿主:cranelift JIT + 组件模型;按任务书钉在支持 WASI 0.3 的版本线。
-# 缓存、池化分配器、并行编译、GC 与 async 对按键路径没有意义,全部关掉,
-# 体积与冷启动是本原型的测量对象,依赖面越小越接近结论。
-wasmtime = { version = "50", default-features = false, features = [
-    "anyhow", "cranelift", "runtime", "component-model", "wat", "std",
+# 清单、权限与同意记录。
+lueying-extmeta.workspace = true
+# 场景协议与服务结果类型,与 guest SDK 共用。
+lueying-extproto.workspace = true
+# 服务缝:阻塞调用现有提供者。
+lueying-extsvc.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 纯 Rust 解释器,无 JIT/C++/可执行内存;wat 只用于自检与测试里的文本模块。
+wasmi = { version = "2", default-features = false, features = [
+    "std",
+    "auto-dispatch",
+    "validate",
+    "wat",
 ] }

@@ -1,12 +1,12 @@
-//! 扩展包清单:一个包可以同时带外观、逻辑与能力组件。
+//! 扩展包清单:一个包就是一份清单加一个 Wasm 模块。
 //!
 //! 清单是扩展与输入法之间唯一的静态契约。加载期把能拒绝的都拒绝:
-//! 未知字段、越界的组件路径、未知权限、过高的 API 版本。运行期不再
+//! 未知字段、越界的模块路径、未知权限、过高的 API 版本。运行期不再
 //! 为坏清单兜底,也不猜作者意图。
 //!
-//! 旧版外观包(`{ "api": 1, "main": "index.js" }`)继续可用。API 2 起
-//! 清单直接描述脚本层:入口、激活方式(触发词/热键/命令)、需要的宿主
-//! 服务与能力。命令只声明,不拥有按键;绑定由用户决定。
+//! API 3 起扩展只有一种形态:Rust(或其它能产出核心 Wasm 的语言)编出的
+//! `.wasm`,由宿主用 wasmi 在进程内解释执行。外观、命令与设置都从同一份
+//! 清单声明;不再有 JS 入口、组件式外观或独立能力进程。
 
 use serde::Deserialize;
 
@@ -17,14 +17,11 @@ pub mod sha256;
 /// 清单文件的大小上限。清单只放元数据,超过这个数说明放错了东西。
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 
-/// 外观组件当前 API。
-pub const APPEARANCE_API: u32 = 1;
-/// 逻辑组件当前 API。
-pub const LOGIC_API: u32 = 1;
-/// 能力组件当前 API。
-pub const PANEL_API: u32 = 1;
-/// 脚本层清单当前 API。
-pub const SCRIPT_API: u32 = 2;
+/// 当前清单 API。
+pub const WASM_API: u32 = 3;
+
+/// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
+pub const MAX_TEXT_CHARS: usize = 4096;
 
 /// 扩展清单,对应包内的 `manifest.json`。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -36,19 +33,20 @@ pub struct Manifest {
     pub name: String,
     /// 扩展自己的版本号,只用于显示。
     pub version: String,
-    /// 清单 API 版本:1 是旧版外观包,2 是脚本层清单。
+    /// 清单 API 版本;当前只接受 [`WASM_API`]。
+    pub api: u32,
+    /// Wasm 模块,包内裸文件名。
+    pub wasm: String,
+    /// 是否提供候选窗外观;为 true 时模块必须导出 `lueying_appearance`。
     #[serde(default)]
-    pub api: Option<u32>,
-    /// 脚本入口,包内裸文件名;API 2 默认 `index.js`。
-    #[serde(default)]
-    pub main: Option<String>,
-    /// API 2 的激活方式。
+    pub appearance: bool,
+    /// 激活方式:触发词、建议热键与命令。
     #[serde(default)]
     pub activate: Option<Activate>,
-    /// API 2 需要的宿主服务。
+    /// 需要的宿主服务;宿主只链接这里声明过的导入。
     #[serde(default)]
     pub needs: Vec<Service>,
-    /// 申请的权限;API 1 必须为空。
+    /// 申请的权限;授权页与同意记录用。
     #[serde(default)]
     pub capabilities: Vec<String>,
     /// 网络白名单;声明 `network` 能力后由扩展网络代理执行。
@@ -57,32 +55,20 @@ pub struct Manifest {
     /// 声明式设置:宿主渲染设置页,值存在 `[ext.<id>]`。
     #[serde(default)]
     pub settings: Vec<Setting>,
-    /// 候选窗外观组件(API 1)。
-    #[serde(default)]
-    pub appearance: Option<Appearance>,
-    /// 逻辑组件(WASM,API 1)。
-    #[serde(default)]
-    pub logic: Option<Logic>,
-    /// 进程外能力组件(API 1)。
-    #[serde(default)]
-    pub panel: Option<Panel>,
 }
 
-/// API 2 的网络白名单。域名写 `host` 或 `host:port`;不写端口时只匹配
-/// 该协议的默认端口(HTTPS 443、本机 HTTP 80)。
+/// 网络白名单。域名写 `host` 或 `host:port`;不写端口时只匹配该协议的
+/// 默认端口(HTTPS 443、本机 HTTP 80)。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkPolicy {
+    /// 允许访问的主机名。
     #[serde(default)]
     pub domains: Vec<String>,
 }
 
-/// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
-pub const MAX_TEXT_CHARS: usize = 4096;
-
 /// 一条声明式设置。设置页按 `type` 渲染,值落在 `config.toml` 的
 /// `[ext.<id>]` 表;`secureText` 的值不进配置文件,存到用户私密目录。
-/// 扩展脚本不直接画控件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Setting {
@@ -93,13 +79,13 @@ pub struct Setting {
     /// 设置页的说明;可空。
     #[serde(default)]
     pub detail: String,
-    /// `toggle` 或 `choice`。
+    /// `toggle`、`choice` 或 `secureText`。
     #[serde(rename = "type")]
     pub kind: String,
-    /// 默认值:toggle 为布尔,choice 为选项文本。
+    /// 默认值:toggle 为布尔,choice/secureText 为文本。
     #[serde(default)]
     pub default: Option<SettingValue>,
-    /// choice 的选项;toggle 必须为空。
+    /// choice 的选项;其它类型必须为空。
     #[serde(default)]
     pub options: Vec<String>,
 }
@@ -108,7 +94,9 @@ pub struct Setting {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum SettingValue {
+    /// 开关值。
     Bool(bool),
+    /// 文本值。
     Text(String),
 }
 
@@ -216,7 +204,7 @@ impl Setting {
     }
 }
 
-/// API 2 的激活声明。三种入口都只是声明,按键绑定仍归用户。
+/// 激活声明。三种入口都只是声明,按键绑定仍归用户。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Activate {
@@ -257,7 +245,7 @@ pub enum When {
     Composing,
 }
 
-/// 宿主服务。扩展声明需要什么,宿主按需提供;没声明就调用失败。
+/// 宿主服务。扩展声明需要什么,宿主按需链接;没声明就加载失败。
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum Service {
@@ -295,7 +283,7 @@ impl Service {
         Self::Notify,
     ];
 
-    /// 清单里的服务名。
+    /// 清单里的服务名,也是 Wasm 导入的函数名后缀。
     pub fn key(self) -> &'static str {
         match self {
             Self::Capture => "capture",
@@ -337,48 +325,11 @@ impl Service {
     }
 }
 
-/// 候选窗外观组件:入口是一段 JS。
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Appearance {
-    /// 场景协议版本。
-    pub api: u32,
-    /// 入口脚本,包内裸文件名。
-    #[serde(default = "default_main")]
-    pub main: String,
-}
-
-/// 逻辑组件:入口是一个 WASM 模块。
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Logic {
-    /// 逻辑 ABI 版本。
-    pub api: u32,
-    /// 模块文件,包内裸文件名。
-    pub module: String,
-    /// 申请的权限。
-    #[serde(default)]
-    pub permissions: Vec<Permission>,
-}
-
-/// 能力组件:入口是一个独立可执行文件。
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Panel {
-    /// 面板协议版本。
-    pub api: u32,
-    /// 可执行文件名,包内裸文件名。
-    pub command: String,
-    /// 申请的权限。
-    #[serde(default)]
-    pub permissions: Vec<Permission>,
-}
-
-/// 扩展能申请的权限。按组件授权,默认一个都不给。
+/// 扩展能申请的权限。默认一个都不给。
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum Permission {
-    /// 读取候选文字,用于过滤与重排。
+    /// 读取候选文字。
     CandidateText,
     /// 截取屏幕区域。
     ScreenCapture,
@@ -429,39 +380,6 @@ impl Permission {
             Self::CandidateText | Self::ScreenCapture | Self::Ocr | Self::Clipboard
         )
     }
-
-    /// 这个权限是否属于该组件。
-    pub fn allowed_for(self, component: Component) -> bool {
-        match self {
-            Self::CandidateText => component == Component::Logic,
-            Self::ScreenCapture | Self::Ocr | Self::Network | Self::Clipboard => {
-                component == Component::Panel
-            }
-        }
-    }
-}
-
-/// 清单里的组件类型;错误信息与权限校验用。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Component {
-    Appearance,
-    Logic,
-    Panel,
-}
-
-impl Component {
-    /// 中文名。
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Appearance => "外观",
-            Self::Logic => "逻辑",
-            Self::Panel => "能力",
-        }
-    }
-}
-
-fn default_main() -> String {
-    "index.js".to_string()
 }
 
 impl Manifest {
@@ -494,113 +412,53 @@ impl Manifest {
         if !valid_version(&self.version) {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
+        if self.api != WASM_API {
+            return Err(format!(
+                "清单 API {} 不支持,当前支持 {WASM_API}",
+                self.api
+            ));
+        }
+        check_entry("Wasm 模块", &self.wasm, "wasm")?;
         check_settings(&self.settings)?;
         if let Some(network) = &self.network {
             check_network(network)?;
         }
-
-        let components = self.appearance.is_some() || self.logic.is_some() || self.panel.is_some();
-        match self.api {
-            Some(SCRIPT_API) => {
-                if components {
-                    return Err("API 2 清单不能和 appearance/logic/panel 混用".into());
-                }
-                check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
-                if !self.capabilities.is_empty() {
-                    check_capabilities(&self.capabilities)?;
-                }
-                check_services(&self.needs)?;
-                if let Some(activate) = &self.activate {
-                    activate.validate()?;
-                }
-                Ok(())
-            }
-            Some(1) => {
-                if components {
-                    return Err("旧版顶层 api/main 不能和 appearance/logic/panel 混用".into());
-                }
-                check_entry("入口脚本", self.main.as_deref().unwrap_or("index.js"), "js")?;
-                if self.activate.is_some() || !self.needs.is_empty() {
-                    return Err("旧版清单不能声明 activate/needs".into());
-                }
-                if !self.capabilities.is_empty() {
-                    return Err(format!(
-                        "扩展声明了旧版能力 {:?},请改用组件权限",
-                        self.capabilities.join(", ")
-                    ));
-                }
-                Ok(())
-            }
-            Some(api) => Err(format!("清单 API {api} 不支持,当前支持 1..={SCRIPT_API}")),
-            None => {
-                if !self.capabilities.is_empty() {
-                    return Err(format!(
-                        "扩展声明了旧版能力 {:?},请改用组件权限",
-                        self.capabilities.join(", ")
-                    ));
-                }
-                if self.activate.is_some() || !self.needs.is_empty() || self.main.is_some() {
-                    return Err("没有 api 的清单不能声明 main/activate/needs".into());
-                }
-                let mut count = 0;
-                if let Some(appearance) = &self.appearance {
-                    check_api(Component::Appearance, appearance.api, APPEARANCE_API)?;
-                    check_entry("入口脚本", &appearance.main, "js")?;
-                    count += 1;
-                }
-                if let Some(logic) = &self.logic {
-                    check_api(Component::Logic, logic.api, LOGIC_API)?;
-                    check_entry("逻辑模块", &logic.module, "wasm")?;
-                    check_permissions(Component::Logic, &logic.permissions)?;
-                    count += 1;
-                }
-                if let Some(panel) = &self.panel {
-                    check_api(Component::Panel, panel.api, PANEL_API)?;
-                    check_entry("能力入口", &panel.command, "exe")?;
-                    check_permissions(Component::Panel, &panel.permissions)?;
-                    count += 1;
-                }
-                if count == 0 {
-                    return Err("清单没有可加载的组件".into());
-                }
-                Ok(())
-            }
+        if !self.capabilities.is_empty() {
+            check_capabilities(&self.capabilities)?;
         }
-    }
-
-    /// 脚本入口:API 2 的 `main`,或外观组件的入口,或旧版顶层 `main`。
-    pub fn script_main(&self) -> Option<&str> {
-        match self.api {
-            Some(SCRIPT_API) => Some(self.main.as_deref().unwrap_or("index.js")),
-            Some(1) => Some(self.main.as_deref().unwrap_or("index.js")),
-            _ => self
-                .appearance
-                .as_ref()
-                .map(|appearance| appearance.main.as_str()),
+        check_services(&self.needs)?;
+        if let Some(activate) = &self.activate {
+            activate.validate()?;
         }
+        Ok(())
     }
 
-    /// 外观 API 版本:新清单的 `appearance.api`,或旧版顶层 `api`。
-    pub fn appearance_api(&self) -> Option<u32> {
-        self.appearance.as_ref().map(|a| a.api).or(self.api)
+    /// Wasm 模块,包内裸文件名。
+    pub fn wasm_main(&self) -> &str {
+        &self.wasm
     }
 
-    /// 是否只有外观组件。设置页的「运行期脚本」列所有带脚本入口的包。
-    pub fn is_appearance_only(&self) -> bool {
-        self.script_main().is_some() && self.logic.is_none() && self.panel.is_none()
+    /// 是否声明了候选窗外观。
+    pub fn is_appearance(&self) -> bool {
+        self.appearance
     }
 
-    /// 激活声明;旧版包没有。
+    /// 激活声明;没有返回 `None`。
     pub fn activate(&self) -> Option<&Activate> {
         self.activate.as_ref()
     }
 
-    /// 命令声明;旧版包返回空表。
+    /// 命令声明;没有激活声明返回空表。
     pub fn commands(&self) -> &[Command] {
         self.activate
             .as_ref()
             .map(|activate| activate.commands.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// 是否有需要宿主链接的服务。
+    pub fn needs(&self, service: Service) -> bool {
+        self.needs.contains(&service)
     }
 }
 
@@ -773,7 +631,7 @@ fn check_trigger(trigger: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// API 2 的能力名必须在已知权限里,且不能重复。
+/// 能力名必须在已知权限里,且不能重复。
 fn check_capabilities(capabilities: &[String]) -> Result<(), String> {
     let mut seen = Vec::new();
     for capability in capabilities {
@@ -875,36 +733,6 @@ fn check_entry(label: &str, name: &str, extension: &str) -> Result<(), String> {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
     {
         return Err(format!("{label} {name:?} 不合法"));
-    }
-    Ok(())
-}
-
-/// API 版本必须在 1..=当前版本。
-fn check_api(component: Component, api: u32, current: u32) -> Result<(), String> {
-    if api == 0 || api > current {
-        return Err(format!(
-            "{}组件需要 API {api},当前支持 1..={current}",
-            component.title()
-        ));
-    }
-    Ok(())
-}
-
-/// 权限必须属于该组件,且不能重复声明。
-fn check_permissions(component: Component, permissions: &[Permission]) -> Result<(), String> {
-    let mut seen = Vec::new();
-    for permission in permissions {
-        if !permission.allowed_for(component) {
-            return Err(format!(
-                "{}组件不能申请 {}",
-                component.title(),
-                permission.key()
-            ));
-        }
-        if seen.contains(permission) {
-            return Err(format!("权限 {} 重复声明", permission.key()));
-        }
-        seen.push(*permission);
     }
     Ok(())
 }

@@ -3,14 +3,16 @@ use std::path::{Path, PathBuf};
 use super::*;
 
 const MANIFEST: &str = r#"{
-  "id":"demo","name":"演示","version":"1.0.0","api":2,
+  "id":"demo","name":"演示","version":"1.0.0","api":3,
+  "wasm":"extension.wasm",
   "activate":{"commands":[{"id":"run","title":"运行"}]},
   "needs":["capture","output"],
   "capabilities":["screen-capture"]
 }"#;
 
-const APPEARANCE: &str =
-    r#"{"id":"look","name":"外观","version":"1.0.0","api":1,"main":"index.js"}"#;
+const APPEARANCE: &str = r#"{
+  "id":"look","name":"外观","version":"1.0.0","api":3,"wasm":"extension.wasm"
+}"#;
 
 struct Temp {
     root: PathBuf,
@@ -42,13 +44,9 @@ impl Drop for Temp {
     }
 }
 
-fn write_pack(dir: &Path, manifest: &str) {
+fn write_pack(dir: &Path, manifest: &str, wasm: &[u8]) {
     std::fs::write(dir.join("manifest.json"), manifest).expect("写清单");
-    std::fs::write(
-        dir.join("index.js"),
-        "lueying.command('run', function () {});\n",
-    )
-    .expect("写入口");
+    std::fs::write(dir.join("extension.wasm"), wasm).expect("写模块");
 }
 
 fn parse(manifest: &str) -> Manifest {
@@ -59,7 +57,7 @@ fn parse(manifest: &str) -> Manifest {
 fn appearance_only_needs_no_consent() {
     let temp = Temp::new("appearance");
     let dir = temp.pack("look");
-    write_pack(&dir, APPEARANCE);
+    write_pack(&dir, APPEARANCE, b"wasm");
     let check = ConsentBook::default()
         .check(&dir, &parse(APPEARANCE))
         .expect("检查");
@@ -69,10 +67,10 @@ fn appearance_only_needs_no_consent() {
 }
 
 #[test]
-fn hash_pins_manifest_and_script() {
+fn hash_pins_manifest_and_wasm() {
     let temp = Temp::new("pin");
     let dir = temp.pack("demo");
-    write_pack(&dir, MANIFEST);
+    write_pack(&dir, MANIFEST, b"v1");
     let manifest = parse(MANIFEST);
     let mut book = ConsentBook::default();
     let missing = book.check(&dir, &manifest).expect("检查");
@@ -85,11 +83,7 @@ fn hash_pins_manifest_and_script() {
     std::fs::write(dir.join("data.txt"), "x").expect("写数据文件");
     assert!(book.check(&dir, &manifest).expect("检查").approved);
 
-    std::fs::write(
-        dir.join("index.js"),
-        "lueying.command('run', function () { return 1; });\n",
-    )
-    .expect("改入口");
+    std::fs::write(dir.join("extension.wasm"), b"v2").expect("换模块");
     let changed = book.check(&dir, &manifest).expect("检查");
     assert!(changed.changed && !changed.approved);
 
@@ -101,7 +95,7 @@ fn hash_pins_manifest_and_script() {
 fn upgrade_reports_added_capabilities() {
     let temp = Temp::new("upgrade");
     let dir = temp.pack("demo");
-    write_pack(&dir, MANIFEST);
+    write_pack(&dir, MANIFEST, b"wasm");
     let manifest = parse(MANIFEST);
     let mut book = ConsentBook::default();
     book.approve(&dir, &manifest, 42).expect("同意");
@@ -115,7 +109,7 @@ fn upgrade_reports_added_capabilities() {
             r#""needs":["capture","output"]"#,
             r#""needs":["capture","output","net"]"#,
         );
-    write_pack(&dir, &upgraded);
+    write_pack(&dir, &upgraded, b"wasm");
     let check = book.check(&dir, &parse(&upgraded)).expect("检查");
     assert!(check.changed && !check.approved);
     assert!(check.added.iter().any(|item| item.contains("访问网络")));
@@ -126,7 +120,7 @@ fn upgrade_reports_added_capabilities() {
 fn save_load_roundtrip() {
     let temp = Temp::new("roundtrip");
     let dir = temp.pack("demo");
-    write_pack(&dir, MANIFEST);
+    write_pack(&dir, MANIFEST, b"wasm");
     let manifest = parse(MANIFEST);
     let mut book = ConsentBook::default();
     book.approve(&dir, &manifest, 42).expect("同意");
@@ -141,7 +135,7 @@ fn save_load_roundtrip() {
 fn corrupt_book_fails_closed() {
     let temp = Temp::new("corrupt");
     let dir = temp.pack("demo");
-    write_pack(&dir, MANIFEST);
+    write_pack(&dir, MANIFEST, b"wasm");
     let path = temp.root.join("consent.json");
     std::fs::write(&path, b"{not json").expect("写坏文件");
     let book = ConsentBook::load(&path);
@@ -171,10 +165,10 @@ fn sensitive_needs_both_read_and_network() {
 }
 
 #[test]
-fn package_hash_requires_entry() {
-    let temp = Temp::new("no-entry");
+fn package_hash_requires_wasm() {
+    let temp = Temp::new("no-wasm");
     let dir = temp.pack("demo");
     std::fs::write(dir.join("manifest.json"), MANIFEST).expect("写清单");
-    let error = package_hash(&dir, &parse(MANIFEST)).expect_err("缺入口应失败");
-    assert!(error.contains("index.js"));
+    let error = package_hash(&dir, &parse(MANIFEST)).expect_err("缺模块应失败");
+    assert!(error.contains("extension.wasm"));
 }

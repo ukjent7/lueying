@@ -1,7 +1,7 @@
 //! 扩展授权:能力说明书、包内容指纹与同意记录。
 //!
 //! 同意记录是宿主对扩展的信任锚:键是扩展 id,值里存包内容哈希与当时
-//! 声明过的能力。加载与热重载都按哈希核对;清单、入口脚本或能力集合变了,
+//! 声明过的能力。加载与热重载都按哈希核对;清单、Wasm 模块或能力集合变了,
 //! 扩展先停用,等用户在设置页重新同意。
 //!
 //! 记录文件在扩展目录根上的 `consent.json`。它只由宿主写;包目录里出现的
@@ -19,15 +19,15 @@ use crate::{Manifest, Permission, Service};
 pub const CONSENT_VERSION: u32 = 1;
 /// 同意记录文件的最大读取量;它只该有几百字节。
 const MAX_BOOK_BYTES: usize = 256 * 1024;
-/// 哈希只读清单与入口脚本,入口脚本本身另有 512 KiB 上限。
-const MAX_HASH_BYTES: usize = 1024 * 1024;
+/// 哈希只读清单与 Wasm 模块;Wasm 模块本身另有 16 MiB 上限。
+const MAX_HASH_BYTES: usize = 32 * 1024 * 1024;
 const DOMAIN: &[u8] = b"lueying-ext-package-v1\0";
 
 /// 一个扩展的同意内容。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentEntry {
-    /// 同意时的包内容哈希(清单 + 入口脚本)。
+    /// 同意时的包内容哈希(清单 + Wasm 模块)。
     pub hash: String,
     /// 同意时的扩展版本,只用于显示。
     pub version: String,
@@ -165,13 +165,11 @@ impl ConsentBook {
     }
 }
 
-/// 包内容哈希:清单与入口脚本按固定框架串起来;其它文件不参与。
+/// 包内容哈希:清单与 Wasm 模块按固定框架串起来;其它文件不参与。
 ///
 /// 运行期只读这两个文件,把别的数据文件算进去只会让无关改动触发重同意。
 pub fn package_hash(dir: &Path, manifest: &Manifest) -> Result<String, String> {
-    let main = manifest
-        .script_main()
-        .ok_or_else(|| format!("扩展 {} 没有脚本入口", manifest.id))?;
+    let main = manifest.wasm_main();
     let mut hasher = Sha256::new();
     hasher.update(DOMAIN);
     for name in ["manifest.json", main] {

@@ -6,26 +6,18 @@ fn base() -> serde_json::Value {
         "id": "my-pack",
         "name": "我的扩展",
         "version": "1.0.0",
-        "appearance": { "api": 1, "main": "index.js" }
+        "api": 3,
+        "wasm": "extension.wasm"
     })
 }
 
-fn legacy() -> serde_json::Value {
-    json!({
-        "id": "old-pack",
-        "name": "旧包",
-        "version": "1.0.0",
-        "api": 1
-    })
-}
-
-fn script_v2() -> serde_json::Value {
+fn shot_ocr() -> serde_json::Value {
     json!({
         "id": "shot-ocr",
         "name": "截图 OCR",
         "version": "0.1.0",
-        "api": 2,
-        "main": "index.js",
+        "api": 3,
+        "wasm": "extension.wasm",
         "activate": {
             "triggers": ["ocr"],
             "hotkeys": ["Ctrl+Alt+O"],
@@ -43,9 +35,9 @@ fn parse(value: serde_json::Value) -> Result<Manifest, String> {
 }
 
 #[test]
-fn parses_script_v2() {
-    let manifest = parse(script_v2()).expect("API 2 清单应通过");
-    assert_eq!(manifest.script_main(), Some("index.js"));
+fn parses_wasm_manifest() {
+    let manifest = parse(shot_ocr()).expect("API 3 清单应通过");
+    assert_eq!(manifest.wasm_main(), "extension.wasm");
     assert_eq!(
         manifest.needs,
         vec![Service::Capture, Service::Ocr, Service::Output]
@@ -64,37 +56,64 @@ fn parses_script_v2() {
 }
 
 #[test]
-fn v2_defaults_entry_and_allows_no_activation() {
-    let value = json!({
-        "id": "skin",
-        "name": "外观",
-        "version": "1.0.0",
-        "api": 2
-    });
-    let manifest = parse(value).expect("API 2 外观包应通过");
-    assert_eq!(manifest.script_main(), Some("index.js"));
+fn allows_no_activation() {
+    let manifest = parse(base()).expect("纯外观包应通过");
     assert!(manifest.commands().is_empty());
 }
 
 #[test]
-fn rejects_v2_mixed_with_components() {
-    let mut value = script_v2();
+fn parses_appearance_pack() {
+    let mut value = base();
+    value["appearance"] = json!(true);
+    let manifest = parse(value).expect("外观包应通过");
+    assert!(manifest.is_appearance());
+    assert!(manifest.commands().is_empty());
+}
+
+#[test]
+fn rejects_non_bool_appearance() {
+    let mut value = base();
     value["appearance"] = json!({ "api": 1 });
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_bad_command() {
+fn rejects_old_api() {
+    for api in [1, 2, 4] {
+        let mut value = base();
+        value["api"] = json!(api);
+        assert!(parse(value).is_err(), "api={api}");
+    }
+}
+
+#[test]
+fn rejects_old_components() {
+    for field in ["main", "logic", "panel"] {
+        let mut value = base();
+        value[field] = json!({ "api": 1 });
+        assert!(parse(value).is_err(), "{field}");
+    }
+}
+
+#[test]
+fn rejects_missing_wasm() {
+    let mut value = base();
+    value.as_object_mut().expect("对象").remove("wasm");
+    assert!(parse(value).is_err());
+}
+
+#[test]
+fn rejects_bad_command() {
     for (id, title) in [("", "标题"), ("Run", "标题"), ("run", ""), ("run", "a\nb")] {
-        let mut value = script_v2();
+        let mut value = shot_ocr();
         value["activate"]["commands"] = json!([{ "id": id, "title": title }]);
         assert!(parse(value).is_err(), "{id:?} {title:?}");
     }
 }
 
 #[test]
-fn rejects_v2_duplicate_command() {
-    let mut value = script_v2();
+fn rejects_duplicate_command() {
+    let mut value = shot_ocr();
     value["activate"]["commands"] = json!([
         { "id": "run", "title": "一" },
         { "id": "run", "title": "二" }
@@ -103,117 +122,70 @@ fn rejects_v2_duplicate_command() {
 }
 
 #[test]
-fn rejects_v2_bad_trigger() {
+fn rejects_bad_trigger() {
     for trigger in ["", "a b", "a\nb", "x".repeat(33).as_str()] {
-        let mut value = script_v2();
+        let mut value = shot_ocr();
         value["activate"]["triggers"] = json!([trigger]);
         assert!(parse(value).is_err(), "{trigger:?}");
     }
 }
 
 #[test]
-fn rejects_v2_duplicate_trigger() {
-    let mut value = script_v2();
+fn rejects_duplicate_trigger() {
+    let mut value = shot_ocr();
     value["activate"]["triggers"] = json!(["ocr", "ocr"]);
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_empty_activation() {
-    let mut value = script_v2();
+fn rejects_empty_activation() {
+    let mut value = shot_ocr();
     value["activate"] = json!({});
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_unknown_service() {
-    let mut value = script_v2();
+fn rejects_unknown_service() {
+    let mut value = shot_ocr();
     value["needs"] = json!(["capture", "telepathy"]);
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_duplicate_service() {
-    let mut value = script_v2();
+fn rejects_duplicate_service() {
+    let mut value = shot_ocr();
     value["needs"] = json!(["capture", "capture"]);
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_unknown_capability() {
-    let mut value = script_v2();
+fn rejects_unknown_capability() {
+    let mut value = shot_ocr();
     value["capabilities"] = json!(["root"]);
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_duplicate_capability() {
-    let mut value = script_v2();
+fn rejects_duplicate_capability() {
+    let mut value = shot_ocr();
     value["capabilities"] = json!(["ocr", "ocr"]);
     assert!(parse(value).is_err());
 }
 
 #[test]
-fn rejects_v2_bad_entry() {
-    for main in ["../x.js", "a/b.js", ".hidden.js", "x.txt"] {
-        let mut value = script_v2();
-        value["main"] = json!(main);
-        assert!(parse(value).is_err(), "{main:?}");
+fn rejects_bad_wasm_entry() {
+    for wasm in [
+        "../x.wasm",
+        "a/b.wasm",
+        ".hidden.wasm",
+        "x.js",
+        "x.wasm/",
+        "x.WASM",
+    ] {
+        let mut value = base();
+        value["wasm"] = json!(wasm);
+        assert!(parse(value).is_err(), "{wasm:?}");
     }
-}
-
-#[test]
-fn rejects_v1_activation() {
-    let mut value = legacy();
-    value["activate"] = json!({ "commands": [{ "id": "run", "title": "跑" }] });
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn parses_legacy_appearance() {
-    let manifest = parse(legacy()).expect("旧版清单应通过");
-    assert_eq!(manifest.script_main(), Some("index.js"));
-    assert_eq!(manifest.appearance_api(), Some(1));
-    assert!(manifest.is_appearance_only());
-}
-
-#[test]
-fn parses_multi_component() {
-    let mut value = base();
-    value["logic"] = json!({
-        "api": 1,
-        "module": "logic.wasm",
-        "permissions": ["candidate-text"]
-    });
-    value["panel"] = json!({
-        "api": 1,
-        "command": "panel.exe",
-        "permissions": ["screen-capture", "ocr"]
-    });
-    let manifest = parse(value).expect("多组件清单应通过");
-    assert_eq!(
-        manifest.logic.as_ref().expect("逻辑组件").permissions,
-        vec![Permission::CandidateText]
-    );
-    assert_eq!(
-        manifest.panel.as_ref().expect("能力组件").permissions,
-        vec![Permission::ScreenCapture, Permission::Ocr]
-    );
-    assert!(!manifest.is_appearance_only());
-    assert_eq!(manifest.script_main(), Some("index.js"));
-}
-
-#[test]
-fn rejects_mixed_legacy_and_new() {
-    let mut value = base();
-    value["api"] = json!(1);
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn rejects_empty_manifest() {
-    let value = json!({ "id": "empty", "name": "空包", "version": "1.0.0" });
-    assert!(parse(value).is_err());
 }
 
 #[test]
@@ -254,110 +226,8 @@ fn rejects_bad_version() {
 }
 
 #[test]
-fn rejects_bad_appearance_entry() {
-    let long = format!("{}.js", "a".repeat(62));
-    let bad = [
-        "../x.js",
-        "a/b.js",
-        ".hidden.js",
-        "x.txt",
-        "x.js/",
-        "x.JS",
-        long.as_str(),
-    ];
-    for main in bad {
-        let mut value = base();
-        value["appearance"]["main"] = json!(main);
-        assert!(parse(value).is_err(), "{main:?}");
-    }
-}
-
-#[test]
-fn rejects_bad_logic_module() {
-    for module in ["../x.wasm", "a/b.wasm", ".hidden.wasm", "x.js", "x.wasm/"] {
-        let mut value = base();
-        value["logic"] = json!({ "api": 1, "module": module });
-        assert!(parse(value).is_err(), "{module:?}");
-    }
-}
-
-#[test]
-fn rejects_bad_panel_command() {
-    for command in ["../x.exe", "a/b.exe", ".hidden.exe", "x.wasm", "x.exe/"] {
-        let mut value = base();
-        value["panel"] = json!({ "api": 1, "command": command });
-        assert!(parse(value).is_err(), "{command:?}");
-    }
-}
-
-#[test]
-fn rejects_api_out_of_range() {
-    for api in [0, 2] {
-        let mut value = base();
-        value["appearance"]["api"] = json!(api);
-        assert!(parse(value).is_err(), "appearance api={api}");
-
-        let mut value = base();
-        value["logic"] = json!({ "api": api, "module": "logic.wasm" });
-        assert!(parse(value).is_err(), "logic api={api}");
-
-        let mut value = base();
-        value["panel"] = json!({ "api": api, "command": "panel.exe" });
-        assert!(parse(value).is_err(), "panel api={api}");
-    }
-}
-
-#[test]
-fn rejects_permission_on_wrong_component() {
-    let mut value = base();
-    value["logic"] = json!({
-        "api": 1,
-        "module": "logic.wasm",
-        "permissions": ["screen-capture"]
-    });
-    assert!(parse(value).is_err());
-
-    let mut value = base();
-    value["panel"] = json!({
-        "api": 1,
-        "command": "panel.exe",
-        "permissions": ["candidate-text"]
-    });
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn rejects_duplicate_permission() {
-    let mut value = base();
-    value["logic"] = json!({
-        "api": 1,
-        "module": "logic.wasm",
-        "permissions": ["candidate-text", "candidate-text"]
-    });
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn rejects_unknown_permission() {
-    let mut value = base();
-    value["logic"] = json!({
-        "api": 1,
-        "module": "logic.wasm",
-        "permissions": ["root"]
-    });
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn rejects_legacy_capabilities() {
-    let mut value = legacy();
-    value["capabilities"] = json!(["network"]);
-    assert!(parse(value).is_err());
-}
-
-#[test]
 fn parses_network_whitelist() {
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["capabilities"] = json!(["screen-capture", "network"]);
     value["needs"] = json!(["capture", "net"]);
     value["network"] = json!({ "domains": ["api.example.com", "localhost:11434"] });
@@ -368,14 +238,14 @@ fn parses_network_whitelist() {
 
 #[test]
 fn rejects_network_domain_with_path() {
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["network"] = json!({ "domains": ["https://example.com/api"] });
     assert!(parse(value).is_err());
 }
 
 #[test]
 fn rejects_network_domain_with_zero_port() {
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["network"] = json!({ "domains": ["localhost:0"] });
     assert!(parse(value).is_err());
 }
@@ -388,7 +258,7 @@ fn rejects_oversized_manifest() {
 
 #[test]
 fn parses_declarative_settings() {
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["settings"] = json!([
         {
             "key": "notify",
@@ -436,7 +306,7 @@ fn parses_declarative_settings() {
 
 #[test]
 fn parses_secure_text_setting() {
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["settings"] = json!([
         {
             "key": "api_key",
@@ -456,7 +326,7 @@ fn parses_secure_text_setting() {
 
 #[test]
 fn rejects_bad_settings() {
-    let value = script_v2();
+    let value = shot_ocr();
     let check = |setting: serde_json::Value| {
         let mut value = value.clone();
         value["settings"] = json!([setting]);
@@ -470,8 +340,7 @@ fn rejects_bad_settings() {
     check(json!({"key": "ok", "title": "x", "type": "choice", "options": ["a"], "default": "b"}));
     check(json!({"key": "ok", "title": "x", "type": "choice", "options": ["a", "a"]}));
     check(json!({"key": "ok", "title": "x", "type": "toggle", "extra": 1}));
-    // 重复键。
-    let mut value = script_v2();
+    let mut value = shot_ocr();
     value["settings"] = json!([
         {"key": "same", "title": "一", "type": "toggle"},
         {"key": "same", "title": "二", "type": "toggle"}

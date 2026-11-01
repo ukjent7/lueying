@@ -2,3 +2,5 @@
 channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
+# 官方扩展 guest 编成 wasm32-unknown-unknown;工具链随仓库自动装好它。
+targets = ["wasm32-unknown-unknown"]

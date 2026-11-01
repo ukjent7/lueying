@@ -1,11 +1,11 @@
 //! 多扩展运行期:有序加载、按激活事件懒加载、空闲卸载与 Scope 回收。
 //!
 //! 每个扩展槽的注册物(命令、触发词、热键)全部来自清单里的 Scope。
-//! 卸载槽位时 Scope 与 JS 宿主一起丢掉,宿主侧不需要逐项反注册;热重载
-//! 也走同一条路径,旧宿主先整体丢弃再加载新版本。
+//! 卸载槽位时 Scope 与 Wasm worker 一起丢掉,宿主侧不需要逐项反注册;
+//! 热重载也走同一条路径,旧 worker 先整体丢弃再加载新版本。
 //!
 //! 外观包常驻(它没有激活事件,候选窗每帧都要用);命令包只在命令被调用
-//! 时加载,空闲 [`IDLE_UNLOAD`] 后卸载。命令清单来自清单文件,不加载 JS
+//! 时加载,空闲 [`IDLE_UNLOAD`] 后卸载。命令清单来自清单文件,不加载 Wasm
 //! 也能列出来,命令面板与设置页因此没有额外成本。
 
 use std::path::{Path, PathBuf};
@@ -16,14 +16,12 @@ use lueying_extmeta::metrics::{ExtStat, ExtState};
 use lueying_extsvc::Registry;
 
 use crate::ConsentGate;
-use crate::host::{Invoke, Limits, Settled};
-use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, When};
-use crate::pack::{Pack, Poll};
-use crate::scene::{SceneIn, ScenePatch};
+use crate::host::{Finished, Limits};
+use crate::manifest::{Manifest, When};
+use crate::pack::{self, Pack, Poll};
+use crate::{SceneIn, ScenePatch};
 
-const MANIFEST: &str = "manifest.json";
-
-/// 命令包空闲多久卸载 JS 宿主。
+/// 命令包空闲多久卸载 Wasm worker。
 pub const IDLE_UNLOAD: Duration = Duration::from_secs(30);
 
 /// 一条可调用的命令。
@@ -128,9 +126,9 @@ impl Runtime {
                 continue;
             }
             let dir = root.join(id);
-            match read_manifest(&dir) {
+            match pack::read_manifest(&dir) {
                 Ok(manifest) => {
-                    let resident = manifest.activate().is_none();
+                    let resident = manifest.is_appearance();
                     slots.push(Slot {
                         id: id.clone(),
                         dir,
@@ -161,7 +159,7 @@ impl Runtime {
         self.idle = idle;
     }
 
-    /// 全部扩展声明的命令;不加载 JS。
+    /// 全部扩展声明的命令;不加载 Wasm。
     pub fn commands(&self) -> Vec<CommandInfo> {
         let mut out = Vec::new();
         for slot in &self.slots {
@@ -224,41 +222,51 @@ impl Runtime {
         })
     }
 
-    /// 加载一个扩展的 JS 宿主;已经加载就只刷新时间。
+    /// 加载一个扩展的 Wasm worker;已经加载就只刷新时间。
     pub fn activate(&mut self, id: &str) -> Result<(), String> {
         let index = self.index(id)?;
         self.ensure(index)
     }
 
-    /// 执行一条完整 id 的命令。
+    /// 执行一条完整 id 的命令;返回提交序号。
     ///
-    /// 命令返回 Promise 时得到 [`Invoke::Pending`],用 [`Runtime::pump`]
-    /// 按宿主时钟推进;等待期间扩展照常空闲卸载计时。
-    pub fn invoke(&mut self, command: &str, args: &str) -> Result<Invoke, String> {
-        let Some((extension, local)) = command.split_once('.') else {
-            return Err(format!("命令 id {command:?} 缺少扩展前缀"));
-        };
-        let index = self.index(extension)?;
-        if !self.slots[index]
-            .manifest
-            .commands()
-            .iter()
-            .any(|item| item.id == local)
-        {
-            return Err(format!("扩展 {extension} 没有声明命令 {local}"));
-        }
+    /// 命令在扩展自己的 worker 上执行,结果用 [`Runtime::take_results`] 取。
+    pub fn invoke(&mut self, command: &str, args: &str) -> Result<u64, String> {
+        let (index, local) = self.locate(command)?;
         self.ensure(index)?;
         let slot = &mut self.slots[index];
         let result = slot
             .pack
             .as_mut()
             .expect("ensure 已加载宿主")
-            .invoke(local, args);
+            .invoke(&local, args);
         slot.last_used = Instant::now();
-        if let Err(error) = &result {
-            slot.error = Some(error.clone());
-        } else {
-            slot.error = None;
+        match &result {
+            Ok(_) => slot.error = None,
+            Err(error) => slot.error = Some(error.clone()),
+        }
+        result
+    }
+
+    /// 执行一条完整 id 的命令并等它跑完;测试与同步调用方用。
+    pub fn invoke_wait(
+        &mut self,
+        command: &str,
+        args: &str,
+        timeout: Duration,
+    ) -> Result<String, String> {
+        let (index, local) = self.locate(command)?;
+        self.ensure(index)?;
+        let slot = &mut self.slots[index];
+        let result = slot
+            .pack
+            .as_mut()
+            .expect("ensure 已加载宿主")
+            .invoke_wait(&local, args, timeout);
+        slot.last_used = Instant::now();
+        match &result {
+            Ok(_) => slot.error = None,
+            Err(error) => slot.error = Some(error.clone()),
         }
         result
     }
@@ -271,14 +279,18 @@ impl Runtime {
             return None;
         }
         let mut merged: Option<ScenePatch> = None;
-        let services = Arc::clone(&self.services);
-        let gate = self.gate.clone();
-        for slot in self.slots.iter_mut() {
+        for slot in &mut self.slots {
             if slot.pack.is_none() {
-                if !slot.resident || slot.manifest.script_main().is_none() {
+                // 常驻包加载失败后不再每帧重试:修好文件或改配置才再试。
+                if !slot.resident || slot.error.is_some() {
                     continue;
                 }
-                match Pack::load_with_gate(&slot.dir, self.limits, &services, gate.clone()) {
+                match Pack::load_with_gate(
+                    &slot.dir,
+                    self.limits,
+                    Arc::clone(&self.services),
+                    self.gate.clone(),
+                ) {
                     Ok(pack) => {
                         slot.pack = Some(pack);
                         slot.error = None;
@@ -312,16 +324,15 @@ impl Runtime {
             let Some(pack) = slot.pack.as_mut() else {
                 continue;
             };
-            let mut reloaded = None;
             match pack.poll() {
                 Poll::Unchanged => {}
-                Poll::Reloaded => reloaded = Some(pack.manifest().clone()),
+                Poll::Reloaded => {
+                    slot.manifest = pack.manifest().clone();
+                    slot.resident = slot.manifest.is_appearance();
+                    slot.error = None;
+                }
                 Poll::Failed(error) => slot.error = Some(error),
                 Poll::Removed => removed.push(index),
-            }
-            if let Some(manifest) = reloaded {
-                slot.manifest = manifest;
-                slot.error = None;
             }
         }
         for index in removed.iter().rev().copied() {
@@ -330,28 +341,26 @@ impl Runtime {
         removed.len()
     }
 
-    /// 推进全部挂起任务:兑现到点定时器、跑作业队列、收结算结果。
-    /// 返回 (扩展 id, 结算) 列表;有活动的扩展刷新空闲计时。
-    pub fn pump(&mut self, now_ms: u64) -> Vec<(String, Settled)> {
+    /// 取走全部已完成的命令结果;有活动的扩展刷新空闲计时。
+    pub fn take_results(&mut self) -> Vec<(String, Finished)> {
         let mut out = Vec::new();
-        for slot in self.slots.iter_mut() {
-            // 不按 pending 跳过:被中断杀掉的任务记账清零后,包里仍可能有
-            // 到点的定时器要兑现;这里每次都进,空泵只有微秒级开销。
+        for slot in &mut self.slots {
             let Some(pack) = slot.pack.as_mut() else {
                 continue;
             };
-            let settled = pack.pump(now_ms);
-            if !settled.is_empty() {
-                slot.last_used = Instant::now();
+            let finished = pack.take_results();
+            if finished.is_empty() {
+                continue;
             }
-            for item in settled {
+            slot.last_used = Instant::now();
+            for item in finished {
                 out.push((slot.id.clone(), item));
             }
         }
         out
     }
 
-    /// 全部扩展挂起、尚未结算的任务数。
+    /// 全部扩展挂起、尚未结算的命令数。
     pub fn pending(&self) -> u64 {
         self.slots
             .iter()
@@ -360,7 +369,7 @@ impl Runtime {
             .sum()
     }
 
-    /// 卸载空闲超过阈值的命令包;常驻外观包不动。
+    /// 卸载空闲超过阈值的命令包;常驻外观包与正在执行的包不动。
     pub fn idle_unload(&mut self) {
         self.idle_unload_at(Instant::now());
     }
@@ -371,13 +380,16 @@ impl Runtime {
             if slot.resident || slot.pack.is_none() {
                 continue;
             }
+            if slot.pack.as_ref().is_some_and(Pack::busy) {
+                continue;
+            }
             if now.saturating_duration_since(slot.last_used) >= self.idle {
                 slot.pack = None;
             }
         }
     }
 
-    /// 卸载一个扩展槽:Scope 与 JS 宿主一起消失。
+    /// 卸载一个扩展槽:Scope 与 Wasm worker 一起消失。
     pub fn unload(&mut self, id: &str) -> bool {
         let Some(index) = self.slots.iter().position(|slot| slot.id == id) else {
             return false;
@@ -386,7 +398,7 @@ impl Runtime {
         true
     }
 
-    /// 丢弃 JS 宿主但保留槽位与命令声明。
+    /// 丢弃 Wasm worker 但保留槽位与命令声明。
     pub fn deactivate(&mut self, id: &str) {
         if let Some(slot) = self.slots.iter_mut().find(|slot| slot.id == id) {
             slot.pack = None;
@@ -406,6 +418,22 @@ impl Runtime {
     /// 某个扩展最近一次错误。
     pub fn error(&self, id: &str) -> Option<&str> {
         self.slot(id).and_then(|slot| slot.error.as_deref())
+    }
+
+    fn locate(&self, command: &str) -> Result<(usize, String), String> {
+        let Some((extension, local)) = command.split_once('.') else {
+            return Err(format!("命令 id {command:?} 缺少扩展前缀"));
+        };
+        let index = self.index(extension)?;
+        if !self.slots[index]
+            .manifest
+            .commands()
+            .iter()
+            .any(|item| item.id == local)
+        {
+            return Err(format!("扩展 {extension} 没有声明命令 {local}"));
+        }
+        Ok((index, local.to_string()))
     }
 
     fn slot(&self, id: &str) -> Option<&Slot> {
@@ -428,7 +456,7 @@ impl Runtime {
         let services = Arc::clone(&self.services);
         let gate = self.gate.clone();
         let slot = &mut self.slots[index];
-        match Pack::load_with_gate(&slot.dir, limits, &services, gate) {
+        match Pack::load_with_gate(&slot.dir, limits, services, gate) {
             Ok(pack) => {
                 slot.pack = Some(pack);
                 slot.error = None;
@@ -443,33 +471,16 @@ impl Runtime {
     }
 }
 
-/// 读清单并检查目录名;不建 JS 运行时。
-fn read_manifest(dir: &Path) -> Result<Manifest, String> {
-    let bytes =
-        std::fs::read(dir.join(MANIFEST)).map_err(|error| format!("读清单失败: {error}"))?;
-    if bytes.len() > MAX_MANIFEST_BYTES {
-        return Err(format!("清单超过 {MAX_MANIFEST_BYTES} 字节"));
-    }
-    let manifest = Manifest::parse(&bytes)?;
-    let name = dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    if name != manifest.id {
-        return Err(format!(
-            "目录名 {name:?} 与扩展 id {:?} 不一致",
-            manifest.id
-        ));
-    }
-    Ok(manifest)
-}
-
-/// 只读一个包目录的清单并核对目录名;设置页与同意检查用,不建 JS 运行时。
+/// 只读一个包目录的清单并核对目录名;设置页与同意检查用,不建 Wasm 引擎。
 pub fn manifest_at(dir: &Path) -> Result<Manifest, String> {
-    read_manifest(dir)
+    pack::read_manifest(dir)
 }
 
 /// 完整命令 id。
 pub fn full_id(extension: &str, command: &str) -> String {
     format!("{extension}.{command}")
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

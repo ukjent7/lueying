@@ -22,14 +22,12 @@
 
 - [扩展 SDK 概览](extensions/README.md)：扩展分层、Rust 扩展契约与最小示例。
 - [分层架构模型](extensions/layers.md)：扩展运行位置、沙箱设计与权限审计模型。
-- [运行期脚本扩展](extensions/script.md)：QuickJS 脚本扩展规范、清单定义、API 与服务调用。
+- [运行期 Wasm 扩展](extensions/wasm.md)：guest SDK、清单定义、ABI 与服务原语。
 - [双拼方案](extensions/shuangpin.md)：双拼展开规则、映射表与多方案支持。
 - [辅助码](extensions/auxiliary-code.md)：五笔辅码过滤规则与输入交互。
 - [自定义短语](extensions/custom-phrases.md)：短语映射格式与匹配策略。
 - [下一词联想](extensions/prediction.md)：基于用户词库的本地联想机制。
 - [外部启动器集成](extensions/powertoys.md)：PowerToys Run 与外部启动器联动桥接。
-- [Agent 开发指南](extensions/agent-guide.md)：面向 AI Coding Agent 的无头开发与回放验证。
-- [扩展开发 Skill 模板](extensions/SKILL.md)：符合规范的扩展包编写模板与验收清单。
 
 ## 项目规范
 

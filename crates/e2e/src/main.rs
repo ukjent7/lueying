@@ -6,9 +6,9 @@ mod address;
 mod bench;
 mod consent;
 mod extensions;
-mod extjs;
-mod extjs_harness;
-mod extjs_services;
+mod extwasm;
+mod extwasm_harness;
+mod extwasm_services;
 mod features;
 mod harness;
 mod metrics;
@@ -225,11 +225,11 @@ fn main() {
     // 动作候选:触发词整串匹配、空格/数字/点选、负反馈与置顶。
     failures += actions::run(&mut report);
 
-    // 运行期脚本扩展:包校验、场景协议、预算、隐私与热重载。
-    failures += extjs::run(&mut report);
+    // 运行期 Wasm 扩展:包校验、场景协议、预算、隐私与热重载。
+    failures += extwasm::run(&mut report);
 
     // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
-    failures += extjs_services::run(&mut report);
+    failures += extwasm_services::run(&mut report);
 
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);

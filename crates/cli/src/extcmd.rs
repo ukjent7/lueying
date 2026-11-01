@@ -1,7 +1,8 @@
 //! `lueying ext` 的开发回路:新建骨架、打包、安装、重载与日志。
 //!
-//! 全部是纯文件与管道操作:不加载 JS,不碰 TSF,Windows 与 Linux 都能跑。
-//! 包格式与配置备份同款——行数声明长度的文本块,`### lueying-pack v1` 开头。
+//! 全部是纯文件与管道操作:不加载 Wasm,不碰 TSF,Windows 与 Linux 都能跑。
+//! 包格式 `### lueying-pack v2`:文本块按行数声明长度,`.wasm` 按字节数
+//! 原样内嵌。
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -10,12 +11,14 @@ use std::path::{Path, PathBuf};
 use lueying_extmeta::Manifest;
 use lueying_protocol::{Request, pipe_name};
 
-/// 包文件头;与「配置备份」同一条格式。
-pub const PACK_HEADER: &str = "### lueying-pack v1";
+/// 包文件头。
+pub const PACK_HEADER: &str = "### lueying-pack v2";
 
-/// 参与打包的文件后缀。扩展包只收文本;发现二进制直接报错,宁可失败也不
-/// 静默丢文件。
-const PACK_EXTS: &[&str] = &["js", "json", "txt", "sksl", "md"];
+/// 参与打包的文本文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
+/// `.wasm` 是唯一的二进制,按字节块打包。
+const PACK_EXTS: &[&str] = &["json", "txt", "sksl", "md", "wasm"];
+/// 二进制文件后缀;只有 Wasm 模块。
+const BINARY_EXTS: &[&str] = &["wasm"];
 
 /// `ext new` 的参数。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +50,8 @@ pub struct LogsArgs {
     pub tail: usize,
 }
 
-/// 新建扩展包骨架:一个合法清单 + 最小脚本,装上就能被设置页看到。
+/// 新建扩展包骨架:Rust crate(指向 guest SDK)+ 合法清单。
+/// 作者编出 wasm 后拷成 `extension.wasm`,清单与目录就能直接打包。
 pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
     if !lueying_extmeta::valid_id(&args.id) {
         return Err(format!(
@@ -65,34 +69,58 @@ pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
         "id": args.id,
         "name": name,
         "version": "0.1.0",
-        "api": 2,
-        "main": "index.js",
+        "api": 3,
+        "wasm": "extension.wasm",
         "activate": {
             "commands": [
                 { "id": "hello", "title": "打个招呼", "when": "any" }
             ]
         },
         "needs": [],
-        "capabilities": [],
-        "settings": [
-            {
-                "key": "greeting",
-                "title": "招呼语",
-                "type": "choice",
-                "options": ["你好", "嗨"],
-                "default": "你好"
-            }
-        ]
+        "capabilities": []
     });
-    let script = format!(
-        "// {name} 的入口脚本。至少注册一个派发入口;不改外观就返回空补丁。\n\
-         lueying.register(() => ({{}}));\n\
-         \n\
-         lueying.command(\"hello\", () => ({{ ok: true }}));\n"
+    let cargo_toml = format!(
+        r#"[package]
+name = "{id}"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lueying-extguest = {{ git = "https://github.com/ukjent7/lueying" }}
+serde_json = "1"
+"#,
+        id = args.id
     );
-    fs::create_dir_all(&dir).map_err(|e| format!("建 {}: {e}", dir.display()))?;
+    let lib_rs = r#"//! 掠影扩展入口:实现 [`Extension`] 并用 `export!` 导出。
+//!
+//! 构建:cargo build --target wasm32-unknown-unknown --release
+//! 然后 `target/wasm32-unknown-unknown/release/<id>.wasm` 拷成包目录里的
+//! `extension.wasm`,再 `lueying ext pack`。
+
+use lueying_extguest::Extension;
+use serde_json::json;
+
+#[derive(Default)]
+struct Hello;
+
+impl Extension for Hello {
+    fn command(&mut self, id: &str, _args: &str) -> Result<String, String> {
+        if id != "hello" {
+            return Err(format!("没有命令 {id}"));
+        }
+        Ok(json!({ "message": "你好,掠影" }).to_string())
+    }
+}
+
+lueying_extguest::export!(Hello);
+"#;
+    fs::create_dir_all(dir.join("src")).map_err(|e| format!("建 {}: {e}", dir.display()))?;
     write_file(&dir.join("manifest.json"), &manifest_text(&manifest)?)?;
-    write_file(&dir.join("index.js"), &script)?;
+    write_file(&dir.join("Cargo.toml"), &cargo_toml)?;
+    write_file(&dir.join("src").join("lib.rs"), lib_rs)?;
     Ok(dir)
 }
 
@@ -103,7 +131,7 @@ fn manifest_text(manifest: &serde_json::Value) -> Result<String, String> {
     Ok(text)
 }
 
-/// 打包一个扩展目录;清单必须存在且 id 等于目录名。
+/// 打包一个扩展目录;清单必须存在且 id 等于目录名,声明的 Wasm 必须在。
 pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     let dir = &args.dir;
     if !dir.is_dir() {
@@ -124,28 +152,39 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     let mut files = Vec::new();
     collect(dir, &mut files)?;
     files.sort();
-    if files.is_empty() {
-        return Err(format!("{} 里没有可打包的文本文件", dir.display()));
+    let wasm = manifest.wasm_main().to_string();
+    if !files.iter().any(|path| {
+        path.strip_prefix(dir)
+            .is_ok_and(|relative| relative.to_string_lossy().replace('\\', "/") == wasm)
+    }) {
+        return Err(format!(
+            "清单声明了 {wasm} 但目录里没有;先构建 guest 再打包"
+        ));
     }
-    let mut out = String::from(PACK_HEADER);
-    out.push('\n');
+    let mut out: Vec<u8> = format!("{PACK_HEADER}\n").into_bytes();
     for path in &files {
         let bytes = fs::read(path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        let text = String::from_utf8(bytes)
-            .map_err(|_| format!("{} 不是 UTF-8 文本,不进扩展包", path.display()))?;
         let name = path
             .strip_prefix(dir)
             .expect("collect 只产出 dir 下的路径")
             .to_string_lossy()
             .replace('\\', "/");
+        if is_binary(&name) {
+            out.extend_from_slice(format!("### binary: {name} {}\n", bytes.len()).as_bytes());
+            out.extend_from_slice(&bytes);
+            out.push(b'\n');
+            continue;
+        }
+        let text = String::from_utf8(bytes)
+            .map_err(|_| format!("{} 不是 UTF-8 文本,不进扩展包", path.display()))?;
         let lines = text.lines().count();
-        out.push_str(&format!("### begin: {name} {lines}\n"));
+        out.extend_from_slice(format!("### begin: {name} {lines}\n").as_bytes());
         // 逐行写出:中间的空行原样保留;结尾补齐一个换行(文本文件规范)。
         for line in text.lines() {
-            out.push_str(line);
-            out.push('\n');
+            out.extend_from_slice(line.as_bytes());
+            out.push(b'\n');
         }
-        out.push_str(&format!("### end: {name}\n"));
+        out.extend_from_slice(format!("### end: {name}\n").as_bytes());
     }
     let target = args.out.clone().unwrap_or_else(|| {
         dir.with_file_name(format!(
@@ -153,8 +192,15 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
             dir.file_name().unwrap_or_default().to_string_lossy()
         ))
     });
-    write_file(&target, &out)?;
+    fs::write(&target, &out).map_err(|e| format!("写 {}: {e}", target.display()))?;
     Ok(target)
+}
+
+fn is_binary(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| BINARY_EXTS.contains(&ext))
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -190,9 +236,9 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
     let (id, files) = if args.source.is_dir() {
         read_directory(&args.source)?
     } else {
-        let text = fs::read_to_string(&args.source)
+        let bytes = fs::read(&args.source)
             .map_err(|e| format!("读 {}: {e}", args.source.display()))?;
-        unpack(&text)?
+        unpack(&bytes)?
     };
     let target = target_root.join(&id);
     if target.exists() {
@@ -206,7 +252,7 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("建 {}: {e}", parent.display()))?;
         }
-        write_file(&path, content)?;
+        fs::write(&path, content).map_err(|e| format!("写 {}: {e}", path.display()))?;
     }
     // 装完再校验一次:清单必须能解析,id 必须等于目录名。
     let manifest_bytes =
@@ -218,7 +264,7 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn read_directory(source: &Path) -> Result<(String, Vec<(String, String)>), String> {
+fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
     let manifest_bytes =
         fs::read(source.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
     let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
@@ -242,58 +288,120 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, String)>), Stri
             .to_string_lossy()
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        let text =
-            String::from_utf8(bytes).map_err(|_| format!("{} 不是 UTF-8 文本", path.display()))?;
-        files.push((relative, text));
+        if !is_binary(&relative) {
+            String::from_utf8(bytes)
+                .map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
+        }
+        files.push((relative, bytes));
     }
     Ok((manifest.id, files))
 }
 
-/// 解包文本:每块 `### begin: <相对路径> <行数>` … `### end: <相对路径>`。
-/// 清单必须存在且能解析;返回 (扩展 id, 全部文件)。
-pub fn unpack(text: &str) -> Result<(String, Vec<(String, String)>), String> {
-    if !text.starts_with(PACK_HEADER) {
+/// 包内容扫描器:在字节流上按块读,文本块与二进制块共用一个游标。
+struct Blocks<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Blocks<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    /// 读一行(不含换行);必须是 UTF-8。
+    fn line(&mut self) -> Result<&'a str, String> {
+        let Some(end) = self.data[self.pos..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| self.pos + offset)
+        else {
+            return Err("包被截断:缺一行".into());
+        };
+        let line = std::str::from_utf8(&self.data[self.pos..end])
+            .map_err(|_| "包里有非 UTF-8 的控制行".to_string())?;
+        self.pos = end + 1;
+        Ok(line)
+    }
+
+    /// 读定长字节。
+    fn take(&mut self, count: usize) -> Result<&'a [u8], String> {
+        let end = self.pos + count;
+        if end > self.data.len() {
+            return Err("包被截断:字节块不够长".into());
+        }
+        let bytes = &self.data[self.pos..end];
+        self.pos = end;
+        Ok(bytes)
+    }
+
+    fn at_end(&self) -> bool {
+        self.pos >= self.data.len()
+    }
+}
+
+/// 解包字节流:文本块 `### begin: <路径> <行数>` … `### end:`,二进制块
+/// `### binary: <路径> <字节数>` 后跟原文。清单必须存在且能解析。
+pub fn unpack(data: &[u8]) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
+    let header = format!("{PACK_HEADER}\n");
+    if !data.starts_with(header.as_bytes()) {
         return Err("不是掠影扩展包(缺 lueying-pack 头)".into());
     }
-    let mut files: Vec<(String, String)> = Vec::new();
-    let mut lines = text.lines();
-    lines.next();
-    while let Some(line) = lines.next() {
-        let rest = line
-            .strip_prefix("### begin: ")
-            .ok_or("包里出现未知行,文件可能被截断")?;
-        let (name, count) = rest
-            .rsplit_once(' ')
-            .ok_or_else(|| format!("begin 行缺少行数: {rest:?}"))?;
-        let count: usize = count
-            .parse()
-            .map_err(|_| format!("begin 行行数不合法: {count:?}"))?;
-        if name.contains("..") || name.starts_with('/') || name.contains('\\') {
-            return Err(format!("包内路径不安全: {name:?}"));
+    let mut blocks = Blocks::new(data);
+    blocks.pos = header.len();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    while !blocks.at_end() {
+        let line = blocks.line()?;
+        if let Some(rest) = line.strip_prefix("### begin: ") {
+            let (name, count) = rest
+                .rsplit_once(' ')
+                .ok_or_else(|| format!("begin 行缺少行数: {rest:?}"))?;
+            check_name(name)?;
+            let count: usize = count
+                .parse()
+                .map_err(|_| format!("begin 行行数不合法: {count:?}"))?;
+            let mut content = Vec::new();
+            for _ in 0..count {
+                let body = blocks.line()?;
+                content.extend_from_slice(body.as_bytes());
+                content.push(b'\n');
+            }
+            let end = blocks.line()?;
+            if end != format!("### end: {name}") {
+                return Err(format!("块 {name:?} 的 end 行对不上: {end:?}"));
+            }
+            files.push((name.to_string(), content));
+        } else if let Some(rest) = line.strip_prefix("### binary: ") {
+            let (name, count) = rest
+                .rsplit_once(' ')
+                .ok_or_else(|| format!("binary 行缺少字节数: {rest:?}"))?;
+            check_name(name)?;
+            let count: usize = count
+                .parse()
+                .map_err(|_| format!("binary 行字节数不合法: {count:?}"))?;
+            let content = blocks.take(count)?.to_vec();
+            if blocks.take(1)? != b"\n" {
+                return Err(format!("字节块 {name:?} 后缺换行"));
+            }
+            files.push((name.to_string(), content));
+        } else {
+            return Err(format!("包里出现未知行,文件可能被截断: {line:?}"));
         }
-        let mut content = String::new();
-        for _ in 0..count {
-            let body = lines
-                .next()
-                .ok_or_else(|| format!("块 {name:?} 提前结束"))?;
-            content.push_str(body);
-            content.push('\n');
-        }
-        let end = lines
-            .next()
-            .ok_or_else(|| format!("块 {name:?} 缺 end 行"))?;
-        if end != format!("### end: {name}") {
-            return Err(format!("块 {name:?} 的 end 行对不上: {end:?}"));
-        }
-        files.push((name.to_string(), content));
     }
     let manifest = files
         .iter()
         .find(|(name, _)| name == "manifest.json")
         .ok_or("包里没有 manifest.json")?;
     let manifest =
-        Manifest::parse(manifest.1.as_bytes()).map_err(|e| format!("清单不合法: {e}"))?;
+        Manifest::parse(&manifest.1).map_err(|e| format!("清单不合法: {e}"))?;
     Ok((manifest.id, files))
+}
+
+/// 包内路径白名单:相对路径、不越界、不写绝对位置。
+fn check_name(name: &str) -> Result<(), String> {
+    if name.contains("..") || name.starts_with('/') || name.contains('\\') {
+        return Err(format!("包内路径不安全: {name:?}"));
+    }
+    Ok(())
 }
 
 /// 让常驻服务重读配置;扩展启停、绑定与设置改动都会被拾起。

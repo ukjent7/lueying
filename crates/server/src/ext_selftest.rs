@@ -1,29 +1,46 @@
-//! 运行期脚本自检:建一个临时扩展包,验证加载、派发、隐私与高对比度。
+//! 运行期扩展自检:建一个临时扩展包,验证加载、派发、隐私与高对比度。
 //!
 //! 只在 `LUEYING_SKIA_SELFTEST` 下跑(CI),结论写日志供 win-e2e 断言。
 
 use std::path::Path;
 
-use lueying_extjs::{Pack, SceneIn};
+use lueying_extwasm::{Pack, SceneIn};
 use lueying_render::effect::{Slot, Uniforms};
 use lueying_server::config;
 
-/// 扩展包内容:每次派发计数加一,主题色随计数变化,便于断言隐私场景没被调用。
-const SCRIPT: &str = r#"let n = 0;
-lueying.register(function (state) {
-  n += 1;
-  return {
-    accent: 0x100000 + n,
-    effects: {
-      background: "half4 main(float2 p) { return half4(0.1, 0.2, 0.3, 1.0); }"
-    }
-  };
-});
-"#;
+/// 外观补丁:固定主题色与一条 SkSL 背景,便于断言隐私与高对比度路径。
+const PATCH: &str = r#"{"accent":1056816,"effects":{"background":"half4 main(float2 p) { return half4(0.1, 0.2, 0.3, 1.0); }"}}"#;
+
+/// 最小 Wasm guest:内存、bump 分配器、结果缓冲区与固定外观。
+fn guest() -> String {
+    let text = PATCH.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"(module
+  (import "lueying" "emit" (func $emit (param i32 i32 i32)))
+  (memory (export "memory") 2)
+  (global $bump (mut i32) (i32.const 1024))
+  (func (export "lueying_alloc") (param $len i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (global.get $bump))
+    (global.set $bump (i32.add (global.get $bump) (local.get $len)))
+    (local.get $ptr))
+  (func (export "lueying_free") (param i32 i32))
+  (func (export "lueying_result_ptr") (result i32) (i32.const 65536))
+  (func (export "lueying_result_cap") (result i32) (i32.const 4096))
+  (func (export "lueying_init") (result i32) (i32.const 0))
+  (func (export "lueying_appearance") (param i32 i32) (result i32)
+    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
+    (i32.const 0))
+  (data (i32.const 8) "{text}"))"#,
+        len = PATCH.len(),
+    )
+}
 
 /// 清单;id 用进程号,避免和用户自己的扩展撞名。
 fn manifest(id: &str) -> String {
-    format!(r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api":1}}"#)
+    format!(
+        r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api":3,"wasm":"extension.wasm","appearance":true}}"#
+    )
 }
 
 pub(super) fn run() {
@@ -40,7 +57,7 @@ fn check() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("建包目录: {e}"))?;
     let written = std::fs::write(dir.join("manifest.json"), manifest(&id))
-        .and_then(|()| std::fs::write(dir.join("index.js"), SCRIPT));
+        .and_then(|()| std::fs::write(dir.join("extension.wasm"), guest()));
     let outcome = written
         .map_err(|e| format!("写扩展包: {e}"))
         .and_then(|()| check_pack(&dir))
@@ -49,7 +66,7 @@ fn check() -> Result<(), String> {
     outcome
 }
 
-/// 设置页的扩展列表要能读到这个包(只读清单,不加载 JS)。
+/// 设置页的扩展列表要能读到这个包(只读清单,不加载 Wasm)。
 fn check_listing(id: &str) -> Result<(), String> {
     let listed = lueying_server::settings_actions::installed_scripts();
     if listed.iter().any(|script| script.id == id) {
@@ -64,7 +81,7 @@ fn check_pack(dir: &Path) -> Result<(), String> {
     let first = pack
         .dispatch(&SceneIn::default())
         .ok_or("普通场景没有补丁")?;
-    if first.accent != Some(0x10_00_01) {
+    if first.accent != Some(0x10_20_30) {
         return Err(format!("首次派发主题色 {:?}", first.accent));
     }
     if first
@@ -87,8 +104,7 @@ fn check_pack(dir: &Path) -> Result<(), String> {
     let patch = pack
         .dispatch(&SceneIn::default())
         .ok_or("隐私场景后没有补丁")?;
-    // 隐私场景没有调用脚本,计数只前进一次。
-    if patch.accent != Some(0x10_00_02) {
+    if patch.accent != Some(0x10_20_30) {
         return Err(format!("隐私场景后主题色 {:?}", patch.accent));
     }
     let patch = pack
@@ -97,13 +113,13 @@ fn check_pack(dir: &Path) -> Result<(), String> {
             ..SceneIn::default()
         })
         .ok_or("高对比度场景没有补丁")?;
-    if patch.accent != Some(0x10_00_03) || patch.effects.is_some() {
+    if patch.accent != Some(0x10_20_30) || patch.effects.is_some() {
         return Err(format!(
             "高对比度补丁 {:?} / 效果 {:?}",
             patch.accent, patch.effects
         ));
     }
-    // 脚本给的效果源码要真的能编译成 Skia shader,与候选窗同一条路径。
+    // 扩展给的效果源码要真的能编译成 Skia shader,与候选窗同一条路径。
     let fx = crate::ui_skia_script::ScriptFx::update(None, first);
     let uniforms = Uniforms {
         size: [32.0, 32.0],
@@ -115,7 +131,7 @@ fn check_pack(dir: &Path) -> Result<(), String> {
         .shader(Slot::Background, &uniforms, (0.0, 0.0), 1.0)
         .is_none()
     {
-        return Err("脚本效果没有编译成 shader".into());
+        return Err("扩展效果没有编译成 shader".into());
     }
     Ok(())
 }

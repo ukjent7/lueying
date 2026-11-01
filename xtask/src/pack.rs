@@ -183,7 +183,7 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
         .map_err(|e| format!("写 licenses/README.md: {e}"))?;
     files.push(("licenses/README.md".into(), notice.len() as u64));
 
-    // 官方起步扩展随安装包分发(几十 KB 的 JS);设置窗按需复制到当前用户目录。
+    // 官方起步扩展随安装包分发(Wasm guest + 清单文本);设置窗按需复制到当前用户目录。
     let extensions = root.join("extensions");
     if extensions.is_dir() {
         copy_tree(

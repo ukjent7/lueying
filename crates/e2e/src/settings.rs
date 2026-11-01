@@ -113,11 +113,11 @@ pub fn run(report: &mut String) -> usize {
         format!("页面={:?}", nav_settings.page),
     );
 
-    // 运行期脚本行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
+    // 运行期扩展行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
     // 「目录」交给平台侧;模型本身负责切换与关闭。
-    let idle = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
+    let idle = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
     settings.cfg.extensions = vec!["demo-pack".to_string()];
-    let active = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
+    let active = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
@@ -141,11 +141,11 @@ pub fn run(report: &mut String) -> usize {
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
     settings.cfg.extensions = vec!["gone".to_string()];
-    let missing = row_detail(&settings, PageId::Extensions, "扩展", "运行期脚本");
+    let missing = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
     settings.select_script(None);
     push(
         &mut checks,
-        "设置运行期脚本选择",
+        "设置运行期扩展选择",
         idle.as_deref()
             .is_some_and(|text| text.contains("未启用") && text.contains('2'))
             && active

@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use lueying_extjs::{AuditOutcome, AuditSink};
+use lueying_extwasm::{AuditOutcome, AuditSink};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
 const LIMIT: u64 = 1024 * 1024;

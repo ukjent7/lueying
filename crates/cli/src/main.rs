@@ -24,7 +24,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::New(args) => {
             let dir = extcmd::new(&args)?;
             println!(
-                "已创建 {};下一步:lueying ext pack {}",
+                "已创建 {};编出 wasm32 后把 {{}}.wasm 拷成 extension.wasm,再 lueying ext pack {}",
                 dir.display(),
                 dir.display()
             );

@@ -20,8 +20,8 @@ pub const USAGE: &str = "\
 扩展的开发回路:新建骨架、打包、安装、重载,以及日志、运行指标与对外上屏。
 
 子命令:
-  new <id>          新建扩展骨架(manifest.json + index.js)
-  pack <目录>       打包成 .luext 文本包
+  new <id>          新建扩展骨架(Rust guest crate + manifest.json)
+  pack <目录>       打包成 .luext 归档(清单/文本 + Wasm 模块)
   install <源>      安装目录或 .luext 到扩展目录
   reload            让常驻服务重读配置与扩展
   logs              看服务日志末尾

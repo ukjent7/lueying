@@ -266,8 +266,8 @@ pub(super) fn check_skia_selftest() -> Result<String, String> {
     ))
 }
 
-/// 运行期脚本自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建临时扩展包,
-/// 验证 QuickJS 在 Windows 上能加载、派发、拦截隐私场景。
+/// 运行期扩展自检:Server 启动时按 `LUEYING_SKIA_SELFTEST` 建临时扩展包,
+/// 验证 Wasm 扩展在 Windows 上能加载、派发、拦截隐私场景。
 pub(super) fn check_ext_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();
     if let Some(line) = text.lines().find(|line| line.contains("扩展自检失败")) {
@@ -276,7 +276,7 @@ pub(super) fn check_ext_selftest() -> Result<String, String> {
     let Some(line) = text.lines().find(|line| line.contains("扩展自检通过")) else {
         return Err("Server 日志里没有扩展自检记录".into());
     };
-    Ok(format!("## 运行期脚本\n\nPASS,{line}"))
+    Ok(format!("## 运行期扩展\n\nPASS,{line}"))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.toml。
@@ -310,7 +310,7 @@ pub(super) fn check_preserved_punct(data: &std::path::Path) -> Result<(), String
 
 /// 官方 shot-ocr 全链路:全局热键 → 截图 → 识别 → 上屏。
 /// 识别在 CI 上换成固定文本(`LUEYING_FAKE_OCR`),截图写 BMP 与上屏都是
-/// 真实现;扩展本身用的是仓库 `extensions/shot-ocr` 的同一份脚本。
+/// 真实现;扩展本身用的是仓库 `extensions/shot-ocr` 编出的同一份 `extension.wasm`。
 pub(super) fn check_shot_ocr(edit: HWND, hwnd: HWND) -> Result<String, String> {
     const VK_CONTROL: u16 = 0x11;
     const VK_MENU: u16 = 0x12;

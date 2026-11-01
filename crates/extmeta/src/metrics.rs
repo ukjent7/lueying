@@ -16,13 +16,13 @@ const MAX_METRICS_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Budgets {
-    /// JS 内存上限(字节)。
+    /// Wasm 线性内存上限(字节)。
     pub memory_bytes: u64,
-    /// JS 栈上限(字节)。
+    /// Wasm 值栈上限(字节)。
     pub stack_bytes: u64,
-    /// 入口脚本初始化时限(毫秒)。
+    /// 模块初始化时限(毫秒)。
     pub init_ms: u64,
-    /// 单次派发/作业步时限(毫秒)。
+    /// 单次调用时限(毫秒)。
     pub dispatch_ms: u64,
     /// 连续失败多少次停用。
     pub max_faults: u32,
@@ -35,7 +35,7 @@ pub enum ExtState {
     /// 命令包尚未加载,或已空闲卸载。
     #[default]
     Idle,
-    /// JS 宿主已加载。
+    /// Wasm 宿主已加载。
     Loaded,
     /// 连续失败或超限,已停用。
     Disabled,
@@ -70,25 +70,25 @@ pub struct ExtStat {
     pub version: String,
     /// 当前状态。
     pub state: ExtState,
-    /// QuickJS 当前占用(字节);未加载为 0。
+    /// Wasm 线性内存当前占用(字节);未加载为 0。
     pub memory_used: u64,
     /// 内存上限(字节)。
     pub memory_limit: u64,
-    /// 命令/场景派发次数。
+    /// 命令/场景调用次数。
     pub dispatches: u64,
-    /// 作业步数。
+    /// 燃料消耗计数。
     pub steps: u64,
-    /// 单次派发最慢耗时(微秒)。
+    /// 单次调用最慢耗时(微秒)。
     pub dispatch_peak_us: u64,
-    /// 单个作业步最慢耗时(微秒)。
+    /// 单次调用内的最慢分段耗时(微秒)。
     pub step_peak_us: u64,
-    /// 派发/步进超时次数。
+    /// 调用/燃料超限次数。
     pub timeouts: u64,
     /// 内存超限次数。
     pub ooms: u64,
     /// 连续失败计数。
     pub faults: u32,
-    /// 尚未结算的 Promise 数。
+    /// 尚未完成的异步命令数。
     pub pending: u64,
     /// 停用或最近一次失败的原因。
     #[serde(default)]
@@ -96,12 +96,12 @@ pub struct ExtStat {
 }
 
 impl ExtStat {
-    /// 单次派发峰值换算成毫秒文本。
+    /// 单次调用峰值换算成毫秒文本。
     pub fn dispatch_peak_ms(&self) -> String {
         millis(self.dispatch_peak_us)
     }
 
-    /// 作业步峰值换算成毫秒文本。
+    /// 分段峰值换算成毫秒文本。
     pub fn step_peak_ms(&self) -> String {
         millis(self.step_peak_us)
     }
@@ -155,7 +155,7 @@ impl ExtMetrics {
         std::fs::rename(&tmp, path).map_err(|e| format!("替换指标失败: {e}"))
     }
 
-    /// 所有扩展里最大的作业步耗时(微秒)。
+    /// 所有扩展里最大的分段耗时(微秒)。
     pub fn peak_step_us(&self) -> u64 {
         self.extensions
             .iter()

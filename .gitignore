@@ -5,4 +5,6 @@
 /wrok/
 __pycache__/
 *.pyc
+# 官方扩展 guest 是 CI 构建产物:wasm32 编译后拷进包目录,不入库。
+extensions/shot-ocr/extension.wasm
 

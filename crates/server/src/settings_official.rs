@@ -85,6 +85,13 @@ fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
             parsed.id, extension.id
         ));
     }
+    if !target.join(parsed.wasm_main()).is_file() {
+        let _ = std::fs::remove_dir_all(&target);
+        return Err(format!(
+            "随包目录缺少 Wasm 模块 {};发布包不完整",
+            parsed.wasm_main()
+        ));
+    }
     Ok(())
 }
 

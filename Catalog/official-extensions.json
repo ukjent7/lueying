@@ -7,7 +7,7 @@
       "version": "0.1.0",
       "kind": "extension",
       "description": "截图后识别文字并上屏；先装扩展，再按需装识别模型",
-      "size": "12 KB",
+      "size": "约 300 KB",
       "bundled": "extensions/shot-ocr"
     },
     {

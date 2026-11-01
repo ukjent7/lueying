@@ -1,23 +1,28 @@
-//! 场景协议:输入法把面板状态交给脚本,脚本只回一个声明式补丁。
+//! 扩展宿主与 Wasm guest 共用的协议类型。
 //!
-//! 状态里没有候选文字、没有宿主应用名、没有击键历史:扩展能看见的只有
-//! 面板的几何与主题状态。补丁只认主题色与三个 SkSL 槽位,未知字段一律
-//! 拒绝,避免脚本按旧语义或新语义猜。
+//! 这个 crate 同时编进宿主与 `wasm32-unknown-unknown`,所以只放数据契约,
+//! 不放 wasmi、Windows 或任何宿主侧实现。场景协议仍然只描述面板状态:
+//! 没有候选文字、没有宿主应用名、没有击键历史。
+
+#![deny(missing_docs)]
 
 use serde::{Deserialize, Serialize};
 
-use crate::SCENE_API;
+/// 场景协议版本。guest 在清单里不声明版本,宿主与 SDK 同步升级。
+pub const SCENE_API: u32 = 1;
 
 /// 单个 SkSL 槽位的源码上限。
 pub const MAX_EFFECT_BYTES: usize = 64 * 1024;
 
-/// 补丁 JSON 的总大小上限:三个槽位各一份源码再留一点字段开销。
+/// 补丁 JSON 的总大小上限。
 pub const MAX_PATCH_BYTES: usize = 3 * MAX_EFFECT_BYTES + 8 * 1024;
 
-/// 输入法交给脚本的面板状态。
-///
-/// 字段只增不减;新增字段时同步 [`SCENE_API`],旧脚本读到多余字段应当忽略。
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// guest 结果缓冲区的字节数。宿主把服务结果写进这块内存,guest 解析后
+/// 再通过 `emit` 交回最终结果。
+pub const MAX_RESULT_BYTES: usize = 1024 * 1024;
+
+/// 输入法交给 guest 的面板状态。
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SceneIn {
     /// 场景协议版本。
     pub api: u32,
@@ -43,7 +48,7 @@ pub struct SceneIn {
     pub time: f32,
     /// 入场/翻页进度 0..1,静止为 1。
     pub anim: f32,
-    /// 是否密码/隐私字段。为 true 时脚本不会被调用。
+    /// 是否密码/隐私字段。为 true 时 guest 不会被调用。
     pub private: bool,
 }
 
@@ -94,14 +99,21 @@ impl SceneIn {
         state
     }
 
-    /// 规整后序列化成 JSON;非有限浮点不会漏进脚本。
+    /// 规整后序列化成 JSON;非有限浮点不会漏进 guest。
     pub fn to_json(&self) -> Result<String, String> {
         serde_json::to_string(&self.cleaned()).map_err(|e| format!("场景序列化失败: {e}"))
     }
+
+    /// 解析宿主传来的场景 JSON;guest 侧用,取值统一走 [`SceneIn::cleaned`]。
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let scene: Self =
+            serde_json::from_str(text).map_err(|e| format!("场景解析失败: {e}"))?;
+        Ok(scene.cleaned())
+    }
 }
 
-/// 脚本返回的补丁;字段全部可选,缺省表示这一项不动。
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+/// guest 返回的补丁;字段全部可选,缺省表示这一项不动。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenePatch {
     /// 主题色 0xRRGGBB。
@@ -200,7 +212,7 @@ impl EffectSlot {
 }
 
 /// 三个槽位的 SkSL 源码;缺省的槽位保持当前效果。
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EffectsPatch {
     /// 面板底。
@@ -245,6 +257,102 @@ impl EffectsPatch {
     }
 }
 
+/// 截图结果;`file` 是宿主临时目录里的 BMP。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Shot {
+    /// 截图文件路径。
+    pub file: String,
+    /// 像素宽度。
+    pub width: i64,
+    /// 像素高度。
+    pub height: i64,
+}
+
+/// 识别结果。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OcrText {
+    /// 识别出的文字,可能为空。
+    pub text: String,
+    /// 实际使用的语言标签;PP-OCR 报 `ppocr`。
+    #[serde(default)]
+    pub lang: String,
+}
+
+/// 上屏结果。
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Delivered {
+    /// 是否真的送出了字符;空文本为 false。
+    pub delivered: bool,
+}
+
+/// 宿主选择面板的结果。
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PanelResult {
+    /// 用户选中的下标;取消或关闭为 `None`。
+    #[serde(default)]
+    pub selected: Option<u32>,
+}
+
+/// 剪贴板读取结果。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClipboardText {
+    /// 纯文本内容;没有文本时为空串。
+    #[serde(default)]
+    pub text: String,
+}
+
+/// 扩展存储读取结果。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StoreValue {
+    /// 键不存在时为 `None`。
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+/// 扩展存储键列表。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StoreKeys {
+    /// 全部键。
+    #[serde(default)]
+    pub keys: Vec<String>,
+}
+
 #[cfg(test)]
-#[path = "scene_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_is_cleaned_before_serializing() {
+        let state = SceneIn {
+            page: 9,
+            pages: 3,
+            candidates: 2,
+            selected: 7,
+            accent: 0x1ff_ffff,
+            time: f32::NAN,
+            anim: f32::INFINITY,
+            ..SceneIn::default()
+        };
+        let json = state.to_json().expect("序列化");
+        assert!(json.contains("\"page\":3"));
+        assert!(json.contains("\"selected\":1"));
+        assert!(json.contains("\"accent\":16777215"));
+        assert!(json.contains("\"time\":0.0"));
+        assert!(json.contains("\"anim\":1.0"));
+    }
+
+    #[test]
+    fn patch_rejects_bad_values() {
+        assert!(ScenePatch::parse(r#"{"accent":16777216}"#).is_err());
+        assert!(ScenePatch::parse(r#"{"future":true}"#).is_err());
+        assert!(ScenePatch::parse(r#"{"effects":{"background":""}}"#).is_err());
+        assert!(ScenePatch::parse(r#"{"accent":1193046}"#).is_ok());
+    }
+}

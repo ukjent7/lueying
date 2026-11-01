@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lueying_bypass::{Bypass, BypassConfig};
-use lueying_extjs::{Done, Provider};
+use lueying_extwasm::{Done, Provider};
 use serde_json::json;
 
 use super::one_method;
