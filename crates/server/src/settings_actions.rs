@@ -449,6 +449,10 @@ pub fn import_luext(settings: &mut Settings) {
             return;
         }
     };
+    if bytes.len() as u64 > MAX_PACKAGE_BYTES {
+        settings.say(Notice::Error, "扩展包超过 128 MiB 上限");
+        return;
+    }
     let Some(root) = config::extensions_dir() else {
         settings.say(Notice::Error, "没有可写的扩展目录");
         return;
@@ -462,34 +466,42 @@ pub fn import_luext(settings: &mut Settings) {
     }
 }
 
-/// 把 .luext 字节落盘到扩展目录;同 id 已有目录就整体替换。
+/// 单个 `.luext` 的读入上限;容器对单文件与全包另有校验。
+const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// 把 `.luext` 字节落盘到扩展目录;同 id 已有目录就整体替换。
 ///
 /// 先解包到临时目录再改名换位,任何一步失败旧目录都保持原样。替换
 /// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
 fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
-    let entries = lueying_extmeta::container::unpack(bytes)?;
-    let manifest = entries
+    let files = lueying_extmeta::container::decode(bytes)?;
+    let manifest = files
         .iter()
-        .find(|entry| entry.name == "manifest.json")
+        .find(|(name, _)| name == "manifest.json")
         .ok_or("包里没有 manifest.json")
-        .and_then(|entry| {
-            lueying_extmeta::Manifest::parse(&entry.bytes).map_err(|e| format!("清单不合法: {e}"))
+        .and_then(|(_, bytes)| {
+            lueying_extmeta::Manifest::parse(bytes).map_err(|e| format!("清单不合法: {e}"))
         })?;
-    if !entries
-        .iter()
-        .any(|entry| entry.name == manifest.payload_file())
-    {
-        return Err(format!("包里缺少 {}", manifest.payload_file()));
+    let payload = manifest.payload_file().to_string();
+    if !files.iter().any(|(name, _)| *name == payload) {
+        return Err(format!("包里缺少 {payload}"));
     }
     let staging = root.join(format!(".import-{}", manifest.id));
     let target = root.join(&manifest.id);
     let backup = root.join(format!(".backup-{}", manifest.id));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("建临时目录失败: {e}"))?;
-    for entry in &entries {
-        if let Err(error) = std::fs::write(staging.join(&entry.name), &entry.bytes) {
+    for (name, content) in &files {
+        let path = staging.join(name);
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
             let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("写 {} 失败: {error}", entry.name));
+            return Err(format!("建 {} 目录失败: {error}", parent.display()));
+        }
+        if let Err(error) = std::fs::write(&path, content) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!("写 {name} 失败: {error}"));
         }
     }
     if target.exists() && std::fs::rename(&target, &backup).is_err() {
@@ -561,6 +573,49 @@ pub fn refresh_ext_metrics(settings: &mut Settings) {
         }
         None => settings.say(Notice::Info, "服务还没有写入运行数据"),
     }
+}
+
+/// 拉一帧场景调试快照;只有类型与数值,正文内容永不出服务进程。
+pub fn refresh_scene_debug(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let scene = call(&Request::SceneDebug).and_then(|reply| reply.scene);
+    match scene {
+        Some(scene) if scene.active => {
+            settings.say(Notice::Success, scene_summary(&scene));
+        }
+        Some(_) => settings.say(Notice::Info, "场景层未启用;先把 scene.toml 放进场景目录"),
+        None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
+    }
+}
+
+/// 快照摘要:最近 64 帧的 p50 与最大耗时,加事件总量与最近几个事件名。
+fn scene_summary(scene: &lueying_protocol::SceneDebugReply) -> String {
+    let mut frames = scene.frame_us.clone();
+    frames.sort_unstable();
+    let pick = |index: usize| {
+        frames
+            .get(index)
+            .map(|us| format!("{:.1} ms", f64::from(*us) / 1000.0))
+    };
+    let frames_text = if frames.is_empty() {
+        "暂无帧数据".to_string()
+    } else {
+        format!(
+            "帧 p50 {} · 最大 {}",
+            pick(frames.len() / 2).unwrap_or_default(),
+            pick(frames.len() - 1).unwrap_or_default()
+        )
+    };
+    let total: u32 = scene.counts.iter().map(|(_, count)| count).sum();
+    let recent = scene
+        .events
+        .iter()
+        .rev()
+        .take(3)
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{frames_text};事件 {total} 次,最近 {recent}")
 }
 
 /// 导出用户词库到文件。

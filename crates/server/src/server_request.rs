@@ -587,6 +587,15 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             Reply::default()
         }
         Request::FuzzyStats => group_reply(&state.user),
+        Request::SceneDebug => Reply {
+            scene: Some(
+                crate::ui_d2d_scene::SCENE_DEBUG
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .snapshot(),
+            ),
+            ..Reply::default()
+        },
         Request::Status => {
             let sync_latency = state.rerank_sync_metrics.snapshot();
             let settle_latency = state.rerank_settle_metrics.snapshot();

@@ -1,6 +1,7 @@
 //! `.luext` 导入落盘的测试;只盖纯函数,文件对话框不进测试。
 
 use super::*;
+use lueying_extmeta::container::{self, Files};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -21,17 +22,11 @@ fn wasm_manifest(id: &str) -> String {
 }
 
 fn wasm_package(id: &str, body: &str) -> Vec<u8> {
-    let entries = vec![
-        lueying_extmeta::container::Entry {
-            name: "manifest.json".into(),
-            bytes: wasm_manifest(id).into_bytes(),
-        },
-        lueying_extmeta::container::Entry {
-            name: format!("{id}.wasm"),
-            bytes: body.as_bytes().to_vec(),
-        },
+    let files: Files = vec![
+        ("manifest.json".into(), wasm_manifest(id).into_bytes()),
+        (format!("{id}.wasm"), body.as_bytes().to_vec()),
     ];
-    lueying_extmeta::container::pack(&entries).unwrap()
+    container::encode(&files).unwrap()
 }
 
 fn cleanup(root: &Path) {
@@ -49,6 +44,22 @@ fn installs_new_package() {
         "v1"
     );
     assert!(!root.join(".import-demo").exists());
+    cleanup(&root);
+}
+
+#[test]
+fn keeps_subdirectories() {
+    let root = temp_root("subdir");
+    let files: Files = vec![
+        ("manifest.json".into(), wasm_manifest("demo").into_bytes()),
+        ("demo.wasm".into(), b"v1".to_vec()),
+        ("docs/说明.md".into(), b"# 标题\n".to_vec()),
+    ];
+    install_luext_bytes(&container::encode(&files).unwrap(), &root).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("demo").join("docs").join("说明.md")).unwrap(),
+        "# 标题\n"
+    );
     cleanup(&root);
 }
 
@@ -85,28 +96,19 @@ fn keeps_old_package_on_bad_upload() {
 fn rejects_unusable_packages() {
     let root = temp_root("reject");
     // 缺清单。
-    let entries = vec![lueying_extmeta::container::Entry {
-        name: "demo.wasm".into(),
-        bytes: b"v1".to_vec(),
-    }];
-    let bytes = lueying_extmeta::container::pack(&entries).unwrap();
+    let files: Files = vec![("demo.wasm".into(), b"v1".to_vec())];
+    let bytes = container::encode(&files).unwrap();
     assert!(install_luext_bytes(&bytes, &root).is_err());
     // 清单不合法。
-    let entries = vec![lueying_extmeta::container::Entry {
-        name: "manifest.json".into(),
-        bytes: b"not json".to_vec(),
-    }];
-    let bytes = lueying_extmeta::container::pack(&entries).unwrap();
+    let files: Files = vec![("manifest.json".into(), b"not json".to_vec())];
+    let bytes = container::encode(&files).unwrap();
     assert!(install_luext_bytes(&bytes, &root).is_err());
     // 缺主负载。
-    let entries = vec![lueying_extmeta::container::Entry {
-        name: "manifest.json".into(),
-        bytes: wasm_manifest("demo").into_bytes(),
-    }];
-    let bytes = lueying_extmeta::container::pack(&entries).unwrap();
+    let files: Files = vec![("manifest.json".into(), wasm_manifest("demo").into_bytes())];
+    let bytes = container::encode(&files).unwrap();
     assert!(install_luext_bytes(&bytes, &root).is_err());
     // 同意记录不许进包(容器层已拒,这里补一层落盘侧的事实)。
-    assert!(lueying_extmeta::container::check_name("consent.json").is_err());
+    assert!(container::check_name("consent.json").is_err());
     assert!(!root.join("demo").exists());
     cleanup(&root);
 }
@@ -115,19 +117,14 @@ fn rejects_unusable_packages() {
 fn imports_native_package() {
     let root = temp_root("native");
     let manifest = r#"{"id":"heavy","name":"重活","version":"0.1.0","api":3,"kind":"native","exe":"heavy.exe","capabilities":["ocr"]}"#;
-    let entries = vec![
-        lueying_extmeta::container::Entry {
-            name: "manifest.json".into(),
-            bytes: manifest.as_bytes().to_vec(),
-        },
-        lueying_extmeta::container::Entry {
-            name: "heavy.exe".into(),
-            bytes: b"MZ".to_vec(),
-        },
+    let files: Files = vec![
+        ("manifest.json".into(), manifest.as_bytes().to_vec()),
+        ("heavy.exe".into(), b"MZ".to_vec()),
     ];
-    let bytes = lueying_extmeta::container::pack(&entries).unwrap();
+    let bytes = container::encode(&files).unwrap();
     let message = install_luext_bytes(&bytes, &root).unwrap();
     assert!(message.contains("原生扩展"), "{message}");
     assert!(root.join("heavy").join("heavy.exe").is_file());
+    assert_eq!(std::fs::read(root.join("heavy").join("heavy.exe")).unwrap(), b"MZ");
     cleanup(&root);
 }

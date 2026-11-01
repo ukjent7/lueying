@@ -64,6 +64,10 @@ fn script_buttons_map_to_actions() {
         Some(Action::ImportLuext)
     );
     assert_eq!(
+        settings.activate(&Id::new(ids::SCENE_DEBUG, 0)),
+        Some(Action::SceneDebug)
+    );
+    assert_eq!(
         settings.activate(&Id::new(ids::CONSENT, 0)),
         Some(Action::ApproveExtension)
     );

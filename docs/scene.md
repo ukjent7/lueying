@@ -46,7 +46,10 @@ do = [
 
 - `lueying scene check <文件|目录>`:校验,中文报错带行号。
 - `lueying scene schema`:输出 JSON Schema,编辑器补全用。
+- `lueying scene pack <目录>`:把场景目录(scene.toml + 素材)打成 `.luext` 归档,可 diff 的纯文本容器。
+- `lueying scene install <源> [--dir <目录>] [--force]`:安装场景包或目录到场景目录(默认 `%APPDATA%\lueying\scene`),装完一秒内热重载生效。
 - `lueying scene replay <脚本> [--scene scene.toml] [--json]`:事件模拟器,不敲键盘把动画推完;`LUEYING_SCENE_RECORD=<路径>` 录下真实会话,录出的文件直接喂给 replay 改。
+- 设置窗「场景装饰」行的「调试」按钮:拉一帧场景快照,报最近帧 p50/最大耗时与抽象事件流,不含任何文字内容。
 - 官方示例:`crates/scene/scenes/`(光晕、下划线、状态环、背景轮播、mascot)。
 
 ## 常见问题

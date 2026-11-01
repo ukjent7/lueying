@@ -5,14 +5,81 @@
 //! 只废掉场景,候选窗照常。隐私字段(密码框)下整个场景层停用,由窗口层
 //! 保证;这里不碰任何候选文字,信号全是几何与计数。
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use lueying_protocol::SessionView;
 use lueying_scene::{EventName, Inputs, Runtime};
 
 use lueying_server::config;
+
+/// 场景调试记录的环形容量:帧与事件各记多少条。
+const DEBUG_FRAMES: usize = 64;
+const DEBUG_EVENTS: usize = 32;
+
+/// 场景调试记录:设置页「场景调试」读这里。只有类型与数值,永不记文字。
+#[derive(Default)]
+pub struct SceneDebugLog {
+    /// 场景层是否在跑。
+    active: bool,
+    /// 最近帧时长(微秒),环形。
+    frame_us: VecDeque<u32>,
+    /// 最近事件:(类型名, 发生时刻),环形。
+    events: VecDeque<(String, Instant)>,
+    /// 各类事件累计次数。
+    counts: BTreeMap<String, u32>,
+}
+
+impl SceneDebugLog {
+    fn note(&mut self, dt: f64, events: &[EventName], live: bool) {
+        self.active = live;
+        if dt > 0.0 {
+            self.frame_us.push_back((dt * 1_000_000.0) as u32);
+            while self.frame_us.len() > DEBUG_FRAMES {
+                self.frame_us.pop_front();
+            }
+        }
+        let now = Instant::now();
+        for name in events {
+            let key = lueying_scene::replay::name_of(name);
+            self.events.push_back((key, now));
+            while self.events.len() > DEBUG_EVENTS {
+                self.events.pop_front();
+            }
+            *self.counts.entry(key).or_default() += 1;
+        }
+    }
+
+    /// 设置页用的快照;事件流换成「距今毫秒」。
+    pub fn snapshot(&self) -> lueying_protocol::SceneDebugReply {
+        let now = Instant::now();
+        lueying_protocol::SceneDebugReply {
+            active: self.active,
+            frame_us: self.frame_us.iter().copied().collect(),
+            events: self
+                .events
+                .iter()
+                .map(|(key, at)| {
+                    (
+                        key.clone(),
+                        now.saturating_duration_since(*at).as_millis() as u32,
+                    )
+                })
+                .collect(),
+            counts: self
+                .counts
+                .iter()
+                .map(|(key, count)| (key.clone(), *count))
+                .collect(),
+        }
+    }
+}
+
+/// 全局场景调试记录;候选窗线程写,设置请求读。
+pub static SCENE_DEBUG: LazyLock<Mutex<SceneDebugLog>> =
+    LazyLock::new(|| Mutex::new(SceneDebugLog::default()));
 
 /// 录制文件;环境变量给出路径,打不开只记日志,输入法照常。
 fn open_recorder() -> Option<std::fs::File> {
@@ -200,6 +267,10 @@ impl SceneHost {
     /// 录完直接回放,或当调动画的底稿改。
     pub(super) fn record(&mut self, dt: f64, inputs: &Inputs, events: &[EventName]) {
         use std::io::Write as _;
+        SCENE_DEBUG
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .note(dt, events, self.live());
         let Some(file) = self.recorder.as_mut() else {
             return;
         };

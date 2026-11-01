@@ -140,6 +140,7 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::ApproveExtension => with(core, settings_actions::approve_extension),
         Action::OpenExtAudit => with(core, settings_actions::open_ext_audit),
         Action::RefreshExtMetrics => with(core, settings_actions::refresh_ext_metrics),
+        Action::SceneDebug => with(core, settings_actions::refresh_scene_debug),
         Action::OpenOcrModels => with(core, settings_actions::open_ocr_models),
         Action::OpenApps => with(core, settings_actions::open_apps),
         Action::BackupExport => with(core, settings_actions::backup_export),

@@ -1,8 +1,8 @@
 //! `lueying ext` 的开发回路:新建骨架、打包、安装、重载与日志。
 //!
 //! 全部是纯文件与管道操作:不加载 Wasm,不碰 TSF,Windows 与 Linux 都能跑。
-//! 包格式 `### lueying-pack v2`:文本块按行数声明长度,`.wasm` 按字节数
-//! 原样内嵌。
+//! 包格式 `### lueying-pack v2` 的编解码在 [`lueying_extmeta::container`];
+//! 这里管目录收集、清单校验与安装落盘。
 
 use std::fs;
 use std::io::{BufReader, Write};
@@ -11,14 +11,11 @@ use std::path::{Path, PathBuf};
 use lueying_extmeta::Manifest;
 use lueying_protocol::{Request, pipe_name};
 
-/// 包文件头。
-pub const PACK_HEADER: &str = "### lueying-pack v2";
+pub use lueying_extmeta::container::PACK_HEADER;
 
 /// 参与打包的文本文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
 /// `.wasm` 是唯一的二进制,按字节块打包。
 const PACK_EXTS: &[&str] = &["json", "txt", "sksl", "md", "wasm"];
-/// 二进制文件后缀;只有 Wasm 模块。
-const BINARY_EXTS: &[&str] = &["wasm"];
 
 /// `ext new` 的参数。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,7 +161,7 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
             "清单声明了 {wasm} 但目录里没有;先构建 guest 再打包"
         ));
     }
-    let mut out: Vec<u8> = format!("{PACK_HEADER}\n").into_bytes();
+    let mut packed_files: Vec<(String, Vec<u8>)> = Vec::new();
     for path in &files {
         let bytes = fs::read(path).map_err(|e| format!("读 {}: {e}", path.display()))?;
         let name = path
@@ -172,23 +169,9 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
             .expect("collect 只产出 dir 下的路径")
             .to_string_lossy()
             .replace('\\', "/");
-        if is_binary(&name) {
-            out.extend_from_slice(format!("### binary: {name} {}\n", bytes.len()).as_bytes());
-            out.extend_from_slice(&bytes);
-            out.push(b'\n');
-            continue;
-        }
-        let text = String::from_utf8(bytes)
-            .map_err(|_| format!("{} 不是 UTF-8 文本,不进扩展包", path.display()))?;
-        let lines = text.lines().count();
-        out.extend_from_slice(format!("### begin: {name} {lines}\n").as_bytes());
-        // 逐行写出:中间的空行原样保留;结尾补齐一个换行(文本文件规范)。
-        for line in text.lines() {
-            out.extend_from_slice(line.as_bytes());
-            out.push(b'\n');
-        }
-        out.extend_from_slice(format!("### end: {name}\n").as_bytes());
+        packed_files.push((name, bytes));
     }
+    let out = lueying_extmeta::container::encode(&packed_files)?;
     let target = args.out.clone().unwrap_or_else(|| {
         dir.with_file_name(format!(
             "{}.luext",
@@ -197,13 +180,6 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     });
     fs::write(&target, &out).map_err(|e| format!("写 {}: {e}", target.display()))?;
     Ok(target)
-}
-
-fn is_binary(name: &str) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| BINARY_EXTS.contains(&ext))
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -291,7 +267,7 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), Str
             .to_string_lossy()
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        if !is_binary(&relative) {
+        if !lueying_extmeta::container::is_binary(&relative) {
             std::str::from_utf8(&bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
         }
         files.push((relative, bytes));
@@ -299,110 +275,15 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), Str
     Ok((manifest.id, files))
 }
 
-/// 包内容扫描器:在字节流上按块读,文本块与二进制块共用一个游标。
-struct Blocks<'a> {
-    data: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Blocks<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
-    }
-
-    /// 读一行(不含换行);必须是 UTF-8。
-    fn line(&mut self) -> Result<&'a str, String> {
-        let Some(end) = self.data[self.pos..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| self.pos + offset)
-        else {
-            return Err("包被截断:缺一行".into());
-        };
-        let line = std::str::from_utf8(&self.data[self.pos..end])
-            .map_err(|_| "包里有非 UTF-8 的控制行".to_string())?;
-        self.pos = end + 1;
-        Ok(line)
-    }
-
-    /// 读定长字节。
-    fn take(&mut self, count: usize) -> Result<&'a [u8], String> {
-        let end = self.pos + count;
-        if end > self.data.len() {
-            return Err("包被截断:字节块不够长".into());
-        }
-        let bytes = &self.data[self.pos..end];
-        self.pos = end;
-        Ok(bytes)
-    }
-
-    fn at_end(&self) -> bool {
-        self.pos >= self.data.len()
-    }
-}
-
-/// 解包字节流:文本块 `### begin: <路径> <行数>` … `### end:`,二进制块
-/// `### binary: <路径> <字节数>` 后跟原文。清单必须存在且能解析。
+/// 解包一个 `.luext`:容器解码后按清单取 id。清单必须存在且能解析。
 pub fn unpack(data: &[u8]) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
-    let header = format!("{PACK_HEADER}\n");
-    if !data.starts_with(header.as_bytes()) {
-        return Err("不是掠影扩展包(缺 lueying-pack 头)".into());
-    }
-    let mut blocks = Blocks::new(data);
-    blocks.pos = header.len();
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    while !blocks.at_end() {
-        let line = blocks.line()?;
-        if let Some(rest) = line.strip_prefix("### begin: ") {
-            let (name, count) = rest
-                .rsplit_once(' ')
-                .ok_or_else(|| format!("begin 行缺少行数: {rest:?}"))?;
-            check_name(name)?;
-            let count: usize = count
-                .parse()
-                .map_err(|_| format!("begin 行行数不合法: {count:?}"))?;
-            let mut content = Vec::new();
-            for _ in 0..count {
-                let body = blocks.line()?;
-                content.extend_from_slice(body.as_bytes());
-                content.push(b'\n');
-            }
-            let end = blocks.line()?;
-            if end != format!("### end: {name}") {
-                return Err(format!("块 {name:?} 的 end 行对不上: {end:?}"));
-            }
-            files.push((name.to_string(), content));
-        } else if let Some(rest) = line.strip_prefix("### binary: ") {
-            let (name, count) = rest
-                .rsplit_once(' ')
-                .ok_or_else(|| format!("binary 行缺少字节数: {rest:?}"))?;
-            check_name(name)?;
-            let count: usize = count
-                .parse()
-                .map_err(|_| format!("binary 行字节数不合法: {count:?}"))?;
-            let content = blocks.take(count)?.to_vec();
-            if blocks.take(1)? != b"\n" {
-                return Err(format!("字节块 {name:?} 后缺换行"));
-            }
-            files.push((name.to_string(), content));
-        } else {
-            return Err(format!("包里出现未知行,文件可能被截断: {line:?}"));
-        }
-    }
+    let files = lueying_extmeta::container::decode(data)?;
     let manifest = files
         .iter()
         .find(|(name, _)| name == "manifest.json")
         .ok_or("包里没有 manifest.json")?;
     let manifest = Manifest::parse(&manifest.1).map_err(|e| format!("清单不合法: {e}"))?;
     Ok((manifest.id, files))
-}
-
-/// 包内路径白名单:相对路径、不越界、不写绝对位置。
-fn check_name(name: &str) -> Result<(), String> {
-    if name.contains("..") || name.starts_with('/') || name.contains('\\') {
-        return Err(format!("包内路径不安全: {name:?}"));
-    }
-    Ok(())
 }
 
 /// 让常驻服务重读配置;扩展启停、绑定与设置改动都会被拾起。

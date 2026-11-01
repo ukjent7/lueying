@@ -9,9 +9,11 @@ use lueying_extmeta::metrics::ExtMetrics;
 
 pub mod extcmd;
 pub mod replay;
+pub mod scenecmd;
 
 pub use extcmd::{InstallArgs, LogsArgs, NewArgs, PackArgs};
 pub use replay::ReplayArgs;
+pub use scenecmd::{SceneInstallArgs, ScenePackArgs};
 
 /// 帮助与错误提示。
 pub const USAGE: &str = "\
@@ -46,6 +48,8 @@ pub const USAGE: &str = "\
 场景(候选窗装饰)的开发回路;场景文件是纯数据,详见官方示例:
   check <文件|目录>  校验 scene.toml;目录就扫全部 .toml(中文报错带行号)
   schema             输出编辑器用的 JSON Schema
+  pack <目录>        把场景目录(scene.toml + 素材)打成 .luext 归档
+  install <源>       安装场景包或目录到场景目录;装完热重载自动生效
   replay <脚本>      事件模拟器:脚本驱动场景出帧(--json 机器可读;
                      --scene 指定 scene.toml,缺省取脚本同目录)";
 
@@ -89,6 +93,10 @@ pub enum Invocation {
     SceneSchema,
     /// 事件模拟器:回放脚本驱动场景出帧。
     SceneReplay(SceneReplayArgs),
+    /// 把场景目录打成 .luext。
+    ScenePack(ScenePackArgs),
+    /// 安装场景包或目录。
+    SceneInstall(SceneInstallArgs),
     /// 打印帮助。
     Help,
 }
@@ -260,7 +268,7 @@ fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
-    let sub = args.next().ok_or("缺子命令;用 check、replay 或 schema")?;
+    let sub = args.next().ok_or("缺子命令;用 check、pack、install、replay 或 schema")?;
     match sub.as_str() {
         "check" => {
             let mut path: Option<PathBuf> = None;
@@ -312,7 +320,52 @@ where
             }
             Ok(Invocation::SceneSchema)
         }
-        other => Err(format!("未知子命令 {other:?};用 check、replay 或 schema")),
+        "pack" => {
+            let mut dir: Option<PathBuf> = None;
+            let mut out: Option<PathBuf> = None;
+            let mut used = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-h" | "--help" => return Ok(Invocation::Help),
+                    "--out" => {
+                        let path = args.next().ok_or("--out 后面缺路径")?;
+                        out = Some(PathBuf::from(path));
+                    }
+                    other if other.starts_with('-') => return Err(format!("未知参数 {other:?}")),
+                    other => take_positional(&mut used, &mut dir, other, "场景目录")?,
+                }
+            }
+            Ok(Invocation::ScenePack(ScenePackArgs {
+                dir: dir.unwrap_or_else(|| PathBuf::from(".")),
+                out,
+            }))
+        }
+        "install" => {
+            let mut source: Option<PathBuf> = None;
+            let mut dir: Option<PathBuf> = None;
+            let mut force = false;
+            let mut used = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-h" | "--help" => return Ok(Invocation::Help),
+                    "--force" => force = true,
+                    "--dir" => {
+                        let path = args.next().ok_or("--dir 后面缺路径")?;
+                        dir = Some(PathBuf::from(path));
+                    }
+                    other if other.starts_with('-') => return Err(format!("未知参数 {other:?}")),
+                    other => take_positional(&mut used, &mut source, other, "场景包或目录")?,
+                }
+            }
+            Ok(Invocation::SceneInstall(SceneInstallArgs {
+                source: source.ok_or("缺场景包或目录路径")?,
+                dir,
+                force,
+            }))
+        }
+        other => Err(format!(
+            "未知子命令 {other:?};用 check、pack、install、replay 或 schema"
+        )),
     }
 }
 

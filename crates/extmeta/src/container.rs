@@ -1,131 +1,182 @@
-//! `.luext` 扩展包容器:一个文件装下清单、Wasm 模块或可执行文件与数据。
+//! `### lueying-pack v2` 扩展包容器:文本块按行数声明长度,Wasm 按
+//! 字节数原样内嵌,整个包是可 diff 的 UTF-8 文本。
 //!
-//! 格式(`LUEXT` v1,小端):5 字节魔数 + 1 字节版本 + u32 文件数,之后
-//! 每个文件是「u16 名字长 + UTF-8 名字 + u64 内容长 + 内容」。没有压缩
-//! 与元数据——扩展包本来就小,大文件(模型)走目录安装,不走容器。
-//!
-//! 名字必须是裸文件名且不得是 `consent.json`:容器落盘到扩展目录,
-//! 同意记录只由宿主写,包里出现同名文件一律拒绝。
+//! 容器只管「文件集 ⇄ 字节流」;目录收集与清单校验在调用方(cli 的
+//! `ext pack`、设置页的「导入」)。授权面约束:包内路径必须是相对
+//! 路径,`consent.json` 只由宿主写,包里出现即拒。
 
-const MAGIC: &[u8; 5] = b"LUEXT";
-const VERSION: u8 = 1;
+use std::path::Path;
 
-/// 包内最多多少个文件。
-pub const MAX_FILES: usize = 64;
-/// 单个文件名的字节上限。
-pub const MAX_NAME: usize = 96;
-/// 单个文件内容的字节上限;与同意指纹的读入上限一致。
-pub const MAX_FILE_BYTES: usize = 128 * 1024 * 1024;
-/// 全包内容合计的字节上限。
-pub const MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+pub const PACK_HEADER: &str = "### lueying-pack v2";
 
-/// 容器里的一个文件。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    pub name: String,
-    pub bytes: Vec<u8>,
-}
+/// 二进制文件后缀;Wasm、原生扩展产物与场景素材,按字节块打包。
+const BINARY_EXTS: &[&str] = &[
+    "wasm", "exe", "dll", "onnx", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg", "ttf",
+    "otf",
+];
 
-/// 裸文件名校验;`consent.json` 是宿主专属,包里出现即拒。
+/// 容器里的一个文件:`(包内相对路径, 内容)`。
+pub type Files = Vec<(String, Vec<u8>)>;
+
+/// 包内路径白名单:相对路径、不越界、不写隐藏文件,`consent.json` 拒收。
 pub fn check_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.len() > MAX_NAME {
-        return Err(format!("文件名长度不对: {name:?}"));
-    }
-    if name == "consent.json"
-        || name.contains(['/', '\\', '\0'])
-        || name.starts_with('.')
+    if name.is_empty()
+        || name == "consent.json"
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.split('/').any(|part| part.is_empty() || part.starts_with('.'))
     {
-        return Err(format!("文件名必须是裸文件名: {name:?}"));
+        return Err(format!("包内路径不安全: {name:?}"));
     }
     Ok(())
 }
 
-/// 打包;名字与大小在写入前校验,坏条目整包拒绝。
-pub fn pack(entries: &[Entry]) -> Result<Vec<u8>, String> {
-    if entries.is_empty() || entries.len() > MAX_FILES {
-        return Err(format!("文件数要在 1..={MAX_FILES} 之间"));
+/// 名字是否走二进制块(其余后缀必须 UTF-8 文本)。
+pub fn is_binary(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| BINARY_EXTS.contains(&ext))
+}
+
+/// 把文件集编码成包字节流;名字、重名与文本编码在写入前校验。
+pub fn encode(files: &Files) -> Result<Vec<u8>, String> {
+    if files.is_empty() {
+        return Err("扩展包至少要有一个文件".into());
     }
-    let mut total = 0usize;
-    for (index, entry) in entries.iter().enumerate() {
-        check_name(&entry.name)?;
-        if entries[..index].iter().any(|other| other.name == entry.name) {
-            return Err(format!("包内文件重名: {}", entry.name));
-        }
-        total += entry.bytes.len();
-        if entry.bytes.len() > MAX_FILE_BYTES {
-            return Err(format!("{} 超过 {MAX_FILE_BYTES} 字节", entry.name));
-        }
-    }
-    if total > MAX_TOTAL_BYTES {
-        return Err(format!("包内容合计超过 {MAX_TOTAL_BYTES} 字节"));
-    }
+    let mut seen: Vec<&str> = Vec::new();
     let mut out = Vec::new();
-    out.extend_from_slice(MAGIC);
-    out.push(VERSION);
-    out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-    for entry in entries {
-        let name = entry.name.as_bytes();
-        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        out.extend_from_slice(name);
-        out.extend_from_slice(&(entry.bytes.len() as u64).to_le_bytes());
-        out.extend_from_slice(&entry.bytes);
+    out.extend_from_slice(PACK_HEADER.as_bytes());
+    out.push(b'\n');
+    for (name, bytes) in files {
+        check_name(name)?;
+        if seen.contains(&name.as_str()) {
+            return Err(format!("包内文件重名: {name}"));
+        }
+        seen.push(name);
+        if is_binary(name) {
+            out.extend_from_slice(format!("### binary: {name} {}\n", bytes.len()).as_bytes());
+            out.extend_from_slice(bytes);
+            out.push(b'\n');
+            continue;
+        }
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| format!("{name} 不是 UTF-8 文本,不进扩展包"))?;
+        out.extend_from_slice(format!("### begin: {name} {}\n", text.lines().count()).as_bytes());
+        // 逐行写出:中间的空行原样保留;结尾补齐一个换行(文本文件规范)。
+        for line in text.lines() {
+            out.extend_from_slice(line.as_bytes());
+            out.push(b'\n');
+        }
+        out.extend_from_slice(format!("### end: {name}\n").as_bytes());
     }
     Ok(out)
 }
 
-/// 解包;魔数、版本、名字与大小全部复核,坏包整体拒绝。
-pub fn unpack(bytes: &[u8]) -> Result<Vec<Entry>, String> {
-    let bad = |why: &str| format!("不是有效的 .luext 包: {why}");
-    if bytes.len() < 10 || &bytes[..5] != MAGIC {
-        return Err(bad("魔数不对"));
+/// 解包字节流:文本块 `### begin: <路径> <行数>` … `### end:`,二进制块
+/// `### binary: <路径> <字节数>` 后跟原文。清单解析留给调用方。
+pub fn decode(data: &[u8]) -> Result<Files, String> {
+    let bad = |why: String| format!("不是有效的扩展包: {why}");
+    let header = format!("{PACK_HEADER}\n");
+    if !data.starts_with(header.as_bytes()) {
+        return Err("不是掠影扩展包(缺 lueying-pack 头)".into());
     }
-    if bytes[5] != VERSION {
-        return Err(bad("格式版本不支持"));
+    let mut blocks = Blocks::new(data);
+    blocks.pos = header.len();
+    let mut files: Files = Vec::new();
+    while !blocks.at_end() {
+        let line = blocks.line().map_err(&bad)?;
+        if let Some(rest) = line.strip_prefix("### begin: ") {
+            let (name, count) = rest
+                .rsplit_once(' ')
+                .ok_or_else(|| bad(format!("begin 行缺少行数: {rest:?}")))?;
+            check_name(name).map_err(&bad)?;
+            let count: usize = count
+                .parse()
+                .map_err(|_| bad(format!("begin 行行数不合法: {count:?}")))?;
+            let mut content = Vec::new();
+            for _ in 0..count {
+                let body = blocks.line().map_err(&bad)?;
+                content.extend_from_slice(body.as_bytes());
+                content.push(b'\n');
+            }
+            let end = blocks.line().map_err(&bad)?;
+            if end != format!("### end: {name}") {
+                return Err(bad(format!("块 {name:?} 的 end 行对不上: {end:?}")));
+            }
+            push_unique(&mut files, name.to_string(), content).map_err(&bad)?;
+        } else if let Some(rest) = line.strip_prefix("### binary: ") {
+            let (name, count) = rest
+                .rsplit_once(' ')
+                .ok_or_else(|| bad(format!("binary 行缺少字节数: {rest:?}")))?;
+            check_name(name).map_err(&bad)?;
+            let count: usize = count
+                .parse()
+                .map_err(|_| bad(format!("binary 行字节数不合法: {count:?}")))?;
+            let content = blocks.take(count).map_err(&bad)?.to_vec();
+            if blocks.take(1).map_err(&bad)? != b"\n" {
+                return Err(bad(format!("字节块 {name:?} 后缺换行")));
+            }
+            push_unique(&mut files, name.to_string(), content).map_err(&bad)?;
+        } else {
+            return Err(bad(format!(
+                "包里出现未知行,文件可能被截断: {line:?}"
+            )));
+        }
     }
-    let mut cursor = 6usize;
-    let mut take = |need: usize| -> Result<&[u8], String> {
-        let rest = bytes.get(cursor..).ok_or_else(|| bad("内容被截断"))?;
-        if rest.len() < need {
-            return Err(bad("内容被截断"));
-        }
-        cursor += need;
-        Ok(&rest[..need])
-    };
-    let count = {
-        let raw = take(4)?;
-        let count = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
-        if count == 0 || count > MAX_FILES {
-            return Err(bad("文件数超限"));
-        }
-        count
-    };
-    let mut entries = Vec::with_capacity(count);
-    let mut total = 0usize;
-    for _ in 0..count {
-        let name_len = u16::from_le_bytes(take(2)?.try_into().unwrap()) as usize;
-        let name = std::str::from_utf8(take(name_len)?).map_err(|_| bad("文件名不是 UTF-8"))?;
-        check_name(name).map_err(|error| bad(&error))?;
-        let raw = take(8)?;
-        let len = u64::from_le_bytes(raw.try_into().unwrap()) as usize;
-        if len > MAX_FILE_BYTES {
-            return Err(bad("单个文件超过大小上限"));
-        }
-        total += len;
-        if total > MAX_TOTAL_BYTES {
-            return Err(bad("包内容合计超过大小上限"));
-        }
-        entries.push(Entry {
-            name: name.to_string(),
-            bytes: take(len)?.to_vec(),
-        });
-        if entries[..entries.len() - 1]
+    Ok(files)
+}
+
+fn push_unique(files: &mut Files, name: String, content: Vec<u8>) -> Result<(), String> {
+    if files.iter().any(|(other, _)| *other == name) {
+        return Err(format!("包内文件重名: {name}"));
+    }
+    files.push((name, content));
+    Ok(())
+}
+
+/// 包内容扫描器:在字节流上按块读,文本块与二进制块共用一个游标。
+struct Blocks<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Blocks<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    /// 读一行(不含换行);必须是 UTF-8。
+    fn line(&mut self) -> Result<&'a str, String> {
+        let Some(end) = self.data[self.pos..]
             .iter()
-            .any(|other| other.name == name)
-        {
-            return Err(bad("包内文件重名"));
-        }
+            .position(|byte| *byte == b'\n')
+            .map(|offset| self.pos + offset)
+        else {
+            return Err("包被截断:缺一行".into());
+        };
+        let line = std::str::from_utf8(&self.data[self.pos..end])
+            .map_err(|_| "包里有非 UTF-8 的控制行".to_string())?;
+        self.pos = end + 1;
+        Ok(line)
     }
-    Ok(entries)
+
+    /// 读定长字节。
+    fn take(&mut self, count: usize) -> Result<&'a [u8], String> {
+        let end = self.pos + count;
+        if end > self.data.len() {
+            return Err("包被截断:字节块不够长".into());
+        }
+        let bytes = &self.data[self.pos..end];
+        self.pos = end;
+        Ok(bytes)
+    }
+
+    fn at_end(&self) -> bool {
+        self.pos >= self.data.len()
+    }
 }
 
 #[cfg(test)]
