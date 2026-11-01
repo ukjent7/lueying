@@ -803,7 +803,8 @@ fn set_global_mode(state: &State, chinese: bool) {
                 pending.preedit = preedit;
                 pending.chinese = chinese;
                 pending.fullwidth = fullwidth;
-            }        } else if s.view.chinese != chinese {
+            }
+        } else if s.view.chinese != chinese {
             s.view.chinese = chinese;
         }
         touched |= handle.publish(&s);

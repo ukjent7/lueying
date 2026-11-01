@@ -3253,6 +3253,7 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
+ "lueying-scene",
  "serde",
  "serde_json",
  "slint",
