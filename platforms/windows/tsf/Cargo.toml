@@ -10,7 +10,7 @@ name = "lueying_tsf"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-lueying-protocol = { path = "../../crates/protocol" }
+lueying-protocol = { path = "../../../crates/protocol" }
 serde_json = "1"
 
 [target."cfg(windows)".dependencies]
