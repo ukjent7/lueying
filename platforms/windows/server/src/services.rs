@@ -293,9 +293,10 @@ fn native_host(dir: &Path, exe: &Path) -> NativeHost {
         idle_exit: Duration::from_secs(60),
         readable: vec![dir.to_path_buf()],
     };
-    NativeHost::new(config).with_limiter(Arc::new(
-        lueying_bypass::job::JobLimiter::new(Some(1536 * 1024 * 1024), None),
-    ))
+    NativeHost::new(config).with_limiter(Arc::new(lueying_bypass::job::JobLimiter::new(
+        Some(1536 * 1024 * 1024),
+        None,
+    )))
 }
 
 /// 按调用参数或配置选引擎;参数优先,未知值回配置。

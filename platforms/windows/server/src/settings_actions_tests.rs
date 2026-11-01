@@ -125,6 +125,9 @@ fn imports_native_package() {
     let message = install_luext_bytes(&bytes, &root).unwrap();
     assert!(message.contains("原生扩展"), "{message}");
     assert!(root.join("heavy").join("heavy.exe").is_file());
-    assert_eq!(std::fs::read(root.join("heavy").join("heavy.exe")).unwrap(), b"MZ");
+    assert_eq!(
+        std::fs::read(root.join("heavy").join("heavy.exe")).unwrap(),
+        b"MZ"
+    );
     cleanup(&root);
 }

@@ -3,12 +3,12 @@
 //! 绘制端口把画面描述成指令,这一层断言几何、绘制次序与配色;Direct2D
 //! 画出来的真实像素由 Windows 侧的自检覆盖,Linux CI 不需要光栅后端。
 
+use lueying_render::Palette;
 use lueying_render::badge;
 use lueying_render::command;
 use lueying_render::paint::{Canvas, Color, Point};
 use lueying_render::panel::{Estimate, Measure, Rect};
 use lueying_render::picker;
-use lueying_render::Palette;
 
 use crate::harness::{palette, push};
 
@@ -239,12 +239,7 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         background(&recorder, &palette),
         format!("首条指令 {:?}", recorder.ops.first()),
     );
-    let selected = Rect::from_ltrb(
-        row.left,
-        row.top + 2.0,
-        row.right,
-        row.bottom - 2.0,
-    );
+    let selected = Rect::from_ltrb(row.left, row.top + 2.0, row.right, row.bottom - 2.0);
     let rrects = recorder.rrects(palette.selected_bg);
     push(
         checks,
@@ -318,8 +313,7 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
             && title.is_some_and(|(content, size, max_width)| {
                 let estimate = Estimate;
                 content.ends_with('…')
-                    && max_width
-                        .is_some_and(|limit| estimate.width(content, size) <= limit + 0.01)
+                    && max_width.is_some_and(|limit| estimate.width(content, size) <= limit + 0.01)
             }),
         format!("{:?} 标题 {title:?}", long_layout.rows),
     );
@@ -374,12 +368,7 @@ fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         background(&recorder, &palette),
         format!("首条指令 {:?}", recorder.ops.first()),
     );
-    let selected = Rect::from_ltrb(
-        row.left,
-        row.top + 2.0,
-        row.right,
-        row.bottom - 2.0,
-    );
+    let selected = Rect::from_ltrb(row.left, row.top + 2.0, row.right, row.bottom - 2.0);
     let rrects = recorder.rrects(palette.selected_bg);
     push(
         checks,

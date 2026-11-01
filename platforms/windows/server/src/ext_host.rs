@@ -538,10 +538,7 @@ fn load(
                 .check(dir, manifest)
                 .map_err(|error| format!("同意检查失败: {error}"))?;
             if check.required && !check.approved {
-                return Err(format!(
-                    "需在设置里同意: {}",
-                    check.items.join("、")
-                ));
+                return Err(format!("需在设置里同意: {}", check.items.join("、")));
             }
             Ok(())
         })

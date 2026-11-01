@@ -14,31 +14,31 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout};
 use std::ptr::null_mut;
 
-use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HLOCAL, HANDLE,
-    HANDLE_FLAG_INHERIT, HANDLE_FLAGS, LocalFree,
+    CloseHandle, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
+    HANDLE_FLAGS, HLOCAL, LocalFree,
 };
 use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows::Win32::Security::{
-    ACCESS_ALLOWED_ACE, AddAccessAllowedAceEx, AddAce, AclSizeInformation,
-    CONTAINER_INHERIT_ACE, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce,
-    GetAclInformation, InitializeAcl, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID,
-    ACL, ACL_REVISION, ACL_SIZE_INFORMATION, ACE_FLAGS, SECURITY_CAPABILITIES,
-    SECURITY_ATTRIBUTES, SECURITY_MAX_SID_SIZE, WinBuiltinAnyPackageSid,
+    ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation,
+    AddAccessAllowedAceEx, AddAce, CONTAINER_INHERIT_ACE, CreateWellKnownSid,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, InitializeAcl,
+    OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+    SECURITY_MAX_SID_SIZE, WinBuiltinAnyPackageSid,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    ResumeThread, UpdateProcThreadAttribute, CREATE_SUSPENDED, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW,
+    CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
 };
+use windows::core::{PCWSTR, PWSTR};
 
 use super::ProcessLimiter;
 
@@ -51,7 +51,8 @@ pub(super) fn spawn_suspended(
 ) -> Result<Child, String> {
     grant_read_execute(exe).map_err(|error| format!("授权可执行文件失败: {error}"))?;
     for path in readable {
-        grant_read_execute(path).map_err(|error| format!("授权 {} 失败: {error}", path.display()))?;
+        grant_read_execute(path)
+            .map_err(|error| format!("授权 {} 失败: {error}", path.display()))?;
     }
     let inherit = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -205,14 +206,16 @@ pub(super) fn grant_read_execute(path: &Path) -> Result<(), String> {
         let allowed = ace as *const ACCESS_ALLOWED_ACE;
         // 只认允许型 ACE(ACCESS_ALLOWED_ACE_TYPE);已有同 SID 的就跳过。
         if unsafe { (*allowed).Header.AceType == 0u8 }
-            && EqualSid(PSID(unsafe { &raw mut (*allowed).SidStart } as *mut c_void), package)
-                .is_ok()
+            && EqualSid(
+                PSID(unsafe { &raw mut (*allowed).SidStart } as *mut c_void),
+                package,
+            )
+            .is_ok()
         {
             return Ok(());
         }
     }
-    let new_len =
-        info.AclBytesInUse as usize + size_of::<ACCESS_ALLOWED_ACE>() + sid_size as usize;
+    let new_len = info.AclBytesInUse as usize + size_of::<ACCESS_ALLOWED_ACE>() + sid_size as usize;
     let mut new_buf = vec![0u8; new_len];
     let new_acl = new_buf.as_mut_ptr() as *mut ACL;
     InitializeAcl(new_acl, new_len as u32, ACL_REVISION).map_err(w32("建新 ACL 失败"))?;
@@ -220,8 +223,7 @@ pub(super) fn grant_read_execute(path: &Path) -> Result<(), String> {
         let mut ace: *mut c_void = null_mut();
         GetAce(dacl, index, &mut ace).map_err(w32("遍历 ACE 失败"))?;
         let size = unsafe { (*(ace as *const windows::Win32::Security::ACE_HEADER)).AceSize };
-        AddAce(new_acl, ACL_REVISION, u32::MAX, ace, size as u32)
-            .map_err(w32("复制 ACE 失败"))?;
+        AddAce(new_acl, ACL_REVISION, u32::MAX, ace, size as u32).map_err(w32("复制 ACE 失败"))?;
     }
     AddAccessAllowedAceEx(
         new_acl,

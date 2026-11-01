@@ -17,8 +17,8 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 pub use lueying_extproto::{
-    ClipboardText, Delivered, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot, StoreKeys,
-    StoreValue,
+    ClipboardText, Delivered, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot,
+    StoreKeys, StoreValue,
 };
 
 /// 结果缓冲区的字节数。服务结果超过这个值时宿主回错误信封。

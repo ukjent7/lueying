@@ -202,29 +202,25 @@ fn refresh(ui: &SettingsWindow, core: &Shared) {
     ui.set_subtitle(page.subtitle.into());
     ui.set_search_text(page.search.into());
     ui.set_active_nav(page.active_nav as i32);
-    ui.set_nav(
-        items(
-            page.nav
-                .iter()
-                .map(|item| NavEntry {
-                    base: item.id.base.clone().into(),
-                    index: item.id.index as i32,
-                    text: item.text.clone().into(),
-                })
-                .collect(),
-        ),
-    );
-    ui.set_groups(
-        items(
-            page.groups
-                .iter()
-                .map(|group| Group {
-                    title: group.title.clone().into(),
-                    rows: items(group.rows.iter().map(|row| slint_row(row)).collect()),
-                })
-                .collect(),
-        ),
-    );
+    ui.set_nav(items(
+        page.nav
+            .iter()
+            .map(|item| NavEntry {
+                base: item.id.base.clone().into(),
+                index: item.id.index as i32,
+                text: item.text.clone().into(),
+            })
+            .collect(),
+    ));
+    ui.set_groups(items(
+        page.groups
+            .iter()
+            .map(|group| Group {
+                title: group.title.clone().into(),
+                rows: items(group.rows.iter().map(|row| slint_row(row)).collect()),
+            })
+            .collect(),
+    ));
     ui.set_header_button(page.header_button.as_ref().map_or_else(
         || Btn {
             base: String::new().into(),
@@ -237,7 +233,9 @@ fn refresh(ui: &SettingsWindow, core: &Shared) {
     ));
     ui.set_notice(page.notice.into());
     ui.set_notice_kind(notice_kind(page.notice_tint, &page_colors));
-    ui.set_footer_buttons(items(page.footer_buttons.iter().map(slint_button).collect()));
+    ui.set_footer_buttons(items(
+        page.footer_buttons.iter().map(slint_button).collect(),
+    ));
 }
 
 /// 提示颜色反查种类:0 info 1 success 2 error。
@@ -304,7 +302,8 @@ fn slint_row(row: &model::Row) -> Row {
             slint.base = id.base.clone().into();
             slint.index = id.index as i32;
             slint.selected = *selected as i32;
-            slint.tinted = !options.is_empty() && options.iter().all(|option| option.tint.is_some());
+            slint.tinted =
+                !options.is_empty() && options.iter().all(|option| option.tint.is_some());
             slint.options = items(
                 options
                     .iter()
@@ -339,7 +338,14 @@ fn slint_row(row: &model::Row) -> Row {
                 vertical: style.vertical,
                 page_size: style.page_size as i32,
                 pinyin: style.pinyin.clone().into(),
-                candidates: items(style.candidates.iter().map(String::as_str).map(Into::into).collect()),
+                candidates: items(
+                    style
+                        .candidates
+                        .iter()
+                        .map(String::as_str)
+                        .map(Into::into)
+                        .collect(),
+                ),
             };
         }
         Control::None => {}
@@ -395,54 +401,55 @@ fn choose_script(ui: &SettingsWindow, core: &Shared) {
                 .map(|script| format!("{}  {}", script.name, script.id)),
         )
         .collect();
-    open_picker(ui, core, "选择运行期扩展", list, move |_ui, core, index| {
-        if index == 0 {
+    open_picker(
+        ui,
+        core,
+        "选择运行期扩展",
+        list,
+        move |_ui, core, index| {
+            if index == 0 {
+                let mut guard = lock(core);
+                guard.settings.select_script(None);
+                guard
+                    .settings
+                    .say(Notice::Info, "已关闭运行期扩展,保存后生效");
+                return;
+            }
+            let Some(script) = scripts.get(index - 1) else {
+                return;
+            };
+            let id = script.id.clone();
+            let name = script.name.clone();
+            // 确认框是模态泵,期间不能握着状态锁。
+            let mut approved_now = false;
+            if script.consent != ConsentState::Approved {
+                let text = lueying_server::settings_consent::prompt(script);
+                if !confirm(&text, "扩展授权") {
+                    lock(core)
+                        .settings
+                        .say(Notice::Info, format!("未同意 {name},扩展保持停用"));
+                    return;
+                }
+                if let Err(error) = settings_actions::approve_package(&id) {
+                    lock(core)
+                        .settings
+                        .say(Notice::Error, format!("同意失败: {error}"));
+                    return;
+                }
+                approved_now = true;
+            }
             let mut guard = lock(core);
-            guard.settings.select_script(None);
-            guard
-                .settings
-                .say(Notice::Info, "已关闭运行期扩展,保存后生效");
-            return;
-        }
-        let Some(script) = scripts.get(index - 1) else {
-            return;
-        };
-        let id = script.id.clone();
-        let name = script.name.clone();
-        // 确认框是模态泵,期间不能握着状态锁。
-        let mut approved_now = false;
-        if script.consent != ConsentState::Approved {
-            let text = lueying_server::settings_consent::prompt(script);
-            if !confirm(&text, "扩展授权") {
-                lock(core)
-                    .settings
-                    .say(Notice::Info, format!("未同意 {name},扩展保持停用"));
-                return;
+            if approved_now {
+                guard.settings.scripts = settings_actions::installed_scripts();
             }
-            if let Err(error) = settings_actions::approve_package(&id) {
-                lock(core)
+            if let Some(index) = guard.settings.scripts.iter().position(|item| item.id == id) {
+                guard.settings.select_script(Some(index));
+                guard
                     .settings
-                    .say(Notice::Error, format!("同意失败: {error}"));
-                return;
+                    .say(Notice::Info, format!("已选择 {name},保存后生效"));
             }
-            approved_now = true;
-        }
-        let mut guard = lock(core);
-        if approved_now {
-            guard.settings.scripts = settings_actions::installed_scripts();
-        }
-        if let Some(index) = guard
-            .settings
-            .scripts
-            .iter()
-            .position(|item| item.id == id)
-        {
-            guard.settings.select_script(Some(index));
-            guard
-                .settings
-                .say(Notice::Info, format!("已选择 {name},保存后生效"));
-        }
-    });
+        },
+    );
 }
 
 /// 从正在运行的程序里挑一个加入按应用配置。
@@ -518,9 +525,7 @@ fn open_picker(
 
 /// 是/否确认框;Esc 或取消返回 false。
 fn confirm(text: &str, title: &str) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IDOK, MB_ICONWARNING, MB_OKCANCEL, MessageBoxW,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{IDOK, MB_ICONWARNING, MB_OKCANCEL, MessageBoxW};
     use windows::core::HSTRING;
     unsafe {
         MessageBoxW(
@@ -552,7 +557,9 @@ fn open_secret_editor(ui: &SettingsWindow, core: &Shared, ext: String, key: Stri
         let mut guard = lock(&shared);
         match settings_secret::set(&ext, &key, &text) {
             Ok(()) => guard.settings.say(Notice::Success, "已保存扩展密钥"),
-            Err(error) => guard.settings.say(Notice::Error, format!("保存失败: {error}")),
+            Err(error) => guard
+                .settings
+                .say(Notice::Error, format!("保存失败: {error}")),
         }
         if let Some(main) = main.upgrade() {
             refresh(&main, &shared);
@@ -650,7 +657,9 @@ fn open_text_editor(ui: &SettingsWindow, core: &Shared, kind: TextKind) {
         match write_text(&path, &body) {
             Ok(()) => {
                 settings_actions::reload();
-                guard.settings.say(Notice::Success, format!("已保存{}", kind.title()));
+                guard
+                    .settings
+                    .say(Notice::Success, format!("已保存{}", kind.title()));
             }
             Err(e) => guard
                 .settings
@@ -750,7 +759,9 @@ fn install_update(ui: &SettingsWindow, core: &Shared) {
                     Ok(()) => guard
                         .settings
                         .say(Notice::Success, "安装程序已启动;按提示完成更新"),
-                    Err(error) => guard.settings.say(Notice::Error, format!("更新失败: {error}")),
+                    Err(error) => guard
+                        .settings
+                        .say(Notice::Error, format!("更新失败: {error}")),
                 }
                 refresh(&ui, &shared);
             });
@@ -815,10 +826,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     let mut settings = Settings::default();
     settings.current = update::current_version();
     let appearance = theme::Appearance::of_system();
-    let colors = page_colors(
-        &theme::colors_with(appearance, 0),
-        appearance,
-    );
+    let colors = page_colors(&theme::colors_with(appearance, 0), appearance);
     let mut total = 0usize;
     for page in PageId::ALL {
         let view = settings.page_view(*page, &colors);
@@ -838,7 +846,10 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     if !aux_ok {
         return Err("输入页找不到辅助码开关".to_string());
     }
-    lines.push(format!("模型 {} 页共 {total} 行,辅助码开关在位", PageId::ALL.len()));
+    lines.push(format!(
+        "模型 {} 页共 {total} 行,辅助码开关在位",
+        PageId::ALL.len()
+    ));
 
     let core: Shared = Arc::new(Mutex::new(Core {
         settings,

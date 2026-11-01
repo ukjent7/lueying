@@ -446,7 +446,10 @@ pub fn import_luext(settings: &mut Settings) {
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            settings.say(Notice::Error, format!("读 {} 失败: {error}", path.display()));
+            settings.say(
+                Notice::Error,
+                format!("读 {} 失败: {error}", path.display()),
+            );
             return;
         }
     };
@@ -507,10 +510,7 @@ fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
     }
     if target.exists() && std::fs::rename(&target, &backup).is_err() {
         let _ = std::fs::remove_dir_all(&staging);
-        return Err(format!(
-            "{} 可能正在运行,先停用或稍后再导入",
-            manifest.id
-        ));
+        return Err(format!("{} 可能正在运行,先停用或稍后再导入", manifest.id));
     }
     if let Err(error) = std::fs::rename(&staging, &target) {
         if backup.exists() {

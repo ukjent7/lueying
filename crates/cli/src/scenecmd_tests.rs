@@ -26,8 +26,11 @@ text = { content = \"你好\" }
 fn write_scene(dir: &Path) {
     fs::create_dir_all(dir).expect("建场景目录");
     fs::write(dir.join("scene.toml"), SCENE).expect("写 scene.toml");
-    fs::write(dir.join("assets").join("glow.png"), [0x89, b'P', b'N', b'G'])
-        .expect("写素材");
+    fs::write(
+        dir.join("assets").join("glow.png"),
+        [0x89, b'P', b'N', b'G'],
+    )
+    .expect("写素材");
 }
 
 #[test]
@@ -54,7 +57,10 @@ fn pack_and_install_roundtrip() {
     })
     .unwrap();
     assert_eq!(installed, target);
-    assert_eq!(fs::read_to_string(target.join("scene.toml")).unwrap(), SCENE);
+    assert_eq!(
+        fs::read_to_string(target.join("scene.toml")).unwrap(),
+        SCENE
+    );
     assert_eq!(
         fs::read(target.join("assets").join("glow.png")).unwrap(),
         [0x89, b'P', b'N', b'G']
@@ -81,11 +87,13 @@ fn install_refuses_overwrite_without_force() {
     };
     install(&args).unwrap();
     assert!(install(&args).is_err());
-    assert!(install(&SceneInstallArgs {
-        force: true,
-        ..args
-    })
-    .is_ok());
+    assert!(
+        install(&SceneInstallArgs {
+            force: true,
+            ..args
+        })
+        .is_ok()
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -106,7 +114,13 @@ fn rejects_bad_or_missing_scene() {
     let empty = root.join("empty");
     fs::create_dir_all(&empty).unwrap();
     fs::write(empty.join("readme.md"), "x").unwrap();
-    assert!(pack(&ScenePackArgs { dir: empty, out: None }).is_err());
+    assert!(
+        pack(&ScenePackArgs {
+            dir: empty,
+            out: None
+        })
+        .is_err()
+    );
     // 手工构造缺 scene.toml 的包,安装侧拒绝。
     let files: Files = vec![("assets/glow.png".into(), vec![1, 2, 3])];
     let bytes = container::encode(&files).unwrap();
@@ -119,15 +133,20 @@ fn rejects_bad_or_missing_scene() {
     })
     .unwrap_err();
     // source 不存在先报读失败;改用真实字节再验内容判定。
-    assert!(error.contains("fake.luext") || error.contains("scene.toml"), "{error}");
+    assert!(
+        error.contains("fake.luext") || error.contains("scene.toml"),
+        "{error}"
+    );
     fs::write(root.join("fake.luext"), &bytes).unwrap();
     let target = root.join("scene-root");
-    assert!(install(&SceneInstallArgs {
-        source: root.join("fake.luext"),
-        dir: Some(target),
-        force: false,
-    })
-    .unwrap_err()
-    .contains("scene.toml"));
+    assert!(
+        install(&SceneInstallArgs {
+            source: root.join("fake.luext"),
+            dir: Some(target),
+            force: false,
+        })
+        .unwrap_err()
+        .contains("scene.toml")
+    );
     fs::remove_dir_all(&root).unwrap();
 }

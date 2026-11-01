@@ -26,7 +26,9 @@ pub fn check_name(name: &str) -> Result<(), String> {
         || name.ends_with('/')
         || name.contains('\\')
         || name.contains("..")
-        || name.split('/').any(|part| part.is_empty() || part.starts_with('.'))
+        || name
+            .split('/')
+            .any(|part| part.is_empty() || part.starts_with('.'))
     {
         return Err(format!("包内路径不安全: {name:?}"));
     }
@@ -62,8 +64,8 @@ pub fn encode(files: &Files) -> Result<Vec<u8>, String> {
             out.push(b'\n');
             continue;
         }
-        let text = std::str::from_utf8(bytes)
-            .map_err(|_| format!("{name} 不是 UTF-8 文本,不进扩展包"))?;
+        let text =
+            std::str::from_utf8(bytes).map_err(|_| format!("{name} 不是 UTF-8 文本,不进扩展包"))?;
         out.extend_from_slice(format!("### begin: {name} {}\n", text.lines().count()).as_bytes());
         // 逐行写出:中间的空行原样保留;结尾补齐一个换行(文本文件规范)。
         for line in text.lines() {
@@ -121,9 +123,7 @@ pub fn decode(data: &[u8]) -> Result<Files, String> {
             }
             push_unique(&mut files, name.to_string(), content).map_err(&bad)?;
         } else {
-            return Err(bad(format!(
-                "包里出现未知行,文件可能被截断: {line:?}"
-            )));
+            return Err(bad(format!("包里出现未知行,文件可能被截断: {line:?}")));
         }
     }
     Ok(files)

@@ -268,7 +268,9 @@ fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
-    let sub = args.next().ok_or("缺子命令;用 check、pack、install、replay 或 schema")?;
+    let sub = args
+        .next()
+        .ok_or("缺子命令;用 check、pack、install、replay 或 schema")?;
     match sub.as_str() {
         "check" => {
             let mut path: Option<PathBuf> = None;

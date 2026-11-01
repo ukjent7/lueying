@@ -68,10 +68,7 @@ pub(crate) fn commands_list(state: &State) -> Result<serde_json::Value, String> 
 /// `Ext` 的 `command.run`:外部启动器触发扩展命令。与动作候选、热键走
 /// 同一条执行路径,结果落在掠影自己的界面与日志;执行是异步的,这里只
 /// 确认已投递。隐私字段下拒绝,与热键的门禁一致。
-pub(crate) fn command_run(
-    state: &State,
-    id: &str,
-) -> Result<serde_json::Value, String> {
+pub(crate) fn command_run(state: &State, id: &str) -> Result<serde_json::Value, String> {
     if state
         .active_published()
         .is_some_and(|published| published.private)

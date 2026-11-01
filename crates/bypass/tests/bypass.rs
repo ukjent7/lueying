@@ -114,9 +114,8 @@ fn provider_swap_routes_call_to_process() {
 #[test]
 fn provider_reinstall_overrides_slot() {
     let registry = Arc::new(Registry::new());
-    let provider = |bypass: Bypass| {
-        FnProvider::new(move |method: &str, args: &str| bypass.call(method, args))
-    };
+    let provider =
+        |bypass: Bypass| FnProvider::new(move |method: &str, args: &str| bypass.call(method, args));
     registry.set(Service::Notify, Arc::new(provider(echo())));
     registry.set(Service::Notify, Arc::new(provider(echo())));
     assert!(registry.has(Service::Notify));

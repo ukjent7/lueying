@@ -286,11 +286,7 @@ impl State {
     }
 
     /// 独占一个会话跑一段逻辑;结束时把视图发布出去,有变化就叫醒候选窗。
-    pub(super) fn with_session<R>(
-        &self,
-        id: u64,
-        f: impl FnOnce(&mut Session) -> R,
-    ) -> Option<R> {
+    pub(super) fn with_session<R>(&self, id: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
         Some(self.session(id)?.with(self, f))
     }
 
@@ -775,7 +771,9 @@ fn switch_mode(s: &mut Session, chinese: bool) -> Vec<Event> {
 fn set_global_mode(state: &State, chinese: bool) {
     let changed = state.chinese.swap(chinese, Ordering::Relaxed) != chinese;
     let caret = if changed {
-        state.active_published().and_then(|published| published.view.caret)
+        state
+            .active_published()
+            .and_then(|published| published.view.caret)
     } else {
         None
     };

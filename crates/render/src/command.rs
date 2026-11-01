@@ -93,13 +93,7 @@ pub fn layout(spec: &Spec, scale: f32) -> Layout {
 }
 
 /// 画一帧;调用方按 [`Layout::size`] 准备同样大的画布。
-pub fn draw(
-    canvas: &mut dyn Canvas,
-    spec: &Spec,
-    layout: &Layout,
-    palette: &Palette,
-    scale: f32,
-) {
+pub fn draw(canvas: &mut dyn Canvas, spec: &Spec, layout: &Layout, palette: &Palette, scale: f32) {
     let scale = scale.max(0.5);
     let (width, height) = layout.size;
     canvas.fill_rect(
@@ -175,13 +169,7 @@ fn caret(canvas: &mut dyn Canvas, x: f32, input: Rect, palette: &Palette, scale:
     );
 }
 
-fn draw_rows(
-    canvas: &mut dyn Canvas,
-    spec: &Spec,
-    layout: &Layout,
-    palette: &Palette,
-    scale: f32,
-) {
+fn draw_rows(canvas: &mut dyn Canvas, spec: &Spec, layout: &Layout, palette: &Palette, scale: f32) {
     if spec.rows.is_empty() {
         let message = if spec.total == 0 && spec.query.is_empty() {
             "没有可用的命令"

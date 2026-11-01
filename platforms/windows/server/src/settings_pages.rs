@@ -336,7 +336,11 @@ impl Settings {
                     label: script.name.clone(),
                     detail: format!(
                         "{}{} · {} · {consent}",
-                        if script.native { "原生扩展 · " } else { "" },
+                        if script.native {
+                            "原生扩展 · "
+                        } else {
+                            ""
+                        },
                         script.id,
                         if enabled { "已启用" } else { "未启用" }
                     ),
@@ -621,13 +625,12 @@ impl Settings {
     /// 截图识别那行的说明:选的引擎与扩展是否可用。
     pub(crate) fn ocr_detail(&self) -> String {
         match (self.cfg.ocr_backend, self.ppocr_ready) {
-            (OcrBackend::Ppocr, true) => "PP-OCRv6 · 原生扩展,首次识别拉起进程,识别不联网"
-                .to_string(),
+            (OcrBackend::Ppocr, true) => {
+                "PP-OCRv6 · 原生扩展,首次识别拉起进程,识别不联网".to_string()
+            }
             (OcrBackend::Ppocr, false) => "识别引擎未安装;到「官方扩展」里安装".to_string(),
             (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
-            (OcrBackend::System, false) => {
-                "系统 OCR;PP-OCRv6 引擎未安装,可按需安装".to_string()
-            }
+            (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 引擎未安装,可按需安装".to_string(),
         }
     }
 }

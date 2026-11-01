@@ -446,17 +446,19 @@ impl NativeHost {
         let step = (idle / 4).clamp(Duration::from_millis(50), Duration::from_secs(15));
         let _ = std::thread::Builder::new()
             .name("ext-native-idle".to_string())
-            .spawn(move || loop {
-                std::thread::sleep(step);
-                let Some(live) = live.upgrade() else {
-                    break;
-                };
-                if let Ok(mut live) = live.try_lock()
-                    && let Some(running) = live.as_ref()
-                    && running.last_used.elapsed() >= idle
-                {
-                    // Drop 收进程;宿主退出时 Job 的 kill-on-close 兜底。
-                    *live = None;
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(step);
+                    let Some(live) = live.upgrade() else {
+                        break;
+                    };
+                    if let Ok(mut live) = live.try_lock()
+                        && let Some(running) = live.as_ref()
+                        && running.last_used.elapsed() >= idle
+                    {
+                        // Drop 收进程;宿主退出时 Job 的 kill-on-close 兜底。
+                        *live = None;
+                    }
                 }
             });
     }

@@ -44,8 +44,8 @@ pub fn pack(args: &ScenePackArgs) -> Result<PathBuf, String> {
     if !dir.is_dir() {
         return Err(format!("{} 不是目录", dir.display()));
     }
-    let scene_text = fs::read_to_string(dir.join("scene.toml"))
-        .map_err(|e| format!("读 scene.toml: {e}"))?;
+    let scene_text =
+        fs::read_to_string(dir.join("scene.toml")).map_err(|e| format!("读 scene.toml: {e}"))?;
     if let Err(errors) = lueying_scene::parse("scene.toml", &scene_text) {
         return Err(errors
             .iter()
@@ -85,7 +85,8 @@ pub fn install(args: &SceneInstallArgs) -> Result<PathBuf, String> {
         .or_else(scene_dir)
         .ok_or("找不到场景目录;用 --dir 指定,或设置 APPDATA")?;
     if !target_root.exists() {
-        fs::create_dir_all(&target_root).map_err(|e| format!("建 {}: {e}", target_root.display()))?;
+        fs::create_dir_all(&target_root)
+            .map_err(|e| format!("建 {}: {e}", target_root.display()))?;
     }
     let files = if args.source.is_dir() {
         read_directory(&args.source)?

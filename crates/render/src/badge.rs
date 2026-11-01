@@ -58,7 +58,11 @@ pub fn draw(canvas: &mut dyn Canvas, badge: &BadgeSpec<'_>) {
             fade(Color::with_alpha(0x000000, 28), badge.opacity),
         );
     }
-    canvas.fill_rrect(body, radius, fade(Color::opaque(badge.palette.bg), badge.opacity));
+    canvas.fill_rrect(
+        body,
+        radius,
+        fade(Color::opaque(badge.palette.bg), badge.opacity),
+    );
     canvas.stroke_rrect(
         body,
         (radius - 0.5 * badge.scale).max(0.0),

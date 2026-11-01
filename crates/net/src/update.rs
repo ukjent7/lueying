@@ -12,7 +12,6 @@ use lueying_protocol::version::{is_newer, parse_sha256};
 use crate::http::Stream;
 use crate::update_manifest::{self, MANIFEST_NAME};
 
-
 /// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
 const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/latest";
 /// 测试渠道要看到预发布,latest 接口只回正式版,这里取最近 20 条。

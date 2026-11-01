@@ -31,8 +31,7 @@ mod imp {
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
-        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW,
-        RegSetValueExW,
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;

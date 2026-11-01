@@ -37,7 +37,9 @@ fn main() {
     let stdin = std::io::stdin();
     for line in BufReader::new(stdin.lock()).lines() {
         let Ok(line) = line else { break };
-        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else { break };
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else {
+            break;
+        };
         let reply = match request["method"].as_str() {
             Some("recognize") => recognize(&model, request["args"]["file"].as_str()),
             Some(method) => Err(format!("没有方法 {method:?}")),
@@ -81,7 +83,6 @@ fn recognize(model: &Option<Result<PpOcr, String>>, file: Option<&str>) -> Resul
     serde_json::to_string(&serde_json::json!({ "text": text, "lang": "ppocr" }))
         .map_err(|e| e.to_string())
 }
-
 
 /// 识别参数;默认值对应 PaddleOCR 的 PP-OCRv6 推理配置。
 #[derive(Clone, Copy, Debug)]

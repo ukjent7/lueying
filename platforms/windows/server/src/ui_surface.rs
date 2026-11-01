@@ -12,7 +12,7 @@ use lueying_render::paint::{Canvas, Color, Point};
 use lueying_render::panel::{Metrics, Rect};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F,
+    D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -29,9 +29,9 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
-    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BitBlt, CreateCompatibleDC,
-    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ,
-    ReleaseDC, SRCCOPY, SelectObject,
+    BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BitBlt, CreateCompatibleDC, CreateDIBSection,
+    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SRCCOPY,
+    SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
 use windows::core::w;
@@ -72,9 +72,8 @@ impl Surface {
             if mem_dc.is_invalid() {
                 return Err("CreateCompatibleDC 失败".into());
             }
-            let factory: ID2D1Factory =
-                D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
-                    .map_err(|e| format!("D2D1CreateFactory: {e}"))?;
+            let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
+                .map_err(|e| format!("D2D1CreateFactory: {e}"))?;
             let properties = D2D1_RENDER_TARGET_PROPERTIES {
                 r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
                 pixelFormat: D2D1_PIXEL_FORMAT {
@@ -95,9 +94,8 @@ impl Surface {
             let brush = target
                 .CreateSolidColorBrush(&D2D1_COLOR_F::default(), None)
                 .map_err(|e| format!("CreateSolidColorBrush: {e}"))?;
-            let dwrite: IDWriteFactory =
-                DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
-                    .map_err(|e| format!("DWriteCreateFactory: {e}"))?;
+            let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
+                .map_err(|e| format!("DWriteCreateFactory: {e}"))?;
             Ok(Self {
                 dwrite,
                 target: Some(target),
@@ -248,7 +246,9 @@ impl Surface {
         };
         unsafe {
             format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP).ok()?;
-            format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER).ok()?;
+            format
+                .SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)
+                .ok()?;
             format.SetTextAlignment(text).ok()?;
         }
         self.formats.insert(key, format.clone());

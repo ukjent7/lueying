@@ -10,7 +10,10 @@ fn sample() -> Files {
     vec![
         ("manifest.json".into(), manifest),
         ("demo.wasm".into(), vec![0, 1, 2, 3, 250, 251]),
-        ("docs/说明.md".into(), "# 标题\n\n正文\n".as_bytes().to_vec()),
+        (
+            "docs/说明.md".into(),
+            "# 标题\n\n正文\n".as_bytes().to_vec(),
+        ),
     ]
 }
 
