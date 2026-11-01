@@ -11,6 +11,7 @@
 use serde::Deserialize;
 
 pub mod consent;
+pub mod container;
 pub mod metrics;
 pub mod sha256;
 

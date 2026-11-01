@@ -327,7 +327,8 @@ impl Settings {
                 Row {
                     label: script.name.clone(),
                     detail: format!(
-                        "{} · {} · {consent}",
+                        "{}{} · {} · {consent}",
+                        if script.native { "原生扩展 · " } else { "" },
                         script.id,
                         if enabled { "已启用" } else { "未启用" }
                     ),
@@ -364,6 +365,7 @@ impl Settings {
             self.script_detail(),
             vec![
                 Self::secondary(ids::SCRIPTS, "选择", true),
+                Self::secondary(ids::IMPORT_LUEXT, "导入", true),
                 Self::secondary(ids::SCRIPTS_DIR, "目录", true),
             ],
         )
@@ -580,7 +582,7 @@ impl Settings {
         match self.cfg.extensions.as_slice() {
             [] => {
                 if self.scripts.is_empty() {
-                    "未安装扩展;点「目录」放入扩展包".to_string()
+                    "未安装扩展;点「导入」装 .luext 包,或把包目录放进扩展目录".to_string()
                 } else {
                     format!("未启用 · 已安装 {} 个", self.scripts.len())
                 }

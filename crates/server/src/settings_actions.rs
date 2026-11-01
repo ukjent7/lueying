@@ -4,7 +4,7 @@
 //! 要问常驻服务」的事,以及那些离不开 Windows API 的对话框。
 
 use std::io::{BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
@@ -377,6 +377,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         scripts.push(ScriptEntry {
             id: manifest.id,
             name: manifest.name,
+            native: manifest.is_native(),
             items,
             consent,
             settings: manifest.settings,
@@ -427,6 +428,94 @@ pub(crate) fn approve_package(id: &str) -> Result<ConsentCheck, String> {
         book.save(&path)?;
     }
     Ok(check)
+}
+
+/// 从文件导入一个 .luext 扩展包;文件对话框外壳,落盘在纯函数里。
+pub fn import_luext(settings: &mut Settings) {
+    settings.confirm_clear = false;
+    let Some(path) = choose_file(
+        false,
+        "",
+        "导入扩展包",
+        "掠影扩展包 (*.luext)\0*.luext\0所有文件 (*.*)\0*.*\0\0",
+        "luext",
+    ) else {
+        return;
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            settings.say(Notice::Error, format!("读 {} 失败: {error}", path.display()));
+            return;
+        }
+    };
+    let Some(root) = config::extensions_dir() else {
+        settings.say(Notice::Error, "没有可写的扩展目录");
+        return;
+    };
+    match install_luext_bytes(&bytes, &root) {
+        Ok(message) => {
+            settings.scripts = installed_scripts();
+            settings.say(Notice::Success, message);
+        }
+        Err(error) => settings.say(Notice::Error, error),
+    }
+}
+
+/// 把 .luext 字节落盘到扩展目录;同 id 已有目录就整体替换。
+///
+/// 先解包到临时目录再改名换位,任何一步失败旧目录都保持原样。替换
+/// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
+fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
+    let entries = lueying_extmeta::container::unpack(bytes)?;
+    let manifest = entries
+        .iter()
+        .find(|entry| entry.name == "manifest.json")
+        .ok_or("包里没有 manifest.json")
+        .and_then(|entry| {
+            lueying_extmeta::Manifest::parse(&entry.bytes).map_err(|e| format!("清单不合法: {e}"))
+        })?;
+    if !entries
+        .iter()
+        .any(|entry| entry.name == manifest.payload_file())
+    {
+        return Err(format!("包里缺少 {}", manifest.payload_file()));
+    }
+    let staging = root.join(format!(".import-{}", manifest.id));
+    let target = root.join(&manifest.id);
+    let backup = root.join(format!(".backup-{}", manifest.id));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| format!("建临时目录失败: {e}"))?;
+    for entry in &entries {
+        if let Err(error) = std::fs::write(staging.join(&entry.name), &entry.bytes) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!("写 {} 失败: {error}", entry.name));
+        }
+    }
+    if target.exists() && std::fs::rename(&target, &backup).is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(format!(
+            "{} 可能正在运行,先停用或稍后再导入",
+            manifest.id
+        ));
+    }
+    if let Err(error) = std::fs::rename(&staging, &target) {
+        if backup.exists() {
+            let _ = std::fs::rename(&backup, &target);
+        }
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(format!("落盘失败: {error}"));
+    }
+    let _ = std::fs::remove_dir_all(&backup);
+    let kind = if manifest.is_native() {
+        "原生扩展"
+    } else {
+        "扩展"
+    };
+    Ok(format!(
+        "{kind} {} 已导入;在「运行期扩展」里同意后可用",
+        manifest.name
+    ))
 }
 
 fn now_ms() -> u64 {
@@ -674,3 +763,7 @@ fn tail_text(bytes: &[u8], limit: usize) -> String {
     let start = bytes.len().saturating_sub(limit);
     String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
+
+#[cfg(test)]
+#[path = "settings_actions_tests.rs"]
+mod tests;

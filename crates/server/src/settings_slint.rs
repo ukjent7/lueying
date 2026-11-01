@@ -136,6 +136,7 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::ResetFuzzy => with(core, settings_actions::reset_fuzzy),
         Action::OpenEffects => with(core, settings_actions::open_scene),
         Action::OpenScripts => with(core, settings_actions::open_scripts),
+        Action::ImportLuext => with(core, settings_actions::import_luext),
         Action::ApproveExtension => with(core, settings_actions::approve_extension),
         Action::OpenExtAudit => with(core, settings_actions::open_ext_audit),
         Action::RefreshExtMetrics => with(core, settings_actions::refresh_ext_metrics),

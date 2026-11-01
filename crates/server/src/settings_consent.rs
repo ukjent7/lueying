@@ -8,6 +8,8 @@
 pub struct ScriptEntry {
     pub id: String,
     pub name: String,
+    /// 原生扩展(独立进程);同意文案与列表说明要更醒目。
+    pub native: bool,
     /// 授权页上的人话能力表。
     pub items: Vec<String>,
     /// 当前同意状态。
@@ -22,6 +24,7 @@ impl ScriptEntry {
         Self {
             id: id.into(),
             name: name.into(),
+            native: false,
             items: Vec::new(),
             consent: ConsentState::Approved,
             settings: Vec::new(),
@@ -71,15 +74,22 @@ pub fn detail(extensions: &[String], scripts: &[ScriptEntry]) -> String {
         return format!("{} 个待处理:{}", pending.len(), pending.join("、"));
     };
     let items = script.items.join("、");
+    let kind = if script.native {
+        "原生扩展(独立进程,受沙箱限制);"
+    } else {
+        ""
+    };
     match &script.consent {
-        ConsentState::Approved if script.items.is_empty() => "无需授权".to_string(),
-        ConsentState::Approved => format!("已同意:{items}"),
-        ConsentState::Missing => format!("待同意:{items}"),
+        ConsentState::Approved if script.items.is_empty() => {
+            format!("{}无需授权", kind)
+        }
+        ConsentState::Approved => format!("{kind}已同意:{items}"),
+        ConsentState::Missing => format!("{kind}待同意:{items}"),
         ConsentState::Changed { added } if added.is_empty() => {
-            format!("包已更新,需重新同意:{items}")
+            format!("{kind}包已更新,需重新同意:{items}")
         }
         ConsentState::Changed { added } => {
-            format!("包已更新,新增 {};需重新同意", added.join("、"))
+            format!("{kind}包已更新,新增 {};需重新同意", added.join("、"))
         }
     }
 }
@@ -97,6 +107,9 @@ pub fn approve_enabled(extensions: &[String], scripts: &[ScriptEntry]) -> bool {
 /// 选择扩展时的确认文案。
 pub fn prompt(script: &ScriptEntry) -> String {
     let mut text = format!("允许「{}」使用以下能力？\n\n", script.name);
+    if script.native {
+        text.push_str("此扩展包含原生可执行文件,以独立进程运行,受系统沙箱与资源限额约束。\n\n");
+    }
     for item in &script.items {
         text.push_str("· ");
         text.push_str(item);

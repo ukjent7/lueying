@@ -32,6 +32,7 @@ pub mod ids {
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";
+    pub const IMPORT_LUEXT: &str = "ext-import";
     pub const CONSENT: &str = "consent";
     pub const AUDIT: &str = "audit";
     pub const EXT_METRICS: &str = "ext-metrics";
@@ -248,6 +249,7 @@ pub enum Action {
     OpenEffects,
     ChooseScript,
     OpenScripts,
+    ImportLuext,
     ApproveExtension,
     OpenExtAudit,
     RefreshExtMetrics,
@@ -463,6 +465,7 @@ impl Settings {
             ids::EFFECTS => Some(Action::OpenEffects),
             ids::SCRIPTS => Some(Action::ChooseScript),
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
+            ids::IMPORT_LUEXT => Some(Action::ImportLuext),
             ids::CONSENT => Some(Action::ApproveExtension),
             ids::AUDIT => Some(Action::OpenExtAudit),
             ids::EXT_METRICS => Some(Action::RefreshExtMetrics),
