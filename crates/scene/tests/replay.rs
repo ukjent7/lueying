@@ -28,10 +28,18 @@ fn scene() -> lueying_scene::Scene {
 #[test]
 fn script_errors_are_chinese_and_stepped() {
     let errors = parse("a.toml", "[[steps]]\ndt = -1.0\n").expect_err("要报错");
-    assert!(errors[0].message.contains("第 1 步"), "{}", errors[0].message);
+    assert!(
+        errors[0].message.contains("第 1 步"),
+        "{}",
+        errors[0].message
+    );
     assert!(errors[0].message.contains("dt"), "{}", errors[0].message);
     let errors = parse("a.toml", "[[steps]]\ndt = 2.0\n").expect_err("要报错");
-    assert!(errors[0].message.contains("dt = 2"), "{}", errors[0].message);
+    assert!(
+        errors[0].message.contains("dt = 2"),
+        "{}",
+        errors[0].message
+    );
     let errors = parse("a.toml", "[[steps]]\ndt = 0.1\ncandidates = 99\n").expect_err("要报错");
     assert!(
         errors[0].message.contains("candidates"),

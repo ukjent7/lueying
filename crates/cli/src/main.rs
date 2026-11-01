@@ -103,7 +103,13 @@ fn scene_replay(args: &SceneReplayArgs) -> Result<(), String> {
     let script_text = std::fs::read_to_string(&args.script)
         .map_err(|error| format!("读 {}: {error}", args.script.display()))?;
     let script = lueying_scene::replay::parse(&args.script.display().to_string(), &script_text)
-        .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))?;
+        .map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
     let scene_path = args
         .scene
         .clone()
@@ -114,8 +120,14 @@ fn scene_replay(args: &SceneReplayArgs) -> Result<(), String> {
             scene_path.display()
         )
     })?;
-    let scene = lueying_scene::parse(&scene_path.display().to_string(), &scene_text)
-        .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))?;
+    let scene =
+        lueying_scene::parse(&scene_path.display().to_string(), &scene_text).map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
     let frames = lueying_scene::replay(&script, scene);
     if args.json {
         let json = serde_json::to_string(&frames).map_err(|error| error.to_string())?;
@@ -132,9 +144,7 @@ fn scene_replay(args: &SceneReplayArgs) -> Result<(), String> {
         let particles = frame
             .items
             .iter()
-            .filter(|item| {
-                matches!(item.body, lueying_scene::Body::Particles { .. })
-            })
+            .filter(|item| matches!(item.body, lueying_scene::Body::Particles { .. }))
             .count();
         let degraded = if frame.degraded { ",已降级" } else { "" };
         println!(

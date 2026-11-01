@@ -18,7 +18,11 @@ use lueying_server::config;
 fn open_recorder() -> Option<std::fs::File> {
     use std::io::Write as _;
     let path = std::env::var_os("LUEYING_SCENE_RECORD")?;
-    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         Ok(mut file) => {
             let _ = writeln!(file, "# lueying 场景录制;喂给 lueying scene replay");
             Some(file)

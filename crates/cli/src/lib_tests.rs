@@ -220,7 +220,12 @@ fn parses_scene_replay() {
     );
     assert_eq!(
         parse_args(args(&[
-            "scene", "replay", "glow.toml", "--scene", "s/scene.toml", "--json"
+            "scene",
+            "replay",
+            "glow.toml",
+            "--scene",
+            "s/scene.toml",
+            "--json"
         ])),
         Ok(Invocation::SceneReplay(super::SceneReplayArgs {
             script: PathBuf::from("glow.toml"),

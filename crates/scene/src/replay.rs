@@ -87,9 +87,7 @@ pub fn parse(file: &str, text: &str) -> Result<Script, Vec<LoadError>> {
         if let Some(rate) = step.typing_rate
             && !(0.0..=100.0).contains(&rate)
         {
-            return Err(fail(format!(
-                "{what}:typing_rate = {rate} 超出 0..=100"
-            )));
+            return Err(fail(format!("{what}:typing_rate = {rate} 超出 0..=100")));
         }
         if let Some(count) = step.candidates
             && count > CANDIDATES_MAX
