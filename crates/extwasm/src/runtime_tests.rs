@@ -55,10 +55,7 @@ fn invoke_loads_and_runs() {
     let temp = Temp::new("runtime-invoke");
     write_command_pack(&temp, "demo", "v1");
     let (mut runtime, _) = runtime(&temp, &["demo"]);
-    assert_eq!(
-        runtime.invoke_wait("demo.run", "{}", WAIT),
-        Ok("v1".into())
-    );
+    assert_eq!(runtime.invoke_wait("demo.run", "{}", WAIT), Ok("v1".into()));
     assert!(runtime.loaded("demo"));
     assert_eq!(runtime.loaded_count(), 1);
 }

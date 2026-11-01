@@ -250,11 +250,8 @@ macro_rules! export {
             fn with<R>(f: impl FnOnce(&mut $ty) -> R) -> R {
                 static EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
                     ::std::sync::Mutex::new(::std::option::Option::None);
-                let mut guard = EXTENSION
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                let slot =
-                    guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
+                let mut guard = EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
                 f(slot)
             }
 
@@ -419,11 +416,7 @@ fn call(raw: ServiceFn, method: &str, args: &str) -> Result<serde_json::Value, S
     }
 }
 
-fn call_typed<T: DeserializeOwned>(
-    raw: ServiceFn,
-    method: &str,
-    args: &str,
-) -> Result<T, String> {
+fn call_typed<T: DeserializeOwned>(raw: ServiceFn, method: &str, args: &str) -> Result<T, String> {
     let value = call(raw, method, args)?;
     serde_json::from_value(value).map_err(|error| format!("服务结果解析失败: {error}"))
 }
@@ -451,11 +444,7 @@ pub fn alloc(len: i32) -> i32 {
         return 0;
     };
     let pointer = unsafe { std::alloc::alloc(layout) };
-    if pointer.is_null() {
-        0
-    } else {
-        pointer as i32
-    }
+    if pointer.is_null() { 0 } else { pointer as i32 }
 }
 
 /// 释放宿主写输入用的 guest 内存。

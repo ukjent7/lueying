@@ -22,7 +22,6 @@ use crate::manifest::Service;
 /// 这里要容纳 serde 解析与宿主调用,固定 1 MiB。
 const WORKER_STACK: usize = 1 << 20;
 
-
 /// 运行期上限。
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -298,10 +297,7 @@ impl Worker {
     }
 
     /// 派发一次外观;worker 忙时返回 `None`,不把长命令算成外观超时。
-    pub(crate) fn appearance(
-        &self,
-        scene: &SceneIn,
-    ) -> Option<Result<Option<ScenePatch>, String>> {
+    pub(crate) fn appearance(&self, scene: &SceneIn) -> Option<Result<Option<ScenePatch>, String>> {
         if self.busy.load(Ordering::Relaxed) {
             return None;
         }
@@ -452,7 +448,9 @@ impl Guest {
         store.data_mut().memory = Some(memory.clone());
         store.data_mut().result_ptr = result_ptr as u32;
         store.data_mut().result_cap = result_cap as u32;
-        let init = instance.get_typed_func::<(), i32>(&store, "lueying_init").ok();
+        let init = instance
+            .get_typed_func::<(), i32>(&store, "lueying_init")
+            .ok();
         let command = instance
             .get_typed_func::<(i32, i32, i32, i32), i32>(&store, "lueying_command")
             .ok();
@@ -659,10 +657,9 @@ impl Guest {
         self.metrics
             .step_peak_us
             .fetch_max(elapsed_us, Ordering::Relaxed);
-        self.metrics.memory_used.store(
-            self.memory.data_size(&self.store) as u64,
-            Ordering::Relaxed,
-        );
+        self.metrics
+            .memory_used
+            .store(self.memory.data_size(&self.store) as u64, Ordering::Relaxed);
     }
 
     fn record_trap(&mut self, error: &wasmi::Error) {
@@ -697,10 +694,7 @@ fn host_emit(caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
         memory.read(ctx, offset, &mut bytes)
     };
     if read.is_ok() {
-        caller.data_mut().emitted = Some(Emitted {
-            bytes,
-            ok: ok != 0,
-        });
+        caller.data_mut().emitted = Some(Emitted { bytes, ok: ok != 0 });
     }
 }
 

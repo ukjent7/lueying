@@ -16,7 +16,7 @@ use crate::ConsentGate;
 use crate::MAX_FAULTS;
 use crate::MAX_WASM_BYTES;
 use crate::host::{self, Finished, Limits, Worker};
-use crate::manifest::{Command, Manifest, MAX_MANIFEST_BYTES};
+use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
 use crate::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";
@@ -343,11 +343,13 @@ impl Pack {
         if let Some(reason) = &self.disabled {
             return Err(format!("扩展 {} 已停用: {reason}", self.manifest.id));
         }
-        if !self.manifest.commands().iter().any(|item| item.id == command) {
-            return Err(format!(
-                "扩展 {} 没有声明命令 {command}",
-                self.manifest.id
-            ));
+        if !self
+            .manifest
+            .commands()
+            .iter()
+            .any(|item| item.id == command)
+        {
+            return Err(format!("扩展 {} 没有声明命令 {command}", self.manifest.id));
         }
         Ok(())
     }
@@ -390,7 +392,10 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
 
 /// 目录名必须等于扩展 id。
 pub(crate) fn check_dir(dir: &Path, manifest: &Manifest) -> Result<(), String> {
-    let name = dir.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    let name = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
     if name != manifest.id {
         return Err(format!(
             "目录名 {name:?} 与扩展 id {:?} 不一致",

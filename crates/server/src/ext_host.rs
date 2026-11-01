@@ -203,14 +203,10 @@ fn worker(
             dispatch_hotkey(&state, current, &hotkey, &bindings, &privacy);
             for (extension, finished) in current.take_results() {
                 match finished.result {
-                    Ok(json) => println!(
-                        "扩展 {extension} 命令 {} → {json}",
-                        finished.command
-                    ),
-                    Err(error) => println!(
-                        "扩展 {extension} 命令 {} 失败:{error}",
-                        finished.command
-                    ),
+                    Ok(json) => println!("扩展 {extension} 命令 {} → {json}", finished.command),
+                    Err(error) => {
+                        println!("扩展 {extension} 命令 {} 失败:{error}", finished.command)
+                    }
                 }
             }
         } else {

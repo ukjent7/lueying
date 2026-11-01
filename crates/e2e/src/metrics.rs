@@ -9,8 +9,8 @@
 use std::time::Duration;
 
 use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json, render_table};
-use lueying_extwasm::{ExtState, Limits, MAX_FAULTS, Pack, Runtime};
 use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat};
+use lueying_extwasm::{ExtState, Limits, MAX_FAULTS, Pack, Runtime};
 
 use crate::extwasm_harness::{command_guest, command_manifest, loop_guest, write_pack};
 use crate::harness::Temp;

@@ -44,17 +44,15 @@ pub use host::{Finished, Limits};
 pub use lueying_extmeta::consent::{ConsentBook, ConsentCheck, ConsentEntry};
 pub use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
 pub use lueying_extmeta::{
-    Activate, Command, Manifest, NetworkPolicy, Permission, Service, Setting, SettingValue, When,
-    MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, WASM_API,
+    Activate, Command, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, NetworkPolicy, Permission,
+    Service, Setting, SettingValue, WASM_API, When,
 };
 pub use lueying_extproto::{
     ClipboardText, Delivered, EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, MAX_PATCH_BYTES,
     MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot, StoreKeys,
     StoreValue,
 };
-pub use lueying_extsvc::{
-    AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry,
-};
+pub use lueying_extsvc::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry};
 pub use pack::{Pack, Poll};
 pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope, manifest_at};
 

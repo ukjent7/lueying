@@ -40,9 +40,7 @@ pub(crate) fn raw_manifest(id: &str, extra: &str) -> String {
 
 /// 最小合法清单:纯模块名,不带任何可选字段。
 pub(crate) fn plain_manifest(id: &str) -> String {
-    format!(
-        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm"}}"#
-    )
+    format!(r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm"}}"#)
 }
 
 pub(crate) fn write_pack(dir: &Path, manifest: &str, wasm: impl AsRef<[u8]>) {

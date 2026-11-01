@@ -54,7 +54,9 @@ fn new_pack_unpack_roundtrip() {
         .expect("包里要有清单");
     assert_eq!(
         manifest.1,
-        fs::read_to_string(dir.join("manifest.json")).expect("读清单").into_bytes()
+        fs::read_to_string(dir.join("manifest.json"))
+            .expect("读清单")
+            .into_bytes()
     );
     let wasm = files
         .iter()
@@ -146,7 +148,11 @@ fn pack_rejects_dir_id_mismatch_and_missing_wasm() {
         r#"{"id":"demo","name":"示例","version":"0.1.0","api":3,"wasm":"extension.wasm"}"#,
     )
     .expect("写清单");
-    let error = pack(&PackArgs { dir: dir.clone(), out: None }).expect_err("目录名与 id 不一致要报错");
+    let error = pack(&PackArgs {
+        dir: dir.clone(),
+        out: None,
+    })
+    .expect_err("目录名与 id 不一致要报错");
     assert!(error.contains("不一致"), "{error}");
 
     fs::write(
@@ -191,7 +197,10 @@ fn unpack_rejects_bad_header_and_unsafe_paths() {
 
     let short = "### lueying-pack v2\n### begin: a.js 3\n只有一行\n";
     let error = unpack(short.as_bytes()).expect_err("块被截断要被拒绝");
-    assert!(error.contains("缺一行") || error.contains("对不上"), "{error}");
+    assert!(
+        error.contains("缺一行") || error.contains("对不上"),
+        "{error}"
+    );
 
     let short_binary = "### lueying-pack v2\n### binary: extension.wasm 99\nxx";
     let error = unpack(short_binary.as_bytes()).expect_err("字节块截断要被拒绝");

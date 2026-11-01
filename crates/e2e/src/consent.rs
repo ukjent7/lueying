@@ -9,9 +9,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
 use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
+use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
 
 use crate::extwasm_harness::command_guest;
 use crate::harness::Temp;
@@ -65,7 +65,12 @@ pub fn run(report: &mut String) -> usize {
     write_pack(&dir, GUEST_V1);
     let registry = Arc::new(Registry::new());
 
-    let denied = Pack::load_with_gate(&dir, Limits::default(), registry.clone(), Some(gate(&consent)));
+    let denied = Pack::load_with_gate(
+        &dir,
+        Limits::default(),
+        registry.clone(),
+        Some(gate(&consent)),
+    );
     checks.push((
         "未同意不加载",
         denied
@@ -76,14 +81,18 @@ pub fn run(report: &mut String) -> usize {
     ));
 
     approve(&dir, &consent);
-    let mut pack =
-        match Pack::load_with_gate(&dir, Limits::default(), registry.clone(), Some(gate(&consent))) {
-            Ok(pack) => pack,
-            Err(error) => {
-                checks.push(("同意后加载", false, error));
-                return write(report, &checks);
-            }
-        };
+    let mut pack = match Pack::load_with_gate(
+        &dir,
+        Limits::default(),
+        registry.clone(),
+        Some(gate(&consent)),
+    ) {
+        Ok(pack) => pack,
+        Err(error) => {
+            checks.push(("同意后加载", false, error));
+            return write(report, &checks);
+        }
+    };
     let loaded = run_command(&mut pack);
     checks.push(("同意后加载", loaded == GUEST_V1, loaded));
 

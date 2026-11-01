@@ -44,7 +44,9 @@ fn region_parsing() {
 fn capture_shots_real_screen() {
     let registry = Registry::new();
     registry.set(Service::Capture, Arc::new(CaptureProvider));
-    let result = registry.call("capture", "shot", "", WAIT).expect("截图失败");
+    let result = registry
+        .call("capture", "shot", "", WAIT)
+        .expect("截图失败");
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let file = parsed["file"].as_str().unwrap();
     let metadata = std::fs::metadata(file).unwrap();
@@ -59,7 +61,9 @@ fn ocr_recognizes_captured_shot() {
     let registry = Registry::new();
     registry.set(Service::Capture, Arc::new(CaptureProvider));
     registry.set(Service::Ocr, Arc::new(OcrProvider::new()));
-    let shot = registry.call("capture", "shot", "", WAIT).expect("截图失败");
+    let shot = registry
+        .call("capture", "shot", "", WAIT)
+        .expect("截图失败");
     let file: String = {
         let parsed: serde_json::Value = serde_json::from_str(&shot).unwrap();
         parsed["file"].as_str().unwrap().to_string()
@@ -264,10 +268,7 @@ fn store_isolated_by_caller() {
         call("other", "get", r#"{"key":"token"}"#),
         Ok(r#"{"value":null}"#.into())
     );
-    assert_eq!(
-        call("demo", "list", ""),
-        Ok(r#"{"keys":["token"]}"#.into())
-    );
+    assert_eq!(call("demo", "list", ""), Ok(r#"{"keys":["token"]}"#.into()));
     let _ = std::fs::remove_dir_all(&dir);
     match previous {
         Some(value) => unsafe { std::env::set_var("LUEYING_EXT_DATA_DIR", value) },

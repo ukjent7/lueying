@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use lueying_extwasm::{Limits, Pack, Poll, Runtime, SceneIn};
 
 use crate::extwasm_harness::{
-    appearance_manifest, appearance_guest, command_guest, command_manifest, error_guest,
-    hog_guest, init_loop_guest, load_or_fail, loop_guest, once_trap_appearance_guest,
-    plain_manifest, raw_manifest, sleep_guest, trap_guest, write_pack,
+    appearance_guest, appearance_manifest, command_guest, command_manifest, error_guest, hog_guest,
+    init_loop_guest, load_or_fail, loop_guest, once_trap_appearance_guest, plain_manifest,
+    raw_manifest, sleep_guest, trap_guest, write_pack,
 };
 use crate::harness::{Temp, push};
 
@@ -203,7 +203,11 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
 fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("patch");
     let dir = temp.pack("patch");
-    write_pack(&dir, &appearance_manifest("patch"), &appearance_guest(PATCH));
+    write_pack(
+        &dir,
+        &appearance_manifest("patch"),
+        &appearance_guest(PATCH),
+    );
     let Some(mut pack) = load_or_fail(checks, "补丁包加载", &dir) else {
         return;
     };
@@ -231,7 +235,11 @@ fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
 fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("budget");
     let dir = temp.pack("spin");
-    write_pack(&dir, &command_manifest("spin", &["run"], &[]), &loop_guest());
+    write_pack(
+        &dir,
+        &command_manifest("spin", &["run"], &[]),
+        &loop_guest(),
+    );
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
         command_fuel: 1_000_000,
@@ -256,7 +264,11 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let hog_dir = temp.pack("hog");
-    write_pack(&hog_dir, &command_manifest("hog", &["run"], &[]), &hog_guest());
+    write_pack(
+        &hog_dir,
+        &command_manifest("hog", &["run"], &[]),
+        &hog_guest(),
+    );
     let mut hog = Pack::load(&hog_dir).expect("加载内存包");
     let _ = hog.invoke_wait("run", "{}", Duration::from_secs(30));
     let stat = hog.stat();
@@ -268,7 +280,11 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let trap_dir = temp.pack("trap");
-    write_pack(&trap_dir, &command_manifest("trap", &["run"], &[]), &trap_guest());
+    write_pack(
+        &trap_dir,
+        &command_manifest("trap", &["run"], &[]),
+        &trap_guest(),
+    );
     let mut trap = Pack::load(&trap_dir).expect("加载 trap 包");
     for _ in 0..3 {
         let _ = trap.invoke_wait("run", "{}", Duration::from_secs(30));
@@ -527,14 +543,23 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
 
     // 未声明的命令不能被调到。
     let refused = runtime.invoke("first.nope", "{}").is_err();
-    push(checks, "未声明命令被拒", refused, "invoke 应直接报错".into());
+    push(
+        checks,
+        "未声明命令被拒",
+        refused,
+        "invoke 应直接报错".into(),
+    );
 }
 
 /// 可取消等待:guest 睡 10 秒,宿主卸载扩展时 2 秒内回来。
 fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("cancel");
     let dir = temp.pack("sleep");
-    write_pack(&dir, &command_manifest("sleep", &["run"], &[]), &sleep_guest(10_000));
+    write_pack(
+        &dir,
+        &command_manifest("sleep", &["run"], &[]),
+        &sleep_guest(10_000),
+    );
     let (mut runtime, errors) =
         Runtime::open(&temp.root, &["sleep".to_string()], Limits::default());
     if !errors.is_empty() {

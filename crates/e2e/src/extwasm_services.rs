@@ -26,7 +26,9 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
         &command_manifest("gate", &["run"], &[]),
         &service_guest("ocr", "recognize", r#"{"file":"x"}"#),
     );
-    let error = lueying_extwasm::Pack::load(&gate_dir).err().unwrap_or_default();
+    let error = lueying_extwasm::Pack::load(&gate_dir)
+        .err()
+        .unwrap_or_default();
     push(
         checks,
         "未声明的服务在加载期被拒",
@@ -184,8 +186,8 @@ fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
     const MANIFEST: &str = include_str!("../../../extensions/shot-ocr/manifest.json");
     const OCR_TEXT: &str = "  掠影黄金文本\n";
 
-    let wasm_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/shot-ocr/extension.wasm");
+    let wasm_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions/shot-ocr/extension.wasm");
     let Ok(wasm) = std::fs::read(&wasm_path) else {
         push(
             checks,
@@ -258,8 +260,7 @@ fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
     registry.set(Service::Output, chain.clone());
     registry.set(Service::Notify, Arc::new(NotifyStub));
     let order = vec!["shot-ocr".to_string()];
-    let (mut runtime, errors) =
-        Runtime::open_with(&temp.root, &order, Limits::default(), registry);
+    let (mut runtime, errors) = Runtime::open_with(&temp.root, &order, Limits::default(), registry);
     push(
         checks,
         "官方 shot-ocr 清单与 guest 加载",

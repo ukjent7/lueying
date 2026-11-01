@@ -29,7 +29,10 @@ fn loads_and_runs() {
     write_command(&dir, r#"{"ok":1}"#);
     let mut pack = load(&dir);
     assert_eq!(pack.manifest().id, "demo");
-    assert_eq!(pack.invoke_wait("run", "{}", WAIT), Ok(r#"{"ok":1}"#.into()));
+    assert_eq!(
+        pack.invoke_wait("run", "{}", WAIT),
+        Ok(r#"{"ok":1}"#.into())
+    );
     assert_eq!(pack.pending(), 0);
     assert!(pack.last_error().is_none());
 }
@@ -127,11 +130,7 @@ fn hot_reload_swaps_wasm() {
     write_command(&dir, "{}");
     let mut pack = load(&dir);
     assert_eq!(pack.poll(), Poll::Unchanged);
-    std::fs::write(
-        dir.join("extension.wasm"),
-        test_guest::command_guest("v2"),
-    )
-    .expect("写新模块");
+    std::fs::write(dir.join("extension.wasm"), test_guest::command_guest("v2")).expect("写新模块");
     assert_eq!(pack.poll(), Poll::Reloaded);
     assert_eq!(pack.invoke_wait("run", "{}", WAIT), Ok("v2".into()));
 }
@@ -177,11 +176,7 @@ fn gate_denial_keeps_previous_version() {
     )
     .expect("首次加载");
     allowed.store(false, Ordering::Relaxed);
-    std::fs::write(
-        dir.join("extension.wasm"),
-        test_guest::command_guest("v2"),
-    )
-    .expect("写新模块");
+    std::fs::write(dir.join("extension.wasm"), test_guest::command_guest("v2")).expect("写新模块");
     assert!(matches!(pack.poll(), Poll::Failed(_)));
     assert_eq!(pack.invoke_wait("run", "{}", WAIT), Ok("v1".into()));
 }

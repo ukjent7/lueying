@@ -236,8 +236,8 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
     let (id, files) = if args.source.is_dir() {
         read_directory(&args.source)?
     } else {
-        let bytes = fs::read(&args.source)
-            .map_err(|e| format!("读 {}: {e}", args.source.display()))?;
+        let bytes =
+            fs::read(&args.source).map_err(|e| format!("读 {}: {e}", args.source.display()))?;
         unpack(&bytes)?
     };
     let target = target_root.join(&id);
@@ -289,8 +289,7 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), Str
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
         if !is_binary(&relative) {
-            String::from_utf8(bytes)
-                .map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
+            String::from_utf8(bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
         }
         files.push((relative, bytes));
     }
@@ -391,8 +390,7 @@ pub fn unpack(data: &[u8]) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
         .iter()
         .find(|(name, _)| name == "manifest.json")
         .ok_or("包里没有 manifest.json")?;
-    let manifest =
-        Manifest::parse(&manifest.1).map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest = Manifest::parse(&manifest.1).map_err(|e| format!("清单不合法: {e}"))?;
     Ok((manifest.id, files))
 }
 

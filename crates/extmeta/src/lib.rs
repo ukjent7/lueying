@@ -413,10 +413,7 @@ impl Manifest {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
         if self.api != WASM_API {
-            return Err(format!(
-                "清单 API {} 不支持,当前支持 {WASM_API}",
-                self.api
-            ));
+            return Err(format!("清单 API {} 不支持,当前支持 {WASM_API}", self.api));
         }
         check_entry("Wasm 模块", &self.wasm, "wasm")?;
         check_settings(&self.settings)?;

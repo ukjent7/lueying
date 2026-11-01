@@ -241,7 +241,13 @@ fn privacy_blocks_before_provider_and_is_audited() {
 fn timeout_returns_error() {
     struct Silent;
     impl Provider for Silent {
-        fn call(&self, _caller: &str, _method: &str, _args: &str, _done: Done) -> Result<(), String> {
+        fn call(
+            &self,
+            _caller: &str,
+            _method: &str,
+            _args: &str,
+            _done: Done,
+        ) -> Result<(), String> {
             Ok(())
         }
     }
@@ -258,7 +264,13 @@ fn timeout_returns_error() {
 fn cancellation_returns_error() {
     struct Silent;
     impl Provider for Silent {
-        fn call(&self, _caller: &str, _method: &str, _args: &str, _done: Done) -> Result<(), String> {
+        fn call(
+            &self,
+            _caller: &str,
+            _method: &str,
+            _args: &str,
+            _done: Done,
+        ) -> Result<(), String> {
             Ok(())
         }
     }

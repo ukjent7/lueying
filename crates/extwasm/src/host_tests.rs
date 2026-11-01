@@ -20,13 +20,7 @@ fn manifest(id: &str, appearance: bool, commands: &[(&str, &str)]) -> Arc<Manife
 fn worker(wasm: &str, manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
     let engine = Arc::new(engine(limits)?);
     let module = Arc::new(compile(&engine, wasm.as_bytes())?);
-    Worker::spawn(
-        engine,
-        module,
-        manifest,
-        Arc::new(Registry::new()),
-        limits,
-    )
+    Worker::spawn(engine, module, manifest, Arc::new(Registry::new()), limits)
 }
 
 #[test]
@@ -53,10 +47,7 @@ fn reports_guest_error() {
         limits,
     )
     .expect("启动 worker");
-    assert_eq!(
-        worker.command_wait("run", "{}", WAIT),
-        Err("boom".into())
-    );
+    assert_eq!(worker.command_wait("run", "{}", WAIT), Err("boom".into()));
 }
 
 #[test]
@@ -139,12 +130,8 @@ fn rejects_missing_allocator() {
       (memory (export "memory") 1)
       (func (export "lueying_init") (result i32) (i32.const 0)))"#;
     let limits = Limits::default();
-    let error = worker(
-        wasm,
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .err()
-    .expect("应当拒绝");
+    let error = worker(wasm, manifest("demo", false, &[("run", "运行")]), limits)
+        .err()
+        .expect("应当拒绝");
     assert!(error.contains("lueying_alloc"), "{error}");
 }

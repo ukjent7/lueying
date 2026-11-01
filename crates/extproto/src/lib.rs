@@ -106,8 +106,7 @@ impl SceneIn {
 
     /// 解析宿主传来的场景 JSON;guest 侧用,取值统一走 [`SceneIn::cleaned`]。
     pub fn parse(text: &str) -> Result<Self, String> {
-        let scene: Self =
-            serde_json::from_str(text).map_err(|e| format!("场景解析失败: {e}"))?;
+        let scene: Self = serde_json::from_str(text).map_err(|e| format!("场景解析失败: {e}"))?;
         Ok(scene.cleaned())
     }
 }

@@ -133,11 +133,7 @@ impl Registry {
         timeout: Duration,
         cancelled: Option<&AtomicBool>,
     ) -> Result<String, String> {
-        let service_enum = match Service::ALL
-            .iter()
-            .copied()
-            .find(|s| s.key() == service)
-        {
+        let service_enum = match Service::ALL.iter().copied().find(|s| s.key() == service) {
             Some(service) => service,
             None => return Err(format!("未知服务 {service:?}")),
         };
@@ -147,13 +143,7 @@ impl Registry {
                 "服务 {} 没有方法 {method:?}(可用: {known})",
                 service_enum.key()
             );
-            self.record(
-                caller,
-                service,
-                method,
-                AuditOutcome::Denied,
-                "方法不存在",
-            );
+            self.record(caller, service, method, AuditOutcome::Denied, "方法不存在");
             return Err(error);
         }
         let privacy = self
@@ -174,13 +164,7 @@ impl Registry {
             .find(|(s, _)| *s == service_enum)
             .map(|(_, p)| Arc::clone(p))
             .ok_or_else(|| {
-                self.record(
-                    caller,
-                    service,
-                    method,
-                    AuditOutcome::Denied,
-                    "没有提供者",
-                );
+                self.record(caller, service, method, AuditOutcome::Denied, "没有提供者");
                 format!("服务 {} 没有提供者", service_enum.key())
             })?;
         let (sender, receiver) = mpsc::channel();
