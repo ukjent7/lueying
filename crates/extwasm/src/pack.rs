@@ -229,7 +229,7 @@ impl Pack {
     /// 派发一次场景状态。
     ///
     /// 隐私字段直接返回 `None`,guest 不会被调用。worker 忙时跳过这一帧,
-    /// 不把长命令算成外观超时。高对比度下补丁里的效果被摘掉,只留主题色。
+    /// 不把长命令算成外观超时。
     pub fn dispatch(&mut self, state: &SceneIn) -> Option<ScenePatch> {
         if state.private || self.removed || self.disabled.is_some() {
             return None;
@@ -243,11 +243,8 @@ impl Pack {
                 self.succeed();
                 None
             }
-            Some(Ok(Some(mut patch))) => {
+            Some(Ok(Some(patch))) => {
                 self.succeed();
-                if state.high_contrast {
-                    patch.effects = None;
-                }
                 Some(patch)
             }
             Some(Err(error)) => {

@@ -15,7 +15,7 @@ pub use lueying_extmeta::container::PACK_HEADER;
 
 /// 参与打包的文本文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
 /// `.wasm` 是唯一的二进制,按字节块打包。
-const PACK_EXTS: &[&str] = &["json", "txt", "sksl", "md", "wasm"];
+const PACK_EXTS: &[&str] = &["json", "txt", "md", "wasm"];
 
 /// `ext new` 的参数。
 #[derive(Clone, Debug, PartialEq, Eq)]

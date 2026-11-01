@@ -62,32 +62,6 @@ fn dispatches_appearance() {
 }
 
 #[test]
-fn high_contrast_drops_effects() {
-    let temp = Temp::new("contrast");
-    let dir = temp.pack("demo");
-    let mut manifest: serde_json::Value =
-        serde_json::from_str(&test_guest::command_manifest("demo", &[("run", "运行")]))
-            .expect("清单 JSON");
-    manifest["appearance"] = serde_json::json!(true);
-    test_guest::write_pack(
-        &dir,
-        &manifest.to_string(),
-        &test_guest::command_appearance_guest(
-            "{}",
-            r#"{"accent":1193046,"effects":{"background":"half4(1)"}}"#,
-        ),
-    );
-    let mut pack = load(&dir);
-    let scene = SceneIn {
-        high_contrast: true,
-        ..SceneIn::default()
-    };
-    let patch = pack.dispatch(&scene).expect("有补丁");
-    assert_eq!(patch.accent, Some(1_193_046));
-    assert!(patch.effects.is_none());
-}
-
-#[test]
 fn private_scene_is_skipped() {
     let temp = Temp::new("private");
     let dir = temp.pack("demo");

@@ -5,8 +5,8 @@
 //! 2. 缺导出(memory、分配器、入口)或坏模块的包被加载。
 //! 3. 死循环、内存暴涨拖住宿主,没有燃料/限额兜底。
 //! 4. 状态里混进候选文字或宿主名,扩展能读到用户输入。
-//! 5. 补丁未知字段、超长 SkSL、非法主题色被静默接受。
-//! 6. 隐私字段仍调用 guest;高对比度下效果没被摘掉。
+//! 5. 补丁未知字段、非法主题色被静默接受。
+//! 6. 隐私字段仍调用 guest。
 //! 7. 热重载写坏文件后,正在用的扩展被弄没。
 //! 8. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
 
@@ -21,7 +21,7 @@ use crate::extwasm_harness::{
 };
 use crate::harness::{Temp, push};
 
-const PATCH: &str = r#"{"accent":1193046,"effects":{"background":"half4 main(float2 p) { return half4(0.1, 0.2, 0.3, 0.5); }"}}"#;
+const PATCH: &str = r#"{"accent":1193046}"#;
 
 /// 包校验:坏清单与坏模块在加载期就拒绝,错误文本能定位到字段。
 fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
@@ -138,15 +138,11 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
     };
     let patch = pack.dispatch(&SceneIn::default());
     let accent = patch.as_ref().and_then(|p| p.accent);
-    let background = patch
-        .as_ref()
-        .and_then(|p| p.effects.as_ref())
-        .and_then(|e| e.background.clone());
     push(
         checks,
-        "正常包返回主题色与效果",
-        accent == Some(0x123456) && background.as_deref().is_some_and(|s| s.contains("main")),
-        format!("{accent:?} {background:?}"),
+        "正常包返回主题色",
+        accent == Some(0x123456),
+        format!("{accent:?}"),
     );
 
     let state = SceneIn {
@@ -320,7 +316,6 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
         ..SceneIn::default()
     });
     let high_accent = high.as_ref().and_then(|p| p.accent);
-    let high_effects = high.as_ref().is_some_and(|p| p.effects.as_ref().is_none());
     push(
         checks,
         "隐私字段不调用 guest",
@@ -329,8 +324,8 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
     );
     push(
         checks,
-        "高对比度摘掉补丁效果",
-        high_accent == Some(0x123456) && high_effects,
+        "高对比度仍返回主题色",
+        high_accent == Some(0x123456),
         format!("{high_accent:?}"),
     );
 

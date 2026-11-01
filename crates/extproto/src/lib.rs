@@ -9,13 +9,11 @@
 use serde::{Deserialize, Serialize};
 
 /// 场景协议版本。guest 在清单里不声明版本,宿主与 SDK 同步升级。
-pub const SCENE_API: u32 = 1;
-
-/// 单个 SkSL 槽位的源码上限。
-pub const MAX_EFFECT_BYTES: usize = 64 * 1024;
+/// 2:补丁删掉 SkSL 效果槽位,只保留主题色。
+pub const SCENE_API: u32 = 2;
 
 /// 补丁 JSON 的总大小上限。
-pub const MAX_PATCH_BYTES: usize = 3 * MAX_EFFECT_BYTES + 8 * 1024;
+pub const MAX_PATCH_BYTES: usize = 8 * 1024;
 
 /// guest 结果缓冲区的字节数。宿主把服务结果写进这块内存,guest 解析后
 /// 再通过 `emit` 交回最终结果。
@@ -118,13 +116,10 @@ pub struct ScenePatch {
     /// 主题色 0xRRGGBB。
     #[serde(default)]
     pub accent: Option<u32>,
-    /// 三个 SkSL 槽位的源码。
-    #[serde(default)]
-    pub effects: Option<EffectsPatch>,
 }
 
 impl ScenePatch {
-    /// 解析并校验补丁。未知字段、非法主题色、超长或空的源码都拒绝。
+    /// 解析并校验补丁。未知字段、非法主题色与超长补丁都拒绝。
     pub fn parse(text: &str) -> Result<Self, String> {
         if text.len() > MAX_PATCH_BYTES {
             return Err(format!(
@@ -144,22 +139,6 @@ impl ScenePatch {
         {
             return Err(format!("主题色 0x{accent:06x} 超出 24 位"));
         }
-        if let Some(effects) = &self.effects {
-            for (slot, source) in effects.iter() {
-                if source.trim().is_empty() {
-                    return Err(format!("{} 的效果源码为空", slot.title()));
-                }
-                if source.len() > MAX_EFFECT_BYTES {
-                    return Err(format!(
-                        "{} 的效果源码超过 {MAX_EFFECT_BYTES} 字节",
-                        slot.title()
-                    ));
-                }
-                if source.contains('\0') {
-                    return Err(format!("{} 的效果源码含 NUL", slot.title()));
-                }
-            }
-        }
         Ok(())
     }
 
@@ -167,91 +146,6 @@ impl ScenePatch {
     pub fn merge(&mut self, patch: Self) {
         if patch.accent.is_some() {
             self.accent = patch.accent;
-        }
-        match (self.effects.as_mut(), patch.effects) {
-            (Some(current), Some(next)) => current.merge(next),
-            (None, Some(next)) => self.effects = Some(next),
-            _ => {}
-        }
-    }
-}
-
-/// 三个 SkSL 槽位,与 `lueying-render` 的效果槽位一一对应。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EffectSlot {
-    /// 面板底。
-    Background,
-    /// 选中候选的高亮块。
-    Highlight,
-    /// 右键菜单底。
-    Menu,
-}
-
-impl EffectSlot {
-    /// 全部槽位;按这个顺序遍历补丁。
-    pub const ALL: [Self; 3] = [Self::Background, Self::Highlight, Self::Menu];
-
-    /// 槽位的字段名,与补丁 JSON 的键一致。
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Background => "background",
-            Self::Highlight => "highlight",
-            Self::Menu => "menu",
-        }
-    }
-
-    /// 槽位的中文名;日志与设置页用。
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Background => "面板底",
-            Self::Highlight => "选中块",
-            Self::Menu => "菜单底",
-        }
-    }
-}
-
-/// 三个槽位的 SkSL 源码;缺省的槽位保持当前效果。
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct EffectsPatch {
-    /// 面板底。
-    #[serde(default)]
-    pub background: Option<String>,
-    /// 选中块。
-    #[serde(default)]
-    pub highlight: Option<String>,
-    /// 菜单底。
-    #[serde(default)]
-    pub menu: Option<String>,
-}
-
-impl EffectsPatch {
-    /// 取某槽位的源码。
-    pub fn get(&self, slot: EffectSlot) -> Option<&str> {
-        match slot {
-            EffectSlot::Background => self.background.as_deref(),
-            EffectSlot::Highlight => self.highlight.as_deref(),
-            EffectSlot::Menu => self.menu.as_deref(),
-        }
-    }
-
-    /// 遍历补丁里出现的槽位。
-    pub fn iter(&self) -> impl Iterator<Item = (EffectSlot, &str)> + '_ {
-        EffectSlot::ALL
-            .into_iter()
-            .filter_map(|slot| self.get(slot).map(|source| (slot, source)))
-    }
-
-    /// 逐槽位合并:后出现的非空槽位覆盖前一个。
-    pub fn merge(&mut self, patch: Self) {
-        if patch.background.is_some() {
-            self.background = patch.background;
-        }
-        if patch.highlight.is_some() {
-            self.highlight = patch.highlight;
-        }
-        if patch.menu.is_some() {
-            self.menu = patch.menu;
         }
     }
 }
@@ -351,7 +245,7 @@ mod tests {
     fn patch_rejects_bad_values() {
         assert!(ScenePatch::parse(r#"{"accent":16777216}"#).is_err());
         assert!(ScenePatch::parse(r#"{"future":true}"#).is_err());
-        assert!(ScenePatch::parse(r#"{"effects":{"background":""}}"#).is_err());
+        assert!(ScenePatch::parse(r#"{"effects":{}}"#).is_err());
         assert!(ScenePatch::parse(r#"{"accent":1193046}"#).is_ok());
     }
 }

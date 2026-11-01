@@ -48,9 +48,8 @@ pub use lueying_extmeta::{
     Setting, SettingValue, When,
 };
 pub use lueying_extproto::{
-    ClipboardText, Delivered, EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, MAX_PATCH_BYTES,
-    MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot, StoreKeys,
-    StoreValue,
+    ClipboardText, Delivered, MAX_PATCH_BYTES, MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API,
+    SceneIn, ScenePatch, Shot, StoreKeys, StoreValue,
 };
 pub use lueying_extsvc::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry};
 pub use pack::{Pack, Poll};

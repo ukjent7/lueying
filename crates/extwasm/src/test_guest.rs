@@ -167,22 +167,3 @@ pub(crate) fn appearance_guest(patch: &str) -> String {
         text = escape(patch),
     )
 }
-
-/// 同时提供命令与外观。
-pub(crate) fn command_appearance_guest(result: &str, patch: &str) -> String {
-    format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {rlen}) (i32.const 1))
-    (i32.const 0))
-  (func (export \"lueying_appearance\") (param i32 i32) (result i32)
-    (call $emit (i32.const 4096) (i32.const {plen}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{rtext}\")
-  (data (i32.const 4096) \"{ptext}\"))",
-        preamble(),
-        rlen = result.len(),
-        rtext = escape(result),
-        plen = patch.len(),
-        ptext = escape(patch),
-    )
-}

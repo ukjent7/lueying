@@ -11,6 +11,7 @@
 - 用户词库改为整份快照原子替换:临时文件写完落盘再改名,进程中途退出或掉电只留上一份完整快照;删掉 SQLite 与旧 TSV 迁移,文本导入导出与配置备份不变。
 - 打字路径:会话独占锁只护引擎状态,候选窗、徽标与扩展宿主只读发布的会话视图;4M 按键重排移到后台线程,按键不再等模型;候选窗与徽标改为事件驱动等待;TSF 管道客户端改重叠 I/O,单次请求 1500 ms 上限。
 - 候选窗、模式徽标与命令面板统一走 Direct2D/DirectWrite,删除 Skia 依赖与预编译命中门禁;候选窗 GPU 管线与 WARP 兜底不变。
+- 运行期扩展外观补丁只保留主题色,删掉三个 SkSL 效果槽位与 `.luext` 的 `.sksl` 白名单。
 - 运行期扩展从 QuickJS 脚本切换到 wasmi Wasm 沙箱:扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
 - `lueying ext new` 生成 Rust guest crate 骨架;`lueying ext pack` 要求清单声明的 `extension.wasm` 存在。
 - 官方 `shot-ocr` 改为 Rust guest;CI 增加 wasm32 构建,文档与扩展规范同步更新。
