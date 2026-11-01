@@ -18,7 +18,6 @@ lueying-server.exe（用户常驻服务）
     └─ 本地日志（%LOCALAPPDATA%\lueying\logs\server.log）
 lueying-settings.exe（独立设置窗口：Slint + AccessKit 无障碍，管道通信）
 lueying-update.exe（独立更新器：基于 lueying-net，静默安装与校验）
-lueying-netproxy.exe（扩展网络代理：按需启动，受清单域名白名单限制）
 lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自启）
 ```
 
@@ -26,7 +25,7 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 
 - **宿主纯净**：`lueying_tsf.dll` 仅依赖 `lueying-protocol`，不引入图形库与复杂引擎依赖。按键消息与编码转换在服务端边界完成。
 - **无网络依赖常驻**：常驻服务端 `lueying-server.exe` 独立编译且不链接 `winhttp.dll`（由 CI 进行导入表断言）。
-- **网络能力隔离**：更新由独立更新器执行；扩展的网络访问委托给按需拉起的代理进程 `lueying-netproxy.exe`，严格限制在扩展清单声明的域名白名单内。
+- **网络能力隔离**：更新由独立更新器执行；扩展没有网络通道（Wasm 宿主不提供 `net` 服务，原生扩展默认也不联网）。
 
 ## 核心引擎
 

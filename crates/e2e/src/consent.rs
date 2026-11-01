@@ -117,19 +117,6 @@ pub fn run(report: &mut String) -> usize {
         Err(error) => checks.push(("重新同意后换新版本", false, error)),
     }
 
-    // 读屏 + 外发组合单独强提示。
-    let risky = MANIFEST.replace(
-        r#""capabilities":["screen-capture"]"#,
-        r#""capabilities":["screen-capture","network"]"#,
-    );
-    let manifest = Manifest::parse(risky.as_bytes()).expect("清单应合法");
-    let check = ConsentBook::default().check(&dir, &manifest);
-    checks.push((
-        "敏感组合标记",
-        check.as_ref().is_ok_and(|check| check.sensitive),
-        format!("{check:?}"),
-    ));
-
     write(report, &checks)
 }
 

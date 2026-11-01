@@ -358,7 +358,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
             continue;
         }
-        let (consent, items, sensitive) = match book.check(&path, &manifest) {
+        let (consent, items) = match book.check(&path, &manifest) {
             Ok(check) => {
                 let state = if check.approved {
                     ConsentState::Approved
@@ -367,16 +367,15 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
                 } else {
                     ConsentState::Missing
                 };
-                (state, check.items, check.sensitive)
+                (state, check.items)
             }
-            Err(_) => (ConsentState::Missing, Vec::new(), false),
+            Err(_) => (ConsentState::Missing, Vec::new()),
         };
         scripts.push(ScriptEntry {
             id: manifest.id,
             name: manifest.name,
             items,
             consent,
-            sensitive,
             settings: manifest.settings,
         });
     }

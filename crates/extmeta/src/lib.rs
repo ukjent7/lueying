@@ -49,22 +49,9 @@ pub struct Manifest {
     /// 申请的权限;授权页与同意记录用。
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// 网络白名单;声明 `network` 能力后由扩展网络代理执行。
-    #[serde(default)]
-    pub network: Option<NetworkPolicy>,
     /// 声明式设置:宿主渲染设置页,值存在 `[ext.<id>]`。
     #[serde(default)]
     pub settings: Vec<Setting>,
-}
-
-/// 网络白名单。域名写 `host` 或 `host:port`;不写端口时只匹配该协议的
-/// 默认端口(HTTPS 443、本机 HTTP 80)。
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct NetworkPolicy {
-    /// 允许访问的主机名。
-    #[serde(default)]
-    pub domains: Vec<String>,
 }
 
 /// 一条声明式设置。设置页按 `type` 渲染,值落在 `config.toml` 的
@@ -261,8 +248,6 @@ pub enum Service {
     Output,
     /// 注册全局热键。
     Hotkey,
-    /// 访问网络(域名白名单)。
-    Net,
     /// 扩展私有存储目录。
     Store,
     /// 系统通知。
@@ -278,7 +263,6 @@ impl Service {
         Self::Panel,
         Self::Output,
         Self::Hotkey,
-        Self::Net,
         Self::Store,
         Self::Notify,
     ];
@@ -292,7 +276,6 @@ impl Service {
             Self::Panel => "panel",
             Self::Output => "output",
             Self::Hotkey => "hotkey",
-            Self::Net => "net",
             Self::Store => "store",
             Self::Notify => "notify",
         }
@@ -307,7 +290,6 @@ impl Service {
             Self::Panel => "显示扩展面板",
             Self::Output => "写入当前输入框",
             Self::Hotkey => "注册全局热键",
-            Self::Net => "访问网络(外发)",
             Self::Store => "读写扩展存储",
             Self::Notify => "系统通知",
         }
@@ -319,7 +301,6 @@ impl Service {
             Self::Capture => Some(Permission::ScreenCapture),
             Self::Ocr => Some(Permission::Ocr),
             Self::Clipboard => Some(Permission::Clipboard),
-            Self::Net => Some(Permission::Network),
             Self::Panel | Self::Output | Self::Hotkey | Self::Store | Self::Notify => None,
         }
     }
@@ -335,19 +316,16 @@ pub enum Permission {
     ScreenCapture,
     /// 对截取内容做文字识别。
     Ocr,
-    /// 访问网络。
-    Network,
     /// 读写剪贴板。
     Clipboard,
 }
 
 impl Permission {
     /// 全部权限;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::CandidateText,
         Self::ScreenCapture,
         Self::Ocr,
-        Self::Network,
         Self::Clipboard,
     ];
 
@@ -357,7 +335,6 @@ impl Permission {
             Self::CandidateText => "candidate-text",
             Self::ScreenCapture => "screen-capture",
             Self::Ocr => "ocr",
-            Self::Network => "network",
             Self::Clipboard => "clipboard",
         }
     }
@@ -368,17 +345,8 @@ impl Permission {
             Self::CandidateText => "读取候选与上下文文字(高敏感)",
             Self::ScreenCapture => "截取屏幕(高敏感)",
             Self::Ocr => "识别文字",
-            Self::Network => "访问网络(外发)",
             Self::Clipboard => "读写剪贴板(高敏感)",
         }
-    }
-
-    /// 会读到用户内容、需要和「外发」组合时强提示。
-    pub fn reads_user_content(self) -> bool {
-        matches!(
-            self,
-            Self::CandidateText | Self::ScreenCapture | Self::Ocr | Self::Clipboard
-        )
     }
 }
 
@@ -417,9 +385,6 @@ impl Manifest {
         }
         check_entry("Wasm 模块", &self.wasm, "wasm")?;
         check_settings(&self.settings)?;
-        if let Some(network) = &self.network {
-            check_network(network)?;
-        }
         if !self.capabilities.is_empty() {
             check_capabilities(&self.capabilities)?;
         }
@@ -640,39 +605,6 @@ fn check_capabilities(capabilities: &[String]) -> Result<(), String> {
             return Err(format!("能力 {capability:?} 重复声明"));
         }
         seen.push(permission);
-    }
-    Ok(())
-}
-
-/// 网络白名单:最多 32 项,只收主机名或 `主机:端口`,不收协议与路径。
-fn check_network(network: &NetworkPolicy) -> Result<(), String> {
-    if network.domains.len() > 32 {
-        return Err("network.domains 最多 32 项".into());
-    }
-    for domain in &network.domains {
-        if domain.is_empty() || domain.len() > 253 {
-            return Err(format!("网络域名 {domain:?} 长度不合法"));
-        }
-        if domain.contains("://") || domain.contains('/') || domain.chars().any(char::is_whitespace)
-        {
-            return Err(format!("网络域名只写 host 或 host:port: {domain:?}"));
-        }
-        let (host, port) = match domain.rsplit_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (domain.as_str(), None),
-        };
-        if host.is_empty()
-            || !host
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
-        {
-            return Err(format!("网络域名 {domain:?} 不合法"));
-        }
-        if let Some(port) = port
-            && (port.is_empty() || !matches!(port.parse::<u16>(), Ok(value) if value != 0))
-        {
-            return Err(format!("网络端口 {port:?} 不合法"));
-        }
     }
     Ok(())
 }

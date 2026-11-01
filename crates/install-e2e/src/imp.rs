@@ -161,7 +161,6 @@ fn real_run() -> Result<String, String> {
             "lueying-server.exe",
             "lueying-settings.exe",
             "lueying-update.exe",
-            "lueying-netproxy.exe",
             "version.txt",
             "licenses/README.md",
             "Catalog/official-extensions.json",
@@ -305,7 +304,6 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
         "lueying-server.exe",
         "lueying-settings.exe",
         "lueying-update.exe",
-        "lueying-netproxy.exe",
         "lueying_tsf.dll",
         "lueying_tsf32.dll",
     ] {
@@ -452,7 +450,6 @@ fn update_installed(
         "lueying-server.exe",
         "lueying-settings.exe",
         "lueying-update.exe",
-        "lueying-netproxy.exe",
         "lueying_tsf.dll",
         "lueying_tsf32.dll",
         "LICENSE",

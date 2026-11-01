@@ -44,8 +44,8 @@ pub use host::{Finished, Limits};
 pub use lueying_extmeta::consent::{ConsentBook, ConsentCheck, ConsentEntry};
 pub use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
 pub use lueying_extmeta::{
-    Activate, Command, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, NetworkPolicy, Permission,
-    Service, Setting, SettingValue, WASM_API, When,
+    Activate, Command, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, Permission, Service, Setting,
+    SettingValue, WASM_API, When,
 };
 pub use lueying_extproto::{
     ClipboardText, Delivered, EffectSlot, EffectsPatch, MAX_EFFECT_BYTES, MAX_PATCH_BYTES,

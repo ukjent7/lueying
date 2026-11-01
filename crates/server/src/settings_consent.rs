@@ -12,8 +12,6 @@ pub struct ScriptEntry {
     pub items: Vec<String>,
     /// 当前同意状态。
     pub consent: ConsentState,
-    /// 同时申请「读用户内容」与「访问网络」。
-    pub sensitive: bool,
     /// 清单里的声明式设置;设置页按它渲染。
     pub settings: Vec<lueying_extmeta::Setting>,
 }
@@ -26,7 +24,6 @@ impl ScriptEntry {
             name: name.into(),
             items: Vec::new(),
             consent: ConsentState::Approved,
-            sensitive: false,
             settings: Vec::new(),
         }
     }
@@ -52,7 +49,7 @@ fn selected<'a>(extensions: &[String], scripts: &'a [ScriptEntry]) -> Option<&'a
     scripts.iter().find(|script| &script.id == id)
 }
 
-/// 扩展授权那行的说明:能力清单、待同意与敏感组合。
+/// 扩展授权那行的说明:能力清单与同意状态。
 pub fn detail(extensions: &[String], scripts: &[ScriptEntry]) -> String {
     let Some(script) = selected(extensions, scripts) else {
         if extensions.is_empty() {
@@ -73,21 +70,16 @@ pub fn detail(extensions: &[String], scripts: &[ScriptEntry]) -> String {
         }
         return format!("{} 个待处理:{}", pending.len(), pending.join("、"));
     };
-    let warning = if script.sensitive {
-        "敏感组合:读取用户内容并外发;"
-    } else {
-        ""
-    };
     let items = script.items.join("、");
     match &script.consent {
         ConsentState::Approved if script.items.is_empty() => "无需授权".to_string(),
-        ConsentState::Approved => format!("{warning}已同意:{items}"),
-        ConsentState::Missing => format!("{warning}待同意:{items}"),
+        ConsentState::Approved => format!("已同意:{items}"),
+        ConsentState::Missing => format!("待同意:{items}"),
         ConsentState::Changed { added } if added.is_empty() => {
-            format!("{warning}包已更新,需重新同意:{items}")
+            format!("包已更新,需重新同意:{items}")
         }
         ConsentState::Changed { added } => {
-            format!("{warning}包已更新,新增 {};需重新同意", added.join("、"))
+            format!("包已更新,新增 {};需重新同意", added.join("、"))
         }
     }
 }
@@ -102,16 +94,13 @@ pub fn approve_enabled(extensions: &[String], scripts: &[ScriptEntry]) -> bool {
     })
 }
 
-/// 选择扩展时的确认文案;含敏感组合的单独警告。
+/// 选择扩展时的确认文案。
 pub fn prompt(script: &ScriptEntry) -> String {
     let mut text = format!("允许「{}」使用以下能力？\n\n", script.name);
     for item in &script.items {
         text.push_str("· ");
         text.push_str(item);
         text.push('\n');
-    }
-    if script.sensitive {
-        text.push_str("\n警告:它会读取屏幕、候选或剪贴板内容,并访问网络。\n");
     }
     if let ConsentState::Changed { added } = &script.consent
         && !added.is_empty()

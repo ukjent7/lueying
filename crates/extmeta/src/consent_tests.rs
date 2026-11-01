@@ -103,17 +103,16 @@ fn upgrade_reports_added_capabilities() {
     let upgraded = MANIFEST
         .replace(
             r#""capabilities":["screen-capture"]"#,
-            r#""capabilities":["screen-capture","network"]"#,
+            r#""capabilities":["screen-capture","clipboard"]"#,
         )
         .replace(
             r#""needs":["capture","output"]"#,
-            r#""needs":["capture","output","net"]"#,
+            r#""needs":["capture","output","clipboard"]"#,
         );
     write_pack(&dir, &upgraded, b"wasm");
     let check = book.check(&dir, &parse(&upgraded)).expect("检查");
     assert!(check.changed && !check.approved);
-    assert!(check.added.iter().any(|item| item.contains("访问网络")));
-    assert!(check.sensitive, "读屏 + 外发要强提示");
+    assert!(check.added.iter().any(|item| item.contains("剪贴板")));
 }
 
 #[test]
@@ -151,17 +150,6 @@ fn items_merge_capability_and_service() {
         consent_items(&manifest),
         vec!["截取屏幕(高敏感)", "写入当前输入框"]
     );
-}
-
-#[test]
-fn sensitive_needs_both_read_and_network() {
-    let read_only = parse(MANIFEST);
-    assert!(!consent_sensitive(&read_only));
-    let outbound = MANIFEST.replace(
-        r#""capabilities":["screen-capture"]"#,
-        r#""capabilities":["screen-capture","network"]"#,
-    );
-    assert!(consent_sensitive(&parse(&outbound)));
 }
 
 #[test]

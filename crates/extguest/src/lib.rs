@@ -74,8 +74,6 @@ unsafe extern "C" {
     fn host_notify(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
     #[link_name = "hotkey"]
     fn host_hotkey(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "net"]
-    fn host_net(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -123,11 +121,6 @@ unsafe extern "C" fn host_notify(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn host_hotkey(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_net(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
     -1
 }
 
@@ -210,11 +203,6 @@ pub fn hotkey_unregister(id: &str) -> Result<(), String> {
 pub fn hotkey_press(id: &str) -> Result<(), String> {
     let args = json!({ "id": id }).to_string();
     call_unit(host_hotkey, "press", &args)
-}
-
-/// 通过宿主网络代理发一次请求;参数与返回值由代理定义。
-pub fn net_fetch(args: &serde_json::Value) -> Result<serde_json::Value, String> {
-    call(host_net, "fetch", &args.to_string())
 }
 
 /// 可取消的等待;宿主卸载扩展时返回错误。

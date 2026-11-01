@@ -77,8 +77,6 @@ pub struct ConsentCheck {
     pub added: Vec<String>,
     /// 全部能力/服务人话,供设置页与同意对话框展示。
     pub items: Vec<String>,
-    /// 是否同时申请「读取用户内容」与「访问网络」。
-    pub sensitive: bool,
 }
 
 impl ConsentBook {
@@ -123,7 +121,6 @@ impl ConsentBook {
             changed: entry.is_some_and(|entry| entry.hash != hash),
             added: Vec::new(),
             items: consent_items(manifest),
-            sensitive: consent_sensitive(manifest),
         };
         if let Some(entry) = entry
             && entry.hash != hash
@@ -205,24 +202,6 @@ pub fn consent_items(manifest: &Manifest) -> Vec<String> {
         push_unique(&mut items, service.title().to_string());
     }
     items
-}
-
-/// 「读取用户内容 + 外发」组合单独强提示。
-pub fn consent_sensitive(manifest: &Manifest) -> bool {
-    let network = manifest.capabilities.iter().any(|key| key == "network")
-        || manifest.needs.contains(&Service::Net);
-    let reads = manifest.capabilities.iter().any(|key| {
-        Permission::ALL
-            .into_iter()
-            .find(|permission| permission.key() == key)
-            .is_some_and(Permission::reads_user_content)
-    }) || manifest.needs.iter().any(|service| {
-        matches!(
-            *service,
-            Service::Capture | Service::Ocr | Service::Clipboard
-        )
-    });
-    network && reads
 }
 
 /// 清单声明的全部键,按能力后服务的顺序。

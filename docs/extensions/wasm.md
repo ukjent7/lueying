@@ -36,7 +36,6 @@ shot-ocr/
   },
   "needs": ["capture", "ocr", "output", "notify"],
   "capabilities": ["screen-capture", "ocr"],
-  "network": { "domains": ["example.com"] },
   "settings": []
 }
 ```
@@ -79,8 +78,7 @@ lueying_extguest::export!(ShotOcr);
 (命令入口,参数与返回值都是 JSON 文本)、`appearance`(每帧外观补丁)。
 服务封装全部是同步函数:`capture_shot`、`ocr_recognize`、`output_deliver`、
 `panel_show`、`clipboard_read/write`、`store_get/set/remove/list`、
-`notify_show`、`hotkey_register/unregister/press`、`net_fetch` 与
-`timeout_sleep`。
+`notify_show`、`hotkey_register/unregister/press` 与 `timeout_sleep`。
 
 构建与发布:
 
@@ -111,7 +109,7 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 |---|---|---|
 | `emit` | `(ptr, len, ok)` | 交回命令/外观的最终结果 |
 | `timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
-| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `net` / `notify` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
+| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
 
 服务结果是一个 JSON 信封:成功 `{"ok":true,"value":...}`,失败
 `{"ok":false,"error":"..."}`。宿主把信封写进 guest 的结果缓冲区,
@@ -126,7 +124,7 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 | 初始化燃料 | 50 M | trap,加载失败 |
 | 命令燃料 | 200 M | trap,计一次超时 |
 | 外观燃料 | 20 M | trap,计一次超时 |
-| 宿主服务等待 | 面板 600 s、OCR/网络 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
+| 宿主服务等待 | 面板 600 s、OCR 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
 | 命令空闲卸载 | 30 s | worker 与实例整体丢弃;外观包常驻 |
 | 容错熔断 | 连续 3 次失败 | 扩展停用,重新加载或热重载成功后恢复 |
 
@@ -138,7 +136,6 @@ trap 之后实例不可再用,下一次调用前宿主自动重建;正在执行�
 - guest 看不到候选汉字、按键历史与宿主应用名;场景状态只有页码、候选
   数量、主题色与系统外观开关。
 - 密码/隐私字段下:外观不派发、命令与热键不执行、服务调用全部拒绝。
-- 没有声明 `network` 能力就没有任何外发通道;网络经独立代理进程按域名
-  白名单执行,常驻服务本体不引入网络库。
+- 扩展没有任何网络通道;需要联网的作业交给独立进程的原生扩展,并且默认关闭网络。
 - 所有服务调用写审计日志(服务、方法与结果),不记录用户正文。
 - 高对比度开启时,外观补丁只保留主题色。

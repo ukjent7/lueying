@@ -804,7 +804,6 @@ fn timeout_for(service: Service, method: &str) -> Duration {
     match (service, method) {
         (Service::Panel, "show") => Duration::from_secs(600),
         (Service::Ocr, "recognize") => Duration::from_secs(120),
-        (Service::Net, "fetch") => Duration::from_secs(120),
         (Service::Capture, "shot") => Duration::from_secs(30),
         _ => Duration::from_secs(10),
     }

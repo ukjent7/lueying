@@ -94,11 +94,10 @@ fn ext_metrics_detail_summarizes_runtime() {
 }
 
 #[test]
-fn consent_detail_reports_pending_and_sensitive() {
+fn consent_detail_reports_pending_and_changed() {
     let mut pending = ScriptEntry::new("shot", "截图");
     pending.items = vec!["截取屏幕(高敏感)".to_string()];
     pending.consent = ConsentState::Missing;
-    pending.sensitive = true;
     let mut settings = Settings {
         scripts: vec![pending],
         ..Settings::default()
@@ -112,16 +111,15 @@ fn consent_detail_reports_pending_and_sensitive() {
     assert!(detail(&settings).contains("选择运行期扩展"));
     settings.cfg.extensions = vec!["shot".to_string()];
     let pending_detail = detail(&settings);
-    assert!(pending_detail.contains("敏感组合"));
     assert!(pending_detail.contains("待同意"));
     assert!(pending_detail.contains("截取屏幕"));
     assert!(enabled(&settings));
 
     settings.scripts[0].consent = ConsentState::Changed {
-        added: vec!["访问网络(外发)".to_string()],
+        added: vec!["读写剪贴板(高敏感)".to_string()],
     };
     let changed = detail(&settings);
-    assert!(changed.contains("新增") && changed.contains("访问网络"));
+    assert!(changed.contains("新增") && changed.contains("剪贴板"));
 
     settings.scripts[0].consent = ConsentState::Approved;
     assert!(!enabled(&settings));

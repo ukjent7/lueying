@@ -226,27 +226,10 @@ fn rejects_bad_version() {
 }
 
 #[test]
-fn parses_network_whitelist() {
+fn rejects_net_service() {
+    // v1 没有扩展网络:清单声明 net 服务直接加载失败。
     let mut value = shot_ocr();
-    value["capabilities"] = json!(["screen-capture", "network"]);
     value["needs"] = json!(["capture", "net"]);
-    value["network"] = json!({ "domains": ["api.example.com", "localhost:11434"] });
-    let manifest = parse(value).expect("网络白名单应通过");
-    let domains = &manifest.network.expect("network").domains;
-    assert_eq!(domains, &["api.example.com", "localhost:11434"]);
-}
-
-#[test]
-fn rejects_network_domain_with_path() {
-    let mut value = shot_ocr();
-    value["network"] = json!({ "domains": ["https://example.com/api"] });
-    assert!(parse(value).is_err());
-}
-
-#[test]
-fn rejects_network_domain_with_zero_port() {
-    let mut value = shot_ocr();
-    value["network"] = json!({ "domains": ["localhost:0"] });
     assert!(parse(value).is_err());
 }
 
