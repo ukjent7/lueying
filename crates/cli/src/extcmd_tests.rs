@@ -179,7 +179,7 @@ fn pack_rejects_non_utf8_text_files() {
 
 #[test]
 fn unpack_rejects_bad_header_and_unsafe_paths() {
-    assert!(unpack(b"没有头").is_err(), "缺头要被拒绝");
+    assert!(unpack("没有头".as_bytes()).is_err(), "缺头要被拒绝");
 
     let evil = "### lueying-pack v2\n### begin: ../evil.js 1\nx\n### end: ../evil.js\n";
     let error = unpack(evil.as_bytes()).expect_err("越界路径要被拒绝");
