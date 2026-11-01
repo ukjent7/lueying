@@ -21,7 +21,7 @@ use lueying_server::config;
 use lueying_server::services;
 
 use crate::ext_audit::FileAudit;
-use crate::imp::{ExtHub, ExtInvoke, State};
+use crate::imp::{ExtHub, ExtInvoke, State, wake_ui};
 
 /// 扩展目录的轮询间隔;改完脚本一秒内生效。
 const POLL: Duration = Duration::from_millis(1000);
@@ -105,10 +105,9 @@ fn worker(
     let privacy: PrivacyCheck = {
         let state = Arc::clone(&state);
         Arc::new(move || {
-            let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-            sessions
-                .get(&state.active.load(Ordering::Relaxed))
-                .is_some_and(|session| session.private)
+            state
+                .active_published()
+                .is_some_and(|published| published.private)
         })
     };
     // 同意记录的最后指纹;用户同意后不重启进程,整表重建运行期。
@@ -154,6 +153,7 @@ fn worker(
                 reported = None;
                 // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
                 let _ = patches.send((last_seq, None));
+                wake_ui(&state);
             }
             if order_changed || want_binds != bound {
                 bound = want_binds;
@@ -181,6 +181,7 @@ fn worker(
                 current.idle_unload();
                 if removed > 0 {
                     let _ = patches.send((last_seq, None));
+                    wake_ui(&state);
                 }
                 for id in &order {
                     let Some(error) = current.error(id) else {
@@ -239,6 +240,7 @@ fn worker(
             .as_mut()
             .and_then(|runtime| runtime.dispatch(&scene));
         let _ = patches.send((seq, patch));
+        wake_ui(&state);
     }
 }
 
@@ -396,13 +398,10 @@ fn run_command(runtime: &mut Runtime, command: &str, source: &str, privacy: &Pri
 
 /// 触发时刻的输入状态:活跃会话在即可编辑,其组合在即组句。
 fn session_input(state: &State) -> lueying_extwasm::bindings::Input {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let active = sessions.get(&state.active.load(Ordering::Relaxed));
+    let active = state.active_published();
     lueying_extwasm::bindings::Input {
         editable: active.is_some(),
-        composing: active
-            .and_then(|session| session.engine.composition())
-            .is_some(),
+        composing: active.is_some_and(|published| published.composing),
     }
 }
 

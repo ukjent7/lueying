@@ -3,12 +3,8 @@
 //! 徽标是候选窗之外的第二个表面:尺寸固定、只放一个字、中英切换时短暂
 //! 出现。平台侧只管建窗与上屏,画面由这里给出,配色与候选窗同源。
 
-use skia_safe::{
-    BlurStyle, Canvas, Color, Font, MaskFilter, Paint, PaintStyle, Point, RRect, Rect, Vector,
-};
-
-use crate::paint::{color, fill_paint};
-use crate::panel::Palette;
+use crate::paint::{Canvas, Color};
+use crate::panel::{Palette, Rect};
 
 /// 徽标卡片宽度(逻辑像素)。
 pub const WIDTH: f32 = 46.0;
@@ -18,6 +14,8 @@ pub const HEIGHT: f32 = 32.0;
 const RADIUS: f32 = 8.0;
 /// 徽标字号(逻辑像素)。
 const TEXT_SIZE: f32 = 17.0;
+/// 投影扩散半径(逻辑像素)。
+const SHADOW_BLUR: f32 = 6.0;
 
 /// 一枚徽标的画法参数。
 pub struct BadgeSpec<'a> {
@@ -25,81 +23,52 @@ pub struct BadgeSpec<'a> {
     pub label: &'a str,
     /// 配色令牌,与候选窗同一套。
     pub palette: &'a Palette,
-    /// 字型;没有时只画卡片,不留空白文字。
-    pub font: Option<&'a Font>,
     /// 卡片尺寸(物理像素)。
     pub width: f32,
     pub height: f32,
     /// DPI 缩放。
     pub scale: f32,
+    /// 整枚徽标的不透明度(淡入淡出);1 为全不透明。
+    pub opacity: f32,
     /// 是否画投影;高对比度主题关掉。
     pub shadow: bool,
 }
 
+/// 按整枚徽标的不透明度淡化一种颜色。
+fn fade(color: Color, opacity: f32) -> Color {
+    let alpha = (f32::from(color.alpha) * opacity.clamp(0.0, 1.0)).round() as u8;
+    Color::with_alpha(color.rgb, alpha)
+}
+
 /// 画一枚模式徽标:圆角卡片 + 描边 + 居中的字。
-pub fn draw(canvas: &Canvas, badge: &BadgeSpec<'_>) {
+pub fn draw(canvas: &mut dyn Canvas, badge: &BadgeSpec<'_>) {
     let radius = RADIUS * badge.scale;
-    if badge.shadow {
-        // 轻投影把徽标从宿主窗口上托起来。
-        let mut halo = Paint::default();
-        halo.set_anti_alias(true);
-        halo.set_color(Color::from_argb(28, 0, 0, 0));
-        if let Some(blur) = MaskFilter::blur(BlurStyle::Normal, 6.0 * badge.scale, Some(true)) {
-            halo.set_mask_filter(blur);
-        }
-        canvas.draw_rrect(
-            RRect::new_rect_radii(
-                Rect::from_xywh(
-                    1.0 * badge.scale,
-                    2.0 * badge.scale,
-                    badge.width - 2.0 * badge.scale,
-                    badge.height - 2.0 * badge.scale,
-                ),
-                &[Vector::new(radius, radius); 4],
-            ),
-            &halo,
-        );
-    }
-    // 底色与描边。
     let body = Rect::from_xywh(
         0.5 * badge.scale,
         0.5 * badge.scale,
         badge.width - badge.scale,
         badge.height - badge.scale,
     );
-    canvas.draw_rrect(
-        RRect::new_rect_radii(body, &[Vector::new(radius, radius); 4]),
-        &fill_paint(badge.palette.bg),
-    );
-    let mut stroke = Paint::default();
-    stroke.set_anti_alias(true);
-    stroke.set_style(PaintStyle::Stroke);
-    stroke.set_stroke_width(badge.scale);
-    stroke.set_color(color(badge.palette.border));
-    canvas.draw_rrect(
-        RRect::new_rect_radii(
+    if badge.shadow {
+        // 轻投影把徽标从宿主窗口上托起来。
+        canvas.shadow_rrect(
             body,
-            &[Vector::new(radius - 0.5 * badge.scale, radius - 0.5 * badge.scale); 4],
-        ),
-        &stroke,
+            radius,
+            SHADOW_BLUR * badge.scale,
+            fade(Color::with_alpha(0x000000, 28), badge.opacity),
+        );
+    }
+    canvas.fill_rrect(body, radius, fade(Color::opaque(badge.palette.bg), badge.opacity));
+    canvas.stroke_rrect(
+        body,
+        (radius - 0.5 * badge.scale).max(0.0),
+        badge.scale,
+        fade(Color::opaque(badge.palette.border), badge.opacity),
     );
-    // 字:没有字型就只剩一张卡片,总比空窗强。
-    let Some(font) = badge.font else {
-        return;
-    };
-    let mut text_font = font.clone();
-    text_font.set_size(TEXT_SIZE * badge.scale);
-    let text_width = text_font.measure_str(badge.label, None).0;
-    let (_, metrics) = text_font.metrics();
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(color(badge.palette.text));
-    // 基线按字体的上下留白居中,而不是拍一个固定偏移。
-    let baseline = badge.height / 2.0 - (metrics.ascent + metrics.descent) / 2.0;
-    canvas.draw_str(
+    canvas.text_centered(
         badge.label,
-        Point::new((badge.width - text_width) / 2.0, baseline),
-        &text_font,
-        &paint,
+        body,
+        TEXT_SIZE * badge.scale,
+        fade(Color::opaque(badge.palette.text), badge.opacity),
     );
 }

@@ -3,8 +3,6 @@
 //! 候选窗(`ui_d2d.rs`)与模式徽标(`ui_hud.rs`)共用同一套停靠点、
 //! 逐显示器 DPI、工作区夹取与全屏避让;"画什么"由会话快照决定。
 
-use std::sync::atomic::Ordering;
-
 use lueying_protocol::SessionView;
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, PreeditBar};
 use lueying_server::config::{UiFont, UiLayout};
@@ -34,12 +32,13 @@ pub(super) struct Snapshot {
 }
 
 /// 激活会话且在组合中才有窗口内容。宿主接管候选绘制时让位。
+///
+/// 只读已发布的视图:候选窗出帧不受任何会话的推理拖住。
 pub(super) fn snapshot(state: &State) -> Option<Snapshot> {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let session = sessions.get(&state.active.load(Ordering::Relaxed))?;
-    (!session.host_draws && session.engine.composition().is_some()).then(|| Snapshot {
-        view: session.view.clone(),
-        private: session.private,
+    let published = state.active_published()?;
+    (!published.host_draws && published.composing).then(|| Snapshot {
+        view: published.view.clone(),
+        private: published.private,
     })
 }
 
@@ -49,20 +48,18 @@ pub(super) fn ui_options(state: &State) -> (UiLayout, UiFont, usize) {
     (cfg.ui_layout, cfg.ui_font, cfg.ui_accent)
 }
 
-/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。宿主接管候选绘制时同样算组合中。
+/// 组合仍在进行;淡出窗口里的旧候选不能响应鼠标。
 pub(super) fn in_composition(state: &State) -> bool {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    sessions
-        .get(&state.active.load(Ordering::Relaxed))
-        .is_some_and(|s| s.engine.composition().is_some())
+    state
+        .active_published()
+        .is_some_and(|published| published.composing)
 }
 
 /// 服务端候选窗在显示;宿主接管绘制时让位。
 pub(super) fn composing(state: &State) -> bool {
-    let sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    sessions
-        .get(&state.active.load(Ordering::Relaxed))
-        .is_some_and(|s| !s.host_draws && s.engine.composition().is_some())
+    state
+        .active_published()
+        .is_some_and(|published| published.composing && !published.host_draws)
 }
 
 /// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。

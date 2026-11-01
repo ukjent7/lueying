@@ -38,7 +38,7 @@ pub struct Inputs<'a> {
     pub panel: Rect,
     pub preedit: Rect,
     pub highlight: Option<Rect>,
-    pub candidates: &'a [Rect],
+    pub candidate_rects: &'a [Rect],
     pub caret: Rect,
     pub screen: Rect,
 }
@@ -603,7 +603,7 @@ fn anchor_rect(anchor: &Anchor, inputs: &Inputs<'_>) -> Option<Rect> {
         AnchorBase::Panel => inputs.panel,
         AnchorBase::Preedit => inputs.preedit,
         AnchorBase::Highlight => inputs.highlight?,
-        AnchorBase::Candidate(index) => *inputs.candidates.get(index)?,
+        AnchorBase::Candidate(index) => *inputs.candidate_rects.get(index)?,
         AnchorBase::Caret => inputs.caret,
         AnchorBase::Screen => inputs.screen,
     })

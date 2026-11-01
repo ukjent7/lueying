@@ -60,12 +60,6 @@ jobs:
           lookup-only: ${{ github.event_name == 'pull_request' }}
           # 与 ci.yml 的 Linux job 共用一份缓存:同一把锁、同一批依赖。
           prefix-key: linux
-      # Skia 预编译二进制静态链进了系统 freetype/fontconfig,链接 E2E 时要 .so
-      # 与 pkg-config 头文件;runner 镜像只有运行库。
-      - name: 安装 Skia 链接依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
       # 与 ci.yml 共用同一份 data/ 缓存;词典转换是纯函数,源码不变就不重转。
       - name: 缓存词典与模型
         id: dict-cache

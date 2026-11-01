@@ -1,19 +1,19 @@
-//! 模式徽标:Win32 分层窗口 + Skia 光栅绘制。
+//! 模式徽标:Win32 分层窗口 + Direct2D 绘制。
 //!
-//! 徽标与候选窗各走各的渲染路径:候选窗在 D2D 管线里,徽标走 CPU 光栅——
-//! 分层窗口不依赖 GPU,候选窗管线起不来时徽标也照常显示。
-//! 画面是预乘 alpha 的位图,靠 UpdateLayeredWindow 上屏,圆角、描边与淡入
-//! 淡出都是逐像素的。
+//! 徽标与候选窗各走各的渲染路径:候选窗在 DirectComposition 管线里,徽标
+//! 画在 Direct2D 兼容的 DC 表面上——分层窗口不依赖 GPU,候选窗管线起不来
+//! 时徽标也照常显示。画面是预乘 alpha 的位图,靠 UpdateLayeredWindow 上屏,
+//! 圆角、描边与淡入淡出都由绘制层给出。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_render::badge;
+use lueying_render::paint::Canvas;
 use lueying_render::panel::Palette;
-use lueying_server::blit::Layer;
 use lueying_server::theme;
-use skia_safe::{Font, Surface};
+use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -36,8 +36,8 @@ const HUD_START_OPACITY: f32 = 0.7;
 const HUD_SHOW: Duration = Duration::from_millis(600);
 const HUD_FADE: Duration = Duration::from_millis(180);
 const HUD_TOTAL: Duration = Duration::from_millis(780);
-/// 轮询间隔;徽标只在切换后出现,15ms 足够跟手。
-const POLL: Duration = Duration::from_millis(15);
+/// 淡入淡出期间的重绘节奏。
+const HUD_TICK: Duration = Duration::from_millis(15);
 
 /// 当前这份徽标:显示哪个字、贴哪个光标、从何时开始计时。
 #[derive(Clone)]
@@ -61,7 +61,7 @@ pub(super) fn spawn(state: Arc<State>) {
     }
 }
 
-/// 徽标线程:轮询切换序号,到期前画一帧,到期后把窗口挪出屏幕。
+/// 徽标线程:等切换事件,可见期间按淡入/保持/淡出分段出帧,到期后停靠。
 fn hud_loop(state: Arc<State>) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -73,14 +73,13 @@ fn hud_loop(state: Arc<State>) {
             return;
         }
     };
-    let mut layer = match Layer::new() {
-        Ok(layer) => layer,
+    let mut surface = match Surface::new() {
+        Ok(surface) => surface,
         Err(e) => {
-            println!("模式徽标建位图失败: {e}");
+            println!("模式徽标建表面失败: {e}");
             return;
         }
     };
-    let font = crate::font::panel_font();
     let mut serial = 0u64;
     let mut current: Option<HudView> = None;
     // 首帧上屏后再显示,避免从停靠点挪到光标处时闪一帧旧徽标。
@@ -100,7 +99,7 @@ fn hud_loop(state: Arc<State>) {
             }
         }
         let now = Instant::now();
-        let next = state.hud_serial.load(Ordering::Relaxed);
+        let next = state.hud_serial.load(Ordering::Acquire);
         if next != serial {
             serial = next;
             current = hud_view(&state);
@@ -120,21 +119,21 @@ fn hud_loop(state: Arc<State>) {
                     let scale = w as f32 / badge::WIDTH;
                     let palette = theme::palette(theme::colors_with(appearance, accent));
                     let opacity = opacity(&view, now, reduce);
-                    match layer.surface(w as u32, h as u32) {
-                        Ok(surface) => {
+                    match surface.begin(w as u32, h as u32) {
+                        Ok(canvas) => {
                             draw_badge(
-                                surface,
+                                canvas,
                                 &view,
-                                font.as_ref(),
                                 &palette,
                                 appearance,
                                 opacity,
                                 scale,
+                                (w as f32, h as f32),
                             );
                         }
                         Err(e) => println!("模式徽标表面失败: {e}"),
                     }
-                    if let Err(e) = layer.present(hwnd, x, y, w, h) {
+                    if let Err(e) = surface.present(hwnd, x, y, w, h) {
                         println!("模式徽标上屏失败: {e}");
                     } else if !visible {
                         unsafe {
@@ -148,7 +147,28 @@ fn hud_loop(state: Arc<State>) {
             }
             None => park(hwnd, &mut visible),
         }
-        std::thread::sleep(POLL);
+        // 停靠时一直睡到下一次切换;可见时睡到下一个动画节点。
+        let wait = next_wait(current.as_ref(), Instant::now(), reduce);
+        state.wake_hud.wait(wait);
+    }
+}
+
+/// 下一次该醒来的时间:停靠时为 None,可见时按淡入/保持/淡出分段。
+fn next_wait(current: Option<&HudView>, now: Instant, reduce: bool) -> Option<Duration> {
+    let view = current?;
+    let elapsed = now.saturating_duration_since(view.at);
+    if elapsed >= HUD_TOTAL {
+        return Some(Duration::ZERO);
+    }
+    if reduce {
+        return Some(HUD_TOTAL - elapsed);
+    }
+    if elapsed < HUD_FADE_IN {
+        Some(HUD_TICK.min(HUD_FADE_IN - elapsed))
+    } else if elapsed < HUD_SHOW {
+        Some(HUD_SHOW - elapsed)
+    } else {
+        Some(HUD_TICK.min(HUD_TOTAL - elapsed))
     }
 }
 
@@ -235,42 +255,28 @@ fn opacity(view: &HudView, now: Instant, reduce: bool) -> f32 {
     }
 }
 
-/// 画一帧徽标:圆角卡片 + 描边 + 居中的字。
+/// 画一帧徽标:圆角卡片 + 描边 + 居中的字;淡入淡出作用整枚徽标。
 fn draw_badge(
-    surface: &mut Surface,
+    canvas: &mut dyn Canvas,
     view: &HudView,
-    font: Option<&Font>,
     palette: &Palette,
     appearance: theme::Appearance,
     opacity: f32,
     scale: f32,
+    (width, height): (f32, f32),
 ) {
-    let (width, height) = (surface.width() as f32, surface.height() as f32);
-    let canvas = surface.canvas();
-    canvas.clear(skia_safe::Color::TRANSPARENT);
-    // 淡入淡出作用整窗;圆角之外的像素保持透明。
-    if opacity < 1.0 {
-        canvas.save_layer_alpha_f(
-            skia_safe::Rect::from_wh(width, height),
-            opacity.clamp(0.0, 1.0),
-        );
-    }
-    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
     badge::draw(
         canvas,
         &badge::BadgeSpec {
             label: view.label,
             palette,
-            font,
             width,
             height,
             scale,
-            shadow: !high_contrast,
+            opacity,
+            shadow: !matches!(appearance, theme::Appearance::HighContrast),
         },
     );
-    if opacity < 1.0 {
-        canvas.restore();
-    }
 }
 
 /// 无焦点置顶的分层窗口:画面只由 UpdateLayeredWindow 给,系统不画背景。

@@ -1,13 +1,11 @@
 //! 宿主选择面板绘制:标题、条目列表、页脚与命中。
 //!
-//! 只认数据:标题与可见行由服务端的 `HostPanel` 模型给出,调色板与字型
-//! 由窗口层传入。绘制与命中共用同一份 [`Layout`],所指即所画。
+//! 只认数据:标题与可见行由服务端的 `HostPanel` 模型给出,调色板由窗口层
+//! 传入。绘制与命中共用同一份 [`Layout`],所指即所画。
 
-use skia_safe::{Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect};
-
-use crate::command::{ellipsize, fill, text};
-use crate::paint::color;
-use crate::panel::Palette;
+use crate::command::{ellipsize, text};
+use crate::paint::{Canvas, Color, Point};
+use crate::panel::{Palette, Rect};
 
 /// 面板逻辑宽度。
 pub const WIDTH: f32 = 440.0;
@@ -88,100 +86,87 @@ pub fn layout(spec: &Spec, scale: f32) -> Layout {
 
 /// 画一帧;调用方按 [`Layout::size`] 准备同样大的画布。
 pub fn draw(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let scale = scale.max(0.5);
     let (width, height) = layout.size;
-    canvas.draw_rect(Rect::from_xywh(0.0, 0.0, width, height), &fill(palette.bg));
-    let mut border = Paint::default();
-    border.set_anti_alias(true);
-    border.set_style(PaintStyle::Stroke);
-    border.set_stroke_width(scale);
-    border.set_color(color(palette.border));
-    canvas.draw_rect(
+    canvas.fill_rect(
+        Rect::from_xywh(0.0, 0.0, width, height),
+        Color::opaque(palette.bg),
+    );
+    // 外框;窗口没有系统边框,描边由这里画。
+    canvas.stroke_rect(
         Rect::from_xywh(0.5 * scale, 0.5 * scale, width - scale, height - scale),
-        &border,
+        scale,
+        Color::opaque(palette.border),
     );
 
-    draw_title(canvas, spec, layout, palette, font, scale);
-    draw_rows(canvas, spec, layout, palette, font, scale);
-    draw_footer(canvas, spec, layout, palette, font, scale);
+    draw_title(canvas, spec, layout, palette, scale);
+    draw_rows(canvas, spec, layout, palette, scale);
+    draw_footer(canvas, spec, layout, palette, scale);
 }
 
 fn draw_title(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let size = 15.0 * scale;
-    let baseline = layout.title.center_y() + size * 0.36;
+    let middle = layout.title.center_y();
     let count = format!("{} 项", spec.total);
-    let mut count_font = font.clone();
-    count_font.set_size(11.0 * scale);
-    let (count_width, _) = count_font.measure_str(&count, None);
+    let count_width = canvas.measure(&count, 11.0 * scale);
     let title_width = (layout.title.width() - 3.0 * PAD * scale - count_width).max(0.0);
-    let title = ellipsize(font, size, &spec.title, title_width);
+    let title = ellipsize(canvas, size, &spec.title, title_width);
     text(
         canvas,
-        font,
         size,
         palette.text,
-        Point::new(PAD * scale, baseline),
+        Point::new(PAD * scale, middle),
         &title,
-        Some((title_width, size)),
+        Some(title_width),
     );
     text(
         canvas,
-        font,
         11.0 * scale,
         palette.text_tertiary,
-        Point::new(
-            layout.title.right - PAD * scale - count_width,
-            layout.title.center_y() + 11.0 * scale * 0.36,
-        ),
+        Point::new(layout.title.right - PAD * scale - count_width, middle),
         &count,
         None,
     );
-    canvas.draw_rect(
+    canvas.fill_rect(
         Rect::from_xywh(
             PAD * scale,
             layout.title.bottom - scale,
             layout.title.width() - 2.0 * PAD * scale,
             scale,
         ),
-        &fill(palette.border),
+        Color::opaque(palette.border),
     );
 }
 
 fn draw_rows(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     if spec.rows.is_empty() {
         let size = 14.0 * scale;
-        let mut message_font = font.clone();
-        message_font.set_size(size);
-        let (width, _) = message_font.measure_str("没有可选项", None);
+        let width = canvas.measure("没有可选项", size);
         text(
             canvas,
-            font,
             size,
             palette.text_secondary,
             Point::new(
                 layout.list.center_x() - width * 0.5,
-                layout.list.center_y() + size * 0.36,
+                layout.list.center_y(),
             ),
             "没有可选项",
             None,
@@ -201,89 +186,79 @@ fn draw_rows(
                 rect.right,
                 rect.bottom - 2.0 * scale,
             );
-            canvas.draw_rrect(
-                RRect::new_rect_xy(inner, RADIUS * scale, RADIUS * scale),
-                &fill(palette.selected_bg),
-            );
+            canvas.fill_rrect(inner, RADIUS * scale, Color::opaque(palette.selected_bg));
         }
         let max_width = rect.width() - 2.0 * PAD * scale;
-        let shown = ellipsize(font, size, row, max_width);
+        let shown = ellipsize(canvas, size, row, max_width);
         text(
             canvas,
-            font,
             size,
             if selected {
                 palette.selected_text
             } else {
                 palette.text
             },
-            Point::new(rect.left + PAD * scale, rect.center_y() + size * 0.36),
+            Point::new(rect.left + PAD * scale, rect.center_y()),
             &shown,
-            Some((max_width, size)),
+            Some(max_width),
         );
     }
     // 卷动提示:上下还有内容时在列表右缘画小箭头。
-    let mut arrow_font = font.clone();
-    arrow_font.set_size(10.0 * scale);
-    let mut arrow = Paint::default();
-    arrow.set_anti_alias(true);
-    arrow.set_color(color(palette.text_tertiary));
     if spec.above > 0 {
-        canvas.draw_str(
-            "▲",
+        text(
+            canvas,
+            10.0 * scale,
+            palette.text_tertiary,
             Point::new(
                 layout.list.right - 12.0 * scale,
-                layout.list.top + 9.0 * scale,
+                layout.list.top + 5.0 * scale,
             ),
-            &arrow_font,
-            &arrow,
+            "▲",
+            None,
         );
     }
     if spec.below > 0 {
-        canvas.draw_str(
-            "▼",
+        text(
+            canvas,
+            10.0 * scale,
+            palette.text_tertiary,
             Point::new(
                 layout.list.right - 12.0 * scale,
-                layout.list.bottom - 3.0 * scale,
+                layout.list.bottom - 5.0 * scale,
             ),
-            &arrow_font,
-            &arrow,
+            "▼",
+            None,
         );
     }
 }
 
 fn draw_footer(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let size = 11.0 * scale;
-    let baseline = layout.footer.center_y() + size * 0.36;
+    let middle = layout.footer.center_y();
     text(
         canvas,
-        font,
         size,
         palette.text_tertiary,
-        Point::new(PAD * scale, baseline),
+        Point::new(PAD * scale, middle),
         "↑↓ 选择 · Enter 确认 · Esc 取消",
-        Some((layout.footer.width() - 2.0 * PAD * scale, size)),
+        Some(layout.footer.width() - 2.0 * PAD * scale),
     );
     if spec.total == 0 {
         return;
     }
     let label = format!("{}/{}", spec.above + spec.selected + 1, spec.total);
-    let mut label_font = font.clone();
-    label_font.set_size(size);
-    let (label_width, _) = label_font.measure_str(&label, None);
+    let label_width = canvas.measure(&label, size);
     text(
         canvas,
-        font,
         size,
         palette.text_tertiary,
-        Point::new(layout.footer.right - PAD * scale - label_width, baseline),
+        Point::new(layout.footer.right - PAD * scale - label_width, middle),
         &label,
         None,
     );
@@ -292,7 +267,7 @@ fn draw_footer(
 /// 鼠标命中;坐标是窗口客户区物理像素。
 pub fn hit(layout: &Layout, spec: &Spec, x: f32, y: f32) -> Hit {
     for (index, rect) in layout.rows.iter().enumerate() {
-        if rect.contains(Point::new(x, y)) && index < spec.rows.len() {
+        if rect.contains(x, y) && index < spec.rows.len() {
             return Hit::Row(index);
         }
     }

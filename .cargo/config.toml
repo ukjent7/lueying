@@ -7,8 +7,6 @@
 #   依赖系统运行库的 DLL。
 #
 #   server/settings/update 是独立进程,宿主不限制它们的 DLL 搜索路径,用系统 CRT
-#   即可。这样才能链上 rust-skia 官方发布的预编译二进制:那些二进制是动态 CRT
-#   构建的,静态 CRT 的产物链它们会缺 __imp_malloc 这类导入符号,根本链不过。
-#   代价是 server 依赖系统里的 VC 运行库(Windows 10/11 自带)。
+#   即可。代价是依赖系统里的 VC 运行库(Windows 11 24H2 自带)。
 #
 # 所以这里不再全局打开 crt-static:要静态 CRT 的只有 TSF DLL,单独构建。

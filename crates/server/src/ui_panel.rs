@@ -1,4 +1,4 @@
-//! 命令面板窗口:可获焦的原生窗 + Skia 光栅 + GDI 贴图。
+//! 命令面板窗口:可获焦的原生窗 + Direct2D 绘制 + GDI 贴图。
 //!
 //! 与候选窗不同,面板需要键盘焦点:总热键唤出时记录前台窗口,面板关闭后
 //! 把焦点还回去。窗口线程只在有请求时醒来,空闲时阻塞在通道上,不轮询。
@@ -14,11 +14,9 @@ use std::time::{Duration, Instant};
 use lueying_dict::Dictionary;
 use lueying_render::command;
 use lueying_render::panel::Palette;
-use lueying_server::blit::Layer;
 use lueying_server::command_panel::{CommandItem, CommandPanel, CommandView};
-use lueying_server::font;
 use lueying_server::theme;
-use skia_safe::Font;
+use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, HDC, InvalidateRect, PAINTSTRUCT};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -123,8 +121,7 @@ fn panel_loop(state: Arc<State>, rx: Receiver<Vec<CommandItem>>) {
 /// 面板窗口状态;由窗口的 USERDATA 指向,生命周期与窗口线程一致。
 struct PanelWindow {
     hwnd: HWND,
-    layer: Layer,
-    font: Font,
+    surface: Surface,
     palette: Palette,
     accent: usize,
     scale: f32,
@@ -145,8 +142,7 @@ impl PanelWindow {
     fn create(dict: Arc<Dictionary>, accent: usize) -> Result<Box<Self>, String> {
         let mut window = Box::new(Self {
             hwnd: HWND::default(),
-            layer: Layer::new()?,
-            font: font::ui_font(),
+            surface: Surface::new()?,
             palette: theme::palette(theme::colors_with(theme::Appearance::of_system(), accent)),
             accent,
             scale: 1.0,
@@ -258,25 +254,17 @@ impl PanelWindow {
         )
     }
 
-    /// 画一帧:Skia 画进位图,再贴到客户区。
+    /// 画一帧:Direct2D 画进位图,再贴到客户区。
     fn paint(&mut self, hdc: HDC) {
         let (w, h) = self.size;
         if w <= 0 || h <= 0 {
             return;
         }
-        let Ok(surface) = self.layer.surface(w as u32, h as u32) else {
+        let Ok(canvas) = self.surface.begin(w as u32, h as u32) else {
             return;
         };
-        command::draw(
-            surface.canvas(),
-            &self.spec,
-            &self.layout,
-            &self.palette,
-            &self.font,
-            self.scale,
-        );
-        let _ = self.layer.copy_pixels();
-        let _ = self.layer.blit(hdc, w, h);
+        command::draw(canvas, &self.spec, &self.layout, &self.palette, self.scale);
+        let _ = self.surface.blit(hdc, w, h);
     }
 
     /// 关闭面板;`restore` 为真时把焦点还给唤出前的窗口。

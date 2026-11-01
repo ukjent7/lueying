@@ -33,10 +33,7 @@ pub mod seam;
 pub mod skin;
 
 #[cfg(windows)]
-pub mod blit;
-
-#[cfg(windows)]
-pub mod font;
+pub mod ui_surface;
 
 #[cfg(windows)]
 pub mod services;

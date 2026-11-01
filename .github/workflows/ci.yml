@@ -116,22 +116,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Skia 预编译二进制静态链进了系统 freetype/fontconfig,链接期要 -lfreetype/
-      # -lfontconfig,也就是 .so 与 pkg-config 头文件;Ubuntu runner 镜像只有运行库。
-      - name: 安装 Skia 链接依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
           # Linux 三个 job 共用一份缓存:同一把锁、同一批依赖,谁先跑完谁落地,
           # 其余 job 恢复同一份,省去各自冷启动全量编译。
           prefix-key: linux
-      # 预编译命中门禁:特性集与 rust-skia 发布的键对不上时,这里几秒就红;
-      # 否则会静默退化成十几分钟的本地编 Skia,还把原因埋在日志里。
-      - name: Skia 预编译命中
-        run: cargo build --release -p lueying-render --features prebuilt-only --locked
       # 单元测试补回归网密度;E2E 仍是主路径,这里只测纯逻辑边界。
       - name: 服务端单元测试
         run: cargo test -p lueying-server --lib --release --locked
@@ -188,16 +178,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: 安装 Skia 链接依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfreetype6-dev libfontconfig1-dev
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
           prefix-key: linux
-      - name: Skia 预编译命中
-        run: cargo build --release -p lueying-render --features prebuilt-only --locked
       - name: 缓存词典与模型
         id: dict-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -248,7 +232,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 缓存只留 windows job(Windows 原生链路与 Skia 是编译大头,ubuntu 两个 job 全量也只要几分钟);
+      # 缓存只留 windows job(Windows 原生链路编译最慢,ubuntu 两个 job 全量也只要几分钟);
       # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -283,11 +267,6 @@ jobs:
         run: |
           rustup target add aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
-      # Skia 预编译命中:d3d 特性已随 P2 的 D2D 迁移删除,Windows 侧回归
-      # 与 Linux 相同的非 GPU 键;prebuilt-only 让预编译缺失时立刻失败,
-      # 而不是本地编 Skia 十几分钟后才失败。
-      - name: Skia 预编译命中
-        run: cargo build --release -p lueying-render --features prebuilt-only --locked
       # 官方原生扩展 ppocr:产物单独走 Release 资产分发,不进安装包。
       # 它的哈希要先补进官方目录(编译期嵌入 server),所以必须在
       # Build (release) 之前补目录。
@@ -336,9 +315,9 @@ jobs:
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
       # 运行时体积基线:2026-10-31 实测 server 33.6 + settings 22.1 +
       # user 0.6 + TSF 0.7 ≈ 57 MiB(自研更新器已砍,更新改设置窗直接
-      # 下载安装包)。大头是静态链接的 Skia。设置窗引入 Slint(winit +
-      # 软件渲染)后先放宽到 90 MiB,Windows 实测出 Slint 的真实增量后
-      # 收紧。发布包另有总门禁。
+      # 下载安装包)。候选窗早已走 D2D,Skia 现已整条删除。设置窗用
+      # Slint(winit + 软件渲染),体积门限 90 MiB;Windows 实测出 Slint
+      # 的真实增量后收紧。发布包另有总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |

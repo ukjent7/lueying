@@ -44,7 +44,7 @@ lueying_tsf.dll (轻量薄壳，注入宿主进程，仅处理按键协议转发
 lueying-server.exe (用户常驻服务)
     ├─ 核心解码引擎 (共享二进制词典、语法搭配与重排模型)
     ├─ 候选窗口 (Direct2D: DirectComposition + WARP 兜底)
-    ├─ 状态徽标 (分层窗口 CPU 光栅化)
+    ├─ 状态徽标 (分层窗口 Direct2D 位图)
     └─ Wasm 扩展沙箱 (wasmi 解释执行，每扩展独立 worker)
 lueying-settings.exe (独立设置中心：Slint 窗口，winit 后端；更新从这里下载安装包)
 ```

@@ -9,10 +9,10 @@
 
 ## 开发环境准备
 
-- **操作系统**：Windows 10（1809+）或 Windows 11（x64）。
+- **操作系统**：Windows 11 24H2 及以上（x64；ARM64 宿主经 x64 模拟加载）。
 - **Rust 工具链**：以项目根目录的 `rust-toolchain.toml` 为准，需包含 `rustfmt` 与 `clippy` 组件。
 - **打包工具**：构建 Windows 安装包需安装 Inno Setup 6.7.3。
-- **Linux 支持**：Linux 环境可直接编译引擎、协议、扩展及无头渲染 E2E 测试，需预装基础开发库：`libfreetype6-dev`、`libfontconfig1-dev`。
+- **Linux 支持**：Linux 环境可直接编译引擎、协议、扩展及无头渲染 E2E 测试，不需要额外的系统图形库。
 
 ### 外部词典与模型资源准备
 

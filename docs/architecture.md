@@ -13,7 +13,7 @@ lueying_tsf.dll（轻量薄壳，注入宿主进程）
 lueying-server.exe（用户常驻服务）
     ├─ 引擎会话（按宿主线程隔离，共享词典、模型与用户词库）
     ├─ 候选窗口（Direct2D/DirectWrite：DirectComposition 交换链 + WARP 兜底）
-    ├─ 状态徽标（原生分层窗口：CPU 光栅化 + UpdateLayeredWindow）
+    ├─ 状态徽标（原生分层窗口：Direct2D 预乘位图 + UpdateLayeredWindow）
     ├─ 后台工作线程（UIA 上下文获取、停顿重排等）
     └─ 本地日志（%LOCALAPPDATA%\lueying\logs\server.log）
 lueying-settings.exe（独立设置窗口：Slint + AccessKit 无障碍，管道通信；更新从这里下载安装包）

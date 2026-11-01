@@ -1,7 +1,7 @@
 //! 自动更新用到的纯逻辑:版本比较与 SHA-256 摘要提取。
 //!
 //! 放在协议 crate 里而不是 Windows 专属的 server 模块,测试就能在 Linux 上跑,
-//! 不必为两个纯函数编译整棵带 Skia 的依赖树。
+//! 不必为两个纯函数编译整棵带 Windows 图形依赖的树。
 
 use std::cmp::Ordering;
 

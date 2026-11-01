@@ -1,6 +1,6 @@
 //! D2D 候选窗:Win32 无焦点弹出窗 + DirectComposition 合成交换链 + Direct2D。
 //!
-//! 候选窗:独立线程自建消息泵,15ms 轮询会话版本号;摆位、停靠、DPI 与
+//! 候选窗:独立线程自建消息泵,等版本号事件、窗口消息与动画帧;摆位、停靠、DPI 与
 //! 全屏避让同 `ui_place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
 //! 滚轮/翻页箭头、右键菜单与悬停,动效可被按键打断,「减少动态效果」时
 //! 全部走终态。管线在 `ui_d2d_pipe`:硬件优先,没有适配器退 WARP;设备
@@ -21,8 +21,9 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GWLP_USERDATA,
-    GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG, PM_REMOVE,
-    PeekMessageW, RegisterClassW, SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE,
+    GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG,
+    MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW, QS_ALLINPUT,
+    RegisterClassW, SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_NOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos,
     ShowWindow, SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE,
     WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE,
@@ -36,8 +37,8 @@ use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
 use crate::ui_d2d_scene::SceneHost;
 use crate::ui_place::{self, CARET_GAP};
 
-/// 会话版本号轮询间隔;取值对打字反馈无感。
-const POLL: Duration = Duration::from_millis(15);
+/// 淡入/淡出期间的重绘节奏。
+const ANIM_TICK: Duration = Duration::from_millis(5);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
@@ -238,10 +239,24 @@ fn window_loop(state: Arc<State>) {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
     }
     let mut last_version = 0u64;
-    let mut next_poll = Instant::now();
     let mut next_scene_frame = Instant::now();
     loop {
-        // 无焦点窗口的消息量很小,每轮顺手排干;真正的节奏靠 5ms 睡眠。
+        // 空闲时一直等下去:版本号、窗口消息与脚本补丁都会叫醒这里;
+        // 动画与场景活着时按帧推进,其余时间不烧 CPU。
+        let waiting = busy_animating(unsafe { &*ctx });
+        let timeout = if waiting {
+            Some(ANIM_TICK)
+        } else if scene_live(unsafe { &*ctx }) {
+            Some(
+                next_scene_frame
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1)),
+            )
+        } else {
+            None
+        };
+        wait_for_input(&state, timeout);
+        // 无焦点窗口的消息量很小,醒来顺手排干。
         unsafe {
             let mut msg = MSG::default();
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -254,41 +269,57 @@ fn window_loop(state: Arc<State>) {
         let patch = unsafe { &(*ctx).script }.take();
         if let Some((seq, patch)) = patch {
             let ctx = unsafe { &mut *ctx };
-            let redraw_now = state.version.load(Ordering::Relaxed) == last_version;
+            let redraw_now = state.version.load(Ordering::Acquire) == last_version;
             apply_script(ctx, seq, patch, redraw_now);
         }
-        if now >= next_poll {
-            next_poll = now + POLL;
-            let version = state.version.load(Ordering::Relaxed);
-            if version != last_version {
-                last_version = version;
-                // 消息泵之外取可变借用;窗口过程里的借用都已结束。
-                let ctx = unsafe { &mut *ctx };
-                ctx.fx.reduce = reduce_motion();
-                place(ctx);
-            }
+        let version = state.version.load(Ordering::Acquire);
+        if version != last_version {
+            last_version = version;
+            // 消息泵之外取可变借用;窗口过程里的借用都已结束。
+            let ctx = unsafe { &mut *ctx };
+            ctx.fx.reduce = reduce_motion();
+            place(ctx);
         }
         // 场景目录有变化就热重载;一秒一查,成本是一次文件元数据读取。
         let ctx = unsafe { &mut *ctx };
         ctx.scene.refresh(now);
         // 淡入/淡出/滑动进行中按循环节奏重绘;场景活着也按节奏推进。
-        let (animating, scene_live) = unsafe {
-            let fx = &(*ctx).fx;
-            let animating = fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some();
-            let scene_live = (*ctx).scene.live()
-                && scene_enabled(&(*ctx).state)
-                && !(*ctx).private
-                && !fx.reduce
-                && fx.last.is_some()
-                && !(*ctx).dead;
-            (animating, scene_live)
-        };
-        if animating || (scene_live && now >= next_scene_frame) {
+        if busy_animating(ctx) || (scene_live(ctx) && now >= next_scene_frame) {
             next_scene_frame = now + SCENE_INTERVAL;
-            let ctx = unsafe { &mut *ctx };
             animate(ctx);
         }
-        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// 淡入/淡出/滑动是否还在推进。
+fn busy_animating(ctx: &WinCtx) -> bool {
+    let fx = &ctx.fx;
+    fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some()
+}
+
+/// 场景层是否活着;活着就要按帧推进。
+fn scene_live(ctx: &WinCtx) -> bool {
+    let fx = &ctx.fx;
+    ctx.scene.live()
+        && scene_enabled(&ctx.state)
+        && !ctx.private
+        && !fx.reduce
+        && fx.last.is_some()
+        && !ctx.dead
+}
+
+/// 等版本号事件、窗口消息或动画帧;`timeout` 为空时一直睡到有事件。
+fn wait_for_input(state: &State, timeout: Option<Duration>) {
+    let event = state.wake_ui.raw();
+    if event.is_invalid() {
+        std::thread::sleep(timeout.unwrap_or(Duration::from_millis(15)));
+        return;
+    }
+    let ms = timeout.map_or(windows::Win32::System::Threading::INFINITE, |wait| {
+        wait.as_millis().min(u128::from(u32::MAX)) as u32
+    });
+    unsafe {
+        MsgWaitForMultipleObjectsEx(Some(&[event]), ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
 }
 
@@ -689,7 +720,7 @@ fn scene_tick(
         panel: [0.0, 0.0, width / s, height / s],
         preedit: [0.0, 0.0, width / s, panel::PREEDIT_H],
         highlight,
-        candidates: &rects,
+        candidate_rects: &rects,
         // 组合光标多半在窗外(宿主应用里);诚实换算,画出去会被裁掉。
         caret: {
             let (wx, wy) = ctx.pos;

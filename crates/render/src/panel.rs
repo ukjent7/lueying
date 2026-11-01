@@ -121,12 +121,29 @@ impl Rect {
         }
     }
 
+    pub fn from_ltrb(left: f32, top: f32, right: f32, bottom: f32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
     pub fn width(&self) -> f32 {
         self.right - self.left
     }
 
     pub fn height(&self) -> f32 {
         self.bottom - self.top
+    }
+
+    pub fn center_x(&self) -> f32 {
+        (self.left + self.right) / 2.0
+    }
+
+    pub fn center_y(&self) -> f32 {
+        (self.top + self.bottom) / 2.0
     }
 
     pub fn contains(&self, x: f32, y: f32) -> bool {

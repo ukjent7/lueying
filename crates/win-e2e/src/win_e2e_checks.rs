@@ -228,7 +228,7 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
 /// D2D 渲染管线自检:Server 启动时按 `LUEYING_D2D_SELFTEST` 离屏出帧并
 /// 读回像素,结论写进日志;这里读日志断言。WARP 软件渲染,没有 GPU 的
 /// CI runner 也跑得出确定性的像素。
-pub(super) fn check_skia_selftest() -> Result<String, String> {
+pub(super) fn check_d2d_selftest() -> Result<String, String> {
     let text = std::fs::read_to_string(server_log()).unwrap_or_default();
     if let Some(line) = text.lines().find(|line| line.contains("D2D 自检失败")) {
         return Err(format!("D2D 自检失败:{line}"));

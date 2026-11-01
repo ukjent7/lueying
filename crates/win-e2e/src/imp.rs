@@ -557,8 +557,8 @@ fn real_run() -> Result<(String, String), String> {
         // 组合里 Ctrl+Backspace 由输入法按音节删除,不能漏给宿主去改文档。
         let segment_note = check_segment_edit(edit, &thread_mgr)?;
         let fullwidth_note = check_fullwidth(edit)?;
-        // Skia 管线自检结论在启动日志里;读不到或失败都让整轮红。
-        let skia_note = check_skia_selftest()?;
+        // D2D 管线自检结论在启动日志里;读不到或失败都让整轮红。
+        let d2d_note = check_d2d_selftest()?;
         // 运行期扩展自检:Wasm guest 在 Windows 上加载、派发、隐私拦截。
         let ext_note = check_ext_selftest()?;
         // 设置窗自检:Slint 组件实例化,页面模型吃得进、关键控件在位。
@@ -590,7 +590,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{d2d_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();

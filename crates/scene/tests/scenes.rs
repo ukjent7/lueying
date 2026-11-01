@@ -19,7 +19,7 @@ fn inputs<'a>(candidates: &'a [[f32; 4]]) -> Inputs<'a> {
         panel: [0.0, 0.0, 400.0, 100.0],
         preedit: [0.0, 0.0, 400.0, 32.0],
         highlight: candidates.first().copied(),
-        candidates,
+        candidate_rects: candidates,
         caret: [0.0, 0.0, 0.0, 20.0],
         screen: [0.0, 0.0, 400.0, 100.0],
     }

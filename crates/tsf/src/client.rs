@@ -1,7 +1,7 @@
-//! Server 管道客户端:懒连接;断线时上层直接放行字母(宁可英文直通也不死键盘)。
+//! Server 管道客户端:懒连接、重叠 I/O 等应答;断线时上层直接放行字母
+//! (宁可英文直通也不死键盘)。
 
 use std::fs::File;
-use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
@@ -9,19 +9,25 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use lueying_protocol::{Reply, Request};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::Storage::FileSystem::{SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT};
-use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe};
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+use windows::Win32::Foundation::{CloseHandle, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Storage::FileSystem::{
+    FILE_FLAG_OVERLAPPED, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
 };
-use windows::core::PWSTR;
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+use windows::Win32::System::Threading::{
+    CreateEventW, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW, ResetEvent, WaitForSingleObject,
+};
+use windows::core::{HRESULT, PWSTR};
 
 pub(crate) struct Client {
-    reader: File,
     /// 已读到但还没凑成完整帧的字节(管道是字节流)。
     pending: Vec<u8>,
-    writer: File,
+    /// 管道句柄;读写都走重叠 I/O。
+    pipe: File,
+    /// 重叠 I/O 的完成事件,每次操作前复位。
+    event: HANDLE,
 }
 
 /// 单次请求-应答的上限。Server 卡住时不能让宿主 UI 线程无限等;
@@ -87,68 +93,124 @@ impl Client {
     }
 
     fn open() -> Option<Self> {
-        let file = std::fs::OpenOptions::new()
+        let pipe = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .share_mode(0)
             // SQOS=IDENTIFICATION:客户端禁止管道服务端模拟自己——键盘流是敏感
-            // 数据,mozc/WeType 同款。custom_flags 正好并入 dwFlagsAndAttributes。
-            .custom_flags(SECURITY_SQOS_PRESENT.0 | SECURITY_IDENTIFICATION.0)
+            // 数据,mozc/WeType 同款。FILE_FLAG_OVERLAPPED 让读写在事件上等,
+            // 不再 PeekNamedPipe 加 1ms 空转。custom_flags 正好并入 dwFlagsAndAttributes。
+            .custom_flags(
+                SECURITY_SQOS_PRESENT.0 | SECURITY_IDENTIFICATION.0 | FILE_FLAG_OVERLAPPED.0,
+            )
             .open(lueying_protocol::pipe_name())
             .ok()?;
         // 对端身份校验:管道名可被抢先创建,连上后确认服务端真是
         // lueying-server;不是就当服务不在(按键按断线放行),绝不外发。
-        if !verify_server(&file) {
+        if !verify_server(&pipe) {
             return None;
         }
-        let writer = file.try_clone().ok()?;
+        let event = unsafe { CreateEventW(None, true, false, None) }.ok()?;
         Some(Self {
-            reader: file,
             pending: Vec::new(),
-            writer,
+            pipe,
+            event,
         })
     }
 
     /// 一次请求-应答;任何一步失败或超时都返回 None(上层视作断线)。
     pub(crate) fn round_trip(&mut self, req: &Request) -> Option<Reply> {
         let frame = lueying_protocol::encode(req).ok()?;
-        self.writer.write_all(&frame).ok()?;
-        self.writer.flush().ok()?;
         let deadline = Instant::now() + ROUND_TRIP_TIMEOUT;
+        self.write_all(&frame, deadline)?;
         loop {
             match lueying_protocol::take_frame(&mut self.pending) {
                 Err(_) => return None,
                 Ok(Some(body)) => return lueying_protocol::decode(&body).ok(),
                 Ok(None) => {}
             }
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-            let mut available = 0u32;
-            let peek = unsafe {
-                PeekNamedPipe(
-                    HANDLE(self.reader.as_raw_handle()),
-                    None,
-                    0,
-                    None,
-                    Some(&mut available),
-                    None,
-                )
-            };
-            if peek.is_err() {
-                return None;
-            }
-            if available == 0 {
-                std::thread::sleep(Duration::from_millis(1));
-                continue;
-            }
             let mut buf = [0u8; 4096];
-            let read = self.reader.read(&mut buf).ok()?;
+            let read = self.read(&mut buf, deadline)?;
             if read == 0 {
                 return None;
             }
             self.pending.extend_from_slice(&buf[..read]);
+        }
+    }
+
+    /// 写完整一帧;帧通常不到一页,一次重叠写就完。
+    fn write_all(&mut self, mut data: &[u8], deadline: Instant) -> Option<()> {
+        while !data.is_empty() {
+            let mut overlapped = OVERLAPPED {
+                hEvent: self.event,
+                ..Default::default()
+            };
+            let started = unsafe {
+                ResetEvent(self.event).ok()?;
+                WriteFile(self.handle(), Some(data), None, Some(&mut overlapped))
+            };
+            let written = self.wait(&overlapped, started, deadline)? as usize;
+            if written == 0 {
+                return None;
+            }
+            data = &data[written..];
+        }
+        Some(())
+    }
+
+    /// 重叠读一次,返回读到的字节数。
+    fn read(&mut self, buf: &mut [u8], deadline: Instant) -> Option<u32> {
+        let mut overlapped = OVERLAPPED {
+            hEvent: self.event,
+            ..Default::default()
+        };
+        let started = unsafe {
+            ResetEvent(self.event).ok()?;
+            ReadFile(self.handle(), Some(buf), None, Some(&mut overlapped))
+        };
+        self.wait(&overlapped, started, deadline)
+    }
+
+    /// 等重叠操作完成;超时就取消,并等内核收尾后再让 OVERLAPPED 出栈。
+    fn wait(
+        &self,
+        overlapped: &OVERLAPPED,
+        started: windows::core::Result<()>,
+        deadline: Instant,
+    ) -> Option<u32> {
+        let mut done = 0u32;
+        if let Err(error) = started {
+            if error.code() != HRESULT::from_win32(ERROR_IO_PENDING.0) {
+                return None;
+            }
+        } else {
+            unsafe { GetOverlappedResult(self.handle(), overlapped, &mut done, false) }.ok()?;
+            return Some(done);
+        }
+        let ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        if unsafe { WaitForSingleObject(self.event, ms) } != WAIT_OBJECT_0 {
+            unsafe {
+                let _ = CancelIoEx(self.handle(), Some(overlapped));
+                let _ = GetOverlappedResult(self.handle(), overlapped, &mut done, true);
+            }
+            return None;
+        }
+        unsafe { GetOverlappedResult(self.handle(), overlapped, &mut done, false) }.ok()?;
+        Some(done)
+    }
+
+    fn handle(&self) -> HANDLE {
+        HANDLE(self.pipe.as_raw_handle())
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.event);
         }
     }
 }

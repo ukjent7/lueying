@@ -3,12 +3,4 @@ name = "lueying-render"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "候选窗 Skia 渲染核心:平台无关,吃数据出帧"
-
-[features]
-# CI 门禁:只走预编译二进制。预编译缺失时立刻失败,而不是退化成十几分钟的
-# 本地编 Skia(失败原因还埋在日志里)。
-prebuilt-only = ["skia-safe/no-compile"]
-
-[dependencies]
-skia-safe.workspace = true
+description = "输入法表面渲染核心:布局、命中与绘制指令,平台无关"

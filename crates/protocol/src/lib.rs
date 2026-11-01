@@ -482,7 +482,7 @@ pub struct EngineStatus {
 }
 
 /// 会话快照(Server 内部与候选窗渲染共用)。
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SessionView {
     /// 组合的原始拼音(含用户输入的隔音符),候选窗首行显示它。
     pub raw: String,

@@ -13,17 +13,16 @@ use std::path::{Path, PathBuf};
 use lueying_render::panel::{self, Hit, ListFx, Measure, Metrics, Palette, PanelSpec};
 use lueying_scene::{Body, EffectOut, Fill, Item as SceneItem, Layer as SceneLayer, Shape};
 use windows::Win32::Foundation::{GENERIC_READ, HWND};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D1_RECT_F};
+use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D_RECT_F};
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1GaussianBlur, CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_SOURCE_OVER,
+    D2D1_COMPOSITE_MODE_SOURCE_OVER,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
-    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS_NONE, D2D1_LAYER_PARAMETERS,
+    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
     D2D1_PROPERTY_TYPE_FLOAT, D2D1_ROUNDED_RECT, D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-    D2D1_SHADOW_PROP_COLOR, D2D1CreateFactory, ID2D1Bitmap1, ID2D1CommandList, ID2D1Device,
-    ID2D1DeviceContext, ID2D1Effect, ID2D1Factory1, ID2D1Geometry, ID2D1Layer,
-    ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_SHADOW_PROP_COLOR, D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext,
+    ID2D1Effect, ID2D1Factory1, ID2D1Layer, ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
@@ -52,6 +51,7 @@ use windows::Win32::Graphics::Imaging::{
     IWICBitmapFrameDecode, IWICFormatConverter, IWICImagingFactory, WICBitmapDitherTypeNone,
     WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
 };
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::core::{Interface, w};
 use windows_numerics::{Matrix3x2, Vector2};
 
@@ -392,8 +392,12 @@ impl SceneImages for Pipeline {
 /// 用 WIC 把图片解成 32bpp 预乘 BGRA 的 D2D 位图。
 fn decode_bitmap(dc: &ID2D1DeviceContext, path: &Path) -> Option<ID2D1Bitmap1> {
     unsafe {
-        let wic: IWICImagingFactory =
-            windows::core::create_instance::<IWICImagingFactory>(&CLSID_WICImagingFactory).ok()?;
+        let wic: IWICImagingFactory = CoCreateInstance(
+            &CLSID_WICImagingFactory,
+            None::<&windows::core::IUnknown>,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
         let decoder: IWICBitmapDecoder = wic
             .CreateDecoderFromFilename(
                 &windows::core::HSTRING::from(path.as_os_str()),
@@ -652,7 +656,7 @@ fn scene_fill(fill: Fill, palette: &Palette) -> u32 {
 
 fn rrect(rect: panel::Rect, radius: f32) -> D2D1_ROUNDED_RECT {
     D2D1_ROUNDED_RECT {
-        rect: D2D1_RECT_F {
+        rect: D2D_RECT_F {
             left: rect.left,
             top: rect.top,
             right: rect.right,
@@ -663,8 +667,8 @@ fn rrect(rect: panel::Rect, radius: f32) -> D2D1_ROUNDED_RECT {
     }
 }
 
-fn d2d_rect(rect: panel::Rect) -> D2D1_RECT_F {
-    D2D1_RECT_F {
+fn d2d_rect(rect: panel::Rect) -> D2D_RECT_F {
+    D2D_RECT_F {
         left: rect.left,
         top: rect.top,
         right: rect.right,
@@ -710,11 +714,11 @@ fn paint(
         let brush: ID2D1SolidColorBrush = dc
             .CreateSolidColorBrush(&D2D1_COLOR_F::default(), None)
             .expect("建纯色画刷失败");
-        dc.Clear(Some(&D2D1_COLOR_F::default()));
+        dc.Clear(None);
         // 带特效的场景内容先录进命令表:特效图必须在无图层状态下录制,
         // 录完再回到后缓冲接着画普通内容。
         let baked = bake_effects(dc, f, text, target, images);
-        let far = D2D1_RECT_F {
+        let far = D2D_RECT_F {
             left: -100000.0,
             top: -100000.0,
             right: 100000.0,
@@ -769,15 +773,15 @@ fn paint(
     }
 }
 
-fn layer_params(bounds: &D2D1_RECT_F, opacity: f32) -> D2D1_LAYER_PARAMETERS {
-    D2D1_LAYER_PARAMETERS {
+fn layer_params(bounds: &D2D_RECT_F, opacity: f32) -> D2D1_LAYER_PARAMETERS1 {
+    D2D1_LAYER_PARAMETERS1 {
         contentBounds: *bounds,
         geometricMask: std::mem::ManuallyDrop::new(None),
         maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
         maskTransform: Matrix3x2::identity(),
         opacity,
         opacityBrush: std::mem::ManuallyDrop::new(None),
-        layerOptions: D2D1_LAYER_OPTIONS_NONE,
+        layerOptions: D2D1_LAYER_OPTIONS1_NONE,
     }
 }
 
@@ -789,7 +793,7 @@ fn bake_effects(
     text: &Text,
     target: &ID2D1Bitmap1,
     images: &dyn SceneImages,
-) {
+) -> Baked {
     unsafe {
         let mut baked = Baked::empty();
         let s = f.metrics.scale();
@@ -942,33 +946,37 @@ fn paint_scene(
                 Some(EffectOut::Blur { .. }) => {
                     // 模糊图替换本体;画之前回到物理像素坐标。
                     if let Some(effect) = &baked.blur[index] {
-                        dc.SetTransform(&Matrix3x2::identity());
-                        let _ = dc.DrawImage(
-                            effect,
-                            None,
-                            None,
-                            D2D1_INTERPOLATION_MODE_LINEAR,
-                            D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                        );
-                        dc.SetTransform(&Matrix3x2::scale(s, s));
+                        if let Ok(output) = effect.GetOutput() {
+                            dc.SetTransform(&Matrix3x2::identity());
+                            let _ = dc.DrawImage(
+                                &output,
+                                None,
+                                None,
+                                D2D1_INTERPOLATION_MODE_LINEAR,
+                                D2D1_COMPOSITE_MODE_SOURCE_OVER,
+                            );
+                            dc.SetTransform(&Matrix3x2::scale(s, s));
+                        }
                     }
                 }
                 Some(EffectOut::Shadow { offset, .. }) => {
                     // 阴影垫底,本体照常画在上面。
                     if let Some(effect) = &baked.shadow[index] {
-                        dc.SetTransform(&Matrix3x2::identity());
-                        let shift = Vector2 {
-                            X: offset[0] * s,
-                            Y: offset[1] * s,
-                        };
-                        let _ = dc.DrawImage(
-                            effect,
-                            Some(&shift),
-                            None,
-                            D2D1_INTERPOLATION_MODE_LINEAR,
-                            D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                        );
-                        dc.SetTransform(&Matrix3x2::scale(s, s));
+                        if let Ok(output) = effect.GetOutput() {
+                            dc.SetTransform(&Matrix3x2::identity());
+                            let shift = Vector2 {
+                                X: offset[0] * s,
+                                Y: offset[1] * s,
+                            };
+                            let _ = dc.DrawImage(
+                                &output,
+                                Some(&shift as *const Vector2),
+                                None,
+                                D2D1_INTERPOLATION_MODE_LINEAR,
+                                D2D1_COMPOSITE_MODE_SOURCE_OVER,
+                            );
+                            dc.SetTransform(&Matrix3x2::scale(s, s));
+                        }
                     }
                     let Ok(brush) = dc.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None) else {
                         continue;
@@ -1013,11 +1021,12 @@ fn scene_item(
                 let Some(bitmap) = images.bitmap(f.scene_dir, src) else {
                     return Ok(());
                 };
-                dc.DrawBitmap(
+                let _ = dc.DrawBitmap(
                     &bitmap,
-                    Some(&d2d_rect(rect)),
+                    Some(&d2d_rect(rect) as *const D2D_RECT_F),
                     item.opacity,
-                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                    D2D1_INTERPOLATION_MODE_LINEAR,
+                    None,
                     None,
                 );
                 Ok(())
@@ -1030,18 +1039,19 @@ fn scene_item(
                 let scale = asset_scale(src);
                 let frame_w = f32::from(grid[0]) * scale;
                 let frame_h = f32::from(grid[1]) * scale;
-                let source = D2D1_RECT_F {
+                let source = D2D_RECT_F {
                     left: f32::from(*frame) * frame_w,
                     top: 0.0,
                     right: (f32::from(*frame) + 1.0) * frame_w,
                     bottom: frame_h,
                 };
-                dc.DrawBitmap(
+                let _ = dc.DrawBitmap(
                     &bitmap,
-                    Some(&d2d_rect(rect)),
+                    Some(&d2d_rect(rect) as *const D2D_RECT_F),
                     item.opacity,
-                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                    Some(&source),
+                    D2D1_INTERPOLATION_MODE_LINEAR,
+                    Some(&source as *const D2D_RECT_F),
+                    None,
                 );
                 Ok(())
             }
@@ -1092,7 +1102,7 @@ fn scene_item(
                             brush,
                         ),
                         _ => dc.FillRectangle(
-                            &D2D1_RECT_F {
+                            &D2D_RECT_F {
                                 left: center.X - half,
                                 top: center.Y - half,
                                 right: center.X + half,
@@ -1211,7 +1221,7 @@ fn preedit_bar(
         let s = f.metrics.scale();
         brush.SetColor(&color(f.palette.surface_alt));
         dc.FillRectangle(
-            &D2D1_RECT_F {
+            &D2D_RECT_F {
                 left: 0.0,
                 top: 0.0,
                 right: width,
@@ -1223,7 +1233,7 @@ fn preedit_bar(
         if !f.spec.items.is_empty() {
             brush.SetColor(&color(f.palette.border));
             dc.FillRectangle(
-                &D2D1_RECT_F {
+                &D2D_RECT_F {
                     left: 0.0,
                     top: (panel::PREEDIT_H - 1.0) * s,
                     right: width,
@@ -1306,8 +1316,8 @@ fn draw_items(
     unsafe {
         let s = f.metrics.scale();
         // 翻页滑动会把候选推出面板;裁到描边内侧。
-        dc.PushAxisAlignedClip(
-            &D2D1_RECT_F {
+        let _ = dc.PushAxisAlignedClip(
+            &D2D_RECT_F {
                 left: s,
                 top: s,
                 right: width - s,
@@ -1318,7 +1328,7 @@ fn draw_items(
         // 滑动/淡入的透明度只作用于列表层,背景与拼音条保持稳定。
         if f.list.opacity < 1.0 {
             let params = layer_params(
-                &D2D1_RECT_F {
+                &D2D_RECT_F {
                     left: 0.0,
                     top: panel::PREEDIT_H * s,
                     right: width,
@@ -1376,8 +1386,8 @@ fn draw_items(
             );
             // 候选文字;超宽部分按 max_text_width 裁掉(DrawText 不换行也不裁,夹取在这里)。
             let text_x = x + (8.0 + 2.0 + 4.0 + 12.0 + 4.0) * s;
-            dc.PushAxisAlignedClip(
-                &D2D1_RECT_F {
+            let _ = dc.PushAxisAlignedClip(
+                &D2D_RECT_F {
                     left: text_x,
                     top: y,
                     right: text_x + f.spec.max_text_width.max(1.0),
@@ -1431,16 +1441,18 @@ fn draw_menu(
         let h = panel::menu_height(&f.metrics);
         // 轻投影把菜单从候选层上托起来;投影图已在无图层状态录好。
         if let Some(effect) = &baked.menu {
-            let _ = dc.DrawImage(
-                effect,
-                Some(&Vector2 {
-                    X: x + s,
-                    Y: y + 2.0 * s,
-                }),
-                None,
-                D2D1_INTERPOLATION_MODE_LINEAR,
-                D2D1_COMPOSITE_MODE_SOURCE_OVER,
-            );
+            if let Ok(output) = effect.GetOutput() {
+                let _ = dc.DrawImage(
+                    &output,
+                    Some(&Vector2 {
+                        X: x + s,
+                        Y: y + 2.0 * s,
+                    } as *const Vector2),
+                    None,
+                    D2D1_INTERPOLATION_MODE_LINEAR,
+                    D2D1_COMPOSITE_MODE_SOURCE_OVER,
+                );
+            }
         }
         let body = panel::Rect::from_xywh(x + 0.5 * s, y + 0.5 * s, w - s, h - s);
         brush.SetColor(&color(f.palette.bg));

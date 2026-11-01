@@ -2,7 +2,6 @@
 //! 推理不持有 `sessions` 锁,回来时用 revision/页/高亮确认结果仍然有效。
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -22,6 +21,8 @@ pub(super) enum SettleMessage {
 
 pub(super) struct SettleJob {
     session: u64,
+    /// 发起时的焦点/上下文代次;中途换了输入范围就丢弃。
+    seq: u64,
     revision: u64,
     context: String,
     texts: Vec<String>,
@@ -85,6 +86,7 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
     };
     let _ = tx.send(SettleMessage::Job(SettleJob {
         session,
+        seq: s.context_seq,
         revision: snap.revision,
         context: snap.context,
         texts: snap.texts,
@@ -154,10 +156,13 @@ fn apply(state: &State, job: &SettleJob, promote: Option<usize>) {
     let Some(index) = promote else {
         return;
     };
-    let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(s) = sessions.get_mut(&job.session) else {
+    let Some(handle) = state.session(job.session) else {
         return;
     };
+    let mut s = handle.lock();
+    if s.context_seq != job.seq {
+        return;
+    }
     if !result_is_current(
         s.engine.revision(),
         job.revision,
@@ -168,8 +173,11 @@ fn apply(state: &State, job: &SettleJob, promote: Option<usize>) {
         return;
     }
     if s.engine.promote(index) {
-        refresh_view(s);
-        state.version.fetch_add(1, Ordering::Relaxed);
+        refresh_view(&mut s);
+        crate::imp::sync_pending(&mut s);
+        if handle.publish(&s) {
+            crate::imp::touch_view(state);
+        }
     }
 }
 

@@ -1,35 +1,172 @@
-//! 模式徽标、命令面板与选择面板的布局、命中与像素 E2E。
+//! 模式徽标、命令面板与选择面板的布局、命中与绘制指令 E2E。
+//!
+//! 绘制端口把画面描述成指令,这一层断言几何、绘制次序与配色;Direct2D
+//! 画出来的真实像素由 Windows 侧的自检覆盖,Linux CI 不需要光栅后端。
 
 use lueying_render::badge;
 use lueying_render::command;
+use lueying_render::paint::{Canvas, Color, Point};
+use lueying_render::panel::{Estimate, Measure, Rect};
 use lueying_render::picker;
-use skia_safe::{Surface, surfaces};
+use lueying_render::Palette;
 
-use crate::harness::{palette, push, read_bgra, rgb};
+use crate::harness::{palette, push};
 
-/// 矩形中心横坐标。
-fn center_x(rect: skia_safe::Rect) -> f32 {
-    (rect.left + rect.right) / 2.0
+/// 一条绘制指令。
+#[derive(Clone, Debug, PartialEq)]
+enum Op {
+    Rect(Rect, Color),
+    StrokeRect(Rect, f32, Color),
+    RRect(Rect, f32, Color),
+    StrokeRRect(Rect, f32, f32, Color),
+    Shadow(Rect, f32, f32, Color),
+    Text {
+        content: String,
+        origin: Point,
+        size: f32,
+        color: Color,
+        max_width: Option<f32>,
+    },
+    TextCentered {
+        content: String,
+        rect: Rect,
+        size: f32,
+        color: Color,
+    },
 }
 
-/// 矩形中心纵坐标。
-fn center_y(rect: skia_safe::Rect) -> f32 {
-    (rect.top + rect.bottom) / 2.0
+/// 记录画布:按绘制顺序收集指令;测宽用与布局相同的估算实现。
+struct Recorder {
+    ops: Vec<Op>,
+    limit: Rect,
 }
 
-/// 设置窗用的字型;系统没有字型时退回默认字型(只影响宽度测量)。
-fn ui_font() -> skia_safe::Font {
-    let mgr = skia_safe::FontMgr::new();
-    match mgr.legacy_make_typeface(None, skia_safe::FontStyle::normal()) {
-        Some(face) => skia_safe::Font::from_typeface(face, 17.0),
-        None => skia_safe::Font::default(),
+impl Recorder {
+    fn new(width: f32, height: f32) -> Self {
+        Self {
+            ops: Vec::new(),
+            limit: Rect::from_xywh(0.0, 0.0, width, height),
+        }
+    }
+
+    /// 某个颜色的圆角矩形及其圆角半径。
+    fn rrects(&self, color: u32) -> Vec<(&Rect, f32)> {
+        self.ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::RRect(rect, radius, c) if c.rgb == color && c.alpha == 255 => {
+                    Some((rect, *radius))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 内容完全一致的文字指令。
+    fn text(&self, content: &str) -> Option<&Op> {
+        self.ops.iter().find(|op| match op {
+            Op::Text { content: c, .. } | Op::TextCentered { content: c, .. } => c == content,
+            _ => false,
+        })
+    }
+
+    /// 以某段文字开头的文字指令。
+    fn text_starting(&self, prefix: &str) -> Option<(&str, f32, Option<f32>)> {
+        self.ops.iter().find_map(|op| match op {
+            Op::Text {
+                content,
+                size,
+                max_width,
+                ..
+            } if content.starts_with(prefix) => Some((content.as_str(), *size, *max_width)),
+            _ => None,
+        })
+    }
+
+    /// 每条矩形指令都落在画布内;投影按设计会溢出卡片,不参与。
+    fn inside(&self) -> bool {
+        self.ops.iter().all(|op| {
+            let rect = match op {
+                Op::Rect(rect, _)
+                | Op::StrokeRect(rect, ..)
+                | Op::RRect(rect, ..)
+                | Op::StrokeRRect(rect, ..)
+                | Op::TextCentered { rect, .. } => *rect,
+                Op::Shadow(..) | Op::Text { .. } => return true,
+            };
+            rect.left >= self.limit.left - 0.01
+                && rect.top >= self.limit.top - 0.01
+                && rect.right <= self.limit.right + 0.01
+                && rect.bottom <= self.limit.bottom + 0.01
+        })
     }
 }
 
-/// 命令面板:尺寸、命中、选中行底色、空状态与长标题截断。
+impl Canvas for Recorder {
+    fn fill_rect(&mut self, rect: Rect, color: Color) {
+        self.ops.push(Op::Rect(rect, color));
+    }
+
+    fn stroke_rect(&mut self, rect: Rect, width: f32, color: Color) {
+        self.ops.push(Op::StrokeRect(rect, width, color));
+    }
+
+    fn fill_rrect(&mut self, rect: Rect, radius: f32, color: Color) {
+        self.ops.push(Op::RRect(rect, radius, color));
+    }
+
+    fn stroke_rrect(&mut self, rect: Rect, radius: f32, width: f32, color: Color) {
+        self.ops.push(Op::StrokeRRect(rect, radius, width, color));
+    }
+
+    fn shadow_rrect(&mut self, rect: Rect, radius: f32, blur: f32, color: Color) {
+        self.ops.push(Op::Shadow(rect, radius, blur, color));
+    }
+
+    fn text(
+        &mut self,
+        content: &str,
+        origin: Point,
+        size: f32,
+        color: Color,
+        max_width: Option<f32>,
+    ) {
+        self.ops.push(Op::Text {
+            content: content.to_string(),
+            origin,
+            size,
+            color,
+            max_width,
+        });
+    }
+
+    fn measure(&mut self, content: &str, size: f32) -> f32 {
+        let estimate = Estimate;
+        estimate.width(content, size)
+    }
+
+    fn text_centered(&mut self, content: &str, rect: Rect, size: f32, color: Color) {
+        self.ops.push(Op::TextCentered {
+            content: content.to_string(),
+            rect,
+            size,
+            color,
+        });
+    }
+}
+
+/// 面板底色:第一条指令铺满整个画布,窗口不会露出系统背景。
+fn background(recorder: &Recorder, palette: &Palette) -> bool {
+    matches!(
+        recorder.ops.first(),
+        Some(Op::Rect(rect, color))
+            if *rect == recorder.limit && color.rgb == palette.bg && color.alpha == 255
+    )
+}
+
+/// 命令面板:尺寸、命中、绘制次序、选中行底色与长标题截断。
 fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let palette = palette();
-    let font = ui_font();
     let spec = command::Spec {
         query: "xue".into(),
         rows: vec![
@@ -67,7 +204,7 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         format!("{input_hit:?}"),
     );
     let row = layout.rows[1];
-    let row_hit = command::hit(&layout, &spec, center_x(row), center_y(row));
+    let row_hit = command::hit(&layout, &spec, row.center_x(), row.center_y());
     push(
         checks,
         "命令面板行命中",
@@ -94,27 +231,44 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         format!("{outside:?}"),
     );
 
-    let mut surface =
-        surfaces::raster_n32_premul((layout.size.0 as i32, layout.size.1 as i32)).expect("raster");
-    command::draw(surface.canvas(), &spec, &layout, &palette, &font, 1.0);
-    let corner = read_bgra(&mut surface, 2, 2);
+    let mut recorder = Recorder::new(layout.size.0, layout.size.1);
+    command::draw(&mut recorder, &spec, &layout, &palette, 1.0);
     push(
         checks,
         "命令面板底色",
-        corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.bg)),
-        format!("{corner:?} 期望 {:?}", rgb(palette.bg)),
+        background(&recorder, &palette),
+        format!("首条指令 {:?}", recorder.ops.first()),
     );
-    let selected = layout.rows[1];
-    let pixel = read_bgra(
-        &mut surface,
-        selected.left as i32 + 4,
-        selected.center_y() as i32,
+    let selected = Rect::from_ltrb(
+        row.left,
+        row.top + 2.0,
+        row.right,
+        row.bottom - 2.0,
     );
+    let rrects = recorder.rrects(palette.selected_bg);
     push(
         checks,
         "命令面板选中行底色",
-        pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.selected_bg)),
-        format!("{pixel:?} 期望 {:?}", rgb(palette.selected_bg)),
+        rrects.len() == 1 && *rrects[0].0 == selected,
+        format!("{rrects:?} 期望 {selected:?}"),
+    );
+    push(
+        checks,
+        "命令面板查询与选中行文字",
+        matches!(
+            recorder.text("xue"),
+            Some(Op::Text { color, .. }) if color.rgb == palette.text
+        ) && matches!(
+            recorder.text("学习"),
+            Some(Op::Text { color, .. }) if color.rgb == palette.selected_text
+        ),
+        "查询串与选中行各有一条文字指令".into(),
+    );
+    push(
+        checks,
+        "命令面板绘制不越界",
+        recorder.inside(),
+        format!("{} 条指令", recorder.ops.len()),
     );
 
     // 空状态仍占一行高度;提示语画在列表区。
@@ -131,6 +285,14 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         (empty_layout.size.1 - expect_empty).abs() < 0.5,
         format!("{:.1} 期望 {expect_empty:.1}", empty_layout.size.1),
     );
+    let mut empty_recorder = Recorder::new(empty_layout.size.0, empty_layout.size.1);
+    command::draw(&mut empty_recorder, &empty, &empty_layout, &palette, 1.0);
+    push(
+        checks,
+        "命令面板空状态提示",
+        empty_recorder.text("没有匹配的命令").is_some(),
+        format!("{:?}", empty_recorder.ops.len()),
+    );
 
     // 长标题按行宽截断,卷动提示不影响几何。
     let long = command::Spec {
@@ -145,29 +307,33 @@ fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         below: 5,
     };
     let long_layout = command::layout(&long, 1.5);
-    let mut long_surface =
-        surfaces::raster_n32_premul((long_layout.size.0 as i32, long_layout.size.1 as i32))
-            .expect("raster");
-    command::draw(
-        long_surface.canvas(),
-        &long,
-        &long_layout,
-        &palette,
-        &font,
-        1.5,
-    );
+    let mut long_recorder = Recorder::new(long_layout.size.0, long_layout.size.1);
+    command::draw(&mut long_recorder, &long, &long_layout, &palette, 1.5);
+    let title = long_recorder.text_starting("很长的命令标题");
     push(
         checks,
         "命令面板长标题不越界",
-        long_layout.rows.len() == 1 && long_layout.rows[0].right <= long_layout.size.0,
-        format!("{:?}", long_layout.rows),
+        long_layout.rows.len() == 1
+            && long_layout.rows[0].right <= long_layout.size.0
+            && title.is_some_and(|(content, size, max_width)| {
+                let estimate = Estimate;
+                content.ends_with('…')
+                    && max_width
+                        .is_some_and(|limit| estimate.width(content, size) <= limit + 0.01)
+            }),
+        format!("{:?} 标题 {title:?}", long_layout.rows),
+    );
+    push(
+        checks,
+        "命令面板卷动提示",
+        long_recorder.text("▲").is_some() && long_recorder.text("▼").is_some(),
+        "上下都有内容时画箭头".into(),
     );
 }
 
-/// 宿主选择面板:尺寸、行命中、选中底色与空状态。
+/// 宿主选择面板:尺寸、行命中、底色、选中行与空状态。
 fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let palette = palette();
-    let font = ui_font();
     let spec = picker::Spec {
         title: "选择语言".into(),
         rows: vec!["中文".into(), "English".into(), "日本語".into()],
@@ -185,7 +351,7 @@ fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         format!("{:?} 期望 ({}, {expect_h})", layout.size, picker::WIDTH),
     );
     let row = layout.rows[1];
-    let row_hit = picker::hit(&layout, &spec, center_x(row), center_y(row));
+    let row_hit = picker::hit(&layout, &spec, row.center_x(), row.center_y());
     push(
         checks,
         "选择面板行命中",
@@ -199,22 +365,43 @@ fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         outside == picker::Hit::Nothing,
         format!("{outside:?}"),
     );
-    let mut surface =
-        surfaces::raster_n32_premul((layout.size.0 as i32, layout.size.1 as i32)).expect("raster");
-    picker::draw(surface.canvas(), &spec, &layout, &palette, &font, 1.0);
-    let corner = read_bgra(&mut surface, 2, 2);
+
+    let mut recorder = Recorder::new(layout.size.0, layout.size.1);
+    picker::draw(&mut recorder, &spec, &layout, &palette, 1.0);
     push(
         checks,
         "选择面板底色",
-        corner.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.bg)),
-        format!("{corner:?} 期望 {:?}", rgb(palette.bg)),
+        background(&recorder, &palette),
+        format!("首条指令 {:?}", recorder.ops.first()),
     );
-    let pixel = read_bgra(&mut surface, row.left as i32 + 4, row.center_y() as i32);
+    let selected = Rect::from_ltrb(
+        row.left,
+        row.top + 2.0,
+        row.right,
+        row.bottom - 2.0,
+    );
+    let rrects = recorder.rrects(palette.selected_bg);
     push(
         checks,
         "选择面板选中行底色",
-        pixel.map(|p| (p.0, p.1, p.2)) == Some(rgb(palette.selected_bg)),
-        format!("{pixel:?} 期望 {:?}", rgb(palette.selected_bg)),
+        rrects.len() == 1 && *rrects[0].0 == selected,
+        format!("{rrects:?} 期望 {selected:?}"),
+    );
+    push(
+        checks,
+        "选择面板标题与选中行文字",
+        recorder.text("选择语言").is_some()
+            && matches!(
+                recorder.text("English"),
+                Some(Op::Text { color, .. }) if color.rgb == palette.selected_text
+            ),
+        "标题与选中行各有一条文字指令".into(),
+    );
+    push(
+        checks,
+        "选择面板绘制不越界",
+        recorder.inside(),
+        format!("{} 条指令", recorder.ops.len()),
     );
 
     let empty = picker::Spec {
@@ -230,76 +417,113 @@ fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
         (empty_layout.size.1 - expect_empty).abs() < 0.5,
         format!("{:.1} 期望 {expect_empty:.1}", empty_layout.size.1),
     );
+    let mut empty_recorder = Recorder::new(empty_layout.size.0, empty_layout.size.1);
+    picker::draw(&mut empty_recorder, &empty, &empty_layout, &palette, 1.0);
+    push(
+        checks,
+        "选择面板空状态提示",
+        empty_recorder.text("没有可选项").is_some(),
+        format!("{:?}", empty_recorder.ops.len()),
+    );
+}
+
+/// 模式徽标:卡片底色、圆角、投影与淡入淡出的透明度。
+fn badge_checks(checks: &mut Vec<(&'static str, bool, String)>) {
+    let palette = palette();
+    let width = badge::WIDTH;
+    let height = badge::HEIGHT;
+    let card = Rect::from_xywh(0.5, 0.5, width - 1.0, height - 1.0);
+    let mut recorder = Recorder::new(width, height);
+    badge::draw(
+        &mut recorder,
+        &badge::BadgeSpec {
+            label: "中",
+            palette: &palette,
+            width,
+            height,
+            scale: 1.0,
+            opacity: 1.0,
+            shadow: false,
+        },
+    );
+    let rrects = recorder.rrects(palette.bg);
+    push(
+        checks,
+        "徽标卡片底色",
+        rrects.len() == 1 && *rrects[0].0 == card && rrects[0].1 > 0.0,
+        format!("{rrects:?} 期望 {card:?}"),
+    );
+    push(
+        checks,
+        "徽标文字居中",
+        matches!(
+            recorder.text("中"),
+            Some(Op::TextCentered { rect, color, .. })
+                if *rect == card && color.rgb == palette.text
+        ),
+        "标签在卡片矩形内居中且用正文色".into(),
+    );
+    push(
+        checks,
+        "徽标绘制不越界",
+        recorder.inside(),
+        format!("{} 条指令", recorder.ops.len()),
+    );
+
+    let mut fading = Recorder::new(width, height);
+    badge::draw(
+        &mut fading,
+        &badge::BadgeSpec {
+            label: "英",
+            palette: &palette,
+            width,
+            height,
+            scale: 1.0,
+            opacity: 0.5,
+            shadow: false,
+        },
+    );
+    let faded = fading.ops.iter().all(|op| match op {
+        Op::RRect(_, _, color)
+        | Op::StrokeRRect(_, _, _, color)
+        | Op::Shadow(_, _, _, color)
+        | Op::TextCentered { color, .. } => color.alpha == 128,
+        _ => false,
+    });
+    push(
+        checks,
+        "徽标淡出统一透明度",
+        faded && !fading.ops.is_empty(),
+        format!("{:?}", fading.ops.len()),
+    );
+
+    // 高对比度主题不画投影;投影只由一次指令给出,由后端展开。
+    let mut plain = Recorder::new(width, height);
+    badge::draw(
+        &mut plain,
+        &badge::BadgeSpec {
+            label: "全",
+            palette: &palette,
+            width,
+            height,
+            scale: 1.0,
+            opacity: 1.0,
+            shadow: true,
+        },
+    );
+    push(
+        checks,
+        "徽标投影",
+        plain
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::Shadow(rect, ..) if *rect == card)),
+        format!("{} 条指令", plain.ops.len()),
+    );
 }
 
 pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
-    // 模式徽标:卡片底色、圆角外的透明,以及字型有没有真的画出来。
-    let (bw, bh) = (badge::WIDTH as i32, badge::HEIGHT as i32);
-    let plain_badge = |surface: &mut Surface, font: Option<&skia_safe::Font>| {
-        badge::draw(
-            surface.canvas(),
-            &badge::BadgeSpec {
-                label: "中",
-                palette: &palette(),
-                font,
-                width: badge::WIDTH,
-                height: badge::HEIGHT,
-                scale: 1.0,
-                shadow: false,
-            },
-        );
-    };
-    let mut badge_surface = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
-    plain_badge(&mut badge_surface, None);
-    match read_bgra(&mut badge_surface, bw / 2, bh / 2) {
-        Some(pixel) => push(
-            checks,
-            "徽标卡片底色",
-            pixel.3 == 255 && (pixel.0, pixel.1, pixel.2) == rgb(palette().bg),
-            format!("{pixel:?} 期望 {:?} 全不透明", rgb(palette().bg)),
-        ),
-        None => push(checks, "徽标卡片底色", false, "像素读回失败".into()),
-    }
-    match read_bgra(&mut badge_surface, 0, 0) {
-        Some(pixel) => push(
-            checks,
-            "徽标圆角外透明",
-            pixel.3 == 0,
-            format!("{pixel:?} 期望 alpha=0"),
-        ),
-        None => push(checks, "徽标圆角外透明", false, "像素读回失败".into()),
-    }
-    // 字型:系统一个可用字型都没有是环境问题,跳过;有字型却画不出东西才是 bug。
-    let mgr = skia_safe::FontMgr::new();
-    let families = mgr.count_families();
-    match mgr.legacy_make_typeface(None, skia_safe::FontStyle::normal()) {
-        Some(face) => {
-            let font = skia_safe::Font::from_typeface(face, 17.0);
-            let mut with_font = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
-            plain_badge(&mut with_font, Some(&font));
-            let mut plain = surfaces::raster_n32_premul((bw, bh)).expect("raster surface");
-            plain_badge(&mut plain, None);
-            let mut differs = false;
-            'y: for y in 0..bh {
-                for x in 0..bw {
-                    if read_bgra(&mut with_font, x, y) != read_bgra(&mut plain, x, y) {
-                        differs = true;
-                        break 'y;
-                    }
-                }
-            }
-            // 一个字体族都没有时,字型画不出东西是环境问题,不算渲染 bug。
-            let ok = differs || families == 0;
-            push(
-                checks,
-                "徽标字型出图",
-                ok,
-                format!("与无字型画面不同={differs} 字体族={families}"),
-            );
-        }
-        None => push(checks, "徽标字型出图", true, "系统没有可用字型,跳过".into()),
-    }
-
+    badge_checks(checks);
     command_checks(checks);
     picker_checks(checks);
 }

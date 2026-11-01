@@ -212,7 +212,7 @@ pub fn replay(script: &Script, scene: Scene) -> Vec<Frame> {
             panel,
             preedit,
             highlight,
-            candidates: &rects,
+            candidate_rects: &rects,
             caret: [12.0, 36.0, 2.0, 28.0],
             screen: panel,
         };

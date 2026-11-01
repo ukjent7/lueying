@@ -360,7 +360,11 @@ pub(crate) fn request_with(client: &SharedClient, shared: &Shared, req: Request)
                     session: shared.session,
                     host: host_app_name(),
                 });
-                *guard = Some(new_client);
+                // Hello 没回来就别把连接留下:管道里可能还躺着它的应答,
+                // 下一次请求会把旧帧当成自己的回复。
+                if hello.is_some() {
+                    *guard = Some(new_client);
+                }
                 hello.map(|reply| (reply.chinese, reply.fullwidth))
             } else {
                 None

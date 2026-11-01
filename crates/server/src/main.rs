@@ -39,6 +39,9 @@ mod pipe;
 mod settle;
 
 #[cfg(windows)]
+mod sync_rerank;
+
+#[cfg(windows)]
 mod uia;
 
 #[cfg(windows)]

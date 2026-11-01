@@ -12,8 +12,8 @@ mod ext;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, mpsc};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, mpsc};
+use std::time::{Duration, Instant};
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
@@ -27,7 +27,9 @@ use lueying_server::command_panel::CommandItem;
 use lueying_server::config::{self, AppConfig};
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, INFINITE, SetEvent, WaitForSingleObject,
+};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
@@ -55,8 +57,8 @@ pub(super) struct Session {
     pub(super) pending: Option<Reply>,
     /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
     pub(super) ui_reply: Option<Reply>,
-    /// 4M 每键同步重排,前缀缓存随会话存活。
-    pub(super) sync_rerank: Option<Rerank>,
+    /// 4M 每键重排:后台线程独占推理,前缀缓存随会话存活。
+    pub(super) sync_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
     pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
@@ -67,6 +69,72 @@ pub(super) struct Session {
     pub(super) context_epoch: u64,
     /// 每次 Context 自增;同一代次里连开两次组合也能区分旧查询。
     pub(super) context_seq: u64,
+}
+
+/// 会话向只读读者发布的状态:候选窗、徽标与扩展宿主只看这里。
+#[derive(Clone, PartialEq)]
+pub(super) struct Published {
+    pub(super) view: SessionView,
+    pub(super) private: bool,
+    pub(super) host_draws: bool,
+    /// 引擎里有组合,不论候选窗是否让位给宿主。
+    pub(super) composing: bool,
+}
+
+impl Published {
+    fn of(s: &Session) -> Self {
+        Self {
+            view: s.view.clone(),
+            private: s.private,
+            host_draws: s.host_draws,
+            composing: s.engine.composition().is_some(),
+        }
+    }
+}
+
+/// 一个会话:独占锁只护住引擎状态,发布视图走 RwLock,检索与读帧都不排队。
+pub(super) struct SessionHandle {
+    state: Mutex<Session>,
+    published: RwLock<Arc<Published>>,
+}
+
+impl SessionHandle {
+    fn new(session: Session) -> Arc<Self> {
+        let published = Arc::new(Published::of(&session));
+        Arc::new(Self {
+            state: Mutex::new(session),
+            published: RwLock::new(published),
+        })
+    }
+
+    pub(super) fn lock(&self) -> MutexGuard<'_, Session> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 独占会话跑一段逻辑;结束时发布视图,有变化就叫醒候选窗。
+    pub(super) fn with<R>(&self, state: &State, f: impl FnOnce(&mut Session) -> R) -> R {
+        let mut s = self.lock();
+        let out = f(&mut s);
+        if self.publish(&s) {
+            touch_view(state);
+        }
+        out
+    }
+
+    /// 把会话当前状态发给只读读者;内容没变就返回 false,调用方不必重绘。
+    pub(super) fn publish(&self, s: &Session) -> bool {
+        let next = Published::of(s);
+        let mut current = self.published.write().unwrap_or_else(|p| p.into_inner());
+        if **current == next {
+            return false;
+        }
+        *current = Arc::new(next);
+        true
+    }
+
+    pub(super) fn published(&self) -> Arc<Published> {
+        Arc::clone(&self.published.read().unwrap_or_else(|p| p.into_inner()))
+    }
 }
 
 /// 一次用户主动的模式变化;候选窗同进程的徽标据此短暂显示「中」「英」「全」「半」。
@@ -90,16 +158,65 @@ pub(super) struct ExtInvoke {
     pub(super) source: &'static str,
 }
 
+/// 自建事件:窗口线程等它休眠,请求线程触发它上岗。
+///
+/// `HANDLE` 里的裸指针不自动 Send/Sync;而 SetEvent/WaitForSingleObject
+/// 都是线程安全的内核调用,句柄值本身跨线程传递没有共享可变状态。
+#[derive(Clone, Copy)]
+pub(super) struct Wake(HANDLE);
+
+// SAFETY: 只按值传递句柄用于线程安全的内核调用,句柄在进程内不关闭。
+unsafe impl Send for Wake {}
+unsafe impl Sync for Wake {}
+
+impl Wake {
+    /// 建一个自动复位事件;建不出来时退化成空句柄,等待改走定时。
+    fn create() -> Self {
+        Self(unsafe { CreateEventW(None, false, false, None) }.unwrap_or_default())
+    }
+
+    /// 触发一次,叫醒等待方。
+    fn set(self) {
+        unsafe {
+            let _ = SetEvent(self.0);
+        }
+    }
+
+    /// 等一次唤醒;`timeout` 为空表示一直等到有事件。
+    pub(super) fn wait(self, timeout: Option<Duration>) {
+        if self.0.is_invalid() {
+            // 事件建不出来时退化成定时空转,线程不能变成满核忙等。
+            std::thread::sleep(timeout.unwrap_or(Duration::from_millis(15)));
+            return;
+        }
+        let ms = timeout.map_or(INFINITE, |wait| {
+            wait.as_millis().min(u128::from(u32::MAX)) as u32
+        });
+        unsafe {
+            let _ = WaitForSingleObject(self.0, ms);
+        }
+    }
+
+    /// 裸句柄;`MsgWaitForMultipleObjectsEx` 要按数组等。
+    pub(super) fn raw(self) -> HANDLE {
+        self.0
+    }
+}
+
 pub(super) struct State {
     pub(super) dict: Arc<Dictionary>,
     pub(super) gram: Option<Arc<Gram>>,
-    pub(super) sessions: Mutex<HashMap<u64, Session>>,
+    pub(super) sessions: Mutex<HashMap<u64, Arc<SessionHandle>>>,
     /// 会话 → 当前管道的连接号。宿主崩溃后按连接清理,避免会话与缓存常驻。
     pub(super) conns: Mutex<HashMap<u64, u64>>,
-    /// 每次会话变化自增,候选窗轮询它决定刷新。
+    /// 每次会话变化自增,候选窗据此决定刷新。
     pub(super) version: AtomicU64,
-    /// 每次中英切换自增,模式徽标轮询它决定是否重新显示。
+    /// 每次中英切换自增,模式徽标据此决定是否重新显示。
     pub(super) hud_serial: AtomicU64,
+    /// 候选窗的空闲等待;版本号变化时叫醒它。
+    pub(super) wake_ui: Wake,
+    /// 模式徽标的空闲等待;切换与淡入淡出期间叫醒它。
+    pub(super) wake_hud: Wake,
     pub(super) mode_hud: Mutex<Option<ModeHud>>,
     /// 候选窗当前贴光标的上方还是下方;模式徽标据此躲到另一侧。
     pub(super) candidate_above: AtomicBool,
@@ -109,6 +226,8 @@ pub(super) struct State {
     pub(super) dict_source: &'static str,
     pub(super) sync_model: Option<Model>,
     pub(super) settled_model: Option<Model>,
+    /// 4M 按键重排的作业通道;按键只发快照,推理在后台。
+    pub(super) sync_tx: Option<mpsc::SyncSender<crate::sync_rerank::Job>>,
     /// 4M 按键同步重排的延迟分布;所有会话共享一份。
     pub(super) rerank_sync_metrics: Arc<LatencyMetrics>,
     /// 25M 停顿重排的延迟分布;所有会话共享一份。
@@ -154,6 +273,66 @@ pub(super) struct State {
 /// 管道与候选窗共用的请求入口;实现放在 `request` 子模块。
 pub(crate) fn handle(state: &State, req: Request) -> Reply {
     request::dispatch(state, req)
+}
+
+impl State {
+    /// 按线程号取会话;只取句柄,不碰会话锁。
+    pub(super) fn session(&self, id: u64) -> Option<Arc<SessionHandle>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&id)
+            .cloned()
+    }
+
+    /// 独占一个会话跑一段逻辑;结束时把视图发布出去,有变化就叫醒候选窗。
+    pub(super) fn with_session<R>(
+        &self,
+        id: u64,
+        f: impl FnOnce(&mut Session) -> R,
+    ) -> Option<R> {
+        Some(self.session(id)?.with(self, f))
+    }
+
+    /// 全部会话的句柄快照;遍历时不再持有会话表锁。
+    pub(super) fn all_sessions(&self) -> Vec<(u64, Arc<SessionHandle>)> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .map(|(&id, handle)| (id, Arc::clone(handle)))
+            .collect()
+    }
+
+    /// 标记活动会话;换了会话就叫醒候选窗,窗口只跟一个宿主。
+    pub(super) fn activate(&self, session: u64) {
+        if self.active.swap(session, Ordering::Relaxed) != session {
+            touch_view(self);
+        }
+    }
+
+    /// 当前活动会话的发布视图。
+    pub(super) fn active_published(&self) -> Option<Arc<Published>> {
+        self.session(self.active.load(Ordering::Relaxed))
+            .map(|handle| handle.published())
+    }
+}
+
+/// 候选窗的数据变了:版本号自增并叫醒等待的窗口线程。
+pub(super) fn touch_view(state: &State) {
+    state.version.fetch_add(1, Ordering::Release);
+    state.wake_ui.set();
+}
+
+/// 只叫醒候选窗,不宣布新视图;脚本补丁走这条旁路。
+pub(super) fn wake_ui(state: &State) {
+    state.wake_ui.set();
+}
+
+/// 模式徽标该刷新了。
+pub(super) fn touch_hud(state: &State) {
+    state.hud_serial.fetch_add(1, Ordering::Release);
+    state.wake_hud.set();
 }
 
 /// 把三个标准句柄接到 NUL。进程被无控制台、无句柄继承的方式拉起时,
@@ -336,7 +515,12 @@ pub(super) fn real_main() {
     let script = Arc::new(ScriptModule::new(app_config.script()));
     let (settle_tx, settle_rx) = mpsc::channel();
     let settle_tx = settled_model.as_ref().map(|_| settle_tx);
+    let (sync_tx, sync_rx) = mpsc::sync_channel(1);
+    let sync_tx = sync_model.as_ref().map(|_| sync_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
+    // 两个窗口线程各等自己的一份数据;建不出事件时等待退化成定时轮询。
+    let wake_ui = Wake::create();
+    let wake_hud = Wake::create();
     let state = Arc::new(State {
         dict: Arc::new(dict),
         dict_source,
@@ -345,6 +529,8 @@ pub(super) fn real_main() {
         conns: Mutex::new(HashMap::new()),
         version: AtomicU64::new(0),
         hud_serial: AtomicU64::new(0),
+        wake_ui,
+        wake_hud,
         mode_hud: Mutex::new(None),
         candidate_above: AtomicBool::new(false),
         active: AtomicU64::new(0),
@@ -352,6 +538,7 @@ pub(super) fn real_main() {
         settled_model,
         rerank_sync_metrics: Arc::new(LatencyMetrics::default()),
         rerank_settle_metrics: Arc::new(LatencyMetrics::default()),
+        sync_tx,
         settle_tx,
         uia_tx: Some(uia_tx),
         user,
@@ -378,6 +565,9 @@ pub(super) fn real_main() {
     });
     if state.settle_tx.is_some() {
         crate::settle::spawn(Arc::clone(&state), settle_rx);
+    }
+    if state.sync_tx.is_some() {
+        crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
     }
     crate::uia::spawn(Arc::clone(&state), uia_rx);
     let pipe = pipe_name();
@@ -535,17 +725,17 @@ fn current_reply(s: &Session) -> Reply {
         chinese: s.engine.mode() == Mode::Chinese,
         ..Reply::default()
     };
-    fill_view(&mut reply, s);
+    fill_view(&mut reply, &s.view);
     reply
 }
 
 /// 把当前候选页附在应答上;TSF 的候选 UI 元素据此回答宿主和读屏软件。
-fn fill_view(reply: &mut Reply, s: &Session) {
-    reply.candidates.clone_from(&s.view.candidates);
-    reply.page = s.view.page;
-    reply.page_size = s.view.page_size;
-    reply.highlight = s.view.highlight;
-    reply.fullwidth = s.view.fullwidth;
+fn fill_view(reply: &mut Reply, view: &SessionView) {
+    reply.candidates.clone_from(&view.candidates);
+    reply.page = view.page;
+    reply.page_size = view.page_size;
+    reply.highlight = view.highlight;
+    reply.fullwidth = view.fullwidth;
 }
 
 fn commits_of(events: &[Event]) -> Vec<String> {
@@ -582,11 +772,10 @@ fn switch_mode(s: &mut Session, chinese: bool) -> Vec<Event> {
 }
 
 /// 中/英是全局状态:一个应用里切了,所有会话与之后的候选窗都跟着变。
-fn set_global_mode(state: &State, sessions: &mut HashMap<u64, Session>, chinese: bool) {
+fn set_global_mode(state: &State, chinese: bool) {
     let changed = state.chinese.swap(chinese, Ordering::Relaxed) != chinese;
     let caret = if changed {
-        let active = state.active.load(Ordering::Relaxed);
-        sessions.get(&active).and_then(|s| s.view.caret)
+        state.active_published().and_then(|published| published.view.caret)
     } else {
         None
     };
@@ -595,15 +784,17 @@ fn set_global_mode(state: &State, sessions: &mut HashMap<u64, Session>, chinese:
     } else {
         Mode::English
     };
-    for (&session, s) in sessions.iter_mut() {
+    let mut touched = false;
+    for (session, handle) in state.all_sessions() {
+        let mut s = handle.lock();
         if s.engine.mode() != target {
             // 别的窗口可能正组合着。清掉组合前先整串落定,把上屏文本放进
             // ui_reply,由那个窗口自己的轮询写进文档;否则内联拼音会僵住。
-            let events = switch_mode(s, chinese);
+            let events = switch_mode(&mut s, chinese);
             let commits = commits_of(&events);
             s.pending = None;
             crate::settle::cancel(state, session);
-            refresh_view(s);
+            refresh_view(&mut s);
             if !commits.is_empty() {
                 let pending = s.ui_reply.get_or_insert_with(Reply::default);
                 pending.commits.extend(commits);
@@ -616,36 +807,34 @@ fn set_global_mode(state: &State, sessions: &mut HashMap<u64, Session>, chinese:
         } else if s.view.chinese != chinese {
             s.view.chinese = chinese;
         }
+        touched |= handle.publish(&s);
+    }
+    if touched {
+        touch_view(state);
     }
     if changed {
         // 只给用户主动切换做徽标;焦点同步、同值 SetMode 不弹。
-        show_hud(state, sessions, if chinese { "中" } else { "英" }, caret);
+        show_hud(state, if chinese { "中" } else { "英" }, caret);
     }
 }
 
-/// 让模式徽标在光标旁短暂显示一个标记。`caret` 由调用方在会话表还可用时取好。
-fn show_hud(
-    state: &State,
-    sessions: &HashMap<u64, Session>,
-    label: &'static str,
-    caret: Option<(i32, i32, i32, i32)>,
-) {
-    let caret = caret.or_else(|| {
-        let active = state.active.load(Ordering::Relaxed);
-        sessions.get(&active).and_then(|s| s.view.caret)
-    });
+/// 让模式徽标在光标旁短暂显示一个标记。
+fn show_hud(state: &State, label: &'static str, caret: Option<(i32, i32, i32, i32)>) {
+    let caret = caret.or_else(|| state.active_published().and_then(|p| p.view.caret));
     *state.mode_hud.lock().unwrap_or_else(|p| p.into_inner()) = Some(ModeHud {
         label,
         caret,
         at: Instant::now(),
     });
-    state.hud_serial.fetch_add(1, Ordering::Relaxed);
+    touch_hud(state);
 }
 
 /// 全角/半角是全局状态;只改后续输出,不落定已有组合。
-fn set_global_fullwidth(state: &State, sessions: &mut HashMap<u64, Session>, fullwidth: bool) {
+fn set_global_fullwidth(state: &State, fullwidth: bool) {
     let changed = state.fullwidth.swap(fullwidth, Ordering::Relaxed) != fullwidth;
-    for s in sessions.values_mut() {
+    let mut touched = false;
+    for (_, handle) in state.all_sessions() {
+        let mut s = handle.lock();
         s.engine.set_fullwidth(fullwidth);
         s.view.fullwidth = fullwidth;
         // 预演或排队中的应答带着旧全角位;一并改掉,免得下一次写回拨回指示器。
@@ -655,9 +844,13 @@ fn set_global_fullwidth(state: &State, sessions: &mut HashMap<u64, Session>, ful
         if let Some(reply) = s.ui_reply.as_mut() {
             reply.fullwidth = fullwidth;
         }
+        touched |= handle.publish(&s);
+    }
+    if touched {
+        touch_view(state);
     }
     if changed {
-        show_hud(state, sessions, if fullwidth { "全" } else { "半" }, None);
+        show_hud(state, if fullwidth { "全" } else { "半" }, None);
     }
 }
 
@@ -688,7 +881,7 @@ fn load_skin() -> lueying_server::skin::Skin {
 }
 
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
-fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppConfig) {
+fn apply_config(state: &State, cfg: AppConfig) {
     // 皮肤文件跟配置一起重读:改完 skin.toml 一次 reload 生效。
     *state.skin.lock().unwrap_or_else(|p| p.into_inner()) = load_skin();
     // 停顿重排缝:配置点名 bypass 且给了 exe 才装;其余情况都是内置(默认关)。
@@ -733,25 +926,30 @@ fn apply_config(state: &State, sessions: &mut HashMap<u64, Session>, cfg: AppCon
     }
     state.prediction.set_enabled(predict);
     state.script.set_script(script);
-    for s in sessions.values_mut() {
+    let mut touched = false;
+    for (_, handle) in state.all_sessions() {
+        let mut s = handle.lock();
         if let Some(scheme) = &scheme {
             s.engine.set_scheme(Arc::clone(scheme));
         }
         s.engine.set_config(engine_cfg.clone());
         // 候选重算后旧按键应答的内联文本/候选都不再有效。
         s.pending = None;
-        refresh_view(s);
+        refresh_view(&mut s);
         // 点选待写回的文本保留,但内联文本要跟上新配置。
         if let Some(pending) = s.ui_reply.as_mut() {
             pending.preedit = s.view.preedit.clone();
             pending.chinese = s.view.chinese;
             pending.fullwidth = s.view.fullwidth;
         }
+        touched |= handle.publish(&s);
     }
-    state.version.fetch_add(1, Ordering::Relaxed);
+    if touched {
+        touch_view(state);
+    }
 }
 
-/// 应用一条左邻文本;组合已建立时按新上下文重跑同步重排。
+/// 应用一条左邻文本;组合已建立时排一次同步重排。
 fn apply_context(state: &State, session: u64, s: &mut Session, text: &str) {
     // 组合里已经上屏过分段词时,左邻文本不含这些词,不能用它覆盖。
     if s.engine.composition().is_some() && s.engine.composition_committed() {
@@ -767,24 +965,10 @@ fn apply_context(state: &State, session: u64, s: &mut Session, text: &str) {
     }
     // 用户已经翻页/移动高亮时不再改变候选顺序;仍要撤掉旧停顿任务。
     if s.engine.page() == 0 && s.engine.highlight() == 0 {
-        apply_sync_rerank(s);
+        crate::sync_rerank::schedule(state, session, s);
         refresh_view(s);
         // 在途的按键应答/点选待写回里还是重排前的内联文本。
-        if let Some(pending) = s.pending.as_mut() {
-            pending.preedit = s.view.preedit.clone();
-            pending.candidates = s.view.candidates.clone();
-            pending.page = s.view.page;
-            pending.page_size = s.view.page_size;
-            pending.highlight = s.view.highlight;
-        }
-        if let Some(pending) = s.ui_reply.as_mut() {
-            pending.preedit = s.view.preedit.clone();
-            pending.candidates = s.view.candidates.clone();
-            pending.page = s.view.page;
-            pending.page_size = s.view.page_size;
-            pending.highlight = s.view.highlight;
-        }
-        state.version.fetch_add(1, Ordering::Relaxed);
+        sync_pending(s);
     }
     crate::settle::schedule(state, session, s);
 }
@@ -794,10 +978,10 @@ pub(super) fn apply_uia_context(state: &State, job: &crate::uia::Job, text: &str
     if state.active.load(Ordering::Relaxed) != job.session {
         return;
     }
-    let mut sessions = state.sessions.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(s) = sessions.get_mut(&job.session) else {
+    let Some(handle) = state.session(job.session) else {
         return;
     };
+    let mut s = handle.lock();
     if s.context_epoch != job.epoch
         || s.context_seq != job.seq
         || s.engine.context() != job.context.as_str()
@@ -810,34 +994,9 @@ pub(super) fn apply_uia_context(state: &State, job: &crate::uia::Job, text: &str
     if !preedit.is_empty() && text.ends_with(preedit) {
         text.truncate(text.len() - preedit.len());
     }
-    apply_context(state, job.session, s, &text);
-}
-
-/// 4M 在每个按键返回前跑一次;门控不通过时立即返回,不碰模型。
-fn apply_sync_rerank(s: &mut Session) {
-    // 快捷候选固定在本轮插入的位置,4M 模型不能把它们换走;置顶词同理。
-    if s.engine
-        .candidates_detailed()
-        .iter()
-        .any(|cand| cand.quick || cand.pinned)
-    {
-        return;
-    }
-    let Some(rerank) = s.sync_rerank.as_mut() else {
-        return;
-    };
-    let Some(snap) = crate::settle::snapshot(&s.engine) else {
-        return;
-    };
-    // 没有左邻上下文时,4M 只能按句子自身打分:共享语料上它的排序比引擎
-    // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 4M 完全相同。这段
-    // 同步推理(实测 p95 50–70 ms)只剩延迟,直接跳过,让引擎顺序先上屏。
-    if snap.context.is_empty() {
-        return;
-    }
-    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-    if let Some(index) = rerank.decide(&snap.context, &texts, &snap.facts) {
-        s.engine.promote(index);
+    apply_context(state, job.session, &mut s, &text);
+    if handle.publish(&s) {
+        touch_view(state);
     }
 }
 
@@ -848,6 +1007,25 @@ fn sync_ui_reply(s: &mut Session) {
         pending.preedit = s.view.preedit.clone();
         pending.chinese = s.view.chinese;
         pending.fullwidth = s.view.fullwidth;
+    }
+}
+
+/// 后台重排落地后,把在途应答里的候选与内联文本同步到当前引擎状态。
+/// 按键应答在重排完成前就已生成,不同步的话 TSF 会写回旧顺序。
+pub(super) fn sync_pending(s: &mut Session) {
+    if let Some(pending) = s.pending.as_mut() {
+        pending.preedit = s.view.preedit.clone();
+        pending.candidates.clone_from(&s.view.candidates);
+        pending.page = s.view.page;
+        pending.page_size = s.view.page_size;
+        pending.highlight = s.view.highlight;
+    }
+    if let Some(pending) = s.ui_reply.as_mut() {
+        pending.preedit = s.view.preedit.clone();
+        pending.candidates.clone_from(&s.view.candidates);
+        pending.page = s.view.page;
+        pending.page_size = s.view.page_size;
+        pending.highlight = s.view.highlight;
     }
 }
 

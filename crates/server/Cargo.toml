@@ -38,8 +38,6 @@ getrandom = "0.4"
 # 设置窗无障碍:AccessKit 把页面模型暴露成 UIA 树,读屏软件才能操作自绘控件。
 accesskit = "0.25"
 accesskit_windows = "0.35"
-# Skia 只剩设置窗/徽标/命令面板的 CPU 光栅(blit 与 lueying-render)。
-skia-safe.workspace = true
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
 windows-numerics = "0.3.1"
 # 运行期 Wasm 扩展:wasmi 沙箱与每扩展 worker,只改候选窗外观或执行命令。

@@ -70,12 +70,11 @@ pub(crate) fn commands_list(state: &State) -> Result<serde_json::Value, String> 
 /// 确认已投递。隐私字段下拒绝,与热键的门禁一致。
 pub(crate) fn command_run(
     state: &State,
-    sessions: &std::collections::HashMap<u64, Session>,
     id: &str,
 ) -> Result<serde_json::Value, String> {
-    if sessions
-        .get(&state.active.load(Ordering::Relaxed))
-        .is_some_and(|session| session.private)
+    if state
+        .active_published()
+        .is_some_and(|published| published.private)
     {
         return Err("隐私字段下不执行扩展命令".into());
     }
@@ -116,7 +115,6 @@ pub(crate) fn settings_get(state: &State, id: &str) -> Result<serde_json::Value,
 /// `Ext` 的 `settings.set`:逐键校验 schema,合并后落盘并下发。
 pub(crate) fn settings_set(
     state: &State,
-    sessions: &mut std::collections::HashMap<u64, Session>,
     id: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
@@ -170,6 +168,6 @@ pub(crate) fn settings_set(
     {
         return Err(format!("保存配置失败: {error}"));
     }
-    apply_config(state, sessions, cfg);
+    apply_config(state, cfg);
     Ok(full)
 }

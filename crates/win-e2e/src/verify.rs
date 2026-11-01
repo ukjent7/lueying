@@ -361,7 +361,7 @@ fn ocr_inner() -> Result<(Verdict, String), String> {
     Ok((verdict, note))
 }
 
-/// 用 GDI 把中文样张画进 24 位 BMP:OCR 只认位图,这里不引入 Skia 依赖。
+/// 用 GDI 把中文样张画进 24 位 BMP:OCR 只认位图,这里不引入图形后端。
 fn write_sample_bitmap() -> Result<PathBuf, String> {
     const WIDTH: i32 = 800;
     const HEIGHT: i32 = 200;
@@ -476,7 +476,7 @@ fn deferred(rows: &mut Vec<Row>) {
     ));
     rows.push((
         "V7",
-        "AccessKit 集成 Skia 自绘窗口",
+        "AccessKit 集成 Slint 自绘窗口",
         Verdict::Pass,
         "设置窗接 SubclassingAdapter 回答 WM_GETOBJECT;win-e2e 用 UIA 读树,断言保存/关闭/分组/开关,再经 UIA Invoke 打开短语编辑器,确认标准 EDIT 文本控件与保存按钮存在。"
             .to_string(),

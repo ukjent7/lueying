@@ -1,12 +1,10 @@
 //! 命令面板绘制:输入框、竖排命令列表、页脚与命中。
 //!
 //! 只认数据:查询串、可见行与选中下标由服务端的命令搜索模型给出,调色板
-//! 与字型由窗口层传入。绘制与命中共用同一份 [`Layout`],所指即所画。
+//! 由窗口层传入。绘制与命中共用同一份 [`Layout`],所指即所画。
 
-use skia_safe::{Canvas, Contains, Font, Paint, PaintStyle, Point, RRect, Rect};
-
-use crate::paint::color;
-use crate::panel::Palette;
+use crate::paint::{Canvas, Color, Point};
+use crate::panel::{Palette, Rect};
 
 /// 面板逻辑宽度。
 pub const WIDTH: f32 = 520.0;
@@ -96,75 +94,68 @@ pub fn layout(spec: &Spec, scale: f32) -> Layout {
 
 /// 画一帧;调用方按 [`Layout::size`] 准备同样大的画布。
 pub fn draw(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let scale = scale.max(0.5);
     let (width, height) = layout.size;
-    canvas.draw_rect(Rect::from_xywh(0.0, 0.0, width, height), &fill(palette.bg));
+    canvas.fill_rect(
+        Rect::from_xywh(0.0, 0.0, width, height),
+        Color::opaque(palette.bg),
+    );
     // 输入框与列表之间的分隔线。
-    canvas.draw_rect(
+    canvas.fill_rect(
         Rect::from_xywh(0.0, layout.input.bottom - scale, width, scale),
-        &fill(palette.border),
+        Color::opaque(palette.border),
     );
     // 外框;窗口没有系统边框,描边由这里画。
-    let mut border = Paint::default();
-    border.set_anti_alias(true);
-    border.set_style(PaintStyle::Stroke);
-    border.set_stroke_width(scale);
-    border.set_color(color(palette.border));
-    canvas.draw_rect(
+    canvas.stroke_rect(
         Rect::from_xywh(0.5 * scale, 0.5 * scale, width - scale, height - scale),
-        &border,
+        scale,
+        Color::opaque(palette.border),
     );
 
-    draw_input(canvas, spec, layout, palette, font, scale);
-    draw_rows(canvas, spec, layout, palette, font, scale);
-    draw_footer(canvas, spec, layout, palette, font, scale);
+    draw_input(canvas, spec, layout, palette, scale);
+    draw_rows(canvas, spec, layout, palette, scale);
+    draw_footer(canvas, spec, layout, palette, scale);
 }
 
 fn draw_input(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let size = 15.0 * scale;
-    let baseline = layout.input.center_y() + size * 0.36;
+    let middle = layout.input.center_y();
     let x = PAD * scale;
     let max_width = layout.input.width() - 2.0 * PAD * scale;
     if spec.query.is_empty() {
         text(
             canvas,
-            font,
             size,
             palette.text_tertiary,
-            Point::new(x, baseline),
+            Point::new(x, middle),
             "输入拼音搜索命令",
-            Some((max_width, size)),
+            Some(max_width),
         );
         // 空查询时把光标画在提示文字前。
         caret(canvas, x, layout.input, palette, scale);
         return;
     }
-    let shown = ellipsize(font, size, &spec.query, max_width - 2.0 * scale);
-    let mut query_font = font.clone();
-    query_font.set_size(size);
-    let (query_width, _) = query_font.measure_str(&shown, None);
+    let shown = ellipsize(canvas, size, &spec.query, max_width - 2.0 * scale);
+    let query_width = canvas.measure(&shown, size);
     text(
         canvas,
-        font,
         size,
         palette.text,
-        Point::new(x, baseline),
+        Point::new(x, middle),
         &shown,
-        Some((max_width, size)),
+        Some(max_width),
     );
     caret(
         canvas,
@@ -175,21 +166,20 @@ fn draw_input(
     );
 }
 
-fn caret(canvas: &Canvas, x: f32, input: Rect, palette: &Palette, scale: f32) {
+fn caret(canvas: &mut dyn Canvas, x: f32, input: Rect, palette: &Palette, scale: f32) {
     let x = x.min(input.right - PAD * scale);
     let height = 18.0 * scale;
-    canvas.draw_rect(
+    canvas.fill_rect(
         Rect::from_xywh(x, input.center_y() - height * 0.5, 1.5 * scale, height),
-        &fill(palette.accent),
+        Color::opaque(palette.accent),
     );
 }
 
 fn draw_rows(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     if spec.rows.is_empty() {
@@ -199,16 +189,12 @@ fn draw_rows(
             "没有匹配的命令"
         };
         let size = 14.0 * scale;
-        let mut message_font = font.clone();
-        message_font.set_size(size);
-        let (width, _) = message_font.measure_str(message, None);
-        let baseline = layout.list.center_y() + size * 0.36;
+        let width = canvas.measure(message, size);
         text(
             canvas,
-            font,
             size,
             palette.text_secondary,
-            Point::new(layout.list.center_x() - width * 0.5, baseline),
+            Point::new(layout.list.center_x() - width * 0.5, layout.list.center_y()),
             message,
             None,
         );
@@ -228,108 +214,94 @@ fn draw_rows(
                 rect.right,
                 rect.bottom - 2.0 * scale,
             );
-            canvas.draw_rrect(
-                RRect::new_rect_xy(inner, RADIUS * scale, RADIUS * scale),
-                &fill(palette.selected_bg),
-            );
+            canvas.fill_rrect(inner, RADIUS * scale, Color::opaque(palette.selected_bg));
         }
-        let mut small_font = font.clone();
-        small_font.set_size(small);
-        let (extension_width, _) = small_font.measure_str(&row.extension, None);
+        let extension_width = canvas.measure(&row.extension, small);
         let extension_x = rect.right - PAD * scale - extension_width;
         let title_width = (extension_x - rect.left - PAD * scale - 10.0 * scale).max(0.0);
-        let title = ellipsize(font, size, &row.title, title_width);
-        let baseline = rect.center_y() + size * 0.36;
+        let title = ellipsize(canvas, size, &row.title, title_width);
+        let middle = rect.center_y();
         text(
             canvas,
-            font,
             size,
             if selected {
                 palette.selected_text
             } else {
                 palette.text
             },
-            Point::new(rect.left + PAD * scale, baseline),
+            Point::new(rect.left + PAD * scale, middle),
             &title,
-            Some((title_width, size)),
+            Some(title_width),
         );
-        let small_baseline = rect.center_y() + small * 0.36;
         text(
             canvas,
-            font,
             small,
             if selected {
                 palette.accent_text
             } else {
                 palette.text_tertiary
             },
-            Point::new(extension_x, small_baseline),
+            Point::new(extension_x, middle),
             &row.extension,
             None,
         );
     }
     // 卷动提示:上下还有内容时在列表右缘画小箭头。
-    let mut arrow_font = font.clone();
-    arrow_font.set_size(10.0 * scale);
-    let mut arrow = Paint::default();
-    arrow.set_anti_alias(true);
-    arrow.set_color(color(palette.text_tertiary));
     if spec.above > 0 {
-        canvas.draw_str(
-            "▲",
+        text(
+            canvas,
+            10.0 * scale,
+            palette.text_tertiary,
             Point::new(
                 layout.list.right - 10.0 * scale,
-                layout.list.top + 9.0 * scale,
+                layout.list.top + 5.0 * scale,
             ),
-            &arrow_font,
-            &arrow,
+            "▲",
+            None,
         );
     }
     if spec.below > 0 {
-        canvas.draw_str(
-            "▼",
+        text(
+            canvas,
+            10.0 * scale,
+            palette.text_tertiary,
             Point::new(
                 layout.list.right - 10.0 * scale,
-                layout.list.bottom - 3.0 * scale,
+                layout.list.bottom - 5.0 * scale,
             ),
-            &arrow_font,
-            &arrow,
+            "▼",
+            None,
         );
     }
 }
 
 fn draw_footer(
-    canvas: &Canvas,
+    canvas: &mut dyn Canvas,
     spec: &Spec,
     layout: &Layout,
     palette: &Palette,
-    font: &Font,
     scale: f32,
 ) {
     let size = 11.0 * scale;
-    let baseline = layout.footer.center_y() + size * 0.36;
+    let middle = layout.footer.center_y();
     text(
         canvas,
-        font,
         size,
         palette.text_tertiary,
-        Point::new(PAD * scale, baseline),
+        Point::new(PAD * scale, middle),
         "↑↓ 选择 · Enter 执行 · Esc 关闭",
-        Some((layout.footer.width() - 2.0 * PAD * scale, size)),
+        Some(layout.footer.width() - 2.0 * PAD * scale),
     );
     if spec.total == 0 {
         return;
     }
     let label = format!("{}/{}", spec.above + spec.selected + 1, spec.total);
-    let mut label_font = font.clone();
-    label_font.set_size(size);
-    let (label_width, _) = label_font.measure_str(&label, None);
+    let label_width = canvas.measure(&label, size);
     text(
         canvas,
-        font,
         size,
         palette.text_tertiary,
-        Point::new(layout.footer.right - PAD * scale - label_width, baseline),
+        Point::new(layout.footer.right - PAD * scale - label_width, middle),
         &label,
         None,
     );
@@ -337,62 +309,44 @@ fn draw_footer(
 
 /// 鼠标命中;坐标是窗口客户区物理像素。
 pub fn hit(layout: &Layout, spec: &Spec, x: f32, y: f32) -> Hit {
-    if layout.input.contains(Point::new(x, y)) {
+    if layout.input.contains(x, y) {
         return Hit::Input;
     }
     for (index, rect) in layout.rows.iter().enumerate() {
-        if rect.contains(Point::new(x, y)) && index < spec.rows.len() {
+        if rect.contains(x, y) && index < spec.rows.len() {
             return Hit::Row(index);
         }
     }
-    if layout.footer.contains(Point::new(x, y)) {
+    if layout.footer.contains(x, y) {
         return Hit::Footer;
     }
     Hit::Nothing
 }
 
-/// 画一段文字;`clip` 给 (最大宽, 字号) 时先裁剪再画。
+/// 画一段文字;`max_width` 给定时裁掉超出部分。
 pub(crate) fn text(
-    canvas: &Canvas,
-    font: &Font,
+    canvas: &mut dyn Canvas,
     size: f32,
     rgb: u32,
     origin: Point,
     content: &str,
-    clip: Option<(f32, f32)>,
+    max_width: Option<f32>,
 ) {
-    let (x, baseline) = (origin.x, origin.y);
-    let mut text_font = font.clone();
-    text_font.set_size(size);
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(color(rgb));
-    match clip {
-        Some((max_width, size)) => {
-            canvas.save();
-            canvas.clip_rect(
-                Rect::from_xywh(x, baseline - size * 1.1, max_width, size * 1.5),
-                skia_safe::ClipOp::Intersect,
-                false,
-            );
-            canvas.draw_str(content, Point::new(x, baseline), &text_font, &paint);
-            canvas.restore();
-        }
-        None => {
-            canvas.draw_str(content, Point::new(x, baseline), &text_font, &paint);
-        }
-    }
+    canvas.text(content, origin, size, Color::opaque(rgb), max_width);
 }
 
 /// 超宽时截断并加省略号;`max_width` 不够放省略号时返回空串。
-pub(crate) fn ellipsize(font: &Font, size: f32, content: &str, max_width: f32) -> String {
-    let mut text_font = font.clone();
-    text_font.set_size(size);
-    if text_font.measure_str(content, None).0 <= max_width {
+pub(crate) fn ellipsize(
+    canvas: &mut dyn Canvas,
+    size: f32,
+    content: &str,
+    max_width: f32,
+) -> String {
+    if canvas.measure(content, size) <= max_width {
         return content.to_string();
     }
     let ellipsis = "…";
-    if text_font.measure_str(ellipsis, None).0 > max_width {
+    if canvas.measure(ellipsis, size) > max_width {
         return String::new();
     }
     let mut out = String::new();
@@ -400,18 +354,11 @@ pub(crate) fn ellipsize(font: &Font, size: f32, content: &str, max_width: f32) -
         let mut next = out.clone();
         next.push(ch);
         next.push_str(ellipsis);
-        if text_font.measure_str(&next, None).0 > max_width {
+        if canvas.measure(&next, size) > max_width {
             break;
         }
         out.push(ch);
     }
     out.push_str(ellipsis);
     out
-}
-
-pub(crate) fn fill(rgb: u32) -> Paint {
-    let mut paint = Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_color(color(rgb));
-    paint
 }
