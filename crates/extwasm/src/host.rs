@@ -530,7 +530,7 @@ impl Guest {
         if self.needs_reset {
             self.rebuild()?;
         }
-        let Some(command) = self.command.as_ref() else {
+        let Some(command) = self.command.clone() else {
             return Err("模块没有导出 lueying_command".into());
         };
         self.store
@@ -570,7 +570,7 @@ impl Guest {
         if self.needs_reset {
             self.rebuild()?;
         }
-        let Some(appearance) = self.appearance.as_ref() else {
+        let Some(appearance) = self.appearance.clone() else {
             return Err("模块没有导出 lueying_appearance".into());
         };
         let json = scene.to_json()?;
@@ -689,10 +689,7 @@ fn host_emit(caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
         return;
     };
     let mut bytes = vec![0; len];
-    let read = {
-        let ctx = caller.as_context();
-        memory.read(ctx, offset, &mut bytes)
-    };
+    let read = memory.read(&mut caller, offset, &mut bytes);
     if read.is_ok() {
         caller.data_mut().emitted = Some(Emitted { bytes, ok: ok != 0 });
     }
@@ -820,7 +817,7 @@ pub(crate) fn engine(limits: Limits) -> Result<Engine, String> {
     config.allow_start_fn(false);
     config.set_max_stack_height(limits.stack_bytes.max(64 << 10));
     config.set_max_recursion_depth(128);
-    Engine::new(&config).map_err(|error| format!("Wasm 引擎创建失败: {error}"))
+    Ok(Engine::new(&config))
 }
 
 /// 编译一个模块;二进制与 WAT 文本都收。

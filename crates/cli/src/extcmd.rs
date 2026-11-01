@@ -289,7 +289,7 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), Str
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
         if !is_binary(&relative) {
-            String::from_utf8(bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
+            std::str::from_utf8(&bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
         }
         files.push((relative, bytes));
     }
