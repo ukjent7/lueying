@@ -234,6 +234,55 @@ fn rejects_net_service() {
 }
 
 #[test]
+fn parses_native_manifest() {
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("ppocr.exe");
+    value.as_object_mut().unwrap().remove("wasm");
+    value.as_object_mut().unwrap().remove("activate");
+    value["needs"] = json!([]);
+    let manifest = parse(value).expect("原生清单应通过");
+    assert!(manifest.is_native());
+    assert_eq!(manifest.payload_file(), "ppocr.exe");
+}
+
+#[test]
+fn rejects_bad_native_manifests() {
+    // native 还声明 wasm 模块。
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("ppocr.exe");
+    assert!(parse(value).is_err());
+
+    // native 声明 activate。
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("ppocr.exe");
+    value.as_object_mut().unwrap().remove("wasm");
+    value["activate"] = json!({"commands":[{"id":"run","title":"跑"}]});
+    assert!(parse(value).is_err());
+
+    // native 声明 needs。
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("ppocr.exe");
+    value.as_object_mut().unwrap().remove("wasm");
+    value["needs"] = json!(["capture"]);
+    assert!(parse(value).is_err());
+
+    // native 缺 exe。
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value.as_object_mut().unwrap().remove("wasm");
+    assert!(parse(value).is_err());
+
+    // wasm 清单声明 exe。
+    let mut value = shot_ocr();
+    value["exe"] = json!("ppocr.exe");
+    assert!(parse(value).is_err());
+}
+
+#[test]
 fn rejects_oversized_manifest() {
     let text = "x".repeat(MAX_MANIFEST_BYTES + 1);
     assert!(Manifest::parse(text.as_bytes()).is_err());

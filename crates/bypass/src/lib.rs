@@ -1,10 +1,11 @@
 //! 旁路进程层:本地大模型、高精度 OCR 这类重活的隔离运行位置。
 //!
 //! 扩展是独立可执行文件,宿主按需启动,一行一请求的 JSON 协议通信;
-//! 不把未签名代码加载进输入法进程。默认不常驻:原型按「一次调用一次
-//! 进程」实现,冷启动成本是测量项之一,常驻化等测量结果决定。进程边
-//! 界即信任边界:限额交 [`ProcessLimiter`] 钩子,Windows 侧用 Job
-//! Object 实现,平台无关的测试用空实现。
+//! 不把未签名代码加载进输入法进程。两种生命周期:[`Bypass`] 一次调用
+//! 一次进程,轻载场景用;[`NativeHost`] 常驻到空闲回收,模型等初始化
+//! 成本只付一次。进程边界即信任边界:限额交 [`ProcessLimiter`] 钩子,
+//! Windows 侧用 Job Object 实现,平台无关的测试用空实现;原生扩展在
+//! Windows 上再加一层无能力的 AppContainer。
 //!
 //! 协议:请求是 `{"method":"...","args":...}\n`,应答是
 //! `{"result":...}\n` 或 `{"error":"..."}\n`。进程退出码非零、行不是
@@ -13,8 +14,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::Arc;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use lueying_extsvc::{Done, Provider};
@@ -59,7 +60,7 @@ impl Bypass {
     }
 
     /// 冷启动 + 往返一次调用。同步阻塞;扩展侧的异步语义由
-    /// [`BypassProvider`] 在独立线程完成。
+    /// [`FnProvider`] 在独立线程完成。
     pub fn call(&self, method: &str, args: &str) -> Result<String, String> {
         let args: serde_json::Value = serde_json::from_str(args)
             .map_err(|error| format!("旁路参数不是合法 JSON: {error}"))?;
@@ -182,49 +183,295 @@ fn kill(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// 应答行只认两种形状;`error` 优先,`result` 原样回传文本。
-fn parse_response(line: &str) -> Result<String, String> {
-    let value: serde_json::Value = serde_json::from_str(line.trim())
-        .map_err(|error| format!("旁路应答不是合法 JSON: {error}"))?;
+/// 应答行的形状;`error` 优先,`result` 原样回传文本。
+enum Reply {
+    Result(String),
+    Error(String),
+    Malformed(String),
+}
+
+/// 把一行应答分成结果、业务错误与协议破坏。
+fn classify_response(line: &str) -> Reply {
+    let value = match serde_json::from_str::<serde_json::Value>(line.trim()) {
+        Ok(value) => value,
+        Err(error) => return Reply::Malformed(format!("旁路应答不是合法 JSON: {error}")),
+    };
     if let Some(error) = value.get("error") {
-        return Err(match error.as_str() {
+        return Reply::Error(match error.as_str() {
             Some(text) => text.to_string(),
             None => error.to_string(),
         });
     }
     match value.get("result") {
-        Some(result) => Ok(result.to_string()),
-        None => Err("旁路应答缺少 result 字段".to_string()),
+        Some(result) => Reply::Result(result.to_string()),
+        None => Reply::Malformed("旁路应答缺少 result 字段".to_string()),
     }
 }
 
-/// 把旁路进程装进服务缝的提供者槽位:本地大模型、高精度 OCR 等由
-/// 独立进程承担,宿主进程内只留一个 spawn 句柄。
+/// 一次性调用的应答只分成败;形状问题统一算失败。
+fn parse_response(line: &str) -> Result<String, String> {
+    match classify_response(line) {
+        Reply::Result(result) => Ok(result),
+        Reply::Error(error) => Err(error),
+        Reply::Malformed(error) => Err(error),
+    }
+}
+
+/// 把任意同步调用函数装进服务缝的提供者槽位:本地大模型、原生扩展等
+/// 由独立进程承担,宿主进程内只留一个转发函数。
 ///
 /// 每次调用在独立线程转发,不阻塞扩展宿主的泵任务;结果照原样过
 /// [`Done`] 完成队列,隐私与审计在 [`Provider`] 之外的注册表层生效。
-pub struct BypassProvider {
-    bypass: Bypass,
+pub struct FnProvider<F> {
+    call: Arc<F>,
 }
 
-impl BypassProvider {
-    pub fn new(bypass: Bypass) -> Self {
-        Self { bypass }
+impl<F> FnProvider<F>
+where
+    F: Fn(&str, &str) -> Result<String, String> + Send + Sync + 'static,
+{
+    pub fn new(call: F) -> Self {
+        Self {
+            call: Arc::new(call),
+        }
     }
 }
 
-impl Provider for BypassProvider {
+impl<F> Provider for FnProvider<F>
+where
+    F: Fn(&str, &str) -> Result<String, String> + Send + Sync + 'static,
+{
     fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
-        let bypass = self.bypass.clone();
+        let call = Arc::clone(&self.call);
         let method = method.to_string();
         let args = args.to_string();
         std::thread::Builder::new()
             .name("bypass-call".to_string())
-            .spawn(move || done.complete(bypass.call(&method, &args)))
+            .spawn(move || done.complete(call(&method, &args)))
             .map_err(|error| format!("旁路调用线程启动失败: {error}"))?;
         Ok(())
     }
 }
 
+/// 常驻原生扩展的运行配置。
+#[derive(Clone, Debug)]
+pub struct NativeConfig {
+    /// 原生可执行文件路径。
+    pub exe: PathBuf,
+    /// 传给可执行文件的参数。
+    pub args: Vec<String>,
+    /// 单次调用的应答预算。
+    pub call_timeout: Duration,
+    /// 空闲多久后收掉进程;进程再被调用会重新拉起。
+    pub idle_exit: Duration,
+    /// 额外授予 AppContainer 只读执行权限的路径(模型目录等)。
+    /// Windows 之外的平台忽略。
+    pub readable: Vec<PathBuf>,
+}
+
+struct Live {
+    child: Child,
+    stdin: ChildStdin,
+    replies: mpsc::Receiver<Result<String, String>>,
+    last_used: Instant,
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        kill(&mut self.child);
+    }
+}
+
+struct Shared {
+    config: NativeConfig,
+    limiter: Option<Arc<dyn ProcessLimiter>>,
+    live: Arc<Mutex<Option<Live>>>,
+}
+
+/// 常驻原生扩展宿主:首次调用拉起进程,之后进程跨调用存活,模型等
+/// 初始化成本只付一次;空闲 [`NativeConfig::idle_exit`] 后由看护线程
+/// 收走,保住零空闲成本。协议与 [`Bypass`] 相同(一行请求一行应答的
+/// JSON),调用串行,同一时刻最多一次在途调用。
+///
+/// Windows 上进程运行在无能力的 AppContainer 里(派生包 SID,不授予
+/// 任何能力),外加可选的 [`ProcessLimiter`] 限额;进程死亡后下一次
+/// 调用自动重新拉起。
+#[derive(Clone)]
+pub struct NativeHost {
+    shared: Arc<Shared>,
+}
+
+impl NativeHost {
+    pub fn new(config: NativeConfig) -> Self {
+        let host = Self {
+            shared: Arc::new(Shared {
+                config,
+                limiter: None,
+                live: Arc::new(Mutex::new(None)),
+            }),
+        };
+        host.spawn_reaper();
+        host
+    }
+
+    /// 装平台限额;Windows 宿主装 Job Object,无限额平台不装。
+    pub fn with_limiter(mut self, limiter: Arc<dyn ProcessLimiter>) -> Self {
+        self.shared.limiter = Some(limiter);
+        self
+    }
+
+    /// 冷启动(仅首次)+ 往返一次调用。同步阻塞;扩展侧的异步语义由
+    /// [`FnProvider`] 在独立线程完成。
+    pub fn call(&self, method: &str, args: &str) -> Result<String, String> {
+        let args: serde_json::Value = serde_json::from_str(args)
+            .map_err(|error| format!("原生扩展参数不是合法 JSON: {error}"))?;
+        let request = serde_json::json!({ "method": method, "args": args }).to_string();
+        let mut live = self
+            .shared
+            .live
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(running) = live.as_ref() {
+            // 一问一答不该有残留;坏扩展多答的行在这里丢弃。
+            while running.replies.try_recv().is_ok() {}
+        }
+        let dead = match live.as_ref() {
+            None => true,
+            Some(running) => running
+                .child
+                .try_wait()
+                .map_or(true, |status| status.is_some()),
+        };
+        if dead {
+            // 换成 None 先收走旧进程(Drop 兜底 kill),再拉新进程。
+            *live = None;
+            *live = Some(self.spawn()?);
+        }
+        let running = live.as_mut().expect("上一步刚拉起进程");
+        if let Err(error) = write_request(&mut running.stdin, &request) {
+            *live = None;
+            return Err(error);
+        }
+        running.last_used = Instant::now();
+        let budget = self.shared.config.call_timeout;
+        match running.replies.recv_timeout(budget) {
+            Ok(Ok(line)) => match classify_response(&line) {
+                Reply::Result(result) => {
+                    running.last_used = Instant::now();
+                    Ok(result)
+                }
+                // 干净的业务错误:进程没坏,留着复用。
+                Reply::Error(error) => Err(error),
+                // 应答不成形说明进程已坏,收掉等下次重拉。
+                Reply::Malformed(error) => {
+                    *live = None;
+                    Err(error)
+                }
+            },
+            Ok(Err(error)) => {
+                *live = None;
+                Err(error)
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                *live = None;
+                Err(format!("原生扩展调用超时({budget:?})"))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                *live = None;
+                Err("原生扩展应答通道关闭".to_string())
+            }
+        }
+    }
+
+    fn spawn(&self) -> Result<Live, String> {
+        let mut child = spawn::spawn_ext(
+            &self.shared.config.exe,
+            &self.shared.config.args,
+            &self.shared.config.readable,
+            self.shared.limiter.as_deref(),
+        )?;
+        let Some(stdin) = child.stdin.take() else {
+            super::kill(&mut child);
+            return Err("原生扩展没有标准输入".to_string());
+        };
+        let Some(stdout) = child.stdout.take() else {
+            super::kill(&mut child);
+            return Err("原生扩展没有标准输出".to_string());
+        };
+        let (sender, receiver) = mpsc::channel();
+        let reader = match std::thread::Builder::new()
+            .name("ext-native-read".to_string())
+            .spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            let _ = sender.send(Err("原生扩展已退出".to_string()));
+                            break;
+                        }
+                        Ok(_) => {
+                            if sender.send(Ok(line)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(format!("读原生扩展应答失败: {error}")));
+                            break;
+                        }
+                    }
+                }
+            }) {
+            Ok(reader) => reader,
+            Err(error) => {
+                super::kill(&mut child);
+                return Err(format!("原生扩展读线程启动失败: {error}"));
+            }
+        };
+        // JoinHandle 在这里丢弃:读线程持有 stdout 自持到 EOF。
+        let _ = reader;
+        Ok(Live {
+            child,
+            stdin,
+            replies: receiver,
+            last_used: Instant::now(),
+        })
+    }
+
+    /// 空闲看护:定期探测,超过预算没被调用就收走进程。探测间隔取
+    /// 预算的四分之一,夹在 50 ms 与 15 s 之间;在途调用持有锁时跳过。
+    fn spawn_reaper(&self) {
+        let live = Arc::downgrade(&self.shared.live);
+        let idle = self.shared.config.idle_exit;
+        let step = (idle / 4).clamp(Duration::from_millis(50), Duration::from_secs(15));
+        let _ = std::thread::Builder::new()
+            .name("ext-native-idle".to_string())
+            .spawn(move || loop {
+                std::thread::sleep(step);
+                let Some(live) = live.upgrade() else {
+                    break;
+                };
+                if let Ok(mut live) = live.try_lock()
+                    && let Some(running) = live.as_ref()
+                    && running.last_used.elapsed() >= idle
+                {
+                    // Drop 收进程;宿主退出时 Job 的 kill-on-close 兜底。
+                    *live = None;
+                }
+            });
+    }
+}
+
+/// 写一行请求。常驻进程的 stdin 跨调用保持打开,写不关闭。
+fn write_request(stdin: &mut ChildStdin, request: &str) -> Result<(), String> {
+    stdin
+        .write_all(request.as_bytes())
+        .and_then(|()| stdin.flush())
+        .map_err(|error| format!("写原生扩展请求失败: {error}"))
+}
+
 #[cfg(windows)]
 pub mod job;
+#[cfg(windows)]
+pub(crate) mod sandbox;
+mod spawn;

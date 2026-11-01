@@ -18,10 +18,22 @@ pub mod sha256;
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 
 /// 当前清单 API。
-pub const WASM_API: u32 = 3;
+pub const EXT_API: u32 = 3;
 
 /// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
 pub const MAX_TEXT_CHARS: usize = 4096;
+
+/// 扩展形态。Wasm 在宿主进程内解释执行;原生是独立进程的服务提供者,
+/// 由旁路宿主按需拉起并沙箱化。
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Kind {
+    /// Wasm 模块(默认)。
+    #[default]
+    Wasm,
+    /// 原生可执行文件。
+    Native,
+}
 
 /// 扩展清单,对应包内的 `manifest.json`。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -33,10 +45,17 @@ pub struct Manifest {
     pub name: String,
     /// 扩展自己的版本号,只用于显示。
     pub version: String,
-    /// 清单 API 版本;当前只接受 [`WASM_API`]。
+    /// 清单 API 版本;当前只接受 [`EXT_API`]。
     pub api: u32,
-    /// Wasm 模块,包内裸文件名。
+    /// 扩展形态;缺省是 Wasm。
+    #[serde(default)]
+    pub kind: Kind,
+    /// Wasm 模块,包内裸文件名;仅 [`Kind::Wasm`]。
+    #[serde(default)]
     pub wasm: String,
+    /// 原生可执行文件,包内裸文件名;仅 [`Kind::Native`]。
+    #[serde(default)]
+    pub exe: String,
     /// 是否提供候选窗外观;为 true 时模块必须导出 `lueying_appearance`。
     #[serde(default)]
     pub appearance: bool,
@@ -380,10 +399,29 @@ impl Manifest {
         if !valid_version(&self.version) {
             return Err(format!("版本号 {:?} 不合法", self.version));
         }
-        if self.api != WASM_API {
-            return Err(format!("清单 API {} 不支持,当前支持 {WASM_API}", self.api));
+        if self.api != EXT_API {
+            return Err(format!("清单 API {} 不支持,当前支持 {EXT_API}", self.api));
         }
-        check_entry("Wasm 模块", &self.wasm, "wasm")?;
+        match self.kind {
+            Kind::Wasm => {
+                if !self.exe.is_empty() {
+                    return Err("kind=wasm 清单不能声明 exe".into());
+                }
+                check_entry("Wasm 模块", &self.wasm, "wasm")?;
+            }
+            Kind::Native => {
+                if !self.wasm.is_empty() {
+                    return Err("kind=native 清单不能声明 wasm 模块".into());
+                }
+                if !self.needs.is_empty() {
+                    return Err("原生扩展暂不接宿主服务,清单不能声明 needs".into());
+                }
+                if self.activate.is_some() {
+                    return Err("原生扩展是服务提供者,清单不能声明 activate".into());
+                }
+                check_entry("可执行文件", &self.exe, "exe")?;
+            }
+        }
         check_settings(&self.settings)?;
         if !self.capabilities.is_empty() {
             check_capabilities(&self.capabilities)?;
@@ -395,9 +433,22 @@ impl Manifest {
         Ok(())
     }
 
-    /// Wasm 模块,包内裸文件名。
+    /// Wasm 模块,包内裸文件名;仅 [`Kind::Wasm`] 清单可调。
     pub fn wasm_main(&self) -> &str {
         &self.wasm
+    }
+
+    /// 主内容文件名:Wasm 模块或原生可执行文件。同意指纹对它算哈希。
+    pub fn payload_file(&self) -> &str {
+        match self.kind {
+            Kind::Wasm => &self.wasm,
+            Kind::Native => &self.exe,
+        }
+    }
+
+    /// 是否原生扩展(独立进程的服务提供者)。
+    pub fn is_native(&self) -> bool {
+        self.kind == Kind::Native
     }
 
     /// 是否声明了候选窗外观。

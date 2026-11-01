@@ -160,3 +160,24 @@ fn package_hash_requires_wasm() {
     let error = package_hash(&dir, &parse(MANIFEST)).expect_err("缺模块应失败");
     assert!(error.contains("extension.wasm"));
 }
+
+const NATIVE: &str = r#"{
+  "id":"ppocr","name":"PP-OCR","version":"1.0.0","api":3,
+  "kind":"native","exe":"ppocr.exe","capabilities":["ocr"]
+}"#;
+
+#[test]
+fn native_hash_covers_exe_bytes() {
+    let temp = Temp::new("native-hash");
+    let dir = temp.pack("ppocr");
+    std::fs::write(dir.join("manifest.json"), NATIVE).expect("写清单");
+    std::fs::write(dir.join("ppocr.exe"), b"v1").expect("写可执行文件");
+    let manifest = parse(NATIVE);
+    let mut book = ConsentBook::default();
+    book.approve(&dir, &manifest, 42).expect("同意");
+    assert!(book.check(&dir, &manifest).expect("检查").approved);
+
+    std::fs::write(dir.join("ppocr.exe"), b"v2").expect("换可执行文件");
+    let check = book.check(&dir, &manifest).expect("检查");
+    assert!(check.changed && !check.approved, "exe 变了要重新同意");
+}

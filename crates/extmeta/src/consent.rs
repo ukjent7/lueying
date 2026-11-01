@@ -166,7 +166,7 @@ impl ConsentBook {
 ///
 /// 运行期只读这两个文件,把别的数据文件算进去只会让无关改动触发重同意。
 pub fn package_hash(dir: &Path, manifest: &Manifest) -> Result<String, String> {
-    let main = manifest.wasm_main();
+    let main = manifest.payload_file();
     let mut hasher = Sha256::new();
     hasher.update(DOMAIN);
     for name in ["manifest.json", main] {

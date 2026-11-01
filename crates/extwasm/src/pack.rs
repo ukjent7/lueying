@@ -392,6 +392,9 @@ pub(crate) fn read_manifest(dir: &Path) -> Result<Manifest, String> {
 
 /// 目录名必须等于扩展 id。
 pub(crate) fn check_dir(dir: &Path, manifest: &Manifest) -> Result<(), String> {
+    if manifest.is_native() {
+        return Err("原生扩展不经 Wasm 运行时加载".into());
+    }
     let name = dir
         .file_name()
         .and_then(|name| name.to_str())

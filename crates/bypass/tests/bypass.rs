@@ -1,9 +1,10 @@
 //! 旁路协议与提供者替换的平台无关测试;CI 的 engine job 在 Linux 上执行。
+//! [`NativeHost`] 的 Windows 沙箱路径(AppContainer + Job)由 win-e2e 覆盖。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lueying_bypass::{Bypass, BypassConfig, BypassProvider, ProcessLimiter};
+use lueying_bypass::{Bypass, BypassConfig, FnProvider, NativeConfig, NativeHost, ProcessLimiter};
 use lueying_extmeta::Service;
 use lueying_extsvc::{Completion, Registry};
 
@@ -92,7 +93,13 @@ fn limiter_failure_kills_process() {
 #[test]
 fn provider_swap_routes_call_to_process() {
     let registry = Arc::new(Registry::new());
-    registry.set(Service::Ocr, Arc::new(BypassProvider::new(echo())));
+    registry.set(
+        Service::Ocr,
+        Arc::new(FnProvider::new({
+            let bypass = echo();
+            move |method: &str, args: &str| bypass.call(method, args)
+        })),
+    );
     assert!(registry.has(Service::Ocr));
     registry
         .call("ocr", "recognize", r#"{"file":"x.bmp"}"#, 7)
@@ -107,8 +114,11 @@ fn provider_swap_routes_call_to_process() {
 #[test]
 fn provider_reinstall_overrides_slot() {
     let registry = Arc::new(Registry::new());
-    registry.set(Service::Notify, Arc::new(BypassProvider::new(echo())));
-    registry.set(Service::Notify, Arc::new(BypassProvider::new(echo())));
+    let provider = |bypass: Bypass| {
+        FnProvider::new(move |method: &str, args: &str| bypass.call(method, args))
+    };
+    registry.set(Service::Notify, Arc::new(provider(echo())));
+    registry.set(Service::Notify, Arc::new(provider(echo())));
     assert!(registry.has(Service::Notify));
     registry
         .call("notify", "show", r#"{"title":"t","body":"b"}"#, 1)
@@ -120,8 +130,8 @@ fn provider_reinstall_overrides_slot() {
 }
 
 /// 旁路冷启动测量:一次调用 = 拉起进程 + 往返 + 回收。
-/// 原型的决策数据之一;数字随 `cargo test -p lueying-bypass -- --nocapture`
-/// 出现在 CI 日志,常驻化决策(默认不常驻)以此为准。
+/// 数字随 `cargo test -p lueying-bypass -- --nocapture` 出现在 CI 日志,
+/// 与 [`NativeHost`] 的常驻模式对照,决定各负载用哪种生命周期。
 #[test]
 fn cold_start_measurement() {
     let started = Instant::now();
@@ -135,4 +145,63 @@ fn cold_start_measurement() {
     println!("旁路冷启动均值(30 次): {per_call:?}");
     // 共享 runner 的调度抖动很大,只给上界,不当精确断言。
     assert!(per_call < Duration::from_secs(2), "冷启动均值 {per_call:?}");
+}
+
+fn native(idle_exit: Duration, call_timeout: Duration) -> NativeHost {
+    NativeHost::new(NativeConfig {
+        exe: echo_exe(),
+        args: Vec::new(),
+        call_timeout,
+        idle_exit,
+        readable: Vec::new(),
+    })
+}
+
+/// 从 `pid` 方法的应答里取替身进程号。
+fn pid_of(answer: &str) -> u32 {
+    let value: serde_json::Value = serde_json::from_str(answer).expect("结果应是 JSON");
+    value["pid"].as_u64().expect("应有进程号") as u32
+}
+
+#[test]
+fn native_host_keeps_process_across_calls() {
+    let host = native(Duration::from_secs(60), Duration::from_secs(5));
+    let first = pid_of(&host.call("pid", "{}").expect("首次调用应成功"));
+    let second = pid_of(&host.call("pid", "{}").expect("二次调用应成功"));
+    assert_eq!(first, second, "空闲预算内进程应常驻");
+}
+
+#[test]
+fn native_host_reaps_idle_process() {
+    let host = native(Duration::from_millis(400), Duration::from_secs(5));
+    let first = pid_of(&host.call("pid", "{}").expect("首次调用应成功"));
+    // 看护间隔取空闲预算的四分之一,留足裕量等回收。
+    std::thread::sleep(Duration::from_millis(1200));
+    let second = pid_of(&host.call("pid", "{}").expect("回收后应重新拉起"));
+    assert_ne!(first, second, "空闲回收后应换新进程");
+}
+
+#[test]
+fn native_host_timeout_kills_and_recovers() {
+    let host = native(Duration::from_secs(60), Duration::from_millis(250));
+    let error = host.call("hang", "{}").expect_err("挂起应超时");
+    assert!(error.contains("超时"), "实际错误 {error}");
+    assert!(pid_of(&host.call("pid", "{}").expect("超时后应能重拉")) > 0);
+}
+
+#[test]
+fn native_host_business_error_keeps_process() {
+    let host = native(Duration::from_secs(60), Duration::from_secs(5));
+    let error = host.call("boom", "{}").expect_err("业务错误应上抛");
+    assert_eq!(error, "测试错误");
+    let first = pid_of(&host.call("pid", "{}").expect("进程应还在"));
+    let second = pid_of(&host.call("pid", "{}").expect("继续调用应成功"));
+    assert_eq!(first, second, "干净的业务错误不该杀进程");
+}
+
+#[test]
+fn native_host_rejects_bad_args_locally() {
+    let host = native(Duration::from_secs(60), Duration::from_secs(5));
+    let error = host.call("pid", "不是 JSON").expect_err("参数应被拒");
+    assert!(error.contains("不是合法 JSON"));
 }

@@ -139,6 +139,9 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     }
     let manifest_bytes = fs::read(dir.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
     let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    if manifest.is_native() {
+        return Err("原生扩展暂不走 ext pack;官方原生扩展经发布流水线分发".into());
+    }
     let dir_name = dir
         .file_name()
         .and_then(|name| name.to_str())
