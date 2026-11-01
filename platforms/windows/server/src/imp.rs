@@ -797,12 +797,13 @@ fn set_global_mode(state: &State, chinese: bool) {
                 let pending = s.ui_reply.get_or_insert_with(Reply::default);
                 pending.commits.extend(commits);
             }
+            let preedit = s.view.preedit.clone();
+            let fullwidth = s.view.fullwidth;
             if let Some(pending) = s.ui_reply.as_mut() {
-                pending.preedit = s.view.preedit.clone();
+                pending.preedit = preedit;
                 pending.chinese = chinese;
-                pending.fullwidth = s.view.fullwidth;
-            }
-        } else if s.view.chinese != chinese {
+                pending.fullwidth = fullwidth;
+            }        } else if s.view.chinese != chinese {
             s.view.chinese = chinese;
         }
         touched |= handle.publish(&s);
@@ -935,10 +936,13 @@ fn apply_config(state: &State, cfg: AppConfig) {
         s.pending = None;
         refresh_view(&mut s);
         // 点选待写回的文本保留,但内联文本要跟上新配置。
+        let preedit = s.view.preedit.clone();
+        let chinese = s.view.chinese;
+        let fullwidth = s.view.fullwidth;
         if let Some(pending) = s.ui_reply.as_mut() {
-            pending.preedit = s.view.preedit.clone();
-            pending.chinese = s.view.chinese;
-            pending.fullwidth = s.view.fullwidth;
+            pending.preedit = preedit;
+            pending.chinese = chinese;
+            pending.fullwidth = fullwidth;
         }
         touched |= handle.publish(&s);
     }

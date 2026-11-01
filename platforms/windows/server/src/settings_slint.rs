@@ -27,7 +27,7 @@ use lueying_server::theme;
 slint::include_modules!();
 
 /// Vec 灌进 Slint 属性的统一入口。
-fn items<T: 'static>(vec: Vec<T>) -> slint::ModelRc<T> {
+fn items<T: 'static + Clone>(vec: Vec<T>) -> slint::ModelRc<T> {
     slint::ModelRc::new(slint::VecModel::from(vec))
 }
 
@@ -92,7 +92,7 @@ pub fn run() {
         if let Some(action) = action {
             dispatch(&ui, &shared, action);
         }
-        refresh(&ui, &core);
+        refresh(&ui, &shared);
     });
     let handle = ui.as_weak();
     let shared = Arc::clone(&core);
@@ -105,7 +105,7 @@ pub fn run() {
             let mut guard = lock(&shared);
             guard.settings.set_search(text);
         }
-        refresh(&ui, &core);
+        refresh(&ui, &shared);
     });
     let shared_close = Arc::clone(&core);
     ui.on_save_hotkey(move || {
@@ -177,7 +177,7 @@ fn with(core: &Shared, f: impl FnOnce(&mut Settings)) {
 /// 把当前状态灌进窗口:配色全局、页面模型与页脚提示。
 fn refresh(ui: &SettingsWindow, core: &Shared) {
     let appearance = theme::Appearance::of_system();
-    let mut guard = lock(core);
+    let guard = lock(core);
     let accent = guard.settings.cfg.ui_accent.min(ACCENTS.len() - 1);
     let colors = theme::colors_with(appearance, accent);
     let theme_colors = ui.global::<Theme>();
@@ -829,7 +829,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     let colors = page_colors(&theme::colors_with(appearance, 0), appearance);
     let mut total = 0usize;
     for page in PageId::ALL {
-        let view = settings.page_view(*page, &colors);
+        let view = settings.page_view(page, &colors);
         let rows: usize = view.groups.iter().map(|group| group.rows.len()).sum();
         if rows == 0 {
             return Err(format!("页面 {:?} 一行都没有", page));

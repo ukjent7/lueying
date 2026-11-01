@@ -115,7 +115,7 @@ pub fn open_apps(settings: &mut Settings) {
 }
 
 /// 正在运行、有可见窗口且尚未配置的应用:exe 名 → 窗口标题。
-pub(crate) fn running_apps(
+pub fn running_apps(
     configured: &std::collections::BTreeMap<String, AppOverride>,
 ) -> Vec<(String, String)> {
     struct Found {
@@ -418,7 +418,7 @@ pub fn approve_extension(settings: &mut Settings) {
 }
 
 /// 同意一个包:清单、哈希与能力写进记录;服务端下一拍重建运行期。
-pub(crate) fn approve_package(id: &str) -> Result<ConsentCheck, String> {
+pub fn approve_package(id: &str) -> Result<ConsentCheck, String> {
     let root = config::extensions_dir().ok_or("没有扩展目录")?;
     let dir = root.join(id);
     let manifest = lueying_extwasm::manifest_at(&dir)?;

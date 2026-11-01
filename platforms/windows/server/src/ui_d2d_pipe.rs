@@ -12,16 +12,18 @@ use std::path::{Path, PathBuf};
 
 use lueying_render::panel::{self, Hit, ListFx, Measure, Metrics, Palette, PanelSpec};
 use lueying_scene::{Body, EffectOut, Fill, Item as SceneItem, Layer as SceneLayer, Shape};
-use windows::Win32::Foundation::{GENERIC_READ, HWND};
-use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F};
+use windows::Win32::Foundation::{GENERIC_READ, HMODULE, HWND};
+use windows::Win32::Graphics::Direct2D::Common::{
+    D2D_RECT_F, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
+};
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1GaussianBlur, CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-    D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_NONE,
-    D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
     D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
     D2D1_PROPERTY_TYPE_FLOAT, D2D1_ROUNDED_RECT, D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
     D2D1_SHADOW_PROP_COLOR, D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext,
-    ID2D1Effect, ID2D1Factory1, ID2D1Layer, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    ID2D1Effect, ID2D1Factory1, ID2D1Image, ID2D1Layer, ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
@@ -188,7 +190,7 @@ impl Core {
             D3D11CreateDevice(
                 &adapter,
                 D3D_DRIVER_TYPE_UNKNOWN,
-                None,
+                HMODULE::default(),
                 D3D11_CREATE_DEVICE_FLAG(0),
                 Some(&[D3D_FEATURE_LEVEL_11_0]),
                 D3D11_SDK_VERSION,
@@ -870,9 +872,11 @@ fn bake_effects(
             };
             match effect {
                 Some(effect) => match item.effect.as_ref() {
-                    Some(EffectOut::Blur { .. }) => baked.blur.last_mut().unwrap().replace(effect),
+                    Some(EffectOut::Blur { .. }) => {
+                        baked.blur.last_mut().unwrap().replace(effect);
+                    }
                     Some(EffectOut::Shadow { .. }) => {
-                        baked.shadow.last_mut().unwrap().replace(effect)
+                        baked.shadow.last_mut().unwrap().replace(effect);
                     }
                     _ => {}
                 },
@@ -1383,6 +1387,7 @@ fn draw_items(
                 &panel::Rect::from_xywh(x + (8.0 + 2.0 + 4.0) * s, y, 20.0 * s, row_h),
                 brush,
             );
+            brush.SetColor(&color(text_rgb));
             // 候选文字;超宽部分按 max_text_width 裁掉(DrawText 不换行也不裁,夹取在这里)。
             let text_x = x + (8.0 + 2.0 + 4.0 + 12.0 + 4.0) * s;
             let _ = dc.PushAxisAlignedClip(

@@ -149,7 +149,7 @@ fn shot_bmp(region: Option<Region>) -> Result<(PathBuf, i32, i32), String> {
         let stride = width as usize * 4;
         let pixels =
             std::slice::from_raw_parts(bits as *const u8, stride * height as usize).to_vec();
-        SelectObject(memory, previous);
+        let _ = SelectObject(memory, previous);
         DeleteObject(section.into());
         let _ = DeleteDC(memory);
         let _ = ReleaseDC(None, screen);

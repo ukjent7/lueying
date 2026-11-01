@@ -81,7 +81,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
 
 /// 校验场景文件;目录就扫全部 .toml,逐个报问题。
 fn scene_check(path: &Path) -> Result<(), String> {
-    let mut files: Vec<std::path::PathBuf> = if path.is_dir() {
+    let files: Vec<std::path::PathBuf> = if path.is_dir() {
         let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(path)
             .map_err(|error| format!("读 {}: {error}", path.display()))?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
