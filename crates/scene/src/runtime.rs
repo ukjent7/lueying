@@ -654,9 +654,6 @@ fn emit_nodes(
             eval(expr, scene, view.vars, inputs, budget, degraded) as f32
         });
         let opacity = (opacity * opacity_mult).clamp(0.0, 1.0);
-        if opacity <= 0.0 {
-            continue;
-        }
         match &node.body {
             NodeBody::Group { children } => {
                 emit_nodes(
@@ -823,11 +820,15 @@ fn emit_leaf(
         }
     };
 
-    // 属性补间:opacity 与 offset 覆盖表达式的现值。
+    // 属性补间:opacity 与 offset 覆盖表达式的现值。基底透明度为 0、
+    // 等补间拉起的节点也走这里,所以先并补间再判「完全看不见」。
     let opacity = match active_tween(view.tweens, &node.id, TweenProp::Opacity) {
         Some(tween) => (tween_value(tween, time) * opacity).clamp(0.0, 1.0),
         None => opacity,
     };
+    if opacity <= 0.0 {
+        return None;
+    }
     let rect = {
         let dx = active_tween(view.tweens, &node.id, TweenProp::OffsetX)
             .map_or(0.0, |tween| tween_value(tween, time));

@@ -96,6 +96,11 @@ pub static FUNCS: &[Func] = &[
     },
     // 缓动;输入与输出都约定在 0..1。
     Func {
+        name: "linear",
+        arity: 1,
+        f: |a, _| a[0],
+    },
+    Func {
         name: "smooth",
         arity: 1,
         f: |a, _| smooth(a[0]),

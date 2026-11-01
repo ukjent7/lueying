@@ -439,6 +439,12 @@ struct RawClip {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RawFollow {
+    spring: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawNode {
     id: Spanned<String>,
     kind: String,
@@ -461,7 +467,7 @@ struct RawNode {
     fps: Option<f32>,
     frames: Option<String>,
     clips: Option<BTreeMap<String, RawClip>>,
-    follow: Option<f32>,
+    follow: Option<RawFollow>,
     content: Option<String>,
     font_size: Option<f32>,
     rate: Option<String>,
@@ -869,8 +875,8 @@ fn build_node(
                     .cloned()
                     .unwrap_or_else(|| "idle".into())
             });
-            let follow = raw.follow.map(|spring| Follow {
-                spring: spring.max(0.1),
+            let follow = raw.follow.map(|follow| Follow {
+                spring: follow.spring.max(0.1),
             });
             NodeBody::Sprite {
                 src,
@@ -1136,7 +1142,9 @@ fn build_tween(
     if let Some(None) = ease {
         builder.error(
             byte,
-            format!("{context} 的缓动不认识;可用 smooth/out_quad/out_cubic/out_quint/out_back"),
+            format!(
+                "{context} 的缓动不认识;可用 linear/smooth/out_quad/out_cubic/out_quint/out_back"
+            ),
         );
     }
     out.push(Action::Tween {

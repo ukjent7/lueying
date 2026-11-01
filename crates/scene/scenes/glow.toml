@@ -1,0 +1,18 @@
+# 光晕:打字越快,高亮块的光圈越大越亮。
+# 放到 %APPDATA%\lueying\scene\scene.toml 即生效;保存后一秒内热重载。
+
+[signals.energy]
+from = "typing_rate"
+gain = 0.6
+decay = "1.5s"
+
+[[nodes]]
+id = "glow"
+kind = "shape"
+shape = "rrect"
+anchor = "highlight"
+inset = -5
+radius = 6
+fill = "accent"
+opacity = "lerp(0.15, 0.55, energy)"
+effect = { kind = "blur", radius = "lerp(2, 10, energy)" }

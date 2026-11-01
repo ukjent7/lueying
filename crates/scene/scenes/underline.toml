@@ -1,0 +1,18 @@
+# 选中项下划线:每次换选弹一下再淡稳。
+
+[[nodes]]
+id = "underline"
+kind = "shape"
+shape = "rrect"
+anchor = "highlight.bottom"
+size = [60.0, 2.0]
+radius = 1.0
+fill = "accent"
+offset = [0.0, 1.0]
+opacity = "0"
+
+[[rules]]
+on = "select"
+do = [
+  { tween = "underline.opacity", to = 1.0, over = "120ms", ease = "out_back" },
+]

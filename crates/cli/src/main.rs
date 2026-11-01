@@ -1,5 +1,6 @@
 //! `lueying` 命令行入口:扩展开发回路(new/pack/install/reload/logs/replay)与运行指标(top)。
 
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -59,8 +60,42 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
             }
         }
         Invocation::Top(options) => top(options)?,
+        Invocation::SceneCheck(path) => scene_check(&path)?,
+        Invocation::SceneSchema => print!("{}", lueying_scene::SCHEMA),
     }
     Ok(())
+}
+
+/// 校验场景文件;目录就扫全部 .toml,逐个报问题。
+fn scene_check(path: &Path) -> Result<(), String> {
+    let mut files: Vec<std::path::PathBuf> = if path.is_dir() {
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(path)
+            .map_err(|error| format!("读 {}: {error}", path.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        files.sort();
+        files
+    } else {
+        vec![path.to_owned()]
+    };
+    if files.is_empty() {
+        return Err(format!("{} 里没有 .toml 场景文件", path.display()));
+    }
+    let mut failed = Vec::new();
+    for file in &files {
+        let text =
+            std::fs::read_to_string(file).map_err(|error| format!("读 {}: {error}", file.display()))?;
+        match lueying_scene::parse(&file.display().to_string(), &text) {
+            Ok(_) => println!("{} 合法", file.display()),
+            Err(errors) => failed.extend(errors.iter().map(|error| error.to_string())),
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("\n"))
+    }
 }
 
 fn top(options: TopOptions) -> Result<(), String> {

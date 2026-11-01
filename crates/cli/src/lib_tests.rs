@@ -184,3 +184,26 @@ fn parses_replay() {
         "空触发词要报错"
     );
 }
+
+#[test]
+fn parses_scene_check_and_schema() {
+    assert_eq!(
+        parse_args(args(&["scene", "check", "a.toml"])),
+        Ok(Invocation::SceneCheck(PathBuf::from("a.toml")))
+    );
+    assert_eq!(
+        parse_args(args(&["scene", "check"])),
+        Ok(Invocation::SceneCheck(PathBuf::from("."))),
+        "check 缺路径就默认当前目录"
+    );
+    assert_eq!(
+        parse_args(args(&["scene", "schema"])),
+        Ok(Invocation::SceneSchema)
+    );
+    assert!(parse_args(args(&["scene"])).is_err(), "缺子命令要报错");
+    assert!(parse_args(args(&["scene", "wat"])).is_err());
+    assert!(
+        parse_args(args(&["scene", "schema", "x"])).is_err(),
+        "schema 不接受参数"
+    );
+}

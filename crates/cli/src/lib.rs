@@ -16,6 +16,7 @@ pub use replay::ReplayArgs;
 /// 帮助与错误提示。
 pub const USAGE: &str = "\
 用法: lueying ext <子命令> [选项]
+       lueying scene <子命令> [路径]
 
 扩展的开发回路:新建骨架、打包、安装、重载,以及日志、运行指标与对外上屏。
 
@@ -40,7 +41,11 @@ pub const USAGE: &str = "\
   install --dir <目录> --force
   logs    --file <路径> --tail <行数>
   top     --file <路径> --json --watch
-  replay  --config <路径> --trigger <词=命令>";
+  replay  --config <路径> --trigger <词=命令>
+
+场景(候选窗装饰)的开发回路;场景文件是纯数据,详见官方示例:
+  check <文件|目录>  校验 scene.toml;目录就扫全部 .toml(中文报错带行号)
+  schema             输出编辑器用的 JSON Schema";
 
 /// 一次命令行调用。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +70,10 @@ pub enum Invocation {
     Run(String),
     /// 列出可触发的扩展命令。
     Commands,
+    /// 校验场景文件或目录。
+    SceneCheck(PathBuf),
+    /// 输出场景的 JSON Schema。
+    SceneSchema,
     /// 打印帮助。
     Help,
 }
@@ -77,8 +86,11 @@ where
     let mut args = args.into_iter();
     match args.next().as_deref() {
         Some("ext") => {}
+        Some("scene") => return parse_scene(args),
         Some("-h" | "--help") | None => return Ok(Invocation::Help),
-        Some(other) => return Err(format!("未知命令 {other:?};从 `lueying ext` 开始")),
+        Some(other) => {
+            return Err(format!("未知命令 {other:?};从 `lueying ext` 或 `lueying scene` 开始"))
+        }
     }
     let sub = args
         .next()
@@ -224,6 +236,44 @@ where
         };
     }
     Ok(Invocation::Commands)
+}
+
+/// `lueying scene <子命令>`:校验与 Schema。
+fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
+where
+    I: Iterator<Item = String>,
+{
+    let sub = args
+        .next()
+        .ok_or("缺子命令;用 check 或 schema")?;
+    match sub.as_str() {
+        "check" => {
+            let mut path: Option<PathBuf> = None;
+            let mut used = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-h" | "--help" => return Ok(Invocation::Help),
+                    other if other.starts_with('-') => {
+                        return Err(format!("未知参数 {other:?}"))
+                    }
+                    other => take_positional(&mut used, &mut path, other, "文件或目录")?,
+                }
+            }
+            Ok(Invocation::SceneCheck(
+                path.unwrap_or_else(|| PathBuf::from(".")),
+            ))
+        }
+        "schema" => {
+            if let Some(arg) = args.next() {
+                return match arg.as_str() {
+                    "-h" | "--help" => Ok(Invocation::Help),
+                    other => Err(format!("schema 不接受参数 {other:?}")),
+                };
+            }
+            Ok(Invocation::SceneSchema)
+        }
+        other => Err(format!("未知子命令 {other:?};用 check 或 schema")),
+    }
 }
 
 fn parse_reload<I>(mut args: I) -> Result<Invocation, String>

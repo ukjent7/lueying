@@ -1,0 +1,11 @@
+# 状态环:英文模式在光标旁亮一个圈,中文模式隐藏。
+
+[[nodes]]
+id = "ring"
+kind = "shape"
+shape = "ellipse"
+anchor = "caret"
+size = [18.0, 18.0]
+stroke = 2.0
+fill = "accent"
+opacity = "1 - mode"

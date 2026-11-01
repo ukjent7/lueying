@@ -16,3 +16,7 @@ pub mod runtime;
 
 pub use model::{Fill, Layer, PaletteName, Scene, parse};
 pub use runtime::{Body, EventName, Frame, Inputs, Item, Particle, Rect, Runtime};
+
+/// 场景文件的 JSON Schema;`lueying scene schema` 原样输出,编辑器拿它
+/// 做自动补全与即时报错。
+pub const SCHEMA: &str = include_str!("../scene.schema.json");

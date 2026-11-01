@@ -1,0 +1,18 @@
+# 背景轮播:按页号换背景图,压在面板底色与文字之间。
+# 图片放场景目录旁;缺文件时该节点整颗跳过,候选窗照常。
+
+[[nodes]]
+id = "bg-0"
+kind = "image"
+src = "bg-0.png"
+anchor = "screen"
+visible = "page == 0"
+opacity = "0.35"
+
+[[nodes]]
+id = "bg-1"
+kind = "image"
+src = "bg-1.png"
+anchor = "screen"
+visible = "page == 1"
+opacity = "0.35"

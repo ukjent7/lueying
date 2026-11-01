@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lueying scene",
+  "description": "掠影候选窗场景:信号、节点与规则;全部是数据,没有可执行代码。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "signals": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/signal" }
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" },
+      "maxItems": 64
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" },
+      "maxItems": 64
+    }
+  },
+  "$defs": {
+    "duration": {
+      "description": "时长:\"80ms\"、\"2s\" 或裸秒数",
+      "type": ["string", "number"],
+      "pattern": "^[0-9.]+\\s*(ms|s)$"
+    },
+    "fill": {
+      "oneOf": [
+        {
+          "enum": [
+            "bg", "border", "text", "text_secondary", "text_tertiary",
+            "accent", "on_accent", "danger", "accent_text",
+            "selected_bg", "selected_text", "hover"
+          ]
+        },
+        { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+      ]
+    },
+    "anchor": {
+      "type": "string",
+      "pattern": "^(panel|preedit|highlight|candidate\\.[0-9]+|caret|screen)(\\.(top|bottom|left|right|center))?$"
+    },
+    "expr": {
+      "type": "string",
+      "description": "有界表达式:算术、比较、lerp/clamp/min/max/abs/floor/ceil/round/sqrt/rand 与缓动;名字是内置信号或 [signals.*] 变量"
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/expr" },
+        "gain": { "type": "number", "description": "每秒逼近剩余差距的比例" },
+        "decay": { "$ref": "#/$defs/duration", "description": "衰减时间常数" }
+      }
+    },
+    "effect": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "blur" },
+            "radius": { "$ref": "#/$defs/expr" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "shadow" },
+            "color": { "$ref": "#/$defs/fill" },
+            "offset": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }
+          }
+        }
+      ]
+    },
+    "clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frames"],
+      "properties": {
+        "frames": { "type": "array", "items": { "type": "integer" }, "minItems": 1 },
+        "fps": { "type": "number" },
+        "loop": { "type": "boolean" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["shape", "image", "sprite", "text", "group", "emitter"] },
+        "anchor": { "$ref": "#/$defs/anchor" },
+        "inset": { "type": "number", "description": "锚矩形收放;负值外扩" },
+        "offset": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "layer": { "enum": ["below-text", "above-text"] },
+        "visible": { "$ref": "#/$defs/expr" },
+        "opacity": { "$ref": "#/$defs/expr" },
+        "effect": { "$ref": "#/$defs/effect" },
+        "shape": { "enum": ["rect", "rrect", "ellipse", "line", "path"] },
+        "size": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "radius": { "type": "number" },
+        "stroke": { "type": "number", "description": "描边宽;0 或缺省为填充" },
+        "fill": { "$ref": "#/$defs/fill" },
+        "points": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+          "description": "line 的终点(相对锚)"
+        },
+        "d": { "type": "string", "description": "path 数据:M/L/Q/C/Z 绝对坐标" },
+        "src": { "type": "string" },
+        "grid": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+        "fps": { "type": "number" },
+        "frames": { "type": "string", "description": "缺省播放的片段名" },
+        "clips": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/clip" }
+        },
+        "follow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spring"],
+          "properties": { "spring": { "type": "number" } },
+          "description": "精灵每秒追随锚点的速率"
+        },
+        "content": { "type": "string", "description": "文字内容;场景拿不到候选文字" },
+        "font_size": { "type": "number" },
+        "rate": { "$ref": "#/$defs/expr", "description": "每秒粒子数" },
+        "life": { "$ref": "#/$defs/duration" },
+        "speed": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "direction": { "type": "number", "description": "度;90 向下" },
+        "spread": { "type": "number", "description": "扇形半角(度)" },
+        "gravity": { "type": "number" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } }
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["set", "to"],
+          "properties": { "set": { "type": "string" }, "to": { "$ref": "#/$defs/expr" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tween", "to", "over"],
+          "properties": {
+            "tween": { "type": "string", "pattern": "^.+\\.(opacity|offset\\.[xy])$" },
+            "to": { "$ref": "#/$defs/expr" },
+            "over": { "$ref": "#/$defs/duration" },
+            "ease": { "enum": ["linear", "smooth", "out_quad", "out_cubic", "out_quint", "out_back"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["play"],
+          "properties": { "play": { "type": "string", "pattern": "^.+\\..+$" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["emit"],
+          "properties": { "emit": { "type": "string", "minLength": 1 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["delay"],
+          "properties": {
+            "delay": { "$ref": "#/$defs/duration" },
+            "then": { "type": "array", "items": { "$ref": "#/$defs/action" } }
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "properties": {
+        "on": { "type": "string", "description": "key/commit/select/page/backspace_burst/correction/mode_switch 或自定义事件" },
+        "when": { "$ref": "#/$defs/expr" },
+        "do": { "type": "array", "items": { "$ref": "#/$defs/action" } }
+      }
+    }
+  }
+}
