@@ -18,11 +18,11 @@ pub mod settings_consent;
 
 pub mod settings_ext;
 
+pub mod settings_model;
+
 pub mod settings_secret;
 
 pub mod settings_schema;
-
-mod settings_focus;
 
 pub mod settings_view;
 
@@ -42,22 +42,10 @@ pub mod font;
 pub mod services;
 
 #[cfg(windows)]
-pub mod settings_a11y;
-
-#[cfg(windows)]
 pub mod settings_actions;
 
 #[cfg(windows)]
-pub mod settings_edit;
-
-#[cfg(windows)]
 pub mod settings_official;
-
-#[cfg(windows)]
-pub mod settings_secret_edit;
-
-#[cfg(windows)]
-pub mod settings_win;
 
 #[cfg(windows)]
 pub mod theme;

@@ -10,7 +10,6 @@ pub mod command;
 pub mod paint;
 pub mod panel;
 pub mod picker;
-pub mod ui;
 
 pub use panel::{
     Estimate, Hit, Item, Layout, ListFx, Measure, Metrics, Palette, PanelSpec, PreeditBar, Rect,

@@ -24,7 +24,7 @@ lueying-extmeta.workspace = true
 lueying-net.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
-# 渲染核心:设置页的控件层在平台无关的部分,Windows 与 Linux E2E 共用。
+# 渲染核心:候选窗/徽标/命令面板的布局与命中;设置窗 UI 已由 Slint 承担。
 lueying-render.workspace = true
 lueying-protocol = { path = "../protocol" }
 # 配置 schema:typed TOML,未知键在读取时拒绝。

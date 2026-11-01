@@ -6,11 +6,11 @@
 use std::collections::BTreeMap;
 
 use lueying_extmeta::{Manifest, Setting, SettingValue};
-use lueying_render::ui::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
 use serde_json::Value;
 
 use crate::config::AppConfig;
 use crate::settings_consent::ScriptEntry;
+use crate::settings_model::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
 use crate::settings_view::ids;
 
 /// 一页最多渲染的字段数;超出的值仍可在 `config.toml` 里手改。

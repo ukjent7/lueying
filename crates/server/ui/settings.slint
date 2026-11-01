@@ -1,66 +1,705 @@
-// 设置窗的 Slint 验证页:Fluent 主题、系统深浅色、一个真实绑定到
-// config.toml 的开关。评估迁移成本用;全量迁移后这里长成完整页面。
+// 掠影设置窗:macOS 27 系统设置的务实近似——左栏搜索 + 主色胶囊导航,
+// 右栏大圆角悬浮卡片、组标题在卡外、行间发丝线;玻璃感用柔和投影与
+// 顶部高光渐变近似(Slint 没有 backdrop-blur,不做窗后模糊)。
+// 结构契约:行数据由 settings_pages 组装(平台无关模型),这里只按
+// kind 渲染;每个可点控件都带 (base, index),回调统一进 activate,
+// 与 settings_view::activate 的 Id 分发一一对应。配色由 host 按系统
+// 深浅色与强调色灌进 Theme 全局。
 
-import { Button, Switch, GroupBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Button, Switch, LineEdit, ScrollView, TextEdit } from "std-widgets.slint";
 
-export component SettingsSpike inherits Window {
-    title: "掠影 设置";
-    preferred-width: 560px;
-    preferred-height: 300px;
+export global Theme {
+    in property <color> accent;
+    in property <color> on-accent;
+    in property <color> accent-text;
+    in property <color> window-bg;
+    in property <color> bg;
+    in property <color> surface-alt;
+    in property <color> hover;
+    in property <color> border;
+    in property <color> border-strong;
+    in property <color> text;
+    in property <color> text-secondary;
+    in property <color> text-tertiary;
+    in property <color> success;
+    in property <color> danger;
+    in property <color> on-danger;
+}
 
-    in property <string> version;
-    in property <string> channel;
-    in-out property <bool> effects;
-    in property <string> notice;
-    callback toggle-effects(bool);
-    callback open-scene();
+export struct Btn {
+    base: string,
+    index: int,
+    text: string,
+    // 对齐 ButtonKind:0 Primary 1 Secondary 2 Ghost 3 Danger。
+    kind: int,
+    enabled: bool,
+}
 
-    VerticalBox {
-        spacing: 12px;
+export struct SegOpt {
+    text: string,
+    // 主题色格子的固定底色;has-tint 为 false 时走主题强调色。
+    tint: color,
+    has-tint: bool,
+}
 
-        GroupBox {
-            title: "外观";
-            HorizontalBox {
+export struct Preview {
+    accent: color,
+    font-scale: float,
+    vertical: bool,
+    page-size: int,
+    pinyin: string,
+    candidates: [string],
+}
+
+export struct Row {
+    label: string,
+    detail: string,
+    // 0 纯文本 1 开关 2 分段 3 按钮排 4 按钮加开关 5 候选预览。
+    kind: int,
+    // 分段组整组是否带主题色(渲染成圆点而不是胶囊格)。
+    tinted: bool,
+    // 开关与分段组的控件 id;Buttons 里的按钮各带自己的 id。
+    base: string,
+    index: int,
+    on: bool,
+    options: [SegOpt],
+    selected: int,
+    buttons: [Btn],
+    preview: Preview,
+}
+
+export struct Group {
+    title: string,
+    rows: [Row],
+}
+
+export struct NavEntry {
+    base: string,
+    index: int,
+    text: string,
+}
+
+// 卡片:大圆角 + 发丝描边 + 柔和投影 + 顶部高光渐变,玻璃感的全部家当。
+component GlassCard inherits Rectangle {
+    border-radius: 16px;
+    background: Theme.bg;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 20px;
+    drop-shadow-color: #1E000000;
+    drop-shadow-offset-y: 5px;
+
+    sheen := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: parent.border-radius;
+        background: @linear-gradient(180deg, #0AFFFFFF 0%, #00FFFFFF 48%);
+    }
+}
+
+component SegButton inherits Rectangle {
+    in property <string> text;
+    in property <color> tint;
+    in property <bool> has-tint;
+    in property <bool> selected;
+    callback picked();
+
+    height: 26px;
+    min-width: 44px;
+    border-radius: 7px;
+    background: selected ? (has-tint ? tint : Theme.accent) : transparent;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { root.picked(); }
+
+    t := TouchArea {
+        clicked => root.picked();
+        mouse-cursor: pointer;
+    }
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        alignment: center;
+        if has-tint: Rectangle {
+            width: 10px;
+            height: 10px;
+            y: (parent.height - 10px) / 2;
+            border-radius: 5px;
+            background: tint;
+            border-width: selected ? 2px : 1px;
+            border-color: selected ? Theme.on-accent : Theme.border-strong;
+        }
+        Text {
+            text: root.text;
+            font-size: 12px;
+            color: selected ? Theme.on-accent : Theme.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// 主题色圆点:macOS 的颜色选择;选中一圈描边。
+component SwatchDot inherits Rectangle {
+    in property <string> text;
+    in property <color> tint;
+    in property <bool> selected;
+    callback picked();
+
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: transparent;
+    border-width: selected ? 2px : 0px;
+    border-color: Theme.text;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { root.picked(); }
+
+    t := TouchArea {
+        clicked => root.picked();
+        mouse-cursor: pointer;
+    }
+    Rectangle {
+        x: 3px;
+        y: 3px;
+        width: parent.width - 6px;
+        height: parent.height - 6px;
+        border-radius: self.width / 2;
+        background: tint;
+        border-width: 1px;
+        border-color: #1A000000;
+    }
+}
+
+component ColoredButton inherits Rectangle {
+    in property <Btn> btn;
+    callback clicked();
+
+    height: 27px;
+    min-width: 54px;
+    border-radius: 7px;
+    background: btn.kind == 0 ? Theme.accent
+        : (btn.kind == 3 ? Theme.danger
+        : (btn.kind == 1 ? Theme.surface-alt : transparent));
+    border-width: btn.kind == 1 ? 1px : 0px;
+    border-color: Theme.border;
+    opacity: btn.enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: btn.text;
+    accessible-action-default => { root.clicked(); }
+
+    states [
+        hovered when t.has-hover && btn.enabled: {
+            opacity: 0.85;
+        }
+    ]
+
+    t := TouchArea {
+        enabled: btn.enabled;
+        clicked => root.clicked();
+        mouse-cursor: btn.enabled ? pointer : default;
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: btn.text;
+            font-size: 12px;
+            color: btn.kind == 0 ? Theme.on-accent
+                : (btn.kind == 3 ? Theme.on-danger
+                : (btn.kind == 2 ? Theme.accent-text : Theme.text));
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component NavButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback picked();
+
+    height: 34px;
+    border-radius: 8px;
+    background: active ? Theme.accent : (t.has-hover ? Theme.hover : transparent);
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { root.picked(); }
+
+    t := TouchArea {
+        clicked => root.picked();
+        mouse-cursor: pointer;
+    }
+    Text {
+        x: 12px;
+        y: 0;
+        height: parent.height;
+        text: root.text;
+        font-size: 13px;
+        vertical-alignment: center;
+        color: active ? Theme.on-accent : Theme.text;
+    }
+}
+
+component PreviewCanvas inherits Rectangle {
+    in property <Preview> preview;
+
+    height: 118px;
+    border-radius: 12px;
+    background: Theme.surface-alt;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    if !preview.vertical: VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+        Rectangle {
+            height: 22px;
+            border-radius: 5px;
+            background: Theme.bg;
+            border-width: 1px;
+            border-color: Theme.border;
+            Text {
+                x: 8px;
+                text: preview.pinyin;
+                font-size: 11px;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            for cand[i] in preview.candidates: Rectangle {
+                horizontal-stretch: i == 0 ? 2 : 1;
+                border-radius: 5px;
+                background: i == 0 ? preview.accent : Theme.bg;
+                border-width: 1px;
+                border-color: Theme.border;
                 Text {
-                    text: "场景装饰";
+                    x: 7px;
+                    text: "\(i + 1). \(cand)";
+                    font-size: 13px * preview.font-scale;
+                    color: i == 0 ? Theme.on-accent : Theme.text;
                     vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+    if preview.vertical: HorizontalLayout {
+        padding: 8px;
+        spacing: 4px;
+        Rectangle {
+            width: 64px;
+            border-radius: 5px;
+            background: Theme.bg;
+            border-width: 1px;
+            border-color: Theme.border;
+            Text {
+                x: 6px;
+                text: preview.pinyin;
+                font-size: 11px;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            spacing: 4px;
+            for cand[i] in preview.candidates: Rectangle {
+                vertical-stretch: i == 0 ? 2 : 1;
+                border-radius: 5px;
+                background: i == 0 ? preview.accent : Theme.bg;
+                border-width: 1px;
+                border-color: Theme.border;
+                Text {
+                    x: 7px;
+                    text: "\(i + 1). \(cand)";
+                    font-size: 13px * preview.font-scale;
+                    color: i == 0 ? Theme.on-accent : Theme.text;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}
+
+// 一行设置:行内透明,行间发丝线;读屏软件里整行是一个分组。
+component RowCard inherits Rectangle {
+    in property <Row> row;
+    in property <bool> separator;
+    callback activate(string, int);
+
+    min-height: 44px;
+    background: transparent;
+    accessible-role: groupbox;
+    accessible-label: row.label;
+
+    if separator: Rectangle {
+        y: 0;
+        x: 16px;
+        width: parent.width - 32px;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    if row.kind == 5: PreviewCanvas {
+        x: 16px;
+        y: 10px;
+        width: parent.width - 32px;
+        preview: row.preview;
+    }
+    if row.kind != 5: HorizontalLayout {
+        x: 16px;
+        width: parent.width - 32px;
+        y: 0;
+        height: parent.height;
+        spacing: 12px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: row.label;
+                font-size: 13px;
+                color: Theme.text;
+            }
+            Text {
+                text: row.detail;
+                font-size: 11px;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+        }
+        if row.kind == 1: VerticalLayout {
+            alignment: center;
+            Switch {
+                text: row.label;
+                checked: row.on;
+                toggled => root.activate(row.base, row.index);
+            }
+        }
+        // 分段组:带主题色的整组铺成圆点,其余装进胶囊轨道。
+        if row.kind == 2 && row.tinted: HorizontalLayout {
+            alignment: center;
+            spacing: 10px;
+            for opt[i] in row.options: SwatchDot {
+                text: opt.text;
+                tint: opt.tint;
+                selected: i == row.selected;
+                picked => root.activate(row.base, i);
+            }
+        }
+        if row.kind == 2 && !row.tinted: Rectangle {
+            border-radius: 9px;
+            background: Theme.surface-alt;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding: 2px;
+                spacing: 2px;
+                alignment: center;
+                for opt[i] in row.options: SegButton {
+                    text: opt.text;
+                    tint: opt.tint;
+                    has-tint: opt.has-tint;
+                    selected: i == row.selected;
+                    picked => root.activate(row.base, i);
+                }
+            }
+        }
+        if row.kind == 3: HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            for b in row.buttons: ColoredButton {
+                btn: b;
+                clicked => root.activate(b.base, b.index);
+            }
+        }
+        if row.kind == 4: HorizontalLayout {
+            alignment: center;
+            spacing: 8px;
+            for b in row.buttons: ColoredButton {
+                btn: b;
+                clicked => root.activate(b.base, b.index);
+            }
+            Switch {
+                text: row.label;
+                checked: row.on;
+                toggled => root.activate(row.base, row.index);
+            }
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    title: "掠影设置";
+    preferred-width: 800px;
+    preferred-height: 640px;
+    min-width: 660px;
+    min-height: 480px;
+    background: Theme.window-bg;
+
+    in property <string> subtitle;
+    in property <[NavEntry]> nav;
+    in property <int> active-nav;
+    in-out property <string> search-text;
+    in property <[Group]> groups;
+    in property <Btn> header-button;
+    in property <string> notice;
+    // 0 info 1 success 2 error。
+    in property <int> notice-kind;
+    in property <[Btn]> footer-buttons;
+
+    callback activate(string, int);
+    callback search-edited();
+    callback save-hotkey();
+    callback escape();
+
+    keys := FocusScope {
+        width: 100%;
+        height: 100%;
+        forward-focus: search;
+        key-pressed(event) => {
+            if event.modifiers.control && event.text == "s" {
+                root.save-hotkey();
+                accept
+            } else if event.text == Key.Escape {
+                root.escape();
+                accept
+            } else {
+                reject
+            }
+        }
+        HorizontalLayout {
+            // 左栏:搜索置顶,主色胶囊导航;稍浅的底色当侧栏。
+            Rectangle {
+                width: 192px;
+                background: Theme.surface-alt;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    search := LineEdit {
+                        placeholder-text: "搜索设置";
+                        text <=> root.search-text;
+                        edited => root.search-edited();
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        for item[i] in root.nav: NavButton {
+                            text: item.text;
+                            active: i == root.active-nav;
+                            picked => root.activate(item.base, item.index);
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Text {
+                        text: "掠影输入法";
+                        font-size: 11px;
+                        color: Theme.text-tertiary;
+                    }
                 }
                 Rectangle {
-                    horizontal-stretch: 1;
+                    x: parent.width - 1px;
+                    y: 0;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.border;
                 }
-                Switch {
-                    checked: root.effects;
-                    toggled => {
-                        root.effects = self.checked;
-                        root.toggle-effects(self.checked);
+            }
+            // 右栏:页头 + 卡片滚动区 + 页脚。
+            VerticalLayout {
+                // 页头:标题 + 更新按钮。
+                HorizontalLayout {
+                    padding: 16px;
+                    padding-bottom: 4px;
+                    spacing: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.subtitle;
+                        font-size: 17px;
+                        font-weight: 600;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if header-button.text != "": ColoredButton {
+                        btn: root.header-button;
+                        clicked => root.activate(header-button.base, header-button.index);
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        padding-left: 18px;
+                        padding-right: 18px;
+                        padding-top: 10px;
+                        padding-bottom: 16px;
+                        spacing: 16px;
+                        for group in root.groups: Rectangle {
+                            accessible-role: groupbox;
+                            accessible-label: group.title;
+                            background: transparent;
+                            VerticalLayout {
+                                spacing: 6px;
+                                if group.title != "": Text {
+                                    text: group.title;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    color: Theme.text;
+                                }
+                                GlassCard {
+                                    VerticalLayout {
+                                        spacing: 0px;
+                                        for row[i] in group.rows: RowCard {
+                                            row: row;
+                                            separator: i > 0;
+                                            activate(s, i) => root.activate(s, i);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // 页脚:提示 + 关闭/保存。
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-top: 6px;
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.notice;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        color: root.notice-kind == 1 ? Theme.success
+                            : (root.notice-kind == 2 ? Theme.danger : Theme.text-tertiary);
+                    }
+                    for b in root.footer-buttons: ColoredButton {
+                        btn: b;
+                        clicked => root.activate(b.base, b.index);
                     }
                 }
             }
-            Text {
-                text: "scene.toml 装饰层，改完存盘一秒内热重载";
-                font-size: 11px;
+        }
+    }
+}
+
+// 短语/标点编辑器:替代旧的原生 EDIT 子窗;IME 由 winit 接管。
+export component TextEditorWindow inherits Window {
+    title: win-title;
+    preferred-width: 560px;
+    preferred-height: 420px;
+    background: Theme.window-bg;
+
+    in-out property <string> win-title;
+    in-out property <string> body;
+    callback save();
+    callback cancel();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+        GlassCard {
+            vertical-stretch: 1;
+            TextEdit {
+                width: 100%;
+                height: 100%;
+                text <=> root.body;
             }
         }
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "取消"; clicked => root.cancel(); }
+            Button { text: "保存"; primary: true; clicked => root.save(); }
+        }
+    }
+}
 
-        GroupBox {
-            title: "关于";
-            Text {
-                text: "版本 " + root.version;
-            }
-            Text {
-                text: "更新渠道 " + root.channel;
-            }
-            HorizontalBox {
-                Button {
-                    text: "打开场景目录";
-                    clicked => root.open-scene();
+// 扩展密钥编辑器:单行输入,存空串即删除。
+export component SecretEditorWindow inherits Window {
+    title: win-title;
+    preferred-width: 460px;
+    preferred-height: 180px;
+    background: Theme.window-bg;
+
+    in-out property <string> win-title;
+    in-out property <string> body;
+    in property <string> hint;
+    callback save();
+    callback cancel();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+        Text {
+            text: root.hint;
+            font-size: 11px;
+            color: Theme.text-tertiary;
+            wrap: word-wrap;
+        }
+        LineEdit {
+            text <=> root.body;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "取消"; clicked => root.cancel(); }
+            Button { text: "保存"; primary: true; clicked => root.save(); }
+        }
+    }
+}
+
+// 单选弹出窗:扩展选择与「添加应用」共用。
+export component PickerWindow inherits Window {
+    title: win-title;
+    preferred-width: 380px;
+    preferred-height: 320px;
+    always-on-top: true;
+    background: Theme.window-bg;
+
+    in-out property <string> win-title;
+    in property <[string]> items;
+    callback pick(int);
+    callback cancel();
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 2px;
+                for item[i] in root.items: Rectangle {
+                    height: 32px;
+                    border-radius: 7px;
+                    background: t.has-hover ? Theme.hover : transparent;
+                    accessible-role: button;
+                    accessible-label: item;
+                    accessible-action-default => { root.pick(i); }
+                    t := TouchArea {
+                        clicked => root.pick(i);
+                        mouse-cursor: pointer;
+                    }
+                    Text {
+                        x: 10px;
+                        text: item;
+                        font-size: 13px;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
                 }
             }
         }
-
-        Text {
-            text: root.notice;
-            font-size: 11px;
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "取消"; clicked => root.cancel(); }
         }
     }
 }

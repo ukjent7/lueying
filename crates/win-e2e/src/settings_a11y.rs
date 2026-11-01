@@ -1,8 +1,8 @@
-//! 设置窗无障碍 E2E:用 UIA 当读屏软件,读 AccessKit 树,再按「编辑」
-//! 打开短语编辑器,确认标准 EDIT 文本控件真的存在。
+//! 设置窗无障碍 E2E:用 UIA 当读屏软件,读 Slint/AccessKit 树,再按
+//! 「编辑」打开短语编辑器,确认 TextEdit 真的能被外部写入并保存。
 //!
-//! 这是 V7 的落地检查:只断言树里有控件还不够,动作必须真的走通
-//! UIA → AccessKit → 窗口线程 → 打开编辑器这条链。
+//! 只断言树里有控件还不够,动作必须真的走通
+//! UIA → AccessKit → Slint 回调 → 落盘这条链。
 
 use std::path::Path;
 use std::process::{Child, Command};
@@ -34,15 +34,14 @@ pub fn check(exe_dir: &Path, data: &Path) -> Result<String, String> {
         .spawn()
         .map_err(|e| format!("启动设置窗失败: {e}"))?;
     let outcome = check_ui(&mut child, data);
-    close_window("lueying-settings-edit");
-    close_window("lueying-settings");
+    close_window("编辑自定义短语");
+    close_window("掠影设置");
     wait_or_kill(&mut child);
-    let lines = outcome?;
-    Ok(format!("## 设置窗无障碍(UIA)\n\n{}\n", lines.join("\n")))
+    Ok(format!("## 设置窗无障碍(UIA)\n\n{}\n", outcome?.join("\n")))
 }
 
 fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
-    let settings = wait_window(w!("lueying-settings"), Duration::from_secs(20), child)?;
+    let settings = wait_window(w!("掠影设置"), Duration::from_secs(20), child)?;
     let automation: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }
             .map_err(|e| format!("CoCreateInstance(UIAutomation): {e}"))?;
@@ -105,7 +104,7 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
     unsafe { invoke.Invoke() }.map_err(|e| format!("UIA 调用编辑按钮失败: {e}"))?;
     lines.push("UIA 调用「编辑」按钮成功".to_string());
 
-    let editor = wait_window(w!("lueying-settings-edit"), Duration::from_secs(5), child)?;
+    let editor = wait_window(w!("编辑自定义短语"), Duration::from_secs(5), child)?;
     let editor_root = unsafe { automation.ElementFromHandle(editor) }
         .map_err(|e| format!("ElementFromHandle(短语编辑器): {e}"))?;
     let editor_name = text(&editor_root);
@@ -116,15 +115,15 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
     let edit = controls
         .iter()
         .find(|element| {
-            // 多行 EDIT 在 UIA 代理下是 Document 控件类型;单行才是 Edit。
+            // 多行 TextEdit 在 UIA 代理下是 Document 控件类型;单行才是 Edit。
             matches!(
                 kind(element),
                 Some(UIA_EditControlTypeId) | Some(UIA_DocumentControlTypeId)
             )
         })
-        .ok_or("短语编辑器里没有 EDIT 文本控件")?;
+        .ok_or("短语编辑器里没有文本控件")?;
     let value: IUIAutomationValuePattern = unsafe { edit.GetCurrentPatternAs(UIA_ValuePatternId) }
-        .map_err(|e| format!("EDIT 没有 ValuePattern: {e}"))?;
+        .map_err(|e| format!("文本控件没有 ValuePattern: {e}"))?;
     unsafe { value.SetValue(&BSTR::from(PHRASE)) }.map_err(|e| format!("UIA 写入短语失败: {e}"))?;
     let save = controls
         .iter()
@@ -148,15 +147,23 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         std::thread::sleep(Duration::from_millis(100));
     }
     lines.push(format!(
-        "短语编辑器 UIA 名称 `{editor_name}`,EDIT 控件可写,保存后 phrases.txt 已更新"
+        "短语编辑器 UIA 名称 `{editor_name}`,文本控件可写,保存后 phrases.txt 已更新"
     ));
+    // 顺手量峰值工作集:进程还活着时读,给体积门禁一个真实数字。
+    if let Ok(bytes) = crate::imp::peak_working_set(child.id()) {
+        lines.push(format!(
+            "峰值工作集 {:.1} MB",
+            bytes as f64 / 1024.0 / 1024.0
+        ));
+    }
     Ok(lines)
 }
 
-fn wait_window(class: PCWSTR, timeout: Duration, child: &mut Child) -> Result<HWND, String> {
+/// 按窗口标题等窗口出现;进程提前退出就报错。
+fn wait_window(title: PCWSTR, timeout: Duration, child: &mut Child) -> Result<HWND, String> {
     let start = Instant::now();
     loop {
-        if let Ok(hwnd) = unsafe { FindWindowW(class, PCWSTR::null()) } {
+        if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR::null(), title) } {
             return Ok(hwnd);
         }
         if let Ok(Some(status)) = child.try_wait() {
@@ -197,9 +204,9 @@ fn kind(element: &IUIAutomationElement) -> Option<UIA_CONTROLTYPE_ID> {
     unsafe { element.CurrentControlType() }.ok()
 }
 
-fn close_window(class: &str) {
-    let name: Vec<u16> = class.encode_utf16().chain(std::iter::once(0)).collect();
-    if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR(name.as_ptr()), PCWSTR::null()) } {
+fn close_window(title: &str) {
+    let name: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(name.as_ptr())) } {
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         }

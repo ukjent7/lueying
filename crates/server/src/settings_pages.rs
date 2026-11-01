@@ -6,10 +6,10 @@
 use super::*;
 
 use crate::config::OcrBackend;
-use crate::settings_schema::{self, ControlDef, PageId, SettingDef};
-use lueying_render::ui::{
+use crate::settings_model::{
     Button, ButtonKind, CandidatePreview, Control, Group, NavItem, Page, Row, SegmentOption,
 };
+use crate::settings_schema::{self, ControlDef, PageId, SettingDef};
 
 impl Settings {
     /// 当前页面:左栏导航 + 右栏设置卡片。

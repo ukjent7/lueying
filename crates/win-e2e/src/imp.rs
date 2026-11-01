@@ -137,10 +137,10 @@ fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 设置窗自检:原生窗口这条链路(CI 里没人点窗口,只能这样确认它活着)。
+/// 设置窗自检:Slint 组件实例化、页面模型灌入与关键控件在位。
 ///
-/// 设置窗是独立进程,自检建窗、画一帧、贴一次位图,再读回像素确认
-/// 画面不是一块底色;报告写进文件,这里原样带进 E2E 报告。
+/// 设置窗是独立进程,自检铺模型、建组件、回读属性;报告写进文件,
+/// 这里原样带进 E2E 报告。
 fn settings_selftest(dir: &std::path::Path) -> Result<String, String> {
     let exe = dir.join("lueying-settings.exe");
     if !exe.exists() {
@@ -561,9 +561,8 @@ fn real_run() -> Result<(String, String), String> {
         let skia_note = check_skia_selftest()?;
         // 运行期扩展自检:Wasm guest 在 Windows 上加载、派发、隐私拦截。
         let ext_note = check_ext_selftest()?;
-        // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
+        // 设置窗自检:Slint 组件实例化,页面模型吃得进、关键控件在位。
         let settings_note = settings_selftest(&dir)?;
-        let slint_note = settings_spike(&dir)?;
         // 设置窗无障碍:UIA 读 AccessKit 树,并按「编辑」打开短语编辑器。
         let a11y_note = crate::settings_a11y::check(&dir, &data)?;
         // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
@@ -591,7 +590,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{slint_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();
@@ -774,7 +773,7 @@ fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> 
 }
 
 /// 一个进程的峰值工作集;内存基线与 Slint 验证共用。
-fn peak_working_set(pid: u32) -> Result<u64, String> {
+pub(crate) fn peak_working_set(pid: u32) -> Result<u64, String> {
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
@@ -787,28 +786,6 @@ fn peak_working_set(pid: u32) -> Result<u64, String> {
         .map_err(|e| format!("GetProcessMemoryInfo({pid}): {e}"));
     let _ = unsafe { CloseHandle(process) };
     result
-}
-
-/// Slint 设置页验证:起 `--slint` 窗口,量峰值工作集,给迁移决策一个数。
-fn settings_spike(dir: &std::path::Path) -> Result<String, String> {
-    let exe = dir.join("lueying-settings.exe");
-    if !exe.exists() {
-        return Err(format!("没有 {}", exe.display()));
-    }
-    let mut child = std::process::Command::new(&exe)
-        .arg("--slint")
-        .spawn()
-        .map_err(|e| format!("启动 Slint 设置窗失败: {e}"))?;
-    std::thread::sleep(Duration::from_secs(4));
-    let pid = child.id();
-    let measured = peak_working_set(pid);
-    let _ = child.kill();
-    let _ = child.wait();
-    let bytes = measured.map_err(|e| format!("Slint 设置窗内存读不到: {e}"))?;
-    let mb = bytes as f64 / 1024.0 / 1024.0;
-    Ok(format!(
-        "## Slint 设置页验证\n\n| 指标 | 实测 |\n|---|---|\n| 峰值工作集(起窗 4 秒,PID {pid}) | {mb:.1} MB |\n"
-    ))
 }
 
 /// Server 工作集基线:优先测 runner 自己拉起的进程,不在了再按 exe 名找

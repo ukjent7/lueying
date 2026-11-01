@@ -45,7 +45,7 @@ lueying-server.exe (用户常驻服务)
     ├─ 候选窗口 (Skia: DirectComposition + D3D12，CPU 兜底)
     ├─ 状态徽标 (分层窗口 CPU 光栅化)
     └─ Wasm 扩展沙箱 (wasmi 解释执行，每扩展独立 worker)
-lueying-settings.exe (独立设置中心：原生窗口 + Skia 光栅化)
+lueying-settings.exe (独立设置中心：Slint 窗口，winit 后端)
 lueying-update.exe (独立更新器：Ed25519 签名验签与静默升级)
 lueying-netproxy.exe (扩展网络代理：按需启动，严格限制白名单域名)
 ```

@@ -45,7 +45,7 @@ pub enum ConsentState {
 }
 
 /// 配置里只有一个扩展时返回它;多扩展有序列表由配置文件维护。
-pub fn selected<'a>(extensions: &[String], scripts: &'a [ScriptEntry]) -> Option<&'a ScriptEntry> {
+fn selected<'a>(extensions: &[String], scripts: &'a [ScriptEntry]) -> Option<&'a ScriptEntry> {
     let [id] = extensions else {
         return None;
     };

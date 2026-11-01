@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::OcrBackend;
+use crate::settings_model::Id;
 use crate::settings_schema::PageId;
 use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
-use lueying_render::ui::Id;
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
     ScriptEntry::new(id, name)
@@ -193,7 +193,7 @@ fn candidate_page_starts_with_preview() {
     assert_eq!(first.label, "候选窗预览");
     assert!(matches!(
         first.control,
-        lueying_render::ui::Control::Preview { .. }
+        crate::settings_model::Control::Preview { .. }
     ));
 }
 
@@ -246,41 +246,6 @@ fn secret_extension_field_opens_editor() {
             "访问令牌".to_string()
         ))
     );
-}
-
-#[test]
-fn focus_order_follows_extension_group() {
-    let mut script = ext_entry();
-    // 待授权的包才有关闭不了的「同意」按钮,Tab 次序里才有它。
-    script.consent = ConsentState::Missing;
-    let mut settings = Settings {
-        scripts: vec![script],
-        ..Settings::default()
-    };
-    settings.cfg.extensions = vec!["shot".to_string()];
-    settings.set_page(PageId::Extensions);
-    let order = settings.focus_ids();
-    let at = |base: &str| order.iter().position(|id| id.base == base).unwrap();
-    assert!(at(ids::SCRIPTS) < at(ids::SCRIPTS_DIR));
-    assert!(at(ids::SCRIPTS_DIR) < at(ids::CONSENT));
-    assert!(at(ids::CONSENT) < at(ids::AUDIT));
-    assert!(at(ids::AUDIT) < at(ids::EXT_METRICS));
-    assert!(at(ids::EXT_METRICS) < at(ids::OCR));
-    assert!(at(ids::OCR) < at(ids::OCR_DIR));
-    assert!(at(ids::OCR_DIR) < at(ids::SAVE));
-}
-
-#[test]
-fn focus_order_lists_script_buttons_once() {
-    let mut settings = Settings::default();
-    settings.set_page(PageId::Extensions);
-    let order = settings.focus_ids();
-    let choose = order.iter().filter(|id| id.base == ids::SCRIPTS).count();
-    let dir = order
-        .iter()
-        .filter(|id| id.base == ids::SCRIPTS_DIR)
-        .count();
-    assert_eq!((choose, dir), (1, 1));
 }
 
 fn ext_entry() -> ScriptEntry {
@@ -337,9 +302,4 @@ fn extension_settings_render_and_activate() {
         "左右键在选项里绕回"
     );
     assert!(!settings.shift(&Id::new(toggle, 0), 1), "开关不吃左右键");
-
-    let focus = settings.focus_ids();
-    let at = |base: &str| focus.iter().position(|id| id.base == base).unwrap();
-    assert!(at(toggle) < at(choice));
-    assert!(at(choice) < at(ids::SAVE), "扩展字段排在扩展页控件之后");
 }

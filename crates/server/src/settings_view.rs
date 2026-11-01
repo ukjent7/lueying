@@ -6,9 +6,9 @@
 
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::EngineStatus;
-use lueying_render::ui::Id;
 
 use crate::config::AppConfig;
+use crate::settings_model::Id;
 use crate::settings_schema::ControlDef;
 
 pub use crate::settings_schema::PageId;
@@ -287,8 +287,6 @@ pub struct Settings {
     /// 安装目录里的版本号。
     pub current: String,
     pub updates: UpdateState,
-    /// 用户效果目录的说明文字。
-    pub effects_detail: String,
     /// 已安装的运行期扩展包;平台侧读目录后填入。
     pub scripts: Vec<ScriptEntry>,
     /// PP-OCRv6 模型是否齐全;平台侧检查目录后填入。
@@ -315,7 +313,6 @@ impl Default for Settings {
             confirm_clear: false,
             current: String::new(),
             updates: UpdateState::Idle,
-            effects_detail: "场景装饰层".to_string(),
             scripts: Vec::new(),
             ppocr_ready: false,
             ext_metrics: None,
@@ -354,11 +351,6 @@ impl Settings {
         self.message = message.into();
     }
 
-    /// 当前选中的包;没启用或启用了多个返回 None。
-    pub fn selected_script(&self) -> Option<&ScriptEntry> {
-        crate::settings_consent::selected(&self.cfg.extensions, &self.scripts)
-    }
-
     /// 选择运行期扩展;`None` 关闭。下标越界按关闭处理。
     pub fn select_script(&mut self, index: Option<usize>) {
         match index.and_then(|index| self.scripts.get(index)) {
@@ -368,14 +360,6 @@ impl Settings {
         self.clear_notice();
     }
 
-    /// 当前启用的包在列表里的下标;没启用或启用了多个返回 None。
-    pub fn script_selected(&self) -> Option<usize> {
-        let [id] = self.cfg.extensions.as_slice() else {
-            return None;
-        };
-        self.scripts.iter().position(|script| &script.id == id)
-    }
-
     /// 模糊音统计有没有内容可重置。
     pub fn reset_enabled(&self) -> bool {
         self.groups.iter().any(|(_, count)| *count > 0)
@@ -383,13 +367,13 @@ impl Settings {
 
     /// 点一下控件:能改配置的直接改,改不了的交给平台侧。
     pub fn activate(&mut self, id: &Id) -> Option<Action> {
-        if let Some(page) = PageId::from_nav(id.base) {
+        if let Some(page) = PageId::from_nav(&id.base) {
             self.page = page;
             self.search.clear();
             self.clear_notice();
             return None;
         }
-        if let Some(slot) = ids::official_slot(id.base) {
+        if let Some(slot) = ids::official_slot(&id.base) {
             let extension = crate::official_extensions::catalog().extensions.get(slot)?;
             let installed = if extension.is_model() {
                 extension.installed_model()
@@ -402,7 +386,7 @@ impl Settings {
             self.clear_notice();
             return Some(Action::InstallOfficial(extension.id.clone()));
         }
-        if let Some(slot) = ids::script_slot(id.base) {
+        if let Some(slot) = ids::script_slot(&id.base) {
             let script = self.scripts.get(slot)?;
             let script_id = script.id.clone();
             if let Some(index) = self
@@ -418,7 +402,7 @@ impl Settings {
             self.clear_notice();
             return None;
         }
-        if let Some(slot) = ids::app_punct_slot(id.base) {
+        if let Some(slot) = ids::app_punct_slot(&id.base) {
             if let Some(host) = self.cfg.apps.keys().nth(slot).cloned() {
                 let current = self.cfg.apps[&host].punct;
                 if let Some(over) = self.cfg.apps.get_mut(&host) {
@@ -428,7 +412,7 @@ impl Settings {
             }
             return None;
         }
-        if let Some(slot) = ids::app_learning_slot(id.base) {
+        if let Some(slot) = ids::app_learning_slot(&id.base) {
             if let Some(host) = self.cfg.apps.keys().nth(slot).cloned() {
                 let current = self.cfg.apps[&host].learning;
                 if let Some(over) = self.cfg.apps.get_mut(&host) {
@@ -438,7 +422,7 @@ impl Settings {
             }
             return None;
         }
-        if let Some(def) = crate::settings_schema::find(id.base) {
+        if let Some(def) = crate::settings_schema::find(&id.base) {
             let Some(ui) = &def.ui else {
                 return None;
             };
@@ -456,7 +440,7 @@ impl Settings {
             self.clear_notice();
             return None;
         }
-        if let Some(slot) = crate::settings_ext::slot(id.base) {
+        if let Some(slot) = crate::settings_ext::slot(&id.base) {
             let field = self
                 .ext_fields()
                 .into_iter()
@@ -473,7 +457,7 @@ impl Settings {
             }
             return None;
         }
-        match id.base {
+        match id.base.as_str() {
             ids::OCR_DIR => Some(Action::OpenOcrModels),
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::EFFECTS => Some(Action::OpenEffects),
@@ -501,7 +485,7 @@ impl Settings {
 
     /// 左右键改分段组的值;返回有没有改成。
     pub fn shift(&mut self, id: &Id, delta: isize) -> bool {
-        if let Some(def) = crate::settings_schema::find(id.base) {
+        if let Some(def) = crate::settings_schema::find(&id.base) {
             let Some(ui) = &def.ui else {
                 return false;
             };
@@ -511,12 +495,12 @@ impl Settings {
             if choices.is_empty() {
                 return false;
             }
-            let current = self.selected(id.base);
+            let current = self.selected(&id.base);
             let next = (current as isize + delta).rem_euclid(choices.len() as isize) as usize;
-            self.activate(&Id::new(id.base, next));
+            self.activate(&Id::new(id.base.clone(), next));
             return true;
         }
-        if let Some(slot) = crate::settings_ext::slot(id.base) {
+        if let Some(slot) = crate::settings_ext::slot(&id.base) {
             let Some(field) = self
                 .ext_fields()
                 .into_iter()

@@ -10,7 +10,7 @@
 use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_extmeta::{Setting, SettingValue};
 use lueying_features::SchemeId;
-use lueying_render::ui::{self, Id};
+use lueying_server::settings_model::{self as ui, Id};
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
 use lueying_server::settings_view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
 
@@ -242,61 +242,7 @@ pub fn run(report: &mut String) -> usize {
         format!("changed={changed} 辅助码={}", settings.cfg.aux),
     );
 
-    // 焦点顺序:每个控件只出现一次,头尾是更新与保存。
-    let page = settings.page(&colors());
-    let order = settings.focus_ids();
-    let mut sorted = order.clone();
-    sorted.sort_by_key(|id| (id.base, id.index));
-    let mut unique = sorted.clone();
-    unique.dedup();
-    push(
-        &mut checks,
-        "设置焦点顺序不重",
-        unique.len() == order.len() && order.len() >= 12,
-        format!("{} 项,去重后 {}", order.len(), unique.len()),
-    );
-    push(
-        &mut checks,
-        "设置焦点首尾正确",
-        order.first() == Some(&Id::new(ids::UPDATE, 0))
-            && order.last() == Some(&Id::new(ids::SAVE, 0)),
-        format!("{:?}…{:?}", order.first(), order.last()),
-    );
-    // 焦点顺序里的控件都得在页面上找得到。
-    let missing: Vec<&str> = order
-        .iter()
-        .filter(|id| !Settings::is_segment(id.base) && !page.has_control(**id))
-        .map(|id| id.base)
-        .collect();
-    push(
-        &mut checks,
-        "设置焦点控件都在页面上",
-        missing.is_empty(),
-        format!("缺 {missing:?}"),
-    );
-
-    // 排版:控件都在卡片里,页面能排出来。
-    let font = ui_font();
-    let layout = ui::layout(&page, &font, 1.0, 650.0);
-    let outside: Vec<&str> = order
-        .iter()
-        .filter_map(|id| layout.card_hit(*id))
-        .filter(|rect| rect.left < 0.0 || rect.right > layout.card.width())
-        .map(|_| "越界")
-        .collect();
-    push(
-        &mut checks,
-        "设置控件不出卡片",
-        outside.is_empty(),
-        format!("越界 {} 个", outside.len()),
-    );
-    // 页脚按钮在视口底上。
-    push(
-        &mut checks,
-        "设置页脚贴视口底",
-        (layout.footer.bottom - 632.0).abs() < 0.5,
-        format!("页脚下沿={:.1}", layout.footer.bottom),
-    );
+    // 焦点与几何归 Slint 的 winit 后端管;这里只验模型与配置。
 
     // 配置往返:extensions 键要能读、能原样存回;路径分隔符不能当扩展 id。
     let path = std::env::temp_dir().join(format!("lueying-config-e2e-{}.toml", std::process::id()));
@@ -373,10 +319,6 @@ pub fn run(report: &mut String) -> usize {
     ext_settings.activate(&Id::new(toggle, 0));
     ext_settings.activate(&Id::new(choice, 0));
     let values = ext_settings.cfg.ext_settings.get("shot-ocr");
-    let focus = ext_settings.focus_ids();
-    let toggle_at = focus.iter().position(|id| id.base == toggle);
-    let choice_at = focus.iter().position(|id| id.base == choice);
-    let save_at = focus.iter().position(|id| id.base == ids::SAVE);
     push(
         &mut checks,
         "扩展声明式设置",
@@ -384,11 +326,8 @@ pub fn run(report: &mut String) -> usize {
             && values.is_some_and(|table| {
                 table.get("notify") == Some(&serde_json::json!(false))
                     && table.get("quality") == Some(&serde_json::json!("fast"))
-            })
-            && toggle_at.is_some()
-            && choice_at.is_some()
-            && save_at.is_some_and(|at| toggle_at < Some(at) && choice_at < Some(at)),
-        format!("行 {rows:?} 焦点 {toggle_at:?}/{choice_at:?}/{save_at:?}"),
+            }),
+        format!("行 {rows:?} 值 {values:?}"),
     );
 
     // 顶部搜索:跨页命中,标题与计数随搜索词变化;清空后回到原页。
@@ -420,7 +359,7 @@ pub fn run(report: &mut String) -> usize {
         !search_settings.searching() && search_settings.page(&colors()).title == "掠影",
         format!("搜索={:?}", search_settings.search),
     );
-    // 候选页第一行是实时预览;控件不参与焦点与命中。
+    // 候选页第一行是实时预览,只画不点。
     let candidate = sample_settings().page_view(PageId::Candidate, &colors());
     let preview = candidate.groups[0].rows.first();
     push(
@@ -428,10 +367,7 @@ pub fn run(report: &mut String) -> usize {
         "设置候选预览行",
         preview.is_some_and(|row| {
             row.label == "候选窗预览" && matches!(row.control, ui::Control::Preview { .. })
-        }) && !candidate
-            .focus_ids()
-            .iter()
-            .any(|id| id.base == "candidate-preview"),
+        }),
         format!("首行={:?}", preview.map(|row| row.label.as_str())),
     );
 
@@ -473,13 +409,4 @@ pub fn run(report: &mut String) -> usize {
     );
 
     crate::harness::write(report, "设置页模型", checks)
-}
-
-/// 设置窗用的字型;系统没有字型时退回默认字型(只影响宽度测量)。
-fn ui_font() -> skia_safe::Font {
-    let mgr = skia_safe::FontMgr::new();
-    match mgr.legacy_make_typeface(None, skia_safe::FontStyle::normal()) {
-        Some(face) => skia_safe::Font::from_typeface(face, 17.0),
-        None => skia_safe::Font::default(),
-    }
 }

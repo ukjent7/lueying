@@ -16,7 +16,7 @@ lueying-server.exe（用户常驻服务）
     ├─ 状态徽标（原生分层窗口：CPU 光栅化 + UpdateLayeredWindow）
     ├─ 后台工作线程（UIA 上下文获取、停顿重排等）
     └─ 本地日志（%LOCALAPPDATA%\lueying\logs\server.log）
-lueying-settings.exe（独立设置窗口：原生 Win32 + Skia 光栅化，管道通信）
+lueying-settings.exe（独立设置窗口：Slint + AccessKit 无障碍，管道通信）
 lueying-update.exe（独立更新器：基于 lueying-net，静默安装与校验）
 lueying-netproxy.exe（扩展网络代理：按需启动，受清单域名白名单限制）
 lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自启）

@@ -12,7 +12,7 @@ use lueying_extmeta::metrics::ExtMetrics;
 use lueying_extwasm::{ConsentBook, ConsentCheck};
 use lueying_net::update;
 use lueying_protocol::{Reply, Request, pipe_name};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -22,10 +22,8 @@ use windows::Win32::UI::Controls::Dialogs::{
     OPENFILENAMEW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, EnumWindows, GetCursorPos, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IDOK, IsWindowVisible, MB_DEFBUTTON2,
-    MB_ICONQUESTION, MB_ICONWARNING, MB_OKCANCEL, MF_CHECKED, MF_SEPARATOR, MF_STRING, MessageBoxW,
-    SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
+    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IDOK,
+    IsWindowVisible, MB_DEFBUTTON2, MB_ICONQUESTION, MB_OKCANCEL, MessageBoxW,
 };
 use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR};
 
@@ -116,7 +114,7 @@ pub fn open_apps(settings: &mut Settings) {
 }
 
 /// 正在运行、有可见窗口且尚未配置的应用:exe 名 → 窗口标题。
-fn running_apps(
+pub(crate) fn running_apps(
     configured: &std::collections::BTreeMap<String, AppOverride>,
 ) -> Vec<(String, String)> {
     struct Found {
@@ -189,60 +187,6 @@ fn running_apps(
         .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
     found.apps.truncate(40);
     found.apps
-}
-
-/// 从正在运行的程序里挑一个加入按应用配置。
-pub fn add_app(hwnd: HWND, settings: &mut Settings) {
-    settings.confirm_clear = false;
-    let apps = running_apps(&settings.cfg.apps);
-    if apps.is_empty() {
-        settings.say(
-            Notice::Info,
-            "没有可添加的运行中程序;可打开「配置文件」手动添加",
-        );
-        return;
-    }
-    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
-        settings.say(Notice::Error, "建菜单失败");
-        return;
-    };
-    for (index, (exe, title)) in apps.iter().enumerate() {
-        let label = HSTRING::from(format!("{}  {}", escape_menu(title), exe));
-        unsafe {
-            let _ = AppendMenuW(menu, MF_STRING, index + 1, &label);
-        }
-    }
-    let mut point = POINT::default();
-    unsafe {
-        let _ = GetCursorPos(&mut point);
-        let _ = SetForegroundWindow(hwnd);
-    }
-    let command = unsafe {
-        TrackPopupMenu(
-            menu,
-            TPM_NONOTIFY | TPM_RETURNCMD,
-            point.x,
-            point.y,
-            None,
-            hwnd,
-            None,
-        )
-    };
-    unsafe {
-        let _ = DestroyMenu(menu);
-    }
-    let chosen = usize::try_from(command.0)
-        .ok()
-        .filter(|index| *index > 0 && *index <= apps.len());
-    let Some(index) = chosen else {
-        return;
-    };
-    let (exe, title) = &apps[index - 1];
-    settings
-        .cfg
-        .apps
-        .insert(exe.clone(), AppOverride::default());
-    settings.say(Notice::Info, format!("已添加 {title} ({exe});保存后生效"));
 }
 
 /// 打开一份用户数据文件;缺失时先写模板。保存后由 Server 在下次
@@ -469,7 +413,7 @@ pub fn approve_extension(settings: &mut Settings) {
 }
 
 /// 同意一个包:清单、哈希与能力写进记录;服务端下一拍重建运行期。
-fn approve_package(id: &str) -> Result<ConsentCheck, String> {
+pub(crate) fn approve_package(id: &str) -> Result<ConsentCheck, String> {
     let root = config::extensions_dir().ok_or("没有扩展目录")?;
     let dir = root.join(id);
     let manifest = lueying_extwasm::manifest_at(&dir)?;
@@ -526,105 +470,6 @@ pub fn refresh_ext_metrics(settings: &mut Settings) {
         }
         None => settings.say(Notice::Info, "服务还没有写入运行数据"),
     }
-}
-
-/// 弹出扩展选择菜单:关闭,或启用某个已安装的包。选择只改配置,
-/// 点保存后服务端才重载。多扩展的有序列表在配置文件里维护;这个
-/// 菜单保持单选,选中一个就替换列表。
-pub fn choose_script(hwnd: HWND, settings: &mut Settings) {
-    settings.confirm_clear = false;
-    settings.scripts = installed_scripts();
-    if settings.scripts.is_empty() {
-        settings.say(Notice::Info, "没有已安装的扩展;点「目录」放入扩展包");
-        return;
-    }
-    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
-        settings.say(Notice::Error, "建菜单失败");
-        return;
-    };
-    let selected = settings.script_selected();
-    let off = HSTRING::from("关闭运行期扩展");
-    unsafe {
-        let flags = if settings.cfg.extensions.is_empty() {
-            MF_STRING | MF_CHECKED
-        } else {
-            MF_STRING
-        };
-        let _ = AppendMenuW(menu, flags, 1, &off);
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        for (index, script) in settings.scripts.iter().enumerate() {
-            let label = HSTRING::from(format!("{}  {}", escape_menu(&script.name), script.id));
-            let flags = if selected == Some(index) {
-                MF_STRING | MF_CHECKED
-            } else {
-                MF_STRING
-            };
-            let _ = AppendMenuW(menu, flags, 2 + index, &label);
-        }
-    }
-    let mut point = POINT { x: 0, y: 0 };
-    let _ = unsafe { GetCursorPos(&mut point) };
-    unsafe {
-        let _ = SetForegroundWindow(hwnd);
-    }
-    let command = unsafe {
-        TrackPopupMenu(
-            menu,
-            TPM_RETURNCMD | TPM_NONOTIFY,
-            point.x,
-            point.y,
-            None,
-            hwnd,
-            None,
-        )
-    };
-    unsafe {
-        let _ = DestroyMenu(menu);
-    }
-    match command.0 as usize {
-        0 => {}
-        1 => {
-            settings.select_script(None);
-            settings.say(Notice::Info, "已关闭运行期扩展,保存后生效");
-        }
-        command => {
-            let index = command - 2;
-            let Some(script) = settings.scripts.get(index) else {
-                return;
-            };
-            let id = script.id.clone();
-            let name = script.name.clone();
-            if script.consent != ConsentState::Approved {
-                let text = crate::settings_consent::prompt(script);
-                let confirmed = unsafe {
-                    MessageBoxW(
-                        None,
-                        &HSTRING::from(text),
-                        &HSTRING::from("扩展授权"),
-                        MB_OKCANCEL | MB_ICONWARNING,
-                    ) == IDOK
-                };
-                if !confirmed {
-                    settings.say(Notice::Info, format!("未同意 {name},扩展保持停用"));
-                    return;
-                }
-                if let Err(error) = approve_package(&id) {
-                    settings.say(Notice::Error, format!("同意失败: {error}"));
-                    return;
-                }
-                settings.scripts = installed_scripts();
-            }
-            if let Some(index) = settings.scripts.iter().position(|item| item.id == id) {
-                settings.select_script(Some(index));
-                settings.say(Notice::Info, format!("已选择 {name},保存后生效"));
-            }
-        }
-    }
-}
-
-/// 菜单里的 `&` 是助记符;包名里的 `&` 要写成 `&&`。
-fn escape_menu(text: &str) -> String {
-    text.replace('&', "&&")
 }
 
 /// 导出用户词库到文件。
