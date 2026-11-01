@@ -89,14 +89,14 @@ fn parse_duration(text: &str) -> Option<f64> {
 }
 
 /// 颜色:调色板名或 `#RRGGBB`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Fill {
     Palette(PaletteName),
     Rgba(u32),
 }
 
 /// 调色板名;与渲染核心的 `Palette` 字段一一对应。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum PaletteName {
     Bg,
     Border,
@@ -203,7 +203,7 @@ fn parse_edge(edge: &str) -> Option<Edge> {
 }
 
 /// 节点画在文字下方还是上方;文字永远最后画,装饰压不坏候选。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum Layer {
     #[default]
     BelowText,
@@ -211,7 +211,7 @@ pub enum Layer {
 }
 
 /// 几何形状;`path` 是 M/L/Q/C/Z 子集,坐标相对锚点。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Shape {
     Rect,
     RRect,
@@ -220,7 +220,7 @@ pub enum Shape {
     Path(Vec<PathSeg>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum PathSeg {
     MoveTo([f32; 2]),
     LineTo([f32; 2]),

@@ -207,3 +207,33 @@ fn parses_scene_check_and_schema() {
         "schema 不接受参数"
     );
 }
+
+#[test]
+fn parses_scene_replay() {
+    assert_eq!(
+        parse_args(args(&["scene", "replay", "glow.toml"])),
+        Ok(Invocation::SceneReplay(super::SceneReplayArgs {
+            script: PathBuf::from("glow.toml"),
+            scene: None,
+            json: false,
+        }))
+    );
+    assert_eq!(
+        parse_args(args(&[
+            "scene", "replay", "glow.toml", "--scene", "s/scene.toml", "--json"
+        ])),
+        Ok(Invocation::SceneReplay(super::SceneReplayArgs {
+            script: PathBuf::from("glow.toml"),
+            scene: Some(PathBuf::from("s/scene.toml")),
+            json: true,
+        }))
+    );
+    assert!(
+        parse_args(args(&["scene", "replay"])).is_err(),
+        "缺脚本路径要报错"
+    );
+    assert!(
+        parse_args(args(&["scene", "replay", "--scene"])).is_err(),
+        "--scene 缺路径要报错"
+    );
+}

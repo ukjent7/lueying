@@ -72,7 +72,7 @@ impl EventName {
 }
 
 /// 一帧绘制清单;`items` 已按 below-text 在前排好序。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct Frame {
     pub items: Vec<Item>,
     /// 表达式预算超限;窗口层据此熔断场景。
@@ -80,7 +80,7 @@ pub struct Frame {
 }
 
 /// 一个待绘制图元。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Item {
     pub layer: Layer,
     /// 相对窗口的逻辑像素矩形。
@@ -91,7 +91,7 @@ pub struct Item {
 }
 
 /// 特效求值结果;窗口层接成 D2D 内置特效图。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum EffectOut {
     Blur {
         radius: f32,
@@ -103,7 +103,7 @@ pub enum EffectOut {
 }
 
 /// 图元本体。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Body {
     Shape {
         shape: Shape,
@@ -132,7 +132,7 @@ pub enum Body {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Particle {
     pub x: f32,
     pub y: f32,

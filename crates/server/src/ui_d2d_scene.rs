@@ -14,6 +14,22 @@ use lueying_scene::{EventName, Inputs, Runtime};
 
 use lueying_server::config;
 
+/// 录制文件;环境变量给出路径,打不开只记日志,输入法照常。
+fn open_recorder() -> Option<std::fs::File> {
+    use std::io::Write as _;
+    let path = std::env::var_os("LUEYING_SCENE_RECORD")?;
+    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "# lueying 场景录制;喂给 lueying scene replay");
+            Some(file)
+        }
+        Err(error) => {
+            println!("场景录制打不开 {}: {error}", path.display());
+            None
+        }
+    }
+}
+
 /// 效果目录的检查间隔;用户改完 scene.toml 一秒内生效。
 const RELOAD_CHECK: Duration = Duration::from_millis(1000);
 /// 打字速率的统计窗;窗口内次数除以窗长。
@@ -36,6 +52,8 @@ pub(super) struct SceneHost {
     last: Option<SessionView>,
     burst: u32,
     burst_until: Option<Instant>,
+    /// 事件录制文件;`LUEYING_SCENE_RECORD` 给出路径,格式即回放脚本。
+    recorder: Option<std::fs::File>,
 }
 
 impl SceneHost {
@@ -52,6 +70,7 @@ impl SceneHost {
             last: None,
             burst: 0,
             burst_until: None,
+            recorder: open_recorder(),
         };
         host.reload();
         host
@@ -171,6 +190,38 @@ impl SceneHost {
         let runtime = self.runtime.as_mut()?;
         self.time += dt;
         Some(runtime.tick(self.time, dt, inputs, events))
+    }
+
+    /// 录一帧;`[[steps]]` 块与 `lueying scene replay` 的脚本同格式,
+    /// 录完直接回放,或当调动画的底稿改。
+    pub(super) fn record(&mut self, dt: f64, inputs: &Inputs, events: &[EventName]) {
+        use std::io::Write as _;
+        let Some(file) = self.recorder.as_mut() else {
+            return;
+        };
+        let names = events
+            .iter()
+            .map(lueying_scene::replay::name_of)
+            .map(|name| format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let events_line = if names.is_empty() {
+            String::new()
+        } else {
+            format!("\nevents = [{names}]")
+        };
+        let _ = writeln!(
+            file,
+            "\n[[steps]]\ndt = {dt:.3}\ntyping_rate = {:.3}\ncandidates = {}\npage = {}\npage_count = {}\nmode_chinese = {}\nselected = {}\nidle = {:.3}{}",
+            inputs.typing_rate,
+            inputs.candidates,
+            inputs.page,
+            inputs.page_count,
+            inputs.mode_chinese,
+            inputs.selected,
+            inputs.idle,
+            events_line,
+        );
     }
 
     /// 打字速率(键/秒)与空闲时长(秒);信号源的窗口层部分。

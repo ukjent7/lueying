@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use lueying_cli::{
-    Invocation, TopOptions, USAGE, default_metrics_path, extcmd, parse_args, read_metrics,
-    render_json, render_table, replay,
+    Invocation, SceneReplayArgs, TopOptions, USAGE, default_metrics_path, extcmd, parse_args,
+    read_metrics, render_json, render_table, replay,
 };
 
 fn main() -> ExitCode {
@@ -62,6 +62,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::Top(options) => top(options)?,
         Invocation::SceneCheck(path) => scene_check(&path)?,
         Invocation::SceneSchema => print!("{}", lueying_scene::SCHEMA),
+        Invocation::SceneReplay(args) => scene_replay(&args)?,
     }
     Ok(())
 }
@@ -96,6 +97,55 @@ fn scene_check(path: &Path) -> Result<(), String> {
     } else {
         Err(failed.join("\n"))
     }
+}
+
+fn scene_replay(args: &SceneReplayArgs) -> Result<(), String> {
+    let script_text = std::fs::read_to_string(&args.script)
+        .map_err(|error| format!("读 {}: {error}", args.script.display()))?;
+    let script = lueying_scene::replay::parse(&args.script.display().to_string(), &script_text)
+        .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))?;
+    let scene_path = args
+        .scene
+        .clone()
+        .unwrap_or_else(|| args.script.with_file_name("scene.toml"));
+    let scene_text = std::fs::read_to_string(&scene_path).map_err(|error| {
+        format!(
+            "读 {}: {error};场景不在脚本旁边时用 --scene 指定",
+            scene_path.display()
+        )
+    })?;
+    let scene = lueying_scene::parse(&scene_path.display().to_string(), &scene_text)
+        .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"))?;
+    let frames = lueying_scene::replay(&script, scene);
+    if args.json {
+        let json = serde_json::to_string(&frames).map_err(|error| error.to_string())?;
+        println!("{json}");
+        return Ok(());
+    }
+    for (index, frame) in frames.iter().enumerate() {
+        let below = frame
+            .items
+            .iter()
+            .filter(|item| item.layer == lueying_scene::Layer::BelowText)
+            .count();
+        let above = frame.items.len() - below;
+        let particles = frame
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(item.body, lueying_scene::Body::Particles { .. })
+            })
+            .count();
+        let degraded = if frame.degraded { ",已降级" } else { "" };
+        println!(
+            "帧 {index}:图元 {}(下 {} / 上 {}),粒子 {particles}{degraded}",
+            frame.items.len(),
+            below,
+            above,
+        );
+    }
+    println!("共 {} 帧", frames.len());
+    Ok(())
 }
 
 fn top(options: TopOptions) -> Result<(), String> {

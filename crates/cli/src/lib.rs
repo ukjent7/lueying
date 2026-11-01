@@ -45,7 +45,20 @@ pub const USAGE: &str = "\
 
 场景(候选窗装饰)的开发回路;场景文件是纯数据,详见官方示例:
   check <文件|目录>  校验 scene.toml;目录就扫全部 .toml(中文报错带行号)
-  schema             输出编辑器用的 JSON Schema";
+  schema             输出编辑器用的 JSON Schema
+  replay <脚本>      事件模拟器:脚本驱动场景出帧(--json 机器可读;
+                     --scene 指定 scene.toml,缺省取脚本同目录)";
+
+/// `scene replay` 的参数。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneReplayArgs {
+    /// 回放脚本。
+    pub script: PathBuf,
+    /// scene.toml;缺省取脚本同目录的 scene.toml。
+    pub scene: Option<PathBuf>,
+    /// 机器可读输出。
+    pub json: bool,
+}
 
 /// 一次命令行调用。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +87,8 @@ pub enum Invocation {
     SceneCheck(PathBuf),
     /// 输出场景的 JSON Schema。
     SceneSchema,
+    /// 事件模拟器:回放脚本驱动场景出帧。
+    SceneReplay(SceneReplayArgs),
     /// 打印帮助。
     Help,
 }
@@ -245,7 +260,7 @@ fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
-    let sub = args.next().ok_or("缺子命令;用 check 或 schema")?;
+    let sub = args.next().ok_or("缺子命令;用 check、replay 或 schema")?;
     match sub.as_str() {
         "check" => {
             let mut path: Option<PathBuf> = None;
@@ -261,6 +276,33 @@ where
                 path.unwrap_or_else(|| PathBuf::from(".")),
             ))
         }
+        "replay" => {
+            let mut script: Option<PathBuf> = None;
+            let mut scene: Option<PathBuf> = None;
+            let mut json = false;
+            let mut used = false;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "-h" | "--help" => return Ok(Invocation::Help),
+                    "--json" => json = true,
+                    "--scene" => {
+                        let Some(path) = args.next() else {
+                            return Err("--scene 缺路径".to_string());
+                        };
+                        scene = Some(PathBuf::from(path));
+                    }
+                    other if other.starts_with('-') => {
+                        return Err(format!("未知参数 {other:?}"));
+                    }
+                    other => take_positional(&mut used, &mut script, other, "回放脚本")?,
+                }
+            }
+            Ok(Invocation::SceneReplay(SceneReplayArgs {
+                script: script.ok_or("缺回放脚本路径")?,
+                scene,
+                json,
+            }))
+        }
         "schema" => {
             if let Some(arg) = args.next() {
                 return match arg.as_str() {
@@ -270,7 +312,7 @@ where
             }
             Ok(Invocation::SceneSchema)
         }
-        other => Err(format!("未知子命令 {other:?};用 check 或 schema")),
+        other => Err(format!("未知子命令 {other:?};用 check、replay 或 schema")),
     }
 }
 

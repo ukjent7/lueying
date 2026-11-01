@@ -715,6 +715,7 @@ fn scene_tick(
     };
     ctx.last_draw = Some(now);
     let events = std::mem::take(&mut ctx.pending);
+    ctx.scene.record(dt, &inputs, &events);
     ctx.scene
         .tick(dt, &inputs, &events)
         .map(|frame| frame.items)
