@@ -283,12 +283,22 @@ jobs:
         run: |
           rustup target add i686-pc-windows-msvc aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
-      # Skia 渲染核心 spike:d3d+textlayout+jpeg/pdf 组合必须命中预编译二进制;
-      # 链接失败或触发本地编 Skia 都在这里暴露。d3d 特性由 render/server 的
-      # cfg(windows) 依赖声明,无需 --features。prebuilt-only 让预编译缺失时
-      # 立刻失败,而不是本地编 Skia 十几分钟后才失败。
-      - name: Skia d3d 预编译命中
+      # Skia 预编译命中:d3d 特性已随 P2 的 D2D 迁移删除,Windows 侧回归
+      # 与 Linux 相同的非 GPU 键;prebuilt-only 让预编译缺失时立刻失败,
+      # 而不是本地编 Skia 十几分钟后才失败。
+      - name: Skia 预编译命中
         run: cargo build --release -p lueying-render --features prebuilt-only --locked
+      # 官方原生扩展 ppocr:产物单独走 Release 资产分发,不进安装包。
+      # 它的哈希要先补进官方目录(编译期嵌入 server),所以必须在
+      # Build (release) 之前补目录。
+      - name: 构建 ppocr(原生扩展)
+        run: cargo build --release --locked -p ppocr
+      - name: 补官方目录的 ppocr.exe
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $url = "https://github.com/ukjent7/lueying/releases/download/$($env:GITHUB_REF_NAME)/lueying-ppocr.exe"
+          cargo run -p xtask --release --locked -- catalog-exe --exe target/release/ppocr.exe --url $url
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
@@ -325,13 +335,14 @@ jobs:
           cargo build --release --locked -p lueying-tsf
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
       # 运行时体积基线:2026-10-31 实测 server 33.6 + settings 22.1 +
-      # update 16.8 + user 0.6 + TSF 0.7 ≈ 73.8 MiB。大头是两份静态链接的
-      # Skia。设置窗引入 Slint(winit + 软件渲染)后先放宽到 90 MiB,
-      # Windows 实测出 Slint 的真实增量后收紧。发布包另有总门禁。
+      # user 0.6 + TSF 0.7 ≈ 57 MiB(自研更新器已砍,更新改设置窗直接
+      # 下载安装包)。大头是静态链接的 Skia。设置窗引入 Slint(winit +
+      # 软件渲染)后先放宽到 90 MiB,Windows 实测出 Slint 的真实增量后
+      # 收紧。发布包另有总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |
-          $names = "lueying-server.exe", "lueying-settings.exe", "lueying-update.exe", "lueying-netproxy.exe", "lueying-user.exe", "lueying_tsf.dll"
+          $names = "lueying-server.exe", "lueying-settings.exe", "lueying-user.exe", "lueying_tsf.dll"
           $bytes = 0
           foreach ($name in $names) {
             $length = (Get-Item "target/release/$name").Length
@@ -522,7 +533,6 @@ jobs:
           test -f dist/lueying/licenses/Apache-2.0.txt
           test -f dist/lueying/licenses/CC-BY-4.0.txt
           test -f dist/lueying/lueying-user.exe
-          test -f dist/lueying/lueying-update.exe
           test -f dist/lueying/lueying_tsf.dll
           test -f dist/lueying/lueying_tsf32.dll
           test -f dist/lueying/main.gram
@@ -533,6 +543,11 @@ jobs:
           fi
           du -sh dist/lueying
           ls -lh dist/lueying-*-setup.exe
+      # ppocr.exe 是独立的 Release 资产(官方目录里登记的下载地址就是它)。
+      - name: 暂存 ppocr.exe 资产
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: Copy-Item target/release/ppocr.exe dist/lueying-ppocr.exe
       - name: 生成安装包校验文件
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -583,6 +598,7 @@ jobs:
           $setup = "dist/lueying-$version-setup.exe"
           $sha = "$setup.sha256"
           $assets = @($setup, $sha)
+          if (Test-Path "dist/lueying-ppocr.exe") { $assets += "dist/lueying-ppocr.exe" }
           if (Test-Path "dist/lueying-manifest.json") { $assets += "dist/lueying-manifest.json" }
           if (Test-Path "dist/lueying-manifest.json.sig") { $assets += "dist/lueying-manifest.json.sig" }
           # Release 说明来自 CHANGELOG 的版本段,不用自动生成的提交列表。
@@ -608,5 +624,6 @@ jobs:
             dist/lueying
             dist/lueying-*-setup.exe
             dist/lueying-*-setup.exe.sha256
+            dist/lueying-ppocr.exe
             dist/lueying-manifest.json
             dist/lueying-manifest.json.sig

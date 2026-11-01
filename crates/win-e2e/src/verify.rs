@@ -80,7 +80,6 @@ fn v3_sizes(rows: &mut Vec<Row>) {
     for name in [
         "lueying-server.exe",
         "lueying-settings.exe",
-        "lueying-update.exe",
         "lueying-user.exe",
         "lueying_tsf.dll",
         "lueying_tsf32.dll",

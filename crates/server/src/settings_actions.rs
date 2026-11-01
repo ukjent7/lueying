@@ -5,6 +5,7 @@
 
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::config::{self, AppOverride};
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
@@ -707,11 +708,11 @@ pub fn export_diagnostics(settings: &mut Settings) {
     }
 }
 
-/// 确认后把更新器复制到临时目录并启动;设置窗退出,更新器接管安装。
+/// 更新确认框;确认后由设置窗后台下载并运行安装程序。
 pub fn install_update(settings: &mut Settings, release: &update::Release) -> bool {
     settings.confirm_clear = false;
     let text = format!(
-        "安装掠影 {}？\n\n设置窗口会关闭,输入法服务短暂重启。",
+        "安装掠影 {}？\n\n安装包会下载到临时目录,校验后直接运行安装程序。",
         release.version
     );
     let confirmed = unsafe {
@@ -722,16 +723,16 @@ pub fn install_update(settings: &mut Settings, release: &update::Release) -> boo
             MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2,
         ) == IDOK
     };
-    if !confirmed {
-        return false;
-    }
-    match update::launch_updater(release, std::process::id()) {
-        Ok(()) => true,
-        Err(error) => {
-            settings.say(Notice::Error, format!("启动更新失败: {error}"));
-            false
-        }
-    }
+    confirmed
+}
+
+/// 后台下载安装包到临时目录,校验后直接运行安装程序;由设置窗线程调。
+pub fn download_and_run_installer(release: &update::Release) -> Result<(), String> {
+    let path = update::download_installer(release)?;
+    Command::new(&path)
+        .spawn()
+        .map_err(|e| format!("启动安装程序: {e}"))?;
+    Ok(())
 }
 
 /// 系统文件对话框;取消或失败时返回 None。

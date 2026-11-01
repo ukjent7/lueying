@@ -3,11 +3,7 @@ name = "lueying-net"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "联网边界:更新检查、签名清单与下载,只被设置窗与更新器链接"
-
-[[bin]]
-name = "lueying-update"
-path = "src/bin/lueying-update.rs"
+description = "联网边界:更新检查、签名清单与下载,只被设置窗链接"
 
 [dependencies]
 # 文件 SHA-256 与协议版本比较;两者都是平台无关的小工具。

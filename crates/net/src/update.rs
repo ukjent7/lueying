@@ -1,20 +1,17 @@
 //! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验。
 //! Release 里带签名清单(`lueying-manifest.json` + `.sig`)时,镜像与哈希以
-//! 验签后的清单为准(见 [`crate::update_manifest`]);更新器进程下载 Inno
-//! Setup 安装包并静默运行,由安装包完成替换。
+//! 验签后的清单为准(见 [`crate::update_manifest`]);设置窗把安装包下载到
+//! 临时目录、校验后直接运行,由安装包完成替换。
 
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
 
 use crate::http::Stream;
 use crate::update_manifest::{self, MANIFEST_NAME};
 
-use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
 
 /// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
 const API_LATEST: &str = "https://api.github.com/repos/ukjent7/lueying/releases/latest";
@@ -34,7 +31,7 @@ pub struct Release {
     pub sha_url: String,
     /// GitHub 记录的资源字节数;0 表示不校验大小。
     pub size: u64,
-    /// 签名清单给出的安装包哈希;有值时更新器不再拉 `.sha256` 文件。
+    /// 签名清单给出的安装包哈希;有值时设置窗不再拉 `.sha256` 文件。
     pub sha256: Option<String>,
 }
 
@@ -62,7 +59,7 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
 }
 
-/// 当前可执行文件所在目录。设置窗与更新器都从这里读 `version.txt`。
+/// 当前可执行文件所在目录。设置窗从这里读 `version.txt`。
 pub fn install_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -279,74 +276,39 @@ fn attach_manifest(value: &serde_json::Value, release: Release) -> Result<Releas
     })
 }
 
-/// 把设置进程里的更新器复制到临时目录再启动,避免安装时覆盖正在运行的 exe。
-pub fn launch_updater(release: &Release, settings_pid: u32) -> Result<(), String> {
-    let source = install_dir().join("lueying-update.exe");
-    if !source.is_file() {
-        return Err("安装目录缺少 lueying-update.exe,请重新安装".into());
+/// 把安装包下载到临时目录并校验;完成后由设置窗直接运行安装器。
+///
+/// 签名清单给过哈希就用它,否则拉 Release 的 `.sha256` 文件;写入前
+/// 先卡大小,校验不过不留半截安装包。
+pub fn download_installer(release: &Release) -> Result<PathBuf, String> {
+    let dest = std::env::temp_dir().join(format!("lueying-{}-setup.exe", release.version));
+    let _ = std::fs::remove_file(&dest);
+    let limit = if release.size > 0 {
+        release.size + 1024 * 1024
+    } else {
+        512 * 1024 * 1024
+    };
+    let (status, bytes) = fetch_bytes(&release.installer_url, limit)?;
+    if !(200..300).contains(&status) {
+        return Err(format!("下载安装包返回 HTTP {status}"));
     }
-    let dir = std::env::temp_dir().join(format!("lueying-update-{settings_pid}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建更新临时目录: {e}"))?;
-    let exe = dir.join("lueying-update.exe");
-    if let Err(error) = std::fs::copy(&source, &exe) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(format!("复制更新器: {error}"));
+    if release.size > 0 && bytes.len() as u64 != release.size {
+        return Err(format!(
+            "安装包大小不符: {} != {}",
+            bytes.len(),
+            release.size
+        ));
     }
-    let size = release.size.to_string();
-    let pid = settings_pid.to_string();
-    // 更新器从临时目录运行,不能靠 current_exe 找安装目录;把设置窗所在
-    // 目录显式传过去,自定义安装位置也能正确校验。
-    let target = install_dir();
-    // 签名清单验过时直接带哈希,更新器少拉一次 .sha256 文件。
-    let mut args = vec![
-        "--url".to_string(),
-        release.installer_url.clone(),
-        "--version".to_string(),
-        release.version.clone(),
-        "--size".to_string(),
-        size,
-        "--wait-pid".to_string(),
-        pid,
-    ];
-    match &release.sha256 {
-        Some(sha) => {
-            args.push("--sha256".to_string());
-            args.push(sha.clone());
-        }
-        None => {
-            args.push("--sha-url".to_string());
-            args.push(release.sha_url.clone());
-        }
+    std::fs::write(&dest, &bytes).map_err(|e| format!("写 {}: {e}", dest.display()))?;
+    let expected = match &release.sha256 {
+        Some(sha) => sha.clone(),
+        None => fetch_sha256(&release.sha_url)?,
+    };
+    if sha256_file(&dest)? != expected {
+        let _ = std::fs::remove_file(&dest);
+        return Err("安装包 SHA-256 校验失败".into());
     }
-    let spawned = Command::new(&exe)
-        .current_dir(&dir)
-        .arg("--install-dir")
-        .arg(&target)
-        .args(&args)
-        .spawn();
-    if let Err(error) = spawned {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Err(format!("启动更新器: {error}"));
-    }
-    Ok(())
-}
-
-/// 等设置进程退出,让安装器能替换设置窗 exe;进程已退出视为成功。
-pub fn wait_for_process(pid: u32, timeout_ms: u32) -> Result<(), String> {
-    unsafe {
-        let process = match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            Ok(process) => process,
-            Err(_) => return Ok(()),
-        };
-        let waited = WaitForSingleObject(process, timeout_ms);
-        let _ = CloseHandle(process);
-        if waited == WAIT_OBJECT_0 {
-            Ok(())
-        } else {
-            Err("等待设置窗口退出超时".into())
-        }
-    }
+    Ok(dest)
 }
 
 pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {

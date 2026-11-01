@@ -16,8 +16,7 @@ lueying-server.exe（用户常驻服务）
     ├─ 状态徽标（原生分层窗口：CPU 光栅化 + UpdateLayeredWindow）
     ├─ 后台工作线程（UIA 上下文获取、停顿重排等）
     └─ 本地日志（%LOCALAPPDATA%\lueying\logs\server.log）
-lueying-settings.exe（独立设置窗口：Slint + AccessKit 无障碍，管道通信）
-lueying-update.exe（独立更新器：基于 lueying-net，静默安装与校验）
+lueying-settings.exe（独立设置窗口：Slint + AccessKit 无障碍，管道通信；更新从这里下载安装包）
 lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自启）
 ```
 
@@ -25,7 +24,7 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 
 - **宿主纯净**：`lueying_tsf.dll` 仅依赖 `lueying-protocol`，不引入图形库与复杂引擎依赖。按键消息与编码转换在服务端边界完成。
 - **无网络依赖常驻**：常驻服务端 `lueying-server.exe` 独立编译且不链接 `winhttp.dll`（由 CI 进行导入表断言）。
-- **网络能力隔离**：更新由独立更新器执行；扩展没有网络通道（Wasm 宿主不提供 `net` 服务，原生扩展默认也不联网）。
+- **网络能力隔离**：联网只发生在设置窗（更新检查与扩展安装）；扩展没有网络通道（Wasm 宿主不提供 `net` 服务，原生扩展默认也不联网）。
 
 ## 核心引擎
 
@@ -88,9 +87,9 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 - **版本权威**：发布产物以安装目录的 `version.txt` 为准。
 - **完整性与签名**：
   - 安装包提供 `.sha256` 校验。
-  - 发布版本附带 `lueying-manifest.json` 及其 Ed25519 数字签名，更新器在验证签名后执行更新流程。
+  - 发布版本附带 `lueying-manifest.json` 及其 Ed25519 数字签名，设置窗验证签名后才采纳镜像与哈希。
   - Windows 安装包在发布流程中自动注入 Authenticode 数字签名。
-- **平滑升级**：TSF DLL 文件名携带版本后缀，避免覆盖冲突；更新器复制至 `%TEMP%` 执行静默替换。
+- **平滑升级**：TSF DLL 文件名携带版本后缀，避免覆盖冲突；设置窗把安装包下载到 `%TEMP%` 校验后直接运行。
 
 ## 质量保障体系
 

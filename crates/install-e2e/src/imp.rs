@@ -160,7 +160,6 @@ fn real_run() -> Result<String, String> {
             "lueying-user.exe",
             "lueying-server.exe",
             "lueying-settings.exe",
-            "lueying-update.exe",
             "version.txt",
             "licenses/README.md",
             "Catalog/official-extensions.json",
@@ -303,7 +302,6 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
         "lueying-user.exe",
         "lueying-server.exe",
         "lueying-settings.exe",
-        "lueying-update.exe",
         "lueying_tsf.dll",
         "lueying_tsf32.dll",
     ] {
@@ -432,7 +430,9 @@ fn run_setup(
     Err(failures.join("\n"))
 }
 
-/// 用本地 9.9.9 安装包跑一遍真实更新器:校验、静默运行 Inno 安装包替换版本。
+/// 用本地 9.9.9 安装包跑一遍真实升级:静默运行 Inno 安装包替换版本。
+/// 设置窗的更新流程就是「下载到临时目录后运行安装包」,这里验安装器
+/// 侧的升级覆盖与 --prune。
 #[allow(clippy::too_many_arguments)]
 fn update_installed(
     payload: &Path,
@@ -449,7 +449,6 @@ fn update_installed(
         "lueying-user.exe",
         "lueying-server.exe",
         "lueying-settings.exe",
-        "lueying-update.exe",
         "lueying_tsf.dll",
         "lueying_tsf32.dll",
         "LICENSE",
@@ -475,33 +474,16 @@ fn update_installed(
 
     phase("编译 9.9.9 安装包");
     let setup = compile_setup(&package, "9.9.9", dist)?;
-    let sha = sha256_file(&setup)?;
 
-    // 从安装目录运行会锁住 lueying-update.exe,导致新安装包复制失败;
-    // 正式流程也是先复制到 %TEMP% 再运行。
-    let updater_dir = root.join("updater");
-    std::fs::create_dir_all(&updater_dir).map_err(|e| format!("创建更新器目录: {e}"))?;
-    let updater = updater_dir.join("lueying-update.exe");
-    std::fs::copy(target.join("lueying-update.exe"), &updater)
-        .map_err(|e| format!("复制更新器: {e}"))?;
-
-    let mut command = Command::new(&updater);
-    command.arg("--installer").arg(&setup).args([
-        "--sha256",
-        sha.as_str(),
-        "--version",
-        "9.9.9",
-        "--quiet",
-    ]);
-    apply_env(&mut command, local, appdata, target, trace);
-    let output = run_command("更新器", &mut command, Duration::from_secs(180))?;
-    if !output.status.success() {
-        return Err(format!(
-            "更新器退出码 {:?}: {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+    run_setup(
+        "升级安装",
+        &setup,
+        &target,
+        &root.join("update.log"),
+        local,
+        appdata,
+        trace,
+    )?;
 
     let installed = std::fs::read_to_string(target.join("version.txt")).unwrap_or_default();
     if installed.trim() != "9.9.9" {
@@ -581,26 +563,6 @@ fn cleanup_install(
     }
     let _ = std::fs::remove_dir_all(target);
     Ok(())
-}
-
-/// 与更新器相同的 certutil 路径,验证 SHA-256 校验分支。
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut command = Command::new(system32("certutil.exe"));
-    command.arg("-hashfile").arg(path).arg("SHA256");
-    let output = run_command("certutil", &mut command, Duration::from_secs(30))?;
-    if !output.status.success() {
-        return Err(format!("certutil 退出码 {:?}", output.status.code()));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .map(|line| {
-            line.chars()
-                .filter(|c| !c.is_whitespace())
-                .collect::<String>()
-        })
-        .find(|line| line.len() == 64 && line.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(|line| line.to_ascii_lowercase())
-        .ok_or_else(|| "certutil 输出里没有 SHA-256".into())
 }
 
 fn tail(bytes: &[u8]) -> String {

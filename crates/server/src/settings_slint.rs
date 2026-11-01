@@ -722,14 +722,43 @@ fn start_update_check(ui: &SettingsWindow, core: &Shared) {
     }
 }
 
-/// 确认后把更新器复制到临时目录并启动;设置窗退出,更新器接管安装。
+/// 确认后后台下载安装包并直接运行安装程序;设置窗保持可用。
 fn install_update(ui: &SettingsWindow, core: &Shared) {
-    let mut guard = lock(core);
-    let Some(release) = guard.release.clone() else {
-        return;
+    let release = {
+        let mut guard = lock(core);
+        let Some(release) = guard.release.clone() else {
+            return;
+        };
+        if !settings_actions::install_update(&mut guard.settings, &release) {
+            return;
+        }
+        guard
+            .settings
+            .say(Notice::Info, "正在下载安装包;界面可以继续使用");
+        release
     };
-    if settings_actions::install_update(&mut guard.settings, &release) {
-        let _ = ui.hide();
+    refresh(ui, core);
+    let handle = ui.as_weak();
+    let shared = Arc::clone(core);
+    let spawned = std::thread::Builder::new()
+        .name("settings-update".into())
+        .spawn(move || {
+            let result = settings_actions::download_and_run_installer(&release);
+            let _ = handle.upgrade_in_event_loop(move |ui| {
+                let mut guard = lock(&shared);
+                match result {
+                    Ok(()) => guard
+                        .settings
+                        .say(Notice::Success, "安装程序已启动;按提示完成更新"),
+                    Err(error) => guard.settings.say(Notice::Error, format!("更新失败: {error}")),
+                }
+                refresh(&ui, &shared);
+            });
+        });
+    if let Err(error) = spawned {
+        with(core, |settings| {
+            settings.say(Notice::Error, format!("启动下载线程失败: {error}"));
+        });
     }
 }
 
