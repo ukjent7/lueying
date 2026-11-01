@@ -48,10 +48,22 @@ def manifest_dependencies(manifest: pathlib.Path) -> set[str]:
     return names
 
 
+def member_manifests() -> list[pathlib.Path]:
+    """按 workspace.members 列出所有成员清单(含 platforms 与 extensions)。"""
+    ws = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    manifests: set[pathlib.Path] = set()
+    for member in ws["workspace"]["members"]:
+        if "*" in member:
+            manifests.update(p / "Cargo.toml" for p in ROOT.glob(member))
+        else:
+            manifests.add(ROOT / member / "Cargo.toml")
+    return sorted(manifests)
+
+
 def main() -> int:
     locked = locked_dependencies()
     missing: list[str] = []
-    for manifest in sorted((ROOT / "crates").glob("*/Cargo.toml")):
+    for manifest in member_manifests():
         package = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]
         recorded = locked.get(package["name"], set())
         for name in sorted(manifest_dependencies(manifest)):
