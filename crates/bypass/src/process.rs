@@ -78,7 +78,9 @@ impl Process {
     pub(crate) unsafe fn from_raw(process: HANDLE, stdin: HANDLE, stdout: HANDLE) -> Self {
         Self {
             inner: Inner::Raw(unsafe { OwnedHandle::from_raw_handle(process.0) }),
-            stdin: Some(Stdin::File(unsafe { std::fs::File::from_raw_handle(stdin.0) })),
+            stdin: Some(Stdin::File(unsafe {
+                std::fs::File::from_raw_handle(stdin.0)
+            })),
             stdout: Some(Stdout::File(unsafe {
                 std::fs::File::from_raw_handle(stdout.0)
             })),
