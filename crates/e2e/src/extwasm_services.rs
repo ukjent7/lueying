@@ -65,6 +65,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     let error = settled
         .iter()
         .find_map(|(_, finished)| finished.result.as_ref().err())
+        .cloned()
         .unwrap_or_default();
     push(
         checks,

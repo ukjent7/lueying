@@ -496,15 +496,14 @@ pub fn skin_path() -> Option<PathBuf> {
 pub fn load(path: &Path) -> AppConfig {
     let mut cfg = AppConfig::default();
     let mut issues = Vec::new();
-    match std::fs::read_to_string(path) {
-        Ok(text) => match toml::from_str::<crate::config_file::FileConfig>(&text) {
+    if let Ok(text) = std::fs::read_to_string(path) {
+        match toml::from_str::<crate::config_file::FileConfig>(&text) {
             Ok(file) => crate::config_file::apply(&mut cfg, file, "config.toml", &mut issues),
             Err(error) => issues.push(ConfigIssue::new(
                 "config.toml",
                 format!("TOML 解析失败: {error}"),
             )),
-        },
-        Err(_) => {}
+        }
     }
     cfg.apps = load_apps(&mut issues);
     cfg.punct = load_punct(punct_path().as_deref());

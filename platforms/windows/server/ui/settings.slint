@@ -334,7 +334,7 @@ component RowCard inherits Rectangle {
     min-height: 44px;
     background: transparent;
     accessible-role: groupbox;
-    accessible-label: self.item.label;
+    accessible-label: root.item.label;
 
     if separator: Rectangle {
         y: 0;
@@ -344,13 +344,13 @@ component RowCard inherits Rectangle {
         background: Theme.border;
     }
 
-    if self.item.kind == 5: PreviewCanvas {
+    if root.item.kind == 5: PreviewCanvas {
         x: 16px;
         y: 10px;
         width: parent.width - 32px;
-        preview: self.item.preview;
+        preview: root.item.preview;
     }
-    if self.item.kind != 5: HorizontalLayout {
+    if root.item.kind != 5: HorizontalLayout {
         x: 16px;
         width: parent.width - 32px;
         y: 0;
@@ -363,37 +363,37 @@ component RowCard inherits Rectangle {
             alignment: center;
             spacing: 2px;
             Text {
-                text: self.item.label;
+                text: root.item.label;
                 font-size: 13px;
                 color: Theme.text;
             }
             Text {
-                text: self.item.detail;
+                text: root.item.detail;
                 font-size: 11px;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
         }
-        if self.item.kind == 1: VerticalLayout {
+        if root.item.kind == 1: VerticalLayout {
             alignment: center;
             Switch {
-                text: self.item.label;
-                checked: self.item.on;
-                toggled => root.activate(self.item.base, self.item.index);
+                text: root.item.label;
+                checked: root.item.on;
+                toggled => root.activate(root.item.base, root.item.index);
             }
         }
         // 分段组:带主题色的整组铺成圆点,其余装进胶囊轨道。
-        if self.item.kind == 2 && self.item.tinted: HorizontalLayout {
+        if root.item.kind == 2 && root.item.tinted: HorizontalLayout {
             alignment: center;
             spacing: 10px;
-            for opt[i] in self.item.options: SwatchDot {
+            for opt[i] in root.item.options: SwatchDot {
                 text: opt.text;
                 tint: opt.tint;
-                selected: i == self.item.selected;
-                picked => root.activate(self.item.base, i);
+                selected: i == root.item.selected;
+                picked => root.activate(root.item.base, i);
             }
         }
-        if self.item.kind == 2 && !self.item.tinted: Rectangle {
+        if root.item.kind == 2 && !root.item.tinted: Rectangle {
             border-radius: 9px;
             background: Theme.surface-alt;
             border-width: 1px;
@@ -402,34 +402,34 @@ component RowCard inherits Rectangle {
                 padding: 2px;
                 spacing: 2px;
                 alignment: center;
-                for opt[i] in self.item.options: SegButton {
+                for opt[i] in root.item.options: SegButton {
                     text: opt.text;
                     tint: opt.tint;
                     has-tint: opt.has-tint;
-                    selected: i == self.item.selected;
-                    picked => root.activate(self.item.base, i);
+                    selected: i == root.item.selected;
+                    picked => root.activate(root.item.base, i);
                 }
             }
         }
-        if self.item.kind == 3: HorizontalLayout {
+        if root.item.kind == 3: HorizontalLayout {
             alignment: center;
             spacing: 6px;
-            for b in self.item.buttons: ColoredButton {
+            for b in root.item.buttons: ColoredButton {
                 btn: b;
                 clicked => root.activate(b.base, b.index);
             }
         }
-        if self.item.kind == 4: HorizontalLayout {
+        if root.item.kind == 4: HorizontalLayout {
             alignment: center;
             spacing: 8px;
-            for b in self.item.buttons: ColoredButton {
+            for b in root.item.buttons: ColoredButton {
                 btn: b;
                 clicked => root.activate(b.base, b.index);
             }
             Switch {
-                text: self.item.label;
-                checked: self.item.on;
-                toggled => root.activate(self.item.base, self.item.index);
+                text: root.item.label;
+                checked: root.item.on;
+                toggled => root.activate(root.item.base, root.item.index);
             }
         }
     }

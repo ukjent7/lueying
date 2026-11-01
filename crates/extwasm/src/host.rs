@@ -116,7 +116,6 @@ struct HostState {
     result_ptr: u32,
     result_cap: u32,
     emitted: Option<Emitted>,
-    metrics: Arc<Metrics>,
 }
 
 /// 一条命令的最终结果。
@@ -369,7 +368,6 @@ struct Guest {
     memory: Memory,
     alloc: TypedFunc<i32, i32>,
     free: TypedFunc<(i32, i32), ()>,
-    init: Option<TypedFunc<(), i32>>,
     command: Option<TypedFunc<(i32, i32, i32, i32), i32>>,
     appearance: Option<TypedFunc<(i32, i32), i32>>,
     needs_reset: bool,
@@ -403,7 +401,6 @@ impl Guest {
             result_ptr: 0,
             result_cap: 0,
             emitted: None,
-            metrics: Arc::clone(&metrics),
         };
         let mut store = Store::new(&engine, state);
         store.limiter(|state| &mut state.limits);
@@ -506,7 +503,6 @@ impl Guest {
             memory,
             alloc,
             free,
-            init,
             command,
             appearance,
             needs_reset: false,

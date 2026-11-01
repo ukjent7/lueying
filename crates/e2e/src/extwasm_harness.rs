@@ -2,7 +2,7 @@
 //!
 //! guest 全部用 WAT 手写:不依赖 wasm32 工具链,Linux CI 也能跑全套。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::harness::push;
 use lueying_extwasm::Pack;
@@ -105,6 +105,19 @@ pub(crate) fn command_guest(result: &str) -> String {
         preamble(),
         len = result.len(),
         text = escape(result),
+    )
+}
+
+/// 外观返回一段固定补丁。
+pub(crate) fn appearance_guest(patch: &str) -> String {
+    format!(
+        "{}(func (export \"lueying_appearance\") (param i32 i32) (result i32)
+    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
+    (i32.const 0))
+  (data (i32.const 8) \"{text}\"))",
+        preamble(),
+        len = patch.len(),
+        text = escape(patch),
     )
 }
 
