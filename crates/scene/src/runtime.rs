@@ -93,19 +93,43 @@ pub struct Item {
 /// 特效求值结果;窗口层接成 D2D 内置特效图。
 #[derive(Debug, Clone, PartialEq)]
 pub enum EffectOut {
-    Blur { radius: f32 },
-    Shadow { color: Option<Fill>, offset: [f32; 2] },
+    Blur {
+        radius: f32,
+    },
+    Shadow {
+        color: Option<Fill>,
+        offset: [f32; 2],
+    },
 }
 
 /// 图元本体。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body {
-    Shape { shape: Shape, radius: f32, stroke: f32, fill: Fill },
-    Image { src: String },
-    Sprite { src: String, frame: u32, grid: [u32; 2] },
-    Text { content: String, font_size: f32, fill: Fill },
+    Shape {
+        shape: Shape,
+        radius: f32,
+        stroke: f32,
+        fill: Fill,
+    },
+    Image {
+        src: String,
+    },
+    Sprite {
+        src: String,
+        frame: u32,
+        grid: [u32; 2],
+    },
+    Text {
+        content: String,
+        font_size: f32,
+        fill: Fill,
+    },
     /// 粒子坐标相对 `rect` 左上角;形状与颜色随节点。
-    Particles { shape: Shape, fill: Fill, particles: Vec<Particle> },
+    Particles {
+        shape: Shape,
+        fill: Fill,
+        particles: Vec<Particle>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,16 +232,17 @@ impl Runtime {
                             ..EmitterState::default()
                         });
                 }
-                NodeBody::Sprite { follow: Some(_), .. } => {
+                NodeBody::Sprite {
+                    follow: Some(_), ..
+                } => {
                     self.state
                         .springs
                         .entry(node.id.clone())
                         .or_insert_with(|| {
-                            anchor_rect(&node.anchor, inputs)
-                                .map_or([0.0, 0.0], |rect| {
-                                    let (cx, cy) = edge_point(rect, node.anchor.edge);
-                                    [cx, cy]
-                                })
+                            anchor_rect(&node.anchor, inputs).map_or([0.0, 0.0], |rect| {
+                                let (cx, cy) = edge_point(rect, node.anchor.edge);
+                                [cx, cy]
+                            })
                         });
                 }
                 _ => {}
@@ -239,8 +264,18 @@ impl Runtime {
             if delays[index].0 <= time {
                 let (_, actions) = delays.remove(index);
                 run_actions(
-                    scene, vars, tweens, sprites, delays, inputs, time, &actions, &mut Vec::new(),
-                    &mut budget, &mut frame.degraded, 0,
+                    scene,
+                    vars,
+                    tweens,
+                    sprites,
+                    delays,
+                    inputs,
+                    time,
+                    &actions,
+                    &mut Vec::new(),
+                    &mut budget,
+                    &mut frame.degraded,
+                    0,
                 );
             } else {
                 index += 1;
@@ -279,8 +314,18 @@ impl Runtime {
                 });
                 if pass {
                     run_actions(
-                        scene, vars, tweens, sprites, delays, inputs, time, actions, &mut queue,
-                        &mut budget, &mut frame.degraded, 0,
+                        scene,
+                        vars,
+                        tweens,
+                        sprites,
+                        delays,
+                        inputs,
+                        time,
+                        actions,
+                        &mut queue,
+                        &mut budget,
+                        &mut frame.degraded,
+                        0,
                     );
                 }
             }
@@ -309,8 +354,8 @@ impl Runtime {
             else {
                 continue;
             };
-            let rate = eval(rate, scene, vars, inputs, &mut budget, &mut frame.degraded)
-                .clamp(0.0, 500.0);
+            let rate =
+                eval(rate, scene, vars, inputs, &mut budget, &mut frame.degraded).clamp(0.0, 500.0);
             // 出生点取锚边点,坐标相对锚矩形左上角,锚动粒子跟着动。
             let origin = anchor_rect(&node.anchor, inputs).map_or([0.0_f32, 0.0], |rect| {
                 let (cx, cy) = edge_point(rect, node.anchor.edge);
@@ -324,8 +369,7 @@ impl Runtime {
                 }
                 let angle =
                     (direction + (seeded_f32(&mut emitter.rng) - 0.5) * 2.0 * spread).to_radians();
-                let speed =
-                    speed[0] + (speed[1] - speed[0]) * seeded_f32(&mut emitter.rng);
+                let speed = speed[0] + (speed[1] - speed[0]) * seeded_f32(&mut emitter.rng);
                 let size = size[0] + (size[1] - size[0]) * seeded_f32(&mut emitter.rng);
                 emitter.live.push(Live {
                     x: origin[0],
@@ -358,7 +402,11 @@ impl Runtime {
             let Some(node) = scene.nodes.iter().find(|node| &node.id == id) else {
                 continue;
             };
-            let NodeBody::Sprite { follow: Some(follow), .. } = &node.body else {
+            let NodeBody::Sprite {
+                follow: Some(follow),
+                ..
+            } = &node.body
+            else {
                 continue;
             };
             let Some(target) = anchor_rect(&node.anchor, inputs) else {
@@ -380,7 +428,14 @@ impl Runtime {
         };
         let mut items = Vec::new();
         emit_nodes(
-            scene, &view, inputs, time, &scene.nodes, 1.0, &mut budget, &mut frame.degraded,
+            scene,
+            &view,
+            inputs,
+            time,
+            &scene.nodes,
+            1.0,
+            &mut budget,
+            &mut frame.degraded,
             &mut items,
         );
         items.sort_by_key(|item| item.layer == Layer::AboveText);
@@ -423,8 +478,12 @@ fn eval(
 ) -> f64 {
     let decls = &scene.vars;
     let names = |name: &str| -> Option<f64> {
-        builtin(name, inputs)
-            .or_else(|| decls.iter().position(|var| var.name == name).map(|index| vars[index]))
+        builtin(name, inputs).or_else(|| {
+            decls
+                .iter()
+                .position(|var| var.name == name)
+                .map(|index| vars[index])
+        })
     };
     match expr.eval(&names, scene.seed, budget) {
         Ok(value) => value,
@@ -462,9 +521,17 @@ fn run_actions(
                     vars[index] = value;
                 }
             }
-            Action::Tween { node, prop, to, over, ease } => {
+            Action::Tween {
+                node,
+                prop,
+                to,
+                over,
+                ease,
+            } => {
                 let to = eval(to, scene, vars, inputs, budget, degraded) as f32;
-                let from = prop_current(scene, tweens, vars, inputs, node, *prop, time, budget, degraded);
+                let from = prop_current(
+                    scene, tweens, vars, inputs, node, *prop, time, budget, degraded,
+                );
                 tweens.retain(|tween| tween.node != *node || tween.prop != *prop);
                 tweens.push(Tween {
                     node: node.clone(),
@@ -477,12 +544,10 @@ fn run_actions(
                 });
             }
             Action::Play { node, clip } => {
-                let entry = sprites
-                    .entry(node.clone())
-                    .or_insert_with(|| SpriteState {
-                        clip: String::new(),
-                        time: 0.0,
-                    });
+                let entry = sprites.entry(node.clone()).or_insert_with(|| SpriteState {
+                    clip: String::new(),
+                    time: 0.0,
+                });
                 entry.clip = clip.clone();
                 entry.time = 0.0;
             }
@@ -523,7 +588,9 @@ fn prop_current(
         TweenProp::Opacity => node
             .opacity
             .as_ref()
-            .map_or(1.0, |expr| eval(expr, scene, vars, inputs, budget, degraded) as f32)
+            .map_or(1.0, |expr| {
+                eval(expr, scene, vars, inputs, budget, degraded) as f32
+            })
             .clamp(0.0, 1.0),
         TweenProp::OffsetX => node.offset[0],
         TweenProp::OffsetY => node.offset[1],
@@ -577,10 +644,9 @@ fn emit_nodes(
     items: &mut Vec<Item>,
 ) {
     for node in nodes {
-        let visible = node
-            .visible
-            .as_ref()
-            .map_or(true, |expr| eval(expr, scene, view.vars, inputs, budget, degraded) != 0.0);
+        let visible = node.visible.as_ref().map_or(true, |expr| {
+            eval(expr, scene, view.vars, inputs, budget, degraded) != 0.0
+        });
         if !visible {
             continue;
         }
@@ -593,7 +659,9 @@ fn emit_nodes(
         }
         match &node.body {
             NodeBody::Group { children } => {
-                emit_nodes(scene, view, inputs, time, children, opacity, budget, degraded, items);
+                emit_nodes(
+                    scene, view, inputs, time, children, opacity, budget, degraded, items,
+                );
             }
             _ => {
                 if let Some(item) =
@@ -635,14 +703,25 @@ fn emit_leaf(
 
     let (rect, body) = match &node.body {
         NodeBody::Group { .. } => return None,
-        NodeBody::Shape { shape, size, radius, stroke, fill } => {
+        NodeBody::Shape {
+            shape,
+            size,
+            radius,
+            stroke,
+            fill,
+        } => {
             let rect = match size {
                 Some([w, h]) => centered(anchor, node, *w, *h),
                 None => inset_rect(anchor, node.inset),
             };
             (
                 shifted(rect, node.offset),
-                Body::Shape { shape: shape.clone(), radius: *radius, stroke: *stroke, fill: *fill },
+                Body::Shape {
+                    shape: shape.clone(),
+                    radius: *radius,
+                    stroke: *stroke,
+                    fill: *fill,
+                },
             )
         }
         NodeBody::Image { src, size } => {
@@ -652,7 +731,14 @@ fn emit_leaf(
             };
             (shifted(rect, node.offset), Body::Image { src: src.clone() })
         }
-        NodeBody::Sprite { src, grid, fps, frames, clips, follow } => {
+        NodeBody::Sprite {
+            src,
+            grid,
+            fps,
+            frames,
+            clips,
+            follow,
+        } => {
             // 播放中的片段优先;没播过用缺省片段;片段名对不上退回缺省。
             let (clip_name, elapsed) = view
                 .sprites
@@ -676,26 +762,37 @@ fn emit_leaf(
             let rect = match follow {
                 Some(_) => {
                     // 弹簧追的是锚边点;矩形以它为中心落回帧上。
-                    let position = view
-                        .springs
-                        .get(&node.id)
-                        .copied()
-                        .unwrap_or_else(|| {
-                            let (cx, cy) = edge_point(anchor, node.anchor.edge);
-                            [cx, cy]
-                        });
+                    let position = view.springs.get(&node.id).copied().unwrap_or_else(|| {
+                        let (cx, cy) = edge_point(anchor, node.anchor.edge);
+                        [cx, cy]
+                    });
                     let (w, h) = (f32::from(grid[0]), f32::from(grid[1]));
                     [position[0] - w * 0.5, position[1] - h * 0.5, w, h]
                 }
                 None => centered(anchor, node, f32::from(grid[0]), f32::from(grid[1])),
             };
-            (shifted(rect, node.offset), Body::Sprite { src: src.clone(), frame, grid: *grid })
+            (
+                shifted(rect, node.offset),
+                Body::Sprite {
+                    src: src.clone(),
+                    frame,
+                    grid: *grid,
+                },
+            )
         }
-        NodeBody::Text { content, font_size, fill } => {
+        NodeBody::Text {
+            content,
+            font_size,
+            fill,
+        } => {
             let rect = centered(anchor, node, anchor[2], f32::from(*font_size) * 1.6);
             (
                 shifted(rect, node.offset),
-                Body::Text { content: content.clone(), font_size: *font_size, fill: *fill },
+                Body::Text {
+                    content: content.clone(),
+                    font_size: *font_size,
+                    fill: *fill,
+                },
             )
         }
         NodeBody::Emitter { shape, fill, .. } => {
@@ -715,7 +812,14 @@ fn emit_leaf(
                         .collect()
                 })
                 .unwrap_or_default();
-            (anchor, Body::Particles { shape: shape.clone(), fill: *fill, particles })
+            (
+                anchor,
+                Body::Particles {
+                    shape: shape.clone(),
+                    fill: *fill,
+                    particles,
+                },
+            )
         }
     };
 
@@ -732,7 +836,13 @@ fn emit_leaf(
         [rect[0] + dx, rect[1] + dy, rect[2], rect[3]]
     };
 
-    Some(Item { layer: node.layer, rect, opacity, effect, body })
+    Some(Item {
+        layer: node.layer,
+        rect,
+        opacity,
+        effect,
+        body,
+    })
 }
 
 /// 该节点该属性的最新补间;没有就 None。

@@ -44,21 +44,77 @@ pub struct Func {
 }
 
 pub static FUNCS: &[Func] = &[
-    Func { name: "lerp", arity: 3, f: lerp },
-    Func { name: "clamp", arity: 3, f: clamp },
-    Func { name: "min", arity: 2, f: |a, _| a[0].min(a[1]) },
-    Func { name: "max", arity: 2, f: |a, _| a[0].max(a[1]) },
-    Func { name: "abs", arity: 1, f: |a, _| a[0].abs() },
-    Func { name: "floor", arity: 1, f: |a, _| a[0].floor() },
-    Func { name: "ceil", arity: 1, f: |a, _| a[0].ceil() },
-    Func { name: "round", arity: 1, f: |a, _| a[0].round() },
-    Func { name: "sqrt", arity: 1, f: |a, _| a[0].sqrt() },
-    Func { name: "rand", arity: 1, f: rand },
+    Func {
+        name: "lerp",
+        arity: 3,
+        f: lerp,
+    },
+    Func {
+        name: "clamp",
+        arity: 3,
+        f: clamp,
+    },
+    Func {
+        name: "min",
+        arity: 2,
+        f: |a, _| a[0].min(a[1]),
+    },
+    Func {
+        name: "max",
+        arity: 2,
+        f: |a, _| a[0].max(a[1]),
+    },
+    Func {
+        name: "abs",
+        arity: 1,
+        f: |a, _| a[0].abs(),
+    },
+    Func {
+        name: "floor",
+        arity: 1,
+        f: |a, _| a[0].floor(),
+    },
+    Func {
+        name: "ceil",
+        arity: 1,
+        f: |a, _| a[0].ceil(),
+    },
+    Func {
+        name: "round",
+        arity: 1,
+        f: |a, _| a[0].round(),
+    },
+    Func {
+        name: "sqrt",
+        arity: 1,
+        f: |a, _| a[0].sqrt(),
+    },
+    Func {
+        name: "rand",
+        arity: 1,
+        f: rand,
+    },
     // 缓动;输入与输出都约定在 0..1。
-    Func { name: "smooth", arity: 1, f: |a, _| smooth(a[0]) },
-    Func { name: "out_quad", arity: 1, f: |a, _| 1.0 - (1.0 - a[0]) * (1.0 - a[0]) },
-    Func { name: "out_cubic", arity: 1, f: |a, _| 1.0 - (1.0 - a[0]).powi(3) },
-    Func { name: "out_quint", arity: 1, f: |a, _| 1.0 - (1.0 - a[0]).powi(5) },
+    Func {
+        name: "smooth",
+        arity: 1,
+        f: |a, _| smooth(a[0]),
+    },
+    Func {
+        name: "out_quad",
+        arity: 1,
+        f: |a, _| 1.0 - (1.0 - a[0]) * (1.0 - a[0]),
+    },
+    Func {
+        name: "out_cubic",
+        arity: 1,
+        f: |a, _| 1.0 - (1.0 - a[0]).powi(3),
+    },
+    Func {
+        name: "out_quint",
+        arity: 1,
+        f: |a, _| 1.0 - (1.0 - a[0]).powi(5),
+    },
     Func {
         name: "out_back",
         arity: 1,
@@ -271,10 +327,7 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn fail(&self, message: impl Into<String>) -> ParseError {
-        let pos = self
-            .tokens
-            .get(self.pos)
-            .map_or(self.end, |&(pos, _)| pos);
+        let pos = self.tokens.get(self.pos).map_or(self.end, |&(pos, _)| pos);
         ParseError {
             pos,
             message: message.into(),
@@ -376,10 +429,9 @@ impl Parser<'_> {
                 self.pos += 1;
                 let arity = FUNCS[index].arity;
                 if args.len() != arity {
-                    return Err(self.fail(format!(
-                        "{name} 要 {arity} 个参数,给了 {} 个",
-                        args.len()
-                    )));
+                    return Err(
+                        self.fail(format!("{name} 要 {arity} 个参数,给了 {} 个", args.len()))
+                    );
                 }
                 Ok(Expr::Call(index, args))
             }
@@ -526,7 +578,12 @@ mod tests {
         // "1 +" 在第 3 个字符处断掉。
         assert_eq!(parse("1 +").unwrap_err().pos, 3);
         assert!(parse("1 + @").unwrap_err().message.contains("不认识的字符"));
-        assert!(parse("lerp(1, 2)").unwrap_err().message.contains("3 个参数"));
+        assert!(
+            parse("lerp(1, 2)")
+                .unwrap_err()
+                .message
+                .contains("3 个参数")
+        );
         assert!(parse("nope(1)").unwrap_err().message.contains("没有函数"));
         assert!(parse("x = 1").unwrap_err().message.contains("=="));
     }

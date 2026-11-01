@@ -13,8 +13,15 @@ use toml::Spanned;
 use crate::expr::{self, Expr};
 
 /// 内置信号名;表达式里可直接引用,只读。
-pub const BUILTIN_SIGNALS: [&str; 7] =
-    ["typing_rate", "candidates", "page", "page_count", "mode", "selected", "idle"];
+pub const BUILTIN_SIGNALS: [&str; 7] = [
+    "typing_rate",
+    "candidates",
+    "page",
+    "page_count",
+    "mode",
+    "selected",
+    "idle",
+];
 
 /// 节点、规则与变量的数量上限;场景是装饰,不是程序。
 pub const MAX_NODES: usize = 64;
@@ -68,7 +75,10 @@ impl<'de> Deserialize<'de> for Seconds {
 
 fn parse_duration(text: &str) -> Option<f64> {
     let text = text.trim();
-    let (number, unit) = text.split_at(text.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(text.len()));
+    let (number, unit) = text.split_at(
+        text.find(|c: char| c.is_ascii_alphabetic())
+            .unwrap_or(text.len()),
+    );
     let value: f64 = number.trim().parse().ok()?;
     let scale = match unit.trim().to_ascii_lowercase().as_str() {
         "s" => 1.0,
@@ -175,7 +185,10 @@ fn parse_anchor(text: &str) -> Option<Anchor> {
         "screen" => AnchorBase::Screen,
         _ => return None,
     };
-    Some(Anchor { base, edge: parse_edge(edge)? })
+    Some(Anchor {
+        base,
+        edge: parse_edge(edge)?,
+    })
 }
 
 fn parse_edge(edge: &str) -> Option<Edge> {
@@ -211,16 +224,28 @@ pub enum Shape {
 pub enum PathSeg {
     MoveTo([f32; 2]),
     LineTo([f32; 2]),
-    QuadTo { control: [f32; 2], to: [f32; 2] },
-    CubicTo { c1: [f32; 2], c2: [f32; 2], to: [f32; 2] },
+    QuadTo {
+        control: [f32; 2],
+        to: [f32; 2],
+    },
+    CubicTo {
+        c1: [f32; 2],
+        c2: [f32; 2],
+        to: [f32; 2],
+    },
     Close,
 }
 
 /// D2D 内置特效;运行期把半径等表达式求成数,由窗口层接成特效图。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    Blur { radius: Option<Expr> },
-    Shadow { color: Option<Fill>, offset: [f32; 2] },
+    Blur {
+        radius: Option<Expr>,
+    },
+    Shadow {
+        color: Option<Fill>,
+        offset: [f32; 2],
+    },
 }
 
 /// 精灵片段:帧序列、帧率与是否循环。
@@ -321,11 +346,28 @@ pub type Ease = usize;
 /// 规则动作;`then` 让延时后的动作链继续。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    Set { name: String, to: Expr },
-    Tween { node: String, prop: TweenProp, to: Expr, over: f64, ease: Option<Ease> },
-    Play { node: String, clip: String },
-    Emit { event: String },
-    Delay { after: f64, then: Vec<Action> },
+    Set {
+        name: String,
+        to: Expr,
+    },
+    Tween {
+        node: String,
+        prop: TweenProp,
+        to: Expr,
+        over: f64,
+        ease: Option<Ease>,
+    },
+    Play {
+        node: String,
+        clip: String,
+    },
+    Emit {
+        event: String,
+    },
+    Delay {
+        after: f64,
+        then: Vec<Action>,
+    },
 }
 
 /// 事件触发的一条规则。
@@ -486,7 +528,10 @@ impl Builder<'_> {
                 Some(parsed)
             }
             Err(error) => {
-                self.error(byte, format!("{context} 的表达式 {text:?} 解析失败:{error}"));
+                self.error(
+                    byte,
+                    format!("{context} 的表达式 {text:?} 解析失败:{error}"),
+                );
                 None
             }
         }
@@ -498,7 +543,9 @@ impl Builder<'_> {
             None => {
                 self.error(
                     byte,
-                    format!("{context} 不认识的颜色 {text:?};写调色板名(accent、bg、text…)或 #RRGGBB"),
+                    format!(
+                        "{context} 不认识的颜色 {text:?};写调色板名(accent、bg、text…)或 #RRGGBB"
+                    ),
                 );
                 None
             }
@@ -518,12 +565,12 @@ pub fn parse(file: &str, text: &str) -> Result<Scene, Vec<LoadError>> {
     let raw: RawScene = match toml::from_str(text) {
         Ok(raw) => raw,
         Err(error) => {
-            let line = error.span().map(|span| {
-                match lines.binary_search(&span.start) {
+            let line = error
+                .span()
+                .map(|span| match lines.binary_search(&span.start) {
                     Ok(index) => index + 1,
                     Err(index) => index,
-                }
-            });
+                });
             return Err(vec![LoadError {
                 file: file.to_owned(),
                 line,
@@ -550,17 +597,15 @@ pub fn parse(file: &str, text: &str) -> Result<Scene, Vec<LoadError>> {
             break;
         }
         let from = signal.from.as_ref().and_then(|text| {
-            builder.expr(
-                text,
-                signal.span().start,
-                &format!("信号 {name:?} 的 from"),
-            )
+            builder.expr(text, signal.span().start, &format!("信号 {name:?} 的 from"))
         });
         builder.vars.push(VarDecl {
             name: name.clone(),
             from,
             gain: signal.gain.unwrap_or(1.0).max(0.0),
-            decay: signal.decay.map_or(1.0, |Seconds(seconds)| seconds.max(0.01)),
+            decay: signal
+                .decay
+                .map_or(1.0, |Seconds(seconds)| seconds.max(0.01)),
         });
     }
 
@@ -598,7 +643,15 @@ fn allowed_fields(kind: &str) -> &'static [&'static str] {
         "text" => &["content", "font_size", "fill"],
         "group" => &["children"],
         "emitter" => &[
-            "shape", "rate", "life", "speed", "direction", "spread", "gravity", "size", "fill",
+            "shape",
+            "rate",
+            "life",
+            "speed",
+            "direction",
+            "spread",
+            "gravity",
+            "size",
+            "fill",
         ],
         _ => &[],
     }
@@ -615,7 +668,10 @@ fn build_node(
     let raw = raw.get_ref();
     builder.nodes_seen += 1;
     if builder.nodes_seen > MAX_NODES * 2 {
-        builder.error(byte, format!("节点总数(含 group 子节点)超过 {},场景太重了", MAX_NODES * 2));
+        builder.error(
+            byte,
+            format!("节点总数(含 group 子节点)超过 {},场景太重了", MAX_NODES * 2),
+        );
         return;
     }
     if depth > 4 {
@@ -673,13 +729,16 @@ fn build_node(
             })
         },
     );
-    let layer = raw.layer.as_ref().map_or(Ok(Layer::BelowText), |text| match text.as_str() {
-        "below-text" => Ok(Layer::BelowText),
-        "above-text" => Ok(Layer::AboveText),
-        _ => Err(format!(
-            "{context} 不认识的层 {text:?};写 below-text 或 above-text"
-        )),
-    });
+    let layer = raw
+        .layer
+        .as_ref()
+        .map_or(Ok(Layer::BelowText), |text| match text.as_str() {
+            "below-text" => Ok(Layer::BelowText),
+            "above-text" => Ok(Layer::AboveText),
+            _ => Err(format!(
+                "{context} 不认识的层 {text:?};写 below-text 或 above-text"
+            )),
+        });
     let visible = raw
         .visible
         .as_ref()
@@ -776,7 +835,10 @@ fn build_node(
                 builder.error(byte, format!("{context} 要写 src"));
                 return;
             };
-            NodeBody::Image { src, size: raw.size }
+            NodeBody::Image {
+                src,
+                size: raw.size,
+            }
         }
         "sprite" => {
             let (Some(src), Some(grid)) = (raw.src.clone(), raw.grid) else {
@@ -801,9 +863,15 @@ fn build_node(
                 }
             }
             let frames = raw.frames.clone().unwrap_or_else(|| {
-                clips.keys().next().cloned().unwrap_or_else(|| "idle".into())
+                clips
+                    .keys()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "idle".into())
             });
-            let follow = raw.follow.map(|spring| Follow { spring: spring.max(0.1) });
+            let follow = raw.follow.map(|spring| Follow {
+                spring: spring.max(0.1),
+            });
             NodeBody::Sprite {
                 src,
                 grid,
@@ -815,7 +883,10 @@ fn build_node(
         }
         "text" => {
             let Some(content) = raw.content.clone() else {
-                builder.error(byte, format!("{context} 要写 content;场景拿不到候选文字,文字只能是场景自己的"));
+                builder.error(
+                    byte,
+                    format!("{context} 要写 content;场景拿不到候选文字,文字只能是场景自己的"),
+                );
                 return;
             };
             NodeBody::Text {
@@ -884,7 +955,9 @@ fn build_node(
         other => {
             builder.error(
                 byte,
-                format!("{context} 不认识的 kind {other:?};写 shape/image/sprite/text/group/emitter"),
+                format!(
+                    "{context} 不认识的 kind {other:?};写 shape/image/sprite/text/group/emitter"
+                ),
             );
             return;
         }
@@ -982,7 +1055,9 @@ fn build_actions(
         } else if set("emit") {
             match table["emit"].as_str() {
                 Some(event) if !event.is_empty() => {
-                    out.push(Action::Emit { event: event.to_owned() });
+                    out.push(Action::Emit {
+                        event: event.to_owned(),
+                    });
                 }
                 _ => builder.error(byte, format!("{context} 的 emit 要是非空字符串")),
             }
@@ -1014,7 +1089,10 @@ fn build_set(
         Some(expr) => expr,
         None => return,
     };
-    out.push(Action::Set { name: name.to_owned(), to });
+    out.push(Action::Set {
+        name: name.to_owned(),
+        to,
+    });
 }
 
 fn build_tween(
@@ -1041,16 +1119,25 @@ fn build_tween(
         _ => None,
     };
     let Some(over) = over else {
-        builder.error(byte, format!("{context} 的 tween 要写 over,例如 over = \"80ms\""));
+        builder.error(
+            byte,
+            format!("{context} 的 tween 要写 over,例如 over = \"80ms\""),
+        );
         return;
     };
-    let ease = table.get("ease").and_then(|value| value.as_str()).map(|name| {
-        expr::FUNCS
-            .iter()
-            .position(|func| func.name == name && func.arity == 1)
-    });
+    let ease = table
+        .get("ease")
+        .and_then(|value| value.as_str())
+        .map(|name| {
+            expr::FUNCS
+                .iter()
+                .position(|func| func.name == name && func.arity == 1)
+        });
     if let Some(None) = ease {
-        builder.error(byte, format!("{context} 的缓动不认识;可用 smooth/out_quad/out_cubic/out_quint/out_back"));
+        builder.error(
+            byte,
+            format!("{context} 的缓动不认识;可用 smooth/out_quad/out_cubic/out_quint/out_back"),
+        );
     }
     out.push(Action::Tween {
         node: target.0,
@@ -1075,7 +1162,10 @@ fn build_delay(
         _ => None,
     };
     let Some(after) = after else {
-        builder.error(byte, format!("{context} 的 delay 要写时长,例如 delay = \"500ms\""));
+        builder.error(
+            byte,
+            format!("{context} 的 delay 要写时长,例如 delay = \"500ms\""),
+        );
         return;
     };
     let mut then = Vec::new();
@@ -1083,13 +1173,9 @@ fn build_delay(
         // 数组里的内联表拿不到独立行号;行号统一记在 delay 这一行。
         for item in items {
             match item.as_table() {
-                Some(table) => build_actions(
-                    builder,
-                    &[(byte, table)],
-                    &mut then,
-                    depth + 1,
-                    context,
-                ),
+                Some(table) => {
+                    build_actions(builder, &[(byte, table)], &mut then, depth + 1, context)
+                }
                 None => builder.error(byte, format!("{context} 的 then 里要全是动作表")),
             }
         }
@@ -1108,9 +1194,7 @@ fn parse_action_value(
     match table.get(key) {
         Some(toml::Value::Float(value)) => Some(Expr::Num(*value)),
         Some(toml::Value::Integer(value)) => Some(Expr::Num(f64::from(*value))),
-        Some(toml::Value::String(text)) => {
-            builder.expr(text, byte, &format!("{context} 的 {key}"))
-        }
+        Some(toml::Value::String(text)) => builder.expr(text, byte, &format!("{context} 的 {key}")),
         _ => {
             builder.error(byte, format!("{context} 的 {key} 要是数或表达式"));
             None

@@ -2,7 +2,7 @@
 //!
 //! 运行时是纯确定性的,这里不需要真机:喂事件序列,断言图元清单。
 
-use lueying_scene::{parse, Body, EventName, Inputs, Layer, Runtime};
+use lueying_scene::{Body, EventName, Inputs, Layer, Runtime, parse};
 
 const PANEL: [f32; 4] = [0.0, 0.0, 400.0, 100.0];
 const PREEDIT: [f32; 4] = [0.0, 0.0, 400.0, 32.0];
@@ -32,7 +32,9 @@ fn build(text: &str) -> Runtime {
 
 #[test]
 fn load_errors_are_chinese_and_located() {
-    let errors = parse("scene.toml", "
+    let errors = parse(
+        "scene.toml",
+        "
 [[nodes]]
 id = \"glow\"
 kind = \"shape\"
@@ -41,10 +43,19 @@ fill = \"accentt\"
 id = \"glow\"
 kind = \"shape\"
 opacity = \"power\"
-")
+",
+    )
     .expect_err("要报错");
-    assert!(errors.iter().any(|error| error.to_string().contains("scene.toml")));
-    assert!(errors.iter().any(|error| error.message.contains("不认识的颜色")));
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.to_string().contains("scene.toml"))
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("不认识的颜色"))
+    );
     assert!(errors.iter().any(|error| error.message.contains("power")));
     // 重复 id 与未知信号都要点出节点。
     assert!(errors.iter().any(|error| error.message.contains("glow")));
@@ -52,20 +63,26 @@ opacity = \"power\"
 
 #[test]
 fn unknown_signal_reports_the_name() {
-    let errors = parse("s.toml", "[[nodes]]\nid = \"x\"\nkind = \"shape\"\nopacity = \"nope + 1\"\n").unwrap_err();
+    let errors = parse(
+        "s.toml",
+        "[[nodes]]\nid = \"x\"\nkind = \"shape\"\nopacity = \"nope + 1\"\n",
+    )
+    .unwrap_err();
     assert!(errors[0].message.contains("nope"));
 }
 
 #[test]
 fn shape_anchors_to_highlight_and_expands_with_inset() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"glow\"
 kind = \"shape\"
 shape = \"rrect\"
 anchor = \"highlight\"
 inset = -4
-");
+",
+    );
     let frame = runtime.tick(0.0, 0.016, &inputs(&[HIGHLIGHT]), &[]);
     assert_eq!(frame.items.len(), 1);
     let item = &frame.items[0];
@@ -77,7 +94,8 @@ inset = -4
 
 #[test]
 fn variable_rises_and_decays() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [signals.energy]
 from = \"typing_rate\"
 gain = 1.0
@@ -86,13 +104,18 @@ decay = \"1s\"
 id = \"glow\"
 kind = \"shape\"
 opacity = \"energy\"
-");
+",
+    );
     let mut inputs = inputs(&[HIGHLIGHT]);
     inputs.typing_rate = 1.0;
     let first = runtime.tick(0.0, 0.5, &inputs, &[]);
     // gain = 1,dt = 0.5:halfway 到目标。
     let first = &first.items[0];
-    assert!((first.opacity - 0.5).abs() < 1e-4, "opacity = {}", first.opacity);
+    assert!(
+        (first.opacity - 0.5).abs() < 1e-4,
+        "opacity = {}",
+        first.opacity
+    );
     // 停止打字:energy 指数衰减,半衰期由 decay 决定。
     inputs.typing_rate = 0.0;
     let second = runtime.tick(0.5, 0.5, &inputs, &[]);
@@ -102,7 +125,8 @@ opacity = \"energy\"
 
 #[test]
 fn rules_set_variables_and_chain_events() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [signals.flash]
 from = \"0\"
 [[nodes]]
@@ -115,7 +139,8 @@ do = [ { set = \"flash\", to = 1.0 }, { emit = \"flash.started\" } ]
 [[rules]]
 on = \"flash.started\"
 do = [ { set = \"flash\", to = 0.5 } ]
-");
+",
+    );
     // set 的值这一帧保持;emit 出来的事件同帧接着处理,后一条规则
     // 看到 1.0 又写成 0.5。下一帧积分把 from=0 拉回来。
     let frame = runtime.tick(0.0, 0.016, &inputs(&[HIGHLIGHT]), &[EventName::Commit]);
@@ -126,7 +151,8 @@ do = [ { set = \"flash\", to = 0.5 } ]
 
 #[test]
 fn tween_moves_property_over_time() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"glow\"
 kind = \"shape\"
@@ -134,10 +160,15 @@ opacity = \"0.2\"
 [[rules]]
 on = \"commit\"
 do = [ { tween = \"glow.opacity\", to = 1.0, over = \"1s\", ease = \"linear\" } ]
-");
+",
+    );
     runtime.tick(0.0, 0.0, &inputs(&[HIGHLIGHT]), &[EventName::Commit]);
     let frame = runtime.tick(0.5, 0.5, &inputs(&[HIGHLIGHT]), &[]);
-    assert!((frame.items[0].opacity - 0.6).abs() < 1e-4, "{}", frame.items[0].opacity);
+    assert!(
+        (frame.items[0].opacity - 0.6).abs() < 1e-4,
+        "{}",
+        frame.items[0].opacity
+    );
     let frame = runtime.tick(1.0, 0.5, &inputs(&[HIGHLIGHT]), &[]);
     assert!((frame.items[0].opacity - 1.0).abs() < 1e-4);
 }
@@ -171,7 +202,8 @@ life = \"0.5s\"
 
 #[test]
 fn sprite_plays_clip_and_stops_on_last_frame() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"mochi\"
 kind = \"sprite\"
@@ -185,7 +217,8 @@ loop = false
 [[rules]]
 on = \"commit\"
 do = [ { play = \"mochi.cheer\" } ]
-");
+",
+    );
     runtime.tick(0.0, 0.0, &inputs(&[HIGHLIGHT]), &[EventName::Commit]);
     let frame = runtime.tick(0.0, 0.05, &inputs(&[HIGHLIGHT]), &[]);
     let Body::Sprite { frame: index, .. } = &frame.items[0].body else {
@@ -201,7 +234,8 @@ do = [ { play = \"mochi.cheer\" } ]
 
 #[test]
 fn above_text_sorts_after_below_text() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"top\"
 kind = \"shape\"
@@ -209,7 +243,8 @@ layer = \"above-text\"
 [[nodes]]
 id = \"bottom\"
 kind = \"shape\"
-");
+",
+    );
     let frame = runtime.tick(0.0, 0.016, &inputs(&[HIGHLIGHT]), &[]);
     assert_eq!(frame.items[0].layer, Layer::BelowText);
     assert_eq!(frame.items[1].layer, Layer::AboveText);
@@ -217,19 +252,22 @@ kind = \"shape\"
 
 #[test]
 fn missing_anchor_skips_the_node() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"glow\"
 kind = \"shape\"
 anchor = \"highlight\"
-");
+",
+    );
     let frame = runtime.tick(0.0, 0.016, &inputs(&[]), &[]);
     assert!(frame.items.is_empty(), "没有选中项就不画");
 }
 
 #[test]
 fn invisible_node_is_skipped() {
-    let mut runtime = build("
+    let mut runtime = build(
+        "
 [[nodes]]
 id = \"glow\"
 kind = \"shape\"
@@ -238,7 +276,8 @@ visible = \"selected == 0\"
 id = \"other\"
 kind = \"shape\"
 visible = \"selected > 0\"
-");
+",
+    );
     let frame = runtime.tick(0.0, 0.016, &inputs(&[HIGHLIGHT]), &[]);
     assert_eq!(frame.items.len(), 1);
 }

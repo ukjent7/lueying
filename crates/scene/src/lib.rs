@@ -14,5 +14,5 @@ pub mod expr;
 pub mod model;
 pub mod runtime;
 
-pub use model::{parse, Fill, Layer, PaletteName, Scene};
+pub use model::{Fill, Layer, PaletteName, Scene, parse};
 pub use runtime::{Body, EventName, Frame, Inputs, Item, Particle, Rect, Runtime};
