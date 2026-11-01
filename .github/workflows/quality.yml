@@ -93,7 +93,7 @@ jobs:
       - name: OCR 单测与 PP-OCRv6 真模型识别
         env:
           LUEYING_PPOCR_DIR: ${{ github.workspace }}/data/ppocr
-        run: cargo test -p lueying-ocr --release --locked -- --include-ignored
+        run: cargo test -p ppocr --release --locked -- --include-ignored
       # 全量语料 + 神经重排 + 长期学习 + 共享语料,一次拿到完整报告。
       - name: 构建 shot-ocr guest
         run: |

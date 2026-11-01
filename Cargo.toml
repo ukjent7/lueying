@@ -36,6 +36,7 @@ members = [
     "crates/install-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
+    "extensions/ppocr",
     "xtask",
 ]
 
@@ -56,7 +57,6 @@ lueying-extwasm = { path = "crates/extwasm" }
 lueying-bypass = { path = "crates/bypass" }
 lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }
-lueying-ocr = { path = "crates/ocr" }
 lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }

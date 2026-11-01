@@ -87,6 +87,9 @@ impl OfficialExtension {
 /// PP-OCR 词表:模型下载含权重,词表随程序分发,避免再依赖一个可变的 raw URL。
 pub const PPOCR_DICT: &str = include_str!("../../../Catalog/ppocr-dict.txt");
 
+/// PP-OCR 原生扩展的清单:随目录分发,与源码 `extensions/ppocr` 同一份。
+pub const PPOCR_MANIFEST: &str = include_str!("../../../extensions/ppocr/manifest.json");
+
 #[cfg(test)]
 #[path = "official_extensions_tests.rs"]
 mod tests;

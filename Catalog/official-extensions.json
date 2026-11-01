@@ -12,12 +12,18 @@
     },
     {
       "id": "ppocr",
-      "name": "PP-OCRv6 模型",
-      "version": "2026-10",
+      "name": "PP-OCRv6 识别引擎",
+      "version": "0.1.0",
       "kind": "model",
-      "description": "本地文字识别模型；装好后识别不联网",
-      "size": "约 31 MB",
+      "description": "本地文字识别引擎(原生扩展,独立进程);装好后识别不联网",
+      "size": "约 45 MB",
       "files": [
+        {
+          "name": "ppocr.exe",
+          "url": "https://github.com/ukjent7/lueying/releases/download/v0.0.0/lueying-ppocr.exe",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "bytes": 0
+        },
         {
           "name": "det.onnx",
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx",

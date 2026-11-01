@@ -55,6 +55,12 @@ pub fn install(id: &str) -> Result<String, String> {
         return Ok(format!("{} 已安装;启用前需要同意权限", extension.name));
     }
     install_model(extension)?;
+    if extension.id == "ppocr" {
+        return Ok(format!(
+            "{} 已下载并校验;在「运行期扩展」里同意后可用",
+            extension.name
+        ));
+    }
     Ok(format!("{} 已下载并校验;重启输入法后生效", extension.name))
 }
 
@@ -109,7 +115,10 @@ fn bundled_source(relative: &str) -> PathBuf {
 fn install_model(extension: &OfficialExtension) -> Result<(), String> {
     let models = crate::config::models_dir().ok_or("没有可写的模型目录")?;
     let target_dir = if extension.id == "ppocr" {
-        models.join("ppocr")
+        // PP-OCRv6 是原生扩展:清单、可执行文件与模型同住扩展目录。
+        crate::config::extensions_dir()
+            .ok_or("没有可写的扩展目录")?
+            .join("ppocr")
     } else {
         models
     };
@@ -119,11 +128,18 @@ fn install_model(extension: &OfficialExtension) -> Result<(), String> {
             &target_dir.join("dict.txt"),
             official_extensions::PPOCR_DICT.as_bytes(),
         )?;
+        write_atomic(
+            &target_dir.join("manifest.json"),
+            official_extensions::PPOCR_MANIFEST.as_bytes(),
+        )?;
     }
     for file in &extension.files {
         let target = target_dir.join(&file.name);
         if target.is_file() && file_matches(&target, &file.sha256) {
             continue;
+        }
+        if file.bytes == 0 {
+            return Err(format!("{} 是发版占位条目,请更新掠影后重试", file.name));
         }
         let limit = file.bytes.saturating_add(1024 * 1024);
         let (status, bytes) = lueying_net::update::fetch_bytes(&file.url, limit)?;

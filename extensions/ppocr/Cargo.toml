@@ -1,10 +1,15 @@
 [package]
-name = "lueying-ocr"
+name = "ppocr"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "PP-OCRv6 small 的 det+rec 推理:平台无关,吃 RGB 图出文字"
+description = "PP-OCRv6 原生扩展:独立进程的离线识别引擎,det+rec 推理"
+
+[[bin]]
+name = "ppocr"
+path = "src/main.rs"
 
 [dependencies]
 # 纯 Rust ONNX 运行时,不随包带 onnxruntime.dll;只编 det/rec 需要的算子。
 tract-onnx = { version = "0.23.9", default-features = false }
+serde_json = "1"

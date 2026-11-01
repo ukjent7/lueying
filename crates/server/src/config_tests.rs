@@ -152,16 +152,21 @@ fn ocr_engine_parses_aliases() {
 }
 
 #[test]
-fn ppocr_dir_requires_all_three_files() {
+fn ppocr_dir_requires_all_five_files() {
     let dir = temp("ppocr-dir");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("建目录");
-    assert!(!ppocr_complete(&dir));
-    std::fs::write(dir.join("det.onnx"), b"x").unwrap();
-    std::fs::write(dir.join("rec.onnx"), b"x").unwrap();
-    assert!(!ppocr_complete(&dir));
-    std::fs::write(dir.join("dict.txt"), b"x").unwrap();
-    assert!(ppocr_complete(&dir));
+    let files = [
+        "manifest.json",
+        "ppocr.exe",
+        "det.onnx",
+        "rec.onnx",
+        "dict.txt",
+    ];
+    for (index, name) in files.iter().enumerate() {
+        std::fs::write(dir.join(name), b"x").unwrap();
+        assert_eq!(ppocr_complete(&dir), index == files.len() - 1, "{name}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -10,6 +10,7 @@
 //! 用法:`cargo run -p xtask -- pack --bin target/release --bin32 target/tsf/i686-pc-windows-msvc/release --data data --out dist/lueying`
 //! 用法:`cargo run -p xtask -- update-manifest --version 0.2.0 --name lueying-0.2.0-setup.exe --size N --sha256 <hex> --mirror <url> --out dist`
 //! 用法:`cargo run -p xtask -- sign-manifest --manifest dist/lueying-manifest.json --key <种子文件>`
+//! 用法:`cargo run -p xtask -- catalog-exe --exe target/release/ppocr.exe --url <发布资产地址>`
 
 #[path = "dict.rs"]
 mod dict;
@@ -20,11 +21,15 @@ mod pack;
 #[path = "manifest.rs"]
 mod manifest;
 
+#[path = "catalog.rs"]
+mod catalog;
+
 enum Task {
     Dict(dict::Args),
     Pack(pack::PackArgs),
     UpdateManifest(manifest::UpdateManifestArgs),
     SignManifest(manifest::SignArgs),
+    CatalogExe(catalog::CatalogExeArgs),
 }
 
 fn main() {
@@ -42,6 +47,7 @@ fn main() {
             "sign-manifest" => {
                 task = Some(Task::SignManifest(manifest::parse_sign_manifest(&mut it)))
             }
+            "catalog-exe" => task = Some(Task::CatalogExe(catalog::parse_catalog_exe(&mut it))),
             other => {
                 eprintln!("未知子命令或参数: {other}");
                 std::process::exit(2);
@@ -53,9 +59,10 @@ fn main() {
         Some(Task::Pack(args)) => pack::pack(args),
         Some(Task::UpdateManifest(args)) => manifest::update_manifest(args),
         Some(Task::SignManifest(args)) => manifest::sign_manifest(args),
+        Some(Task::CatalogExe(args)) => catalog::catalog_exe(args),
         None => {
             eprintln!(
-                "用法: xtask dict ... | xtask pack ... | xtask update-manifest ... | xtask sign-manifest ..."
+                "用法: xtask dict ... | xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ..."
             );
             std::process::exit(2);
         }

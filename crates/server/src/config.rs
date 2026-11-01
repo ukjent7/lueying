@@ -190,7 +190,7 @@ impl Channel {
     }
 }
 
-/// 截图 OCR 引擎。系统 OCR 零依赖;PP-OCRv6 随包带模型,首次识别时加载。
+/// 截图 OCR 引擎。系统 OCR 零依赖;PP-OCRv6 是原生扩展,首次识别拉起进程。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OcrBackend {
     #[default]
@@ -452,28 +452,30 @@ pub fn ext_data_dir() -> Option<PathBuf> {
     user_file("ext-data")
 }
 
-/// PP-OCRv6 模型目录:`LUEYING_PPOCR_DIR` 优先,其次用户目录
-/// `%APPDATA%\lueying\models\ppocr`,最后程序目录的 `models/ppocr`。
-/// 用户放的文件可以覆盖随包模型;三件齐全才算可用。
+/// PP-OCRv6 原生扩展目录:`LUEYING_PPOCR_DIR` 优先(测试隔离),其次
+/// 扩展目录 `%APPDATA%\lueying\extensions\ppocr`。清单、可执行文件与
+/// 三件模型(det.onnx、rec.onnx、dict.txt)都在一起,五件齐全才算可用。
 pub fn ppocr_dir() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
     if let Some(dir) = std::env::var_os("LUEYING_PPOCR_DIR") {
-        candidates.push(PathBuf::from(dir));
+        let path = PathBuf::from(dir);
+        if ppocr_complete(&path) {
+            return Some(path);
+        }
     }
-    if let Some(dir) = ppocr_user_dir() {
-        candidates.push(dir);
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        candidates.push(parent.join("models").join("ppocr"));
-    }
-    candidates.into_iter().find(|dir| ppocr_complete(dir))
+    let dir = extensions_dir()?.join("ppocr");
+    ppocr_complete(&dir).then_some(dir)
 }
 
-/// 用户放模型的目录;设置页的「目录」按钮打开这里。
-pub fn ppocr_user_dir() -> Option<PathBuf> {
-    user_file("models/ppocr")
+fn ppocr_complete(dir: &Path) -> bool {
+    [
+        "manifest.json",
+        "ppocr.exe",
+        "det.onnx",
+        "rec.onnx",
+        "dict.txt",
+    ]
+    .iter()
+    .all(|name| dir.join(name).is_file())
 }
 
 /// 按需下载模型的用户目录;`LUEYING_MODEL_DIR` 给自动化测试隔离用。
@@ -496,12 +498,6 @@ pub fn model_path(name: &str) -> Option<PathBuf> {
     let mut path = std::env::current_exe().ok()?;
     path.set_file_name(name);
     path.is_file().then_some(path)
-}
-
-fn ppocr_complete(dir: &Path) -> bool {
-    ["det.onnx", "rec.onnx", "dict.txt"]
-        .iter()
-        .all(|name| dir.join(name).is_file())
 }
 
 fn user_file(name: &str) -> Option<PathBuf> {

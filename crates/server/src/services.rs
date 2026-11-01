@@ -13,7 +13,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
+use lueying_bypass::{NativeConfig, NativeHost};
+use lueying_extmeta::consent::ConsentBook;
 use lueying_extwasm::bindings::Modifier;
 use lueying_extwasm::{Done, Provider};
 use serde_json::json;
@@ -188,42 +191,16 @@ fn shot_bmp(region: Option<Region>) -> Result<(PathBuf, i32, i32), String> {
 }
 
 /// 文字识别;默认系统 OCR,配置 `ocr_engine=ppocr` 或调用参数 `engine` 时
-/// 走随包的 PP-OCRv6。`lang` 只对系统 OCR 有意义,PP-OCR 结果里报 `ppocr`。
+/// 走 PP-OCRv6 原生扩展(独立进程,模型常驻)。`lang` 只对系统 OCR 有意义。
 pub struct OcrProvider {
-    cache: Arc<PpOcrCache>,
-}
-
-#[derive(Default)]
-struct PpOcrCache {
-    /// 模型目录与已加载计划;目录换了就重新加载。
-    model: Mutex<Option<(PathBuf, Arc<lueying_ocr::PpOcr>)>>,
+    native: Arc<NativeHosts>,
 }
 
 impl OcrProvider {
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(PpOcrCache::default()),
+            native: Arc::new(NativeHosts::default()),
         }
-    }
-}
-
-impl PpOcrCache {
-    fn load(&self, dir: PathBuf) -> Result<Arc<lueying_ocr::PpOcr>, String> {
-        let mut slot = self.model.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some((cached, model)) = slot.as_ref()
-            && cached == &dir
-        {
-            return Ok(Arc::clone(model));
-        }
-        let started = std::time::Instant::now();
-        let model = Arc::new(lueying_ocr::PpOcr::open(&dir)?);
-        println!(
-            "PP-OCRv6 模型 ← {}（{} ms）",
-            dir.display(),
-            started.elapsed().as_millis()
-        );
-        *slot = Some((dir, Arc::clone(&model)));
-        Ok(model)
     }
 }
 
@@ -241,20 +218,89 @@ impl Provider for OcrProvider {
             done.complete(fake_ocr(&file));
             return Ok(());
         }
-        let cache = Arc::clone(&self.cache);
+        let native = Arc::clone(&self.native);
         std::thread::Builder::new()
             .name("ext-ocr".into())
             .spawn(move || {
-                done.complete(recognize_file(&cache, &file, lang, engine));
+                done.complete(recognize_file(&native, &file, lang, engine));
             })
             .map_err(|e| format!("识别线程启动失败: {e}"))?;
         Ok(())
     }
 }
 
+/// 原生扩展宿主侧:按 id 找包、查同意、按需构建常驻进程。进程由
+/// [`lueying_bypass::NativeHost`] 管;同意指纹含可执行文件哈希,在
+/// 拉起进程前核对,文件一变同意失效、宿主随之重建。进程存活期间
+/// Windows 文件锁保证可执行文件就是核对过的那份。
+#[derive(Default)]
+pub struct NativeHosts {
+    hosts: Mutex<HashMap<String, Arc<NativeHost>>>,
+}
+
+impl NativeHosts {
+    /// 调一次原生扩展;包缺失、清单不对或未同意都是明确错误。
+    pub fn call(&self, id: &str, method: &str, args: &str) -> Result<String, String> {
+        let host = self.boot(id)?;
+        host.call(method, args)
+    }
+
+    /// 冷启动:核对清单与同意指纹后拉起常驻进程。只在进程未存活时
+    /// 执行,识别热路径不重算整包哈希。
+    fn boot(&self, id: &str) -> Result<Arc<NativeHost>, String> {
+        {
+            let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(host) = hosts.get(id) {
+                return Ok(Arc::clone(host));
+            }
+        }
+        let dir = crate::config::extensions_dir()
+            .ok_or("没有扩展目录")?
+            .join(id);
+        let bytes = std::fs::read(dir.join("manifest.json"))
+            .map_err(|error| format!("读 {id} 清单失败: {error}"))?;
+        let manifest = lueying_extmeta::Manifest::parse(&bytes)?;
+        if !manifest.is_native() {
+            return Err(format!("{id} 不是原生扩展"));
+        }
+        let path = crate::config::extensions_consent_path().ok_or("没有同意记录路径")?;
+        let book = ConsentBook::load(&path);
+        let check = book.check(&dir, &manifest)?;
+        if check.required && !check.approved {
+            return Err(format!("{id} 需在设置里同意后才能调用"));
+        }
+        let exe = dir.join(&manifest.exe);
+        if !exe.is_file() {
+            return Err(format!("原生扩展 {id} 缺可执行文件 {}", manifest.exe));
+        }
+        let mut hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(host) = hosts.get(id) {
+            return Ok(Arc::clone(host));
+        }
+        let host = Arc::new(native_host(&dir, &exe));
+        hosts.insert(id.to_string(), Arc::clone(&host));
+        Ok(host)
+    }
+}
+
+/// 拉起配置:扩展目录(可执行文件与模型)授予沙箱只读;识别给 120 s,
+/// 空闲 60 s 收进程;内存给足推理,CPU 不设硬上限。
+fn native_host(dir: &Path, exe: &Path) -> NativeHost {
+    let config = NativeConfig {
+        exe: exe.to_path_buf(),
+        args: Vec::new(),
+        call_timeout: Duration::from_secs(120),
+        idle_exit: Duration::from_secs(60),
+        readable: vec![dir.to_path_buf()],
+    };
+    NativeHost::new(config).with_limiter(Arc::new(
+        lueying_bypass::job::JobLimiter::new(Some(1536 * 1024 * 1024), None),
+    ))
+}
+
 /// 按调用参数或配置选引擎;参数优先,未知值回配置。
 fn recognize_file(
-    cache: &PpOcrCache,
+    native: &NativeHosts,
     file: &str,
     lang: Option<String>,
     engine: Option<String>,
@@ -267,24 +313,13 @@ fn recognize_file(
             .unwrap_or_default(),
     };
     match backend {
-        crate::config::OcrBackend::Ppocr => ppocr_file(cache, file),
+        crate::config::OcrBackend::Ppocr => {
+            // 截图在临时目录,逐次授给沙箱读;扩展目录在拉起时已授。
+            lueying_bypass::grant_appcontainer_read(Path::new(file))?;
+            native.call("ppocr", "recognize", &json!({ "file": file }).to_string())
+        }
         crate::config::OcrBackend::System => ocr_file(file, lang),
     }
-}
-
-/// PP-OCRv6 只吃 BMP;截图链路固定产出 BMP,其它格式回明确错误。
-fn ppocr_file(cache: &PpOcrCache, file: &str) -> Result<String, String> {
-    let dir = crate::config::ppocr_dir()
-        .ok_or_else(|| "PP-OCRv6 模型未安装:需要 det.onnx、rec.onnx、dict.txt".to_string())?;
-    let model = cache.load(dir)?;
-    let image = lueying_ocr::load_bmp(Path::new(file))?;
-    let lines = model.recognize(&image)?;
-    let text = lines
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    serde_json::to_string(&json!({ "text": text, "lang": "ppocr" })).map_err(|e| e.to_string())
 }
 
 /// Windows E2E 的固定识别结果:CI 镜像不一定带 OCR 语言包,截图与上屏仍是

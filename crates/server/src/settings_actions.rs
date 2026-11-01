@@ -263,16 +263,16 @@ opacity = "lerp(0.15, 0.55, energy)"
 effect = { kind = "blur", radius = "lerp(2, 10, energy)" }
 "#;
 
-/// PP-OCRv6 模型是否齐全;设置页据此写「可用 / 未安装」。
+/// PP-OCRv6 原生扩展是否齐全;设置页据此写「可用 / 未安装」。
 pub fn ppocr_ready() -> bool {
     config::ppocr_dir().is_some()
 }
 
-/// 打开 PP-OCR 模型目录:没有就建,并放一份文件名与下载地址说明。
+/// 打开 PP-OCRv6 原生扩展目录:没有就建,并放一份文件名与下载说明。
 pub fn open_ocr_models(settings: &mut Settings) {
     settings.confirm_clear = false;
-    let Some(dir) = config::ppocr_user_dir() else {
-        settings.say(Notice::Error, "没有可写的模型目录");
+    let Some(dir) = config::extensions_dir().map(|root| root.join("ppocr")) else {
+        settings.say(Notice::Error, "没有可写的扩展目录");
         return;
     };
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -290,19 +290,22 @@ pub fn open_ocr_models(settings: &mut Settings) {
 }
 
 const PPOCR_README: &str = "\
-掠影 PP-OCRv6 模型目录
+掠影 PP-OCRv6 识别引擎(原生扩展)目录
 
-需要三个文件(此目录优先于程序目录的随包模型):
-  det.onnx  文字检测模型
-  rec.onnx  文字识别模型
-  dict.txt  词表,一行一个字
+需要五个文件(推荐在「官方扩展」里一键安装,放好五件即视为已装):
+  manifest.json  扩展清单
+  ppocr.exe      识别引擎(独立进程,模型常驻)
+  det.onnx       文字检测模型
+  rec.onnx       文字识别模型
+  dict.txt       词表,一行一个字
 
-下载:
+模型下载:
   https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
   https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
   dict.txt 从 rec 仓库的 inference.yml 里提取 character_dict,共 18708 行。
 
-放好后在设置页把「截图识别」切到 PP-OCRv6;首次识别会加载模型。
+放好后在设置页把「截图识别」切到 PP-OCRv6,并在「运行期扩展」里同意;
+首次识别会拉起引擎进程。
 ";
 
 /// 打开运行期扩展目录:没有就建,再拉起资源管理器。每个包一个子

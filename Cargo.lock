@@ -826,9 +826,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-ocr"
+name = "ppocr"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tract-onnx",
 ]
 
@@ -878,7 +879,6 @@ dependencies = [
  "lueying-extwasm",
  "lueying-features",
  "lueying-net",
- "lueying-ocr",
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",

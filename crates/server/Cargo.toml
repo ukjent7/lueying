@@ -44,8 +44,6 @@ accesskit_windows = "0.35"
 skia-safe.workspace = true
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
 windows-numerics = "0.3.1"
-# 可选 OCR 引擎:PP-OCRv6 det+rec,纯 Rust 推理。
-lueying-ocr.workspace = true
 # 运行期 Wasm 扩展:wasmi 沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-extwasm.workspace = true
 # Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。

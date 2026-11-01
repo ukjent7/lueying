@@ -63,7 +63,8 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 | `%APPDATA%\lueying\punct.txt` | 自定义标点 | 格式：`键=输出` |
 | `%APPDATA%\lueying\apps.toml` | 应用隔离配置 | 针对特定可执行文件的标点与学习规则 |
 | `%APPDATA%\lueying\secrets\<id>.json` | 扩展私密配置 | 仅限当前用户权限，支持原子写入 |
-| `%APPDATA%\lueying\models\` | 本地模型目录 | 按需下载的 25M 重排模型与 PP-OCR 模型 |
+| `%APPDATA%\lueying\models\` | 本地模型目录 | 按需下载的 25M 重排模型 |
+| `%APPDATA%\lueying\extensions\` | 原生扩展目录 | 按需安装的 PP-OCRv6 识别引擎(独立进程)与 `consent.json` 同意记录 |
 | `%LOCALAPPDATA%\lueying\user.tsv` | 用户个性化词库 | 记录选词历史、造词、搭配与置顶数据 |
 | `%LOCALAPPDATA%\lueying\logs\server.log` | 服务端日志 | 超过 1MB 自动滚动，只保留单份归档 |
 

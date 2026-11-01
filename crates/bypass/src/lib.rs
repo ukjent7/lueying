@@ -470,6 +470,18 @@ fn write_request(stdin: &mut ChildStdin, request: &str) -> Result<(), String> {
         .map_err(|error| format!("写原生扩展请求失败: {error}"))
 }
 
+/// 给路径授 AppContainer 只读执行(文件或目录);非 Windows 平台是空操作。
+/// 幂等;给每次调用的数据文件(截图)用,目录授权在拉起时已做。
+#[cfg(windows)]
+pub fn grant_appcontainer_read(path: &std::path::Path) -> Result<(), String> {
+    sandbox::grant_read_execute(path)
+}
+
+#[cfg(not(windows))]
+pub fn grant_appcontainer_read(_path: &std::path::Path) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(windows)]
 pub mod job;
 #[cfg(windows)]

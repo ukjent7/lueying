@@ -482,6 +482,11 @@ fn load(
                 continue;
             }
         };
+        if manifest.is_native() {
+            // 原生扩展不进 Wasm 运行时:服务提供者按需经 NativeHosts 调用。
+            println!("原生扩展 {id}:由服务提供者按需调用");
+            continue;
+        }
         match book.check(&dir, &manifest) {
             Ok(check) if !check.required || check.approved => {
                 approved.push(id.clone());

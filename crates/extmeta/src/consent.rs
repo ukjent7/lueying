@@ -19,8 +19,9 @@ use crate::{Manifest, Permission, Service};
 pub const CONSENT_VERSION: u32 = 1;
 /// 同意记录文件的最大读取量;它只该有几百字节。
 const MAX_BOOK_BYTES: usize = 256 * 1024;
-/// 哈希只读清单与 Wasm 模块;Wasm 模块本身另有 16 MiB 上限。
-const MAX_HASH_BYTES: usize = 32 * 1024 * 1024;
+/// 哈希只读清单与主负载;Wasm 模块宿主侧另有 16 MiB 上限,原生
+/// 可执行文件(静态链接推理运行时)大得多,给到 128 MiB。
+const MAX_HASH_BYTES: usize = 128 * 1024 * 1024;
 const DOMAIN: &[u8] = b"lueying-ext-package-v1\0";
 
 /// 一个扩展的同意内容。

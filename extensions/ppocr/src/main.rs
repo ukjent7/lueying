@@ -1,8 +1,12 @@
-//! PP-OCRv6 small 的本地推理:det 找文字行,rec 逐行识别。
+//! PP-OCRv6 原生扩展:det 找文字行,rec 逐行识别,独立进程常驻。
 //!
-//! 平台无关:输入是解码好的 RGB 图,输出是按阅读顺序排好的文字行。
-//! 模型用纯 Rust 的 tract 跑,不随包带 onnxruntime.dll;空闲时不占线程,
-//! 只在 `ocr.recognize` 被调用时进推理。
+//! 平台无关:输入是 BMP 解码出的 RGB 图,输出是按阅读顺序排好的文字行。
+//! 模型用纯 Rust 的 tract 跑,不随包带 onnxruntime.dll。进程由宿主的
+//! 原生扩展宿主拉起:计划与词表在启动时加载,之后常驻到空闲回收,模型
+//! 与可执行文件同目录(det.onnx、rec.onnx、dict.txt)。
+//!
+//! 协议与旁路层一致:一行 `{"method":"recognize","args":{"file":...}}`,
+//! 一行 `{"result":{"text":...,"lang":"ppocr"}}` 或 `{"error":"..."}`。
 //!
 //! 预处理与后处理照 PaddleOCR 的默认值:det 固定 960×960 画布、DB 阈值
 //! 0.2 / box 阈值 0.45 / unclip 1.4;rec 高 48、宽至少 320、按 CTC 解码。
@@ -20,11 +24,64 @@ mod rec;
 pub use bmp::{RgbImage, decode_bmp, load_bmp};
 pub use db::TextBox;
 
-use std::path::Path;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 
 use tract_onnx::prelude::*;
 
 use model::Plan;
+
+fn main() {
+    // 模型在可执行文件旁边;启动即加载,失败则每个请求回同一错误。
+    let model = model_dir().map(|dir| PpOcr::open(&dir));
+    let stdin = std::io::stdin();
+    for line in BufReader::new(stdin.lock()).lines() {
+        let Ok(line) = line else { break };
+        let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) else { break };
+        let reply = match request["method"].as_str() {
+            Some("recognize") => recognize(&model, request["args"]["file"].as_str()),
+            Some(method) => Err(format!("没有方法 {method:?}")),
+            None => Err("缺 method".to_string()),
+        };
+        match reply {
+            Ok(value) => println!("{{\"result\":{value}}}"),
+            Err(error) => println!(
+                "{{\"error\":{}}}",
+                serde_json::to_string(&error).unwrap_or_else(|_| "\"内部错误\"".to_string())
+            ),
+        }
+        let _ = std::io::stdout().flush();
+    }
+}
+
+/// 模型目录 = 可执行文件所在目录;沙箱对它有只读授权。
+fn model_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+}
+
+/// 识别一张 BMP;`model` 是启动时缓存的加载结果。
+fn recognize(model: &Option<Result<PpOcr, String>>, file: Option<&str>) -> Result<String, String> {
+    let Some(file) = file else {
+        return Err("缺 file".to_string());
+    };
+    let model = match model {
+        Some(Ok(model)) => model,
+        Some(Err(error)) => return Err(error.clone()),
+        None => return Err("模型目录不可解析:可执行文件路径异常".to_string()),
+    };
+    let image = load_bmp(Path::new(file))?;
+    let lines = model.recognize(&image)?;
+    let text = lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    serde_json::to_string(&serde_json::json!({ "text": text, "lang": "ppocr" }))
+        .map_err(|e| e.to_string())
+}
+
 
 /// 识别参数;默认值对应 PaddleOCR 的 PP-OCRv6 推理配置。
 #[derive(Clone, Copy, Debug)]
