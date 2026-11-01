@@ -676,7 +676,7 @@ impl Guest {
 }
 
 /// 宿主侧 `lueying_emit(ptr, len, ok)`:把 guest 的最终结果拷到宿主。
-fn host_emit(caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
+fn host_emit(mut caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
     let Some(memory) = caller.data().memory.clone() else {
         return;
     };

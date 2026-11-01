@@ -1,4 +1,5 @@
-# push/PR:构建、静态检查、快速 E2E、共享语料基准与 Windows 构建体积门禁;
+# push/PR:构建、静态检查、快速 E2E 与 Windows 构建体积门禁;
+# 共享语料全量基准在 quality.yml 定时跑,不占 push 门禁。
 # Windows 全链路 E2E 成本高,移到 quality.yml 定时与发版前跑。
 # 全量语料与安装冒烟在 quality.yml 定时跑。
 name: ci
@@ -107,7 +108,7 @@ jobs:
           cargo test -p lueying-cli --lib --locked
 
   # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准。
-  # 1444 条共享语料逐条重排成本高,拆进下面的 bench job 与场景并行。
+  # 1444 条共享语料逐条重排成本高,放 quality.yml 定时跑。
   quality:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -167,58 +168,6 @@ jobs:
           path: |
             target/e2e-report.md
             target/bench-report.md
-
-  # 共享语料基准独立成 job:1444 条逐条 4M+25M 重排即使按核分片并行也要几分钟,
-  # 与场景 E2E 并行跑,wall 时间不再被它单独拖长。门限与主 E2E 同样阻断。
-  bench:
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          lookup-only: ${{ github.event_name == 'pull_request' }}
-          prefix-key: linux
-      - name: 缓存词典与模型
-        id: dict-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
-      - name: 下载白霜词库
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_frost.sh data/frost
-      - name: 下载神经重排模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载精简语法模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_gram.sh data
-      - name: 下载 PP-OCRv6 模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_ppocr.sh data/ppocr
-      - name: 转换词典
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      - name: 共享语料基准
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --only-shared
-      - name: 报告摘要
-        if: always()
-        shell: bash
-        run: |
-          if [ -f target/e2e-report.md ]; then cat target/e2e-report.md >> "$GITHUB_STEP_SUMMARY"; fi
-      - name: 上传报告
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: bench-shared-report
-          path: |
-            target/e2e-report.md
-            target/bench-shared.json
-            target/bench-shared.tsv
 
   windows:
     if: ${{ !cancelled() }}

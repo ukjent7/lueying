@@ -17,9 +17,6 @@ const PAD_X: f32 = 8.0;
 const PAD_BOTTOM: f32 = 6.0;
 /// 竖排列的左右内边距。
 const COL_PAD_X: f32 = 6.0;
-/// 面板与高亮块圆角。
-const RADIUS: f32 = 8.0;
-const ITEM_RADIUS: f32 = 4.0;
 
 /// 面板外观令牌;字段与 server 的 `theme::Colors` 一一对应,值为 0xRRGGBB。
 #[derive(Clone, Copy, Debug)]

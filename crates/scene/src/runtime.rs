@@ -389,7 +389,7 @@ impl Runtime {
                     particle.age += step;
                     particle.x += particle.vx * step as f32;
                     particle.y += particle.vy * step as f32;
-                    particle.vy += *gravity as f32 * step as f32;
+                    particle.vy += *gravity * step as f32;
                 }
                 left -= step;
                 steps += 1;
@@ -498,7 +498,7 @@ fn eval(
 #[allow(clippy::too_many_arguments)]
 fn run_actions(
     scene: &Scene,
-    vars: &mut Vec<f64>,
+    vars: &mut [f64],
     tweens: &mut Vec<Tween>,
     sprites: &mut HashMap<String, SpriteState>,
     delays: &mut Vec<(f64, Vec<Action>)>,
@@ -625,8 +625,8 @@ fn edge_point(rect: Rect, edge: Edge) -> (f32, f32) {
 fn tween_value(tween: &Tween, time: f64) -> f32 {
     let progress = ((time - tween.start) / tween.over).clamp(0.0, 1.0);
     let shaped = match tween.ease {
-        Some(index) => (expr::FUNCS[index].f)(&[f64::from(progress)], 0),
-        None => f64::from(progress),
+        Some(index) => (expr::FUNCS[index].f)(&[progress], 0),
+        None => progress,
     };
     (tween.from + (tween.to - tween.from) * shaped as f32).clamp(0.0, 4.0)
 }
@@ -732,7 +732,7 @@ fn emit_leaf(
         NodeBody::Sprite {
             src,
             grid,
-            fps,
+            fps: _,
             frames,
             clips,
             follow,
