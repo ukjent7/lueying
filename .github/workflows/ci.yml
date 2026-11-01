@@ -326,10 +326,8 @@ jobs:
           Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
       # 运行时体积基线:2026-10-31 实测 server 33.6 + settings 22.1 +
       # update 16.8 + user 0.6 + TSF 0.7 ≈ 73.8 MiB。大头是两份静态链接的
-      # Skia;旧的 40 MiB 数字来自未链接 Skia 的版本。80 MiB 门限留约 8%
-      # 余量,依赖/特性继续膨胀会先红。更新器已拆到独立的 lueying-net
-      # crate,不再链接 Skia;下一次 Windows 实测后收紧门限。发布包另有
-      # 总门禁。
+      # Skia。设置窗引入 Slint(winit + 软件渲染)后先放宽到 90 MiB,
+      # Windows 实测出 Slint 的真实增量后收紧。发布包另有总门禁。
       - name: 运行时体积门禁
         shell: pwsh
         run: |
@@ -340,8 +338,8 @@ jobs:
             $bytes += $length
             "{0} {1:N1} MiB" -f $name, ($length / 1MB)
           }
-          "{0:N1} MiB / 80 MiB" -f ($bytes / 1MB)
-          if ($bytes -gt 80MB) { throw "运行时体积超过 80 MiB" }
+          "{0:N1} MiB / 90 MiB" -f ($bytes / 1MB)
+          if ($bytes -gt 90MB) { throw "运行时体积超过 90 MiB" }
       - name: Build Windows E2E harness
         id: build_e2e
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')

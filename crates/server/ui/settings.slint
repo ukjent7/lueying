@@ -1,0 +1,66 @@
+// 设置窗的 Slint 验证页:Fluent 主题、系统深浅色、一个真实绑定到
+// config.toml 的开关。评估迁移成本用;全量迁移后这里长成完整页面。
+
+import { Button, Switch, GroupBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export component SettingsSpike inherits Window {
+    title: "掠影 设置";
+    preferred-width: 560px;
+    preferred-height: 300px;
+
+    in property <string> version;
+    in property <string> channel;
+    in-out property <bool> effects;
+    in property <string> notice;
+    callback toggle-effects(bool);
+    callback open-scene();
+
+    VerticalBox {
+        spacing: 12px;
+
+        GroupBox {
+            title: "外观";
+            HorizontalBox {
+                Text {
+                    text: "场景装饰";
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Switch {
+                    checked: root.effects;
+                    toggled => {
+                        root.effects = self.checked;
+                        root.toggle-effects(self.checked);
+                    }
+                }
+            }
+            Text {
+                text: "scene.toml 装饰层，改完存盘一秒内热重载";
+                font-size: 11px;
+            }
+        }
+
+        GroupBox {
+            title: "关于";
+            Text {
+                text: "版本 " + root.version;
+            }
+            Text {
+                text: "更新渠道 " + root.channel;
+            }
+            HorizontalBox {
+                Button {
+                    text: "打开场景目录";
+                    clicked => root.open-scene();
+                }
+            }
+        }
+
+        Text {
+            text: root.notice;
+            font-size: 11px;
+        }
+    }
+}

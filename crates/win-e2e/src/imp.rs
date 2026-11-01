@@ -563,6 +563,7 @@ fn real_run() -> Result<(String, String), String> {
         let ext_note = check_ext_selftest()?;
         // 设置窗自检:原生窗口这条链路建窗、画一帧、贴一次、读回像素。
         let settings_note = settings_selftest(&dir)?;
+        let slint_note = settings_spike(&dir)?;
         // 设置窗无障碍:UIA 读 AccessKit 树,并按「编辑」打开短语编辑器。
         let a11y_note = crate::settings_a11y::check(&dir, &data)?;
         // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
@@ -590,7 +591,7 @@ fn real_run() -> Result<(String, String), String> {
         Ok((
             text,
             format!(
-                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
+                "{latency}\n\n{ui_note}\n\n{touch_note}\n\n{finalize_note}\n\n{segment_note}\n\n{fullwidth_note}\n\n{skia_note}\n\n{ext_note}\n\n{settings_note}\n\n{slint_note}\n\n{a11y_note}\n\n{panel_note}\n\n{gate_note}\n\n{keys}\n\n{shot_note}\n\n{metrics_note}\n\n{memory}\n\n{verify}"
             ),
         ))
     })();
@@ -772,6 +773,44 @@ fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> 
     Ok(summary)
 }
 
+/// 一个进程的峰值工作集;内存基线与 Slint 验证共用。
+fn peak_working_set(pid: u32) -> Result<u64, String> {
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map_err(|e| format!("OpenProcess({pid}): {e}"))?;
+    let mut counters = PROCESS_MEMORY_COUNTERS::default();
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    let result = unsafe { GetProcessMemoryInfo(process, &mut counters, counters.cb) }
+        .map(|_| counters.PeakWorkingSetSize as u64)
+        .map_err(|e| format!("GetProcessMemoryInfo({pid}): {e}"));
+    let _ = unsafe { CloseHandle(process) };
+    result
+}
+
+/// Slint 设置页验证:起 `--slint` 窗口,量峰值工作集,给迁移决策一个数。
+fn settings_spike(dir: &std::path::Path) -> Result<String, String> {
+    let exe = dir.join("lueying-settings.exe");
+    if !exe.exists() {
+        return Err(format!("没有 {}", exe.display()));
+    }
+    let mut child = std::process::Command::new(&exe)
+        .arg("--slint")
+        .spawn()
+        .map_err(|e| format!("启动 Slint 设置窗失败: {e}"))?;
+    std::thread::sleep(Duration::from_secs(4));
+    let pid = child.id();
+    let measured = peak_working_set(pid);
+    let _ = child.kill();
+    let _ = child.wait();
+    let bytes = measured.map_err(|e| format!("Slint 设置窗内存读不到: {e}"))?;
+    let mb = bytes as f64 / 1024.0 / 1024.0;
+    Ok(format!(
+        "## Slint 设置页验证\n\n| 指标 | 实测 |\n|---|---|\n| 峰值工作集(起窗 4 秒,PID {pid}) | {mb:.1} MB |\n"
+    ))
+}
+
 /// Server 工作集基线:优先测 runner 自己拉起的进程,不在了再按 exe 名找
 /// (TSF 断线后会懒拉起新实例)。只抓失控级增长,细粒度波动仅记录。
 fn server_memory(server_pid: u32) -> Result<String, String> {
@@ -779,20 +818,8 @@ fn server_memory(server_pid: u32) -> Result<String, String> {
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
-    let peak = |pid: u32| -> Result<u64, String> {
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
-            .map_err(|e| format!("OpenProcess({pid}): {e}"))?;
-        let mut counters = PROCESS_MEMORY_COUNTERS::default();
-        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-        let result = unsafe { GetProcessMemoryInfo(process, &mut counters, counters.cb) }
-            .map(|_| counters.PeakWorkingSetSize as u64)
-            .map_err(|e| format!("GetProcessMemoryInfo({pid}): {e}"));
-        let _ = unsafe { CloseHandle(process) };
-        result
-    };
+    let peak = peak_working_set;
     let pid_by_name = |name: &str| -> Result<u32, String> {
         let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
             .map_err(|e| format!("CreateToolhelp32Snapshot: {e}"))?;

@@ -10,6 +10,9 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod settings_slint;
+
 fn main() {
     // 平台无关:脚本与 AI agent 读取设置元数据,不需要启动窗口。
     if std::env::args().nth(1).as_deref() == Some("--dump-config-schema") {
@@ -19,6 +22,10 @@ fn main() {
     #[cfg(windows)]
     {
         let mut args = std::env::args().skip(1);
+        if args.next().as_deref() == Some("--slint") {
+            settings_slint::run_spike();
+            return;
+        }
         if args.next().as_deref() == Some("--selftest") {
             let path = args
                 .next()

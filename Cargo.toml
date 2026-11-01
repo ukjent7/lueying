@@ -76,6 +76,15 @@ skia-safe = { version = "0.156", default-features = false, features = [
     "pdf",
     "textlayout",
 ] }
+# 设置窗的声明式 UI:Fluent 主题 + winit + 软件渲染;GPLv3 与本项目一致。
+slint = { version = "1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "accessibility",
+] }
+slint-build = "1.18.1"
 
 [profile.release]
 lto = "thin"
