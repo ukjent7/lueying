@@ -316,7 +316,9 @@ impl NativeHost {
 
     /// 装平台限额;Windows 宿主装 Job Object,无限额平台不装。
     pub fn with_limiter(mut self, limiter: Arc<dyn ProcessLimiter>) -> Self {
-        self.shared.limiter = Some(limiter);
+        Arc::get_mut(&mut self.shared)
+            .expect("NativeHost 尚未共享")
+            .limiter = Some(limiter);
         self
     }
 
@@ -335,7 +337,7 @@ impl NativeHost {
             // 一问一答不该有残留;坏扩展多答的行在这里丢弃。
             while running.replies.try_recv().is_ok() {}
         }
-        let dead = match live.as_ref() {
+        let dead = match live.as_mut() {
             None => true,
             Some(running) => running
                 .child
@@ -391,11 +393,11 @@ impl NativeHost {
             self.shared.limiter.as_deref(),
         )?;
         let Some(stdin) = child.stdin.take() else {
-            super::kill(&mut child);
+            kill(&mut child);
             return Err("原生扩展没有标准输入".to_string());
         };
         let Some(stdout) = child.stdout.take() else {
-            super::kill(&mut child);
+            kill(&mut child);
             return Err("原生扩展没有标准输出".to_string());
         };
         let (sender, receiver) = mpsc::channel();
@@ -424,7 +426,7 @@ impl NativeHost {
             }) {
             Ok(reader) => reader,
             Err(error) => {
-                super::kill(&mut child);
+                kill(&mut child);
                 return Err(format!("原生扩展读线程启动失败: {error}"));
             }
         };

@@ -278,7 +278,7 @@ component PreviewCanvas inherits Rectangle {
                 border-color: Theme.border;
                 Text {
                     x: 7px;
-                    text: "\(i + 1). \(cand)";
+                    text: "\{i + 1}. \{cand}";
                     font-size: 13px * preview.font-scale;
                     color: i == 0 ? Theme.on-accent : Theme.text;
                     vertical-alignment: center;
@@ -314,7 +314,7 @@ component PreviewCanvas inherits Rectangle {
                 border-color: Theme.border;
                 Text {
                     x: 7px;
-                    text: "\(i + 1). \(cand)";
+                    text: "\{i + 1}. \{cand}";
                     font-size: 13px * preview.font-scale;
                     color: i == 0 ? Theme.on-accent : Theme.text;
                     vertical-alignment: center;
@@ -327,14 +327,14 @@ component PreviewCanvas inherits Rectangle {
 
 // 一行设置:行内透明,行间发丝线;读屏软件里整行是一个分组。
 component RowCard inherits Rectangle {
-    in property <Row> row;
+    in property <Row> item;
     in property <bool> separator;
     callback activate(string, int);
 
     min-height: 44px;
     background: transparent;
     accessible-role: groupbox;
-    accessible-label: row.label;
+    accessible-label: self.item.label;
 
     if separator: Rectangle {
         y: 0;
@@ -344,13 +344,13 @@ component RowCard inherits Rectangle {
         background: Theme.border;
     }
 
-    if row.kind == 5: PreviewCanvas {
+    if self.item.kind == 5: PreviewCanvas {
         x: 16px;
         y: 10px;
         width: parent.width - 32px;
-        preview: row.preview;
+        preview: self.item.preview;
     }
-    if row.kind != 5: HorizontalLayout {
+    if self.item.kind != 5: HorizontalLayout {
         x: 16px;
         width: parent.width - 32px;
         y: 0;
@@ -363,37 +363,37 @@ component RowCard inherits Rectangle {
             alignment: center;
             spacing: 2px;
             Text {
-                text: row.label;
+                text: self.item.label;
                 font-size: 13px;
                 color: Theme.text;
             }
             Text {
-                text: row.detail;
+                text: self.item.detail;
                 font-size: 11px;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
         }
-        if row.kind == 1: VerticalLayout {
+        if self.item.kind == 1: VerticalLayout {
             alignment: center;
             Switch {
-                text: row.label;
-                checked: row.on;
-                toggled => root.activate(row.base, row.index);
+                text: self.item.label;
+                checked: self.item.on;
+                toggled => root.activate(self.item.base, self.item.index);
             }
         }
         // 分段组:带主题色的整组铺成圆点,其余装进胶囊轨道。
-        if row.kind == 2 && row.tinted: HorizontalLayout {
+        if self.item.kind == 2 && self.item.tinted: HorizontalLayout {
             alignment: center;
             spacing: 10px;
-            for opt[i] in row.options: SwatchDot {
+            for opt[i] in self.item.options: SwatchDot {
                 text: opt.text;
                 tint: opt.tint;
-                selected: i == row.selected;
-                picked => root.activate(row.base, i);
+                selected: i == self.item.selected;
+                picked => root.activate(self.item.base, i);
             }
         }
-        if row.kind == 2 && !row.tinted: Rectangle {
+        if self.item.kind == 2 && !self.item.tinted: Rectangle {
             border-radius: 9px;
             background: Theme.surface-alt;
             border-width: 1px;
@@ -402,34 +402,34 @@ component RowCard inherits Rectangle {
                 padding: 2px;
                 spacing: 2px;
                 alignment: center;
-                for opt[i] in row.options: SegButton {
+                for opt[i] in self.item.options: SegButton {
                     text: opt.text;
                     tint: opt.tint;
                     has-tint: opt.has-tint;
-                    selected: i == row.selected;
-                    picked => root.activate(row.base, i);
+                    selected: i == self.item.selected;
+                    picked => root.activate(self.item.base, i);
                 }
             }
         }
-        if row.kind == 3: HorizontalLayout {
+        if self.item.kind == 3: HorizontalLayout {
             alignment: center;
             spacing: 6px;
-            for b in row.buttons: ColoredButton {
+            for b in self.item.buttons: ColoredButton {
                 btn: b;
                 clicked => root.activate(b.base, b.index);
             }
         }
-        if row.kind == 4: HorizontalLayout {
+        if self.item.kind == 4: HorizontalLayout {
             alignment: center;
             spacing: 8px;
-            for b in row.buttons: ColoredButton {
+            for b in self.item.buttons: ColoredButton {
                 btn: b;
                 clicked => root.activate(b.base, b.index);
             }
             Switch {
-                text: row.label;
-                checked: row.on;
-                toggled => root.activate(row.base, row.index);
+                text: self.item.label;
+                checked: self.item.on;
+                toggled => root.activate(self.item.base, self.item.index);
             }
         }
     }
@@ -555,7 +555,7 @@ export component SettingsWindow inherits Window {
                                     VerticalLayout {
                                         spacing: 0px;
                                         for row[i] in group.rows: RowCard {
-                                            row: row;
+                                            item: row;
                                             separator: i > 0;
                                             activate(s, i) => root.activate(s, i);
                                         }
