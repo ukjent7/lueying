@@ -483,8 +483,8 @@ fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
     let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
         return Err("包里没有 manifest.json".to_string());
     };
-    let manifest = lueying_extmeta::Manifest::parse(manifest_bytes)
-        .map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest =
+        lueying_extmeta::Manifest::parse(manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
     let payload = manifest.payload_file().to_string();
     if !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));
