@@ -71,17 +71,19 @@ pub(super) fn spawn(user: SharedUser, path: PathBuf) {
     let mut saved = revision(&user);
     std::thread::Builder::new()
         .name("lueying-user-save".into())
-        .spawn(move || loop {
-            std::thread::sleep(CHECK_EVERY);
-            let rev = revision(&user);
-            if rev == saved {
-                continue;
-            }
-            // 拿到写锁后再确认修订号:清空/退出刚写过时不能把旧内容盖回去。
-            match write_if_current(&user, &path, rev) {
-                Ok(true) => saved = rev,
-                Ok(false) => {}
-                Err(e) => println!("用户词库 {} 写入失败: {e}", path.display()),
+        .spawn(move || {
+            loop {
+                std::thread::sleep(CHECK_EVERY);
+                let rev = revision(&user);
+                if rev == saved {
+                    continue;
+                }
+                // 拿到写锁后再确认修订号:清空/退出刚写过时不能把旧内容盖回去。
+                match write_if_current(&user, &path, rev) {
+                    Ok(true) => saved = rev,
+                    Ok(false) => {}
+                    Err(e) => println!("用户词库 {} 写入失败: {e}", path.display()),
+                }
             }
         })
         .expect("启动用户词库保存线程失败");
