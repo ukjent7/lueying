@@ -159,7 +159,7 @@ fn rand(a: &[f64], seed: u64) -> f64 {
 }
 
 /// 表达式语法树;只有数值一种类型。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Num(f64),
     Var(String),

@@ -228,7 +228,7 @@ impl Runtime {
                         .emitters
                         .entry(node.id.clone())
                         .or_insert_with(|| EmitterState {
-                            rng: expr::seeded(&mut (scene.seed ^ fnv(node.id.as_bytes()))),
+                            rng: scene.seed ^ fnv(node.id.as_bytes()),
                             ..EmitterState::default()
                         });
                 }
@@ -304,12 +304,12 @@ impl Runtime {
         while index < queue.len() && index < MAX_EVENTS {
             let event = queue[index].clone();
             index += 1;
-            for rule_index in 0..scene.rules.len() {
-                let Rule { on, when, actions } = &scene.rules[rule_index];
+            for rule in &scene.rules {
+                let Rule { on, when, actions } = rule;
                 if !event.matches(on) {
                     continue;
                 }
-                let pass = when.map_or(true, |expr| {
+                let pass = when.as_ref().is_none_or(|expr| {
                     eval(expr, scene, vars, inputs, &mut budget, &mut frame.degraded) != 0.0
                 });
                 if pass {
@@ -644,7 +644,7 @@ fn emit_nodes(
     items: &mut Vec<Item>,
 ) {
     for node in nodes {
-        let visible = node.visible.as_ref().map_or(true, |expr| {
+        let visible = node.visible.as_ref().is_none_or(|expr| {
             eval(expr, scene, view.vars, inputs, budget, degraded) != 0.0
         });
         if !visible {
@@ -763,10 +763,10 @@ fn emit_leaf(
                         let (cx, cy) = edge_point(anchor, node.anchor.edge);
                         [cx, cy]
                     });
-                    let (w, h) = (f32::from(grid[0]), f32::from(grid[1]));
+                    let (w, h) = (grid[0] as f32, grid[1] as f32);
                     [position[0] - w * 0.5, position[1] - h * 0.5, w, h]
                 }
-                None => centered(anchor, node, f32::from(grid[0]), f32::from(grid[1])),
+                None => centered(anchor, node, grid[0] as f32, grid[1] as f32),
             };
             (
                 shifted(rect, node.offset),
@@ -782,7 +782,7 @@ fn emit_leaf(
             font_size,
             fill,
         } => {
-            let rect = centered(anchor, node, anchor[2], f32::from(*font_size) * 1.6);
+            let rect = centered(anchor, node, anchor[2], *font_size * 1.6);
             (
                 shifted(rect, node.offset),
                 Body::Text {
@@ -847,7 +847,7 @@ fn emit_leaf(
 }
 
 /// 该节点该属性的最新补间;没有就 None。
-fn active_tween(tweens: &[Tween], node: &str, prop: TweenProp) -> Option<&Tween> {
+fn active_tween<'a>(tweens: &'a [Tween], node: &str, prop: TweenProp) -> Option<&'a Tween> {
     tweens
         .iter()
         .rev()
@@ -855,8 +855,8 @@ fn active_tween(tweens: &[Tween], node: &str, prop: TweenProp) -> Option<&Tween>
 }
 
 /// 以锚边点为中心的矩形。
-fn centered(anchor: &Rect, node: &Node, width: f32, height: f32) -> Rect {
-    let (cx, cy) = edge_point(*anchor, node.anchor.edge);
+fn centered(anchor: Rect, node: &Node, width: f32, height: f32) -> Rect {
+    let (cx, cy) = edge_point(anchor, node.anchor.edge);
     [cx - width * 0.5, cy - height * 0.5, width, height]
 }
 

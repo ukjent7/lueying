@@ -602,8 +602,10 @@ pub fn parse(file: &str, text: &str) -> Result<Scene, Vec<LoadError>> {
             );
             break;
         }
+        let span = signal.span().start;
+        let signal = signal.get_ref();
         let from = signal.from.as_ref().and_then(|text| {
-            builder.expr(text, signal.span().start, &format!("信号 {name:?} 的 from"))
+            builder.expr(text, span, &format!("信号 {name:?} 的 from"))
         });
         builder.vars.push(VarDecl {
             name: name.clone(),
@@ -875,7 +877,7 @@ fn build_node(
                     .cloned()
                     .unwrap_or_else(|| "idle".into())
             });
-            let follow = raw.follow.map(|follow| Follow {
+            let follow = raw.follow.as_ref().map(|follow| Follow {
                 spring: follow.spring.max(0.1),
             });
             NodeBody::Sprite {
@@ -1121,7 +1123,7 @@ fn build_tween(
     };
     let over = match table.get("over") {
         Some(toml::Value::String(text)) => parse_duration(text),
-        Some(toml::Value::Integer(value)) => Some(f64::from(*value)),
+        Some(toml::Value::Integer(value)) => Some(*value as f64),
         _ => None,
     };
     let Some(over) = over else {
@@ -1166,7 +1168,7 @@ fn build_delay(
 ) {
     let after = match table.get("delay") {
         Some(toml::Value::String(text)) => parse_duration(text),
-        Some(toml::Value::Integer(value)) => Some(f64::from(*value)),
+        Some(toml::Value::Integer(value)) => Some(*value as f64),
         _ => None,
     };
     let Some(after) = after else {
@@ -1201,7 +1203,7 @@ fn parse_action_value(
 ) -> Option<Expr> {
     match table.get(key) {
         Some(toml::Value::Float(value)) => Some(Expr::Num(*value)),
-        Some(toml::Value::Integer(value)) => Some(Expr::Num(f64::from(*value))),
+        Some(toml::Value::Integer(value)) => Some(Expr::Num(*value as f64)),
         Some(toml::Value::String(text)) => builder.expr(text, byte, &format!("{context} 的 {key}")),
         _ => {
             builder.error(byte, format!("{context} 的 {key} 要是数或表达式"));
@@ -1269,7 +1271,7 @@ fn parse_path(d: &str) -> Result<Vec<PathSeg>, String> {
             segments.push(PathSeg::Close);
             return Ok(());
         }
-        if pending.is_empty() || pending.len() % size != 0 {
+        if pending.is_empty() || !pending.len().is_multiple_of(size) {
             return Err(format!("{command} 的参数个数要是 {size} 的倍数"));
         }
         let mut numbers = pending.drain(..);
