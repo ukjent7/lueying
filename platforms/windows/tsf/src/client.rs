@@ -134,7 +134,7 @@ impl Client {
             if read == 0 {
                 return None;
             }
-            self.pending.extend_from_slice(&buf[..read]);
+            self.pending.extend_from_slice(&buf[..read as usize]);
         }
     }
 

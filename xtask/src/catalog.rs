@@ -22,9 +22,9 @@ pub(crate) fn parse_catalog_exe(it: &mut impl Iterator<Item = String>) -> Catalo
     };
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--exe" => args.exe = it.next().unwrap_or(args.exe),
+            "--exe" => args.exe = it.next().map(PathBuf::from).unwrap_or(args.exe),
             "--url" => args.url = it.next().unwrap_or(args.url),
-            "--catalog" => args.catalog = it.next().unwrap_or(args.catalog),
+            "--catalog" => args.catalog = it.next().map(PathBuf::from).unwrap_or(args.catalog),
             _ => {}
         }
     }
@@ -60,7 +60,7 @@ pub(crate) fn catalog_exe(args: CatalogExeArgs) -> Result<(), String> {
         .find(|file| file["name"] == "ppocr.exe")
         .ok_or("ppocr 条目缺 ppocr.exe 文件")?;
     exe_entry["url"] = serde_json::Value::String(args.url);
-    exe_entry["sha256"] = serde_json::Value::String(sha256);
+    exe_entry["sha256"] = serde_json::Value::String(sha256.clone());
     exe_entry["bytes"] = serde_json::Value::Number(bytes.into());
     let pretty = serde_json::to_string_pretty(&catalog).map_err(|e| e.to_string())?;
     std::fs::write(&args.catalog, pretty + "\n")

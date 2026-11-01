@@ -89,39 +89,39 @@ pub fn decode(data: &[u8]) -> Result<Files, String> {
     blocks.pos = header.len();
     let mut files: Files = Vec::new();
     while !blocks.at_end() {
-        let line = blocks.line().map_err(&bad)?;
+        let line = blocks.line().map_err(bad)?;
         if let Some(rest) = line.strip_prefix("### begin: ") {
             let (name, count) = rest
                 .rsplit_once(' ')
                 .ok_or_else(|| bad(format!("begin 行缺少行数: {rest:?}")))?;
-            check_name(name).map_err(&bad)?;
+            check_name(name).map_err(bad)?;
             let count: usize = count
                 .parse()
                 .map_err(|_| bad(format!("begin 行行数不合法: {count:?}")))?;
             let mut content = Vec::new();
             for _ in 0..count {
-                let body = blocks.line().map_err(&bad)?;
+                let body = blocks.line().map_err(bad)?;
                 content.extend_from_slice(body.as_bytes());
                 content.push(b'\n');
             }
-            let end = blocks.line().map_err(&bad)?;
+            let end = blocks.line().map_err(bad)?;
             if end != format!("### end: {name}") {
                 return Err(bad(format!("块 {name:?} 的 end 行对不上: {end:?}")));
             }
-            push_unique(&mut files, name.to_string(), content).map_err(&bad)?;
+            push_unique(&mut files, name.to_string(), content).map_err(bad)?;
         } else if let Some(rest) = line.strip_prefix("### binary: ") {
             let (name, count) = rest
                 .rsplit_once(' ')
                 .ok_or_else(|| bad(format!("binary 行缺少字节数: {rest:?}")))?;
-            check_name(name).map_err(&bad)?;
+            check_name(name).map_err(bad)?;
             let count: usize = count
                 .parse()
                 .map_err(|_| bad(format!("binary 行字节数不合法: {count:?}")))?;
-            let content = blocks.take(count).map_err(&bad)?.to_vec();
-            if blocks.take(1).map_err(&bad)? != b"\n" {
+            let content = blocks.take(count).map_err(bad)?.to_vec();
+            if blocks.take(1).map_err(bad)? != b"\n" {
                 return Err(bad(format!("字节块 {name:?} 后缺换行")));
             }
-            push_unique(&mut files, name.to_string(), content).map_err(&bad)?;
+            push_unique(&mut files, name.to_string(), content).map_err(bad)?;
         } else {
             return Err(bad(format!("包里出现未知行,文件可能被截断: {line:?}")));
         }

@@ -103,7 +103,7 @@ fn scale_of(metrics: &Metrics) -> f32 {
 }
 
 /// 布局矩形(逻辑像素);布局、命中与窗口层换算的通用单位。
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub left: f32,
     pub top: f32,

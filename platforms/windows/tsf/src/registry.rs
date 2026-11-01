@@ -68,7 +68,7 @@ fn create_key(parent: HKEY, subkey: &str) -> Result<HKEY> {
         RegCreateKeyExW(
             parent,
             PCWSTR(subkey.as_ptr()),
-            0,
+            Some(0),
             PCWSTR::null(),
             REG_OPTION_NON_VOLATILE,
             KEY_WRITE,
@@ -91,10 +91,12 @@ fn set_string(key: HKEY, name: &str, value: &str) -> Result<()> {
         RegSetValueExW(
             key,
             PCWSTR(name.as_ptr()),
-            0,
+            Some(0),
             REG_SZ,
-            data.as_ptr().cast(),
-            (data.len() * 2) as u32,
+            Some(std::slice::from_raw_parts(
+                data.as_ptr().cast::<u8>(),
+                data.len() * 2,
+            )),
         )
     };
     if err == ERROR_SUCCESS {
@@ -106,7 +108,7 @@ fn set_string(key: HKEY, name: &str, value: &str) -> Result<()> {
 
 /// 注册表调用返回 WIN32_ERROR;转成 crate 统一的 windows Result。
 fn win32(err: WIN32_ERROR) -> windows::core::Error {
-    windows::core::Error::from_hresult(windows::core::HRESULT::from_win32(err.0 as i32))
+    windows::core::Error::from_hresult(windows::core::HRESULT::from_win32(err.0))
 }
 
 pub(crate) fn unregister() -> Result<()> {

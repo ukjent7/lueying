@@ -24,7 +24,7 @@ pub(crate) fn parse_winget(it: &mut impl Iterator<Item = String>) -> WingetArgs 
         match a.as_str() {
             "--version" => args.version = it.next().unwrap_or_default(),
             "--sha256" => args.sha256 = it.next().unwrap_or_default(),
-            "--out" => args.out = it.next().unwrap_or(args.out),
+            "--out" => args.out = it.next().map(PathBuf::from).unwrap_or(args.out),
             _ => {}
         }
     }
