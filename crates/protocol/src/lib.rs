@@ -126,13 +126,17 @@ pub fn take_frame(pending: &mut Vec<u8>) -> Result<Option<Vec<u8>>, CodecError> 
 /// 阻塞读一条完整帧(4 字节头 + 体)。对端关闭或截断时报 [`CodecError::Truncated`]。
 pub fn read_frame(reader: &mut impl Read) -> Result<Vec<u8>, CodecError> {
     let mut header = [0u8; 4];
-    reader.read_exact(&mut header).map_err(|_| CodecError::Truncated)?;
+    reader
+        .read_exact(&mut header)
+        .map_err(|_| CodecError::Truncated)?;
     let len = u32::from_le_bytes(header) as usize;
     if len > MAX_FRAME {
         return Err(CodecError::TooLarge(len));
     }
     let mut body = vec![0u8; len];
-    reader.read_exact(&mut body).map_err(|_| CodecError::Truncated)?;
+    reader
+        .read_exact(&mut body)
+        .map_err(|_| CodecError::Truncated)?;
     Ok(body)
 }
 
