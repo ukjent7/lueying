@@ -9,6 +9,7 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use lueying_extmeta::Manifest;
+use lueying_extmeta::container::Files;
 use lueying_protocol::{Request, pipe_name};
 
 pub use lueying_extmeta::container::PACK_HEADER;
@@ -243,7 +244,7 @@ pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
+fn read_directory(source: &Path) -> Result<(String, Files), String> {
     let manifest_bytes =
         fs::read(source.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
     let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
@@ -276,7 +277,7 @@ fn read_directory(source: &Path) -> Result<(String, Vec<(String, Vec<u8>)>), Str
 }
 
 /// 解包一个 `.luext`:容器解码后按清单取 id。清单必须存在且能解析。
-pub fn unpack(data: &[u8]) -> Result<(String, Vec<(String, Vec<u8>)>), String> {
+pub fn unpack(data: &[u8]) -> Result<(String, Files), String> {
     let files = lueying_extmeta::container::decode(data)?;
     let manifest = files
         .iter()

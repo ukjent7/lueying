@@ -12,13 +12,15 @@
 //! 合法 JSON 或超时都算失败;超时的进程被宿主终止并停用语义由调用方
 //! 记账(与脚本层的连续失败停用一致)。
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use lueying_extsvc::{Done, Provider};
+
+pub use process::Process;
 
 /// 一次旁路调用的配置。
 #[derive(Clone, Debug)]
@@ -35,7 +37,7 @@ pub struct BypassConfig {
 ///
 /// `Err` 表示限额装不上,调用方必须终止进程并把本次调用判为失败。
 pub trait ProcessLimiter: Send + Sync {
-    fn attach(&self, process: &Child) -> Result<(), String>;
+    fn attach(&self, process: &Process) -> Result<(), String>;
 }
 
 /// 旁路进程客户端。克隆便宜;每次 [`Bypass::call`] 拉起新进程。
@@ -65,18 +67,19 @@ impl Bypass {
         let args: serde_json::Value = serde_json::from_str(args)
             .map_err(|error| format!("旁路参数不是合法 JSON: {error}"))?;
         let request = serde_json::json!({ "method": method, "args": args }).to_string();
-        let mut child = Command::new(&self.config.exe)
+        let child = Command::new(&self.config.exe)
             .args(&self.config.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| format!("旁路进程启动失败: {error}"))?;
+        let mut child = Process::from(child);
         if let Err(error) = self.attach(&mut child) {
             kill(&mut child);
             return Err(error);
         }
-        let Some(stdout) = child.stdout.take() else {
+        let Some(stdout) = child.take_stdout() else {
             kill(&mut child);
             return Err("旁路进程没有标准输出".to_string());
         };
@@ -100,7 +103,7 @@ impl Bypass {
         result
     }
 
-    fn attach(&self, child: &mut Child) -> Result<(), String> {
+    fn attach(&self, child: &mut Process) -> Result<(), String> {
         match &self.limiter {
             Some(limiter) => limiter.attach(child),
             None => Ok(()),
@@ -110,13 +113,13 @@ impl Bypass {
     /// 写请求、按预算等应答;超时即杀,管道闭合后读线程随之结束。
     fn exchange(
         &self,
-        child: &mut Child,
+        child: &mut Process,
         request: &str,
         receiver: std::sync::mpsc::Receiver<Result<String, String>>,
         reader: std::thread::JoinHandle<()>,
     ) -> Result<String, String> {
         {
-            let Some(mut stdin) = child.stdin.take() else {
+            let Some(mut stdin) = child.take_stdin() else {
                 return Err("旁路进程没有标准输入".to_string());
             };
             // 请求行很小,管道缓冲装得下,写不会阻塞在没读的进程上。
@@ -143,7 +146,7 @@ impl Bypass {
 }
 
 /// 读一行应答;EOF 与 IO 错误都归为失败。
-fn read_response(stdout: ChildStdout) -> Result<String, String> {
+fn read_response(stdout: Box<dyn Read + Send>) -> Result<String, String> {
     let mut line = String::new();
     let mut reader = BufReader::new(stdout);
     match reader.read_line(&mut line) {
@@ -154,7 +157,7 @@ fn read_response(stdout: ChildStdout) -> Result<String, String> {
 }
 
 /// 等进程退出;预算内不退出就终止。返回错误前必已回收进程。
-fn reap(child: &mut Child, budget: Duration) -> Result<(), String> {
+fn reap(child: &mut Process, budget: Duration) -> Result<(), String> {
     let deadline = Instant::now() + budget;
     loop {
         match child.try_wait() {
@@ -178,7 +181,7 @@ fn reap(child: &mut Child, budget: Duration) -> Result<(), String> {
 }
 
 /// 终止并回收;失败方向是进程被杀,错误不再上抛。
-fn kill(child: &mut Child) {
+fn kill(child: &mut Process) {
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -270,8 +273,8 @@ pub struct NativeConfig {
 }
 
 struct Live {
-    child: Child,
-    stdin: ChildStdin,
+    child: Process,
+    stdin: Box<dyn Write + Send>,
     replies: mpsc::Receiver<Result<String, String>>,
     last_used: Instant,
 }
@@ -392,11 +395,11 @@ impl NativeHost {
             &self.shared.config.readable,
             self.shared.limiter.as_deref(),
         )?;
-        let Some(stdin) = child.stdin.take() else {
+        let Some(stdin) = child.take_stdin() else {
             kill(&mut child);
             return Err("原生扩展没有标准输入".to_string());
         };
-        let Some(stdout) = child.stdout.take() else {
+        let Some(stdout) = child.take_stdout() else {
             kill(&mut child);
             return Err("原生扩展没有标准输出".to_string());
         };
@@ -467,7 +470,7 @@ impl NativeHost {
 }
 
 /// 写一行请求。常驻进程的 stdin 跨调用保持打开,写不关闭。
-fn write_request(stdin: &mut ChildStdin, request: &str) -> Result<(), String> {
+fn write_request(stdin: &mut (dyn Write + Send), request: &str) -> Result<(), String> {
     stdin
         .write_all(request.as_bytes())
         .and_then(|()| stdin.flush())
@@ -488,6 +491,7 @@ pub fn grant_appcontainer_read(_path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(windows)]
 pub mod job;
+mod process;
 #[cfg(windows)]
 pub(crate) mod sandbox;
 mod spawn;

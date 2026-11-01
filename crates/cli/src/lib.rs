@@ -275,7 +275,7 @@ where
         "check" => {
             let mut path: Option<PathBuf> = None;
             let mut used = false;
-            while let Some(arg) = args.next() {
+            for arg in args.by_ref() {
                 match arg.as_str() {
                     "-h" | "--help" => return Ok(Invocation::Help),
                     other if other.starts_with('-') => return Err(format!("未知参数 {other:?}")),

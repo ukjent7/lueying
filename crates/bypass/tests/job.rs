@@ -38,7 +38,7 @@ fn job_limiter_allows_healthy_call() {
 fn job_limiter_failure_fails_call() {
     struct RejectLimiter;
     impl ProcessLimiter for RejectLimiter {
-        fn attach(&self, _process: &std::process::Child) -> Result<(), String> {
+        fn attach(&self, _process: &lueying_bypass::Process) -> Result<(), String> {
             Err("测试注入的限额失败".to_string())
         }
     }
@@ -51,15 +51,16 @@ fn job_limiter_failure_fails_call() {
 /// 直接对 cmd 子进程挂 Job,验证 attach 本身不报错、进程可正常退出。
 #[test]
 fn job_limiter_attaches_plain_child() {
-    let mut child = Command::new("cmd")
+    let child = Command::new("cmd")
         .args(["/c", "exit", "0"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("cmd 应能启动");
+    let mut process = lueying_bypass::Process::from(child);
     let limiter = JobLimiter::new(None, Some(5_000));
-    limiter.attach(&child).expect("挂接应成功");
-    let status = child.wait().expect("进程应能回收");
+    limiter.attach(&process).expect("挂接应成功");
+    let status = process.wait().expect("进程应能回收");
     assert!(status.success());
 }

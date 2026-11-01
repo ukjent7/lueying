@@ -85,12 +85,12 @@ jobs:
           prefix-key: linux
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --workspace --locked
+        run: cargo doc --no-deps --workspace --exclude ppocr --locked
       # 版本比较/SHA 解析在 protocol crate,纯逻辑在 Linux 上测,
       # 不必为此编译 Windows 原生链路。
       - name: Protocol 单元测试
@@ -216,16 +216,24 @@ jobs:
         run: |
           rustup target add aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
-      # 官方原生扩展 ppocr:产物单独走 Release 资产分发,不进安装包。
-      # 它的哈希要先补进官方目录(编译期嵌入 server),所以必须在
-      # Build (release) 之前补目录。
-      - name: 构建 ppocr(原生扩展)
-        run: cargo build --release --locked -p ppocr
+      # 官方原生扩展 ppocr:由 extensions.yml 单独发 Release;主 CI 只下载成品。
+      - name: 下载已发布的 ppocr 扩展
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
+          $tag = "ppocr-v$($manifest.version)"
+          New-Item -ItemType Directory -Force target/release | Out-Null
+          gh release download $tag --pattern lueying-ppocr.exe --dir target/release
+          Move-Item target/release/lueying-ppocr.exe target/release/ppocr.exe -Force
       - name: 补官方目录的 ppocr.exe
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          $url = "https://github.com/ukjent7/lueying/releases/download/$($env:GITHUB_REF_NAME)/lueying-ppocr.exe"
+          $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
+          $url = "https://github.com/ukjent7/lueying/releases/download/ppocr-v$($manifest.version)/lueying-ppocr.exe"
           cargo run -p xtask --release --locked -- catalog-exe --exe target/release/ppocr.exe --url $url
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
@@ -428,11 +436,7 @@ jobs:
           fi
           du -sh dist/lueying
           ls -lh dist/lueying-*-setup.exe
-      # ppocr.exe 是独立的 Release 资产(官方目录里登记的下载地址就是它)。
-      - name: 暂存 ppocr.exe 资产
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: Copy-Item target/release/ppocr.exe dist/lueying-ppocr.exe
+      # ppocr.exe 由 extensions.yml 单独发 Release,主发布不带这份资产。
       - name: 生成安装包校验文件
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -483,7 +487,6 @@ jobs:
           $setup = "dist/lueying-$version-setup.exe"
           $sha = "$setup.sha256"
           $assets = @($setup, $sha)
-          if (Test-Path "dist/lueying-ppocr.exe") { $assets += "dist/lueying-ppocr.exe" }
           if (Test-Path "dist/lueying-manifest.json") { $assets += "dist/lueying-manifest.json" }
           if (Test-Path "dist/lueying-manifest.json.sig") { $assets += "dist/lueying-manifest.json.sig" }
           # Release 说明来自 CHANGELOG 的版本段,不用自动生成的提交列表。
@@ -509,6 +512,5 @@ jobs:
             dist/lueying
             dist/lueying-*-setup.exe
             dist/lueying-*-setup.exe.sha256
-            dist/lueying-ppocr.exe
             dist/lueying-manifest.json
             dist/lueying-manifest.json.sig

@@ -79,7 +79,7 @@ fn timeout_kills_process() {
 fn limiter_failure_kills_process() {
     struct Reject;
     impl ProcessLimiter for Reject {
-        fn attach(&self, _process: &std::process::Child) -> Result<(), String> {
+        fn attach(&self, _process: &lueying_bypass::Process) -> Result<(), String> {
             Err("注入失败".to_string())
         }
     }

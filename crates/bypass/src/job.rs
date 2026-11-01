@@ -6,10 +6,6 @@
 //! 个待宿主退出的 Job 句柄,按「旁路调用是用户级低频操作」的定位可
 //! 以接受,常驻化时要换成子进程退出后关句柄的看护线程。
 
-use std::os::windows::io::AsRawHandle;
-use std::process::Child;
-
-use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
     JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_CPU_RATE_CONTROL,
@@ -20,7 +16,7 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::core::PCWSTR;
 
-use crate::ProcessLimiter;
+use crate::{Process, ProcessLimiter};
 
 /// Job Object 限额;克隆便宜。
 #[derive(Clone, Debug, Default)]
@@ -41,7 +37,7 @@ impl JobLimiter {
 }
 
 impl ProcessLimiter for JobLimiter {
-    fn attach(&self, process: &Child) -> Result<(), String> {
+    fn attach(&self, process: &Process) -> Result<(), String> {
         unsafe {
             let job = CreateJobObjectW(None, PCWSTR::null())
                 .map_err(|error| format!("创建 Job 失败: {error}"))?;
@@ -76,7 +72,7 @@ impl ProcessLimiter for JobLimiter {
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             )
             .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
-            AssignProcessToJobObject(job, HANDLE(process.as_raw_handle()))
+            AssignProcessToJobObject(job, process.raw_handle())
                 .map_err(|error| format!("进程挂入 Job 失败: {error}"))?;
         }
         Ok(())

@@ -298,7 +298,7 @@ mod imp {
             RegCreateKeyExW(
                 parent,
                 PCWSTR(subkey.as_ptr()),
-                0,
+                Some(0),
                 PCWSTR::null(),
                 REG_OPTION_NON_VOLATILE,
                 KEY_WRITE,
@@ -316,15 +316,18 @@ mod imp {
 
     fn set_string(key: HKEY, name: &str, value: &str) -> Result<(), String> {
         let name = HSTRING::from(name);
-        let data: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+        let data: Vec<u8> = value
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .chain([0, 0])
+            .collect();
         let err = unsafe {
             RegSetValueExW(
                 key,
                 PCWSTR(name.as_ptr()),
-                0,
+                Some(0),
                 REG_SZ,
-                data.as_ptr().cast(),
-                (data.len() * 2) as u32,
+                Some(data.as_slice()),
             )
         };
         if err == ERROR_SUCCESS {
@@ -339,8 +342,15 @@ mod imp {
         let subkey = HSTRING::from(subkey);
         let name = HSTRING::from(name);
         let mut key = HKEY::default();
-        let opened =
-            unsafe { RegOpenKeyExW(parent, PCWSTR(subkey.as_ptr()), 0, KEY_SET_VALUE, &mut key) };
+        let opened = unsafe {
+            RegOpenKeyExW(
+                parent,
+                PCWSTR(subkey.as_ptr()),
+                Some(0),
+                KEY_SET_VALUE,
+                &mut key,
+            )
+        };
         if opened == ERROR_SUCCESS {
             let _ = unsafe { RegDeleteValueW(key, PCWSTR(name.as_ptr())) };
             let _ = unsafe { RegCloseKey(key) };
