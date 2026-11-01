@@ -28,12 +28,13 @@ Windows CI 构建任务依次执行以下步骤：
 
 1. **核心组件构建**：编译 64 位服务端、设置中心、PP-OCR 原生扩展及安装辅助程序。
 2. **TSF 薄壳编译**：使用静态 C 运行时（Static CRT）构建 x64 与 i686（32 位）两份 `lueying_tsf.dll`。
-3. **端到端测试与指标断言**：运行全链路宿主 E2E 测试，验证运行时体积（≤ 80 MiB）、常驻内存工作集（≤ 128 MB）与交互延迟（p95 ≤ 60ms）。
+3. **端到端测试与指标断言**：运行全链路宿主 E2E 测试，验证运行时体积（≤ 90 MiB）、常驻内存工作集（≤ 128 MB）与交互延迟（p95 ≤ 60ms）。
 4. **安装包打包**：整合词典与模型资源，生成 `version.txt` 与结构化清单，编译输出 `lueying-<version>-setup.exe`。
 5. **数字签名**：
    - **Authenticode 签名**：若配置了 `WINDOWS_PFX_BASE64` 与密码密钥，使用 `signtool` 对安装包进行数字签名。
    - **清单签名**：生成 `lueying-manifest.json` 与 `.sha256`，若配置了 `LUEYING_SIGN_KEY` 则追加 Ed25519 签名。
-6. **创建 GitHub Release**：将安装包、校验文件、更新清单与签名上传至发布版本。
+6. **创建 GitHub Release**：将安装包、校验文件、`lueying-ppocr.exe`（官方原生扩展，发布构建时已把它的地址与哈希补进官方目录）、更新清单与签名上传至发布版本。
+7. **winget manifest**：用 `cargo run -p xtask -- winget --version <版本> --sha256 <setup 哈希>` 生成三份 manifest，提交到 microsoft/winget-pkgs 开 PR。
 
 ### 签名密钥说明
 

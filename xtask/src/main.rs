@@ -11,6 +11,7 @@
 //! 用法:`cargo run -p xtask -- update-manifest --version 0.2.0 --name lueying-0.2.0-setup.exe --size N --sha256 <hex> --mirror <url> --out dist`
 //! 用法:`cargo run -p xtask -- sign-manifest --manifest dist/lueying-manifest.json --key <种子文件>`
 //! 用法:`cargo run -p xtask -- catalog-exe --exe target/release/ppocr.exe --url <发布资产地址>`
+//! 用法:`cargo run -p xtask -- winget --version 0.2.0 --sha256 <setup哈希> --out dist/winget`
 
 #[path = "dict.rs"]
 mod dict;
@@ -24,12 +25,16 @@ mod manifest;
 #[path = "catalog.rs"]
 mod catalog;
 
+#[path = "winget.rs"]
+mod winget;
+
 enum Task {
     Dict(dict::Args),
     Pack(pack::PackArgs),
     UpdateManifest(manifest::UpdateManifestArgs),
     SignManifest(manifest::SignArgs),
     CatalogExe(catalog::CatalogExeArgs),
+    Winget(winget::WingetArgs),
 }
 
 fn main() {
@@ -48,6 +53,7 @@ fn main() {
                 task = Some(Task::SignManifest(manifest::parse_sign_manifest(&mut it)))
             }
             "catalog-exe" => task = Some(Task::CatalogExe(catalog::parse_catalog_exe(&mut it))),
+            "winget" => task = Some(Task::Winget(winget::parse_winget(&mut it))),
             other => {
                 eprintln!("未知子命令或参数: {other}");
                 std::process::exit(2);
@@ -60,9 +66,10 @@ fn main() {
         Some(Task::UpdateManifest(args)) => manifest::update_manifest(args),
         Some(Task::SignManifest(args)) => manifest::sign_manifest(args),
         Some(Task::CatalogExe(args)) => catalog::catalog_exe(args),
+        Some(Task::Winget(args)) => winget::winget(args),
         None => {
             eprintln!(
-                "用法: xtask dict ... | xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ..."
+                "用法: xtask dict ... | xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ... | xtask winget ..."
             );
             std::process::exit(2);
         }
