@@ -30,9 +30,9 @@ mod imp {
     };
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
         RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW,
-        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE,
-        REG_OPTION_NON_VOLATILE, REG_SZ,
+        RegSetValueExW,
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
@@ -298,8 +298,8 @@ mod imp {
     }
 
     fn set_run_key(server: &Path) -> Result<(), String> {
-        let key = create_key(HKEY_CURRENT_USER, RUN_KEY)
-            .map_err(|e| format!("打开自启动注册表: {e}"))?;
+        let key =
+            create_key(HKEY_CURRENT_USER, RUN_KEY).map_err(|e| format!("打开自启动注册表: {e}"))?;
         set_string(key, RUN_VALUE, &format!("\"{}\"", server.display()))
             .map_err(|e| format!("写自启动: {e}"))?;
         let _ = unsafe { RegCloseKey(key) };
@@ -369,9 +369,8 @@ mod imp {
         let subkey = HSTRING::from(subkey);
         let name = HSTRING::from(name);
         let mut key = HKEY::default();
-        let opened = unsafe {
-            RegOpenKeyExW(parent, PCWSTR(subkey.as_ptr()), 0, KEY_SET_VALUE, &mut key)
-        };
+        let opened =
+            unsafe { RegOpenKeyExW(parent, PCWSTR(subkey.as_ptr()), 0, KEY_SET_VALUE, &mut key) };
         if opened == ERROR_SUCCESS {
             let _ = unsafe { RegDeleteValueW(key, PCWSTR(name.as_ptr())) };
             let _ = unsafe { RegCloseKey(key) };

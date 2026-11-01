@@ -10,14 +10,14 @@ use windows::Win32::Graphics::Gdi::{
     COLOR_WINDOWFRAME, COLOR_WINDOWTEXT, GetSysColor, SYS_COLOR_INDEX,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
-    REG_VALUE_TYPE,
+    HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD, REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW,
+    RegQueryValueExW,
 };
 use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
-use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::UI::WindowsAndMessaging::{
     SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
 };
+use windows::core::{HSTRING, PCWSTR};
 
 /// 当前窗口使用的外观。高对比度优先于深浅色。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,8 +45,15 @@ impl Appearance {
 fn apps_use_light() -> bool {
     let path = HSTRING::from("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
     let mut key = HKEY::default();
-    if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(path.as_ptr()), 0, KEY_READ, &mut key) }
-        != ERROR_SUCCESS
+    if unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(path.as_ptr()),
+            0,
+            KEY_READ,
+            &mut key,
+        )
+    } != ERROR_SUCCESS
     {
         return true;
     }

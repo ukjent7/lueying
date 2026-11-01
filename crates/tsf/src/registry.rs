@@ -1,9 +1,14 @@
 //! 自注册:COM InprocServer32(HKCR,regsvr32 要管理员)+ TSF profile 与能力类别。
 //! 缺少沉浸式等能力声明时,Win10/11 的输入切换器会把这个输入法过滤掉(装上又消失)。
 
+use windows::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
+};
+use windows::Win32::System::Registry::{
+    HKEY, HKEY_CLASSES_ROOT, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+    RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
 use windows::Win32::UI::TextServices::{
@@ -12,11 +17,6 @@ use windows::Win32::UI::TextServices::{
     GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT, GUID_TFCAT_TIPCAP_SECUREMODE,
     GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, ITfCategoryMgr,
     ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
-};
-use windows::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW, HKEY, HKEY_CLASSES_ROOT,
-    KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 use windows::core::{GUID, HSTRING, Interface, PCWSTR, Result};
 
