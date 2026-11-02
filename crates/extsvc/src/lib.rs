@@ -168,7 +168,10 @@ impl Registry {
                 format!("服务 {} 没有提供者", service_enum.key())
             })?;
         let (sender, receiver) = mpsc::channel();
-        if let Err(error) = provider.call(caller, method, args, Done { result: sender }) {
+        // 保留一个 Sender 直到调用结算:提供者返回 Ok 后可以不立即完成,
+        // 若这里只传临时值,接收端会提前看到断连而误报"没有回传结果"。
+        let done = Done { result: sender };
+        if let Err(error) = provider.call(caller, method, args, done.clone()) {
             self.record(caller, service, method, AuditOutcome::Denied, &error);
             return Err(error);
         }
