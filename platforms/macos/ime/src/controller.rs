@@ -280,7 +280,17 @@ impl LueyingInputController {
 
     fn caret_rect(&self) -> Option<NSRect> {
         let client = self.ivars().client.borrow();
-        let client = client.as_ref()?;
+        let client = client.as_deref()?;
+        // SAFETY:respondsToSelector: 只查询方法是否存在。
+        let responds: bool = unsafe {
+            msg_send![
+                client,
+                respondsToSelector: sel!(attributesForCharacterIndex:lineHeightRectangle:)
+            ]
+        };
+        if !responds {
+            return None;
+        }
         let mut rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0));
         // SAFETY:IMKTextInput 的客户端方法;index 0 表示当前选区。
         let _: *mut AnyObject = unsafe {

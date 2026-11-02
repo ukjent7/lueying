@@ -12,12 +12,12 @@ use lueying_render::panel::{
 };
 use objc2::rc::{Allocated, Retained, Weak};
 use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSPanel, NSPopUpMenuWindowLevel, NSScreen, NSView,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_foundation::{MainThreadMarker, NSInteger, NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSInteger, NSPoint, NSRect, NSSize};
 
 use crate::canvas::{AppKitCanvas, AppKitMeasure};
 use crate::theme;
