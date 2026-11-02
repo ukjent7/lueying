@@ -344,9 +344,8 @@ pub(super) fn check_shot_ocr(edit: HWND, hwnd: HWND) -> Result<String, String> {
         return Err(format!("SendInput 只发出 {sent} 个事件"));
     }
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut text = String::new();
     loop {
-        text = edit_text(edit);
+        let text = edit_text(edit);
         if text.contains(GOLDEN) {
             break;
         }

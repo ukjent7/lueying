@@ -116,10 +116,9 @@ fn check_ui(child: &mut Child, data: &Path) -> Result<Vec<String>, String> {
         .iter()
         .find(|element| {
             // 多行 TextEdit 在 UIA 代理下是 Document 控件类型;单行才是 Edit。
-            matches!(
-                kind(element),
-                Some(UIA_EditControlTypeId) | Some(UIA_DocumentControlTypeId)
-            )
+            kind(element).is_some_and(|kind| {
+                kind == UIA_EditControlTypeId || kind == UIA_DocumentControlTypeId
+            })
         })
         .ok_or("短语编辑器里没有文本控件")?;
     let value: IUIAutomationValuePattern = unsafe { edit.GetCurrentPatternAs(UIA_ValuePatternId) }

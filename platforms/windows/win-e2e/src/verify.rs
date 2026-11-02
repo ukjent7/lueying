@@ -290,26 +290,27 @@ fn ocr_check() -> Result<(Verdict, String), String> {
 }
 
 fn ocr_inner() -> Result<(Verdict, String), String> {
-    let languages = unsafe { OcrEngine::AvailableRecognizerLanguages() }
+    let languages = OcrEngine::AvailableRecognizerLanguages()
         .map_err(|e| format!("查询可用识别语言失败: {e}"))?;
-    let count = unsafe { languages.Size() }.map_err(|e| format!("识别语言数量: {e}"))?;
+    let count = languages.Size().map_err(|e| format!("识别语言数量: {e}"))?;
     let mut tags = Vec::new();
     for index in 0..count {
-        let tag = unsafe { languages.GetAt(index) }
-            .and_then(|language| unsafe { language.LanguageTag() })
+        let tag = languages
+            .GetAt(index)
+            .and_then(|language| language.LanguageTag())
             .map_err(|e| format!("识别语言 {index}: {e}"))?;
         tags.push(tag.to_string());
     }
-    let zh_language = unsafe { Language::CreateLanguage(&HSTRING::from("zh-Hans-CN")) }
+    let zh_language = Language::CreateLanguage(&HSTRING::from("zh-Hans-CN"))
         .map_err(|e| format!("建 zh-Hans-CN 语言对象失败: {e}"))?;
-    let zh_supported = unsafe { OcrEngine::IsLanguageSupported(&zh_language) }
+    let zh_supported = OcrEngine::IsLanguageSupported(&zh_language)
         .map_err(|e| format!("IsLanguageSupported: {e}"))?;
-    let engine = match unsafe { OcrEngine::TryCreateFromLanguage(&zh_language) } {
+    let engine = match OcrEngine::TryCreateFromLanguage(&zh_language) {
         Ok(engine) => Some(engine),
         Err(error) if zh_supported => {
             return Err(format!("zh 引擎创建失败但语言受支持: {error}"));
         }
-        Err(_) => unsafe { OcrEngine::TryCreateFromUserProfileLanguages() }.ok(),
+        Err(_) => OcrEngine::TryCreateFromUserProfileLanguages().ok(),
     };
     let Some(engine) = engine else {
         return Ok((
@@ -321,22 +322,26 @@ fn ocr_inner() -> Result<(Verdict, String), String> {
     };
     let sample = write_sample_bitmap()?;
     let path = HSTRING::from(sample.to_str().unwrap_or_default());
-    let file = unsafe { StorageFile::GetFileFromPathAsync(&path) }
+    let file = StorageFile::GetFileFromPathAsync(&path)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("GetFileFromPathAsync: {e}"))?;
-    let stream = unsafe { file.OpenAsync(FileAccessMode::Read) }
+    let stream = file
+        .OpenAsync(FileAccessMode::Read)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("OpenAsync: {e}"))?;
-    let decoder = unsafe { BitmapDecoder::CreateAsync(&stream) }
+    let decoder = BitmapDecoder::CreateAsync(&stream)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("BitmapDecoder: {e}"))?;
-    let bitmap = unsafe { decoder.GetSoftwareBitmapAsync() }
+    let bitmap = decoder
+        .GetSoftwareBitmapAsync()
         .and_then(|operation| operation.join())
         .map_err(|e| format!("GetSoftwareBitmapAsync: {e}"))?;
-    let recognized = unsafe { engine.RecognizeAsync(&bitmap) }
+    let recognized = engine
+        .RecognizeAsync(&bitmap)
         .and_then(|operation| operation.join())
         .map_err(|e| format!("RecognizeAsync: {e}"))?;
-    let text = unsafe { recognized.Text() }
+    let text = recognized
+        .Text()
         .map_err(|e| format!("OcrResult.Text: {e}"))?
         .to_string();
     let compact = text.split_whitespace().collect::<Vec<_>>().join("");
@@ -410,8 +415,8 @@ fn write_sample_bitmap() -> Result<PathBuf, String> {
 
         let pixels =
             std::slice::from_raw_parts(bits as *const u8, STRIDE * HEIGHT as usize).to_vec();
-        DeleteObject(font.into());
-        DeleteObject(section.into());
+        let _ = DeleteObject(font.into());
+        let _ = DeleteObject(section.into());
         let _ = DeleteDC(memory);
         let _ = ReleaseDC(None, hdc);
         pixels

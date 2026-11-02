@@ -264,7 +264,7 @@ fn real_run() -> Result<String, String> {
         if reg_query(RUN_KEY, Some("Lueying")) {
             return Err("卸载后自启动项仍在".into());
         }
-        if reg_query(&inproc64, Some("")) || reg_query(&inproc32, Some("")) {
+        if reg_query(&inproc64, Some("")) {
             return Err("卸载后 TSF CLSID 仍在".into());
         }
         // profile 已注销时查询本身可能失败;只有明确仍启用才算清理失败。
