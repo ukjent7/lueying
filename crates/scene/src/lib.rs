@@ -15,9 +15,9 @@ pub mod model;
 pub mod replay;
 pub mod runtime;
 
-pub use model::{Fill, Layer, PaletteName, Scene, parse};
+pub use model::{Fill, Layer, PaletteName, Scene, Shape, parse};
 pub use replay::{Script, replay};
-pub use runtime::{Body, EventName, Frame, Inputs, Item, Particle, Rect, Runtime};
+pub use runtime::{Body, EffectOut, EventName, Frame, Inputs, Item, Particle, Rect, Runtime};
 
 /// 场景文件的 JSON Schema;`lueying scene schema` 原样输出,编辑器拿它
 /// 做自动补全与即时报错。

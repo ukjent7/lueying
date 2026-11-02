@@ -44,7 +44,7 @@ impl SceneDebugLog {
         let now = Instant::now();
         for name in events {
             let key = lueying_scene::replay::name_of(name);
-            self.events.push_back((key, now));
+            self.events.push_back((key.clone(), now));
             while self.events.len() > DEBUG_EVENTS {
                 self.events.pop_front();
             }

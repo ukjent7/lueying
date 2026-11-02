@@ -18,10 +18,12 @@ const CANDIDATES_MAX: usize = 16;
 const IDLE_NEVER: f64 = 999.0;
 
 /// 一份回放脚本;`parse` 产出一个推到底的确定时间线。
+#[derive(Debug)]
 pub struct Script {
     steps: Vec<Step>,
 }
 
+#[derive(Debug)]
 struct Step {
     dt: f64,
     typing_rate: Option<f64>,

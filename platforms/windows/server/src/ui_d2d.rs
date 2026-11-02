@@ -217,6 +217,7 @@ fn window_loop(state: Arc<State>) {
     let script = crate::ext_host::Script::spawn(Arc::clone(&state));
     let scene = SceneHost::new();
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
+    let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
         hwnd,
         state: Arc::clone(&state),
@@ -233,7 +234,7 @@ fn window_loop(state: Arc<State>) {
         last_draw: None,
         pos: (0, 0),
         visible: false,
-        dead: pipe.is_none(),
+        dead,
     }));
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
@@ -665,7 +666,6 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         scene: scene_frame.as_deref().unwrap_or(&empty),
         scene_dir: &scene_dir,
     };
-    let started = Instant::now();
     let drawn = match ctx.pipe.as_mut() {
         Some(pipe) => pipe
             .paint_frame(&frame, &ctx.text)

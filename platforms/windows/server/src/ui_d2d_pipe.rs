@@ -1040,12 +1040,12 @@ fn scene_item(
                 };
                 // 图集横向排帧;@2x/@3x 素材按文件名比例换算源矩形。
                 let scale = asset_scale(src);
-                let frame_w = f32::from(grid[0]) * scale;
-                let frame_h = f32::from(grid[1]) * scale;
+                let frame_w = grid[0] as f32 * scale;
+                let frame_h = grid[1] as f32 * scale;
                 let source = D2D_RECT_F {
-                    left: f32::from(*frame) * frame_w,
+                    left: *frame as f32 * frame_w,
                     top: 0.0,
-                    right: (f32::from(*frame) + 1.0) * frame_w,
+                    right: (*frame as f32 + 1.0) * frame_w,
                     bottom: frame_h,
                 };
                 let _ = dc.DrawBitmap(
