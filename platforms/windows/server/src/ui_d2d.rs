@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extwasm::{SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
-use lueying_render::panel::{self, Metrics, PanelSpec};
 use lueying_render::Spring;
+use lueying_render::panel::{self, Metrics, PanelSpec};
 use lueying_scene::{EventName, Inputs};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -418,8 +418,11 @@ fn place(ctx: &mut WinCtx) {
             ctx.fx.rest = rect;
             let (x, y, w, h) = rect;
             // 出现动画里窗口带着弹簧位移落位;静止时位移为 0,落点不变。
-            let dy =
-                ctx.fx.show.as_ref().map_or(0.0, |spring| f64::from(spring.value()));
+            let dy = ctx
+                .fx
+                .show
+                .as_ref()
+                .map_or(0.0, |spring| f64::from(spring.value()));
             if let Err(e) = layout_window(ctx, (x, y + dy.round() as i32, w, h)) {
                 println!("D2D 候选窗调整失败: {e}");
                 return;

@@ -7,10 +7,10 @@
 
 use windows::Win32::Foundation::{BOOL, FARPROC, HWND};
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::core::{s, w};
 
 /// 亚克力着色的不透明度;太薄读不清文字,太厚看不见毛玻璃。
@@ -75,7 +75,11 @@ pub(super) fn apply(hwnd: HWND, material: Material) -> bool {
     let applied = material.on
         && composition_attribute().is_some_and(|set| unsafe { set(hwnd, &mut data).as_bool() });
     // Win11 的圆角由 DWM 裁;Win10 没有这个属性,静默忽略,方角亚克力可接受。
-    let corner = if applied { DWMWCP_ROUND } else { DWMWCP_DONOTROUND };
+    let corner = if applied {
+        DWMWCP_ROUND
+    } else {
+        DWMWCP_DONOTROUND
+    };
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd,
