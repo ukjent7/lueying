@@ -451,7 +451,6 @@ pub(super) struct Offscreen {
     core: Core,
     texture: ID3D11Texture2D,
     bitmap: ID2D1Bitmap1,
-    size: (u32, u32),
 }
 
 impl Offscreen {
@@ -489,14 +488,8 @@ impl Offscreen {
                 core,
                 texture,
                 bitmap,
-                size: (w, h),
             })
         }
-    }
-
-    /// 整幅像素读回;自检拿它比对两帧的差异。
-    pub(super) fn pixels(&mut self) -> Option<Vec<u8>> {
-        read_all(&self.core.d3d, &self.core.context, &self.texture, self.size)
     }
 }
 
@@ -523,49 +516,6 @@ impl Target for Offscreen {
 
     fn pixel(&mut self, x: i32, y: i32) -> Option<(u8, u8, u8)> {
         read_bgr(&self.core.d3d, &self.core.context, &self.texture, x, y)
-    }
-}
-
-/// 整幅像素读回(BGRA 预乘);自检拿它比对两帧的差异。
-fn read_all(
-    d3d: &ID3D11Device,
-    context: &ID3D11DeviceContext,
-    texture: &ID3D11Texture2D,
-    (w, h): (u32, u32),
-) -> Option<Vec<u8>> {
-    unsafe {
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: w,
-            Height: h,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_STAGING,
-            BindFlags: 0,
-            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-            MiscFlags: 0,
-        };
-        let mut staging: Option<ID3D11Texture2D> = None;
-        d3d.CreateTexture2D(&desc, None, Some(&mut staging)).ok()?;
-        let staging = staging?;
-        context.CopyResource(&staging, texture);
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        context
-            .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-            .ok()?;
-        let pitch = mapped.RowPitch as usize;
-        let mut buf = vec![0u8; (w * h * 4) as usize];
-        for row in 0..h as usize {
-            let src = mapped.pData.add(row * pitch) as *const u8;
-            let dst = buf.as_mut_ptr().add(row * w as usize * 4);
-            std::ptr::copy_nonoverlapping(src, dst, w as usize * 4);
-        }
-        context.Unmap(&staging, 0);
-        Some(buf)
     }
 }
 
