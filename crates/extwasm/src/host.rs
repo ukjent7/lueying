@@ -661,7 +661,10 @@ impl Guest {
 
     fn record_trap(&mut self, error: &wasmtime::Error) {
         let text = error.to_string().to_ascii_lowercase();
-        if text.contains("fuel") {
+        // 燃料耗尽后 store 的剩余燃料为 0;不同 wasmtime 版本的 trap 文案会变,
+        // 不能只靠字符串里的 "fuel" 判断。
+        let exhausted = self.store.get_fuel().is_ok_and(|left| left == 0);
+        if exhausted || text.contains("fuel") {
             self.metrics.timeouts.fetch_add(1, Ordering::Relaxed);
         }
         // 内存限额触发时 wasmtime 报 "memory ... exceeds memory limits" 或增长失败越界。

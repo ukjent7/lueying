@@ -77,8 +77,9 @@ fn fuel_stops_a_loop() {
         limits,
     )
     .expect("启动 worker");
-    assert!(worker.command_wait("run", "{}", WAIT).is_err());
-    assert!(worker.metrics().timeouts > 0);
+    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    let metrics = worker.metrics();
+    assert!(metrics.timeouts > 0, "error={error:?} metrics={metrics:?}");
 }
 
 #[test]
