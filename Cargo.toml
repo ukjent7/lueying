@@ -29,6 +29,8 @@ members = [
     "platforms/windows/server",
     "platforms/windows/tsf",
     "platforms/windows/installer",
+    # macOS 平台薄层:InputMethodKit 外壳与候选窗画布(仅 macOS 目标编译)
+    "platforms/macos/ime",
     # 验证与工具
     "crates/e2e",
     "platforms/windows/win-e2e",

@@ -5,6 +5,8 @@
 //! 实量,无字体的 E2E 与兜底路径用 [`Estimate`] 估算。布局与绘制必须
 //! 用同一个实现,保证所指即所画。
 
+use crate::paint::{Canvas, Color};
+
 /// 预编辑条高(逻辑像素);与 server 的 `PREEDIT_H` 一致。
 pub const PREEDIT_H: f32 = 32.0;
 /// 列表上内边距(`py_1`)。
@@ -382,5 +384,143 @@ pub fn menu_hit(x: f32, y: f32, metrics: &Metrics, mx: f32, my: f32) -> Option<u
         Some(1)
     } else {
         None
+    }
+}
+
+/// 一帧候选面板的绘制输入。
+pub struct Frame<'a> {
+    pub spec: &'a PanelSpec,
+    pub palette: &'a Palette,
+    pub metrics: Metrics,
+    /// 页内悬停候选;`None` 表示没有。
+    pub hover: Option<usize>,
+    /// 悬停的翻页箭头。
+    pub pager: Option<Hit>,
+}
+
+/// 画一帧候选面板:圆角底、拼音条、分页与候选行。
+///
+/// 这是跨平台画布的基准视觉,macOS 直接使用;Windows 的 D2D 路径另有
+/// 场景层与动画,不经过这里。布局与命中仍共用本文件的几何函数。
+pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
+    let s = frame.metrics.scale();
+    let width = panel_width(frame.spec, &frame.metrics, measure);
+    let height = panel_height(frame.spec, &frame.metrics, measure);
+    let body = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, height - s);
+    canvas.shadow_rrect(
+        Rect::from_xywh(2.0 * s, 3.0 * s, width - 4.0 * s, height - 6.0 * s),
+        9.0 * s,
+        16.0 * s,
+        crate::paint::Color::with_alpha(0x000000, 56),
+    );
+    canvas.fill_rrect(body, 8.0 * s, Color::opaque(frame.palette.bg));
+    canvas.stroke_rrect(
+        Rect::from_xywh(
+            body.left + 0.5 * s,
+            body.top + 0.5 * s,
+            (width - 2.0 * s).max(0.0),
+            (height - 2.0 * s).max(0.0),
+        ),
+        7.5 * s,
+        s,
+        Color::opaque(frame.palette.border),
+    );
+
+    // 拼音条:底色与一条只在有候选时出现的分隔线。顶部两角跟随面板圆角,
+    // 下半段用矩形补齐,避免方块盖住外框。
+    let bar = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, (PREEDIT_H - 0.5) * s);
+    canvas.fill_rrect(
+        Rect::from_xywh(bar.left, bar.top, bar.width(), 16.0 * s),
+        7.5 * s,
+        Color::opaque(frame.palette.surface_alt),
+    );
+    canvas.fill_rect(
+        Rect::from_xywh(bar.left, bar.top + 8.0 * s, bar.width(), bar.height() - 8.0 * s),
+        Color::opaque(frame.palette.surface_alt),
+    );
+    if !frame.spec.items.is_empty() {
+        canvas.fill_rect(
+            Rect::from_xywh(bar.left, (PREEDIT_H - 1.0) * s, bar.width(), s),
+            Color::opaque(frame.palette.border),
+        );
+    }
+    let has_pages = !frame.spec.preedit.page_label.is_empty();
+    let (prev, label, next) = pager_rects(width, &frame.metrics);
+    if has_pages {
+        for (rect, hit) in [(prev, Hit::PrevPage), (next, Hit::NextPage)] {
+            if frame.pager == Some(hit) {
+                canvas.fill_rrect(rect, 6.0 * s, Color::opaque(frame.palette.border));
+            }
+        }
+    }
+    canvas.text(
+        &frame.spec.preedit.text,
+        crate::paint::Point::new(12.0 * s, PREEDIT_H * s * 0.5),
+        13.0 * s,
+        Color::opaque(frame.palette.text_secondary),
+        Some((width - 100.0 * s).max(1.0)),
+    );
+    if has_pages {
+        canvas.text_centered("‹", prev, 15.0 * s, Color::opaque(frame.palette.text_secondary));
+        canvas.text_centered("›", next, 15.0 * s, Color::opaque(frame.palette.text_secondary));
+        canvas.text_centered(
+            &frame.spec.preedit.page_label,
+            label,
+            11.0 * s,
+            Color::opaque(frame.palette.text_tertiary),
+        );
+    }
+
+    let rects = item_rects(frame.spec, &frame.metrics, measure);
+    for (index, (item, rect)) in frame.spec.items.iter().zip(&rects).enumerate() {
+        let row_h = rect.height();
+        if item.selected {
+            canvas.fill_rrect(*rect, 4.0 * s, Color::opaque(frame.palette.selected_bg));
+            canvas.fill_rrect(
+                Rect::from_xywh(
+                    rect.left + 8.0 * s,
+                    rect.top + (row_h - 14.0 * s) * 0.5,
+                    2.0 * s,
+                    14.0 * s,
+                ),
+                s,
+                Color::opaque(frame.palette.accent_text),
+            );
+        } else if frame.hover == Some(index) {
+            canvas.fill_rrect(*rect, 4.0 * s, Color::opaque(frame.palette.hover));
+        }
+        canvas.text(
+            &format!("{}", index + 1),
+            crate::paint::Point::new(rect.left + 14.0 * s, rect.center_y()),
+            frame.metrics.small,
+            Color::opaque(if item.selected {
+                frame.palette.accent_text
+            } else {
+                frame.palette.text_tertiary
+            }),
+            Some(20.0 * s),
+        );
+        let text_x = rect.left + (8.0 + 2.0 + 4.0 + 12.0 + 4.0) * s;
+        canvas.text(
+            &item.text,
+            crate::paint::Point::new(text_x, rect.center_y()),
+            frame.metrics.text,
+            Color::opaque(if item.selected {
+                frame.palette.selected_text
+            } else {
+                frame.palette.text
+            }),
+            Some(frame.spec.max_text_width.max(1.0)),
+        );
+        if !item.hint.is_empty() {
+            let text_width = measure.width(&item.text, frame.metrics.text);
+            canvas.text(
+                &item.hint,
+                crate::paint::Point::new(text_x + text_width + 4.0 * s, rect.center_y()),
+                frame.metrics.small,
+                Color::opaque(frame.palette.text_tertiary),
+                Some(100.0 * s),
+            );
+        }
     }
 }
