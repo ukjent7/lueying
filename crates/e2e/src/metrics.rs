@@ -26,7 +26,7 @@ pub fn run(report: &mut String) -> usize {
     write_pack(
         &dir,
         &command_manifest("demo", &["run"], &[]),
-        &command_guest(GOOD),
+        command_guest(GOOD),
     );
     let order = vec!["demo".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
@@ -85,7 +85,7 @@ pub fn run(report: &mut String) -> usize {
     write_pack(
         &dir,
         &command_manifest("demo", &["run"], &[]),
-        &loop_guest(),
+        loop_guest(),
     );
     let limits = Limits {
         command_fuel: 1_000_000,

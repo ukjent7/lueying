@@ -112,7 +112,7 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
     }
 
     let dir = temp.pack("spin");
-    write_pack(&dir, &appearance_manifest("spin"), &init_loop_guest());
+    write_pack(&dir, &appearance_manifest("spin"), init_loop_guest());
     let limits = Limits {
         init_fuel: 1_000_000,
         ..Limits::default()
@@ -132,7 +132,7 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
 fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("scene");
     let dir = temp.pack("demo");
-    write_pack(&dir, &appearance_manifest("demo"), &appearance_guest(PATCH));
+    write_pack(&dir, &appearance_manifest("demo"), appearance_guest(PATCH));
     let Some(mut pack) = load_or_fail(checks, "正常包加载", &dir) else {
         return;
     };
@@ -202,7 +202,7 @@ fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &dir,
         &appearance_manifest("patch"),
-        &appearance_guest(PATCH),
+        appearance_guest(PATCH),
     );
     let Some(mut pack) = load_or_fail(checks, "补丁包加载", &dir) else {
         return;
@@ -214,7 +214,7 @@ fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &bad_dir,
         &appearance_manifest("badpatch"),
-        &error_guest("主题色 0xffffff 超出 24 位"),
+        error_guest("主题色 0xffffff 超出 24 位"),
     );
     let mut bad = Pack::load(&bad_dir).expect("加载坏补丁包");
     let refused = bad.dispatch(&SceneIn::default()).is_none();
@@ -234,7 +234,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &dir,
         &command_manifest("spin", &["run"], &[]),
-        &loop_guest(),
+        loop_guest(),
     );
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
@@ -263,7 +263,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &hog_dir,
         &command_manifest("hog", &["run"], &[]),
-        &hog_guest(),
+        hog_guest(),
     );
     let mut hog = Pack::load(&hog_dir).expect("加载内存包");
     let _ = hog.invoke_wait("run", "{}", Duration::from_secs(30));
@@ -279,7 +279,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &trap_dir,
         &command_manifest("trap", &["run"], &[]),
-        &trap_guest(),
+        trap_guest(),
     );
     let mut trap = Pack::load(&trap_dir).expect("加载 trap 包");
     for _ in 0..3 {
@@ -302,7 +302,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
 fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("privacy");
     let dir = temp.pack("demo");
-    write_pack(&dir, &appearance_manifest("demo"), &appearance_guest(PATCH));
+    write_pack(&dir, &appearance_manifest("demo"), appearance_guest(PATCH));
     let Some(mut pack) = load_or_fail(checks, "外观包加载", &dir) else {
         return;
     };
@@ -335,7 +335,7 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &boom_dir,
         &appearance_manifest("boom"),
-        &once_trap_appearance_guest(boom_patch),
+        once_trap_appearance_guest(boom_patch),
     );
     let mut boom = Pack::load(&boom_dir).expect("加载 trap 外观包");
     let crashed = boom.dispatch(&SceneIn::default()).is_none();
@@ -492,13 +492,13 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &first,
         &appearance_manifest("first"),
-        &appearance_guest(r#"{"accent":100001}"#),
+        appearance_guest(r#"{"accent":100001}"#),
     );
     let second = temp.pack("second");
     write_pack(
         &second,
         &appearance_manifest("second"),
-        &appearance_guest(r#"{"accent":200002}"#),
+        appearance_guest(r#"{"accent":200002}"#),
     );
     let (mut forward, _) = Runtime::open(
         &temp.root,
@@ -553,7 +553,7 @@ fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &dir,
         &command_manifest("sleep", &["run"], &[]),
-        &sleep_guest(10_000),
+        sleep_guest(10_000),
     );
     let (mut runtime, errors) =
         Runtime::open(&temp.root, &["sleep".to_string()], Limits::default());

@@ -24,7 +24,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &gate_dir,
         &command_manifest("gate", &["run"], &[]),
-        &service_guest("ocr", "recognize", r#"{"file":"x"}"#),
+        service_guest("ocr", "recognize", r#"{"file":"x"}"#),
     );
     let error = lueying_extwasm::Pack::load(&gate_dir)
         .err()
@@ -41,7 +41,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(
         &svc_dir,
         &command_manifest("svc", &["run"], &["notify"]),
-        &service_guest("notify", "show", "{}"),
+        service_guest("notify", "show", "{}"),
     );
     let registry = Arc::new(Registry::new());
     let (mut runtime, errors) = Runtime::open_with(
