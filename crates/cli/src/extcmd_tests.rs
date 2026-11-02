@@ -31,8 +31,9 @@ fn new_pack_unpack_roundtrip() {
     let root = temp_root("roundtrip");
     let dir = skeleton(&root, "demo");
     let manifest = fs::read_to_string(dir.join("manifest.json")).expect("读清单");
-    assert!(manifest.contains("\"api\":3"), "骨架清单是 API 3");
-    assert!(manifest.contains("extension.wasm"), "骨架清单指向 Wasm");
+    let value: serde_json::Value = serde_json::from_str(&manifest).expect("清单是 JSON");
+    assert_eq!(value["api"], 3, "骨架清单是 API 3");
+    assert_eq!(value["wasm"], "extension.wasm", "骨架清单指向 Wasm");
 
     let out = pack(&PackArgs {
         dir: dir.clone(),

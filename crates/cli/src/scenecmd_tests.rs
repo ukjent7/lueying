@@ -24,7 +24,7 @@ text = { content = \"你好\" }
 ";
 
 fn write_scene(dir: &Path) {
-    fs::create_dir_all(dir).expect("建场景目录");
+    fs::create_dir_all(dir.join("assets")).expect("建场景目录");
     fs::write(dir.join("scene.toml"), SCENE).expect("写 scene.toml");
     fs::write(
         dir.join("assets").join("glow.png"),
