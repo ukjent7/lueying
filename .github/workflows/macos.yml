@@ -38,7 +38,7 @@ jobs:
       - name: Clippy
         run: cargo clippy -p lueying-macos --all-targets --locked -- -D warnings
       - name: 测试
-        run: cargo test -p lueying-macos --locked
+        run: cargo test -p lueying-macos -p lueying-render --locked
       - name: 打包
         run: bash platforms/macos/package.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4

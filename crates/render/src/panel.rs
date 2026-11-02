@@ -387,11 +387,27 @@ pub fn menu_hit(x: f32, y: f32, metrics: &Metrics, mx: f32, my: f32) -> Option<u
     }
 }
 
+/// 面板底色由谁提供。
+///
+/// `Solid` 由本文件画实底、描边与投影;`Glass` 交给宿主用原生材质
+/// (macOS 的液态玻璃)做背板,本文件只画内容,底色一律压成半透明,
+/// 让材质透出来。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Surface {
+    /// 实底:本文件画底色、描边与投影。
+    #[default]
+    Solid,
+    /// 材质背板:宿主提供底色,本文件只画内容。
+    Glass,
+}
+
 /// 一帧候选面板的绘制输入。
 pub struct Frame<'a> {
     pub spec: &'a PanelSpec,
     pub palette: &'a Palette,
     pub metrics: Metrics,
+    /// 底色由谁提供。
+    pub surface: Surface,
     /// 页内悬停候选;`None` 表示没有。
     pub hover: Option<usize>,
     /// 悬停的翻页箭头。
@@ -407,46 +423,68 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
     let width = panel_width(frame.spec, &frame.metrics, measure);
     let height = panel_height(frame.spec, &frame.metrics, measure);
     let body = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, height - s);
-    canvas.shadow_rrect(
-        Rect::from_xywh(2.0 * s, 3.0 * s, width - 4.0 * s, height - 6.0 * s),
-        9.0 * s,
-        16.0 * s,
-        crate::paint::Color::with_alpha(0x000000, 56),
-    );
-    canvas.fill_rrect(body, 8.0 * s, Color::opaque(frame.palette.bg));
-    canvas.stroke_rrect(
-        Rect::from_xywh(
-            body.left + 0.5 * s,
-            body.top + 0.5 * s,
-            (width - 2.0 * s).max(0.0),
-            (height - 2.0 * s).max(0.0),
-        ),
-        7.5 * s,
-        s,
-        Color::opaque(frame.palette.border),
-    );
+    let glass = frame.surface == Surface::Glass;
+    // 材质背板上不透明色块会盖住材质,统一压成半透明。
+    let tint = |rgb: u32, alpha: u8| {
+        if glass {
+            Color::with_alpha(rgb, alpha)
+        } else {
+            Color::opaque(rgb)
+        }
+    };
+    if glass {
+        // 材质自带边缘,这里只留一道极淡的描边把轮廓点出来。
+        canvas.stroke_rrect(body, 8.0 * s, s, tint(frame.palette.border_strong, 0x4d));
+    } else {
+        canvas.shadow_rrect(
+            Rect::from_xywh(2.0 * s, 3.0 * s, width - 4.0 * s, height - 6.0 * s),
+            9.0 * s,
+            16.0 * s,
+            Color::with_alpha(0x000000, 56),
+        );
+        canvas.fill_rrect(body, 8.0 * s, Color::opaque(frame.palette.bg));
+        canvas.stroke_rrect(
+            Rect::from_xywh(
+                body.left + 0.5 * s,
+                body.top + 0.5 * s,
+                (width - 2.0 * s).max(0.0),
+                (height - 2.0 * s).max(0.0),
+            ),
+            7.5 * s,
+            s,
+            Color::opaque(frame.palette.border),
+        );
+    }
 
     // 拼音条:底色与一条只在有候选时出现的分隔线。顶部两角跟随面板圆角,
-    // 下半段用矩形补齐,避免方块盖住外框。
+    // 下半段用矩形补齐,避免方块盖住外框。材质背板上不铺底色,只留分隔线。
     let bar = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, (PREEDIT_H - 0.5) * s);
-    canvas.fill_rrect(
-        Rect::from_xywh(bar.left, bar.top, bar.width(), 16.0 * s),
-        7.5 * s,
-        Color::opaque(frame.palette.surface_alt),
-    );
-    canvas.fill_rect(
-        Rect::from_xywh(
-            bar.left,
-            bar.top + 8.0 * s,
-            bar.width(),
-            bar.height() - 8.0 * s,
-        ),
-        Color::opaque(frame.palette.surface_alt),
-    );
+    if !glass {
+        canvas.fill_rrect(
+            Rect::from_xywh(bar.left, bar.top, bar.width(), 16.0 * s),
+            7.5 * s,
+            Color::opaque(frame.palette.surface_alt),
+        );
+        canvas.fill_rect(
+            Rect::from_xywh(
+                bar.left,
+                bar.top + 8.0 * s,
+                bar.width(),
+                bar.height() - 8.0 * s,
+            ),
+            Color::opaque(frame.palette.surface_alt),
+        );
+    }
     if !frame.spec.items.is_empty() {
+        // 实底用原来的分隔线颜色;材质背板上换用亮一档的描边色,压成半透明。
+        let separator = if glass {
+            Color::with_alpha(frame.palette.border_strong, 0x4d)
+        } else {
+            Color::opaque(frame.palette.border)
+        };
         canvas.fill_rect(
             Rect::from_xywh(bar.left, (PREEDIT_H - 1.0) * s, bar.width(), s),
-            Color::opaque(frame.palette.border),
+            separator,
         );
     }
     let has_pages = !frame.spec.preedit.page_label.is_empty();
@@ -454,7 +492,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
     if has_pages {
         for (rect, hit) in [(prev, Hit::PrevPage), (next, Hit::NextPage)] {
             if frame.pager == Some(hit) {
-                canvas.fill_rrect(rect, 6.0 * s, Color::opaque(frame.palette.border));
+                canvas.fill_rrect(rect, 6.0 * s, tint(frame.palette.border, 0x4d));
             }
         }
     }
@@ -490,7 +528,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
     for (index, (item, rect)) in frame.spec.items.iter().zip(&rects).enumerate() {
         let row_h = rect.height();
         if item.selected {
-            canvas.fill_rrect(*rect, 4.0 * s, Color::opaque(frame.palette.selected_bg));
+            canvas.fill_rrect(*rect, 4.0 * s, tint(frame.palette.selected_bg, 0xb3));
             canvas.fill_rrect(
                 Rect::from_xywh(
                     rect.left + 8.0 * s,
@@ -502,7 +540,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
                 Color::opaque(frame.palette.accent_text),
             );
         } else if frame.hover == Some(index) {
-            canvas.fill_rrect(*rect, 4.0 * s, Color::opaque(frame.palette.hover));
+            canvas.fill_rrect(*rect, 4.0 * s, tint(frame.palette.hover, 0x66));
         }
         canvas.text(
             &format!("{}", index + 1),

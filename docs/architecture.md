@@ -43,12 +43,14 @@ lueying-user.exe（安装辅助工具：管理用户态输入法注册表与自�
 
 ## 渲染管线
 
-全部输入法表面共用同一套 Direct2D/DirectWrite 绘制代码，遵循 **硬件优先、软件设备兜底** 原则：
+Windows 侧的输入法表面共用同一套 Direct2D/DirectWrite 绘制代码，遵循 **硬件优先、软件设备兜底** 原则：
 
 - **候选窗口**：独立无焦点 Win32 窗口（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`），D3D11 → Direct2D → DirectComposition 交换链呈现；无硬件适配器时用 WARP 软件设备，绘制代码不变。
 - **异常恢复**：设备被摘除或驱动重启时，就地重建交换链与设备上下文，保证打字过程无中断。
 - **状态徽标与面板**：同一绘制层画到 32 位预乘位图，再经分层窗口或 BitBlt 上屏；徽标不占 GPU 资源，并在布局上与候选窗口动态避让。
 - **动效规格**：展开 140ms、淡出 90ms、翻页 90ms 滑动；支持随时被按键打断；系统开启「减少动态效果」时直接呈现终态。
+
+macOS 侧的候选窗是 InputMethodKit 外壳：无边框 `NSPanel` + 自绘 `NSView`，底色交给系统材质背板——macOS 26 用液态玻璃 `NSGlassEffectView`，更早的版本退回 `NSVisualEffectView`；系统要求降低透明度或提高对比度时改用自绘实底。出现动效由阻尼弹簧驱动：窗口自下方 6pt 弹回原位，约 260ms 落定；系统开启「减少动态效果」时直接呈现终态。布局、命中与绘制指令仍与 Windows 侧共用 `lueying-render` 的同一份几何。
 
 ## 用户数据模型
 

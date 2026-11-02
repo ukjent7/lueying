@@ -106,6 +106,8 @@ define_class!(
         #[unsafe(method(inputControllerWillClose))]
         fn input_controller_will_close(&self) {
             self.save_session();
+            // 收掉候选窗,动画计时器随之作废,不再有迟到的回调。
+            self.hide_panel();
         }
 
         /// 候选窗点击:kind 0=候选,1=上一页,2=下一页。
@@ -129,7 +131,9 @@ define_class!(
 
         #[unsafe(method(settleTimer:))]
         fn settle_timer(&self, _timer: &NSTimer) {
-            *self.ivars().settle_timer.borrow_mut() = None;
+            // 先取出计时器,借用结束后再释放它。
+            let expired = self.ivars().settle_timer.borrow_mut().take();
+            drop(expired);
             let active = {
                 let mut sessions = self.ivars().session.borrow_mut();
                 let Some(session) = sessions.as_mut() else {
@@ -144,6 +148,16 @@ define_class!(
             };
             if active {
                 self.refresh_panel();
+            }
+        }
+
+        /// 候选窗出现动画的逐帧回调;落定后候选窗自己作废计时器。
+        #[unsafe(method(panelTick:))]
+        fn panel_tick(&self, _timer: &NSTimer) {
+            // 落定会释放计时器;先把 Rc 取出来,别在借用中触发连锁释放。
+            let panel = self.ivars().panel.borrow().clone();
+            if let Some(panel) = panel {
+                panel.tick();
             }
         }
     }
@@ -267,7 +281,9 @@ impl LueyingInputController {
     }
 
     fn hide_panel(&self) {
-        if let Some(panel) = self.ivars().panel.borrow().as_ref() {
+        // 隐藏会作废动画计时器,先把 Rc 取出来再调用。
+        let panel = self.ivars().panel.borrow().clone();
+        if let Some(panel) = panel {
             panel.hide();
         }
     }
@@ -319,7 +335,9 @@ impl LueyingInputController {
     }
 
     fn cancel_settle(&self) {
-        if let Some(timer) = self.ivars().settle_timer.borrow_mut().take() {
+        // 先取出,借用结束后再作废计时器。
+        let timer = self.ivars().settle_timer.borrow_mut().take();
+        if let Some(timer) = timer {
             timer.invalidate();
         }
     }
