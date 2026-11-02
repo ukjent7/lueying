@@ -1,7 +1,5 @@
-# push/PR:构建、静态检查、快速 E2E 与 Windows 构建体积门禁;
-# 共享语料全量基准在 quality.yml 定时跑,不占 push 门禁。
-# Windows 全链路 E2E 成本高,移到 quality.yml 定时与发版前跑。
-# 全量语料与安装冒烟在 quality.yml 定时跑。
+# push/PR:构建、静态检查与 Windows 构建体积门禁;
+# E2E、候选基准与安装冒烟成本高,全部在 quality.yml 定时与发版前跑。
 name: ci
 
 on:
@@ -95,6 +93,9 @@ jobs:
       # 不必为此编译 Windows 原生链路。
       - name: Protocol 单元测试
         run: cargo test -p lueying-protocol --lib --locked
+      # 服务端纯逻辑单测:E2E 覆盖不到的边界组合,debug 构建足够。
+      - name: 服务端单元测试
+        run: cargo test -p lueying-server --lib --locked
       # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
       - name: Wasm guest 构建
         run: cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
@@ -106,68 +107,6 @@ jobs:
           cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extsvc -p lueying-extguest --lib --locked
           cargo test -p lueying-bypass --locked
           cargo test -p lueying-cli --lib --locked
-
-  # 每次提交的快速质量门禁:全部 E2E 场景 + 快速候选基准。
-  # 1444 条共享语料逐条重排成本高,放 quality.yml 定时跑。
-  quality:
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          lookup-only: ${{ github.event_name == 'pull_request' }}
-          # Linux 三个 job 共用一份缓存:同一把锁、同一批依赖,谁先跑完谁落地,
-          # 其余 job 恢复同一份,省去各自冷启动全量编译。
-          prefix-key: linux
-      # 单元测试补回归网密度;E2E 仍是主路径,这里只测纯逻辑边界。
-      - name: 服务端单元测试
-        run: cargo test -p lueying-server --lib --release --locked
-      - name: 缓存词典与模型
-        id: dict-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
-      - name: 下载白霜词库
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_frost.sh data/frost
-      - name: 下载神经重排模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载精简语法模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_gram.sh data
-      - name: 下载 PP-OCRv6 模型
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_ppocr.sh data/ppocr
-      - name: 转换词典
-        if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-      - name: 构建 shot-ocr guest
-        run: |
-          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
-          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-      - name: 快速 E2E + 快速候选基准
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench-fast
-      - name: 报告摘要
-        if: always()
-        shell: bash
-        run: |
-          for f in target/e2e-report.md target/bench-report.md; do
-            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
-          done
-      - name: 上传报告
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: quality-fast-report
-          path: |
-            target/e2e-report.md
-            target/bench-report.md
 
   windows:
     if: ${{ !cancelled() }}
@@ -181,7 +120,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 缓存只留 windows job(Windows 原生链路编译最慢,ubuntu 两个 job 全量也只要几分钟);
+      # 缓存只留 windows job(Windows 原生链路编译最慢,Linux job 全量也只要几分钟);
       # PR 时 lookup-only 只恢复不保存,否则 PR 作用域会另存一份 1.5GB,挤爆 10GB 免费配额
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
