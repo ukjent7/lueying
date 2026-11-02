@@ -39,10 +39,9 @@ fn attributes(size: f32, color: Color) -> Retained<NSDictionary<NSAttributedStri
     let color = ns_color(color);
     let font: Retained<AnyObject> = unsafe { Retained::cast_unchecked(font) };
     let color: Retained<AnyObject> = unsafe { Retained::cast_unchecked(color) };
-    NSDictionary::from_retained_objects(
-        &[NSFontAttributeName, NSForegroundColorAttributeName],
-        &[font, color],
-    )
+    // SAFETY:两个属性名都是 AppKit 导出的常量字符串。
+    let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
+    NSDictionary::from_retained_objects(&keys, &[font, color])
 }
 
 impl Canvas for AppKitCanvas {
