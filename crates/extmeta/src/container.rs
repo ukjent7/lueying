@@ -126,6 +126,9 @@ pub fn decode(data: &[u8]) -> Result<Files, String> {
             return Err(bad(format!("包里出现未知行,文件可能被截断: {line:?}")));
         }
     }
+    if files.is_empty() {
+        return Err(bad("包是空的".into()));
+    }
     Ok(files)
 }
 

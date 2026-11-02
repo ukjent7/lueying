@@ -49,8 +49,8 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # 全量基准基线约 21 分钟;补词后曾跑到 34 分钟,给足余量避免中途丢报告。
-    timeout-minutes: 60
+    # 全量语料 + 共享语料实测 45~60 分钟,给足余量避免中途丢报告。
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

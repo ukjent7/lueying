@@ -20,7 +20,8 @@ fn sample() -> Files {
 #[test]
 fn round_trips_files() {
     let packed = encode(&sample()).unwrap();
-    let text = std::str::from_utf8(&packed).unwrap();
+    // 二进制块原样内嵌,整包不保证 UTF-8;只看可读的控制行。
+    let text = String::from_utf8_lossy(&packed);
     assert!(text.starts_with("### lueying-pack v2\n"));
     assert!(text.contains("### begin: manifest.json 1\n"));
     assert!(text.contains("### binary: demo.wasm 6\n"));
