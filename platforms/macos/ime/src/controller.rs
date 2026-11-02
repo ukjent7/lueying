@@ -45,6 +45,7 @@ const KEY_UP: u16 = 0x7e;
 /// 停顿重排的静默窗口,与 Windows 侧一致。
 const SETTLE_DELAY: f64 = 0.12;
 
+#[derive(Default)]
 struct ControllerIvars {
     session: RefCell<Option<Session>>,
     client: RefCell<Option<Retained<AnyObject>>>,
@@ -52,19 +53,6 @@ struct ControllerIvars {
     settle_timer: RefCell<Option<Retained<NSTimer>>>,
     shift_down: Cell<bool>,
     shift_tapped: Cell<bool>,
-}
-
-impl Default for ControllerIvars {
-    fn default() -> Self {
-        Self {
-            session: RefCell::new(None),
-            client: RefCell::new(None),
-            panel: RefCell::new(None),
-            settle_timer: RefCell::new(None),
-            shift_down: Cell::new(false),
-            shift_tapped: Cell::new(false),
-        }
-    }
 }
 
 define_class!(

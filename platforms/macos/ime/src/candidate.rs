@@ -35,18 +35,10 @@ struct PanelModel {
     pager: Option<Hit>,
 }
 
+#[derive(Default)]
 struct CandidateViewIvars {
     model: RefCell<Option<PanelModel>>,
     target: RefCell<Option<Weak<AnyObject>>>,
-}
-
-impl Default for CandidateViewIvars {
-    fn default() -> Self {
-        Self {
-            model: RefCell::new(None),
-            target: RefCell::new(None),
-        }
-    }
 }
 
 define_class!(
