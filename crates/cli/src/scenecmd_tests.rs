@@ -18,9 +18,12 @@ fn temp_root(tag: &str) -> PathBuf {
 }
 
 const SCENE: &str = "\
-version = 1
-[node.panel]
-text = { content = \"你好\" }
+[[nodes]]
+id = \"glow\"
+kind = \"shape\"
+shape = \"rect\"
+anchor = \"panel\"
+fill = \"accent\"
 ";
 
 fn write_scene(dir: &Path) {
