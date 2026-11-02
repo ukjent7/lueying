@@ -527,7 +527,10 @@ pub fn refresh_scene_debug(settings: &mut Settings) {
         Some(scene) if scene.active => {
             settings.say(Notice::Success, scene_summary(&scene));
         }
-        Some(_) => settings.say(Notice::Info, "场景层未启用;在「扩展」页导入并启用一个场景皮肤"),
+        Some(_) => settings.say(
+            Notice::Info,
+            "场景层未启用;在「扩展」页导入并启用一个场景皮肤",
+        ),
         None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
     }
 }

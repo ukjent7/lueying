@@ -17,8 +17,7 @@ pub use lueying_extmeta::container::PACK_HEADER;
 /// 参与打包的文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
 /// `.wasm` 是唯一的代码,其余是清单、文档与场景皮肤的素材。
 const PACK_EXTS: &[&str] = &[
-    "json", "txt", "md", "wasm", "toml", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3",
-    "ogg",
+    "json", "txt", "md", "wasm", "toml", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg",
 ];
 
 /// `ext new` 的参数。
@@ -157,10 +156,12 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     collect(dir, &mut files)?;
     files.sort();
     let wasm = manifest.wasm_main().to_string();
-    if !wasm.is_empty() && !files.iter().any(|path| {
-        path.strip_prefix(dir)
-            .is_ok_and(|relative| relative.to_string_lossy().replace('\\', "/") == wasm)
-    }) {
+    if !wasm.is_empty()
+        && !files.iter().any(|path| {
+            path.strip_prefix(dir)
+                .is_ok_and(|relative| relative.to_string_lossy().replace('\\', "/") == wasm)
+        })
+    {
         return Err(format!(
             "清单声明了 {wasm} 但目录里没有;先构建 guest 再打包"
         ));

@@ -261,9 +261,7 @@ fn parse_scene<I>(mut args: I) -> Result<Invocation, String>
 where
     I: Iterator<Item = String>,
 {
-    let sub = args
-        .next()
-        .ok_or("缺子命令;用 check、replay 或 schema")?;
+    let sub = args.next().ok_or("缺子命令;用 check、replay 或 schema")?;
     match sub.as_str() {
         "check" => {
             let mut path: Option<PathBuf> = None;
@@ -315,9 +313,7 @@ where
             }
             Ok(Invocation::SceneSchema)
         }
-        other => Err(format!(
-            "未知子命令 {other:?};用 check、replay 或 schema"
-        )),
+        other => Err(format!("未知子命令 {other:?};用 check、replay 或 schema")),
     }
 }
 

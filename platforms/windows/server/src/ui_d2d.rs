@@ -717,7 +717,11 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     } else {
         None
     };
-    let scene_dir = ctx.scene.dir().unwrap_or(std::path::Path::new("")).to_path_buf();
+    let scene_dir = ctx
+        .scene
+        .dir()
+        .unwrap_or(std::path::Path::new(""))
+        .to_path_buf();
     let empty: Vec<lueying_scene::Item> = Vec::new();
     let frame = Frame {
         spec: &spec,
