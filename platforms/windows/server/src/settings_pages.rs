@@ -215,12 +215,6 @@ impl Settings {
                     "effects" => Control::ButtonsToggle {
                         items: vec![
                             Button {
-                                id: Id::new(ids::EFFECTS, 0),
-                                text: "目录".to_string(),
-                                kind: ButtonKind::Secondary,
-                                enabled: true,
-                            },
-                            Button {
                                 id: Id::new(ids::SCENE_DEBUG, 0),
                                 text: "调试".to_string(),
                                 kind: ButtonKind::Secondary,
