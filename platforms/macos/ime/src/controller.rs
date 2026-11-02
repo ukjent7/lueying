@@ -88,14 +88,15 @@ define_class!(
             let this: Option<Retained<Self>> = unsafe {
                 msg_send![super(this), initWithServer: server, delegate: delegate, client: client]
             };
-            let this = this?;
-            if let Some(client) = client {
-                *this.ivars().client.borrow_mut() = Some(client.retain());
-            }
-            let mut session = Session::new();
-            session.set_client(client);
-            *this.ivars().session.borrow_mut() = Some(session);
-            Some(this)
+            this.map(|this| {
+                if let Some(client) = client {
+                    *this.ivars().client.borrow_mut() = Some(client.retain());
+                }
+                let mut session = Session::new();
+                session.set_client(client);
+                *this.ivars().session.borrow_mut() = Some(session);
+                this
+            })
         }
 
         /// 接收按键与修饰键变化;返回 true 表示输入法消费了事件。
