@@ -65,6 +65,8 @@ pub(super) struct Frame<'a> {
     pub spec: &'a PanelSpec,
     pub palette: &'a Palette,
     pub metrics: Metrics,
+    /// 背板由 DWM 亚克力出底色;自绘只铺半透明内容层。
+    pub glass: bool,
     /// 整窗透明度(淡入/淡出)。
     pub opacity: f32,
     /// 候选列表动效(翻页滑动)。
@@ -587,6 +589,25 @@ fn color(rgb: u32) -> D2D1_COLOR_F {
     }
 }
 
+/// 0xRRGGBB 带透明度转 D2D 颜色;材质背板上的内容层用。
+fn color_a(rgb: u32, alpha: u8) -> D2D1_COLOR_F {
+    D2D1_COLOR_F {
+        a: f32::from(alpha) / 255.0,
+        ..color(rgb)
+    }
+}
+
+impl Frame<'_> {
+    /// 实底照原样上色;材质背板上压成半透明,免得盖住亚克力。
+    fn tint(&self, rgb: u32, alpha: u8) -> D2D1_COLOR_F {
+        if self.glass {
+            color_a(rgb, alpha)
+        } else {
+            color(rgb)
+        }
+    }
+}
+
 /// 场景配色转主题色。
 fn scene_fill(fill: Fill, palette: &Palette) -> u32 {
     match fill {
@@ -695,9 +716,14 @@ fn paint(
         }
         dc.PushLayer(&mask_params, None::<&ID2D1Layer>);
         // 底色圆角矩形 + 1px 描边(内缩 0.5px 让描边完整落在窗口里)。
-        brush.SetColor(&color(f.palette.bg));
-        dc.FillRoundedRectangle(&rrect(body, 8.0 * s), &brush);
-        brush.SetColor(&color(f.palette.border));
+        // 材质背板上不透明底色会盖住亚克力;底色不铺,描边换亮一档压半透明。
+        if !f.glass {
+            brush.SetColor(&color(f.palette.bg));
+            dc.FillRoundedRectangle(&rrect(body, 8.0 * s), &brush);
+            brush.SetColor(&color(f.palette.border));
+        } else {
+            brush.SetColor(&f.tint(f.palette.border_strong, 0x4d));
+        }
         dc.DrawRoundedRectangle(
             &rrect(
                 panel::Rect::from_xywh(
@@ -1175,19 +1201,27 @@ fn preedit_bar(
 ) {
     unsafe {
         let s = f.metrics.scale();
-        brush.SetColor(&color(f.palette.surface_alt));
-        dc.FillRectangle(
-            &D2D_RECT_F {
-                left: 0.0,
-                top: 0.0,
-                right: width,
-                bottom: panel::PREEDIT_H * s,
-            },
-            brush,
-        );
+        // 材质背板上不铺拼音条底色,让亚克力透出来。
+        if !f.glass {
+            brush.SetColor(&color(f.palette.surface_alt));
+            dc.FillRectangle(
+                &D2D_RECT_F {
+                    left: 0.0,
+                    top: 0.0,
+                    right: width,
+                    bottom: panel::PREEDIT_H * s,
+                },
+                brush,
+            );
+        }
         // 只有当前页有候选才画分隔线,空页不留一条孤线。
         if !f.spec.items.is_empty() {
-            brush.SetColor(&color(f.palette.border));
+            let separator = if f.glass {
+                f.tint(f.palette.border_strong, 0x4d)
+            } else {
+                color(f.palette.border)
+            };
+            brush.SetColor(&separator);
             dc.FillRectangle(
                 &D2D_RECT_F {
                     left: 0.0,
@@ -1204,7 +1238,7 @@ fn preedit_bar(
         if has_pages {
             for (rect, hit) in [(prev, Hit::PrevPage), (next, Hit::NextPage)] {
                 if f.pager == Some(hit) {
-                    brush.SetColor(&color(f.palette.border));
+                    brush.SetColor(&f.tint(f.palette.border, 0x4d));
                     dc.FillRoundedRectangle(&rrect(rect, 6.0 * s), brush);
                 }
             }
@@ -1301,7 +1335,7 @@ fn draw_items(
             let row_h = rect.height();
             // 选中块:柔和底色 + 左侧 2px 主色条;悬停块只给非选中行。
             if item.selected {
-                brush.SetColor(&color(f.palette.selected_bg));
+                brush.SetColor(&f.tint(f.palette.selected_bg, 0xb3));
                 dc.FillRoundedRectangle(&rrect(*rect, 4.0 * s), brush);
                 brush.SetColor(&color(f.palette.accent_text));
                 dc.FillRoundedRectangle(
@@ -1317,7 +1351,7 @@ fn draw_items(
                     brush,
                 );
             } else if f.hover == Some(index) {
-                brush.SetColor(&color(f.palette.hover));
+                brush.SetColor(&f.tint(f.palette.hover, 0x66));
                 dc.FillRoundedRectangle(&rrect(*rect, 4.0 * s), brush);
             }
             let index_rgb = if item.selected {

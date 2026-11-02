@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use lueying_extwasm::{SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
 use lueying_render::panel::{self, Metrics, PanelSpec};
+use lueying_render::Spring;
 use lueying_scene::{EventName, Inputs};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -32,6 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, w};
 
 use crate::imp::State;
+use crate::ui_d2d_material::{self, Material};
 use crate::ui_d2d_mouse;
 use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
 use crate::ui_d2d_scene::SceneHost;
@@ -41,9 +43,12 @@ use crate::ui_place::{self, CARET_GAP};
 const ANIM_TICK: Duration = Duration::from_millis(5);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
-/// 首次出现淡入:首帧就有 45% 不透明度,140ms 内到 100%,避免快速打字时候选短暂不可见。
-const SHOW_FADE: Duration = Duration::from_millis(140);
-const SHOW_START_OPACITY: f32 = 0.45;
+/// 出现动画的起始落差(逻辑像素);乘缩放成物理像素,弹簧把它带回原位。
+const ENTER_DISTANCE: f32 = 6.0;
+/// 出现弹簧参数:刚度、阻尼、质量;与 macOS 候选窗同一组。
+const SPRING_STIFFNESS: f32 = 360.0;
+const SPRING_DAMPING: f32 = 28.0;
+const SPRING_MASS: f32 = 1.0;
 /// 组合结束后的淡出时长;期间沿用最后一份内容并让鼠标穿透。
 const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 翻页时候选内容横向滑入,90ms 内归位。
@@ -72,8 +77,10 @@ pub(super) fn spawn(state: Arc<State>) {
 /// 窗口线程的动画与交互状态;全部归窗口线程所有。
 #[derive(Default)]
 pub(super) struct Fx {
-    /// 淡入截止时刻;`None` 表示没有在淡入。
-    show: Option<Instant>,
+    /// 出现弹簧:窗口从落点下方弹回,落定清空。
+    show: Option<Spring>,
+    /// 本次出现的起始落差(物理像素);进度归一用。
+    enter: f32,
     /// 淡出截止时刻;期间沿用最后一份内容并让鼠标穿透。
     hide: Option<Instant>,
     /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。
@@ -102,6 +109,8 @@ pub(super) struct Fx {
     first_frame: bool,
     /// 本次组合的起点;场景的动画时钟从这儿算。
     since: Option<Instant>,
+    /// 静止位置(屏幕坐标);弹簧只在它附近挪窗口。
+    rest: (i32, i32, i32, i32),
 }
 
 impl Fx {
@@ -128,10 +137,10 @@ impl Fx {
             .unwrap_or(0.0)
     }
 
-    /// 入场/翻页进度:静止为 1,淡出时退回 0。
+    /// 入场/翻页进度:静止为 1,淡出时退回 0;出现中按弹簧位移归一。
     fn anim(&self, now: Instant) -> f32 {
-        if let Some(end) = self.show {
-            return ease_out_quint(progress(SHOW_FADE, end, now));
+        if let Some(spring) = self.show {
+            return (1.0 - spring.value() / self.enter.max(1.0)).clamp(0.0, 1.0);
         }
         if let Some(end) = self.hide {
             return 1.0 - ease_out_quint(progress(HIDE_FADE, end, now));
@@ -176,6 +185,8 @@ pub(super) struct WinCtx {
     visible: bool,
     /// 出帧路径彻底走不通:候选窗停用。
     dead: bool,
+    /// 已落的背板材质:(期望态, 亚克力是否启用);变化才调窗口属性。
+    material: Option<(Material, bool)>,
 }
 
 /// 窗口线程主循环:排干消息、轮询会话、按需重绘。
@@ -235,6 +246,7 @@ fn window_loop(state: Arc<State>) {
         pos: (0, 0),
         visible: false,
         dead,
+        material: None,
     }));
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
@@ -368,10 +380,17 @@ fn place(ctx: &mut WinCtx) {
                 // 新组合:第一帧走素色,场景时钟从现在起算。
                 ctx.fx.first_frame = true;
                 ctx.fx.since = Some(Instant::now());
+                // 出现动画:窗口从落点下方 6pt 弹回原位;「减少动态效果」直接就位。
+                ctx.fx.enter = match view.caret {
+                    Some((l, _, r, b)) => ENTER_DISTANCE * ui_place::scale_at(l.min(r), b),
+                    None => ENTER_DISTANCE,
+                };
                 ctx.fx.show = if ctx.fx.reduce {
                     None
                 } else {
-                    Some(Instant::now() + SHOW_FADE)
+                    let mut spring = Spring::new(SPRING_STIFFNESS, SPRING_DAMPING, SPRING_MASS);
+                    spring.set(ctx.fx.enter);
+                    Some(spring)
                 };
             }
             ctx.fx.hide = None;
@@ -396,7 +415,12 @@ fn place(ctx: &mut WinCtx) {
                 park(ctx);
                 return;
             }
-            if let Err(e) = layout_window(ctx, rect) {
+            ctx.fx.rest = rect;
+            let (x, y, w, h) = rect;
+            // 出现动画里窗口带着弹簧位移落位;静止时位移为 0,落点不变。
+            let dy =
+                ctx.fx.show.as_ref().map_or(0.0, |spring| f64::from(spring.value()));
+            if let Err(e) = layout_window(ctx, (x, y + dy.round() as i32, w, h)) {
                 println!("D2D 候选窗调整失败: {e}");
                 return;
             }
@@ -532,11 +556,36 @@ fn animate(ctx: &mut WinCtx) {
         return;
     }
     // 到期的动画清掉;终态与上一帧在视觉上已重合,下轮不再进动画分支。
-    if ctx.fx.show.is_some_and(|end| now >= end) {
-        ctx.fx.show = None;
-    }
     if ctx.fx.slide.is_some_and(|(_, end)| now >= end) {
         ctx.fx.slide = None;
+    }
+    // 出现弹簧推进一帧;窗口跟着弹簧值落位,落定精确停在静止位置。
+    let mut settled = false;
+    if let Some(spring) = ctx.fx.show.as_mut() {
+        if spring.step(ANIM_TICK.as_secs_f32()) {
+            let (x, y, w, h) = ctx.fx.rest;
+            let dy = f64::from(spring.value());
+            unsafe {
+                let _ = SetWindowPos(
+                    ctx.hwnd,
+                    Some(HWND_TOPMOST),
+                    x,
+                    y + dy.round() as i32,
+                    w,
+                    h,
+                    SWP_NOACTIVATE,
+                );
+            }
+        } else {
+            settled = true;
+        }
+    }
+    if settled {
+        ctx.fx.show = None;
+        let (x, y, w, h) = ctx.fx.rest;
+        unsafe {
+            let _ = SetWindowPos(ctx.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+        }
     }
     let animating = ctx.fx.hide.is_some() || ctx.fx.show.is_some() || ctx.fx.slide.is_some();
     if let Some(view) = (animating || ctx.scene.live())
@@ -588,10 +637,26 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     // 皮肤(skin.toml)叠在脚本主题色之上,是用户显式放置的最后一层;
     // 高对比度下 with_skin 原样返回。
     let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
+    // 用户的 skin.toml 是显式选择的自绘配色,有皮肤就不上材质背板。
+    let skinless = skin.is_empty();
     let palette =
         lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
     // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
     drop(skin);
+    // 材质背板:亚克力由 DWM 出底色,自绘只铺半透明内容层;系统关闭
+    // 「透明效果」、高对比度、有皮肤或落属性失败时回实底主题。
+    let wanted = Material {
+        on: !high_contrast && skinless && ui_d2d_material::transparency_enabled(),
+        tint: colors.bg,
+    };
+    let glass = match ctx.material {
+        Some((cached, applied)) if cached == wanted => applied,
+        _ => {
+            let applied = ui_d2d_material::apply(ctx.hwnd, wanted);
+            ctx.material = Some((wanted, applied));
+            applied
+        }
+    };
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
         Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),
@@ -602,11 +667,9 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
     spec.width = ui_place::measure_width(view, layout, &metrics, &ctx.text);
     let now = Instant::now();
+    // 出现靠弹簧位移,透明度恒为 1;淡出仍按旧节奏渐隐。
     let opacity = if let Some(end) = ctx.fx.hide {
         (1.0 - ease_out_quint(progress(HIDE_FADE, end, now))).max(0.0)
-    } else if let Some(end) = ctx.fx.show {
-        SHOW_START_OPACITY
-            + (1.0 - SHOW_START_OPACITY) * ease_out_quint(progress(SHOW_FADE, end, now))
     } else {
         1.0
     };
@@ -657,6 +720,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         spec: &spec,
         palette: &palette,
         metrics,
+        glass,
         opacity,
         list,
         hover: ctx.fx.hover,

@@ -60,6 +60,9 @@ mod ui_place;
 mod ui_d2d;
 
 #[cfg(windows)]
+mod ui_d2d_material;
+
+#[cfg(windows)]
 mod ui_d2d_mouse;
 
 #[cfg(windows)]
