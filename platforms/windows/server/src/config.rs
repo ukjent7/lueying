@@ -375,13 +375,6 @@ pub fn punct_path() -> Option<PathBuf> {
     user_file("punct.txt")
 }
 
-/// 场景目录(`%APPDATA%\lueying\scene`);scene.toml 与素材都放这里。
-pub fn scene_dir() -> Option<PathBuf> {
-    let base =
-        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    Some(base.join("lueying").join("scene"))
-}
-
 /// 运行期扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
 pub fn extensions_dir() -> Option<PathBuf> {
     user_file("extensions")

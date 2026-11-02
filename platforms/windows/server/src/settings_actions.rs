@@ -209,61 +209,6 @@ fn open_text_file(settings: &mut Settings, path: Option<PathBuf>, template: &str
     }
 }
 
-/// 打开场景目录:没有 scene.toml 就写一份官方示例当起点,再拉起资源
-/// 管理器。用户改完存盘,候选窗一秒内热重载。
-pub fn open_scene(settings: &mut Settings) {
-    settings.confirm_clear = false;
-    let Some(dir) = config::scene_dir() else {
-        settings.say(Notice::Error, "没有可写的场景目录");
-        return;
-    };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        settings.say(Notice::Error, format!("建目录失败: {e}"));
-        return;
-    }
-    let starter = dir.join("scene.toml");
-    let mut written = false;
-    if !starter.exists() {
-        match std::fs::write(&starter, SCENE_STARTER) {
-            Ok(()) => written = true,
-            Err(e) => {
-                settings.say(Notice::Error, format!("写 {} 失败: {e}", starter.display()));
-                return;
-            }
-        }
-    }
-    match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
-        Ok(_) => settings.say(
-            Notice::Info,
-            if written {
-                format!("已写入示例场景,打开 {}", dir.display())
-            } else {
-                format!("已打开 {}", dir.display())
-            },
-        ),
-        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
-    }
-}
-
-/// 场景起步示例:打字光晕,官方示例库的第一个,改完存盘即生效。
-const SCENE_STARTER: &str = r#"# 场景 = 候选窗的装饰层。改完存盘一秒内热重载;字段全表见 docs。
-[signals.energy]
-from = "typing_rate"
-gain = 0.6
-decay = "1.5s"
-
-[[nodes]]
-id = "glow"
-kind = "shape"
-shape = "rrect"
-anchor = "highlight"
-inset = -5
-radius = 6
-fill = "accent"
-opacity = "lerp(0.15, 0.55, energy)"
-effect = { kind = "blur", radius = "lerp(2, 10, energy)" }
-"#;
-
 /// PP-OCRv6 原生扩展是否齐全;设置页据此写「可用 / 未安装」。
 pub fn ppocr_ready() -> bool {
     config::ppocr_dir().is_some()
@@ -486,7 +431,7 @@ fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
     let manifest =
         lueying_extmeta::Manifest::parse(manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
     let payload = manifest.payload_file().to_string();
-    if !files.iter().any(|(name, _)| *name == payload) {
+    if !payload.is_empty() && !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));
     }
     let staging = root.join(format!(".import-{}", manifest.id));
@@ -519,15 +464,14 @@ fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
         return Err(format!("落盘失败: {error}"));
     }
     let _ = std::fs::remove_dir_all(&backup);
-    let kind = if manifest.is_native() {
-        "原生扩展"
+    let (kind, next) = if manifest.is_native() {
+        ("原生扩展", "在「运行期扩展」里同意后可用")
+    } else if manifest.is_scene() {
+        ("场景皮肤", "在「运行期扩展」里启用即可")
     } else {
-        "扩展"
+        ("扩展", "在「运行期扩展」里同意后可用")
     };
-    Ok(format!(
-        "{kind} {} 已导入;在「运行期扩展」里同意后可用",
-        manifest.name
-    ))
+    Ok(format!("{kind} {} 已导入;{next}", manifest.name))
 }
 
 fn now_ms() -> u64 {
@@ -583,7 +527,7 @@ pub fn refresh_scene_debug(settings: &mut Settings) {
         Some(scene) if scene.active => {
             settings.say(Notice::Success, scene_summary(&scene));
         }
-        Some(_) => settings.say(Notice::Info, "场景层未启用;先把 scene.toml 放进场景目录"),
+        Some(_) => settings.say(Notice::Info, "场景层未启用;在「扩展」页导入并启用一个场景皮肤"),
         None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
     }
 }

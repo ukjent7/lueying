@@ -185,6 +185,43 @@ fn pack_rejects_non_utf8_text_files() {
 }
 
 #[test]
+fn pack_validates_scene_skins() {
+    let root = temp_root("scene-pack");
+    let dir = root.join("glow");
+    fs::create_dir_all(&dir).expect("建目录");
+    fs::write(
+        dir.join("manifest.json"),
+        r#"{"id":"glow","name":"微光","version":"0.1.0","api":3,"kind":"scene"}"#,
+    )
+    .expect("写清单");
+
+    let error = pack(&PackArgs {
+        dir: dir.clone(),
+        out: None,
+    })
+    .expect_err("没有 scene.toml 要报错");
+    assert!(error.contains("scene.toml"), "{error}");
+
+    fs::write(dir.join("scene.toml"), "nodes = ][").expect("写坏场景");
+    let error = pack(&PackArgs {
+        dir: dir.clone(),
+        out: None,
+    })
+    .expect_err("坏 scene.toml 要报错");
+    assert!(error.contains("scene.toml 不合法"), "{error}");
+
+    fs::write(
+        dir.join("scene.toml"),
+        "[[nodes]]\nid = \"glow\"\nkind = \"shape\"\nshape = \"rrect\"\nanchor = \"highlight\"\n",
+    )
+    .expect("写合法场景");
+    let out = pack(&PackArgs { dir, out: None }).expect("场景皮肤要能打包");
+    let (id, files) = unpack(&fs::read(out).expect("读包")).expect("unpack 应成功");
+    assert_eq!(id, "glow");
+    assert!(files.iter().any(|(name, _)| name == "scene.toml"));
+}
+
+#[test]
 fn unpack_rejects_bad_header_and_unsafe_paths() {
     assert!(unpack("没有头".as_bytes()).is_err(), "缺头要被拒绝");
 

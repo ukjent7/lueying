@@ -51,8 +51,7 @@ pub fn take_result() -> Option<Result<String, String>> {
 pub fn install(id: &str) -> Result<String, String> {
     let extension = official_extensions::find(id).ok_or_else(|| format!("未知官方扩展 {id}"))?;
     if extension.is_extension() {
-        install_bundled(extension)?;
-        return Ok(format!("{} 已安装;启用前需要同意权限", extension.name));
+        return install_bundled(extension);
     }
     install_model(extension)?;
     if extension.id == "ppocr" {
@@ -64,7 +63,7 @@ pub fn install(id: &str) -> Result<String, String> {
     Ok(format!("{} 已下载并校验;重启输入法后生效", extension.name))
 }
 
-fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
+fn install_bundled(extension: &OfficialExtension) -> Result<String, String> {
     let relative = extension
         .bundled
         .as_deref()
@@ -91,14 +90,19 @@ fn install_bundled(extension: &OfficialExtension) -> Result<(), String> {
             parsed.id, extension.id
         ));
     }
-    if !target.join(parsed.wasm_main()).is_file() {
+    if !parsed.wasm_main().is_empty() && !target.join(parsed.wasm_main()).is_file() {
         let _ = std::fs::remove_dir_all(&target);
         return Err(format!(
             "随包目录缺少 Wasm 模块 {};发布包不完整",
             parsed.wasm_main()
         ));
     }
-    Ok(())
+    let next = if parsed.is_scene() {
+        "在「运行期扩展」里启用即可"
+    } else {
+        "在「运行期扩展」里同意后可用"
+    };
+    Ok(format!("{} 已安装;{next}", extension.name))
 }
 
 /// 随包扩展在安装目录的 `extensions/`;开发构建回退仓库根目录。

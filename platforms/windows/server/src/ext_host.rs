@@ -486,6 +486,11 @@ fn load(
             println!("原生扩展 {id}:由服务提供者按需调用");
             continue;
         }
+        if manifest.is_scene() {
+            // 场景皮肤是纯声明包:候选窗场景层按启用清单加载,这里没有可执行体。
+            println!("场景皮肤 {id}:由候选窗场景层加载");
+            continue;
+        }
         match book.check(&dir, &manifest) {
             Ok(check) if !check.required || check.approved => {
                 approved.push(id.clone());

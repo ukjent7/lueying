@@ -1,10 +1,10 @@
-# 场景装饰(scene.toml)
+# 场景皮肤(scene.toml)
 
-候选窗装饰层:在文字下面或上面画几何、图片、精灵与粒子,用声明式表达式驱动动效。纯数据,没有代码;改完存盘 1 秒内热重载。
+候选窗装饰层:在文字下面或上面画几何、图片、精灵与粒子,用声明式表达式驱动动效。纯数据,没有代码;皮肤扩展装好或改盘后 1 秒内热重载。
 
-## 目录与文件
+## 打包与启用
 
-`%APPDATA%\lueying\scene\scene.toml`(设置 → 候选 → 场景装饰 → 目录 可直达;首次打开会写入示例)。图片、精灵帧等素材放同目录,节点里写相对路径。隐私字段(密码框)与系统高对比度下整层自动停用。
+皮肤以扩展形态分发:目录里放 `manifest.json`(`"kind": "scene"`,清单契约见 [扩展](extensions/README.md))、`scene.toml` 与素材(图片、精灵帧等,节点里写相对路径),`lueying ext pack` 打成 `.luext`,在设置「扩展」页导入并启用。启用列表里第一个皮肤扩展生效,停用即回到素色候选窗。隐私字段(密码框)与系统高对比度下整层自动停用;「场景装饰」开关整体停用。
 
 ## 结构
 
@@ -46,14 +46,13 @@ do = [
 
 - `lueying scene check <文件|目录>`:校验,中文报错带行号。
 - `lueying scene schema`:输出 JSON Schema,编辑器补全用。
-- `lueying scene pack <目录>`:把场景目录(scene.toml + 素材)打成 `.luext` 归档,可 diff 的纯文本容器。
-- `lueying scene install <源> [--dir <目录>] [--force]`:安装场景包或目录到场景目录(默认 `%APPDATA%\lueying\scene`),装完一秒内热重载生效。
+- `lueying ext pack <目录>`:把皮肤扩展目录(manifest.json + scene.toml + 素材)打成 `.luext` 归档,可 diff 的纯文本容器;装包用 `lueying ext install` 或设置页导入。
 - `lueying scene replay <脚本> [--scene scene.toml] [--json]`:事件模拟器,不敲键盘把动画推完;`LUEYING_SCENE_RECORD=<路径>` 录下真实会话,录出的文件直接喂给 replay 改。
 - 设置窗「场景装饰」行的「调试」按钮:拉一帧场景快照,报最近帧 p50/最大耗时与抽象事件流,不含任何文字内容。
-- 官方示例:`crates/scene/scenes/`(光晕、下划线、状态环、背景轮播、mascot)。
+- 官方示例:`crates/scene/scenes/`(下划线、状态环、背景轮播、mascot);可安装的皮肤扩展样例在 `extensions/glow/`。
 
 ## 常见问题
 
-- **改了没生效?** 检查设置里的「场景装饰」开关;解析失败会打日志并沿用上一个合法版本,修好保存即恢复。
+- **改了没生效?** 检查皮肤扩展是否在设置「扩展」页里启用、「场景装饰」开关是否打开;解析失败会打日志并沿用上一个合法版本,修好保存即恢复。
 - **怎么只换颜色不动?** 用 [skin.toml](skin.md),场景层是给动效与图形用的。
 - **动画卡?** 单帧有表达式与粒子预算,粒子池 256;把 blur 半径的表达式范围调小最先见效。

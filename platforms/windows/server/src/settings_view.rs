@@ -28,7 +28,6 @@ pub mod ids {
     pub const LAYOUT: &str = "layout";
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
-    pub const EFFECTS: &str = "effects";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";
@@ -247,7 +246,6 @@ pub enum Action {
     Close,
     CheckUpdate,
     InstallUpdate(String),
-    OpenEffects,
     ChooseScript,
     OpenScripts,
     ImportLuext,
@@ -464,7 +462,6 @@ impl Settings {
         match id.base.as_str() {
             ids::OCR_DIR => Some(Action::OpenOcrModels),
             ids::UPDATE => Some(Action::CheckUpdate),
-            ids::EFFECTS => Some(Action::OpenEffects),
             ids::SCRIPTS => Some(Action::ChooseScript),
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
             ids::IMPORT_LUEXT => Some(Action::ImportLuext),

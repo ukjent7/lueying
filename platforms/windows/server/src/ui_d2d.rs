@@ -226,7 +226,7 @@ fn window_loop(state: Arc<State>) {
         )
     };
     let script = crate::ext_host::Script::spawn(Arc::clone(&state));
-    let scene = SceneHost::new();
+    let scene = SceneHost::new(&state);
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
@@ -295,7 +295,7 @@ fn window_loop(state: Arc<State>) {
         }
         // 场景目录有变化就热重载;一秒一查,成本是一次文件元数据读取。
         let ctx = unsafe { &mut *ctx };
-        ctx.scene.refresh(now);
+        ctx.scene.refresh(now, &ctx.state);
         // 淡入/淡出/滑动进行中按循环节奏重绘;场景活着也按节奏推进。
         if busy_animating(ctx) || (scene_live(ctx) && now >= next_scene_frame) {
             next_scene_frame = now + SCENE_INTERVAL;
@@ -717,7 +717,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     } else {
         None
     };
-    let scene_dir = ctx.scene.dir().to_path_buf();
+    let scene_dir = ctx.scene.dir().unwrap_or(std::path::Path::new("")).to_path_buf();
     let empty: Vec<lueying_scene::Item> = Vec::new();
     let frame = Frame {
         spec: &spec,

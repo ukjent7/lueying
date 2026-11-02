@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use lueying_cli::{
     Invocation, SceneReplayArgs, TopOptions, USAGE, default_metrics_path, extcmd, parse_args,
-    read_metrics, render_json, render_table, replay, scenecmd,
+    read_metrics, render_json, render_table, replay,
 };
 
 fn main() -> ExitCode {
@@ -63,18 +63,6 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::SceneCheck(path) => scene_check(&path)?,
         Invocation::SceneSchema => print!("{}", lueying_scene::SCHEMA),
         Invocation::SceneReplay(args) => scene_replay(&args)?,
-        Invocation::ScenePack(args) => {
-            let path = scenecmd::pack(&args)?;
-            println!(
-                "已打包 {};下一步:lueying scene install {}",
-                path.display(),
-                path.display()
-            );
-        }
-        Invocation::SceneInstall(args) => {
-            let dir = scenecmd::install(&args)?;
-            println!("已安装到 {};场景一秒内热重载生效", dir.display());
-        }
     }
     Ok(())
 }

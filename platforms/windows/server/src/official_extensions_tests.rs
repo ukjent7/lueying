@@ -23,6 +23,7 @@ fn catalog_ids_are_unique_and_known() {
         }
     }
     assert!(find("shot-ocr").is_some());
+    assert!(find("glow").is_some());
     assert!(find("ppocr").is_some());
     assert!(find("rerank-25m").is_some());
 }

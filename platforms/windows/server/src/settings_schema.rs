@@ -701,7 +701,7 @@ pub static SETTINGS: &[SettingDef] = &[
     SettingDef {
         key: "effects",
         title: "场景装饰",
-        detail: "场景装饰层,scene.toml 一秒内热重载",
+        detail: "场景装饰层;皮肤扩展装好或改盘后一秒内热重载",
         value: ValueType::Bool,
         default: DefaultValue::Bool(true),
         ui: Some(UiDef {

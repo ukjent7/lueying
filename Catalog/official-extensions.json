@@ -11,6 +11,15 @@
       "bundled": "extensions/shot-ocr"
     },
     {
+      "id": "glow",
+      "name": "微光",
+      "version": "0.1.0",
+      "kind": "extension",
+      "description": "候选窗场景皮肤：打字时边框泛起呼吸微光；纯声明包，装好启用即生效",
+      "size": "约 2 KB",
+      "bundled": "extensions/glow"
+    },
+    {
       "id": "ppocr",
       "name": "PP-OCRv6 识别引擎",
       "version": "0.1.0",

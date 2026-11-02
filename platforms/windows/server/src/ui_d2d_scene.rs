@@ -1,9 +1,11 @@
-//! 场景层宿主:加载 `scene.toml`、热重载、把会话差异翻成事件、按帧喂信号。
+//! 场景层宿主:加载皮肤扩展的 `scene.toml`、热重载、把会话差异翻成事件、
+//! 按帧喂信号。
 //!
-//! 场景运行时(`lueying_scene`)是纯确定性的,素材与文件都在这侧:
-//! 目录 `%APPDATA%\lueying\scene`,改完 scene.toml 一秒内生效;解析失败
-//! 只废掉场景,候选窗照常。隐私字段(密码框)下整个场景层停用,由窗口层
-//! 保证;这里不碰任何候选文字,信号全是几何与计数。
+//! 场景运行时(`lueying_scene`)是纯确定性的,素材与文件都在这侧:场景
+//! 皮肤是清单 `kind = "scene"` 的扩展,启用列表里第一个皮肤扩展生效,装/停
+//! 或改盘一秒内跟着走;解析失败只废掉场景,候选窗照常。隐私字段(密码框)
+//! 下整个场景层停用,由窗口层保证;这里不碰任何候选文字,信号全是几何与
+//! 计数。
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
@@ -14,6 +16,8 @@ use lueying_protocol::SessionView;
 use lueying_scene::{EventName, Inputs, Runtime};
 
 use lueying_server::config;
+
+use crate::imp::State;
 
 /// 场景调试记录的环形容量:帧与事件各记多少条。
 const DEBUG_FRAMES: usize = 64;
@@ -101,7 +105,7 @@ fn open_recorder() -> Option<std::fs::File> {
     }
 }
 
-/// 效果目录的检查间隔;用户改完 scene.toml 一秒内生效。
+/// 效果目录的检查间隔;皮肤扩展装/停或改盘一秒内生效。
 const RELOAD_CHECK: Duration = Duration::from_millis(1000);
 /// 打字速率的统计窗;窗口内次数除以窗长。
 const RATE_WINDOW: Duration = Duration::from_secs(2);
@@ -109,9 +113,36 @@ const RATE_WINDOW: Duration = Duration::from_secs(2);
 const BURST_COUNT: u32 = 3;
 const BURST_WINDOW: Duration = Duration::from_millis(1000);
 
+/// 场景皮肤的来源:启用列表里第一个 `kind = "scene"` 的扩展目录。
+///
+/// 扩展在设置里启停,装/卸就是文件变化,场景层一秒内跟着走。
+fn scene_source(state: &State) -> Option<PathBuf> {
+    let enabled = state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .extensions
+        .clone();
+    let root = config::extensions_dir()?;
+    for id in enabled {
+        let dir = root.join(&id);
+        let Ok(bytes) = std::fs::read(dir.join("manifest.json")) else {
+            continue;
+        };
+        let Ok(manifest) = lueying_extmeta::Manifest::parse(&bytes) else {
+            continue;
+        };
+        if manifest.is_scene() {
+            return Some(dir);
+        }
+    }
+    None
+}
+
 /// 场景层宿主;归窗口线程所有。
 pub(super) struct SceneHost {
-    dir: PathBuf,
+    /// 皮肤扩展目录;`None` 表示没有启用的场景皮肤。
+    dir: Option<PathBuf>,
     runtime: Option<Runtime>,
     stamp: Option<SystemTime>,
     next_check: Instant,
@@ -128,11 +159,10 @@ pub(super) struct SceneHost {
 }
 
 impl SceneHost {
-    /// 读场景目录;文件不存在或解析失败都不算错误,候选窗照常。
-    pub(super) fn new() -> Self {
-        let dir = config::scene_dir().unwrap_or_else(|| PathBuf::from("lueying-scene"));
+    /// 读启用列表里的场景皮肤;没有或解析失败都不算错误,候选窗照常。
+    pub(super) fn new(state: &State) -> Self {
         let mut host = Self {
-            dir,
+            dir: scene_source(state),
             runtime: None,
             stamp: None,
             next_check: Instant::now(),
@@ -143,13 +173,15 @@ impl SceneHost {
             burst_until: None,
             recorder: open_recorder(),
         };
-        host.reload();
+        if host.dir.is_some() {
+            host.reload();
+        }
         host
     }
 
     /// 场景素材目录;图片与精灵的相对路径从这儿解析。
-    pub(super) fn dir(&self) -> &std::path::Path {
-        &self.dir
+    pub(super) fn dir(&self) -> Option<&std::path::Path> {
+        self.dir.as_deref()
     }
 
     /// 场景是否可用;不可用时窗口层整层跳过,一行代码都不多跑。
@@ -157,23 +189,33 @@ impl SceneHost {
         self.runtime.is_some()
     }
 
-    /// 目录有变化就重新解析;坏了保留旧场景并报错,下次保存还有机会。
-    pub(super) fn refresh(&mut self, now: Instant) {
+    /// 目录或其 scene.toml 有变化就重新解析;坏了保留旧场景并报错,下次保存还有机会。
+    pub(super) fn refresh(&mut self, now: Instant, state: &State) {
         if now < self.next_check {
             return;
         }
         self.next_check = now + RELOAD_CHECK;
-        let stamp = std::fs::metadata(self.dir.join("scene.toml"))
-            .and_then(|meta| meta.modified())
-            .ok();
-        if stamp == self.stamp {
+        let dir = scene_source(state);
+        let stamp = dir
+            .as_ref()
+            .and_then(|dir| std::fs::metadata(dir.join("scene.toml")).ok())
+            .and_then(|meta| meta.modified().ok());
+        if dir == self.dir && stamp == self.stamp {
             return;
         }
+        self.dir = dir;
         self.reload();
     }
 
     fn reload(&mut self) {
-        let path = self.dir.join("scene.toml");
+        let Some(dir) = self.dir.clone() else {
+            self.stamp = None;
+            if self.runtime.take().is_some() {
+                println!("场景皮肤扩展已停用,场景层退出");
+            }
+            return;
+        };
+        let path = dir.join("scene.toml");
         self.stamp = std::fs::metadata(&path)
             .and_then(|meta| meta.modified())
             .ok();

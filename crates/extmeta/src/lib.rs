@@ -25,7 +25,7 @@ pub const EXT_API: u32 = 3;
 pub const MAX_TEXT_CHARS: usize = 4096;
 
 /// 扩展形态。Wasm 在宿主进程内解释执行;原生是独立进程的服务提供者,
-/// 由旁路宿主按需拉起并沙箱化。
+/// 由旁路宿主按需拉起并沙箱化;场景皮肤是纯声明包,候选窗场景层直接加载。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
@@ -34,6 +34,8 @@ pub enum Kind {
     Wasm,
     /// 原生可执行文件。
     Native,
+    /// 场景皮肤:包内 `scene.toml` 与素材,没有任何可执行体。
+    Scene,
 }
 
 /// 扩展清单,对应包内的 `manifest.json`。
@@ -422,6 +424,23 @@ impl Manifest {
                 }
                 check_entry("可执行文件", &self.exe, "exe")?;
             }
+            Kind::Scene => {
+                if !self.wasm.is_empty() {
+                    return Err("kind=scene 清单不能声明 wasm 模块".into());
+                }
+                if !self.exe.is_empty() {
+                    return Err("kind=scene 清单不能声明 exe".into());
+                }
+                if !self.needs.is_empty() {
+                    return Err("场景皮肤是纯声明包,清单不能声明 needs".into());
+                }
+                if !self.capabilities.is_empty() {
+                    return Err("场景皮肤不执行代码,清单不能声明 capabilities".into());
+                }
+                if self.activate.is_some() {
+                    return Err("场景皮肤是纯声明包,清单不能声明 activate".into());
+                }
+            }
         }
         check_settings(&self.settings)?;
         if !self.capabilities.is_empty() {
@@ -439,17 +458,24 @@ impl Manifest {
         &self.wasm
     }
 
-    /// 主内容文件名:Wasm 模块或原生可执行文件。同意指纹对它算哈希。
+    /// 主内容文件名:Wasm 模块或原生可执行文件。同意指纹对它算哈希;
+    /// 场景皮肤没有可执行体,返回空串(它们不申请能力,不走同意)。
     pub fn payload_file(&self) -> &str {
         match self.kind {
             Kind::Wasm => &self.wasm,
             Kind::Native => &self.exe,
+            Kind::Scene => "",
         }
     }
 
     /// 是否原生扩展(独立进程的服务提供者)。
     pub fn is_native(&self) -> bool {
         self.kind == Kind::Native
+    }
+
+    /// 是否场景皮肤扩展(纯声明包)。
+    pub fn is_scene(&self) -> bool {
+        self.kind == Kind::Scene
     }
 
     /// 是否声明了候选窗外观。
