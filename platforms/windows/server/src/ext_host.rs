@@ -471,6 +471,7 @@ fn load(
         .map(ConsentBook::load)
         .unwrap_or_default();
     let mut approved = Vec::new();
+    let mut network_grants: Vec<(String, Vec<String>)> = Vec::new();
     for id in order {
         let dir = root.join(id);
         let manifest = match lueying_extwasm::manifest_at(&dir) {
@@ -493,6 +494,9 @@ fn load(
         }
         match book.check(&dir, &manifest) {
             Ok(check) if !check.required || check.approved => {
+                if let Some(grant) = &manifest.network {
+                    network_grants.push((id.clone(), grant.allow.clone()));
+                }
                 approved.push(id.clone());
             }
             Ok(check) => {
@@ -532,6 +536,9 @@ fn load(
     let hotkey: Arc<services::HotkeyProvider> = Arc::clone(hotkey);
     registry.set(Service::Hotkey, hotkey);
     registry.set(Service::Notify, Arc::new(services::NotifyProvider));
+    let network = services::NetworkProvider::new(services::network_broker());
+    network.set_allow(network_grants);
+    registry.set(Service::Network, Arc::new(network));
     let gate: ConsentGate = {
         let path = consent_path;
         Arc::new(move |manifest, dir| {

@@ -17,8 +17,8 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 pub use lueying_extproto::{
-    ClipboardText, Delivered, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot,
-    StoreKeys, StoreValue,
+    ClipboardText, Delivered, FetchArgs, FetchResult, OcrText, PanelResult, SCENE_API, SceneIn,
+    ScenePatch, Shot, StoreKeys, StoreValue, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS,
 };
 
 /// 结果缓冲区的字节数。服务结果超过这个值时宿主回错误信封。
@@ -74,6 +74,8 @@ unsafe extern "C" {
     fn host_notify(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
     #[link_name = "hotkey"]
     fn host_hotkey(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
+    #[link_name = "network"]
+    fn host_network(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -121,6 +123,11 @@ unsafe extern "C" fn host_notify(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn host_hotkey(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
+    -1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn host_network(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
     -1
 }
 
@@ -179,6 +186,15 @@ pub fn store_remove(key: &str) -> Result<(), String> {
 /// 列出扩展私有存储的全部键。
 pub fn store_list() -> Result<StoreKeys, String> {
     call_typed(host_store, "list", "")
+}
+
+/// 经独立 broker 发一次 HTTP(S) 请求;域名必须在清单 network.allow
+/// 白名单里,宿主逐请求强制。响应体是文本;体积与时限缺省值见
+/// [`FETCH_DEFAULT_LIMIT`] 与 [`FETCH_DEFAULT_TIMEOUT_MS`]。
+pub fn network_fetch(options: &FetchArgs) -> Result<FetchResult, String> {
+    let args = serde_json::to_string(options)
+        .map_err(|error| format!("联网参数序列化失败: {error}"))?;
+    call_typed(host_network, "fetch", &args)
 }
 
 /// 发一条系统通知;v1 落在宿主日志里。

@@ -270,6 +270,9 @@ pub struct NativeConfig {
     /// 额外授予 AppContainer 只读执行权限的路径(模型目录等)。
     /// Windows 之外的平台忽略。
     pub readable: Vec<PathBuf>,
+    /// 是否套沙箱(Windows 的无能力 AppContainer)。下载来的原生扩展要
+    /// 沙箱;自有组件(联网 broker)要开网络,关掉。
+    pub sandboxed: bool,
 }
 
 struct Live {
@@ -394,6 +397,7 @@ impl NativeHost {
             &self.shared.config.args,
             &self.shared.config.readable,
             self.shared.limiter.as_deref(),
+            self.shared.config.sandboxed,
         )?;
         let Some(stdin) = child.take_stdin() else {
             kill(&mut child);

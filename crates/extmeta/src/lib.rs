@@ -71,9 +71,22 @@ pub struct Manifest {
     /// 申请的权限;授权页与同意记录用。
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// 联网白名单;`needs` 声明 `network` 时必填。
+    #[serde(default)]
+    pub network: Option<NetworkGrant>,
     /// 声明式设置:宿主渲染设置页,值存在 `[ext.<id>]`。
     #[serde(default)]
     pub settings: Vec<Setting>,
+}
+
+/// 联网白名单:扩展声明它能访问的域名,用户同意后由宿主提供者逐请求
+/// 强制。条目是 `host` 或 `host:port`,没有 scheme 与路径;不带端口的
+/// 条目只放行该 scheme 的默认端口(https 443、http 80)。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkGrant {
+    /// 允许访问的域名,1 到 32 条,精确匹配。
+    pub allow: Vec<String>,
 }
 
 /// 一条声明式设置。设置页按 `type` 渲染,值落在 `config.toml` 的
@@ -274,11 +287,13 @@ pub enum Service {
     Store,
     /// 系统通知。
     Notify,
+    /// 经独立 broker 进程访问清单白名单里的域名;server 保持离线。
+    Network,
 }
 
 impl Service {
     /// 全部服务;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Capture,
         Self::Ocr,
         Self::Clipboard,
@@ -287,6 +302,7 @@ impl Service {
         Self::Hotkey,
         Self::Store,
         Self::Notify,
+        Self::Network,
     ];
 
     /// 清单里的服务名,也是 Wasm 导入的函数名后缀。
@@ -300,6 +316,7 @@ impl Service {
             Self::Hotkey => "hotkey",
             Self::Store => "store",
             Self::Notify => "notify",
+            Self::Network => "network",
         }
     }
 
@@ -314,6 +331,7 @@ impl Service {
             Self::Hotkey => "注册全局热键",
             Self::Store => "读写扩展存储",
             Self::Notify => "系统通知",
+            Self::Network => "访问外部网络(高敏感)",
         }
     }
 
@@ -323,7 +341,12 @@ impl Service {
             Self::Capture => Some(Permission::ScreenCapture),
             Self::Ocr => Some(Permission::Ocr),
             Self::Clipboard => Some(Permission::Clipboard),
-            Self::Panel | Self::Output | Self::Hotkey | Self::Store | Self::Notify => None,
+            Self::Panel
+            | Self::Output
+            | Self::Hotkey
+            | Self::Store
+            | Self::Notify
+            | Self::Network => None,
         }
     }
 }
@@ -447,6 +470,7 @@ impl Manifest {
             check_capabilities(&self.capabilities)?;
         }
         check_services(&self.needs)?;
+        check_network(self)?;
         if let Some(activate) = &self.activate {
             activate.validate()?;
         }
@@ -695,6 +719,84 @@ fn check_services(services: &[Service]) -> Result<(), String> {
             return Err(format!("宿主服务 {} 重复声明", service.key()));
         }
         seen.push(*service);
+    }
+    Ok(())
+}
+
+/// 联网白名单的完整性与域名格式;白名单是同意书的一部分,改一个域名
+/// 就要重新同意。
+fn check_network(manifest: &Manifest) -> Result<(), String> {
+    let declared = manifest.needs.contains(&Service::Network);
+    match (&manifest.network, declared) {
+        (Some(_), false) => {
+            return Err("清单声明 network 白名单前,needs 里要先有 network".into());
+        }
+        (None, true) => {
+            return Err("needs 声明 network 就要给出 network.allow 域名白名单".into());
+        }
+        _ => {}
+    }
+    let Some(grant) = &manifest.network else {
+        return Ok(());
+    };
+    if grant.allow.is_empty() {
+        return Err("network.allow 不能为空;没有可访问的域名就别声明 network".into());
+    }
+    if grant.allow.len() > 32 {
+        return Err("network.allow 超过 32 条上限".into());
+    }
+    for (index, entry) in grant.allow.iter().enumerate() {
+        check_allow_host(entry)?;
+        if grant.allow[..index]
+            .iter()
+            .any(|other| other.eq_ignore_ascii_case(entry))
+        {
+            return Err(format!("白名单条目 {entry:?} 重复"));
+        }
+    }
+    Ok(())
+}
+
+/// 白名单条目:`host` 或 `host:port`,精确匹配才可审计,不收通配符。
+/// IPv6 字面量带方括号(如 `[::1]:8080`)。
+fn check_allow_host(entry: &str) -> Result<(), String> {
+    let bad = |reason: &str| format!("白名单条目 {entry:?} {reason}");
+    let (host, port) = if let Some(body) = entry.strip_prefix('[') {
+        let Some(end) = body.find(']') else {
+            return Err(bad("IPv6 缺右括号"));
+        };
+        let (v6, rest) = (&body[..end], &body[end + 1..]);
+        match rest.strip_prefix(':') {
+            Some(port) => (v6, Some(port)),
+            None if rest.is_empty() => (v6, None),
+            None => return Err(bad("应为 [IPv6]:端口")),
+        }
+    } else {
+        match entry.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (entry, None),
+        }
+    };
+    if let Some(port) = port {
+        port.parse::<u16>()
+            .ok()
+            .filter(|number| *number > 0)
+            .ok_or_else(|| bad("端口要落在 1..=65535"))?;
+    }
+    if host.is_empty() {
+        return Err(bad("缺主机名"));
+    }
+    let ok_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-');
+    if host.contains(':') {
+        if !host.chars().all(|c| ok_char(c) || c == ':') {
+            return Err(bad("IPv6 字符不合法"));
+        }
+    } else if host.len() > 253 || !host.chars().all(ok_char) {
+        return Err(bad("只接受主机名或 IPv4,不收通配符与 scheme"));
+    } else if host.split('.').any(|label| {
+        label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-')
+    }) {
+        return Err(bad("主机名标签不合法"));
     }
     Ok(())
 }

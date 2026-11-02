@@ -129,6 +129,25 @@ interface notify {
   show: func(options: show-options) -> result<string, string>;
 }
 
+// 联网:经独立 broker 进程发 HTTPS 请求;域名必须在清单 network.allow
+// 白名单里,宿主逐请求强制。响应体按文本处理,超限与超时在 broker 侧兜底。
+interface network {
+  record fetch-options {
+    url: string,
+    method: option<string>,
+    headers: list<tuple<string, string>>,
+    body: option<string>,
+    // 响应体上限(字节),缺省 2 MiB;时限(毫秒),缺省 30 s。
+    limit: option<u64>,
+    timeout-ms: option<u32>,
+  }
+  record fetch-result {
+    status: u32,
+    body: string,
+  }
+  fetch: func(options: fetch-options) -> result<fetch-result, string>;
+}
+
 world extension {
   import capture;
   import ocr;
@@ -138,4 +157,5 @@ world extension {
   import panel;
   import hotkey;
   import notify;
+  import network;
 }

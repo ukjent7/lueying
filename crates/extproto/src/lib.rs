@@ -19,6 +19,49 @@ pub const MAX_PATCH_BYTES: usize = 8 * 1024;
 /// 再通过 `emit` 交回最终结果。
 pub const MAX_RESULT_BYTES: usize = 1024 * 1024;
 
+/// 联网取回的默认响应体上限(字节);封顶见 [`FETCH_MAX_LIMIT`]。
+pub const FETCH_DEFAULT_LIMIT: u64 = 256 * 1024;
+/// 联网取回的响应体上限封顶;结果还要装进 [`MAX_RESULT_BYTES`] 缓冲,
+/// 上限必须小于它。
+pub const FETCH_MAX_LIMIT: u64 = 512 * 1024;
+/// 联网取回的默认时限(毫秒);封顶见 [`FETCH_MAX_TIMEOUT_MS`]。
+pub const FETCH_DEFAULT_TIMEOUT_MS: u32 = 30_000;
+/// 联网取回的时限封顶;再慢的调用让扩展自己拆请求。
+pub const FETCH_MAX_TIMEOUT_MS: u32 = 120_000;
+
+/// 联网取回请求;字段与 WIT `network.fetch-options` 一致。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FetchArgs {
+    /// 完整 URL;域名必须在清单 network.allow 白名单里。
+    pub url: String,
+    /// HTTP 方法;缺省 GET。
+    #[serde(default)]
+    pub method: Option<String>,
+    /// 请求头;名称与值都不能含换行。
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    /// 请求体文本。
+    #[serde(default)]
+    pub body: Option<String>,
+    /// 响应体上限(字节),缺省 [`FETCH_DEFAULT_LIMIT`]。
+    #[serde(default)]
+    pub limit: Option<u64>,
+    /// 时限(毫秒),缺省 [`FETCH_DEFAULT_TIMEOUT_MS`]。
+    #[serde(default)]
+    pub timeout_ms: Option<u32>,
+}
+
+/// 联网取回结果;响应体按 UTF-8 文本交付,二进制响应报错。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FetchResult {
+    /// HTTP 状态码;非 2xx 也照常返回,由扩展判断。
+    pub status: u16,
+    /// 响应体文本。
+    pub body: String,
+}
+
 /// 输入法交给 guest 的面板状态。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct SceneIn {

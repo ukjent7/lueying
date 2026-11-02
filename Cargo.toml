@@ -23,6 +23,8 @@ members = [
     "crates/scene",
     # 联网边界:更新与下载,常驻 Server 不依赖
     "crates/net",
+    # 联网 broker:扩展网络请求的唯一出口,独立进程,平台无关协议层
+    "crates/broker",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
     "crates/render",
     # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
@@ -56,6 +58,7 @@ lueying-extproto = { path = "crates/extproto" }
 lueying-extsvc = { path = "crates/extsvc" }
 lueying-extwasm = { path = "crates/extwasm" }
 lueying-bypass = { path = "crates/bypass" }
+lueying-broker = { path = "crates/broker" }
 lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }
 lueying-protocol = { path = "crates/protocol" }

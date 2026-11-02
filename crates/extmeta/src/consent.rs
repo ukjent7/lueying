@@ -200,6 +200,16 @@ pub fn consent_items(manifest: &Manifest) -> Vec<String> {
         {
             continue;
         }
+        if *service == Service::Network {
+            // 域名白名单就是同意的对象,一条条亮出来。
+            if let Some(grant) = &manifest.network {
+                push_unique(
+                    &mut items,
+                    format!("访问外部网络(仅限 {})", grant.allow.join("、")),
+                );
+                continue;
+            }
+        }
         push_unique(&mut items, service.title().to_string());
     }
     items

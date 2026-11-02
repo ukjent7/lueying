@@ -44,6 +44,9 @@ shot-ocr/
 - `appearance`:为 `true` 时模块必须导出 `lueying_appearance`,包常驻运行。
 - `needs`:宿主只链接这里声明过的服务导入;没声明的服务在实例化时直接
   加载失败。
+- `network`:联网白名单,`needs` 声明 `network` 时必填。条目是 `host` 或
+  `host:port`(如 `"api.example.com"`、`"dev.local:8080"`),精确匹配,
+  不收通配符与 scheme,1..=32 条;白名单进同意书,改一条就要重新同意。
 - `capabilities` 与 `needs` 非空时,用户必须先同意;同意记录对
   `manifest.json` 与 `.wasm` 的 SHA-256 做指纹,任一变动都要求重新同意。
 - 触发词、建议热键与命令只是声明;实际绑定关系由用户的 `config.toml` 决定。
@@ -78,7 +81,9 @@ lueying_extguest::export!(ShotOcr);
 (命令入口,参数与返回值都是 JSON 文本)、`appearance`(每帧外观补丁)。
 服务封装全部是同步函数:`capture_shot`、`ocr_recognize`、`output_deliver`、
 `panel_show`、`clipboard_read/write`、`store_get/set/remove/list`、
-`notify_show`、`hotkey_register/unregister/press` 与 `timeout_sleep`。
+`notify_show`、`hotkey_register/unregister/press`、`network_fetch` 与
+`timeout_sleep`。`network_fetch` 收 `FetchArgs`(与 WIT `fetch-options`
+同形),域名必须在清单白名单里,响应体按 UTF-8 文本交付。
 
 构建与发布:
 
@@ -109,7 +114,7 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 |---|---|---|
 | `emit` | `(ptr, len, ok)` | 交回命令/外观的最终结果 |
 | `timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
-| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
+| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` / `network` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
 
 服务结果是一个 JSON 信封:成功 `{"ok":true,"value":...}`,失败
 `{"ok":false,"error":"..."}`。宿主把信封写进 guest 的结果缓冲区,
@@ -124,7 +129,7 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 | 初始化燃料 | 50 M | trap,加载失败 |
 | 命令燃料 | 200 M | trap,计一次超时 |
 | 外观燃料 | 20 M | trap,计一次超时 |
-| 宿主服务等待 | 面板 600 s、OCR 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
+| 宿主服务等待 | 面板 600 s、联网 140 s、OCR 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
 | 命令空闲卸载 | 30 s | worker 与实例整体丢弃;外观包常驻 |
 | 容错熔断 | 连续 3 次失败 | 扩展停用,重新加载或热重载成功后恢复 |
 
@@ -136,6 +141,9 @@ trap 之后实例不可再用,下一次调用前宿主自动重建;正在执行�
 - guest 看不到候选汉字、按键历史与宿主应用名;场景状态只有页码、候选
   数量、主题色与系统外观开关。
 - 密码/隐私字段下:外观不派发、命令与热键不执行、服务调用全部拒绝。
-- 扩展没有任何网络通道;需要联网的作业交给独立进程的原生扩展,并且默认关闭网络。
+- 联网只经独立 broker 进程 `lueying-broker.exe`:宿主提供者逐请求核对
+  清单白名单,broker 兜传输的底(HTTPS-only 外部地址、响应体默认 256 KiB
+  封顶 512 KiB、时限封顶 120 s);`lueying-server.exe` 保持离线(CI 导入表
+  断言)。外观帧不做联网调用,长请求放命令里。
 - 所有服务调用写审计日志(服务、方法与结果),不记录用户正文。
 - 外观补丁只有主题色字段;高对比度下仍返回主题色。

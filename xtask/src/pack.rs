@@ -40,6 +40,7 @@ pub(crate) fn parse_pack(it: &mut impl Iterator<Item = String>) -> PackArgs {
 /// 发布目录的必需文件。DLL 文件名随 Cargo 包名生成,两种拼写都接受。
 const PACK_BINS: &[&str] = &[
     "lueying-server.exe",
+    "lueying-broker.exe",
     "lueying-settings.exe",
     "lueying-user.exe",
 ];

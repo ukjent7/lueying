@@ -144,6 +144,7 @@ fn native(idle_exit: Duration, call_timeout: Duration) -> NativeHost {
         call_timeout,
         idle_exit,
         readable: Vec::new(),
+        sandboxed: true,
     })
 }
 

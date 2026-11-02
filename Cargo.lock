@@ -3059,6 +3059,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lueying-broker"
+version = "0.1.0"
+dependencies = [
+ "lueying-extproto",
+ "serde_json",
+]
+
+[[package]]
 name = "lueying-bypass"
 version = "0.1.0"
 dependencies = [
@@ -3259,6 +3267,7 @@ dependencies = [
  "accesskit 0.25.2",
  "accesskit_windows 0.35.2",
  "getrandom 0.4.3",
+ "lueying-broker",
  "lueying-bypass",
  "lueying-dict",
  "lueying-engine",

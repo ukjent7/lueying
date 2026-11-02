@@ -35,6 +35,76 @@ fn parse(value: serde_json::Value) -> Result<Manifest, String> {
 }
 
 #[test]
+fn parses_network_grant() {
+    let mut value = base();
+    value["needs"] = json!(["network"]);
+    value["network"] = json!({ "allow": ["api.example.com", "dev.local:8080", "[::1]:8080"] });
+    let manifest = parse(value).expect("联网清单应通过");
+    let grant = manifest.network.expect("白名单要解析出来");
+    assert_eq!(
+        grant.allow,
+        vec![
+            "api.example.com".to_string(),
+            "dev.local:8080".to_string(),
+            "[::1]:8080".to_string()
+        ]
+    );
+}
+
+#[test]
+fn network_needs_and_grant_come_together() {
+    let mut value = base();
+    value["needs"] = json!(["network"]);
+    let error = parse(value).expect_err("声明 network 就要给白名单");
+    assert!(error.contains("network.allow"), "{error}");
+
+    let mut value = base();
+    value["network"] = json!({ "allow": ["api.example.com"] });
+    let error = parse(value).expect_err("白名单要配 network 服务");
+    assert!(error.contains("needs 里要先有 network"), "{error}");
+}
+
+#[test]
+fn network_allow_rejects_bad_entries() {
+    let check = |entry: &str| {
+        let mut value = base();
+        value["needs"] = json!(["network"]);
+        value["network"] = json!({ "allow": [entry] });
+        parse(value).expect_err("坏条目要报错")
+    };
+    for entry in [
+        "*",
+        "*.example.com",
+        "https://api.example.com",
+        "api.example.com/x",
+        "api.example.com:0",
+        "api.example.com:99999",
+        "api..example.com",
+        "-api.example.com",
+        "",
+    ] {
+        let error = check(entry);
+        assert!(error.contains("白名单条目"), "{entry}: {error}");
+    }
+}
+
+#[test]
+fn network_allow_rejects_duplicates_and_overflow() {
+    let mut value = base();
+    value["needs"] = json!(["network"]);
+    value["network"] = json!({ "allow": ["api.example.com", "API.example.com"] });
+    let error = parse(value).expect_err("大小写重复要报错");
+    assert!(error.contains("重复"), "{error}");
+
+    let mut value = base();
+    value["needs"] = json!(["network"]);
+    let allow: Vec<String> = (0..33).map(|index| format!("host{index}.example.com")).collect();
+    value["network"] = json!({ "allow": allow });
+    let error = parse(value).expect_err("超过 32 条要报错");
+    assert!(error.contains("32"), "{error}");
+}
+
+#[test]
 fn parses_wasm_manifest() {
     let manifest = parse(shot_ocr()).expect("API 3 清单应通过");
     assert_eq!(manifest.wasm_main(), "extension.wasm");

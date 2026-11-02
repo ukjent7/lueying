@@ -799,12 +799,13 @@ fn write_result(caller: Caller<'_, HostState>, bytes: &[u8]) -> i32 {
     }
 }
 
-/// 服务的宿主等待时限。面板要等用户操作,单独放宽。
+/// 服务的宿主等待时限。面板要等用户操作,broker 要跑满传输时限,单独放宽。
 fn timeout_for(service: Service, method: &str) -> Duration {
     match (service, method) {
         (Service::Panel, "show") => Duration::from_secs(600),
         (Service::Ocr, "recognize") => Duration::from_secs(120),
         (Service::Capture, "shot") => Duration::from_secs(30),
+        (Service::Network, "fetch") => Duration::from_secs(140),
         _ => Duration::from_secs(10),
     }
 }
