@@ -443,7 +443,7 @@ impl Guest {
             return Err(format!("扩展 {} 的结果缓冲区为空", manifest.id));
         }
         let result_cap = (result_cap as usize).min(MAX_RESULT_BYTES);
-        store.data_mut().memory = Some(memory.clone());
+        store.data_mut().memory = Some(memory);
         store.data_mut().result_ptr = result_ptr as u32;
         store.data_mut().result_cap = result_cap as u32;
         let init = instance
@@ -673,7 +673,7 @@ impl Guest {
 
 /// 宿主侧 `lueying_emit(ptr, len, ok)`:把 guest 的最终结果拷到宿主。
 fn host_emit(mut caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
-    let Some(memory) = caller.data().memory.clone() else {
+    let Some(memory) = caller.data().memory else {
         return;
     };
     let Ok(len) = usize::try_from(len) else {
@@ -759,7 +759,7 @@ fn error_bytes(error: &str) -> Vec<u8> {
 
 /// 从 guest 线性内存读一段 UTF-8 文本。
 fn read_string(caller: &Caller<'_, HostState>, ptr: i32, len: i32) -> Result<String, String> {
-    let memory = caller.data().memory.clone().ok_or("实例没有内存")?;
+    let memory = caller.data().memory.ok_or("实例没有内存")?;
     let len = usize::try_from(len).map_err(|_| "文本长度为负".to_string())?;
     if len == 0 {
         return Ok(String::new());
@@ -777,7 +777,7 @@ fn read_string(caller: &Caller<'_, HostState>, ptr: i32, len: i32) -> Result<Str
 
 /// 把结果信封写进 guest 的结果缓冲区,返回写入长度。
 fn write_result(caller: Caller<'_, HostState>, bytes: &[u8]) -> i32 {
-    let Some(memory) = caller.data().memory.clone() else {
+    let Some(memory) = caller.data().memory else {
         return -1;
     };
     let ptr = caller.data().result_ptr as usize;
