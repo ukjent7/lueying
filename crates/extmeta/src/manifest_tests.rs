@@ -98,7 +98,9 @@ fn network_allow_rejects_duplicates_and_overflow() {
 
     let mut value = base();
     value["needs"] = json!(["network"]);
-    let allow: Vec<String> = (0..33).map(|index| format!("host{index}.example.com")).collect();
+    let allow: Vec<String> = (0..33)
+        .map(|index| format!("host{index}.example.com"))
+        .collect();
     value["network"] = json!({ "allow": allow });
     let error = parse(value).expect_err("超过 32 条要报错");
     assert!(error.contains("32"), "{error}");

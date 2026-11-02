@@ -10,8 +10,8 @@
 use std::io::{BufRead, Write};
 
 pub use lueying_extproto::{
-    FetchArgs, FetchResult, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FETCH_MAX_LIMIT,
-    FETCH_MAX_TIMEOUT_MS,
+    FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FETCH_MAX_LIMIT, FETCH_MAX_TIMEOUT_MS,
+    FetchArgs, FetchResult,
 };
 
 /// 收敛调用方给的体积与时限:缺省归默认,越界封顶,零视为缺省。
@@ -98,7 +98,9 @@ pub fn serve(
             Err(error) => serde_json::json!({ "error": error }).to_string(),
         };
         writeln!(stdout, "{reply}").map_err(|error| format!("写应答失败: {error}"))?;
-        stdout.flush().map_err(|error| format!("写应答失败: {error}"))?;
+        stdout
+            .flush()
+            .map_err(|error| format!("写应答失败: {error}"))?;
     }
     Ok(())
 }
@@ -116,13 +118,9 @@ fn handle(
     if method != "fetch" {
         return Err(format!("没有方法 {method:?}"));
     }
-    let args: FetchArgs = serde_json::from_value(
-        envelope
-            .get("args")
-            .cloned()
-            .ok_or("请求缺 args")?,
-    )
-    .map_err(|error| format!("联网参数不合法: {error}"))?;
+    let args: FetchArgs =
+        serde_json::from_value(envelope.get("args").cloned().ok_or("请求缺 args")?)
+            .map_err(|error| format!("联网参数不合法: {error}"))?;
     fetch(normalize(args))
 }
 

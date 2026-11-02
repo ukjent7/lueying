@@ -17,8 +17,8 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 pub use lueying_extproto::{
-    ClipboardText, Delivered, FetchArgs, FetchResult, OcrText, PanelResult, SCENE_API, SceneIn,
-    ScenePatch, Shot, StoreKeys, StoreValue, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS,
+    ClipboardText, Delivered, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FetchArgs,
+    FetchResult, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot, StoreKeys, StoreValue,
 };
 
 /// 结果缓冲区的字节数。服务结果超过这个值时宿主回错误信封。
@@ -192,8 +192,8 @@ pub fn store_list() -> Result<StoreKeys, String> {
 /// 白名单里,宿主逐请求强制。响应体是文本;体积与时限缺省值见
 /// [`FETCH_DEFAULT_LIMIT`] 与 [`FETCH_DEFAULT_TIMEOUT_MS`]。
 pub fn network_fetch(options: &FetchArgs) -> Result<FetchResult, String> {
-    let args = serde_json::to_string(options)
-        .map_err(|error| format!("联网参数序列化失败: {error}"))?;
+    let args =
+        serde_json::to_string(options).map_err(|error| format!("联网参数序列化失败: {error}"))?;
     call_typed(host_network, "fetch", &args)
 }
 

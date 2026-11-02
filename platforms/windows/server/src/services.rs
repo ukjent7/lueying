@@ -10,8 +10,8 @@
 //! [`HotkeyProvider::pump`] 在同一线程收取:扩展 `press` 就地兑现,用户
 //! 绑定行号回带给调用方派发。
 
-use std::collections::{HashMap, VecDeque};
 use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -583,8 +583,8 @@ impl Provider for NetworkProvider {
             .get(caller)
             .cloned()
             .unwrap_or_default();
-        let args: FetchArgs = serde_json::from_str(args)
-            .map_err(|_| "联网参数不是合法 JSON".to_string())?;
+        let args: FetchArgs =
+            serde_json::from_str(args).map_err(|_| "联网参数不是合法 JSON".to_string())?;
         match lueying_broker::host_allowed(&allow, &args.url) {
             Ok(true) => {}
             Ok(false) => {

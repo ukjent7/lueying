@@ -3063,6 +3063,7 @@ name = "lueying-broker"
 version = "0.1.0"
 dependencies = [
  "lueying-extproto",
+ "lueying-net",
  "serde_json",
 ]
 

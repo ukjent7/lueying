@@ -113,16 +113,24 @@ fn handle_serves_fetch_and_rejects_the_rest() {
     assert_eq!(args.limit, Some(100));
     assert_eq!(args.timeout_ms, Some(DEFAULT_TIMEOUT_MS));
 
-    assert!(handle(r#"{"method":"post","args":{}}"#, &mut fetch)
-        .unwrap_err()
-        .contains("没有方法"));
-    assert!(handle("不是 JSON", &mut fetch)
-        .unwrap_err()
-        .contains("不是合法 JSON"));
-    assert!(handle(r#"{"method":"fetch"}"#, &mut fetch)
-        .unwrap_err()
-        .contains("缺 args"));
-    assert!(handle(r#"{"method":"fetch","args":{}}"#, &mut fetch)
-        .unwrap_err()
-        .contains("联网参数不合法"));
+    assert!(
+        handle(r#"{"method":"post","args":{}}"#, &mut fetch)
+            .unwrap_err()
+            .contains("没有方法")
+    );
+    assert!(
+        handle("不是 JSON", &mut fetch)
+            .unwrap_err()
+            .contains("不是合法 JSON")
+    );
+    assert!(
+        handle(r#"{"method":"fetch"}"#, &mut fetch)
+            .unwrap_err()
+            .contains("缺 args")
+    );
+    assert!(
+        handle(r#"{"method":"fetch","args":{}}"#, &mut fetch)
+            .unwrap_err()
+            .contains("联网参数不合法")
+    );
 }
