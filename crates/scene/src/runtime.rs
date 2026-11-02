@@ -214,7 +214,7 @@ impl Runtime {
     }
 
     /// 推进一个时间片;`dt` 单位秒。同一帧内事件按序触发,emit 出来的
-    /// 自定义事件接在同一条队列后面,超过 [`MAX_EVENTS`] 直接弃掉。
+    /// 自定义事件接在同一条队列后面,超过 `MAX_EVENTS` 直接弃掉。
     pub fn tick(&mut self, time: f64, dt: f64, inputs: &Inputs<'_>, events: &[EventName]) -> Frame {
         let mut budget = EXPR_OPS;
         let mut frame = Frame::default();
