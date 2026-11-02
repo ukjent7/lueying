@@ -3,17 +3,15 @@
 //! 面板坐标是逻辑点,和 macOS 的视图坐标一致;Retina 缩放由 AppKit
 //! 的矢量绘制自动处理。文字与图形都走系统字体与贝塞尔路径。
 
-use lueying_render::panel::Rect;
 use lueying_render::paint::{Canvas, Color, Point};
+use lueying_render::panel::Rect;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{
-    NSBezierPath, NSColor, NSFont, NSGraphicsContext, NSShadow, NSStringDrawing,
-    NSForegroundColorAttributeName, NSFontAttributeName,
+    NSBezierPath, NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
+    NSGraphicsContext, NSShadow, NSStringDrawing,
 };
-use objc2_foundation::{
-    NSAttributedStringKey, NSDictionary, NSPoint, NSRect, NSSize, NSString,
-};
+use objc2_foundation::{NSAttributedStringKey, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
 pub struct AppKitCanvas;
 

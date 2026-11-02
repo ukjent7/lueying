@@ -217,9 +217,7 @@ impl LueyingInputController {
         if key_code != KEY_SHIFT_LEFT && key_code != KEY_SHIFT_RIGHT {
             return false;
         }
-        let down = event
-            .modifierFlags()
-            .contains(NSEventModifierFlags::Shift);
+        let down = event.modifierFlags().contains(NSEventModifierFlags::Shift);
         let was_down = self.ivars().shift_down.replace(down);
         if down && !was_down {
             self.ivars().shift_tapped.set(true);

@@ -7,13 +7,15 @@
 use std::cell::RefCell;
 
 use lueying_protocol::SessionView;
-use lueying_render::panel::{self, Frame, Hit, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
+use lueying_render::panel::{
+    self, Frame, Hit, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar,
+};
 use objc2::rc::{Allocated, Retained, Weak};
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSPanel, NSScreen, NSView, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSPopUpMenuWindowLevel,
+    NSBackingStoreType, NSColor, NSEvent, NSPanel, NSPopUpMenuWindowLevel, NSScreen, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{MainThreadMarker, NSInteger, NSPoint, NSRect, NSSize};
 
@@ -259,9 +261,8 @@ fn place(caret: Option<NSRect>, width: f64, height: f64) -> NSPoint {
     let Some(mtm) = MainThreadMarker::new() else {
         return NSPoint::new(0.0, 0.0);
     };
-    let anchor = caret.unwrap_or_else(|| {
-        NSRect::new(NSEvent::mouseLocation(), NSSize::new(0.0, 18.0))
-    });
+    let anchor =
+        caret.unwrap_or_else(|| NSRect::new(NSEvent::mouseLocation(), NSSize::new(0.0, 18.0)));
     let mut x = anchor.origin.x;
     let mut y = anchor.origin.y - height - CARET_GAP;
     if let Some(screen) = screen_of(mtm, anchor) {

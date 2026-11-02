@@ -435,7 +435,12 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
         Color::opaque(frame.palette.surface_alt),
     );
     canvas.fill_rect(
-        Rect::from_xywh(bar.left, bar.top + 8.0 * s, bar.width(), bar.height() - 8.0 * s),
+        Rect::from_xywh(
+            bar.left,
+            bar.top + 8.0 * s,
+            bar.width(),
+            bar.height() - 8.0 * s,
+        ),
         Color::opaque(frame.palette.surface_alt),
     );
     if !frame.spec.items.is_empty() {
@@ -461,8 +466,18 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
         Some((width - 100.0 * s).max(1.0)),
     );
     if has_pages {
-        canvas.text_centered("‹", prev, 15.0 * s, Color::opaque(frame.palette.text_secondary));
-        canvas.text_centered("›", next, 15.0 * s, Color::opaque(frame.palette.text_secondary));
+        canvas.text_centered(
+            "‹",
+            prev,
+            15.0 * s,
+            Color::opaque(frame.palette.text_secondary),
+        );
+        canvas.text_centered(
+            "›",
+            next,
+            15.0 * s,
+            Color::opaque(frame.palette.text_secondary),
+        );
         canvas.text_centered(
             &frame.spec.preedit.page_label,
             label,

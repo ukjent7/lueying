@@ -142,7 +142,12 @@ impl Session {
             .engine
             .candidates_detailed()
             .iter()
-            .map(|candidate| (candidate.text.clone(), candidate.hint.clone().unwrap_or_default()))
+            .map(|candidate| {
+                (
+                    candidate.text.clone(),
+                    candidate.hint.clone().unwrap_or_default(),
+                )
+            })
             .unzip();
         self.view.candidates = texts;
         self.view.hints = hints;
