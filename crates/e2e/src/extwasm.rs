@@ -199,11 +199,7 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
 fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("patch");
     let dir = temp.pack("patch");
-    write_pack(
-        &dir,
-        &appearance_manifest("patch"),
-        appearance_guest(PATCH),
-    );
+    write_pack(&dir, &appearance_manifest("patch"), appearance_guest(PATCH));
     let Some(mut pack) = load_or_fail(checks, "补丁包加载", &dir) else {
         return;
     };
@@ -231,11 +227,7 @@ fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
 fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let temp = Temp::new("budget");
     let dir = temp.pack("spin");
-    write_pack(
-        &dir,
-        &command_manifest("spin", &["run"], &[]),
-        loop_guest(),
-    );
+    write_pack(&dir, &command_manifest("spin", &["run"], &[]), loop_guest());
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
         command_fuel: 1_000_000,

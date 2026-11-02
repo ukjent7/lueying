@@ -82,11 +82,7 @@ pub fn run(report: &mut String) -> usize {
     // 2. 死循环连续超限后停用;状态与超限次数都要能看见。
     let spin_temp = Temp::new("spin");
     let dir = spin_temp.pack("demo");
-    write_pack(
-        &dir,
-        &command_manifest("demo", &["run"], &[]),
-        loop_guest(),
-    );
+    write_pack(&dir, &command_manifest("demo", &["run"], &[]), loop_guest());
     let limits = Limits {
         command_fuel: 1_000_000,
         ..Limits::default()
