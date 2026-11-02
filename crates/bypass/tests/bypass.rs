@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use lueying_bypass::{Bypass, BypassConfig, FnProvider, NativeConfig, NativeHost, ProcessLimiter};
 use lueying_extmeta::Service;
-use lueying_extsvc::{Completion, Registry};
+use lueying_extsvc::Registry;
 
 /// `cargo test` 为集成测试构建同包的 `bypass-echo`,并由 Cargo 注入路径。
 fn echo_exe() -> std::path::PathBuf {
@@ -21,20 +21,29 @@ fn echo() -> Bypass {
     })
 }
 
-/// 提供者在独立线程完成调用;轮询完成队列直到带该 token 的结果出现。
-fn wait_completion(registry: &Registry, token: u64) -> Completion {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let found = registry
-            .take_completions()
-            .into_iter()
-            .find(|completion| completion.token == token);
-        if let Some(completion) = found {
-            return completion;
-        }
-        assert!(Instant::now() < deadline, "完成结果未到");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+/// 提供者在独立线程完成调用;注册表阻塞到结果返回。
+#[test]
+fn provider_swap_routes_call_to_process() {
+    let registry = Arc::new(Registry::new());
+    registry.set(
+        Service::Ocr,
+        Arc::new(FnProvider::new({
+            let bypass = echo();
+            move |method: &str, args: &str| bypass.call(method, args)
+        })),
+    );
+    assert!(registry.has(Service::Ocr));
+    let result = registry
+        .call(
+            "guest",
+            "ocr",
+            "recognize",
+            r#"{"file":"x.bmp"}"#,
+            Duration::from_secs(5),
+        )
+        .expect("旁路应答应成功");
+    let value: serde_json::Value = serde_json::from_str(&result).expect("结果应是 JSON");
+    assert_eq!(value["echo"]["file"], "x.bmp");
 }
 
 #[test]
@@ -88,28 +97,6 @@ fn limiter_failure_kills_process() {
     assert!(error.contains("注入失败"));
 }
 
-/// 服务提供者替换:同一个服务槽位装上旁路提供者后,注册表把调用
-/// 转发到独立进程;隐私与审计仍由注册表层把关。
-#[test]
-fn provider_swap_routes_call_to_process() {
-    let registry = Arc::new(Registry::new());
-    registry.set(
-        Service::Ocr,
-        Arc::new(FnProvider::new({
-            let bypass = echo();
-            move |method: &str, args: &str| bypass.call(method, args)
-        })),
-    );
-    assert!(registry.has(Service::Ocr));
-    registry
-        .call("ocr", "recognize", r#"{"file":"x.bmp"}"#, 7)
-        .expect("调用应发出");
-    let completion = wait_completion(&registry, 7);
-    let result = completion.result.expect("旁路应答应成功");
-    let value: serde_json::Value = serde_json::from_str(&result).expect("结果应是 JSON");
-    assert_eq!(value["echo"]["file"], "x.bmp");
-}
-
 /// 替换语义:重装同一服务的提供者立即生效,旧进程句柄随之丢弃。
 #[test]
 fn provider_reinstall_overrides_slot() {
@@ -119,12 +106,16 @@ fn provider_reinstall_overrides_slot() {
     registry.set(Service::Notify, Arc::new(provider(echo())));
     registry.set(Service::Notify, Arc::new(provider(echo())));
     assert!(registry.has(Service::Notify));
-    registry
-        .call("notify", "show", r#"{"title":"t","body":"b"}"#, 1)
-        .expect("调用应发出");
-    let completion = wait_completion(&registry, 1);
     // echo 替身把整个 args 回显在 result 里,证明调用确实走了旁路进程。
-    let result = completion.result.expect("旁路应答应成功");
+    let result = registry
+        .call(
+            "guest",
+            "notify",
+            "show",
+            r#"{"title":"t","body":"b"}"#,
+            Duration::from_secs(5),
+        )
+        .expect("旁路应答应成功");
     assert!(result.contains(r#""body":"b""#));
 }
 
