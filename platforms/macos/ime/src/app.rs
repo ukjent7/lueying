@@ -1,6 +1,6 @@
 //! 进程入口:注册 IMKServer,macOS 输入法由系统按需拉起。
 
-use objc2::MainThreadMarker;
+use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::{NSBundle, NSString};
 use objc2_input_method_kit::IMKServer;

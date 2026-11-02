@@ -57,7 +57,7 @@ define_class!(
     struct CandidateView;
 
     impl CandidateView {
-        #[unsafe(method(initWithFrame:))]
+        #[unsafe(method_id(initWithFrame:))]
         fn init_with_frame(this: Allocated<Self>, frame: NSRect) -> Retained<Self> {
             let this = this.set_ivars(CandidateViewIvars::default());
             // SAFETY:初始化链只转发给 NSView。
@@ -131,8 +131,9 @@ define_class!(
 
 impl CandidateView {
     fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
-        // SAFETY:alloc/init 成对调用,initWithFrame: 会初始化 ivars。
-        unsafe { msg_send![Self::alloc(mtm), initWithFrame: frame] }
+        let this = Self::alloc(mtm).set_ivars(CandidateViewIvars::default());
+        // SAFETY:ivars 已初始化,这里直接调用 NSView 的初始化器。
+        unsafe { msg_send![super(this), initWithFrame: frame] }
     }
 
     fn set_target(&self, target: &AnyObject) {

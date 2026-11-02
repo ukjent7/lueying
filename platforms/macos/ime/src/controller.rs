@@ -10,9 +10,9 @@ use lueying_engine::Key;
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::AnyObject;
 use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
-use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSRect};
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
 use objc2_foundation::{
-    NSInteger, NSNotFound, NSPoint, NSRange, NSSize, NSString, NSTimer, NSUInteger,
+    NSInteger, NSNotFound, NSPoint, NSRange, NSRect, NSSize, NSString, NSTimer, NSUInteger,
 };
 use objc2_input_method_kit::{IMKInputController, IMKServer, IMKStateSetting};
 
@@ -76,7 +76,7 @@ define_class!(
     struct LueyingInputController;
 
     impl LueyingInputController {
-        #[unsafe(method(initWithServer:delegate:client:))]
+        #[unsafe(method_id(initWithServer:delegate:client:))]
         fn init_with_server(
             this: Allocated<Self>,
             server: Option<&IMKServer>,
@@ -101,32 +101,9 @@ define_class!(
         /// 接收按键与修饰键变化;返回 true 表示输入法消费了事件。
         #[unsafe(method(handleEvent:client:))]
         fn handle_event(&self, event: Option<&NSEvent>, client: Option<&AnyObject>) -> bool {
-            let Some(event) = event else {
-                return false;
-            };
-            if let Some(client) = client {
-                *self.ivars().client.borrow_mut() = Some(client.retain());
-            }
-            if event.r#type() == NSEventType::FlagsChanged {
-                return self.handle_flags(event);
-            }
-            if event.r#type() != NSEventType::KeyDown {
-                return false;
-            }
-            self.ivars().shift_tapped.set(false);
-            let Some(key) = key_of(event) else {
-                return false;
-            };
-            let consumed = {
-                let mut sessions = self.ivars().session.borrow_mut();
-                let Some(session) = sessions.as_mut() else {
-                    return false;
-                };
-                session.process_key(key)
-            };
-            self.refresh_panel();
-            self.schedule_settle();
-            consumed
+            // 宏会把 bool 返回值转成 Objective-C 的 BOOL,这里让所有
+            // 提前返回都留在普通 Rust 函数里。
+            self.handle_event_inner(event, client)
         }
 
         #[unsafe(method(commitComposition:))]
@@ -212,6 +189,35 @@ define_class!(
 );
 
 impl LueyingInputController {
+    fn handle_event_inner(&self, event: Option<&NSEvent>, client: Option<&AnyObject>) -> bool {
+        let Some(event) = event else {
+            return false;
+        };
+        if let Some(client) = client {
+            *self.ivars().client.borrow_mut() = Some(client.retain());
+        }
+        if event.r#type() == NSEventType::FlagsChanged {
+            return self.handle_flags(event);
+        }
+        if event.r#type() != NSEventType::KeyDown {
+            return false;
+        }
+        self.ivars().shift_tapped.set(false);
+        let Some(key) = key_of(event) else {
+            return false;
+        };
+        let consumed = {
+            let mut sessions = self.ivars().session.borrow_mut();
+            let Some(session) = sessions.as_mut() else {
+                return false;
+            };
+            session.process_key(key)
+        };
+        self.refresh_panel();
+        self.schedule_settle();
+        consumed
+    }
+
     fn handle_flags(&self, event: &NSEvent) -> bool {
         let key_code = event.keyCode();
         if key_code != KEY_SHIFT_LEFT && key_code != KEY_SHIFT_RIGHT {
