@@ -72,8 +72,7 @@ impl Spring {
 
     /// 是否已经停在目标上。
     pub fn settled(&self) -> bool {
-        (self.value - self.target).abs() <= VALUE_EPSILON
-            && self.velocity.abs() <= VELOCITY_EPSILON
+        (self.value - self.target).abs() <= VALUE_EPSILON && self.velocity.abs() <= VELOCITY_EPSILON
     }
 }
 
