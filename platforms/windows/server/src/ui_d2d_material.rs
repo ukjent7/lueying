@@ -5,13 +5,13 @@
 //! GetProcAddress 动态解析,导出缺失只回退实底,不影响进程启动。系统关闭
 //! 「透明效果」、高对比度、用户皮肤或调用失败时,调用方回自绘实底主题。
 
-use windows::Win32::Foundation::{BOOL, FARPROC, HWND};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-use windows::core::{s, w};
+use windows::core::{BOOL, s, w};
 
 /// 亚克力着色的不透明度;太薄读不清文字,太厚看不见毛玻璃。
 const TINT_ALPHA: u32 = 0xb3;
@@ -112,9 +112,9 @@ pub(super) fn transparency_enabled() -> bool {
 
 /// SetWindowCompositionAttribute 未公开;动态解析,导出缺失返回 None。
 fn composition_attribute() -> Option<SetWindowCompositionAttribute> {
-    let module = unsafe { GetModuleHandleW(Some(w!("user32"))) }.ok()?;
-    let proc: FARPROC = unsafe { GetProcAddress(module, s!("SetWindowCompositionAttribute")) };
-    let proc = proc.0?;
+    let module = unsafe { GetModuleHandleW(w!("user32")) }.ok()?;
+    // FARPROC 是 Option<函数指针> 的别名,导出缺失时为 None。
+    let proc = unsafe { GetProcAddress(module, s!("SetWindowCompositionAttribute")) }?;
     // SAFETY:导出存在即签名与 ACCENT_POLICY 的公开用法一致。
     Some(unsafe {
         std::mem::transmute::<unsafe extern "system" fn() -> isize, SetWindowCompositionAttribute>(
