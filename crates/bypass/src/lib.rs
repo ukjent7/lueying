@@ -469,10 +469,12 @@ impl NativeHost {
     }
 }
 
-/// 写一行请求。常驻进程的 stdin 跨调用保持打开,写不关闭。
+/// 写一行请求。常驻进程的 stdin 跨调用保持打开,行尾必须补换行,
+/// 否则对端 `read_line` 会一直等到管道关闭。
 fn write_request(stdin: &mut (dyn Write + Send), request: &str) -> Result<(), String> {
     stdin
         .write_all(request.as_bytes())
+        .and_then(|()| stdin.write_all(b"\n"))
         .and_then(|()| stdin.flush())
         .map_err(|error| format!("写原生扩展请求失败: {error}"))
 }
