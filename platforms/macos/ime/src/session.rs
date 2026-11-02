@@ -228,7 +228,9 @@ impl Session {
     }
 }
 
-fn snapshot(engine: &Engine) -> Option<(String, Vec<String>, Vec<Fact>, Vec<bool>)> {
+type Snapshot = (String, Vec<String>, Vec<Fact>, Vec<bool>);
+
+fn snapshot(engine: &Engine) -> Option<Snapshot> {
     engine.composition()?;
     let candidates = engine.candidates_detailed();
     Some((

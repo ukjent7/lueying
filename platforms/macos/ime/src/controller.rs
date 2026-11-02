@@ -88,14 +88,13 @@ define_class!(
             let this: Option<Retained<Self>> = unsafe {
                 msg_send![super(this), initWithServer: server, delegate: delegate, client: client]
             };
-            this.map(|this| {
+            this.inspect(|this| {
                 if let Some(client) = client {
                     *this.ivars().client.borrow_mut() = Some(client.retain());
                 }
                 let mut session = Session::new();
                 session.set_client(client);
                 *this.ivars().session.borrow_mut() = Some(session);
-                this
             })
         }
 
