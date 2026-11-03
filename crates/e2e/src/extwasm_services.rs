@@ -32,7 +32,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "未声明的服务在加载期被拒",
-        error.contains("实例化失败") && error.contains("ocr"),
+        error.contains("没声明的宿主服务") && error.contains("ocr"),
         error,
     );
 

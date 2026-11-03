@@ -10,35 +10,33 @@ use lueying_server::config;
 /// 外观补丁:固定主题色,便于断言隐私与高对比度路径。
 const PATCH: &str = r#"{"accent":1056816}"#;
 
-/// 最小 Wasm guest:内存、bump 分配器、结果缓冲区与固定外观。
+/// 最小 Wasm guest:extism 内核分配加固定外观。
 fn guest() -> String {
-    let text = PATCH.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut stores = String::new();
+    for (index, byte) in PATCH.as_bytes().iter().enumerate() {
+        stores.push_str(&format!(
+            "    (call $store_u8 (i64.add (local.get $ptr) (i64.const {index})) (i32.const {byte}))\n"
+        ));
+    }
     format!(
         r#"(module
-  (import "lueying" "emit" (func $emit (param i32 i32 i32)))
-  (memory (export "memory") 2)
-  (global $bump (mut i32) (i32.const 1024))
-  (func (export "lueying_alloc") (param $len i32) (result i32)
-    (local $ptr i32)
-    (local.set $ptr (global.get $bump))
-    (global.set $bump (i32.add (global.get $bump) (local.get $len)))
-    (local.get $ptr))
-  (func (export "lueying_free") (param i32 i32))
-  (func (export "lueying_result_ptr") (result i32) (i32.const 65536))
-  (func (export "lueying_result_cap") (result i32) (i32.const 4096))
-  (func (export "lueying_init") (result i32) (i32.const 0))
-  (func (export "lueying_appearance") (param i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) "{text}"))"#,
+  (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
+  (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
+  (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
+  (func (export "lueying_appearance") (result i32)
+    (local $ptr i64)
+    (local.set $ptr (call $alloc (i64.const {len})))
+{stores}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))"#,
         len = PATCH.len(),
+        stores = stores,
     )
 }
 
 /// 清单;id 用进程号,避免和用户自己的扩展撞名。
 fn manifest(id: &str) -> String {
     format!(
-        r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api":3,"wasm":"extension.wasm","appearance":true}}"#
+        r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api": 4,"wasm":"extension.wasm","appearance":true}}"#
     )
 }
 

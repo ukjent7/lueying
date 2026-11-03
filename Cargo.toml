@@ -13,7 +13,7 @@ members = [
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
-    # 运行期扩展:wasmtime JIT 宿主与每扩展 worker,平台无关
+    # 运行期扩展:Extism 插件宿主与每扩展 worker,平台无关
     "crates/extwasm",
     # 运行期扩展:旁路进程层,按需启动、JSON 行协议,平台无关
     "crates/bypass",
@@ -69,6 +69,9 @@ lueying-rerank = { path = "crates/rerank" }
 lueying-scene = { path = "crates/scene" }
 lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
+# Extism 运行期:插件格式、内核 ABI 与宿主函数都在这里。关掉默认特性,
+# 联网与文件注册留给宿主自己接,插件碰不到网络与磁盘。
+extism = { version = "1.41", default-features = false }
 slint = { version = "1.18.1", default-features = false, features = [
     "std",
     "compat-1-2",

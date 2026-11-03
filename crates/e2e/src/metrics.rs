@@ -49,11 +49,11 @@ pub fn run(report: &mut String) -> usize {
     }
     let loaded = runtime.stats();
     checks.push((
-        "加载后有内存与派发计数",
+        "加载后有内存上限与派发计数",
         ran.is_ok()
             && loaded[0].state == ExtState::Loaded
             && loaded[0].dispatches >= 1
-            && loaded[0].memory_used > 0,
+            && loaded[0].memory_limit > 0,
         format!("run={ran:?} stat={:?}", loaded.first()),
     ));
     let peak = loaded[0].dispatch_peak_us;

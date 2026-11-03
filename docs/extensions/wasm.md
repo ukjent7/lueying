@@ -1,16 +1,20 @@
 # 运行期 Wasm 扩展规范
 
-运行期扩展是一份 `manifest.json` 加一个核心 Wasm 模块。宿主用 wasmtime
-(Cranelift JIT)在常驻服务进程内执行:线性内存隔离、燃料计量、资源限额,
-没有独立进程。扩展作者用 Rust(或其它能产出 `wasm32-unknown-unknown`
-的语言)实现同步的 `Extension` trait,服务调用阻塞的是扩展自己的
-worker 线程,绝不触碰输入热路径。
+运行期扩展是一份 `manifest.json` 加一个核心 Wasm 模块。模块就是标准
+[Extism](https://extism.org) 插件:宿主用 Extism 运行期(Cranelift JIT)在
+常驻服务进程内执行——线性内存隔离、燃料计量、资源限额,没有独立进程。
+别的 Extism 宿主写的插件、官方 Extism PDK 编出来的插件,放进扩展目录
+同样能被调用。
+
+扩展作者用 Rust(或其它能产出 `wasm32-unknown-unknown` 的语言)实现同步
+的 `Extension` trait,服务调用阻塞的是扩展自己的 worker 线程,绝不触碰
+输入热路径。
 
 ## 包结构
 
 ```
 shot-ocr/
-├── manifest.json       # 清单(API 3)
+├── manifest.json       # 清单(API 4)
 └── extension.wasm      # wasm32-unknown-unknown 编译产物
 ```
 
@@ -18,14 +22,14 @@ shot-ocr/
 文本块按行数声明长度,`.wasm` 按字节数原样内嵌,`lueying ext pack/install`
 负责打包与安装。
 
-## 清单(API 3)
+## 清单(API 4)
 
 ```json
 {
   "id": "shot-ocr",
   "name": "截图 OCR",
   "version": "0.1.0",
-  "api": 3,
+  "api": 4,
   "wasm": "extension.wasm",
   "activate": {
     "triggers": ["ocr"],
@@ -76,8 +80,13 @@ impl Extension for ShotOcr {
     }
 }
 
-lueying_extguest::export!(ShotOcr);
+lueying_extguest::export!(ShotOcr, commands: [run]);
 ```
+
+`export!` 的 `commands` 列出命令 id,每个 id 生成一个同名导出:宿主按
+清单里的命令 id 调用它,输入是参数 JSON,输出是结果 JSON。命令 id 就是
+导出名,所以第三方 Extism 插件(导出名任意)也能用:清单里把命令 id 写成
+它的导出名即可。
 
 `Extension` 三个方法都有默认实现:`init`(加载失败可报错)、`command`
 (命令入口,参数与返回值都是 JSON 文本)、`appearance`(每帧外观补丁)。
@@ -114,28 +123,35 @@ lueying ext reload         # 常驻服务热重载
 
 ## ABI
 
-guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
-
-| 导出 | 签名 | 说明 |
-|---|---|---|
-| `memory` | — | 唯一线性内存 |
-| `lueying_init` | `() -> i32` | 0 成功;非 0 时经 `emit` 交错误文本 |
-| `lueying_command` | `(id ptr, id len, args ptr, args len) -> i32` | 0 成功 |
-| `lueying_appearance` | `(scene ptr, scene len) -> i32` | 0 成功;空结果表示这一帧不改 |
-| `lueying_alloc` / `lueying_free` | `(len) -> ptr` / `(ptr, len)` | 宿主写输入用 |
-| `lueying_result_ptr` / `lueying_result_cap` | `() -> i32` | 服务结果缓冲区 |
-
-宿主导入(模块为 `lueying`;只链接清单 `needs` 里声明过的服务):
+数据都在 Extism 的内存里:guest 从 `extism:host/env` 导入内核函数
+(分配、读写、输入输出、错误),不自己管线性内存。内核函数清单:
 
 | 导入 | 签名 | 说明 |
 |---|---|---|
-| `emit` | `(ptr, len, ok)` | 交回命令/外观的最终结果 |
-| `timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
-| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` / `network` / `context` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
+| `alloc` / `free` | `(len) -> offset` / `(offset)` | 分配与释放一块内存 |
+| `length` | `(offset) -> len` | 取块长度 |
+| `load_u8` / `store_u8` | `(offset) -> u8` / `(offset, u8)` | 逐字节读写 |
+| `input_length` / `input_load_u8` | `() -> len` / `(index) -> u8` | 读宿主传进来的输入 |
+| `output_set` | `(offset, len)` | 交回结果 |
+| `error_set` | `(offset)` | 交回错误文本 |
 
-服务结果是一个 JSON 信封:成功 `{"ok":true,"value":...}`,失败
-`{"ok":false,"error":"..."}`。宿主把信封写进 guest 的结果缓冲区,
-返回写入长度;超长时宿主直接回一个错误信封。
+guest 导出(SDK 宏生成;手写 guest 自己定名):
+
+| 导出 | 签名 | 说明 |
+|---|---|---|
+| `<命令 id>` | `() -> i32` | 每个命令一个;输入是参数 JSON,输出是结果 JSON |
+| `lueying_appearance` | `() -> i32` | 清单 `appearance` 为 true 时必须实现;输入是场景 JSON |
+| `lueying_init` | `() -> i32` | 可选;有就调一次,失败即加载失败 |
+
+宿主导入(模块为 `extism:host/user`;只链接清单 `needs` 里声明过的服务):
+
+| 导入 | 签名 | 说明 |
+|---|---|---|
+| `lueying_timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
+| `lueying_capture` / `lueying_ocr` / `lueying_output` / `lueying_panel` / `lueying_clipboard` / `lueying_store` / `lueying_hotkey` / `lueying_notify` / `lueying_network` / `lueying_context` | `(request offset) -> offset` | 收一段 JSON 请求,回一段 JSON 响应 |
+
+服务请求是 `{"method":…,"args":…}`,响应是 `{"ok":true,"value":…}` 或
+`{"ok":false,"error":"…"}`。请求里的 `args` 原样转给服务提供者。
 
 这份 ABI 是扩展与宿主之间的唯一契约:导入模块名、导出符号名与签名都固定,
 契约本身不含任何运行时细节,宿主换一个 JIT 也不影响扩展。清单 `api` 字段
@@ -145,17 +161,17 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 
 | 资源项 | 限额 | 超限处理 |
 |---|---|---|
-| 线性内存 | 16 MiB | 增长即 trap,计一次 OOM |
+| 线性内存 | 16 MiB(Extism 页上限) | 增长失败即 trap,计一次 OOM |
 | Wasm 值栈 | 256 KiB | 栈溢出 trap |
-| 初始化燃料 | 50 M | trap,加载失败 |
+| 初始化燃料 | 50 M | 实例化阶段烧完即 trap,加载失败 |
 | 命令燃料 | 200 M | trap,计一次超时 |
 | 外观燃料 | 20 M | trap,计一次超时 |
 | 宿主服务等待 | 面板 600 s、联网 140 s、OCR 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
 | 命令空闲卸载 | 30 s | worker 与实例整体丢弃;外观包常驻 |
 | 容错熔断 | 连续 3 次失败 | 扩展停用,重新加载或热重载成功后恢复 |
 
-trap 之后实例不可再用,下一次调用前宿主自动重建;正在执行的阻塞服务
-调用在卸载或停用时 50 ms 内取消。
+trap 之后实例照旧能用,下一次调用前 Extism 重置内核状态;正在执行的阻塞
+服务调用在卸载或停用时 50 ms 内取消。
 
 ## 安全与隐私边界
 
@@ -165,7 +181,8 @@ trap 之后实例不可再用,下一次调用前宿主自动重建;正在执行�
 - 联网只经独立 broker 进程 `lueying-broker.exe`:宿主提供者逐请求核对
   清单白名单,broker 兜传输的底(HTTPS-only 外部地址、响应体默认 256 KiB
   封顶 512 KiB、时限封顶 120 s);`lueying-server.exe` 保持离线(CI 导入表
-  断言)。外观帧不做联网调用,长请求放命令里。
+  断言)。插件自己发不出 HTTP:Extism 运行期没开联网特性,`http_request`
+  直接被拒。外观帧不做联网调用,长请求放命令里。
 - 上下文分级:只有清单申请 `selected-text` 的扩展能读当前窗口选中文字;
   密码框与输入法自家窗口一律不读,读不到就是读不到。
 - 所有服务调用写审计日志(服务、方法与结果),不记录用户正文。

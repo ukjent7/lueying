@@ -4,8 +4,8 @@
 //! 未知字段、越界的模块路径、未知权限、过高的 API 版本。运行期不再
 //! 为坏清单兜底,也不猜作者意图。
 //!
-//! API 3 起扩展只有一种形态:Rust(或其它能产出核心 Wasm 的语言)编出的
-//! `.wasm`,由宿主用 wasmtime JIT 在进程内执行。外观、命令与设置都从同一份
+//! API 4 起扩展只有一种形态:标准 Extism 插件(编出的 `.wasm`),
+//! 由宿主用 Extism 运行期在进程内执行。外观、命令与设置都从同一份
 //! 清单声明;不再有 JS 入口、组件式外观或独立能力进程。
 
 use serde::Deserialize;
@@ -19,7 +19,7 @@ pub mod sha256;
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 
 /// 当前清单 API。
-pub const EXT_API: u32 = 3;
+pub const EXT_API: u32 = 4;
 
 /// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
 pub const MAX_TEXT_CHARS: usize = 4096;
@@ -308,7 +308,7 @@ impl Service {
         Self::Context,
     ];
 
-    /// 清单里的服务名,也是 Wasm 导入的函数名后缀。
+    /// 清单里的服务名;宿主导入的函数名是 `lueying_<服务名>`。
     pub fn key(self) -> &'static str {
         match self {
             Self::Capture => "capture",

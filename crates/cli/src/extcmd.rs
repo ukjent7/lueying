@@ -69,7 +69,7 @@ pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
         "id": args.id,
         "name": name,
         "version": "0.1.0",
-        "api": 3,
+        "api": 4,
         "wasm": "extension.wasm",
         "activate": {
             "commands": [
@@ -115,7 +115,7 @@ impl Extension for Hello {
     }
 }
 
-lueying_extguest::export!(Hello);
+lueying_extguest::export!(Hello, commands: [hello]);
 "#;
     fs::create_dir_all(dir.join("src")).map_err(|e| format!("建 {}: {e}", dir.display()))?;
     write_file(&dir.join("manifest.json"), &manifest_text(&manifest)?)?;

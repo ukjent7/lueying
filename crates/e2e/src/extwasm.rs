@@ -37,7 +37,7 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
         (
             "契约版本过高被拒",
             "apihigh",
-            raw_manifest("apihigh", r#""appearance":true"#).replace(r#""api":3"#, r#""api":99"#),
+            raw_manifest("apihigh", r#""appearance":true"#).replace(r#""api":4"#, r#""api":99"#),
             command_guest("{}"),
             "99",
         ),
@@ -57,11 +57,11 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
             "不一致",
         ),
         (
-            "命令包缺 lueying_command 被拒",
+            "命令包缺导出被拒",
             "nocmd",
             command_manifest("nocmd", &["run"], &[]),
             appearance_guest(PATCH),
-            "lueying_command",
+            "没有导出命令",
         ),
         (
             "外观包缺 lueying_appearance 被拒",
@@ -76,20 +76,6 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
             plain_manifest("noentry"),
             command_guest("{}"),
             "没有可调用的入口",
-        ),
-        (
-            "缺 memory 导出被拒",
-            "nomem",
-            plain_manifest("nomem"),
-            "(module (func (export \"lueying_command\") (result i32) (i32.const 0)))".to_string(),
-            "没有导出 memory",
-        ),
-        (
-            "缺分配器被拒",
-            "noalloc",
-            plain_manifest("noalloc"),
-            "(module (memory (export \"memory\") 1) (func (export \"lueying_command\") (result i32) (i32.const 0)))".to_string(),
-            "lueying_alloc",
         ),
         (
             "坏 Wasm 字节被拒",

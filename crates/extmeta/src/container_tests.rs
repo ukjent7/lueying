@@ -3,7 +3,7 @@ use super::*;
 fn sample() -> Files {
     // 文本块按规范补尾换行;样例自带尾换行才能逐字节 roundtrip。
     let mut manifest =
-        r#"{"id":"demo","name":"演示","version":"0.1.0","api":3,"wasm":"demo.wasm"}"#
+        r#"{"id":"demo","name":"演示","version":"0.1.0","api": 4,"wasm":"demo.wasm"}"#
             .as_bytes()
             .to_vec();
     manifest.push(b'\n');

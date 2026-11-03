@@ -36,4 +36,4 @@ impl Extension for ShotOcr {
     }
 }
 
-lueying_extguest::export!(ShotOcr);
+lueying_extguest::export!(ShotOcr, commands: [run]);

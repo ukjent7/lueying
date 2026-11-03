@@ -1,9 +1,8 @@
 /* 掠影运行期扩展的 guest ABI(C 与 C++ 通用)。
  *
- * 契约只有两条:guest 从模块 "lueying" 导入宿主服务,guest 导出 lueying_*
- * 符号。宿主用什么 JIT 与这份契约无关,任何能产出 wasm32-unknown-unknown
- * 模块的工具链都能实现它;Rust 侧有 lueying-extguest 便利封装,这里的声明
- * 与它等价。
+ * 扩展就是标准 Extism 插件:数据放在 extism 的内存里,命令按 id 导出。
+ * Rust 侧有 lueying-extguest 便利封装,这里的声明与它等价;别的语言用
+ * 官方 Extism PDK 也一样能跑。
  *
  * 编译:
  *   clang --target=wasm32-unknown-unknown -nostdlib -O2 \
@@ -22,26 +21,45 @@ extern "C" {
 #endif
 
 /* 清单 api 字段的取值。 */
-#define LUEYING_EXT_API 3
+#define LUEYING_EXT_API 4
 
-/* 宿主导入(模块 "lueying")。 */
+/* extism 内核(模块 "extism:host/env")。
+ * guest 的数据都在 extism 的内存里:分配一块、写进去、交给宿主。 */
 
-/* 交回命令或外观的最终结果;ok 非 0 表示成功,0 表示失败并附错误文本。 */
-__attribute__((import_module("lueying"), import_name("emit")))
-void lueying_emit(const uint8_t *bytes, uint32_t len, int32_t ok);
+__attribute__((import_module("extism:host/env"), import_name("alloc")))
+uint64_t extism_alloc(uint64_t len);
 
-/* 可取消的等待(毫秒);宿主卸载扩展时返回 -1。 */
-__attribute__((import_module("lueying"), import_name("timeout")))
-int32_t lueying_timeout(int64_t ms);
+__attribute__((import_module("extism:host/env"), import_name("free")))
+void extism_free(uint64_t offset);
 
-/* 服务调用:方法名与参数都指向 guest 线性内存。
- * 返回值是写进结果缓冲区的字节数,-1 表示宿主拒绝这次调用。
- * 结果是一个 JSON 信封:成功 {"ok":true,"value":...},失败
- * {"ok":false,"error":"..."}。 */
+__attribute__((import_module("extism:host/env"), import_name("length")))
+uint64_t extism_length(uint64_t offset);
+
+__attribute__((import_module("extism:host/env"), import_name("load_u8")))
+uint8_t extism_load_u8(uint64_t offset);
+
+__attribute__((import_module("extism:host/env"), import_name("store_u8")))
+void extism_store_u8(uint64_t offset, uint8_t value);
+
+__attribute__((import_module("extism:host/env"), import_name("input_length")))
+uint64_t extism_input_length(void);
+
+__attribute__((import_module("extism:host/env"), import_name("input_load_u8")))
+uint8_t extism_input_load_u8(uint64_t index);
+
+__attribute__((import_module("extism:host/env"), import_name("output_set")))
+void extism_output_set(uint64_t offset, uint64_t len);
+
+__attribute__((import_module("extism:host/env"), import_name("error_set")))
+void extism_error_set(uint64_t offset);
+
+/* 宿主服务(模块 "extism:host/user")。
+ * 请求是一段 JSON,回一段 JSON;返回值是 extism 内存里那段响应的偏移。
+ * 清单 needs 里没声明的服务不会被链接,用到就在实例化时失败。 */
 #define LUEYING_SERVICE(name)                                                 \
-  __attribute__((import_module("lueying"), import_name(#name)))               \
-  int32_t lueying_##name(const uint8_t *method, uint32_t method_len,          \
-                         const uint8_t *args, uint32_t args_len)
+  __attribute__((import_module("extism:host/user"),                            \
+                 import_name("lueying_" #name)))                              \
+  uint64_t lueying_##name(uint64_t request)
 
 LUEYING_SERVICE(capture);
 LUEYING_SERVICE(ocr);
@@ -54,42 +72,50 @@ LUEYING_SERVICE(notify);
 LUEYING_SERVICE(network);
 LUEYING_SERVICE(context);
 
+/* 可取消的等待(毫秒);宿主卸载扩展时返回 -1。 */
+__attribute__((import_module("extism:host/user"), import_name("lueying_timeout")))
+int32_t lueying_timeout(int64_t ms);
+
 /* guest 导出:宿主按清单与调用点取用。
  * 下面的宏贴在函数定义前面,把符号名改成宿主要的那个。 */
 
-/* 初始化;返回 0 成功,非 0 时经 lueying_emit 交错误文本。可不实现。 */
+/* 初始化;返回 0 成功。可不实现。 */
 #define LUEYING_EXPORT_INIT                                                   \
   __attribute__((export_name("lueying_init"))) int32_t lueying_init(void)
 
-/* 命令入口:id 与 args 是宿主写进 guest 内存的 JSON 文本;返回 0 成功。 */
-#define LUEYING_EXPORT_COMMAND                                                \
-  __attribute__((export_name("lueying_command"))) int32_t lueying_command(    \
-      const uint8_t *id, uint32_t id_len, const uint8_t *args,                \
-      uint32_t args_len)
+/* 命令入口:导出名就是命令 id,清单里的命令 id 要与它一致。
+ * 宿主把参数 JSON 作为 extism 输入传进来;结果用 lueying_output 交回。 */
+#define LUEYING_EXPORT_COMMAND(name)                                          \
+  __attribute__((export_name(#name))) int32_t name(void)
 
-/* 外观帧:清单 appearance 为 true 时必须实现,返回 0 成功。 */
+/* 外观帧:清单 appearance 为 true 时必须实现,结果用 lueying_output 交回。 */
 #define LUEYING_EXPORT_APPEARANCE                                             \
   __attribute__((export_name("lueying_appearance"))) int32_t lueying_appearance( \
-      const uint8_t *scene, uint32_t scene_len)
+      void)
 
-/* 宿主写输入前问 guest 要一块内存,用完交回。 */
-#define LUEYING_EXPORT_ALLOC                                                  \
-  __attribute__((export_name("lueying_alloc"))) uint32_t lueying_alloc(        \
-      uint32_t len)
+/* 把一段字节交给宿主当结果。 */
+static inline int32_t lueying_output(const uint8_t *bytes, uint64_t len) {
+  uint64_t offset = extism_alloc(len);
+  for (uint64_t i = 0; i < len; i++) {
+    extism_store_u8(offset + i, bytes[i]);
+  }
+  extism_output_set(offset, len);
+  return 0;
+}
 
-#define LUEYING_EXPORT_FREE                                                  \
-  __attribute__((export_name("lueying_free"))) void lueying_free(uint32_t ptr, \
-                                                                 uint32_t len)
-
-/* 服务结果缓冲区:宿主把 JSON 信封写在这里,guest 按返回的字节数读。
- * 指针要稳定,容量至少 1 字节,64 KiB 足够。 */
-#define LUEYING_EXPORT_RESULT_PTR                                             \
-  __attribute__((export_name("lueying_result_ptr"))) uint32_t                 \
-      lueying_result_ptr(void)
-
-#define LUEYING_EXPORT_RESULT_CAP                                             \
-  __attribute__((export_name("lueying_result_cap"))) uint32_t                 \
-      lueying_result_cap(void)
+/* 把一段文本交给宿主当错误;宿主把它当成命令失败的原因。 */
+static inline int32_t lueying_error(const char *text) {
+  uint64_t len = 0;
+  while (text[len] != '\0') {
+    len++;
+  }
+  uint64_t offset = extism_alloc(len);
+  for (uint64_t i = 0; i < len; i++) {
+    extism_store_u8(offset + i, (uint8_t)text[i]);
+  }
+  extism_error_set(offset);
+  return -1;
+}
 
 #ifdef __cplusplus
 }

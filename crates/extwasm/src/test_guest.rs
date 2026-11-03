@@ -1,4 +1,7 @@
 //! 测试用的最小 Wasm guest 与临时包目录。
+//!
+//! guest 走标准 Extism ABI:从 `extism:host/env` 导入内核函数,导出按
+//! 命令 id 命名的入口。这样测的路径与第三方插件完全一致。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,7 +54,7 @@ pub(crate) fn command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
         "id": id,
         "name": "演示",
         "version": "1.0.0",
-        "api": 3,
+        "api": 4,
         "wasm": "extension.wasm",
         "activate": {
             "commands": commands
@@ -69,76 +72,81 @@ pub(crate) fn appearance_manifest(id: &str) -> String {
         "id": id,
         "name": "演示",
         "version": "1.0.0",
-        "api": 3,
+        "api": 4,
         "wasm": "extension.wasm",
         "appearance": true
     })
     .to_string()
 }
 
-/// WAT 字符串字面量转义;长度按 UTF-8 字节算。
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(ch),
-        }
-    }
-    out
+/// 一份没有任何入口的清单。
+pub(crate) fn plain_manifest(id: &str) -> String {
+    json!({
+        "id": id,
+        "name": "演示",
+        "version": "1.0.0",
+        "api": 4,
+        "wasm": "extension.wasm"
+    })
+    .to_string()
 }
 
-/// 公共骨架:内存、bump 分配器、结果缓冲区与 init。
+/// 公共骨架:extism 内核函数的导入。
 fn preamble() -> &'static str {
     r#"(module
-  (import "lueying" "emit" (func $emit (param i32 i32 i32)))
-  (memory (export "memory") 2)
-  (global $bump (mut i32) (i32.const 1024))
-  (func (export "lueying_alloc") (param $len i32) (result i32)
-    (local $ptr i32)
-    (local.set $ptr (global.get $bump))
-    (global.set $bump (i32.add (global.get $bump) (local.get $len)))
-    (local.get $ptr))
-  (func (export "lueying_free") (param i32 i32))
-  (func (export "lueying_result_ptr") (result i32) (i32.const 65536))
-  (func (export "lueying_result_cap") (result i32) (i32.const 4096))
-  (func (export "lueying_init") (result i32) (i32.const 0))
+  (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
+  (import "extism:host/env" "free" (func $free (param i64)))
+  (import "extism:host/env" "length" (func $length (param i64) (result i64)))
+  (import "extism:host/env" "load_u8" (func $load_u8 (param i64) (result i32)))
+  (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
+  (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
+  (import "extism:host/env" "error_set" (func $error_set (param i64)))
 "#
+}
+
+/// 把字节逐个写进 extism 内存;偏移从 `local` 里的块首地址开始。
+fn store_bytes(local: &str, bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (index, byte) in bytes.iter().enumerate() {
+        out.push_str(&format!(
+            "    (call $store_u8 (i64.add (local.get {local}) (i64.const {index})) (i32.const {byte}))\n"
+        ));
+    }
+    out
 }
 
 /// 命令返回一段固定文本。
 pub(crate) fn command_guest(result: &str) -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"run\") (result i32)
+    (local $ptr i64)
+    (local.set $ptr (call $alloc (i64.const {len})))
+{stores}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
         len = result.len(),
-        text = escape(result),
+        stores = store_bytes("$ptr", result.as_bytes()),
     )
 }
 
 /// 命令回传错误文本。
 pub(crate) fn error_guest(error: &str) -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 0))
-    (i32.const 1))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"run\") (result i32)
+    (local $ptr i64)
+    (local.set $ptr (call $alloc (i64.const {len})))
+{stores}    (call $error_set (local.get $ptr))
+    (i32.const -1)))",
         preamble(),
         len = error.len(),
-        text = escape(error),
+        stores = store_bytes("$ptr", error.as_bytes()),
     )
 }
 
 /// 命令直接 trap。
 pub(crate) fn trap_guest() -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
+        "{}(func (export \"run\") (result i32)
     (unreachable)
     (i32.const 0)))",
         preamble(),
@@ -148,10 +156,10 @@ pub(crate) fn trap_guest() -> String {
 /// 命令死循环;燃料烧完才停。
 pub(crate) fn loop_guest() -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
+        "{}(func (export \"run\") (result i32)
     (local $x i32)
     (loop $forever
-      ;; wasmtime 给 block/loop/br 记 0 燃料,循环体放一条真实指令保证烧燃料。
+      ;; 循环体放一条真实指令,保证烧燃料。
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (br $forever))
     (i32.const 0)))",
@@ -162,12 +170,13 @@ pub(crate) fn loop_guest() -> String {
 /// 外观返回一段固定补丁。
 pub(crate) fn appearance_guest(patch: &str) -> String {
     format!(
-        "{}(func (export \"lueying_appearance\") (param i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"lueying_appearance\") (result i32)
+    (local $ptr i64)
+    (local.set $ptr (call $alloc (i64.const {len})))
+{stores}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
         len = patch.len(),
-        text = escape(patch),
+        stores = store_bytes("$ptr", patch.as_bytes()),
     )
 }

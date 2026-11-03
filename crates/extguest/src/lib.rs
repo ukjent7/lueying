@@ -1,16 +1,17 @@
-//! 掠影 Wasm 扩展的同步 Rust SDK。
+//! 掠影 Wasm 扩展的 Rust SDK(Extism ABI)。
 //!
-//! 扩展作者实现 [`Extension`],用 [`export!`] 导出入口;命令与服务都是同步
-//! 调用,宿主在扩展自己的 worker 上阻塞等待。服务结果写进一块固定的结果
-//! 缓冲区,超过 64 KiB 时宿主回一个错误信封。
+//! 扩展作者实现 [`Extension`],用 [`export!`] 声明命令;宿主按命令 id 调用
+//! 同名导出,输入是参数 JSON,输出是结果 JSON。命令与服务都是同步调用,
+//! 宿主在扩展自己的 worker 上阻塞等待。
+//!
+//! 产物是标准 Extism 插件:别的 Extism 宿主也跑得动,别的 Extism 插件放进
+//! 掠影的扩展目录同样能被调用。宿主服务从 `extism:host/user` 导入,
+//! 清单 `needs` 里没声明的服务在链接时就通不过。
 //!
 //! 这个 crate 同时编进 `wasm32-unknown-unknown` 与宿主测试目标:非 Wasm
 //! 目标上的宿主导入是返回 `-1` 的桩,方便在普通 `cargo test` 里检查逻辑。
 
 #![deny(missing_docs)]
-
-use std::alloc::Layout;
-use std::sync::{Mutex, MutexGuard};
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -22,17 +23,11 @@ pub use lueying_extproto::{
     StoreKeys, StoreValue,
 };
 
-/// 结果缓冲区的字节数。服务结果超过这个值时宿主回错误信封。
-const RESULT_CAP: usize = 64 * 1024;
-
-/// 宿主写服务结果、guest 读结果的固定缓冲区。
-static RESULT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-
 /// 扩展入口。
 ///
 /// 宿主只调用清单里声明过的命令;`appearance` 只在清单 `appearance: true`
 /// 时被派发。实现类型必须能放进静态 `Mutex`,也就是 `Send`。
-pub trait Extension: Send {
+pub trait Extension: Send + Default {
     /// 初始化;返回 `Err` 会让扩展加载失败。
     fn init(&mut self) -> Result<(), String> {
         Ok(())
@@ -49,40 +44,86 @@ pub trait Extension: Send {
     }
 }
 
-/// 宿主导入的服务函数签名:方法名与参数都从 guest 内存读。
-type ServiceFn = unsafe extern "C" fn(i32, i32, i32, i32) -> i32;
+/// 宿主服务函数的签名:收一段 extism 内存里的 JSON,回一段 JSON 的偏移。
+type ServiceFn = unsafe extern "C" fn(u64) -> u64;
 
 #[cfg(target_arch = "wasm32")]
-#[link(wasm_import_module = "lueying")]
+#[link(wasm_import_module = "extism:host/env")]
 unsafe extern "C" {
-    #[link_name = "emit"]
-    fn host_emit(ptr: i32, len: i32, ok: i32);
-    #[link_name = "timeout"]
+    fn input_length() -> u64;
+    fn input_load_u8(offs: u64) -> u8;
+    fn length(offs: u64) -> u64;
+    fn alloc(len: u64) -> u64;
+    fn free(offs: u64);
+    fn output_set(offs: u64, len: u64);
+    fn error_set(offs: u64);
+    fn load_u8(offs: u64) -> u8;
+    fn store_u8(offs: u64, value: u8);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "extism:host/user")]
+unsafe extern "C" {
+    #[link_name = "lueying_timeout"]
     fn host_timeout(ms: i64) -> i32;
-    #[link_name = "capture"]
-    fn host_capture(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "ocr"]
-    fn host_ocr(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "output"]
-    fn host_output(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "panel"]
-    fn host_panel(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "clipboard"]
-    fn host_clipboard(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "store"]
-    fn host_store(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "notify"]
-    fn host_notify(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "hotkey"]
-    fn host_hotkey(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "network"]
-    fn host_network(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
-    #[link_name = "context"]
-    fn host_context(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
+    #[link_name = "lueying_capture"]
+    fn host_capture(request: u64) -> u64;
+    #[link_name = "lueying_ocr"]
+    fn host_ocr(request: u64) -> u64;
+    #[link_name = "lueying_output"]
+    fn host_output(request: u64) -> u64;
+    #[link_name = "lueying_panel"]
+    fn host_panel(request: u64) -> u64;
+    #[link_name = "lueying_clipboard"]
+    fn host_clipboard(request: u64) -> u64;
+    #[link_name = "lueying_store"]
+    fn host_store(request: u64) -> u64;
+    #[link_name = "lueying_notify"]
+    fn host_notify(request: u64) -> u64;
+    #[link_name = "lueying_hotkey"]
+    fn host_hotkey(request: u64) -> u64;
+    #[link_name = "lueying_network"]
+    fn host_network(request: u64) -> u64;
+    #[link_name = "lueying_context"]
+    fn host_context(request: u64) -> u64;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_emit(_ptr: i32, _len: i32, _ok: i32) {}
+unsafe extern "C" fn alloc(_len: u64) -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn free(_offset: u64) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn length(_offset: u64) -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn load_u8(_offset: u64) -> u8 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn store_u8(_offset: u64, _value: u8) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn input_length() -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn input_load_u8(_index: u64) -> u8 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn output_set(_offset: u64, _len: u64) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn error_set(_offset: u64) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn host_timeout(_ms: i64) -> i32 {
@@ -90,58 +131,58 @@ unsafe extern "C" fn host_timeout(_ms: i64) -> i32 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_capture(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_capture(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_ocr(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_ocr(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_output(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_output(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_panel(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_panel(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_clipboard(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_clipboard(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_store(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_store(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_notify(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_notify(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_hotkey(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_hotkey(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_network(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_network(_request: u64) -> u64 {
+    0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-unsafe extern "C" fn host_context(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
-    -1
+unsafe extern "C" fn host_context(_request: u64) -> u64 {
+    0
 }
 
 /// 截取整块虚拟桌面,返回临时 BMP 的路径与尺寸。
 pub fn capture_shot() -> Result<Shot, String> {
-    call_typed(host_capture, "shot", "")
+    call_typed(host_capture, "shot", "{}")
 }
 
 /// 识别一张位图;`lang` 只对系统 OCR 有意义,`None` 用系统默认语言。
@@ -164,7 +205,7 @@ pub fn panel_show(title: &str, items: &[String]) -> Result<PanelResult, String> 
 
 /// 读剪贴板纯文本。
 pub fn clipboard_read() -> Result<ClipboardText, String> {
-    call_typed(host_clipboard, "read", "")
+    call_typed(host_clipboard, "read", "{}")
 }
 
 /// 写剪贴板纯文本。
@@ -193,7 +234,7 @@ pub fn store_remove(key: &str) -> Result<(), String> {
 
 /// 列出扩展私有存储的全部键。
 pub fn store_list() -> Result<StoreKeys, String> {
-    call_typed(host_store, "list", "")
+    call_typed(host_store, "list", "{}")
 }
 
 /// 经独立 broker 发一次 HTTP(S) 请求;域名必须在清单 network.allow
@@ -208,7 +249,7 @@ pub fn network_fetch(options: &FetchArgs) -> Result<FetchResult, String> {
 /// 读当前窗口里用户选中的文字;扩展清单要在 `capabilities` 里申请
 /// `selected-text`,没申请就调用失败。没有选中文字时返回空串。
 pub fn context_selection() -> Result<SelectedText, String> {
-    call_typed(host_context, "selection", "")
+    call_typed(host_context, "selection", "{}")
 }
 
 /// 发一条系统通知;v1 落在宿主日志里。
@@ -247,7 +288,7 @@ pub fn timeout_sleep(ms: u64) -> Result<(), String> {
 
 /// 导出扩展入口。
 ///
-/// 用法:
+/// 命令 id 就是导出的符号名,清单里的命令 id 要与它一致。用法:
 ///
 /// ```ignore
 /// #[derive(Default)]
@@ -259,120 +300,37 @@ pub fn timeout_sleep(ms: u64) -> Result<(), String> {
 ///     }
 /// }
 ///
-/// lueying_extguest::export!(MyExtension);
+/// lueying_extguest::export!(MyExtension, commands: [run]);
 /// ```
 #[macro_export]
 macro_rules! export {
-    ($ty:ty) => {
+    ($ty:ty, commands: [$($command:ident),* $(,)?]) => {
         const _: () = {
-            fn with<R>(f: impl FnOnce(&mut $ty) -> R) -> R {
-                static EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
-                    ::std::sync::Mutex::new(::std::option::Option::None);
+            static EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
+                ::std::sync::Mutex::new(::std::option::Option::None);
+
+            $(
+                #[unsafe(no_mangle)]
+                pub extern "C" fn $command() -> i32 {
+                    let mut guard =
+                        EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                    let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
+                    $crate::__private::run_command(slot, stringify!($command))
+                }
+            )*
+
+            #[unsafe(no_mangle)]
+            pub extern "C" fn lueying_appearance() -> i32 {
                 let mut guard = EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
                 let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
-                f(slot)
+                $crate::__private::run_appearance(slot)
             }
 
             #[unsafe(no_mangle)]
             pub extern "C" fn lueying_init() -> i32 {
-                match with(|ext| $crate::Extension::init(ext)) {
-                    Ok(()) => 0,
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        1
-                    }
-                }
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_command(
-                id_ptr: i32,
-                id_len: i32,
-                args_ptr: i32,
-                args_len: i32,
-            ) -> i32 {
-                let id = match unsafe { $crate::__private::read_input(id_ptr, id_len) } {
-                    Ok(text) => text,
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        return 1;
-                    }
-                };
-                let args = match unsafe { $crate::__private::read_input(args_ptr, args_len) } {
-                    Ok(text) => text,
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        return 1;
-                    }
-                };
-                match with(|ext| $crate::Extension::command(ext, &id, &args)) {
-                    Ok(text) => {
-                        $crate::__private::emit_ok(&text);
-                        0
-                    }
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        1
-                    }
-                }
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_appearance(scene_ptr: i32, scene_len: i32) -> i32 {
-                let text = match unsafe { $crate::__private::read_input(scene_ptr, scene_len) } {
-                    Ok(text) => text,
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        return 1;
-                    }
-                };
-                let scene = match $crate::__private::parse_scene(&text) {
-                    Ok(scene) => scene,
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        return 1;
-                    }
-                };
-                match with(|ext| $crate::Extension::appearance(ext, &scene)) {
-                    Ok(Some(patch)) => match $crate::__private::patch_json(&patch) {
-                        Ok(text) => {
-                            $crate::__private::emit_ok(&text);
-                            0
-                        }
-                        Err(error) => {
-                            $crate::__private::emit_error(&error);
-                            1
-                        }
-                    },
-                    Ok(None) => {
-                        $crate::__private::emit_ok("");
-                        0
-                    }
-                    Err(error) => {
-                        $crate::__private::emit_error(&error);
-                        1
-                    }
-                }
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_alloc(len: i32) -> i32 {
-                $crate::__private::alloc(len)
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_free(ptr: i32, len: i32) {
-                $crate::__private::free(ptr, len)
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_result_ptr() -> i32 {
-                $crate::__private::result_ptr()
-            }
-
-            #[unsafe(no_mangle)]
-            pub extern "C" fn lueying_result_cap() -> i32 {
-                $crate::__private::result_cap()
+                let mut guard = EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
+                $crate::__private::run_init(slot)
             }
         };
     };
@@ -387,44 +345,21 @@ struct Envelope {
     error: String,
 }
 
-fn result_buffer() -> MutexGuard<'static, Vec<u8>> {
-    let mut guard = RESULT.lock().unwrap_or_else(|error| error.into_inner());
-    if guard.len() != RESULT_CAP {
-        guard.resize(RESULT_CAP, 0);
-    }
-    guard
-}
-
-fn emit_raw(bytes: &[u8], ok: bool) {
-    unsafe {
-        host_emit(
-            bytes.as_ptr() as i32,
-            bytes.len() as i32,
-            if ok { 1 } else { 0 },
-        );
-    }
-}
-
+/// 调一次宿主服务;请求与响应都是 JSON。
 fn call(raw: ServiceFn, method: &str, args: &str) -> Result<serde_json::Value, String> {
-    let code = unsafe {
-        raw(
-            method.as_ptr() as i32,
-            method.len() as i32,
-            args.as_ptr() as i32,
-            args.len() as i32,
-        )
+    let args = if args.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(args).unwrap_or_else(|_| serde_json::Value::String(args.to_string()))
     };
-    if code < 0 {
+    let request = serde_json::json!({ "method": method, "args": args }).to_string();
+    let offset = write_block(request.as_bytes());
+    let response = unsafe { raw(offset) };
+    if response == 0 {
         return Err("宿主没有回传服务结果".into());
     }
-    let bytes = {
-        let buffer = result_buffer();
-        let end = (code as usize).min(buffer.len());
-        buffer[..end].to_vec()
-    };
-    if bytes.is_empty() {
-        return Ok(serde_json::Value::Null);
-    }
+    let bytes = read_block(response);
+    unsafe { free(response) };
     let envelope: Envelope =
         serde_json::from_slice(&bytes).map_err(|error| format!("服务结果解析失败: {error}"))?;
     if envelope.ok {
@@ -443,88 +378,119 @@ fn call_unit(raw: ServiceFn, method: &str, args: &str) -> Result<(), String> {
     call(raw, method, args).map(|_| ())
 }
 
-/// `export!` 展开时用到的内部符号;不属于公开 API。
-#[doc(hidden)]
-pub mod __private {
-    pub use crate::{
-        alloc, emit_error, emit_ok, free, parse_scene, patch_json, read_input, result_cap,
-        result_ptr,
-    };
-}
-
-/// 给宿主写输入分配一块 guest 内存。
-#[doc(hidden)]
-pub fn alloc(len: i32) -> i32 {
-    if len <= 0 {
-        return 0;
+/// 往 extism 内存写一块数据,返回块首偏移。
+fn write_block(bytes: &[u8]) -> u64 {
+    let offset = unsafe { alloc(bytes.len() as u64) };
+    for (index, byte) in bytes.iter().enumerate() {
+        unsafe { store_u8(offset + index as u64, *byte) };
     }
-    let Ok(layout) = Layout::from_size_align(len as usize, 1) else {
-        return 0;
-    };
-    let pointer = unsafe { std::alloc::alloc(layout) };
-    if pointer.is_null() { 0 } else { pointer as i32 }
+    offset
 }
 
-/// 释放宿主写输入用的 guest 内存。
-#[doc(hidden)]
-pub fn free(ptr: i32, len: i32) {
-    if ptr <= 0 || len <= 0 {
-        return;
+/// 从 extism 内存读一块数据。
+fn read_block(offset: u64) -> Vec<u8> {
+    let len = unsafe { length(offset) } as usize;
+    let mut out = vec![0u8; len];
+    for (index, slot) in out.iter_mut().enumerate() {
+        *slot = unsafe { load_u8(offset + index as u64) };
     }
-    let Ok(layout) = Layout::from_size_align(len as usize, 1) else {
-        return;
-    };
-    unsafe { std::alloc::dealloc(ptr as *mut u8, layout) };
+    out
 }
 
-/// 结果缓冲区的起始地址;宿主实例化后读一次并缓存。
-#[doc(hidden)]
-pub fn result_ptr() -> i32 {
-    result_buffer().as_ptr() as i32
-}
-
-/// 结果缓冲区的字节数。
-#[doc(hidden)]
-pub fn result_cap() -> i32 {
-    RESULT_CAP as i32
-}
-
-/// 从宿主写进 guest 内存的输入读 UTF-8 文本。
-#[doc(hidden)]
-pub unsafe fn read_input(ptr: i32, len: i32) -> Result<String, String> {
-    if len < 0 {
-        return Err("输入长度为负".into());
+/// 宿主传进来的输入;命令是参数 JSON,外观是场景 JSON。
+fn input_string() -> Result<String, String> {
+    let len = unsafe { input_length() } as usize;
+    let mut bytes = vec![0u8; len];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        *slot = unsafe { input_load_u8(index as u64) };
     }
-    if len == 0 {
-        return Ok(String::new());
-    }
-    if ptr <= 0 {
-        return Err("输入指针为空".into());
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    String::from_utf8(bytes.to_vec()).map_err(|_| "输入不是 UTF-8".into())
+    String::from_utf8(bytes).map_err(|_| "宿主输入不是 UTF-8".to_string())
 }
 
-/// 解析宿主传来的场景 JSON。
-#[doc(hidden)]
-pub fn parse_scene(text: &str) -> Result<SceneIn, String> {
-    SceneIn::parse(text)
-}
-
-/// 把补丁序列化成 JSON。
-#[doc(hidden)]
-pub fn patch_json(patch: &ScenePatch) -> Result<String, String> {
-    serde_json::to_string(patch).map_err(|error| format!("补丁序列化失败: {error}"))
-}
-
-/// 把成功结果交给宿主。
-#[doc(hidden)]
-pub fn emit_ok(text: &str) {
-    emit_raw(text.as_bytes(), true);
+/// 把结果交给宿主。
+fn set_output(bytes: &[u8]) {
+    let offset = write_block(bytes);
+    unsafe { output_set(offset, bytes.len() as u64) };
 }
 
 /// 把错误文本交给宿主。
+fn set_error(text: &str) {
+    let offset = write_block(text.as_bytes());
+    unsafe { error_set(offset) };
+}
+
+/// `export!` 展开时用到的内部符号;不属于公开 API。
 #[doc(hidden)]
-pub fn emit_error(text: &str) {
-    emit_raw(text.as_bytes(), false);
+pub mod __private {
+    use super::*;
+
+    /// 跑一条命令;返回 0 是成功。
+    pub fn run_command<E: Extension>(ext: &mut E, id: &str) -> i32 {
+        let args = match input_string() {
+            Ok(text) => text,
+            Err(error) => {
+                set_error(&error);
+                return -1;
+            }
+        };
+        match ext.command(id, &args) {
+            Ok(text) => {
+                set_output(text.as_bytes());
+                0
+            }
+            Err(error) => {
+                set_error(&error);
+                -1
+            }
+        }
+    }
+
+    /// 跑一帧外观;返回 0 是成功,输出是补丁 JSON。
+    pub fn run_appearance<E: Extension>(ext: &mut E) -> i32 {
+        let text = match input_string() {
+            Ok(text) => text,
+            Err(error) => {
+                set_error(&error);
+                return -1;
+            }
+        };
+        let scene = match SceneIn::parse(&text) {
+            Ok(scene) => scene,
+            Err(error) => {
+                set_error(&error);
+                return -1;
+            }
+        };
+        match ext.appearance(&scene) {
+            Ok(Some(patch)) => match serde_json::to_string(&patch) {
+                Ok(text) => {
+                    set_output(text.as_bytes());
+                    0
+                }
+                Err(error) => {
+                    set_error(&format!("补丁序列化失败: {error}"));
+                    -1
+                }
+            },
+            Ok(None) => {
+                set_output(b"");
+                0
+            }
+            Err(error) => {
+                set_error(&error);
+                -1
+            }
+        }
+    }
+
+    /// 跑初始化;返回 0 是成功。
+    pub fn run_init<E: Extension>(ext: &mut E) -> i32 {
+        match ext.init() {
+            Ok(()) => 0,
+            Err(error) => {
+                set_error(&error);
+                -1
+            }
+        }
+    }
 }

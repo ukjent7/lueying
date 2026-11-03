@@ -70,7 +70,7 @@ pub struct ExtStat {
     pub version: String,
     /// 当前状态。
     pub state: ExtState,
-    /// Wasm 线性内存当前占用(字节);未加载为 0。
+    /// Wasm 线性内存当前占用(字节);Extism 运行期不提供当前占用,恒为 0。
     pub memory_used: u64,
     /// 内存上限(字节)。
     pub memory_limit: u64,

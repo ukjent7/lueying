@@ -1,34 +1,68 @@
-//! wasmtime 宿主:一个扩展一个 worker,线程内持有 `Store`、实例与服务导入。
+//! Extism 运行期扩展宿主:每个扩展一个 worker,线程内跑 Extism 插件。
 //!
-//! 命令与外观都在 worker 上串行执行;宿主服务调用是阻塞的,但只阻塞这个
-//! worker,不碰引擎线程。trap 后实例不可再进入,下一次调用前重建。
+//! 扩展就是标准 Extism 插件:wasm 模块从 `extism:host/env` 导入内核函数
+//! (分配、输入输出、错误),需要宿主服务时再从 `extism:host/user` 导入
+//! `lueying_<服务>`。宿主用 extism 的运行期执行插件,别的 Extism 宿主写的
+//! 插件也能直接放进扩展目录。
+//!
+//! 命令与外观都在 worker 上串行执行;宿主服务是阻塞调用:宿主把调用交给
+//! [`lueying_extsvc`] 的提供者,等它经 [`Done`] 回传,期间不碰引擎线程。
+//!
+//! # ABI
+//!
+//! - 命令:宿主按清单里的命令 id 调用同名导出,输入是参数 JSON,输出是
+//!   结果 JSON;导出返回非 0 或设了 extism 错误就是失败。
+//! - 外观:宿主调用 `lueying_appearance` 导出,输入是场景 JSON。
+//! - 服务:`extism:host/user` 里的 `lueying_<服务>` 收一段 JSON
+//!   `{"method":…,"args":…}`,回一段 JSON `{"ok":true,"value":…}`。
+//!
+//! # 边界
+//!
+//! - 线性内存上限 [`Limits::memory_bytes`],值栈上限 [`Limits::stack_bytes`]。
+//! - 初始化与每次调用都有燃料预算;燃料烧完即 trap,连续 [`MAX_FAULTS`]
+//!   次失败停用该包。
+//! - 隐私字段([`SceneIn::private`])直接跳过,guest 不会收到那次状态。
+//! - 清单 `needs` 里没声明的服务不链接,guest 用到就在实例化时失败。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use extism::{
+    CompiledPlugin, CurrentPlugin, Manifest as ExtismManifest, Plugin, PluginBuilder, UserData,
+    Val, ValType, Wasm,
+};
 use lueying_extproto::{MAX_RESULT_BYTES, SceneIn, ScenePatch};
 use lueying_extsvc::Registry;
-use wasmtime::{
-    AsContext, Caller, Config, Engine, Linker, Memory, Module, Store, StoreLimits,
-    StoreLimitsBuilder, TypedFunc,
-};
 
 use crate::Manifest;
 use crate::manifest::Service;
 
-/// worker 线程的宿主栈;serde 解析、宿主调用与 wasm 帧(wasmtime 把
-/// [`Limits::stack_bytes`] 当真实线程栈约束)都要装下,固定 1 MiB。
-const WORKER_STACK: usize = 1 << 20;
+/// worker 线程的宿主栈;extism 内核、wasm 帧(wasmtime 把
+/// [`Limits::stack_bytes`] 当真实线程栈约束)与宿主函数的 serde 解析都要
+/// 装下,固定 2 MiB。
+const WORKER_STACK: usize = 2 << 20;
+
+/// extism 内核的一页;内存上限按页算。
+const PAGE: usize = 65536;
+
+/// 宿主函数的命名空间;extism 内核在 `extism:host/env`,宿主服务在用户区。
+const USER_NS: &str = "extism:host/user";
+
+/// 外观导出名;清单 `appearance` 为 true 时必须存在。
+const APPEARANCE_EXPORT: &str = "lueying_appearance";
+
+/// 初始化导出名;存在就调一次,失败即加载失败。
+const INIT_EXPORT: &str = "lueying_init";
 
 /// 运行期上限。
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// 线性内存上限(字节)。
+    /// 线性内存上限(字节);换算成 extism 的页数上限。
     pub memory_bytes: usize,
-    /// Wasm 栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
-    /// 必须明显小于 worker 线程栈(`WORKER_STACK`,1 MiB)。
+    /// Wasm 值栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
+    /// 必须明显小于 worker 线程栈([`WORKER_STACK`]）。
     pub stack_bytes: usize,
     /// 初始化时限(毫秒);指标展示用。
     pub init_ms: u64,
@@ -59,8 +93,6 @@ impl Default for Limits {
 /// 一个 worker 的运行指标快照。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostMetrics {
-    /// 线性内存当前占用(字节)。
-    pub memory_used: u64,
     /// 命令/外观调用次数。
     pub dispatches: u64,
     /// 燃料消耗累计。
@@ -77,7 +109,6 @@ pub struct HostMetrics {
 
 #[derive(Default)]
 struct Metrics {
-    memory_used: AtomicU64,
     dispatches: AtomicU64,
     steps: AtomicU64,
     dispatch_peak_us: AtomicU64,
@@ -89,7 +120,6 @@ struct Metrics {
 impl Metrics {
     fn snapshot(&self) -> HostMetrics {
         HostMetrics {
-            memory_used: self.memory_used.load(Ordering::Relaxed),
             dispatches: self.dispatches.load(Ordering::Relaxed),
             steps: self.steps.load(Ordering::Relaxed),
             dispatch_peak_us: self.dispatch_peak_us.load(Ordering::Relaxed),
@@ -98,24 +128,6 @@ impl Metrics {
             ooms: self.ooms.load(Ordering::Relaxed),
         }
     }
-}
-
-/// guest 通过 `lueying_emit` 交回的最后一段结果。
-struct Emitted {
-    bytes: Vec<u8>,
-    ok: bool,
-}
-
-/// `Store` 的宿主状态。
-struct HostState {
-    caller: String,
-    services: Arc<Registry>,
-    cancelled: Arc<AtomicBool>,
-    limits: StoreLimits,
-    memory: Option<Memory>,
-    result_ptr: u32,
-    result_cap: u32,
-    emitted: Option<Emitted>,
 }
 
 /// 一条命令的最终结果。
@@ -158,10 +170,9 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// 编译好的模块起一个 worker;初始化失败时返回错误,线程已回收。
+    /// 一个扩展的模块起一个 worker;加载失败时返回错误,线程已回收。
     pub(crate) fn spawn(
-        engine: Arc<Engine>,
-        module: Arc<Module>,
+        wasm: Vec<u8>,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
         limits: Limits,
@@ -182,8 +193,7 @@ impl Worker {
             .stack_size(WORKER_STACK)
             .spawn(move || {
                 let mut guest = match Guest::new(
-                    engine,
-                    module,
+                    wasm,
                     manifest,
                     services,
                     limits,
@@ -231,7 +241,7 @@ impl Worker {
                 }
             })
             .map_err(|error| format!("扩展 {caller} worker 启动失败: {error}"))?;
-        match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        match ready_rx.recv_timeout(Duration::from_secs(30)) {
             Ok(Ok(())) => Ok(Self {
                 jobs: jobs_tx,
                 results,
@@ -355,297 +365,135 @@ impl Drop for Worker {
     }
 }
 
-/// 一个已实例化的 guest;trap 后由下一次调用重建。
+/// 一个 extism 插件实例。
 struct Guest {
-    engine: Arc<Engine>,
-    module: Arc<Module>,
+    plugin: Plugin,
     manifest: Arc<Manifest>,
-    services: Arc<Registry>,
-    limits: Limits,
-    cancelled: Arc<AtomicBool>,
     metrics: Arc<Metrics>,
-    store: Store<HostState>,
-    memory: Memory,
-    alloc: TypedFunc<i32, i32>,
-    free: TypedFunc<(i32, i32), ()>,
-    command: Option<TypedFunc<(i32, i32, i32, i32), i32>>,
-    appearance: Option<TypedFunc<(i32, i32), i32>>,
-    needs_reset: bool,
 }
 
 impl Guest {
     fn new(
-        engine: Arc<Engine>,
-        module: Arc<Module>,
+        wasm: Vec<u8>,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
         limits: Limits,
         cancelled: Arc<AtomicBool>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
-        let store_limits = StoreLimitsBuilder::new()
-            .memory_size(limits.memory_bytes)
-            .table_elements(10_000)
-            .instances(1)
-            .tables(1)
-            .memories(1)
-            // 超限就 trap:返回 -1 会让死循环 guest 一直烧燃料,错误归因会漂移。
-            .trap_on_grow_failure(true)
-            .build();
-        let state = HostState {
-            caller: manifest.id.clone(),
-            services: Arc::clone(&services),
-            cancelled: Arc::clone(&cancelled),
-            limits: store_limits,
-            memory: None,
-            result_ptr: 0,
-            result_cap: 0,
-            emitted: None,
-        };
-        let mut store = Store::new(&engine, state);
-        store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(limits.init_fuel)
-            .map_err(|error| format!("燃料初始化失败: {error}"))?;
-        let mut linker = Linker::new(&engine);
-        linker
-            .func_wrap("lueying", "emit", host_emit)
-            .map_err(|error| format!("注册 emit 失败: {error}"))?;
-        linker
-            .func_wrap("lueying", "timeout", host_timeout)
-            .map_err(|error| format!("注册 timeout 失败: {error}"))?;
+        let mut builder = PluginBuilder::new(extism_manifest(&wasm, limits))
+            .with_wasi(true)
+            .with_cache_disabled()
+            .with_fuel_limit(call_fuel(&manifest, limits))
+            .with_initialization_fuel_limit(limits.init_fuel)
+            .with_wasmtime_config(wasmtime_config(limits));
         for service in &manifest.needs {
-            linker
-                .func_wrap("lueying", service.key(), service_import(*service))
-                .map_err(|error| format!("注册服务 {} 失败: {error}", service.key()))?;
+            builder = builder.with_function_in_namespace(
+                USER_NS,
+                service_function_name(*service),
+                [ValType::I64],
+                [ValType::I64],
+                UserData::new(ServiceCtx {
+                    caller: manifest.id.clone(),
+                    service: *service,
+                    services: Arc::clone(&services),
+                    cancelled: Arc::clone(&cancelled),
+                }),
+                service_call,
+            );
         }
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|error| format!("扩展 {} 实例化失败: {error}", manifest.id))?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| format!("扩展 {} 没有导出 memory", manifest.id))?;
-        let alloc = instance
-            .get_typed_func::<i32, i32>(&mut store, "lueying_alloc")
-            .map_err(|error| format!("扩展 {} 没有导出 lueying_alloc: {error}", manifest.id))?;
-        let free = instance
-            .get_typed_func::<(i32, i32), ()>(&mut store, "lueying_free")
-            .map_err(|error| format!("扩展 {} 没有导出 lueying_free: {error}", manifest.id))?;
-        let result_ptr = instance
-            .get_typed_func::<(), i32>(&mut store, "lueying_result_ptr")
-            .and_then(|func| func.call(&mut store, ()))
-            .map_err(|error| format!("扩展 {} 没有可用的结果缓冲区: {error}", manifest.id))?;
-        let result_cap = instance
-            .get_typed_func::<(), i32>(&mut store, "lueying_result_cap")
-            .and_then(|func| func.call(&mut store, ()))
-            .map_err(|error| format!("扩展 {} 没有可用的结果容量: {error}", manifest.id))?;
-        if result_ptr <= 0 || result_cap <= 0 {
-            return Err(format!("扩展 {} 的结果缓冲区为空", manifest.id));
-        }
-        let result_cap = (result_cap as usize).min(MAX_RESULT_BYTES);
-        store.data_mut().memory = Some(memory);
-        store.data_mut().result_ptr = result_ptr as u32;
-        store.data_mut().result_cap = result_cap as u32;
-        let init = instance
-            .get_typed_func::<(), i32>(&mut store, "lueying_init")
-            .ok();
-        let command = instance
-            .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "lueying_command")
-            .ok();
-        let appearance = instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, "lueying_appearance")
-            .ok();
-        if manifest.is_appearance() && appearance.is_none() {
-            return Err(format!(
-                "扩展 {} 声明了 appearance,但没有导出 lueying_appearance",
-                manifest.id
-            ));
-        }
-        if !manifest.commands().is_empty() && command.is_none() {
-            return Err(format!(
-                "扩展 {} 声明了命令,但没有导出 lueying_command",
-                manifest.id
-            ));
-        }
-        if appearance.is_none() && command.is_none() {
-            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
-        }
-        if let Some(init) = &init {
-            store
-                .set_fuel(limits.init_fuel)
-                .map_err(|error| format!("燃料初始化失败: {error}"))?;
-            let status = init
-                .call(&mut store, ())
-                .map_err(|error| format!("扩展 {} 初始化失败: {error}", manifest.id))?;
-            if status != 0 {
-                let text = store
-                    .data_mut()
-                    .emitted
-                    .take()
-                    .map(|emitted| String::from_utf8_lossy(&emitted.bytes).into_owned())
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or_else(|| "没有错误文本".into());
-                return Err(format!("扩展 {} 初始化失败: {text}", manifest.id));
+        builder = builder.with_function_in_namespace(
+            USER_NS,
+            "lueying_timeout",
+            [ValType::I64],
+            [ValType::I32],
+            UserData::new(TimeoutCtx {
+                cancelled: Arc::clone(&cancelled),
+            }),
+            timeout_call,
+        );
+        let compiled = CompiledPlugin::new(builder)
+            .map_err(|error| format!("扩展 {} 编译失败: {error}", manifest.id))?;
+        let plugin = Plugin::new_from_compiled(&compiled)
+            .map_err(|error| format!("扩展 {} 加载失败: {error}", explain_link_error(&error)))?;
+        for command in manifest.commands() {
+            if !plugin.function_exists(&command.id) {
+                return Err(format!("扩展 {} 没有导出命令 {}", manifest.id, command.id));
             }
         }
-        metrics
-            .memory_used
-            .store(memory.data_size(&store) as u64, Ordering::Relaxed);
-        Ok(Self {
-            engine,
-            module,
+        if manifest.is_appearance() && !plugin.function_exists(APPEARANCE_EXPORT) {
+            return Err(format!("扩展 {} 没有导出 {APPEARANCE_EXPORT}", manifest.id));
+        }
+        if manifest.commands().is_empty() && !manifest.is_appearance() {
+            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
+        }
+        let mut guest = Self {
+            plugin,
             manifest,
-            services,
-            limits,
-            cancelled,
             metrics,
-            store,
-            memory,
-            alloc,
-            free,
-            command,
-            appearance,
-            needs_reset: false,
-        })
+        };
+        guest.init()?;
+        Ok(guest)
     }
 
-    fn rebuild(&mut self) -> Result<(), String> {
-        let rebuilt = Self::new(
-            Arc::clone(&self.engine),
-            Arc::clone(&self.module),
-            Arc::clone(&self.manifest),
-            Arc::clone(&self.services),
-            self.limits,
-            Arc::clone(&self.cancelled),
-            Arc::clone(&self.metrics),
-        )?;
-        *self = rebuilt;
-        Ok(())
+    /// 插件导出了初始化入口就调一次;失败即加载失败。
+    fn init(&mut self) -> Result<(), String> {
+        if !self.plugin.function_exists(INIT_EXPORT) {
+            return Ok(());
+        }
+        self.call(INIT_EXPORT, "")
+            .map(|_| ())
+            .map_err(|error| format!("扩展 {} 初始化失败: {error}", self.manifest.id))
     }
 
     fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
-        if self.needs_reset {
-            self.rebuild()?;
-        }
-        let Some(command) = self.command.clone() else {
-            return Err("模块没有导出 lueying_command".into());
-        };
-        self.store
-            .set_fuel(self.limits.command_fuel)
-            .map_err(|error| format!("燃料设置失败: {error}"))?;
         let started = Instant::now();
-        let id_ptr = self.write(id.as_bytes())?;
-        let args_ptr = self.write(args.as_bytes())?;
-        self.store.data_mut().emitted = None;
-        let outcome = command.call(
-            &mut self.store,
-            (
-                id_ptr,
-                i32::try_from(id.len()).unwrap_or(i32::MAX),
-                args_ptr,
-                i32::try_from(args.len()).unwrap_or(i32::MAX),
-            ),
-        );
-        self.free(id_ptr, id.len());
-        self.free(args_ptr, args.len());
-        self.note(started, self.limits.command_fuel);
+        let outcome = self.call(id, args);
+        self.note(started);
         match outcome {
-            Ok(0) => self.take_emitted(),
-            Ok(_) => Err(self
-                .take_emitted()
-                .err()
-                .unwrap_or_else(|| format!("命令 {id} 返回失败但没有错误文本"))),
-            Err(error) => {
-                self.needs_reset = true;
-                self.record_trap(&error);
-                Err(format!("命令 {id} 执行失败: {error}"))
+            Ok(bytes) => {
+                String::from_utf8(bytes).map_err(|_| format!("命令 {id} 的结果不是 UTF-8"))
             }
+            Err(error) => Err(format!("命令 {id} 执行失败: {error}")),
         }
     }
 
     fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
-        if self.needs_reset {
-            self.rebuild()?;
-        }
-        let Some(appearance) = self.appearance.clone() else {
-            return Err("模块没有导出 lueying_appearance".into());
-        };
         let json = scene.to_json()?;
-        self.store
-            .set_fuel(self.limits.appearance_fuel)
-            .map_err(|error| format!("燃料设置失败: {error}"))?;
         let started = Instant::now();
-        let ptr = self.write(json.as_bytes())?;
-        self.store.data_mut().emitted = None;
-        let outcome = appearance.call(
-            &mut self.store,
-            (ptr, i32::try_from(json.len()).unwrap_or(i32::MAX)),
-        );
-        self.free(ptr, json.len());
-        self.note(started, self.limits.appearance_fuel);
-        match outcome {
-            Ok(0) => {
-                let text = self.take_emitted()?;
-                if text.is_empty() {
-                    Ok(None)
-                } else {
-                    ScenePatch::parse(&text).map(Some)
-                }
-            }
-            Ok(_) => Err(self
-                .take_emitted()
-                .err()
-                .unwrap_or_else(|| "外观派发失败但没有错误文本".into())),
-            Err(error) => {
-                self.needs_reset = true;
-                self.record_trap(&error);
-                Err(format!("外观派发失败: {error}"))
-            }
+        let outcome = self.call(APPEARANCE_EXPORT, &json);
+        self.note(started);
+        let bytes = outcome.map_err(|error| format!("外观派发失败: {error}"))?;
+        let text = String::from_utf8(bytes).map_err(|_| "外观补丁不是 UTF-8".to_string())?;
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        ScenePatch::parse(&text).map(Some)
+    }
+
+    /// 调一个导出;trap 之后实例照旧能用,extism 每次调用都重置内核状态。
+    fn call(&mut self, export: &str, input: &str) -> Result<Vec<u8>, extism::Error> {
+        let outcome = self.plugin.call::<&[u8], Vec<u8>>(export, input.as_bytes());
+        if let Err(error) = &outcome {
+            self.classify(error);
+        }
+        outcome
+    }
+
+    /// 把错误归类:燃料耗尽算超时,内存限额算超限。
+    fn classify(&self, error: &extism::Error) {
+        let text = error.to_string().to_ascii_lowercase();
+        if text.contains("fuel") {
+            self.metrics.timeouts.fetch_add(1, Ordering::Relaxed);
+        }
+        if text.contains("oom") || text.contains("memory") || text.contains("grow") {
+            self.metrics.ooms.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    fn write(&mut self, bytes: &[u8]) -> Result<i32, String> {
-        if bytes.is_empty() {
-            return Ok(0);
-        }
-        let len = i32::try_from(bytes.len()).map_err(|_| "输入超过 i32 长度".to_string())?;
-        let ptr = self
-            .alloc
-            .call(&mut self.store, len)
-            .map_err(|error| format!("guest 分配输入失败: {error}"))?;
-        if ptr <= 0 {
-            return Err("guest 分配输入失败".into());
-        }
-        self.memory
-            .write(&mut self.store, ptr as usize, bytes)
-            .map_err(|error| format!("写 guest 内存失败: {error}"))?;
-        Ok(ptr)
-    }
-
-    fn free(&mut self, ptr: i32, len: usize) {
-        if ptr <= 0 {
-            return;
-        }
-        let len = i32::try_from(len).unwrap_or(i32::MAX);
-        let _ = self.free.call(&mut self.store, (ptr, len));
-    }
-
-    fn take_emitted(&mut self) -> Result<String, String> {
-        let Some(emitted) = self.store.data_mut().emitted.take() else {
-            return Ok(String::new());
-        };
-        let text =
-            String::from_utf8(emitted.bytes).map_err(|_| "guest 结果不是 UTF-8".to_string())?;
-        if emitted.ok { Ok(text) } else { Err(text) }
-    }
-
-    fn note(&mut self, started: Instant, budget: u64) {
+    fn note(&mut self, started: Instant) {
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let used = self
-            .store
-            .get_fuel()
-            .map(|left| budget.saturating_sub(left))
-            .unwrap_or(0);
+        let used = self.plugin.fuel_consumed().unwrap_or(0);
         self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
         self.metrics.steps.fetch_add(used, Ordering::Relaxed);
         self.metrics
@@ -654,152 +502,178 @@ impl Guest {
         self.metrics
             .step_peak_us
             .fetch_max(elapsed_us, Ordering::Relaxed);
-        self.metrics
-            .memory_used
-            .store(self.memory.data_size(&self.store) as u64, Ordering::Relaxed);
-    }
-
-    fn record_trap(&mut self, error: &wasmtime::Error) {
-        let text = error.to_string().to_ascii_lowercase();
-        // 燃料耗尽后 store 的剩余燃料为 0;不同 wasmtime 版本的 trap 文案会变,
-        // 不能只靠字符串里的 "fuel" 判断。
-        let exhausted = self.store.get_fuel().is_ok_and(|left| left == 0);
-        if exhausted || text.contains("fuel") {
-            self.metrics.timeouts.fetch_add(1, Ordering::Relaxed);
-        }
-        // 内存限额触发时 wasmtime 报 "memory ... exceeds memory limits" 或增长失败越界。
-        if text.contains("memory") || text.contains("grow") {
-            self.metrics.ooms.fetch_add(1, Ordering::Relaxed);
-        }
     }
 }
 
-/// 宿主侧 `lueying_emit(ptr, len, ok)`:把 guest 的最终结果拷到宿主。
-fn host_emit(mut caller: Caller<'_, HostState>, ptr: i32, len: i32, ok: i32) {
-    let Some(memory) = caller.data().memory else {
-        return;
-    };
-    let Ok(len) = usize::try_from(len) else {
-        return;
-    };
-    if len > MAX_RESULT_BYTES {
-        return;
-    }
-    let Ok(offset) = usize::try_from(ptr) else {
-        return;
-    };
-    let mut bytes = vec![0; len];
-    let read = memory.read(&mut caller, offset, &mut bytes);
-    if read.is_ok() {
-        caller.data_mut().emitted = Some(Emitted { bytes, ok: ok != 0 });
+/// 造一份 extism 清单:模块、内存页上限与联网策略。
+///
+/// 联网一律走宿主 broker:extism 自己不放行任何域名,清单里的
+/// `network.allow` 由宿主的服务提供者逐请求强制。
+fn extism_manifest(wasm: &[u8], limits: Limits) -> ExtismManifest {
+    let mut out = ExtismManifest::new([Wasm::data(wasm.to_vec())]).disallow_all_hosts();
+    out.memory.max_pages = Some((limits.memory_bytes / PAGE).max(1) as u32);
+    out
+}
+
+/// 每次调用的燃料预算;只有外观的包按帧算,带命令的包按命令算。
+fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
+    if manifest.commands().is_empty() {
+        limits.appearance_fuel
+    } else {
+        limits.command_fuel
     }
 }
 
-/// 宿主侧 `lueying_timeout(ms)`:可取消的睡眠,卸载时 50 ms 内返回。
-fn host_timeout(caller: Caller<'_, HostState>, ms: i64) -> i32 {
-    let cancelled = Arc::clone(&caller.data().cancelled);
-    let mut left = ms.clamp(0, 600_000) as u64;
+/// wasmtime 配置;栈上限按 [`Limits`] 配,其余用 extism 的默认。
+fn wasmtime_config(limits: Limits) -> wasmtime::Config {
+    let mut config = wasmtime::Config::default();
+    config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
+    config
+}
+
+/// 服务在 extism 用户区的函数名。
+fn service_function_name(service: Service) -> String {
+    format!("lueying_{}", service.key())
+}
+
+/// 把链接错误翻译成人话:扩展用了清单没声明的宿主服务。
+fn explain_link_error(error: &extism::Error) -> String {
+    let text = error.to_string();
+    for service in Service::ALL {
+        if text.contains(&service_function_name(service)) {
+            return format!(
+                "用到了没声明的宿主服务 {}(清单 needs 里补上)",
+                service.key()
+            );
+        }
+    }
+    text
+}
+
+/// 服务宿主函数的上下文。
+struct ServiceCtx {
+    /// 调用方扩展 id;审计与按扩展隔离的存储用。
+    caller: String,
+    /// 服务。
+    service: Service,
+    /// 服务提供者表。
+    services: Arc<Registry>,
+    /// 取消标志;扩展卸载时置位。
+    cancelled: Arc<AtomicBool>,
+}
+
+/// 一次服务调用的请求;guest 发来的 JSON。
+#[derive(serde::Deserialize)]
+struct ServiceRequest {
+    /// 方法名;宿主按服务白名单核。
+    method: String,
+    /// 参数;原样转给提供者。
+    #[serde(default)]
+    args: serde_json::Value,
+}
+
+/// 可取消等待的上下文。
+struct TimeoutCtx {
+    /// 取消标志;扩展卸载时置位。
+    cancelled: Arc<AtomicBool>,
+}
+
+/// 宿主服务:收一段 JSON 请求,回一段 JSON 响应。
+///
+/// 请求是 `{"method":…,"args":…}`;响应是 `{"ok":true,"value":…}` 或
+/// `{"ok":false,"error":…}`。返回值是 extism 内存里那块响应的偏移。
+fn service_call(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    outputs: &mut [Val],
+    user_data: UserData<ServiceCtx>,
+) -> Result<(), extism::Error> {
+    let ctx = user_data.get()?;
+    let ctx = ctx
+        .lock()
+        .map_err(|_| extism::Error::msg("服务上下文锁坏了"))?;
+    let offset = inputs.first().and_then(Val::i64).unwrap_or(0).max(0) as u64;
+    let raw = read_block(plugin, offset)?;
+    let request: ServiceRequest = serde_json::from_slice(&raw)
+        .map_err(|error| extism::Error::msg(format!("服务请求解析失败: {error}")))?;
+    let timeout = timeout_for(ctx.service, &request.method);
+    let args = match &request.args {
+        serde_json::Value::Null => "{}".to_string(),
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let result = ctx.services.call_cancellable(
+        &ctx.caller,
+        ctx.service.key(),
+        &request.method,
+        &args,
+        timeout,
+        Some(&ctx.cancelled),
+    );
+    let envelope = match result {
+        Ok(value) => {
+            let value = serde_json::from_str::<serde_json::Value>(&value)
+                .unwrap_or(serde_json::Value::String(value));
+            serde_json::json!({ "ok": true, "value": value })
+        }
+        Err(error) => serde_json::json!({ "ok": false, "error": error }),
+    };
+    let bytes = serde_json::to_vec(&envelope)
+        .map_err(|error| extism::Error::msg(format!("服务响应序列化失败: {error}")))?;
+    let handle = plugin.memory_alloc(bytes.len() as u64)?;
+    plugin.memory_bytes_mut(handle)?.copy_from_slice(&bytes);
+    outputs[0] = plugin.memory_to_val(handle);
+    Ok(())
+}
+
+/// 宿主侧 `lueying_timeout(ms)`:可取消的等待,卸载时 50 ms 内返回。
+fn timeout_call(
+    _plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    outputs: &mut [Val],
+    user_data: UserData<TimeoutCtx>,
+) -> Result<(), extism::Error> {
+    let ctx = user_data.get()?;
+    let ctx = ctx
+        .lock()
+        .map_err(|_| extism::Error::msg("等待上下文锁坏了"))?;
+    let mut left = inputs
+        .first()
+        .and_then(Val::i64)
+        .unwrap_or(0)
+        .clamp(0, 600_000) as u64;
     while left > 0 {
-        if cancelled.load(Ordering::Relaxed) {
-            return -1;
+        if ctx.cancelled.load(Ordering::Relaxed) {
+            outputs[0] = Val::I32(-1);
+            return Ok(());
         }
         let step = left.min(50);
         std::thread::sleep(Duration::from_millis(step));
         left -= step;
     }
-    if cancelled.load(Ordering::Relaxed) {
-        -1
-    } else {
-        0
-    }
+    let cancelled = ctx.cancelled.load(Ordering::Relaxed);
+    outputs[0] = Val::I32(if cancelled { -1 } else { 0 });
+    Ok(())
 }
 
-/// 一个服务的导入实现;方法名与参数都从 guest 内存读。
-fn service_import(
-    service: Service,
-) -> impl Fn(Caller<'_, HostState>, i32, i32, i32, i32) -> i32 + Send + Sync + 'static {
-    move |caller, method_ptr, method_len, args_ptr, args_len| {
-        let method = match read_string(&caller, method_ptr, method_len) {
-            Ok(text) => text,
-            Err(error) => return write_result(caller, &error_bytes(&error)),
-        };
-        let args = match read_string(&caller, args_ptr, args_len) {
-            Ok(text) => text,
-            Err(error) => return write_result(caller, &error_bytes(&error)),
-        };
-        let caller_id = caller.data().caller.clone();
-        let services = Arc::clone(&caller.data().services);
-        let cancelled = Arc::clone(&caller.data().cancelled);
-        let timeout = timeout_for(service, &method);
-        let result = services.call_cancellable(
-            &caller_id,
-            service.key(),
-            &method,
-            &args,
-            timeout,
-            Some(&cancelled),
-        );
-        let envelope = match result {
-            Ok(value) => {
-                let value = serde_json::from_str::<serde_json::Value>(&value)
-                    .unwrap_or(serde_json::Value::String(value));
-                serde_json::json!({ "ok": true, "value": value })
-            }
-            Err(error) => error_envelope(&error),
-        };
-        let bytes = serde_json::to_vec(&envelope).unwrap_or_default();
-        write_result(caller, &bytes)
+/// 从 extism 内存读一块数据。
+fn read_block(plugin: &mut CurrentPlugin, offset: u64) -> Result<Vec<u8>, extism::Error> {
+    if offset == 0 {
+        return Ok(Vec::new());
     }
+    let handle = plugin
+        .memory_handle(offset)
+        .ok_or_else(|| extism::Error::msg("宿主服务收到无效的内存偏移"))?;
+    let bytes = plugin.memory_bytes(handle)?;
+    if bytes.len() > MAX_RESULT_BYTES {
+        return Err(extism::Error::msg(format!(
+            "服务请求超过 {MAX_RESULT_BYTES} 字节"
+        )));
+    }
+    Ok(bytes.to_vec())
 }
 
-fn error_envelope(error: &str) -> serde_json::Value {
-    serde_json::json!({ "ok": false, "error": error })
-}
-
-fn error_bytes(error: &str) -> Vec<u8> {
-    serde_json::to_vec(&error_envelope(error)).unwrap_or_default()
-}
-
-/// 从 guest 线性内存读一段 UTF-8 文本。
-fn read_string(caller: &Caller<'_, HostState>, ptr: i32, len: i32) -> Result<String, String> {
-    let memory = caller.data().memory.ok_or("实例没有内存")?;
-    let len = usize::try_from(len).map_err(|_| "文本长度为负".to_string())?;
-    if len == 0 {
-        return Ok(String::new());
-    }
-    if len > MAX_RESULT_BYTES {
-        return Err(format!("文本超过 {MAX_RESULT_BYTES} 字节"));
-    }
-    let offset = usize::try_from(ptr).map_err(|_| "文本指针为负".to_string())?;
-    let mut bytes = vec![0; len];
-    memory
-        .read(caller.as_context(), offset, &mut bytes)
-        .map_err(|error| format!("读 guest 内存失败: {error}"))?;
-    String::from_utf8(bytes).map_err(|_| "guest 文本不是 UTF-8".to_string())
-}
-
-/// 把结果信封写进 guest 的结果缓冲区,返回写入长度。
-fn write_result(caller: Caller<'_, HostState>, bytes: &[u8]) -> i32 {
-    let Some(memory) = caller.data().memory else {
-        return -1;
-    };
-    let ptr = caller.data().result_ptr as usize;
-    let cap = caller.data().result_cap as usize;
-    let payload = if bytes.len() <= cap {
-        bytes.to_vec()
-    } else {
-        error_bytes(&format!("服务结果超过 {cap} 字节"))
-    };
-    if payload.len() > cap {
-        return -1;
-    }
-    match memory.write(caller, ptr, &payload) {
-        Ok(()) => i32::try_from(payload.len()).unwrap_or(-1),
-        Err(_) => -1,
-    }
-}
-
-/// 服务的宿主等待时限。面板要等用户操作,broker 要跑满传输时限,单独放宽。
+/// 服务的宿主等待时限。面板要等用户操作,识别要跑满传输时限,单独放宽。
 fn timeout_for(service: Service, method: &str) -> Duration {
     match (service, method) {
         (Service::Panel, "show") => Duration::from_secs(600),
@@ -809,23 +683,3 @@ fn timeout_for(service: Service, method: &str) -> Duration {
         _ => Duration::from_secs(10),
     }
 }
-
-/// 创建一个 wasmtime 引擎;燃料与 wasm 栈上限按 [`Limits`] 配。
-///
-/// start 函数随实例化执行,与 `lueying_init` 一样受初始化燃料约束;
-/// 栈溢出与深递归由 [`Limits::stack_bytes`] 在真实线程栈上兜住。
-pub(crate) fn engine(limits: Limits) -> Result<Engine, String> {
-    let mut config = Config::default();
-    config.consume_fuel(true);
-    config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
-    Engine::new(&config).map_err(|error| format!("Wasm 引擎初始化失败: {error}"))
-}
-
-/// 编译一个模块;二进制与 WAT 文本都收。
-pub(crate) fn compile(engine: &Engine, bytes: &[u8]) -> Result<Module, String> {
-    Module::new(engine, bytes).map_err(|error| format!("Wasm 模块编译失败: {error}"))
-}
-
-#[cfg(test)]
-#[path = "host_tests.rs"]
-mod tests;

@@ -2,7 +2,7 @@
   "id": "ppocr",
   "name": "PP-OCRv6 识别引擎",
   "version": "0.1.0",
-  "api": 3,
+  "api": 4,
   "kind": "native",
   "exe": "ppocr.exe",
   "capabilities": ["ocr"]

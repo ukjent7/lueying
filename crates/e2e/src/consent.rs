@@ -17,7 +17,7 @@ use crate::extwasm_harness::command_guest;
 use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{
-  "id":"demo","name":"演示","version":"1.0.0","api":3,"wasm":"extension.wasm",
+  "id":"demo","name":"演示","version":"1.0.0","api": 4,"wasm":"extension.wasm",
   "activate":{"commands":[{"id":"run","title":"运行"}]},
   "needs":["capture"],
   "capabilities":["screen-capture"]

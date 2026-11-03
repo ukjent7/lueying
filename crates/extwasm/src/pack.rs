@@ -10,12 +10,11 @@ use std::time::Duration;
 
 use lueying_extmeta::metrics::{ExtStat, ExtState};
 use lueying_extsvc::Registry;
-use wasmtime::Engine;
 
 use crate::ConsentGate;
 use crate::MAX_FAULTS;
 use crate::MAX_WASM_BYTES;
-use crate::host::{self, Finished, Limits, Worker};
+use crate::host::{Finished, Limits, Worker};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
 use crate::{SceneIn, ScenePatch};
 
@@ -45,7 +44,6 @@ struct Stamp {
 pub struct Pack {
     dir: PathBuf,
     manifest: Manifest,
-    engine: Arc<Engine>,
     worker: Worker,
     limits: Limits,
     services: Arc<Registry>,
@@ -88,11 +86,9 @@ impl Pack {
         }
         let wasm = read_capped(&dir.join(manifest.wasm_main()), MAX_WASM_BYTES)
             .map_err(|error| format!("读 Wasm 模块 {} 失败: {error}", manifest.wasm_main()))?;
-        let engine = Arc::new(host::engine(limits)?);
-        let module = Arc::new(host::compile(&engine, &wasm)?);
+        let wasm_hash = hash(&wasm);
         let worker = Worker::spawn(
-            Arc::clone(&engine),
-            module,
+            wasm,
             Arc::new(manifest.clone()),
             Arc::clone(&services),
             limits,
@@ -102,10 +98,9 @@ impl Pack {
             dir: dir.to_path_buf(),
             stamp: Stamp {
                 manifest: hash(&manifest_bytes),
-                wasm: hash(&wasm),
+                wasm: wasm_hash,
             },
             manifest,
-            engine,
             worker,
             limits,
             services,
@@ -160,7 +155,8 @@ impl Pack {
             } else {
                 ExtState::Loaded
             },
-            memory_used: host.memory_used,
+            // extism 运行期不提供当前占用,只报上限。
+            memory_used: 0,
             memory_limit: self.limits.memory_bytes as u64,
             dispatches: host.dispatches,
             steps: host.steps,
@@ -302,17 +298,8 @@ impl Pack {
             self.last_error = Some(error.clone());
             return Poll::Failed(error);
         }
-        let module = match host::compile(&self.engine, &wasm) {
-            Ok(module) => Arc::new(module),
-            Err(error) => {
-                let error = format!("扩展 {} 重载失败: {error}", manifest.id);
-                self.last_error = Some(error.clone());
-                return Poll::Failed(error);
-            }
-        };
         let worker = match Worker::spawn(
-            Arc::clone(&self.engine),
-            module,
+            wasm,
             Arc::new(manifest.clone()),
             Arc::clone(&self.services),
             self.limits,

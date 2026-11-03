@@ -3,7 +3,7 @@ name = "lueying-extwasm"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "运行期 Wasm 扩展宿主:wasmtime JIT、每扩展 worker、阻塞服务调用"
+description = "运行期扩展宿主:Extism 插件、每扩展 worker、阻塞服务调用"
 
 [dependencies]
 # 清单、权限与同意记录。
@@ -14,8 +14,12 @@ lueying-extproto.workspace = true
 lueying-extsvc.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Cranelift JIT 执行,资源与燃料上限都在 Store 上;wat 只用于自检与测试里的文本模块。
-wasmtime = { version = "50", default-features = false, features = [
+# Extism 运行期:插件格式、内核 ABI 与宿主函数都在这里。默认特性关掉,
+# 插件自己发不了 HTTP、也读不了宿主文件;联网只走宿主的服务提供者。
+extism.workspace = true
+# wasmtime 只用来配 wasm 栈上限;版本跟 extism 依赖的 wasmtime 一致,
+# 升级 extism 时一起升,免得树里出现两份 wasmtime。
+wasmtime = { version = "49", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",

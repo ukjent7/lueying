@@ -1,6 +1,8 @@
 //! 扩展 E2E 公共件:临时扩展包与最小 Wasm guest。
 //!
 //! guest 全部用 WAT 手写:不依赖 wasm32 工具链,Linux CI 也能跑全套。
+//! guest 走标准 Extism ABI:从 `extism:host/env` 导入内核函数,导出按
+//! 命令 id 命名的入口。
 
 use std::path::Path;
 
@@ -10,7 +12,7 @@ use lueying_extwasm::Pack;
 /// 外观包清单。
 pub(crate) fn appearance_manifest(id: &str) -> String {
     format!(
-        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm","appearance":true}}"#
+        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm","appearance":true}}"#
     )
 }
 
@@ -27,20 +29,20 @@ pub(crate) fn command_manifest(id: &str, commands: &[&str], needs: &[&str]) -> S
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm","activate":{{"commands":[{list}]}},"needs":[{services}]}}"#
+        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm","activate":{{"commands":[{list}]}},"needs":[{services}]}}"#
     )
 }
 
 /// 自定义清单原文;`extra` 拼在 `wasm` 字段后面。
 pub(crate) fn raw_manifest(id: &str, extra: &str) -> String {
     format!(
-        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm",{extra}}}"#
+        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm",{extra}}}"#
     )
 }
 
 /// 最小合法清单:纯模块名,不带任何可选字段。
 pub(crate) fn plain_manifest(id: &str) -> String {
-    format!(r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":3,"wasm":"extension.wasm"}}"#)
+    format!(r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm"}}"#)
 }
 
 pub(crate) fn write_pack(dir: &Path, manifest: &str, wasm: impl AsRef<[u8]>) {
@@ -62,115 +64,120 @@ pub(crate) fn load_or_fail(
     }
 }
 
-/// WAT 字符串字面量转义;长度按 UTF-8 字节算。
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(ch),
-        }
+/// extism 内核函数的导入。
+fn preamble() -> &'static str {
+    r#"(module
+  (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
+  (import "extism:host/env" "free" (func $free (param i64)))
+  (import "extism:host/env" "length" (func $length (param i64) (result i64)))
+  (import "extism:host/env" "load_u8" (func $load_u8 (param i64) (result i32)))
+  (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
+  (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
+  (import "extism:host/env" "error_set" (func $error_set (param i64)))
+"#
+}
+
+/// 把字节逐个写进 extism 内存;偏移从 `local` 里的块首地址开始。
+fn store_bytes(local: &str, bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for (index, byte) in bytes.iter().enumerate() {
+        out.push_str(&format!(
+            "    (call $store_u8 (i64.add (local.get {local}) (i64.const {index})) (i32.const {byte}))\n"
+        ));
     }
     out
 }
 
-/// 公共骨架:内存、bump 分配器、结果缓冲区与 init。
-fn preamble() -> &'static str {
-    r#"(module
-  (import "lueying" "emit" (func $emit (param i32 i32 i32)))
-  (memory (export "memory") 2)
-  (global $bump (mut i32) (i32.const 1024))
-  (func (export "lueying_alloc") (param $len i32) (result i32)
-    (local $ptr i32)
-    (local.set $ptr (global.get $bump))
-    (global.set $bump (i32.add (global.get $bump) (local.get $len)))
-    (local.get $ptr))
-  (func (export "lueying_free") (param i32 i32))
-  (func (export "lueying_result_ptr") (result i32) (i32.const 65536))
-  (func (export "lueying_result_cap") (result i32) (i32.const 4096))
-  (func (export "lueying_init") (result i32) (i32.const 0))
-"#
+/// 分配一块内存并写进文本,返回偏移。
+fn block(local: &str, text: &str) -> String {
+    format!(
+        "    (local.set {local} (call $alloc (i64.const {})))\n{}",
+        text.len(),
+        store_bytes(local, text.as_bytes())
+    )
 }
 
 /// 命令返回一段固定文本。
 pub(crate) fn command_guest(result: &str) -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"run\") (result i32)
+    (local $ptr i64)
+{}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
+        block("$ptr", result),
         len = result.len(),
-        text = escape(result),
     )
 }
 
 /// 外观返回一段固定补丁。
 pub(crate) fn appearance_guest(patch: &str) -> String {
     format!(
-        "{}(func (export \"lueying_appearance\") (param i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"lueying_appearance\") (result i32)
+    (local $ptr i64)
+{}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
+        block("$ptr", patch),
         len = patch.len(),
-        text = escape(patch),
     )
 }
 
 /// 命令与外观都回传错误文本;两种清单都能加载,专测错误路径。
 pub(crate) fn error_guest(error: &str) -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 0))
-    (i32.const 1))
-  (func (export \"lueying_appearance\") (param i32 i32) (result i32)
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 0))
-    (i32.const 1))
-  (data (i32.const 8) \"{text}\"))",
+        "{}(func (export \"run\") (result i32)
+    (local $ptr i64)
+{}    (call $error_set (local.get $ptr))
+    (i32.const -1))
+  (func (export \"lueying_appearance\") (result i32)
+    (local $ptr i64)
+{}    (call $error_set (local.get $ptr))
+    (i32.const -1)))",
         preamble(),
-        len = error.len(),
-        text = escape(error),
+        block("$ptr", error),
+        block("$ptr", error),
     )
 }
 
 /// 命令与外观都直接 trap;两种清单都能加载。
 pub(crate) fn trap_guest() -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
+        "{}(func (export \"run\") (result i32)
     (unreachable))
-  (func (export \"lueying_appearance\") (param i32 i32) (result i32)
+  (func (export \"lueying_appearance\") (result i32)
     (unreachable)))",
         preamble(),
     )
 }
 
-/// 外观第一次派发 trap,之后返回固定补丁;验证 trap 后重建仍然可用。
+/// 外观第一次派发 trap,之后返回固定补丁;验证 trap 后宿主仍然可用。
 pub(crate) fn once_trap_appearance_guest(patch: &str) -> String {
     format!(
         "{}(global $calls (mut i32) (i32.const 0))
-  (func (export \"lueying_appearance\") (param i32 i32) (result i32)
+  (func (export \"lueying_appearance\") (result i32)
+    (local $ptr i64)
     (if (i32.eqz (global.get $calls))
       (then
         (global.set $calls (i32.const 1))
         (unreachable)))
-    (call $emit (i32.const 8) (i32.const {len}) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{text}\"))",
+{}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
+        block("$ptr", patch),
         len = patch.len(),
-        text = escape(patch),
     )
 }
 
 /// 命令死循环;燃料烧完才停。
 pub(crate) fn loop_guest() -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (loop $forever (br $forever))
+        "{}(func (export \"run\") (result i32)
+    (local $x i32)
+    (loop $forever
+      ;; 循环体放一条真实指令,保证烧燃料。
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $forever))
     (i32.const 0)))",
         preamble(),
     )
@@ -179,7 +186,8 @@ pub(crate) fn loop_guest() -> String {
 /// 命令不停申请内存;线性内存限额一到就 trap。
 pub(crate) fn hog_guest() -> String {
     format!(
-        "{}(func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
+        "{}(memory 1)
+  (func (export \"run\") (result i32)
     (loop $grow
       (drop (memory.grow (i32.const 16)))
       (br $grow))
@@ -188,13 +196,16 @@ pub(crate) fn hog_guest() -> String {
     )
 }
 
-/// `lueying_init` 死循环;初始化燃料烧完才停。
+/// 初始化死循环;初始化燃料烧完才停。
 pub(crate) fn init_loop_guest() -> String {
     format!(
-        "{}(func (export \"lueying_appearance\") (param i32 i32) (result i32)
+        "{}(func (export \"lueying_appearance\") (result i32)
     (i32.const 0))
   (func (export \"lueying_init\") (result i32)
-    (loop $forever (br $forever))
+    (local $x i32)
+    (loop $forever
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $forever))
     (i32.const 0)))",
         preamble(),
     )
@@ -203,55 +214,50 @@ pub(crate) fn init_loop_guest() -> String {
 /// 命令先睡 `ms` 毫秒再回文本;测宿主可取消等待。
 pub(crate) fn sleep_guest(ms: u64) -> String {
     format!(
-        "{}(import \"lueying\" \"timeout\" (func $timeout (param i64) (result i32)))
-  (func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
+        "{}(import \"extism:host/user\" \"lueying_timeout\" (func $timeout (param i64) (result i32)))
+  (func (export \"run\") (result i32)
     (local $code i32)
+    (local $ptr i64)
     (local.set $code (call $timeout (i64.const {ms})))
     (if (i32.ne (local.get $code) (i32.const 0))
       (then
-        (call $emit (i32.const 2048) (i32.const 12) (i32.const 0))
-        (return (i32.const 1))))
-    (call $emit (i32.const 8) (i32.const 13) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{{\\\"slept\\\":true}}\")
-  (data (i32.const 2048) \"睡被取消\"))",
+{}    (call $error_set (local.get $ptr))
+        (return (i32.const -1))))
+{}    (call $output_set (local.get $ptr) (i64.const {len}))
+    (i32.const 0)))",
         preamble(),
+        block("$ptr", "睡被取消"),
+        block("$ptr", r#"{"slept":true}"#),
+        len = r#"{"slept":true}"#.len(),
     )
 }
 
-/// 命令调用一个宿主服务并把结果信封转交;`method` 与 `args` 固定。
+/// 命令调用一个宿主服务并把结果原样交回;方法与参数固定。
 pub(crate) fn service_guest(service: &str, method: &str, args: &str) -> String {
-    let method_ptr = 8 + method.len();
-    let args_ptr = method_ptr + args.len();
+    let request = format!(r#"{{"method":"{method}","args":{args}}}"#);
     format!(
-        "{}(import \"lueying\" \"{service}\" (func $svc (param i32 i32 i32 i32) (result i32)))
-  (func $copy (param $src i32) (param $dst i32) (param $len i32)
-    (block $done (loop $l (br_if $done (i32.eqz (local.get $len)))
-      (i32.store8 (local.get $dst) (i32.load8_u (local.get $src)))
-      (local.set $src (i32.add (local.get $src) (i32.const 1)))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
-      (local.set $len (i32.sub (local.get $len) (i32.const 1)))
-      (br $l))))
-  (func (export \"lueying_command\") (param i32 i32 i32 i32) (result i32)
-    (local $code i32)
-    (local.set $code (call $svc (i32.const 8) (i32.const {mlen}) (i32.const {aptr}) (i32.const {alen})))
-    (if (i32.lt_s (local.get $code) (i32.const 0))
-      (then
-        (call $emit (i32.const 2048) (i32.const {elen}) (i32.const 0))
-        (return (i32.const 1))))
-    (call $copy (i32.const 65536) (i32.const 2048) (local.get $code))
-    (call $emit (i32.const 2048) (local.get $code) (i32.const 1))
-    (i32.const 0))
-  (data (i32.const 8) \"{mtext}\")
-  (data (i32.const {aptr}) \"{atext}\")
-  (data (i32.const 2048) \"{etext}\"))",
+        "{}(import \"extism:host/user\" \"lueying_{service}\" (func $svc (param i64) (result i64)))
+  (func (export \"run\") (result i32)
+    (local $req i64)
+    (local $resp i64)
+    (local $len i64)
+    (local $i i64)
+    (local $out i64)
+{}    (local.set $resp (call $svc (local.get $req)))
+    (local.set $len (call $length (local.get $resp)))
+    (local.set $out (call $alloc (local.get $len)))
+    (local.set $i (i64.const 0))
+    (block $done
+      (loop $copy
+        (br_if $done (i64.ge_u (local.get $i) (local.get $len)))
+        (call $store_u8
+          (i64.add (local.get $out) (local.get $i))
+          (call $load_u8 (i64.add (local.get $resp) (local.get $i))))
+        (local.set $i (i64.add (local.get $i) (i64.const 1)))
+        (br $copy)))
+    (call $output_set (local.get $out) (local.get $len))
+    (i32.const 0)))",
         preamble(),
-        mlen = method.len(),
-        aptr = args_ptr,
-        alen = args.len(),
-        elen = "宿主没有回传结果".len(),
-        mtext = escape(method),
-        atext = escape(args),
-        etext = "宿主没有回传结果",
+        block("$req", &request),
     )
 }

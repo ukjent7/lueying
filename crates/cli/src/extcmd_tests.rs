@@ -32,7 +32,7 @@ fn new_pack_unpack_roundtrip() {
     let dir = skeleton(&root, "demo");
     let manifest = fs::read_to_string(dir.join("manifest.json")).expect("读清单");
     let value: serde_json::Value = serde_json::from_str(&manifest).expect("清单是 JSON");
-    assert_eq!(value["api"], 3, "骨架清单是 API 3");
+    assert_eq!(value["api"], 4, "骨架清单是 API 4");
     assert_eq!(value["wasm"], "extension.wasm", "骨架清单指向 Wasm");
 
     let out = pack(&PackArgs {
@@ -146,7 +146,7 @@ fn pack_rejects_dir_id_mismatch_and_missing_wasm() {
     fs::create_dir_all(&dir).expect("建目录");
     fs::write(
         dir.join("manifest.json"),
-        r#"{"id":"demo","name":"示例","version":"0.1.0","api":3,"wasm":"extension.wasm"}"#,
+        r#"{"id":"demo","name":"示例","version":"0.1.0","api": 4,"wasm":"extension.wasm"}"#,
     )
     .expect("写清单");
     let error = pack(&PackArgs {
@@ -158,7 +158,7 @@ fn pack_rejects_dir_id_mismatch_and_missing_wasm() {
 
     fs::write(
         dir.join("manifest.json"),
-        r#"{"id":"wrong","name":"示例","version":"0.1.0","api":3,"wasm":"extension.wasm"}"#,
+        r#"{"id":"wrong","name":"示例","version":"0.1.0","api": 4,"wasm":"extension.wasm"}"#,
     )
     .expect("写清单");
     let error = pack(&PackArgs { dir, out: None }).expect_err("缺 guest 要报错");
@@ -191,7 +191,7 @@ fn pack_validates_scene_skins() {
     fs::create_dir_all(&dir).expect("建目录");
     fs::write(
         dir.join("manifest.json"),
-        r#"{"id":"glow","name":"微光","version":"0.1.0","api":3,"kind":"scene"}"#,
+        r#"{"id":"glow","name":"微光","version":"0.1.0","api": 4,"kind":"scene"}"#,
     )
     .expect("写清单");
 

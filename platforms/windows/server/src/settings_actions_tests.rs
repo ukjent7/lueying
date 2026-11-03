@@ -18,7 +18,7 @@ fn temp_root(tag: &str) -> PathBuf {
 }
 
 fn wasm_manifest(id: &str) -> String {
-    format!(r#"{{"id":"{id}","name":"演示","version":"0.1.0","api":3,"wasm":"{id}.wasm"}}"#)
+    format!(r#"{{"id":"{id}","name":"演示","version":"0.1.0","api": 4,"wasm":"{id}.wasm"}}"#)
 }
 
 fn wasm_package(id: &str, body: &str) -> Vec<u8> {
@@ -116,7 +116,7 @@ fn rejects_unusable_packages() {
 #[test]
 fn imports_native_package() {
     let root = temp_root("native");
-    let manifest = r#"{"id":"heavy","name":"重活","version":"0.1.0","api":3,"kind":"native","exe":"heavy.exe","capabilities":["ocr"]}"#;
+    let manifest = r#"{"id":"heavy","name":"重活","version":"0.1.0","api": 4,"kind":"native","exe":"heavy.exe","capabilities":["ocr"]}"#;
     let files: Files = vec![
         ("manifest.json".into(), manifest.as_bytes().to_vec()),
         ("heavy.exe".into(), b"MZ".to_vec()),

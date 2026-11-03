@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::*;
 
 const MANIFEST: &str = r#"{
-  "id":"demo","name":"演示","version":"1.0.0","api":3,
+  "id":"demo","name":"演示","version":"1.0.0","api": 4,
   "wasm":"extension.wasm",
   "activate":{"commands":[{"id":"run","title":"运行"}]},
   "needs":["capture","output"],
@@ -11,7 +11,7 @@ const MANIFEST: &str = r#"{
 }"#;
 
 const APPEARANCE: &str = r#"{
-  "id":"look","name":"外观","version":"1.0.0","api":3,"wasm":"extension.wasm"
+  "id":"look","name":"外观","version":"1.0.0","api": 4,"wasm":"extension.wasm"
 }"#;
 
 struct Temp {
@@ -162,7 +162,7 @@ fn package_hash_requires_wasm() {
 }
 
 const NATIVE: &str = r#"{
-  "id":"ppocr","name":"PP-OCR","version":"1.0.0","api":3,
+  "id":"ppocr","name":"PP-OCR","version":"1.0.0","api": 4,
   "kind":"native","exe":"ppocr.exe","capabilities":["ocr"]
 }"#;
 

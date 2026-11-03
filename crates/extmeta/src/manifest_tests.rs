@@ -6,7 +6,7 @@ fn base() -> serde_json::Value {
         "id": "my-pack",
         "name": "我的扩展",
         "version": "1.0.0",
-        "api": 3,
+        "api": 4,
         "wasm": "extension.wasm"
     })
 }
@@ -16,7 +16,7 @@ fn shot_ocr() -> serde_json::Value {
         "id": "shot-ocr",
         "name": "截图 OCR",
         "version": "0.1.0",
-        "api": 3,
+        "api": 4,
         "wasm": "extension.wasm",
         "activate": {
             "triggers": ["ocr"],
@@ -108,7 +108,7 @@ fn network_allow_rejects_duplicates_and_overflow() {
 
 #[test]
 fn parses_wasm_manifest() {
-    let manifest = parse(shot_ocr()).expect("API 3 清单应通过");
+    let manifest = parse(shot_ocr()).expect("API 4 清单应通过");
     assert_eq!(manifest.wasm_main(), "extension.wasm");
     assert_eq!(
         manifest.needs,
@@ -458,7 +458,7 @@ fn parses_scene_manifest() {
         "id": "glow",
         "name": "微光",
         "version": "0.1.0",
-        "api": 3,
+        "api": 4,
         "kind": "scene"
     }))
     .expect("场景皮肤清单应通过");
@@ -474,7 +474,7 @@ fn rejects_scene_with_code() {
             "id": "glow",
             "name": "微光",
             "version": "0.1.0",
-            "api": 3,
+            "api": 4,
             "kind": "scene"
         });
         for (key, val) in extra.as_object().expect("对象") {

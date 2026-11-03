@@ -22,9 +22,12 @@ fn worker(wasm: &str, manifest: Arc<Manifest>, limits: Limits) -> Result<Worker,
 }
 
 fn worker_bytes(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
-    let engine = Arc::new(engine(limits)?);
-    let module = Arc::new(compile(&engine, wasm)?);
-    Worker::spawn(engine, module, manifest, Arc::new(Registry::new()), limits)
+    Worker::spawn(
+        wasm.to_vec(),
+        manifest,
+        Arc::new(Registry::new()),
+        limits,
+    )
 }
 
 #[test]
@@ -51,7 +54,8 @@ fn reports_guest_error() {
         limits,
     )
     .expect("启动 worker");
-    assert_eq!(worker.command_wait("run", "{}", WAIT), Err("boom".into()));
+    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    assert!(error.contains("boom"), "{error}");
 }
 
 #[test]
@@ -83,6 +87,7 @@ fn fuel_stops_a_loop() {
     .expect("启动 worker");
     let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
     let metrics = worker.metrics();
+    assert!(error.contains("fuel"), "{error}");
     assert!(metrics.timeouts > 0, "error={error:?} metrics={metrics:?}");
 }
 
@@ -113,7 +118,7 @@ fn rejects_missing_command_export() {
     )
     .err()
     .expect("应当拒绝");
-    assert!(error.contains("lueying_command"), "{error}");
+    assert!(error.contains("没有导出命令"), "{error}");
 }
 
 #[test]
@@ -130,15 +135,13 @@ fn rejects_missing_appearance_export() {
 }
 
 #[test]
-fn rejects_missing_allocator() {
-    let wasm = r#"(module
-      (memory (export "memory") 1)
-      (func (export "lueying_init") (result i32) (i32.const 0)))"#;
+fn rejects_manifest_without_entry() {
+    let wasm = r#"(module (func (export "other") (result i32) (i32.const 0)))"#;
     let limits = Limits::default();
-    let error = worker(wasm, manifest("demo", false, &[("run", "运行")]), limits)
-        .err()
-        .expect("应当拒绝");
-    assert!(error.contains("lueying_alloc"), "{error}");
+    let text = test_guest::plain_manifest("demo");
+    let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
+    let error = worker(wasm, manifest, limits).err().expect("应当拒绝");
+    assert!(error.contains("没有可调用的入口"), "{error}");
 }
 
 /// C 写的 guest 也得能跑:CI 用 clang 把 `crates/extguest/c/example.c` 编到

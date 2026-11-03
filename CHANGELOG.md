@@ -12,7 +12,7 @@
 - 打字路径:会话独占锁只护引擎状态,候选窗、徽标与扩展宿主只读发布的会话视图;4M 按键重排移到后台线程,按键不再等模型;候选窗与徽标改为事件驱动等待;TSF 管道客户端改重叠 I/O,单次请求 1500 ms 上限。
 - 候选窗、模式徽标与命令面板统一走 Direct2D/DirectWrite,删除 Skia 依赖与预编译命中门禁;候选窗 GPU 管线与 WARP 兜底不变。
 - 运行期扩展外观补丁只保留主题色,删掉三个 SkSL 效果槽位与 `.luext` 的 `.sksl` 白名单。
-- 运行期扩展从 QuickJS 脚本切换到 Wasm 沙箱(宿主 wasmtime JIT):扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 3(`wasm` 入口,`appearance` 布尔),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
+- 运行期扩展从 QuickJS 脚本切换到 Extism 插件沙箱(宿主 Extism 运行期,Cranelift JIT):扩展就是标准 Extism 插件,别的 Extism 宿主写的插件、官方 PDK 编出来的插件都能直接放进扩展目录;扩展用 Rust(`lueying-extguest` SDK)同步编写,每个扩展独立 worker 线程,阻塞服务调用只在 worker 上等待;清单升级到 API 4(命令按命令 id 导出,外观走 `lueying_appearance`,宿主服务从 `extism:host/user` 导入),同意指纹纳入 `.wasm`,`.luext` 包格式升级为 v2(内嵌 Wasm 字节块)。
 - `lueying ext new` 生成 Rust guest crate 骨架;`lueying ext pack` 要求清单声明的 `extension.wasm` 存在。
 - 官方 `shot-ocr` 改为 Rust guest;CI 增加 wasm32 构建,文档与扩展规范同步更新。
 - 系统底线收紧为 Windows 11 24H2,x64 单架构(ARM64 宿主经 x64 模拟加载);删掉 32 位 TSF DLL 与旧配置迁移。

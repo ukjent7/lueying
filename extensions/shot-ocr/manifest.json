@@ -2,7 +2,7 @@
   "id": "shot-ocr",
   "name": "截图 OCR",
   "version": "0.1.0",
-  "api": 3,
+  "api": 4,
   "wasm": "extension.wasm",
   "activate": {
     "triggers": ["ocr"],
