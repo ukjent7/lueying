@@ -145,8 +145,8 @@ fn rejects_missing_allocator() {
 /// `target/c-guest/example.wasm`。本地没有 clang 或 zig 时跳过。
 #[test]
 fn runs_a_c_guest() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/c-guest/example.wasm");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/c-guest/example.wasm");
     let Ok(bytes) = std::fs::read(&path) else {
         return;
     };
