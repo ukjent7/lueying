@@ -49,6 +49,7 @@ pub fn map(sym: Keysym, text: &str, mods: Modifiers) -> Option<Key> {
     let key = match sym {
         Keysym::Return | Keysym::KP_Enter => Key::Enter,
         Keysym::Escape => Key::Esc,
+        Keysym::BackSpace => Key::Backspace,
         Keysym::Delete if mods.shift => Key::DeleteCandidate,
         Keysym::Delete => Key::Backspace,
         Keysym::Left => Key::Left,
