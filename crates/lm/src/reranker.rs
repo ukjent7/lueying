@@ -3,7 +3,7 @@
 //! 可比集的判定与提位阈值在这里;每轮的续跑状态与批式评分计划也归它持有,
 //! 前向算术交给 [`crate::forward`]。
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::forward::{BatchContext, BatchRow, HiddenState, Prefix, TailRun, TerminalState};
 use crate::model::SentenceModel;

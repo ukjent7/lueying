@@ -5,6 +5,8 @@
 
 use super::*;
 
+use lueying_engine::Action;
+
 /// 当前组合的整串输入命中用户触发表时,把动作交给引擎注入候选。
 /// 标题表由脚本线程维护:命令不存在(扩展没启用或已卸载)就不出动作候选。
 pub(crate) fn sync_action(state: &State, s: &mut Session) {

@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 
 use crate::ModelError;
-use crate::forward::{BatchContext, BatchRow, HiddenState, Prefix};
-use crate::math::{Matrix, dot, dot_i8};
+use crate::forward::{BatchContext, BatchRow, HiddenState};
+use crate::math::{LinearScratch, Matrix, dot, dot_i8};
 use crate::weights::{Tensor, Weights};
+#[cfg(test)]
+use crate::forward::Prefix;
 #[cfg(test)]
 use crate::{FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS};
 const UNK: u32 = 1;

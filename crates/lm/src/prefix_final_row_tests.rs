@@ -1,3 +1,7 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use super::*;
 
 // 固定 527d2fa 的完整前缀入口；本片未改变任何底层算术 helper。

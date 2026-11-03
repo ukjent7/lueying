@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 
 // 固定 03b3b5d 的物化恢复；只适配私有终末行参数和 Prefix 新字段。

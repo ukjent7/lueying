@@ -7,6 +7,8 @@
 //! bits, not tolerances, and they compare the amount of work too: a batch that ran a position twice
 //! or skipped one would still produce the right numbers here and the wrong latency in a host.
 
+use std::sync::Arc;
+
 use super::*;
 
 /// A small deterministic stream, so fixtures are not built from arithmetic progressions whose

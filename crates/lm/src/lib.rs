@@ -45,6 +45,14 @@ thread_local! {
     static ATTENTION_POSITIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static VOCABULARY_PROJECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+#[cfg(test)]
+std::thread_local! {
+    static FORWARD_POSITIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // 记录最近一次候选编码的缓冲地址，验证评分时直接转移所有权。
+    static LAST_ENCODED_POINTER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static LAST_ENCODED_LENGTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 /// What the caller knows about one candidate. Neither field can be worked out from the candidate
 /// text, which is why they are asked for rather than derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

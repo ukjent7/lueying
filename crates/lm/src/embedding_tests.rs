@@ -1,6 +1,8 @@
-use super::*;
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
+
+use super::*;
 
 // 固定 926915e73bfafbc2545574c1203a98f0f4f849ba 的完整嵌入路径，保持临时行申请与析构。
 fn legacy_embed(model: &SentenceModel, tokens: &[u32], offset: usize) -> Vec<f32> {
