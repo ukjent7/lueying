@@ -106,7 +106,11 @@ fn reads_hanzi_only_list_from_main_dictionary() {
     assert_eq!(report.imported, 1);
     assert_eq!(report.skipped, 1);
     assert_eq!(report.no_pinyin, 1);
-    assert!(report.text.starts_with("chong'qing\t重庆\t"), "{}", report.text);
+    assert!(
+        report.text.starts_with("chong'qing\t重庆\t"),
+        "{}",
+        report.text
+    );
 }
 
 #[test]

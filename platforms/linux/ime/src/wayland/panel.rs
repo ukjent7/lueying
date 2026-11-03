@@ -74,9 +74,13 @@ impl Panel {
             return;
         }
         let mut spec = crate::ui::spec_of(view, Layout::Wrap);
-        spec.width = crate::ui::measure_width(view, &self.metrics, &TextMeasure {
-            font: self.font.as_ref(),
-        });
+        spec.width = crate::ui::measure_width(
+            view,
+            &self.metrics,
+            &TextMeasure {
+                font: self.font.as_ref(),
+            },
+        );
         if self.buffer.is_some() {
             self.spec = Some(spec);
             self.dirty = true;
@@ -174,9 +178,7 @@ impl Panel {
         for (dst, src) in map.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {
             dst.copy_from_slice(&[src[2], src[1], src[0], src[3]]);
         }
-        let pool = self
-            .shm
-            .create_pool(file.as_fd(), size as i32, qh, ());
+        let pool = self.shm.create_pool(file.as_fd(), size as i32, qh, ());
         let buffer = pool.create_buffer(
             0,
             width as i32,
@@ -188,7 +190,8 @@ impl Panel {
         );
         drop(pool);
         self.surface.attach(Some(&buffer), 0, 0);
-        self.surface.damage_buffer(0, 0, width as i32, height as i32);
+        self.surface
+            .damage_buffer(0, 0, width as i32, height as i32);
         self.surface.commit();
         Some(Buffer {
             _buffer: buffer,
@@ -235,13 +238,9 @@ impl Canvas for TinyCanvas<'_> {
             width,
             ..Stroke::default()
         };
-        let _ = self.pixmap.stroke_path(
-            &path,
-            &paint(color),
-            &stroke,
-            Transform::identity(),
-            None,
-        );
+        let _ = self
+            .pixmap
+            .stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
     }
 
     fn fill_rrect(&mut self, rect: Rect, radius: f32, color: Color) {
@@ -262,13 +261,9 @@ impl Canvas for TinyCanvas<'_> {
                 width,
                 ..Stroke::default()
             };
-            let _ = self.pixmap.stroke_path(
-                &path,
-                &paint(color),
-                &stroke,
-                Transform::identity(),
-                None,
-            );
+            let _ =
+                self.pixmap
+                    .stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
         }
     }
 
@@ -313,7 +308,8 @@ impl Canvas for TinyCanvas<'_> {
             {
                 break;
             }
-            let glyph = glyph.with_scale_and_position(PxScale::from(size), ab_glyph::point(caret, 0.0));
+            let glyph =
+                glyph.with_scale_and_position(PxScale::from(size), ab_glyph::point(caret, 0.0));
             let id = glyph.id;
             if let Some(outline) = font.outline_glyph(glyph) {
                 let bounds = outline.px_bounds();
@@ -395,12 +391,7 @@ fn rrect(rect: Rect, radius: f32) -> Option<tiny_skia::Path> {
     pb.line_to(rect.right - radius, rect.top);
     pb.quad_to(rect.right, rect.top, rect.right, rect.top + radius);
     pb.line_to(rect.right, rect.bottom - radius);
-    pb.quad_to(
-        rect.right,
-        rect.bottom,
-        rect.right - radius,
-        rect.bottom,
-    );
+    pb.quad_to(rect.right, rect.bottom, rect.right - radius, rect.bottom);
     pb.line_to(rect.left + radius, rect.bottom);
     pb.quad_to(rect.left, rect.bottom, rect.left, rect.bottom - radius);
     pb.line_to(rect.left, rect.top + radius);
@@ -449,16 +440,14 @@ fn load_font() -> Option<FontArc> {
         stretch: fontdb::Stretch::Normal,
         style: fontdb::Style::Normal,
     };
-    let id = db
-        .query(&query)
-        .or_else(|| {
-            db.query(&fontdb::Query {
-                families: &[fontdb::Family::SansSerif],
-                weight: fontdb::Weight::NORMAL,
-                stretch: fontdb::Stretch::Normal,
-                style: fontdb::Style::Normal,
-            })
-        })?;
+    let id = db.query(&query).or_else(|| {
+        db.query(&fontdb::Query {
+            families: &[fontdb::Family::SansSerif],
+            weight: fontdb::Weight::NORMAL,
+            stretch: fontdb::Stretch::Normal,
+            style: fontdb::Style::Normal,
+        })
+    })?;
     db.with_face_data(id, |data, index| {
         FontVec::try_from_vec_and_index(data.to_vec(), index)
             .ok()

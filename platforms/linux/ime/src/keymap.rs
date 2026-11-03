@@ -107,7 +107,10 @@ mod tests {
             ctrl: true,
             ..Modifiers::default()
         };
-        assert_eq!(map(Keysym::BackSpace, "", mods), Some(Key::SegmentBackspace));
+        assert_eq!(
+            map(Keysym::BackSpace, "", mods),
+            Some(Key::SegmentBackspace)
+        );
         assert_eq!(map(Keysym::Delete, "", mods), Some(Key::SegmentDelete));
         assert_eq!(map(Keysym::Left, "", mods), Some(Key::SegmentLeft));
         assert_eq!(map(Keysym::Right, "", mods), Some(Key::SegmentRight));

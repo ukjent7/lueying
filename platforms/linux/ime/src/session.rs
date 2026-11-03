@@ -43,8 +43,7 @@ impl Session {
             .with_scheme(lueying_features::scheme(app.scheme, app.aux));
         engine.set_host("lueying-linux");
         let sync_rerank = model("rerank-4m.safetensors").map(|m| Mutex::new(Rerank::new(&m)));
-        let settle_rerank =
-            model("rerank-25m.safetensors").map(|m| Mutex::new(Rerank::new(&m)));
+        let settle_rerank = model("rerank-25m.safetensors").map(|m| Mutex::new(Rerank::new(&m)));
         Self {
             engine,
             view: SessionView::default(),

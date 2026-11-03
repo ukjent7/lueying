@@ -62,8 +62,20 @@ mod tests {
     fn view(page: usize, highlight: usize) -> SessionView {
         SessionView {
             raw: "nihao".into(),
-            candidates: vec!["你".into(), "你好".into(), "拟".into(), "泥".into(), "逆".into()],
-            hints: vec!["ni".into(), "ni hao".into(), String::new(), String::new(), String::new()],
+            candidates: vec![
+                "你".into(),
+                "你好".into(),
+                "拟".into(),
+                "泥".into(),
+                "逆".into(),
+            ],
+            hints: vec![
+                "ni".into(),
+                "ni hao".into(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ],
             page,
             page_size: 2,
             highlight,

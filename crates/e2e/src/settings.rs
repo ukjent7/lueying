@@ -454,10 +454,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "词表转用户词库格式",
-        imported.imported == 1
-            && imported.skipped == 0
-            && key == "ni'hao"
-            && word == "你好",
+        imported.imported == 1 && imported.skipped == 0 && key == "ni'hao" && word == "你好",
         format!("导入 {} 条:{native}", imported.imported),
     );
 

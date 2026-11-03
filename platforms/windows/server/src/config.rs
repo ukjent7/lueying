@@ -467,7 +467,9 @@ pub fn models_dir() -> Option<PathBuf> {
     {
         let base = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+            })?;
         Some(base.join("lueying").join("models"))
     }
 }

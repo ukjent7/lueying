@@ -169,7 +169,8 @@ impl Report {
 
     /// 追加一条原生格式词条。
     fn push(&mut self, key: &str, word: &str, freq: u32, ts: u64) {
-        self.text.push_str(&format!("{key}\t{word}\t{freq}\t{ts}\n"));
+        self.text
+            .push_str(&format!("{key}\t{word}\t{freq}\t{ts}\n"));
         self.imported += 1;
     }
 }

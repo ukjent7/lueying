@@ -16,9 +16,14 @@ pub enum Command {
     /// 重新开始停顿计时。
     Settle,
     /// 按下可重复键;`repeat` 为假时只清掉旧的重复任务。
-    KeyPress { repeat: bool },
+    KeyPress {
+        repeat: bool,
+    },
     KeyRelease,
-    RepeatInfo { rate: i32, delay: i32 },
+    RepeatInfo {
+        rate: i32,
+        delay: i32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]

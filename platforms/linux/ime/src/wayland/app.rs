@@ -17,7 +17,7 @@ use wayland_client::protocol::{
     wl_surface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
-use xkbcommon::xkb::{self, Keycode, KeyDirection, Keymap, Keysym, State};
+use xkbcommon::xkb::{self, KeyDirection, Keycode, Keymap, Keysym, State};
 
 use crate::keymap::{self, Modifiers};
 use crate::session::Session;
@@ -167,7 +167,11 @@ impl App {
         if !pressed {
             let consumed = self.consumed.remove(&evdev);
             if consumed {
-                if self.repeat.as_ref().is_some_and(|repeat| repeat.evdev == evdev) {
+                if self
+                    .repeat
+                    .as_ref()
+                    .is_some_and(|repeat| repeat.evdev == evdev)
+                {
                     self.repeat = None;
                     let _ = self.worker.send(Command::KeyRelease);
                 }
@@ -426,12 +430,12 @@ impl Dispatch<ZwpInputMethodKeyboardGrabV2, ()> for App {
         match event {
             Event::Keymap { format, fd, size } => state.install_keymap(fd, size, format),
             Event::Key {
-                time, key, state: key_state, ..
+                time,
+                key,
+                state: key_state,
+                ..
             } => {
-                let pressed = matches!(
-                    key_state,
-                    WEnum::Value(wl_keyboard::KeyState::Pressed)
-                );
+                let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 state.key(time, key, pressed);
             }
             Event::Modifiers {
