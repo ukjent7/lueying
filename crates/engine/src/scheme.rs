@@ -72,6 +72,19 @@ impl Expansion {
     }
 }
 
+/// 形码候选:码表里的一条命中。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeCandidate {
+    /// 上屏文本:一个字或一个词。
+    pub text: String,
+    /// 命中的码;前缀没打完时是已敲的那一段。
+    pub code: String,
+    /// 权重:同一个码下越大越靠前。
+    pub weight: u64,
+    /// 是否吃完整串输入。
+    pub full: bool,
+}
+
 /// 输入方案。实现者只负责击键到规范全拼的映射,不接触词典或候选排序。
 pub trait Scheme: Send + Sync {
     fn manifest(&self) -> SchemeManifest;
@@ -96,6 +109,14 @@ pub trait Scheme: Send + Sync {
             .map(|&(start, end)| syllables::canonical(&raw[start..end]))
             .collect::<Vec<_>>()
             .join("'")
+    }
+
+    /// 形码方案的候选来源。默认没有,组合走核心词图。
+    ///
+    /// 形码(五笔、仓颉)按字形取码,击键不展开成音节,候选直接来自码表。
+    /// 返回非空时核心用它替代词图候选,模块链与动作候选也不再参与。
+    fn code_candidates(&self, _raw: &str) -> Vec<CodeCandidate> {
+        Vec::new()
     }
 }
 

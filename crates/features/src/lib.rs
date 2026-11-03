@@ -5,6 +5,7 @@
 //! 候选生成与学习。宿主按配置选择方案并注册模块。
 
 pub mod aux_code;
+pub mod code;
 pub mod emoji;
 pub mod english;
 pub mod phrases;
@@ -17,6 +18,7 @@ mod symbols;
 use std::sync::Arc;
 
 pub use aux_code::{AuxCode, AuxLookup, AuxScheme};
+pub use code::{CodeEntry, CodeScheme, CodeTable};
 pub use emoji::EmojiModule;
 pub use english::EnglishModule;
 pub use lueying_ext::Script;

@@ -8,3 +8,7 @@ description = "掠影第一批内置扩展:双拼、自定义短语、辅助码�
 [dependencies]
 lueying-dict.workspace = true
 lueying-ext.workspace = true
+
+[dev-dependencies]
+# 形码方案的测试要真跑一遍引擎。
+lueying-engine.workspace = true

@@ -41,7 +41,9 @@
 pub use lueying_engine::module::{
     CandidateContext, Capability, CommitContext, KeyContext, Manifest, Module, Modules,
 };
-pub use lueying_engine::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
+pub use lueying_engine::scheme::{
+    CandidateFilter, CodeCandidate, Expansion, FullPinyin, Scheme, SchemeManifest,
+};
 pub use lueying_engine::{Candidate, CivilTime, Key, Script};
 
 /// SDK 版本。扩展可在 `Manifest` 里自行标注兼容的 SDK 版本。
@@ -50,8 +52,8 @@ pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 扩展作者常用的导入集合。
 pub mod prelude {
     pub use crate::{
-        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CommitContext,
-        Expansion, FullPinyin, Key, KeyContext, Manifest, Module, Modules, SDK_VERSION, Scheme,
-        SchemeManifest, Script,
+        Candidate, CandidateContext, CandidateFilter, Capability, CivilTime, CodeCandidate,
+        CommitContext, Expansion, FullPinyin, Key, KeyContext, Manifest, Module, Modules,
+        SDK_VERSION, Scheme, SchemeManifest, Script,
     };
 }

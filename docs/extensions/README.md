@@ -80,6 +80,32 @@ impl Scheme for UpperScheme {
 }
 ```
 
+## 形码方案(五笔、仓颉)
+
+形码按字形取码:击键不展开成音节,候选直接来自码表。方案实现
+`Scheme::code_candidates`,核心拿它替代词图候选,模块链与动作候选不参与。
+
+码表是纯文本,每行 `码<TAB>字词<TAB>权重`:
+
+```text
+# 码<TAB>字词<TAB>权重
+nk<TAB>你<TAB>1000
+```
+
+同一个码下可以有多条,权重大的排前面;码没敲完时,所有以它开头的码都进候选,
+敲全的那个码排在最前。`crates/features` 的 `CodeTable` 读表与查表,
+`CodeScheme` 把它接进方案契约:
+
+```rust
+use lueying_features::{CodeScheme, CodeTable};
+
+let table = CodeTable::open(std::path::Path::new("data/wubi.txt"))?;
+let scheme = CodeScheme::new("wubi", "五笔", table);
+```
+
+码输入与拼音词库是两套键空间:码候选不学习、不参与模型重排,整串输入算一段,
+退格与 Ctrl+左右按整段走。
+
 ## 运行期扩展与扩展 CLI
 
 运行期扩展存放在 `%APPDATA%\lueying\extensions\<id>\`，通过 `manifest.json` 与 `extension.wasm` 定义。

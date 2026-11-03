@@ -10,6 +10,7 @@
 //! 文件布局:`state` 放会话、配置与候选选择,`input` 放按键状态机与上屏。
 
 mod address;
+mod code;
 mod input;
 mod input_commit;
 mod input_edit;
@@ -39,7 +40,9 @@ pub mod prelude {
     pub use crate::module::{
         CandidateContext, Capability, CommitContext, KeyContext, Manifest, Module, Modules,
     };
-    pub use crate::scheme::{CandidateFilter, Expansion, FullPinyin, Scheme, SchemeManifest};
+    pub use crate::scheme::{
+        CandidateFilter, CodeCandidate, Expansion, FullPinyin, Scheme, SchemeManifest,
+    };
     pub use crate::{Candidate, Config, Engine, Event, Key, Mode, UserDict};
 }
 

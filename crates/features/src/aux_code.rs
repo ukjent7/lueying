@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use lueying_ext::{CandidateFilter, Expansion, Scheme, SchemeManifest};
+use lueying_ext::{CandidateFilter, CodeCandidate, Expansion, Scheme, SchemeManifest};
 
 /// 字形码查询。返回该字是否有任一码以 `prefix` 开头。
 pub trait AuxLookup: Send + Sync {
@@ -182,6 +182,11 @@ impl Scheme for AuxScheme {
 
     fn segments(&self, raw: &str) -> Vec<(usize, usize)> {
         self.expand(raw).segments
+    }
+
+    /// 形码候选由底层方案给;辅助码只作用于拼音方案。
+    fn code_candidates(&self, raw: &str) -> Vec<CodeCandidate> {
+        self.base.code_candidates(raw)
     }
 
     fn accepts_char(&self, c: char) -> bool {

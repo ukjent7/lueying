@@ -3177,6 +3177,7 @@ name = "lueying-features"
 version = "0.1.0"
 dependencies = [
  "lueying-dict",
+ "lueying-engine",
  "lueying-ext",
 ]
 

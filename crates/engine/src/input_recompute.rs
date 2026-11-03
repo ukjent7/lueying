@@ -25,6 +25,22 @@ impl Engine {
         }
         let context = self.context.clone();
         let raw = comp.raw.clone();
+        // 形码方案:候选直接来自码表,不进词图、模块链与动作候选。
+        let codes = self.scheme.code_candidates(&raw);
+        if !codes.is_empty() {
+            let built = crate::code::build(codes, raw.len());
+            comp.display = built
+                .cands
+                .first()
+                .map(|cand| cand.text.clone())
+                .unwrap_or_else(|| raw.clone());
+            // 码输入不分音节:整串算一段,退格与 Ctrl+左右按整段走。
+            comp.seg_spans = vec![(0, raw.len())];
+            self.cands = built.cands;
+            self.hl = 0;
+            self.page = 0;
+            return;
+        }
         // 方案把击键展开成规范全拼;词图只认展开后的串,候选区间再映射回击键。
         let expansion = self.scheme.expand(&raw);
         let base_len = expansion.aux_start.unwrap_or(raw.len());
