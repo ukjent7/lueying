@@ -48,9 +48,21 @@ impl ProcessLimiter for JobLimiter {
                 info.JobMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
                 info.ProcessMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
             }
-            if let Some(rate) = self.cpu_rate {
+            if self.cpu_rate.is_some() {
+                // CPU 速率是独立的信息类,extended limit 里只挂标志,
+                // 具体速率要等 extended limit 设好之后再单独设。
                 info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_CPU_RATE_CONTROL;
-                // CPU 速率是独立的信息类,extended limit 结构体里没有这块。
+            }
+            // 进程随 Job 兜底:宿主崩溃或句柄泄漏,旁路进程也会被收走。
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
+            if let Some(rate) = self.cpu_rate {
                 let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
                 cpu.ControlFlags =
                     JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
@@ -63,15 +75,6 @@ impl ProcessLimiter for JobLimiter {
                 )
                 .map_err(|error| format!("设置 CPU 限额失败: {error}"))?;
             }
-            // 进程随 Job 兜底:宿主崩溃或句柄泄漏,旁路进程也会被收走。
-            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as _,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-            .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
             AssignProcessToJobObject(job, process.raw_handle())
                 .map_err(|error| format!("进程挂入 Job 失败: {error}"))?;
         }

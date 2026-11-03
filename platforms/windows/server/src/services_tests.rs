@@ -45,7 +45,7 @@ fn capture_shots_real_screen() {
     let registry = Registry::new();
     registry.set(Service::Capture, Arc::new(CaptureProvider));
     let result = registry
-        .call("capture", "shot", "", WAIT)
+        .call("test", "capture", "shot", "", WAIT)
         .expect("截图失败");
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     let file = parsed["file"].as_str().unwrap();
@@ -62,14 +62,14 @@ fn ocr_recognizes_captured_shot() {
     registry.set(Service::Capture, Arc::new(CaptureProvider));
     registry.set(Service::Ocr, Arc::new(OcrProvider::new()));
     let shot = registry
-        .call("capture", "shot", "", WAIT)
+        .call("test", "capture", "shot", "", WAIT)
         .expect("截图失败");
     let file: String = {
         let parsed: serde_json::Value = serde_json::from_str(&shot).unwrap();
         parsed["file"].as_str().unwrap().to_string()
     };
     let args = serde_json::json!({ "file": file }).to_string();
-    match registry.call("ocr", "recognize", &args, Duration::from_secs(120)) {
+    match registry.call("test", "ocr", "recognize", &args, Duration::from_secs(120)) {
         Ok(result) => {
             let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
             assert!(parsed["text"].is_string());
@@ -89,6 +89,7 @@ fn hotkey_register_conflict_unregister() {
     registry.set(Service::Hotkey, Arc::new(HotkeyProvider::default()));
     let register = |registry: &Registry, id: &str| {
         registry.call(
+            "test",
             "hotkey",
             "register",
             &format!(r#"{{"id":"{id}","modifiers":["ctrl","alt"],"key":"K"}}"#),
@@ -101,6 +102,7 @@ fn hotkey_register_conflict_unregister() {
     assert_eq!(second, Err("热键已注册: paste".into()));
     registry
         .call(
+            "test",
             "hotkey",
             "unregister",
             r#"{"id":"paste"}"#,
@@ -210,6 +212,7 @@ fn hotkey_press_resolves_on_fire() {
     registry.set(Service::Hotkey, provider);
     registry
         .call(
+            "test",
             "hotkey",
             "register",
             r#"{"id":"paste","modifiers":["ctrl","alt"],"key":"N"}"#,
@@ -217,6 +220,7 @@ fn hotkey_press_resolves_on_fire() {
         )
         .expect("注册失败");
     let missing = registry.call(
+        "test",
         "hotkey",
         "press",
         r#"{"id":"ghost"}"#,
@@ -228,6 +232,7 @@ fn hotkey_press_resolves_on_fire() {
         let registry = Arc::clone(&registry);
         std::thread::spawn(move || {
             registry.call(
+                "test",
                 "hotkey",
                 "press",
                 r#"{"id":"paste"}"#,
@@ -298,6 +303,7 @@ fn notify_ok_empty_deliver_and_panel_without_ui() {
     registry.set(Service::Panel, Arc::new(PanelProvider::new()));
     assert_eq!(
         registry.call(
+            "test",
             "notify",
             "show",
             r#"{"title":"标题","body":"正文"}"#,
@@ -308,6 +314,7 @@ fn notify_ok_empty_deliver_and_panel_without_ui() {
     // 空文本不注入按键;真上屏由 win-e2e 在 RichEdit 上验证。
     assert_eq!(
         registry.call(
+            "test",
             "output",
             "deliver",
             r#"{"text":""}"#,
@@ -317,6 +324,7 @@ fn notify_ok_empty_deliver_and_panel_without_ui() {
     );
     assert_eq!(
         registry.call(
+            "test",
             "panel",
             "show",
             r#"{"title":"板","items":["甲"]}"#,

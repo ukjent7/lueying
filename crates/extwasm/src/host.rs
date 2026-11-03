@@ -683,3 +683,6 @@ fn timeout_for(service: Service, method: &str) -> Duration {
         _ => Duration::from_secs(10),
     }
 }
+
+#[cfg(test)]
+mod host_tests;
