@@ -14,7 +14,7 @@ use crate::weights::{Tensor, Weights};
 #[cfg(test)]
 use crate::{FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS};
 const UNK: u32 = 1;
-const BOS: u32 = 2;
+pub(crate) const BOS: u32 = 2;
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 pub(crate) struct Config {

@@ -26,14 +26,14 @@ pub use reranker::{Reranker, should_rerank};
 mod tests;
 
 #[cfg(test)]
-use forward::{FeedForwardScratch, HiddenState, Prefix, TailRun, TailStates, TerminalState};
+use forward::{HiddenState, Prefix, TailRun, TailStates, TerminalState};
 #[cfg(test)]
 use math::{
     LinearScratch, Matrix, erf, gelu, layer_norm, linear, linear_into, log_normalizer, split_qkv,
-    split_qkv_with_suffix,
+    split_qkv_with_suffix, split_qkv_with_suffix_into,
 };
 #[cfg(test)]
-use model::{BOS, Block, Config};
+use model::{BOS, Block, Config, FeedForwardScratch};
 #[cfg(test)]
 use reranker::{COMPARED, Compared, comparable};
 #[cfg(test)]

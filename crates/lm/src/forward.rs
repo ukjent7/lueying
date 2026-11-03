@@ -550,7 +550,7 @@ impl SentenceModel {
         }
     }
 
-    fn project_attention_into(
+    pub(crate) fn project_attention_into(
         &self,
         attended: &[f32],
         block: &Block,
@@ -568,7 +568,12 @@ impl SentenceModel {
         );
     }
 
-    fn normalize_attention_into(&self, x: &[f32], block: &Block, scratch: &mut FeedForwardScratch) {
+    pub(crate) fn normalize_attention_into(
+        &self,
+        x: &[f32],
+        block: &Block,
+        scratch: &mut FeedForwardScratch,
+    ) {
         scratch.normalized.resize(x.len(), 0.0);
         layer_norm_into(
             x,
@@ -579,7 +584,7 @@ impl SentenceModel {
         );
     }
 
-    fn qkv_into(&self, block: &Block, scratch: &mut FeedForwardScratch) {
+    pub(crate) fn qkv_into(&self, block: &Block, scratch: &mut FeedForwardScratch) {
         let normalized = &scratch.normalized;
         scratch.hidden.resize(normalized.len() * 3, 0.0);
         linear_into(
@@ -593,7 +598,12 @@ impl SentenceModel {
         );
     }
 
-    fn feed_forward(&self, x: &mut [f32], block: &Block, scratch: &mut FeedForwardScratch) {
+    pub(crate) fn feed_forward(
+        &self,
+        x: &mut [f32],
+        block: &Block,
+        scratch: &mut FeedForwardScratch,
+    ) {
         let n_embd = self.config.n_embd;
         scratch.normalized.resize(x.len(), 0.0);
         layer_norm_into(
@@ -635,7 +645,14 @@ impl SentenceModel {
         }
     }
 
-    fn attention(&self, q: &[f32], k: &[f32], v: &[f32], rows: usize, offset: usize) -> Vec<f32> {
+    pub(crate) fn attention(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        rows: usize,
+        offset: usize,
+    ) -> Vec<f32> {
         #[cfg(test)]
         ATTENTION_POSITIONS.with(|count| count.set(count.get() + rows));
         let n_embd = self.config.n_embd;
