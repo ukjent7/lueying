@@ -15,6 +15,8 @@
 //! - 外观:宿主调用 `lueying_appearance` 导出,输入是场景 JSON。
 //! - 服务:`extism:host/user` 里的 `lueying_<服务>` 收一段 JSON
 //!   `{"method":…,"args":…}`,回一段 JSON `{"ok":true,"value":…}`。
+//!   服务失败不静默:错误信封交给 guest,guest 自己失败时用它的错误文本;
+//!   guest 收到信封仍返回成功,宿主按这条服务错误把这次调用判失败。
 //!
 //! # 边界
 //!
@@ -25,7 +27,7 @@
 //! - 清单 `needs` 里没声明的服务不链接,guest 用到就在实例化时失败。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -370,6 +372,8 @@ struct Guest {
     plugin: Plugin,
     manifest: Arc<Manifest>,
     metrics: Arc<Metrics>,
+    /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
+    failure: Arc<Mutex<Option<String>>>,
 }
 
 impl Guest {
@@ -387,6 +391,7 @@ impl Guest {
             .with_fuel_limit(call_fuel(&manifest, limits))
             .with_initialization_fuel_limit(limits.init_fuel)
             .with_wasmtime_config(wasmtime_config(limits));
+        let failure = Arc::new(Mutex::new(None));
         for service in &manifest.needs {
             builder = builder.with_function_in_namespace(
                 USER_NS,
@@ -398,6 +403,7 @@ impl Guest {
                     service: *service,
                     services: Arc::clone(&services),
                     cancelled: Arc::clone(&cancelled),
+                    failure: Arc::clone(&failure),
                 }),
                 service_call,
             );
@@ -431,6 +437,7 @@ impl Guest {
             plugin,
             manifest,
             metrics,
+            failure,
         };
         guest.init()?;
         Ok(guest)
@@ -441,9 +448,14 @@ impl Guest {
         if !self.plugin.function_exists(INIT_EXPORT) {
             return Ok(());
         }
-        self.call(INIT_EXPORT, "")
-            .map(|_| ())
-            .map_err(|error| format!("扩展 {} 初始化失败: {error}", self.manifest.id))
+        let outcome = self.call(INIT_EXPORT, "");
+        match outcome {
+            Ok(_) => match self.take_failure() {
+                Some(error) => Err(format!("扩展 {} 初始化失败: {error}", self.manifest.id)),
+                None => Ok(()),
+            },
+            Err(error) => Err(format!("扩展 {} 初始化失败: {error}", self.manifest.id)),
+        }
     }
 
     fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
@@ -452,6 +464,11 @@ impl Guest {
         self.note(started);
         match outcome {
             Ok(bytes) => {
+                // 服务失败过的调用不算成功:guest 自己失败时用它的错误文本,
+                // guest 仍返回成功就按服务错误顶回去,失败不会被静默吞掉。
+                if let Some(error) = self.take_failure() {
+                    return Err(format!("命令 {id} 执行失败: {error}"));
+                }
                 String::from_utf8(bytes).map_err(|_| format!("命令 {id} 的结果不是 UTF-8"))
             }
             Err(error) => Err(format!("命令 {id} 执行失败: {error}")),
@@ -464,6 +481,9 @@ impl Guest {
         let outcome = self.call(APPEARANCE_EXPORT, &json);
         self.note(started);
         let bytes = outcome.map_err(|error| format!("外观派发失败: {error}"))?;
+        if let Some(error) = self.take_failure() {
+            return Err(format!("外观派发失败: {error}"));
+        }
         let text = String::from_utf8(bytes).map_err(|_| "外观补丁不是 UTF-8".to_string())?;
         if text.trim().is_empty() {
             return Ok(None);
@@ -473,6 +493,8 @@ impl Guest {
 
     /// 调一个导出;trap 之后实例照旧能用,extism 每次调用都重置内核状态。
     fn call(&mut self, export: &str, input: &str) -> Result<Vec<u8>, extism::Error> {
+        // 上一轮的服务失败不带进这一轮。
+        self.take_failure();
         let outcome = self.plugin.call::<&[u8], Vec<u8>>(export, input.as_bytes());
         if let Err(error) = &outcome {
             self.classify(error);
@@ -489,6 +511,11 @@ impl Guest {
         if text.contains("oom") || text.contains("memory") || text.contains("grow") {
             self.metrics.ooms.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// 取走本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
+    fn take_failure(&self) -> Option<String> {
+        self.failure.lock().ok().and_then(|mut slot| slot.take())
     }
 
     fn note(&mut self, started: Instant) {
@@ -560,6 +587,8 @@ struct ServiceCtx {
     services: Arc<Registry>,
     /// 取消标志;扩展卸载时置位。
     cancelled: Arc<AtomicBool>,
+    /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
+    failure: Arc<Mutex<Option<String>>>,
 }
 
 /// 一次服务调用的请求;guest 发来的 JSON。
@@ -616,7 +645,13 @@ fn service_call(
                 .unwrap_or(serde_json::Value::String(value));
             serde_json::json!({ "ok": true, "value": value })
         }
-        Err(error) => serde_json::json!({ "ok": false, "error": error }),
+        Err(error) => {
+            // 失败同时记一笔:guest 收到信封后仍返回成功,宿主按这条把它判失败。
+            if let Ok(mut slot) = ctx.failure.lock() {
+                *slot = Some(error.clone());
+            }
+            serde_json::json!({ "ok": false, "error": error })
+        }
     };
     let bytes = serde_json::to_vec(&envelope)
         .map_err(|error| extism::Error::msg(format!("服务响应序列化失败: {error}")))?;

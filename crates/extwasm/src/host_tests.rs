@@ -103,6 +103,24 @@ fn appearance_returns_patch() {
     assert_eq!(patch.accent, Some(1_193_046));
 }
 
+/// 服务失败不许被 guest 吞掉:guest 拿到错误信封仍返回成功,宿主也要把
+/// 这次调用判失败。
+#[test]
+fn service_failure_fails_the_command() {
+    let limits = Limits::default();
+    let text = test_guest::command_manifest_with_needs("demo", &[("run", "运行")], &["notify"]);
+    let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
+    let worker = worker(
+        &test_guest::service_guest("notify", "show", "{}"),
+        manifest,
+        limits,
+    )
+    .expect("启动 worker");
+    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    assert!(error.contains("没有提供者"), "{error}");
+    assert!(error.contains("notify"), "{error}");
+}
+
 #[test]
 fn rejects_missing_command_export() {
     let limits = Limits::default();

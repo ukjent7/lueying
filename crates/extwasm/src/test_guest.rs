@@ -79,6 +79,29 @@ pub(crate) fn appearance_manifest(id: &str) -> String {
     .to_string()
 }
 
+/// 一份带命令与宿主服务声明的清单。
+pub(crate) fn command_manifest_with_needs(
+    id: &str,
+    commands: &[(&str, &str)],
+    needs: &[&str],
+) -> String {
+    json!({
+        "id": id,
+        "name": "演示",
+        "version": "1.0.0",
+        "api": 4,
+        "wasm": "extension.wasm",
+        "activate": {
+            "commands": commands
+                .iter()
+                .map(|(id, title)| json!({ "id": id, "title": title }))
+                .collect::<Vec<_>>()
+        },
+        "needs": needs
+    })
+    .to_string()
+}
+
 /// 一份没有任何入口的清单。
 pub(crate) fn plain_manifest(id: &str) -> String {
     json!({
@@ -178,5 +201,37 @@ pub(crate) fn appearance_guest(patch: &str) -> String {
         preamble(),
         len = patch.len(),
         stores = store_bytes("$ptr", patch.as_bytes()),
+    )
+}
+
+/// 调一次宿主服务,把响应原样交回;服务失败也照样返回信封。
+pub(crate) fn service_guest(service: &str, method: &str, args: &str) -> String {
+    let request = format!(r#"{{"method":"{method}","args":{args}}}"#);
+    format!(
+        "{}(import \"extism:host/user\" \"lueying_{service}\" (func $svc (param i64) (result i64)))
+  (func (export \"run\") (result i32)
+    (local $req i64)
+    (local $resp i64)
+    (local $len i64)
+    (local $i i64)
+    (local $out i64)
+    (local.set $req (call $alloc (i64.const {len})))
+{stores}    (local.set $resp (call $svc (local.get $req)))
+    (local.set $len (call $length (local.get $resp)))
+    (local.set $out (call $alloc (local.get $len)))
+    (local.set $i (i64.const 0))
+    (block $done
+      (loop $copy
+        (br_if $done (i64.ge_u (local.get $i) (local.get $len)))
+        (call $store_u8
+          (i64.add (local.get $out) (local.get $i))
+          (call $load_u8 (i64.add (local.get $resp) (local.get $i))))
+        (local.set $i (i64.add (local.get $i) (i64.const 1)))
+        (br $copy)))
+    (call $output_set (local.get $out) (local.get $len))
+    (i32.const 0)))",
+        preamble(),
+        len = request.len(),
+        stores = store_bytes("$req", request.as_bytes()),
     )
 }
