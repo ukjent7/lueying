@@ -403,6 +403,9 @@ pub struct Reply {
     /// 用户词库文本(仅 `ExportUser` 应答使用)。
     #[serde(default)]
     pub user: String,
+    /// 用户词库条数(仅 `ImportUser` 应答使用;词库有上限,导入后看这个数)。
+    #[serde(default)]
+    pub user_entries: usize,
     /// 引擎资源状态(仅 `Status` 应答使用)。
     #[serde(default)]
     pub status: Option<EngineStatus>,

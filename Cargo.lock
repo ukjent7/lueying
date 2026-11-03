@@ -3484,6 +3484,7 @@ version = "0.1.0"
 dependencies = [
  "accesskit 0.25.2",
  "accesskit_windows 0.35.2",
+ "encoding_rs",
  "getrandom 0.4.3",
  "lueying-broker",
  "lueying-bypass",

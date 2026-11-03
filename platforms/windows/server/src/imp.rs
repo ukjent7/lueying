@@ -856,14 +856,14 @@ fn set_global_fullwidth(state: &State, fullwidth: bool) {
 
 /// 设置窗读取/重置模糊组学习后的应答。
 fn group_reply(user: &SharedUser) -> Reply {
+    let user = user.read().unwrap_or_else(|p| p.into_inner());
     Reply {
         groups: user
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
             .group_stats()
             .into_iter()
             .map(|(name, count)| (name.to_string(), count))
             .collect(),
+        user_entries: user.len(),
         ..Reply::default()
     }
 }

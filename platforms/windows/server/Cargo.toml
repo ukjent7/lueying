@@ -36,6 +36,8 @@ lueying-protocol = { path = "../../../crates/protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
+# 词表解码:UTF-8 / UTF-16 / GB18030 一份实现,词表是纯逻辑,不必绑平台。
+encoding_rs = "0.8"
 # 令牌生成的 CSPRNG,直连系统随机源。
 getrandom = "0.4"
 

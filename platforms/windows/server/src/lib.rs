@@ -10,6 +10,9 @@ pub mod config;
 
 mod config_file;
 
+/// 词库导入:第三方词表转成用户词库的原生格式。
+pub mod dict_import;
+
 pub mod host_panel;
 
 pub mod official_extensions;

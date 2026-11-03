@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::{self, AppOverride};
+use crate::dict_import;
 use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_extwasm::{ConsentBook, ConsentCheck};
@@ -27,6 +28,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, MB_DEFBUTTON2, MB_ICONQUESTION, MB_OKCANCEL, MessageBoxW,
 };
 use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR};
+
+/// 一次导入的分块大小(字节);管道单帧上限 1 MiB,留一半给协议开销。
+const IMPORT_CHUNK: usize = 512 * 1024;
 
 /// 给常驻 Server 发一条请求并取回应答;没在运行返回 None。
 pub fn call(request: &Request) -> Option<Reply> {
@@ -584,26 +588,52 @@ pub fn export_user(settings: &mut Settings) {
     }
 }
 
-/// 从文件导入用户词库。
+/// 从文件导入用户词库:本机导出的原生格式、标准 TSV 词表与纯汉字词表都能读。
 pub fn import_user(settings: &mut Settings) {
     settings.confirm_clear = false;
     let Some(path) = choose_user_file(false) else {
         return;
     };
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
         Err(e) => {
             settings.say(Notice::Error, format!("读取失败: {e}"));
             return;
         }
     };
-    match call(&Request::ImportUser { text }) {
-        Some(reply) => {
-            settings.groups = reply.groups;
-            settings.say(Notice::Success, format!("已从 {} 合并", path.display()));
+    let mut report = dict_import::parse(&dict_import::decode(&bytes));
+    // 纯汉字词表没有读音,主词典能查到就并入,查不到整条跳过。
+    let dict = if report.needs_dict() {
+        dict_import::open_main_dict()
+    } else {
+        None
+    };
+    report.resolve(dict.as_ref());
+    let mut groups = settings.groups.clone();
+    let mut entries = 0usize;
+    for chunk in dict_import::split(&report.text, IMPORT_CHUNK) {
+        match call(&Request::ImportUser {
+            text: chunk.to_string(),
+        }) {
+            Some(reply) => {
+                groups = reply.groups;
+                entries = reply.user_entries;
+            }
+            None => {
+                settings.say(Notice::Error, "输入法服务未运行,启动后再试");
+                return;
+            }
         }
-        None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
     }
+    settings.groups = groups;
+    let mut text = format!("已导入 {} 词", report.imported);
+    if entries != report.imported {
+        text.push_str(&format!(",词库现有 {entries} 条"));
+    }
+    if report.skipped > 0 {
+        text.push_str(&format!(",跳过 {} 行", report.skipped));
+    }
+    settings.say(Notice::Success, text);
 }
 
 /// 导出诊断报告:版本、配置、模糊组统计与服务日志末尾。
@@ -687,17 +717,23 @@ pub fn download_and_run_installer(release: &update::Release) -> Result<(), Strin
 
 /// 系统文件对话框;取消或失败时返回 None。
 fn choose_user_file(save: bool) -> Option<PathBuf> {
-    choose_file(
-        save,
-        if save { "lueying-user.tsv" } else { "" },
-        if save {
-            "导出用户词库"
-        } else {
-            "导入用户词库"
-        },
-        "用户词库 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0\0",
-        "tsv",
-    )
+    if save {
+        choose_file(
+            true,
+            "lueying-user.tsv",
+            "导出用户词库",
+            "用户词库 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0\0",
+            "tsv",
+        )
+    } else {
+        choose_file(
+            false,
+            "",
+            "导入词库",
+            "词表文件 (*.txt;*.tsv)\0*.txt;*.tsv\0所有文件 (*.*)\0*.*\0\0",
+            "txt",
+        )
+    }
 }
 
 /// 诊断报告的另存对话框。

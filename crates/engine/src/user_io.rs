@@ -98,6 +98,11 @@ impl UserDict {
         self.map.is_empty()
     }
 
+    /// 词条总数;设置窗导入后用它报「词库现在有多少条」。
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
     /// 只遍历音节数与首字母可能匹配的用户键。首字母模糊等价由调用方展开;
     /// 同一音节数、同一首字母是逐音节匹配的必要条件,不会漏词。
     pub fn for_each_matching(&self, shapes: &[(usize, char)], mut f: impl FnMut(&str, &str, u32)) {

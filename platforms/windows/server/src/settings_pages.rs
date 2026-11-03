@@ -488,7 +488,7 @@ impl Settings {
     fn user_dict_row(&self) -> Row {
         self.action_row(
             "用户词库",
-            "导入、导出或清空本机学习记录".to_string(),
+            "导入标准词表(词/拼音/权重)或本机导出的词库;导出与清空本机学习记录".to_string(),
             vec![
                 Self::secondary(ids::IMPORT_USER, "导入", true),
                 Self::secondary(ids::EXPORT_USER, "导出", true),

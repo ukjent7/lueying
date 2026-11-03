@@ -430,5 +430,36 @@ pub fn run(report: &mut String) -> usize {
         format!("行 {sync_labels:?} 按钮 {sync_button:?}"),
     );
 
+    // 词库导入:词库页有用户词库那行,点导入走的是导入动作。
+    let mut dict_settings = sample_settings();
+    let dict_page = dict_settings.page_view(PageId::Dictionary, &colors());
+    let dict_group = dict_page.groups.iter().find(|group| group.title == "词库");
+    let dict_labels: Vec<&str> = dict_group
+        .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
+        .unwrap_or_default();
+    let import_button = dict_settings.activate(&Id::new(ids::IMPORT_USER, 0));
+    push(
+        &mut checks,
+        "设置词库导入行",
+        dict_labels.contains(&"用户词库") && import_button == Some(Action::ImportUser),
+        format!("行 {dict_labels:?} 按钮 {import_button:?}"),
+    );
+
+    // 导入词表:标准词表要转成用户词库能并的原生格式。
+    let imported = lueying_server::dict_import::parse("你好\tni hao\t1000\n");
+    let native = imported.text.trim_end().to_string();
+    let native_row: Vec<&str> = native.split('\t').collect();
+    let key = native_row.first().copied().unwrap_or_default();
+    let word = native_row.get(1).copied().unwrap_or_default();
+    push(
+        &mut checks,
+        "词表转用户词库格式",
+        imported.imported == 1
+            && imported.skipped == 0
+            && key == "ni'hao"
+            && word == "你好",
+        format!("导入 {} 条:{native}", imported.imported),
+    );
+
     crate::harness::write(report, "设置页模型", checks)
 }
