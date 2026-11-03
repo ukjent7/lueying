@@ -8,7 +8,10 @@ fn temp(name: &str) -> PathBuf {
 #[test]
 fn pack_and_unpack_round_trip() {
     let blocks = vec![
-        ("config.toml".to_string(), "scheme = \"full\"\npage_size = 5".to_string()),
+        (
+            "config.toml".to_string(),
+            "scheme = \"full\"\npage_size = 5".to_string(),
+        ),
         ("phrases.txt".to_string(), "你好,世界".to_string()),
         ("empty.txt".to_string(), String::new()),
     ];

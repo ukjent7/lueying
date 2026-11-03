@@ -113,7 +113,9 @@ fn host_of(authority: &str) -> String {
     let host = if let Some(end) = authority.find(']') {
         &authority[1..end]
     } else {
-        authority.rsplit_once(':').map_or(authority, |(host, _)| host)
+        authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host)
     };
     host.trim_matches(['[', ']']).to_ascii_lowercase()
 }

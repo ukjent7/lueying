@@ -140,9 +140,15 @@ fn webdav_keys_round_trip() {
 
 #[test]
 fn webdav_url_only_accepts_https_outside_loopback() {
-    let cfg = load_text("webdav-plain", "webdav_url = \"http://dav.example.com/ly\"\n");
+    let cfg = load_text(
+        "webdav-plain",
+        "webdav_url = \"http://dav.example.com/ly\"\n",
+    );
     assert!(cfg.webdav_url.is_empty(), "明文地址不收");
-    let cfg = load_text("webdav-local", "webdav_url = \"http://127.0.0.1:8080/ly\"\n");
+    let cfg = load_text(
+        "webdav-local",
+        "webdav_url = \"http://127.0.0.1:8080/ly\"\n",
+    );
     assert_eq!(cfg.webdav_url, "http://127.0.0.1:8080/ly");
 }
 

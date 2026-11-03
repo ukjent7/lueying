@@ -186,7 +186,9 @@ impl ResponseHandle {
         }
         if let Some((user, password)) = &request.credentials {
             header_text.push_str("Authorization: Basic ");
-            header_text.push_str(&crate::base64::encode(format!("{user}:{password}").as_bytes()));
+            header_text.push_str(&crate::base64::encode(
+                format!("{user}:{password}").as_bytes(),
+            ));
             header_text.push_str("\r\n");
         }
         header_text.push_str("Accept-Encoding: identity\r\n");

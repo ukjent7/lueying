@@ -721,7 +721,9 @@ fn report_sync(core: &Shared, outcome: settings_actions::Outcome) {
         }
         settings_actions::Outcome::Pulled => {
             guard.settings.last_sync = "已下载".to_string();
-            guard.settings.say(Notice::Success, "已从 WebDAV 下载并应用");
+            guard
+                .settings
+                .say(Notice::Success, "已从 WebDAV 下载并应用");
             if let Some(path) = guard.settings.path.clone() {
                 guard.settings.cfg = config::load(&path);
             }
