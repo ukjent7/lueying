@@ -8,11 +8,11 @@
 
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
-    JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_CPU_RATE_CONTROL,
-    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectCpuRateControlInformation,
-    JobObjectExtendedLimitInformation, SetInformationJobObject,
+    JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_JOB_MEMORY,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
 };
 use windows::core::PCWSTR;
 
@@ -49,23 +49,8 @@ impl ProcessLimiter for JobLimiter {
                 info.ProcessMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
             }
             if let Some(rate) = self.cpu_rate {
-                info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_CPU_RATE_CONTROL;
-                // extended limit 结构体里那块 CPU 速率也要填:光挂标志不填值,
-                // SetInformationJobObject 会回 ERROR_INVALID_PARAMETER。
-                info.CpuRateControl.ControlFlags =
-                    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
-                info.CpuRateControl.Anonymous.CpuRate = rate.clamp(1, 10_000);
-            }
-            // 进程随 Job 兜底:宿主崩溃或句柄泄漏,旁路进程也会被收走。
-            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as _,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-            .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
-            if let Some(rate) = self.cpu_rate {
+                // CPU 速率只走独立的信息类:LimitFlags 里没有对应位,
+                // 硬挂 JOB_OBJECT_LIMIT_CPU_RATE_CONTROL 会让整次设置报参数错。
                 let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
                 cpu.ControlFlags =
                     JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
@@ -78,6 +63,15 @@ impl ProcessLimiter for JobLimiter {
                 )
                 .map_err(|error| format!("设置 CPU 限额失败: {error}"))?;
             }
+            // 进程随 Job 兜底:宿主崩溃或句柄泄漏,旁路进程也会被收走。
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
             AssignProcessToJobObject(job, process.raw_handle())
                 .map_err(|error| format!("进程挂入 Job 失败: {error}"))?;
         }
