@@ -111,7 +111,7 @@ fn handle_serves_fetch_and_rejects_the_rest() {
     let args = &seen.lock().unwrap()[0];
     assert_eq!(args.url, "https://api.example.com");
     assert_eq!(args.limit, Some(100));
-    assert_eq!(args.timeout_ms, Some(DEFAULT_TIMEOUT_MS));
+    assert_eq!(args.timeout_ms, Some(FETCH_DEFAULT_TIMEOUT_MS));
 
     assert!(
         handle(r#"{"method":"post","args":{}}"#, &mut fetch)
