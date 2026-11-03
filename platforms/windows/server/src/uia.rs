@@ -5,8 +5,8 @@
 use std::ffi::c_void;
 use std::io::Write as _;
 use std::sync::Arc;
-use std::sync::mpsc;
 use std::sync::Mutex;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use lueying_engine::CONTEXT_KEEP;
@@ -254,9 +254,10 @@ pub(crate) fn selection_reader() -> Option<SelectionReader> {
                 let _ = unsafe { automation2.SetTransactionTimeout(1000) };
             }
             while let Ok(reply) = rx.recv() {
-                let text =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| selection(&automation)))
-                        .unwrap_or(None);
+                let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    selection(&automation)
+                }))
+                .unwrap_or(None);
                 let _ = reply.send(text);
             }
             unsafe { CoUninitialize() };
