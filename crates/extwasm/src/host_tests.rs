@@ -18,8 +18,12 @@ fn manifest(id: &str, appearance: bool, commands: &[(&str, &str)]) -> Arc<Manife
 }
 
 fn worker(wasm: &str, manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
+    worker_bytes(wasm.as_bytes(), manifest, limits)
+}
+
+fn worker_bytes(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
     let engine = Arc::new(engine(limits)?);
-    let module = Arc::new(compile(&engine, wasm.as_bytes())?);
+    let module = Arc::new(compile(&engine, wasm)?);
     Worker::spawn(engine, module, manifest, Arc::new(Registry::new()), limits)
 }
 
@@ -135,4 +139,22 @@ fn rejects_missing_allocator() {
         .err()
         .expect("应当拒绝");
     assert!(error.contains("lueying_alloc"), "{error}");
+}
+
+/// C 写的 guest 也得能跑:CI 用 clang 把 `crates/extguest/c/example.c` 编到
+/// `target/c-guest/example.wasm`。本地没有 clang 或 zig 时跳过。
+#[test]
+fn runs_a_c_guest() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/c-guest/example.wasm");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let limits = Limits::default();
+    let worker = worker_bytes(&bytes, manifest("demo", false, &[("run", "运行")]), limits)
+        .expect("启动 worker");
+    assert_eq!(
+        worker.command_wait("run", "{}", WAIT),
+        Ok(r#"{"lang":"c"}"#.into())
+    );
 }

@@ -102,6 +102,21 @@ jobs:
       # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
       - name: Wasm guest 构建
         run: cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+      # 非 Rust 语言也能写扩展:C 头文件与示例 guest 用 clang 编成 wasm,
+      # 扩展层单元测试会把这个模块真的跑一遍。本地没有 clang 就跳过。
+      - name: C 示例 guest 编译
+        run: |
+          command -v clang >/dev/null || { echo "没有 clang,跳过"; exit 0; }
+          linker=$(clang --target=wasm32-unknown-unknown -print-prog-name=wasm-ld 2>/dev/null || echo wasm-ld)
+          if ! command -v "$linker" >/dev/null && [ ! -x "$linker" ]; then
+            echo "没有 wasm-ld,跳过"
+            exit 0
+          fi
+          mkdir -p target/c-guest
+          clang --target=wasm32-unknown-unknown -nostdlib -O2 \
+            -I crates/extguest/include \
+            -Wl,--no-entry -Wl,--export-memory \
+            -o target/c-guest/example.wasm crates/extguest/c/example.c
       # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
       # 旁路层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
       # CLI 的子命令解析同样不进 E2E,在这里跑;联网 broker 的协议层同场。

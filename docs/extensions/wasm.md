@@ -89,6 +89,19 @@ lueying_extguest::export!(ShotOcr);
 文本交付;`context_selection` 读当前窗口选中文字,清单要申请
 `selected-text` 权限。
 
+不想写 Rust 时按下面的 ABI 手写 guest 即可:`crates/extguest/include/lueying_ext.h`
+是同一份契约的 C 头文件,含导入声明与导出宏;`crates/extguest/c/example.c`
+是能直接编的最小例子:
+
+```sh
+clang --target=wasm32-unknown-unknown -nostdlib -O2 \
+  -I crates/extguest/include \
+  -Wl,--no-entry -Wl,--export-memory \
+  -o extension.wasm crates/extguest/c/example.c
+```
+
+任何能产出 `wasm32-unknown-unknown` 的工具链都能用这套契约。
+
 构建与发布:
 
 ```sh
@@ -123,6 +136,10 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 服务结果是一个 JSON 信封:成功 `{"ok":true,"value":...}`,失败
 `{"ok":false,"error":"..."}`。宿主把信封写进 guest 的结果缓冲区,
 返回写入长度;超长时宿主直接回一个错误信封。
+
+这份 ABI 是扩展与宿主之间的唯一契约:导入模块名、导出符号名与签名都固定,
+契约本身不含任何运行时细节,宿主换一个 JIT 也不影响扩展。清单 `api` 字段
+标出契约版本,版本对不上宿主直接拒绝加载。
 
 ## 资源限额与熔断
 
