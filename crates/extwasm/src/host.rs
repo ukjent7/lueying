@@ -494,7 +494,7 @@ impl Guest {
     /// 调一个导出;trap 之后实例照旧能用,extism 每次调用都重置内核状态。
     fn call(&mut self, export: &str, input: &str) -> Result<Vec<u8>, extism::Error> {
         // 上一轮的服务失败不带进这一轮。
-        self.take_failure();
+        let _ = self.take_failure();
         let outcome = self.plugin.call::<&[u8], Vec<u8>>(export, input.as_bytes());
         if let Err(error) = &outcome {
             self.classify(error);

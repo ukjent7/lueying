@@ -263,7 +263,7 @@ jobs:
         timeout-minutes: 8
         shell: pwsh
         run: |
-          $cap = Get-WindowsCapability -Online | Where-Object Name -like 'Language.OCR*zh-CN*'
+          $cap = @(Get-WindowsCapability -Online | Where-Object Name -like 'Language.OCR*zh-CN*')[0]
           if (-not $cap) { "镜像里没有 zh-CN OCR 能力包"; exit 0 }
           $proc = Start-Process -FilePath dism.exe -ArgumentList "/Online", "/Add-Capability", "/CapabilityName:$($cap.Name)" -PassThru -NoNewWindow
           if (-not $proc.WaitForExit(240000)) {
