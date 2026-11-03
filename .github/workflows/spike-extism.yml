@@ -11,7 +11,7 @@ permissions:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       # 两侧用同一套 profile:lto 与 strip 会让体积不可比。
       CARGO_PROFILE_RELEASE_LTO: "false"
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: 量依赖树与静态库体积
+      - name: 量依赖树与产物体积
         continue-on-error: true
         run: |
           set -uo pipefail
@@ -42,14 +42,20 @@ jobs:
             fi
             end=$(date +%s)
             lib="$dir/target/release/libspike_${name}.a"
-            size=$(stat -c%s "$lib")
+            libsize=$(stat -c%s "$lib")
+            # rlib 总量:静态库只打进被引用的那一份 wasmtime,总量才看得见重复版本。
+            rlibsize=$(find "$dir/target/release/deps" -name '*.rlib' -printf '%s\n' | awk '{s+=$1} END{print s+0}')
             count=$( cd "$dir" && cargo tree -e normal --prefix none | awk '{print $1" "$2}' | sort -u | wc -l )
+            dup=$( cd "$dir" && cargo tree --duplicates --prefix none | awk '{print $1}' | sort | uniq -d | tr '\n' ' ' )
             {
               printf '## %s\n' "$name"
-              printf '静态库 %.1f MiB,编译 %s s,依赖 %s 个\n' \
-                "$(awk -v b="$size" 'BEGIN{printf "%.1f", b/1048576}')" "$((end-start))" "$count"
-              printf '重复版本:\n'
-              ( cd "$dir" && cargo tree --duplicates || true )
+              printf '静态库 %.1f MiB,rlib 总量 %.1f MiB,编译 %s s,依赖 %s 个\n' \
+                "$(awk -v b="$libsize" 'BEGIN{printf "%.1f", b/1048576}')" \
+                "$(awk -v b="$rlibsize" 'BEGIN{printf "%.1f", b/1048576}')" \
+                "$((end-start))" "$count"
+              printf '重复出现的包: %s\n' "$dup"
+              printf 'wasmtime 版本: %s\n' \
+                "$( cd "$dir" && cargo tree -e normal --prefix none | awk '{print $1" "$2}' | grep -E '^wasmtime |^wasmtime-wasi ' | sort -u | tr '\n' ' ' )"
               printf '\n'
             } >> "$report"
           }
@@ -57,7 +63,9 @@ jobs:
             'wasmtime = { version = "50", default-features = false, features = ["std", "runtime", "cranelift", "wat"] }' \
             'serde = { version = "1", features = ["derive"] }' \
             'serde_json = "1"'
-          measure extism \
+          measure extism_only \
+            'extism = "1.41"'
+          measure extism_plus_ours \
             'extism = "1.41"' \
             'wasmtime = { version = "50", default-features = false, features = ["std", "runtime", "cranelift", "wat"] }'
           cat "$report"
