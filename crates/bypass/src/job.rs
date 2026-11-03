@@ -48,10 +48,13 @@ impl ProcessLimiter for JobLimiter {
                 info.JobMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
                 info.ProcessMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
             }
-            if self.cpu_rate.is_some() {
-                // CPU 速率是独立的信息类,extended limit 里只挂标志,
-                // 具体速率要等 extended limit 设好之后再单独设。
+            if let Some(rate) = self.cpu_rate {
                 info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_CPU_RATE_CONTROL;
+                // extended limit 结构体里那块 CPU 速率也要填:光挂标志不填值,
+                // SetInformationJobObject 会回 ERROR_INVALID_PARAMETER。
+                info.CpuRateControl.ControlFlags =
+                    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+                info.CpuRateControl.Anonymous.CpuRate = rate.clamp(1, 10_000);
             }
             // 进程随 Job 兜底:宿主崩溃或句柄泄漏,旁路进程也会被收走。
             info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
