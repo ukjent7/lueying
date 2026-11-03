@@ -120,13 +120,13 @@ pub fn pinned_candidates(engine: &Engine) -> bool {
         .any(|candidate| candidate.quick || candidate.pinned)
 }
 
-/// 4M 按键重排只在有左邻上下文时才有意义:没有上下文时它只能按句子自身
+/// 8M 按键重排只在有左邻上下文时才有意义:没有上下文时它只能按句子自身
 /// 打分,共享语料上比引擎原序弱 7.6 个百分点。
 pub fn sync_worthwhile(snapshot: &Snapshot) -> bool {
     !snapshot.context.is_empty()
 }
 
-/// 4M 按键重排:返回要提到首位的候选下标。
+/// 8M 按键重排:返回要提到首位的候选下标。
 pub fn decide_sync(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize> {
     if !sync_worthwhile(snapshot) {
         return None;

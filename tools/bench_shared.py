@@ -11,6 +11,7 @@
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
     import-msime      把水杉 convert_eval --dump 的 JSONL 转成统一逐条结果
     compare           并排比较多份统一结果,输出 Markdown
+    stats             对两份逐条结果做 Wilson 区间与 McNemar 精确检验
 
 统一结果 TSV 的头部用 `# key=value` 记录 schema/engine/corpus/kind:
     kind=items    category input expected rank top1 ms
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -256,6 +258,99 @@ def fmt(value: float | None, suffix: str = "") -> str:
 
 def fmt_mrr(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}"
+
+
+def wilson_interval(successes: int, total: int) -> tuple[float, float]:
+    """top-1 比例的 Wilson 95% 区间,以百分数返回。"""
+    if total == 0:
+        return (0.0, 0.0)
+    p = successes / total
+    z = 1.959963984540054
+    denominator = 1.0 + z * z / total
+    center = (p + z * z / (2.0 * total)) / denominator
+    half = (
+        z
+        * math.sqrt(p * (1.0 - p) / total + z * z / (4.0 * total * total))
+        / denominator
+    )
+    return (max(0.0, center - half) * 100.0, min(1.0, center + half) * 100.0)
+
+
+def mcnemar_exact(rescue: int, breakage: int) -> float:
+    """两名选手不一致对的 McNemar 精确检验(双侧)。rescue 只在一方对,breakage 只在另一方对。"""
+    discordant = rescue + breakage
+    if discordant == 0:
+        return 1.0
+    tail = sum(math.comb(discordant, i) for i in range(min(rescue, breakage) + 1))
+    return min(1.0, 2.0 * tail / (2**discordant))
+
+
+def read_item_results(path: Path) -> tuple[dict[str, str], dict[tuple[str, str], bool]]:
+    meta, kind, rows = read_result(path)
+    if kind != "items":
+        raise SystemExit(f"{path}: stats 需要 kind=items 的逐条结果")
+    outcomes: dict[tuple[str, str], bool] = {}
+    for row in rows:
+        key = (row.get("category", "unknown"), row.get("input", ""))
+        rank = row.get("rank", "")
+        outcomes[key] = rank == "0"
+    return meta, outcomes
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    baseline_meta, baseline = read_item_results(Path(args.baseline))
+    candidate_meta, candidate = read_item_results(Path(args.candidate))
+    shared = sorted(set(baseline) & set(candidate))
+    if not shared:
+        raise SystemExit("两份结果的 category+input 没有交集")
+
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for key in shared:
+        groups.setdefault(key[0], []).append(key)
+
+    def row(label: str, keys: list[tuple[str, str]]) -> str:
+        n = len(keys)
+        base = sum(baseline[key] for key in keys)
+        cand = sum(candidate[key] for key in keys)
+        rescue = sum(1 for key in keys if not baseline[key] and candidate[key])
+        breakage = sum(1 for key in keys if baseline[key] and not candidate[key])
+        low_a, high_a = wilson_interval(base, n)
+        low_b, high_b = wilson_interval(cand, n)
+        delta = (cand - base) * 100.0 / n
+        p = mcnemar_exact(rescue, breakage)
+        return (
+            f"| {label} | {n} | {base * 100.0 / n:.1f}% "
+            f"[{low_a:.1f}, {high_a:.1f}] | {cand * 100.0 / n:.1f}% "
+            f"[{low_b:.1f}, {high_b:.1f}] | {delta:+.1f} | {p:.4f} | {rescue} | {breakage} |"
+        )
+
+    lines = [
+        "# 共享语料显著性",
+        "",
+        f"基线:`{baseline_meta.get('engine', Path(args.baseline).stem)}`;"
+        f"候选:`{candidate_meta.get('engine', Path(args.candidate).stem)}`。",
+        f"共同条目 {len(shared)} 条"
+        + (f",未配对 {len(set(baseline) ^ set(candidate))} 条已跳过。" if set(baseline) != set(candidate) else "。"),
+        "",
+        "| 类别 | n | 基线 top-1 [Wilson 95%] | 候选 top-1 [Wilson 95%] | Δpp | McNemar p | rescue | breakage |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        row("全量", shared),
+    ]
+    for category in sorted(groups):
+        lines.append(row(category, groups[category]))
+    lines.extend(
+        [
+            "",
+            "Wilson 区间按 top-1 比例计算;McNemar 精确检验使用不一致对的二项分布。"
+            "n=60 时区间半宽约 ±13pp,应看 Δpp 与 rescue/breakage,不要用单次汇总下结论。",
+        ]
+    )
+    text = "\n".join(lines) + "\n"
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"写出 {args.out}")
+    sys.stdout.write(text)
+    return 0
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -506,6 +601,12 @@ def main() -> int:
     compare.add_argument("results", nargs="+", help="统一结果 TSV")
     compare.add_argument("--out", help="同时写入该路径")
     compare.set_defaults(func=cmd_compare)
+
+    stats = sub.add_parser("stats", help="两份逐条结果的 Wilson 区间与 McNemar 检验")
+    stats.add_argument("baseline", help="基线统一结果 TSV")
+    stats.add_argument("candidate", help="候选统一结果 TSV")
+    stats.add_argument("--out", help="同时写入该路径")
+    stats.set_defaults(func=cmd_stats)
 
     qingjian = sub.add_parser("import-qingjian", help="青简 --eval-details JSONL → 统一逐条结果")
     qingjian.add_argument("--details", required=True)

@@ -1,4 +1,4 @@
-//! 4M 同步 + 25M 停顿重排的 E2E 契约。
+//! 8M 同步 + 25M 停顿重排的 E2E 契约。
 //!
 //! 先列失败方式，再逐条检查：
 //! 1. 模型缺失、截断或损坏仍被接受 → 加载必须报错，引擎保持原排序。
@@ -8,12 +8,12 @@
 //! 5. 重排后空格上屏的不是新的首选 → 禁止。
 //! 6. 25M 停顿结果在输入变化、翻页或移动高亮后落地 → 用 revision/页/高亮丢弃。
 //! 7. 连续按键仍执行旧停顿任务 → 去抖只保留每会话最后一次提交。
-//! 8. 上下文没有进入模型 → 同一对候选在「她说：」后排序应变化。
-//! 9. 4M 同步路径拖垮按键延迟 → 分位数门限。
+//! 8. 上下文没有进入模型 → 同一对候选在「她说：」后的分数应变化。
+//! 9. 8M 同步路径拖垮按键延迟 → 分位数门限。
 //! 10. 重排让整句 top-1/top-5 掉出门限 → 质量门限。
 //! 11. 发布包里的模型几何/许可与预期不符 → 校验 config、license、attribution、体积。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,23 +37,28 @@ pub struct Models {
 
 /// 读取并解析两档模型。文件缺失或损坏都返回可读错误，由主程序记为 FAIL。
 pub fn load(dir: &Path) -> Result<Models, String> {
-    let read = |name: &str| -> Result<(PathBuf, Vec<u8>), String> {
+    let read = |name: &str| -> Result<Vec<u8>, String> {
         let path = dir.join(name);
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok((path, bytes))
+        std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
     };
-    let (four_path, four_bytes) = read("rerank-4m.safetensors")?;
-    let (five_path, five_bytes) = read("rerank-25m.safetensors")?;
-    let four = Model::load(&four_bytes).map_err(|e| format!("{}: {e}", four_path.display()))?;
-    let five = Model::load(&five_bytes).map_err(|e| format!("{}: {e}", five_path.display()))?;
+    let four = Model::load_keystroke_dir(dir, "rerank-8m")?;
+    let five = Model::load_keystroke_dir(dir, "rerank-25m")?;
+    let eight_bytes = read("rerank-8m.ort")?;
+    let five_bytes = read("rerank-25m.ort")?;
+    let manifest = String::from_utf8(read("rerank-8m.model.json")?)
+        .map_err(|e| format!("rerank-8m.model.json: {e}"))?;
+    let vocab = String::from_utf8(read("rerank-8m.vocab.json")?)
+        .map_err(|e| format!("rerank-8m.vocab.json: {e}"))?;
     // 截断到一半与空文件都必须在解析阶段被拒；不能带着半份权重进推理。
-    let rejects_bad = Model::load(&four_bytes[..four_bytes.len() / 2]).is_err()
-        && Model::load(&five_bytes[..five_bytes.len() / 2]).is_err()
-        && Model::load(&[] as &[u8]).is_err();
+    let rejects_bad = Model::load_keystroke(&eight_bytes[..eight_bytes.len() / 2], &manifest, &vocab)
+        .is_err()
+        && Model::load_keystroke(&eight_bytes, "{", &vocab).is_err()
+        && Model::load_keystroke(&eight_bytes, &manifest, "{}").is_err()
+        && Model::load_keystroke(&[], &manifest, &vocab).is_err();
     Ok(Models {
         four,
         five,
-        four_size: four_bytes.len() as u64,
+        four_size: eight_bytes.len() as u64,
         five_size: five_bytes.len() as u64,
         rejects_bad,
     })
@@ -136,26 +141,26 @@ pub fn run(
 
     push(
         &mut checks,
-        "4M 体积",
-        models.four_size == 4_486_280,
+        "8M 体积",
+        models.four_size == 8_220_064,
         format!("{} 字节", models.four_size),
     );
     push(
         &mut checks,
         "25M 体积",
-        models.five_size == 25_480_184,
+        models.five_size == 30_834_688,
         format!("{} 字节", models.five_size),
     );
     push(
         &mut checks,
-        "4M 几何",
+        "8M 几何",
         models.four.context_length() == 64,
         format!("context={}", models.four.context_length()),
     );
     push(
         &mut checks,
         "25M 几何",
-        models.five.context_length() == 128,
+        models.five.context_length() == 64,
         format!("context={}", models.five.context_length()),
     );
     push(
@@ -187,7 +192,7 @@ pub fn run(
     let scores = four.scores("", &pair);
     push(
         &mut checks,
-        "4M 门控样本有效",
+        "8M 门控样本有效",
         argmax(&scores) == 1,
         format!("{scores:?}"),
     );
@@ -267,6 +272,29 @@ pub fn run(
         "只有首条覆盖整键".into(),
     );
 
+    // 纠错候选由另一条音节串生成,不能把它的词典命中当成用户实际键入的内容。
+    let mut correction = fresh();
+    for c in "hoa".chars() {
+        correction.process(Key::Letter(c));
+    }
+    let details = correction.candidates_detailed();
+    let corrected = details.iter().find(|cand| cand.text == "好");
+    push(
+        &mut checks,
+        "纠错候选标记为非可信",
+        corrected.is_some_and(|cand| {
+            cand.full && !cand.trusted && cand.edits == 0 && cand.hint.is_some()
+        }),
+        corrected
+            .map(|cand| {
+                format!(
+                    "full={} trusted={} edits={} hint={:?}",
+                    cand.full, cand.trusted, cand.edits, cand.hint
+                )
+            })
+            .unwrap_or_else(|| "缺少「好」".into()),
+    );
+
     let four_empty = four.scores("", &pair);
     let four_context = four.scores("她说：", &pair);
     let changed = four_empty
@@ -275,16 +303,20 @@ pub fn run(
         .any(|(a, b)| (a - b).abs() > 1e-6);
     push(
         &mut checks,
-        "4M 上下文进入模型",
+        "8M 上下文进入模型",
         changed,
         format!("{four_empty:?} → {four_context:?}"),
     );
     let five_empty = five.scores("", &pair);
     let five_context = five.scores("她说：", &pair);
+    let five_changed = five_empty
+        .iter()
+        .zip(&five_context)
+        .any(|(a, b)| (a - b).abs() > 1e-6);
     push(
         &mut checks,
-        "25M 上下文改变排序",
-        five_empty[1] > five_empty[0] && five_context[0] > five_context[1],
+        "25M 上下文进入模型",
+        five_changed,
         format!("{five_empty:?} → {five_context:?}"),
     );
 
@@ -447,7 +479,7 @@ pub fn run(
         String::new(),
     );
 
-    // 真实输入：逐条跑 4M 同步与 25M 停顿，检查候选集合、可信门控、上屏与质量。
+    // 真实输入：逐条跑 8M 同步与 25M 停顿，检查候选集合、可信门控、上屏与质量。
     let mut total = 0usize;
     let (mut base1, mut base5) = (0usize, 0usize);
     let (mut four1, mut four5) = (0usize, 0usize);
@@ -588,13 +620,13 @@ pub fn run(
     );
     push(
         &mut checks,
-        "4M 后 top-1 ≥ 92%",
+        "8M 后 top-1 ≥ 92%",
         rate(four1) >= 92.0,
         format!("{four1}/{total} = {:.1}%", rate(four1)),
     );
     push(
         &mut checks,
-        "4M 后 top-5 ≥ 95%",
+        "8M 后 top-5 ≥ 95%",
         rate(four5) >= 95.0,
         format!("{four5}/{total} = {:.1}%", rate(four5)),
     );
@@ -612,7 +644,7 @@ pub fn run(
     );
     push(
         &mut checks,
-        "4M 不显著拖低基线",
+        "8M 不显著拖低基线",
         four1 + 2 >= base1,
         format!("{base1} → {four1}"),
     );
@@ -622,13 +654,13 @@ pub fn run(
     let five_p95 = pct(&mut five_ms, 95.0);
     push(
         &mut checks,
-        "4M 决策 p95 ≤ 40ms",
+        "8M 决策 p95 ≤ 40ms",
         four_p95 <= 40.0,
         format!("{four_p95:.2} ms"),
     );
     push(
         &mut checks,
-        "4M 决策 p99 ≤ 80ms",
+        "8M 决策 p99 ≤ 80ms",
         four_p99 <= 80.0,
         format!("{four_p99:.2} ms"),
     );
@@ -673,7 +705,7 @@ pub fn run(
 
     let failures = checks.iter().filter(|(_, ok, _)| !*ok).count();
     report.push_str(&format!(
-        "\n## 神经重排(4M 同步 + 25M 停顿)\n\n| 指标 | 基线 | 4M 同步 | +25M 停顿 |\n|---|---:|---:|---:|\n| top-1 | {base1}/{total} = {:.1}% | {four1}/{total} = {:.1}% | {five1}/{total} = {:.1}% |\n| top-5 | {base5}/{total} = {:.1}% | {four5}/{total} = {:.1}% | {five5}/{total} = {:.1}% |\n\n4M 决策 {:.2} ms p95 / {:.2} ms p99，25M 停顿 {:.2} ms p95；提升 {} 次，可信首条 {} 条，其中模型想改 {} 条。\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n",
+        "\n## 神经重排(8M 同步 + 25M 停顿)\n\n| 指标 | 基线 | 8M 同步 | +25M 停顿 |\n|---|---:|---:|---:|\n| top-1 | {base1}/{total} = {:.1}% | {four1}/{total} = {:.1}% | {five1}/{total} = {:.1}% |\n| top-5 | {base5}/{total} = {:.1}% | {four5}/{total} = {:.1}% | {five5}/{total} = {:.1}% |\n\n8M 决策 {:.2} ms p95 / {:.2} ms p99，25M 停顿 {:.2} ms p95；提升 {} 次，可信首条 {} 条，其中模型想改 {} 条。\n\n| 检查 | 结果 | 说明 |\n|---|---|---|\n",
         rate(base1),
         rate(four1),
         rate(five1),

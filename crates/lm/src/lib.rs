@@ -11,6 +11,8 @@
 //! shortest candidate first every time regardless of quality. Scores are per character for the same
 //! reason, and the caller restricts the set it passes in.
 
+mod keystroke;
+mod ort;
 mod weights;
 
 #[cfg(test)]
@@ -198,6 +200,16 @@ struct FeedForwardScratch {
     kernel: LinearScratch,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct Variant {
+    /// 训练时使用的上文窗口;0 表示与 `Config::context` 相同。
+    window: usize,
+    /// 上游 8M 按键模型用 tanh 近似的 GELU,整句模型用精确 erf。
+    gelu_tanh: bool,
+    /// 8M 按键模型自归一化,候选分数只算一次点积。
+    self_normalized: bool,
+}
+
 pub struct SentenceModel {
     config: Config,
     index: HashMap<char, u32>,
@@ -206,6 +218,9 @@ pub struct SentenceModel {
     blocks: Vec<Block>,
     final_weight: Vec<f32>,
     final_bias: Vec<f32>,
+    /// 按键模型在每段嵌入上加的段落向量;整句模型为 `None`。
+    segment: Option<Vec<f32>>,
+    variant: Variant,
     attribution: String,
     license: String,
 }
@@ -476,6 +491,8 @@ impl SentenceModel {
             blocks,
             final_weight: weights.take("ln_f.weight")?,
             final_bias: weights.take("ln_f.bias")?,
+            segment: None,
+            variant: Variant::default(),
             attribution,
             license,
         };
@@ -505,6 +522,9 @@ impl SentenceModel {
         expect_matrix("tok.weight", &self.token, vocab, n_embd)?;
         expect("pos.weight", self.position.len(), context * n_embd)?;
         expect("ln_f.weight", self.final_weight.len(), n_embd)?;
+        if let Some(segment) = &self.segment {
+            expect("segment", segment.len(), n_embd)?;
+        }
         for (layer, block) in self.blocks.iter().enumerate() {
             expect_matrix(
                 &format!("blocks.{layer}.qkv"),
@@ -548,7 +568,15 @@ impl SentenceModel {
     }
 
     pub fn context_length(&self) -> usize {
-        self.config.context
+        self.window()
+    }
+
+    fn window(&self) -> usize {
+        if self.variant.window == 0 {
+            self.config.context
+        } else {
+            self.variant.window
+        }
     }
 
     fn encode(&self, text: &str) -> Vec<u32> {
@@ -652,7 +680,13 @@ impl SentenceModel {
     /// the candidate: a truncated candidate would be scored on text the user did not type, whereas
     /// a truncated context only weakens the conditioning.
     fn prefix_tokens(&self, context: &str, longest: usize) -> Vec<u32> {
-        let room = self.config.context.saturating_sub(longest + 1);
+        // 整句模型把候选也算进 context 总长;按键模型的 context_chars 只限制上文,
+        // 候选长度由位置表 capacity 另行限制,与上游 `write_golden` 的切法一致。
+        let room = if self.variant.window == 0 {
+            self.config.context.saturating_sub(longest + 1)
+        } else {
+            self.variant.window
+        };
         // 词表外的字符(常见的是上一句结尾的标点)对条件没有信息量,只会把
         // 上文结尾变成 <unk>;剥掉它们,上游横评里 25M 的整句有上文 top-1
         // 从 87.0% 抬到 89.9%(metasequoiaime/chinese-ime-lm #91,sentences-ctx-v1)。
@@ -697,6 +731,11 @@ impl SentenceModel {
             let row = &mut x[step * n_embd..(step + 1) * n_embd];
             let position_row = &self.position[position * n_embd..(position + 1) * n_embd];
             self.token.embed_row(token, position_row, row);
+            if let Some(segment) = &self.segment {
+                for (slot, &value) in row.iter_mut().zip(segment) {
+                    *slot += value;
+                }
+            }
         }
         x
     }
@@ -926,6 +965,11 @@ impl SentenceModel {
                 (contexts[row.context].length() + row.depth).min(self.config.context - 1);
             let position_row = &self.position[position * n_embd..(position + 1) * n_embd];
             self.token.embed_row(token, position_row, slot);
+            if let Some(segment) = &self.segment {
+                for (value, &added) in slot.iter_mut().zip(segment) {
+                    *value += added;
+                }
+            }
         }
 
         let mut feed_forward = FeedForwardScratch::default();
@@ -1026,6 +1070,10 @@ impl SentenceModel {
         let vocab = self.config.vocab;
         let rows = hidden.len() / n_embd;
         out.clear();
+        if self.variant.self_normalized {
+            out.resize(rows, 0.0);
+            return;
+        }
         let mut transposed = Vec::new();
         let mut widened = Vec::new();
         let mut logits = Vec::new();
@@ -1139,7 +1187,11 @@ impl SentenceModel {
             &mut scratch.kernel,
         );
         for value in &mut scratch.hidden {
-            *value = gelu(*value);
+            *value = if self.variant.gelu_tanh {
+                gelu_tanh(*value)
+            } else {
+                gelu(*value)
+            };
         }
         // 第一线性层已消费归一化结果，输出投影可以覆盖同一份存储。
         linear_into(
@@ -1159,6 +1211,11 @@ impl SentenceModel {
     /// 同一隐藏状态的完整词表只投影一次，后续 token 只计算自己的 logit。
     fn log_probability(&self, hidden: &HiddenState, token: u32) -> f32 {
         let token = (token as usize).min(self.config.vocab - 1);
+        if self.variant.self_normalized {
+            return self
+                .token
+                .dot_row(&hidden.values, token, self.config.n_embd);
+        }
         let offset = hidden
             .log_normalizer
             .get_or_init(|| self.project(&hidden.values).1);
@@ -1216,7 +1273,11 @@ impl SentenceModel {
     pub fn next_log_probabilities(&self, text: &str) -> Vec<f32> {
         let mut tokens = vec![BOS];
         let encoded = self.encode(text);
-        let room = self.config.context - 1;
+        let room = if self.variant.window == 0 {
+            self.config.context - 1
+        } else {
+            self.variant.window
+        };
         tokens.extend_from_slice(&encoded[encoded.len().saturating_sub(room)..]);
         let prefix = self.run_prefix(&tokens);
         self.distribution(&prefix.last_hidden.values)
@@ -1385,7 +1446,7 @@ impl Reranker {
     /// preferred candidate beats the engine's leader by at least `min_margin` in mean
     /// log-probability per character. A zero margin reproduces `best_where`.
     ///
-    /// Small score gaps are noise: the shared benchmark showed the 4M model lowering top-1 when it
+    /// Small score gaps are noise: the shared benchmark showed the 8M model lowering top-1 when it
     /// was allowed to act on them, while clear leads still help. The caller picks the margin because
     /// it knows which model and latency budget the decision belongs to.
     pub fn best_where_margin(
@@ -2306,6 +2367,13 @@ fn gelu(x: f32) -> f32 {
     0.5 * x * (1.0 + erf(x * std::f32::consts::FRAC_1_SQRT_2))
 }
 
+/// `torch.nn.functional.gelu(approximate="tanh")`, used by the 8M keystroke model.
+fn gelu_tanh(x: f32) -> f32 {
+    0.5 * x
+        * (1.0
+            + ((2.0 / std::f32::consts::PI).sqrt() * (x + 0.044_715 * x * x * x)).tanh())
+}
+
 /// Abramowitz and Stegun 7.1.26, whose error stays below 1.5e-7 across the range.
 fn erf(x: f32) -> f32 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
@@ -2365,6 +2433,8 @@ mod tests {
             }],
             final_weight: vec![1.0; 4],
             final_bias: vec![0.0; 4],
+            segment: None,
+            variant: Default::default(),
             attribution: String::new(),
             license: String::new(),
         })

@@ -1,4 +1,4 @@
-//! 4M 按键重排:按键只取一份快照,推理与候选提升都在后台线程完成。
+//! 8M 按键重排:按键只取一份快照,推理与候选提升都在后台线程完成。
 //!
 //! 结果落地前核对 revision/页/高亮:输入已经往前走了就丢弃。按键路径因此
 //! 只花引擎本身的时间,模型快慢不再决定一次按键的延迟。
@@ -28,15 +28,15 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
     let Some(rerank) = s.sync_rerank.as_ref() else {
         return;
     };
-    // 快捷候选固定在本轮插入的位置,4M 模型不能把它们换走;置顶词同理。
+    // 快捷候选固定在本轮插入的位置,8M 模型不能把它们换走;置顶词同理。
     if lueying_session::pinned_candidates(&s.engine) {
         return;
     }
     let Some(snap) = lueying_session::snapshot(&s.engine) else {
         return;
     };
-    // 没有左邻上下文时,4M 只能按句子自身打分:共享语料上它的排序比引擎
-    // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 4M 完全相同。
+    // 没有左邻上下文时,8M 只能按句子自身打分:共享语料上它的排序比引擎
+    // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 8M 完全相同。
     if !lueying_session::sync_worthwhile(&snap) {
         return;
     }

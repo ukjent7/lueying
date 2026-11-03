@@ -7,14 +7,14 @@ pub fn status_detail(status: &Option<EngineStatus>) -> String {
     match status {
         Some(s) => {
             let mut detail = format!(
-                "词典 {}({}) · 语法模型{} · 重排 4M{} / 25M{}",
+                "词典 {}({}) · 语法模型{} · 重排 8M{} / 25M{}",
                 word_count(s.dict_words),
                 s.dict_source,
                 mark(s.gram),
-                mark(s.rerank4m),
+                mark(s.rerank8m),
                 mark(s.rerank25m),
             );
-            for (label, latency) in [("4M", &s.rerank_sync), ("25M", &s.rerank_settle)] {
+            for (label, latency) in [("8M", &s.rerank_sync), ("25M", &s.rerank_settle)] {
                 let line = latency_detail(label, latency);
                 if !line.is_empty() {
                     detail.push_str(" · ");

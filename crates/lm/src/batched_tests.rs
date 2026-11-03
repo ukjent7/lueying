@@ -94,6 +94,8 @@ fn model(width: usize, heads: usize, layers: usize, quantized: bool) -> Arc<Sent
         blocks,
         final_weight: vector(width, &mut stream).iter().map(|v| 1.0 + v).collect(),
         final_bias: vector(width, &mut stream),
+        segment: None,
+        variant: Default::default(),
         attribution: String::new(),
         license: String::new(),
     })

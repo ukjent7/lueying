@@ -55,6 +55,8 @@ fn fixture(width: usize, vocab: usize, quantized: bool) -> (SentenceModel, Vec<f
         blocks: Vec::new(),
         final_weight: vec![1.0; width],
         final_bias: vec![0.0; width],
+        segment: None,
+        variant: Default::default(),
         attribution: String::new(),
         license: String::new(),
     };

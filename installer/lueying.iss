@@ -82,7 +82,9 @@ Source: "{#PayloadDir}\main.tsv"; DestDir: "{app}"; Flags: ignoreversion skipifs
 ; 会先确认这些文件齐全,--allow-missing-data 只用于本地调试。
 Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-4m.safetensors"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\rerank-8m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\rerank-8m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\rerank-8m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; 25M 停顿重排模型与 PP-OCR 模型不随基础安装包分发;设置窗的「官方扩展」
 ; 按需下载,逐文件校验 SHA-256 后写入 %APPDATA%\lueying\models。
 ; 官方起步扩展(截图 OCR 等)随包分发,作为扩展中心的本地安装源;用户

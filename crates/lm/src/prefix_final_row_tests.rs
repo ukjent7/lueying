@@ -111,6 +111,8 @@ pub(super) fn model(width: usize, heads: usize, layers: usize, quantized: bool) 
             .collect(),
         final_weight: vector(width, 13),
         final_bias: vector(width, 14),
+        segment: None,
+        variant: Default::default(),
         attribution: String::new(),
         license: String::new(),
     }

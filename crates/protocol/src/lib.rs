@@ -470,11 +470,12 @@ pub struct EngineStatus {
     pub dict_source: String,
     /// 语法模型(`main.gram`)是否已加载。
     pub gram: bool,
-    /// 4M 每键同步重排是否已加载。
-    pub rerank4m: bool,
+    /// 8M 每键同步重排是否已加载。线协议沿用旧字段名，避免新旧进程混跑时读不到。
+    #[serde(rename = "rerank4m")]
+    pub rerank8m: bool,
     /// 25M 停顿重排是否已加载。
     pub rerank25m: bool,
-    /// 4M 按键同步重排的本机耗时分布。
+    /// 8M 按键同步重排的本机耗时分布。
     #[serde(default)]
     pub rerank_sync: RerankLatency,
     /// 25M 停顿重排的本机耗时分布。

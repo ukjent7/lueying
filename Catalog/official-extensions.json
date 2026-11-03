@@ -50,16 +50,28 @@
     {
       "id": "rerank-25m",
       "name": "25M 停顿重排模型",
-      "version": "2026-10",
+      "version": "2026-11",
       "kind": "model",
-      "description": "停顿后异步重排的更大模型；缺失时继续用 4M 与词频",
-      "size": "约 25 MB",
+      "description": "停顿后异步重排的更大模型；缺失时继续用 8M 与词频",
+      "size": "约 31 MB",
       "files": [
         {
-          "name": "rerank-25m.safetensors",
-          "url": "https://huggingface.co/metasequoiaime/pinyin-ime-reranker-25M/resolve/75295b373a7ef0d14e9bebd32c1625c9cfcfea49/sentence-model.safetensors",
-          "sha256": "0a6ecba69bf1d39c7eb49549c716477dd6c03fdf05757773e1f50435262fb469",
-          "bytes": 25480184
+          "name": "rerank-25m.ort",
+          "url": "https://huggingface.co/msime/pinyin-ime-keystroke-reranker-25M/resolve/c492a22f47445ed53501d214a2de671d87959218/lm_step.ort",
+          "sha256": "ad729f94fc10cae0326269e2f089d7747ee8efae3dd2affe365c2740c59a4a93",
+          "bytes": 30834688
+        },
+        {
+          "name": "rerank-25m.model.json",
+          "url": "https://huggingface.co/msime/pinyin-ime-keystroke-reranker-25M/resolve/c492a22f47445ed53501d214a2de671d87959218/model.json",
+          "sha256": "2a92e6aad513335e0800ff24ef7037acb365d0ae9abb7ae5b92ebf241c065a20",
+          "bytes": 682
+        },
+        {
+          "name": "rerank-25m.vocab.json",
+          "url": "https://huggingface.co/msime/pinyin-ime-keystroke-reranker-25M/resolve/c492a22f47445ed53501d214a2de671d87959218/vocab.json",
+          "sha256": "d7fb2e70de9f0c2c65b822a8fbf604655bfef6d0dcd8f1975d73f1cd5ea7f038",
+          "bytes": 85613
         }
       ]
     }

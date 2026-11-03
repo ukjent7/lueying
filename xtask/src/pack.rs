@@ -45,11 +45,17 @@ const PACK_BINS: &[&str] = &[
     "lueying-user.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包带精确词典、4M 同步重排模型与精简语法模型。`main.gram` 缺失时引擎
+/// 默认包带精确词典、8M 同步重排模型与精简语法模型。`main.gram` 缺失时引擎
 /// 退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
 /// 让 Server 无需配置就能发现它。25M 停顿重排与 PP-OCR 模型体积大,
 /// 改为在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
-const PACK_DATA: &[&str] = &["main.pyd", "main.gram", "rerank-4m.safetensors"];
+const PACK_DATA: &[&str] = &[
+    "main.pyd",
+    "main.gram",
+    "rerank-8m.ort",
+    "rerank-8m.model.json",
+    "rerank-8m.vocab.json",
+];
 /// 发布体积门禁:0.1.0 历史发布目录 147.7 MiB、安装包 59.8 MiB。
 /// 上限留约 25% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
 const MAX_PAYLOAD_BYTES: u64 = 200 * 1024 * 1024;
@@ -131,6 +137,13 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     }
     let cc_license = root.join("licenses/CC-BY-4.0.txt");
     copy_file(&cc_license, &args.out, "licenses/CC-BY-4.0.txt", &mut files)?;
+    // 模型仓库的 NOTICE 是训练语料署名,Apache-2.0 要求随权重一起再分发。
+    let model_notice = [args.data.join("rerank/NOTICE"), args.data.join("NOTICE")]
+        .into_iter()
+        .find(|path| path.exists());
+    if let Some(path) = model_notice {
+        copy_file(&path, &licenses, "NOTICE", &mut files)?;
+    }
     let notice = "\
 # 随包第三方许可与署名
 
@@ -149,13 +162,13 @@ commit a99a7ad35701ff87dac6bd2057b0f594cd004d81)按真实输入语料裁剪出�
 未再修改;sha256 c85801930ab5703d28472f86153f37a367287156ef70a523c5a4fb07f6a95147。\
 许可全文见 CC-BY-4.0.txt。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
-commit b97e99cbaa4a1a358158d717ffd434c472d5d5ca;全文见 Apache-2.0.txt。
-- pinyin-ime-reranker-4M:Apache-2.0,\
-https://huggingface.co/metasequoiaime/pinyin-ime-reranker-4M,\
-revision e5b1f7e768d7cb2b6ff334db4e34af153920c6ff。
-- pinyin-ime-reranker-25M:Apache-2.0,\
-https://huggingface.co/metasequoiaime/pinyin-ime-reranker-25M,\
-revision 75295b373a7ef0d14e9bebd32c1625c9cfcfea49。
+commit 8a22e8508138270d2508548b7c1de5fc549120ca;全文见 Apache-2.0.txt。
+- pinyin-ime-keystroke-reranker-8M:Apache-2.0,\
+https://huggingface.co/msime/pinyin-ime-keystroke-reranker-8M,\
+revision 1ae5be9d7bb35d9e7242171a7a2868103a9e4286。
+- pinyin-ime-keystroke-reranker-25M:Apache-2.0,\
+https://huggingface.co/msime/pinyin-ime-keystroke-reranker-25M,\
+revision c492a22f47445ed53501d214a2de671d87959218。
 - PP-OCRv6 small det/rec:Apache-2.0,\
 https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx (revision \
 28fe5895c24fd108c19eb3e8479f4ab385fbfc62)、\

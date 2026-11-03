@@ -45,16 +45,15 @@ pub fn shared_gram() -> Option<Arc<Gram>> {
 }
 
 /// 载入一档重排模型;文件不存在就返回 `None`,会话自动只用引擎排序。
-pub fn rerank(name: &str) -> Option<Model> {
+pub fn rerank(stem: &str) -> Option<Model> {
     if let Some(dir) = crate::config::models_dir()
-        && let Ok(bytes) = std::fs::read(dir.join(name))
+        && let Ok(model) = Model::load_keystroke_dir(&dir, stem)
     {
-        return Model::load(&bytes).ok();
+        return Some(model);
     }
-    let bytes = data_dirs()
+    data_dirs()
         .into_iter()
-        .find_map(|dir| std::fs::read(dir.join(name)).ok())?;
-    Model::load(&bytes).ok()
+        .find_map(|dir| Model::load_keystroke_dir(&dir, stem).ok())
 }
 
 fn load_dictionary() -> Dictionary {

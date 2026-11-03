@@ -7,6 +7,8 @@
 
 ### 新增
 
+- 按键重排升级到 chinese-ime-lm 的 8M/25M 选词模型：8M 随基础安装包分发，25M 放进设置窗「官方扩展」按需安装；两者直接读取上游 `.ort` 图、`model.json` 与 `vocab.json`，用树内纯 Rust 推理，不引入 ONNX Runtime 原生依赖。上游同池评测有上文 top-1 分别为 90.4% / 91.9%（旧 4.25M / 24.9M 为 79.5% / 87.0%），无上文 8M 为 83.0%（旧 4.25M 为 76.1%）。
+- 评测工具：`tools/bench_shared.py stats` 新增 Wilson 95% 区间、McNemar 精确检验与按来源分桶的 rescue/breakage 统计；E2E 补上纠错候选必须报告 `trusted_dictionary_hit=false` 的检查。
 - 词库导入：设置窗「词库」页的「用户词库 → 导入」除本机导出的原生格式外，还能读标准 TSV 词表（词/拼音/权重）与纯汉字词表；UTF-8、UTF-16、GB18030 都能解码，拼音统一成引擎学习键，权重按对数折算成词频，纯汉字词表的读音从主词典反查。
 - 云同步:设置窗「词库」页可把配置、自定义短语、自定义标点、按应用配置与用户词库经 WebDAV 在多台机器之间同步(HTTPS + Basic 认证);远端没有文件就上传,两边都改过则弹窗裁决用哪一份;同步地址与账号留在本机,口令单独存在本机文件里。
 - Linux Wayland 外壳 `lueying-linux`：实现 `zwp_input_method_v2` 与 `zwp_virtual_keyboard_manager_v1`，键盘 grab 后跑完整引擎，未消费按键经虚拟键盘回送；候选窗用 `tiny-skia` 软件绘制到 `wl_shm` 的输入法 popup，支持鼠标点选、翻页与浅/深配色；配置与用户数据走 XDG 路径。

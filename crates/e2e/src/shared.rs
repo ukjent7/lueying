@@ -185,8 +185,8 @@ fn rank_after(
         .position(|index| bench::matches_normalized(&order[index], expected))
 }
 
-/// 一条候选链路的还原:4M 逐键同步、25M 停顿,与产品里的应用顺序一致。
-/// 同时算出「不经过 4M、25M 直接跑在引擎顺序上」的名次,用来判断同步重排
+/// 一条候选链路的还原:8M 逐键同步、25M 停顿,与产品里的应用顺序一致。
+/// 同时算出「不经过 8M、25M 直接跑在引擎顺序上」的名次,用来判断同步重排
 /// 是否值得:它换来的即时顺序如果让停顿结果也变差,就该让位。
 /// 三个模型耗时分开返回,由调用方汇进各自的分位向量。
 fn apply_rerank(
@@ -235,7 +235,7 @@ fn apply_rerank(
     }
     let rank5 = rank_of(engine, expected);
 
-    // 对照组:同一份 25M,不经过 4M,候选仍是引擎顺序。
+    // 对照组:同一份 25M,不经过 8M,候选仍是引擎顺序。
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
     let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
@@ -244,7 +244,7 @@ fn apply_rerank(
     ((rank4, rank5, direct), Some([four_ms, five_ms, direct_ms]))
 }
 
-/// 重排名次与耗时样本:`(4M,25M,仅25M) 名次` 与各模型耗时;捷径路径没有样本。
+/// 重排名次与耗时样本:`(8M,25M,仅25M) 名次` 与各模型耗时;捷径路径没有样本。
 type Ranks = (Option<usize>, Option<usize>, Option<usize>);
 type RerankSample = (Ranks, Option<[f64; 3]>);
 
@@ -312,7 +312,7 @@ pub fn run(
     let mut overall = Metric::default();
     let mut core = Metric::default();
     let mut items = Vec::with_capacity(cases.len());
-    // 产品链路:4M 逐键同步,25M 停顿。只在提供了模型目录时测量。
+    // 产品链路:8M 逐键同步,25M 停顿。只在提供了模型目录时测量。
     let mut four_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
     let mut five_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
     let mut direct_by_category: BTreeMap<&str, Metric> = BTreeMap::new();
@@ -422,10 +422,10 @@ pub fn run(
             };
         text.push_str(
             "\n### 神经重排(产品链路)\n\n\
-             4M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\
-             本基准逐条清空左邻上下文;产品在没有上下文时会跳过 4M,所以 4M 列是模型自身的诊断值。\n\
-             最后一列是同一份 25M 不经过 4M、直接在引擎顺序上决策的对照。\n\n\
-             | 类别 | 条数 | 4M top-1 | +25M top-1 | +25M top-5 | 仅 25M top-1 |\n\
+             8M 在每键返回前同步重排,+25M 是随后的停顿重排;两者只换顺序,不增删候选。\n\
+             本基准逐条清空左邻上下文;产品在没有上下文时会跳过 8M,所以 8M 列是模型自身的诊断值。\n\
+             最后一列是同一份 25M 不经过 8M、直接在引擎顺序上决策的对照。\n\n\
+             | 类别 | 条数 | 8M top-1 | +25M top-1 | +25M top-5 | 仅 25M top-1 |\n\
              |---|---:|---:|---:|---:|---:|\n",
         );
         for category in four_by_category.keys() {
@@ -456,7 +456,7 @@ pub fn run(
         let five_p95 = pct(&mut five_ms.clone(), 95.0);
         let _ = writeln!(
             text,
-            "\n4M 决策 p95 {four_p95:.2} ms,25M 决策 p95 {five_p95:.2} ms。"
+            "\n8M 决策 p95 {four_p95:.2} ms,25M 决策 p95 {five_p95:.2} ms。"
         );
     }
 
@@ -530,7 +530,7 @@ pub fn run(
         let mut five_times = five_ms.clone();
         let mut direct_times = direct_ms.clone();
         serde_json::json!({
-            "4m": {
+            "8m": {
                 "overall": metric_json(&four_overall),
                 "core": metric_json(&four_core),
                 "categories": category_map(&four_by_category),

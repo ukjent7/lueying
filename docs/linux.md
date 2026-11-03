@@ -26,8 +26,9 @@ install -Dm755 target/release/lueying-linux /usr/local/bin/lueying-linux
 3. `/usr/local/share/lueying`、`/usr/share/lueying`
 4. 当前目录的 `data`
 
-需要 `main.pyd`(或 `main.tsv`)、可选的 `main.gram`、`rerank-4m.safetensors`
-与 `rerank-25m.safetensors`。缺词典时退回内置词典;缺模型时只用引擎排序。
+需要 `main.pyd`(或 `main.tsv`)、可选的 `main.gram`,以及重排模型的三件套
+`rerank-8m.ort` / `.model.json` / `.vocab.json`(可选 `rerank-25m.*`)。
+缺词典时退回内置词典;缺模型时只用引擎排序。
 
 在合成器配置里启动:
 
@@ -59,7 +60,7 @@ Linux 当前没有设置窗口,直接编辑 `config.toml` 后重启进程生效�
 
 - 全拼、简拼、整句词图、模糊音、用户词库自学习。
 - 双拼、辅助码、自定义短语、下一词联想、表情、英文混输、简繁转换。
-- 4M 按键重排与 25M 停顿重排;模型缺失时自动跳过。
+- 8M 按键重排与 25M 停顿重排;模型缺失时自动跳过。
 - 按键 grab、虚拟键盘回送、Shift 单击切换中英文、候选窗鼠标点选与翻页。
 - 横排候选窗、浅色/深色配色、页标签。
 

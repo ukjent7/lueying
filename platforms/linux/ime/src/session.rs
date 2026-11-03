@@ -42,8 +42,10 @@ impl Session {
             ))
             .with_scheme(lueying_features::scheme(app.scheme, app.aux));
         engine.set_host("lueying-linux");
-        let sync_rerank = model("rerank-4m.safetensors").map(|m| Mutex::new(Rerank::new(&m)));
-        let settle_rerank = model("rerank-25m.safetensors").map(|m| Mutex::new(Rerank::new(&m)));
+        let sync_model = model("rerank-8m");
+        let settle_model = model("rerank-25m").or_else(|| sync_model.clone());
+        let sync_rerank = sync_model.map(|m| Mutex::new(Rerank::new(&m)));
+        let settle_rerank = settle_model.map(|m| Mutex::new(Rerank::new(&m)));
         Self {
             engine,
             view: SessionView::default(),
@@ -176,14 +178,14 @@ fn phrases_path() -> Option<PathBuf> {
     Some(path)
 }
 
-fn model(name: &str) -> Option<Model> {
-    static FOUR: OnceLock<Option<Model>> = OnceLock::new();
+fn model(stem: &str) -> Option<Model> {
+    static EIGHT: OnceLock<Option<Model>> = OnceLock::new();
     static TWENTY_FIVE: OnceLock<Option<Model>> = OnceLock::new();
-    let (slot, name) = match name {
-        "rerank-4m.safetensors" => (&FOUR, name),
-        _ => (&TWENTY_FIVE, name),
+    let (slot, stem) = match stem {
+        "rerank-8m" => (&EIGHT, stem),
+        _ => (&TWENTY_FIVE, stem),
     };
-    slot.get_or_init(|| crate::model::rerank(name)).clone()
+    slot.get_or_init(|| crate::model::rerank(stem)).clone()
 }
 
 fn commit_text(events: Vec<Event>) -> Option<String> {

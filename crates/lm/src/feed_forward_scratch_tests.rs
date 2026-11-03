@@ -232,6 +232,8 @@ fn model(width: usize, layers: usize, quantized: bool) -> SentenceModel {
             .collect(),
         final_weight: vec![1.0; width],
         final_bias: vec![0.0; width],
+        segment: None,
+        variant: Default::default(),
         attribution: String::new(),
         license: String::new(),
     }

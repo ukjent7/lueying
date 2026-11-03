@@ -24,7 +24,7 @@
 评测系统考察以下关键指标：
 - **Top-1 / Top-3 / Top-5 准确率**：期望文本出现在对应候选档位的比例。
 - **MRR（平均倒数排名）**：衡量期望结果在候选列表中排位的紧凑程度。
-- **延迟预算门限**：端到端击键响应 p95 ≤ 60ms；4M 实时同步重排 p95 ≤ 40ms；25M 异步重排 p95 ≤ 800ms。
+- **延迟预算门限**：端到端击键响应 p95 ≤ 60ms；8M 实时同步重排 p95 ≤ 40ms；25M 异步重排 p95 ≤ 800ms。
 
 ### 基准表现参考
 
@@ -69,7 +69,12 @@ python3 tools/bench_shared.py export --engine <目标引擎> --out /tmp/eval-inp
 
 # 运行对比生成并排表格
 python3 tools/bench_shared.py compare target/bench-shared.tsv /tmp/engine1-result.tsv /tmp/engine2-result.tsv
+
+# 两份逐条结果做 Wilson 95% 区间与 McNemar 精确检验
+python3 tools/bench_shared.py stats target/bench-shared.tsv /tmp/engine1-result.tsv
 ```
+
+`stats` 按类别分别给出 top-1 的 Wilson 区间、配对差、McNemar 精确 p 值以及 rescue/breakage 条数。n=60 时区间半宽约 ±13pp，比较模型请看差值和不一致对，不要用单次汇总下结论。
 
 ### 评测原则
 

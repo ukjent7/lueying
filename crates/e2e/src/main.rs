@@ -401,7 +401,7 @@ fn main() {
             report.push_str("\n**整句准确率低于门限**\n");
         }
 
-        // 神经重排:同一份主词典与语法模型,先基线再 4M 同步、25M 停顿。
+        // 神经重排:同一份主词典与语法模型,先基线再 8M 同步、25M 停顿。
         // 模型句柄留给共享语料基准再用一次,那条链路才代表产品实际排序。
         let models = if let Some(dir) = &rerank_dir {
             match rerank::load(dir) {

@@ -35,7 +35,7 @@ use crate::imp::State;
 
 const BUFFER_SIZE: u32 = 64 * 1024;
 /// 处理耗时超过这个值的请求记进服务日志。键入路径的常态是 10 ms 上下;
-/// 超过通常是 4M/25M 推理或词典冷页,排障时拿它对齐宿主卡顿。
+/// 超过通常是 8M/25M 推理或词典冷页,排障时拿它对齐宿主卡顿。
 const SLOW_REQUEST_MS: u128 = 100;
 /// 连接号只增不减;用于区分同一会话的重连与旧连接断开。
 static NEXT_CONN: AtomicU64 = AtomicU64::new(1);

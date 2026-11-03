@@ -1,7 +1,7 @@
 //! 本地神经重排:把引擎候选交给字符级语言模型重新排序。
 //!
 //! 采用 metasequoia 参考实现的门控:词典整键精确命中不覆盖、只比较回答整个
-//! 按键的候选、最多九条。4M 走同步按键路径,25M 只在下文 [`debounce`] 的停顿
+//! 按键的候选、最多九条。8M 走同步按键路径,25M 只在下文 [`debounce`] 的停顿
 //! 槽位运行;两者共用同一套 [`Fact`] 契约。
 
 pub mod debounce;
@@ -30,6 +30,34 @@ impl Model {
         Ok(Self {
             inner: Arc::new(SentenceModel::load(bytes)?),
         })
+    }
+
+    /// 加载上游按键重排模型:`.ort` 图加同目录的 `model.json`、`vocab.json`。
+    pub fn load_keystroke(
+        ort: &[u8],
+        manifest: &str,
+        vocabulary: &str,
+    ) -> Result<Self, ModelError> {
+        Ok(Self {
+            inner: Arc::new(SentenceModel::load_keystroke(ort, manifest, vocabulary)?),
+        })
+    }
+
+    /// 从目录加载一组按键重排模型文件,`stem` 形如 `rerank-8m`。
+    pub fn load_keystroke_dir(dir: &std::path::Path, stem: &str) -> Result<Self, String> {
+        let read = |suffix: &str| {
+            let path = dir.join(format!("{stem}{suffix}"));
+            std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
+        };
+        let ort = read(".ort")?;
+        let manifest = read(".model.json")?;
+        let vocabulary = read(".vocab.json")?;
+        let manifest = String::from_utf8(manifest)
+            .map_err(|error| format!("{stem}.model.json: {error}"))?;
+        let vocabulary = String::from_utf8(vocabulary)
+            .map_err(|error| format!("{stem}.vocab.json: {error}"))?;
+        Self::load_keystroke(&ort, &manifest, &vocabulary)
+            .map_err(|error| format!("{stem}: {error}"))
     }
 
     /// 模型能接受的上下文窗口(字符数)。
@@ -61,9 +89,9 @@ pub struct Fact {
 /// 只让上下文明确的模糊候选小幅领先时才改首选,快速连打时仍保持稳定。
 pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
 
-/// 4M 同步重排的最小领先幅度(每字符平均对数概率)。
+/// 8M 同步重排的最小领先幅度(每字符平均对数概率)。
 ///
-/// 4M 比 25M 小,分数更容易被噪声拉平;共享语料上它在小分差时改首选,
+/// 8M 比 25M 小,分数更容易被噪声拉平;共享语料上它在小分差时改首选,
 /// top-1 反而低于引擎原序。只让模型明确领先的候选越过首位,把即时排序
 /// 留给词频与语法模型,停顿后再由 25M 做更细的判断。
 pub const SYNC_PROMOTE_MARGIN: f32 = 0.05;
@@ -79,7 +107,7 @@ impl Rerank {
         Self::with_metrics(model, Arc::new(LatencyMetrics::default()))
     }
 
-    /// 会话共享一份延迟直方图;4M 与 25M 各传各的。
+    /// 会话共享一份延迟直方图;8M 与 25M 各传各的。
     pub fn with_metrics(model: &Model, metrics: Arc<LatencyMetrics>) -> Self {
         Self {
             inner: Reranker::new(Arc::clone(&model.inner)),
@@ -157,7 +185,7 @@ impl Rerank {
         }
         let leader = facts.first()?;
         if !leader.trusted_dictionary_hit || !leader.answers_key {
-            // 25M 比 4M 准,首位不是可信整键命中时保留它原有的完整决策,
+            // 25M 比 8M 准,首位不是可信整键命中时保留它原有的完整决策,
             // 不套用同步重排的门槛。
             return self.decide_inner_with_margin(context, texts, facts, 0.0);
         }

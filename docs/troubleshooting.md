@@ -20,9 +20,9 @@
 - 确认安装目录（默认 `%ProgramFiles%\lueying\`）中存在以下核心资产：
   - `main.pyd`：主词典二进制内存映射文件。
   - `main.gram`：语法搭配模型。
-  - `rerank-4m.safetensors`：每键实时同步重排权重。
+  - `rerank-8m.ort`、`rerank-8m.model.json`、`rerank-8m.vocab.json`：每键实时同步重排模型。
 - 若上述文件损坏或缺失，引擎会自动退回内置微型词典；重新安装可修复核心资源。
-- 进阶的 `rerank-25m.safetensors`（停顿重排）与 PP-OCR 模型属于按需下载组件，请在「掠影设置 → 扩展 → 官方扩展」中重新下载。
+- 进阶的 `rerank-25m.ort`、`rerank-25m.model.json`、`rerank-25m.vocab.json`（停顿重排）与 PP-OCR 模型属于按需下载组件，请在「掠影设置 → 扩展 → 官方扩展」中重新下载。
 
 ## 日志与诊断排查
 

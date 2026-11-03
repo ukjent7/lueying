@@ -36,10 +36,11 @@ impl Session {
         let user_path = user_path();
         let user: SharedUser = Arc::new(RwLock::new(load_user(user_path.as_deref())));
         engine = engine.with_user(Arc::clone(&user));
-        let sync_rerank =
-            shared_rerank(SyncModel::Four).map(|model| Mutex::new(Rerank::new(&model)));
-        let settle_rerank =
-            shared_rerank(SyncModel::TwentyFive).map(|model| Mutex::new(Rerank::new(&model)));
+        let sync_model = shared_rerank(SyncModel::Eight);
+        let settle_model =
+            shared_rerank(SyncModel::TwentyFive).or_else(|| sync_model.clone());
+        let sync_rerank = sync_model.map(|model| Mutex::new(Rerank::new(&model)));
+        let settle_rerank = settle_model.map(|model| Mutex::new(Rerank::new(&model)));
         Self {
             engine,
             view: SessionView::default(),
@@ -142,7 +143,7 @@ impl Session {
         let Some(snap) = lueying_session::snapshot(&self.engine) else {
             return;
         };
-        // 没有左邻上下文时 4M 的排序弱于引擎原序,直接跳过。
+        // 没有左邻上下文时 8M 的排序弱于引擎原序,直接跳过。
         if !lueying_session::sync_worthwhile(&snap) {
             return;
         }
@@ -229,25 +230,24 @@ fn shared_gram() -> Option<Arc<Gram>> {
 }
 
 enum SyncModel {
-    Four,
+    Eight,
     TwentyFive,
 }
 
 fn shared_rerank(model: SyncModel) -> Option<Model> {
-    static FOUR: OnceLock<Option<Model>> = OnceLock::new();
+    static EIGHT: OnceLock<Option<Model>> = OnceLock::new();
     static TWENTY_FIVE: OnceLock<Option<Model>> = OnceLock::new();
-    let (slot, name) = match model {
-        SyncModel::Four => (&FOUR, "rerank-4m.safetensors"),
-        SyncModel::TwentyFive => (&TWENTY_FIVE, "rerank-25m.safetensors"),
+    let (slot, stem) = match model {
+        SyncModel::Eight => (&EIGHT, "rerank-8m"),
+        SyncModel::TwentyFive => (&TWENTY_FIVE, "rerank-25m"),
     };
-    slot.get_or_init(|| load_rerank(name)).clone()
+    slot.get_or_init(|| load_rerank(stem)).clone()
 }
 
-fn load_rerank(name: &str) -> Option<Model> {
-    let bytes = data_dirs()
+fn load_rerank(stem: &str) -> Option<Model> {
+    data_dirs()
         .into_iter()
-        .find_map(|dir| std::fs::read(dir.join(name)).ok())?;
-    Model::load(&bytes).ok()
+        .find_map(|dir| Model::load_keystroke_dir(&dir, stem).ok())
 }
 
 fn user_path() -> Option<PathBuf> {

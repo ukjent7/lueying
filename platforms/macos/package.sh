@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 构建 macOS 输入法 .app 包。产物在 dist/Lueying.app。
-# 数据文件可选:存在 main.pyd/main.gram/rerank-*.safetensors 就一起打包,
+# 数据文件可选:存在 main.pyd/main.gram/rerank-* 就一起打包,
 # 缺失时输入法退回内置词库并关闭重排。
 set -euo pipefail
 
@@ -28,9 +28,18 @@ copy_data() {
 copy_data "$ROOT/data/main.pyd" main.pyd
 copy_data "$ROOT/data/main.tsv" main.tsv
 copy_data "$ROOT/data/main.gram" main.gram
-for name in rerank-4m.safetensors rerank-25m.safetensors; do
+for name in \
+  rerank-8m.ort rerank-8m.model.json rerank-8m.vocab.json \
+  rerank-25m.ort rerank-25m.model.json rerank-25m.vocab.json; do
   copy_data "$ROOT/data/rerank/$name" "$name"
   copy_data "$ROOT/data/$name" "$name"
+done
+
+mkdir -p "$APP/Contents/Resources/licenses"
+for name in LICENSE NOTICE; do
+  if [ -f "$ROOT/data/rerank/$name" ]; then
+    cp "$ROOT/data/rerank/$name" "$APP/Contents/Resources/licenses/$name"
+  fi
 done
 
 # 本地 ad-hoc 签名,方便直接拖进 ~/Library/Input Methods 试用。

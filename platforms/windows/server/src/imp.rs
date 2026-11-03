@@ -57,7 +57,7 @@ pub(super) struct Session {
     pub(super) pending: Option<Reply>,
     /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
     pub(super) ui_reply: Option<Reply>,
-    /// 4M 每键重排:后台线程独占推理,前缀缓存随会话存活。
+    /// 8M 每键重排:后台线程独占推理,前缀缓存随会话存活。
     pub(super) sync_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
     pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
@@ -226,9 +226,9 @@ pub(super) struct State {
     pub(super) dict_source: &'static str,
     pub(super) sync_model: Option<Model>,
     pub(super) settled_model: Option<Model>,
-    /// 4M 按键重排的作业通道;按键只发快照,推理在后台。
+    /// 8M 按键重排的作业通道;按键只发快照,推理在后台。
     pub(super) sync_tx: Option<mpsc::SyncSender<crate::sync_rerank::Job>>,
-    /// 4M 按键同步重排的延迟分布;所有会话共享一份。
+    /// 8M 按键同步重排的延迟分布;所有会话共享一份。
     pub(super) rerank_sync_metrics: Arc<LatencyMetrics>,
     /// 25M 停顿重排的延迟分布;所有会话共享一份。
     pub(super) rerank_settle_metrics: Arc<LatencyMetrics>,
@@ -474,8 +474,9 @@ pub(super) fn real_main() {
     // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
     let _ = dict.total_weight();
     // 两档神经重排都是可选数据:缺失/损坏就只保留词频候选。
-    let sync_model = load_model("rerank-4m.safetensors");
-    let settled_model = load_model("rerank-25m.safetensors");
+    let sync_model = load_model("rerank-8m");
+    let settled_model = load_model("rerank-25m");
+    let settle_available = settled_model.is_some() || sync_model.is_some();
     // 用户词库是可选数据:读不到就从空开始,坏行跳过。
     let user_path = crate::user_store::path();
     let user = Arc::new(RwLock::new(match &user_path {
@@ -510,7 +511,7 @@ pub(super) fn real_main() {
     let prediction = Arc::new(Prediction::with_enabled(app_config.predict));
     let script = Arc::new(ScriptModule::new(app_config.script()));
     let (settle_tx, settle_rx) = mpsc::channel();
-    let settle_tx = settled_model.as_ref().map(|_| settle_tx);
+    let settle_tx = settle_available.then_some(settle_tx);
     let (sync_tx, sync_rx) = mpsc::sync_channel(1);
     let sync_tx = sync_model.as_ref().map(|_| sync_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
@@ -618,37 +619,36 @@ fn single_instance() -> Option<HANDLE> {
     Some(handle)
 }
 
-/// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.safetensors)。
+/// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.*)。
 fn dict_path(name: &str) -> Option<std::path::PathBuf> {
     let mut path = std::env::current_exe().ok()?;
     path.set_file_name(name);
     path.exists().then_some(path)
 }
 
-fn load_model(name: &str) -> Option<Model> {
-    let path = config::model_path(name)?;
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            println!("重排模型 {} 读取失败: {e}", path.display());
-            return None;
+fn load_model(stem: &str) -> Option<Model> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = config::models_dir() {
+        dirs.push(dir);
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.to_path_buf());
+    }
+    for dir in dirs {
+        if !dir.join(format!("{stem}.ort")).is_file() {
+            continue;
         }
-    };
-    match Model::load(&bytes) {
-        Ok(model) => {
-            println!(
-                "重排模型 {} ← {}（{} 字节）",
-                name,
-                path.display(),
-                bytes.len()
-            );
-            Some(model)
-        }
-        Err(e) => {
-            println!("重排模型 {} 不可用: {e}", path.display());
-            None
+        match Model::load_keystroke_dir(&dir, stem) {
+            Ok(model) => {
+                println!("重排模型 {stem} ← {}", dir.display());
+                return Some(model);
+            }
+            Err(e) => println!("重排模型 {stem} 不可用: {e}"),
         }
     }
+    None
 }
 
 fn load_dict(path: std::path::PathBuf) -> Option<Dictionary> {
