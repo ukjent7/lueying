@@ -22,12 +22,7 @@ fn worker(wasm: &str, manifest: Arc<Manifest>, limits: Limits) -> Result<Worker,
 }
 
 fn worker_bytes(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
-    Worker::spawn(
-        wasm.to_vec(),
-        manifest,
-        Arc::new(Registry::new()),
-        limits,
-    )
+    Worker::spawn(wasm.to_vec(), manifest, Arc::new(Registry::new()), limits)
 }
 
 #[test]
