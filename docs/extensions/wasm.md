@@ -10,6 +10,20 @@
 的 `Extension` trait,服务调用阻塞的是扩展自己的 worker 线程,绝不触碰
 输入热路径。
 
+## 第三方插件怎么接进来
+
+官方 Extism PDK 编出的插件直接能用,不用改代码:
+
+- 导出是 `() -> i32`:输入从内核的 `input_length`/`input_load_u8` 读,
+  结果用 `output_set` 交回。宿主按清单里的命令 id 调同名导出,所以清单里
+  把命令 id 写成插件的导出名即可。
+- PDK 自带的能力由 Extism 运行期提供:日志进服务端日志,变量与配置照
+  Extism 的语义走,`http_request` 被拒——插件自己发不出 HTTP,联网只走
+  清单白名单里的 `network` 服务。
+- 插件里要调掠影的服务原语(截图、识别、上屏等),按本文 ABI 从
+  `extism:host/user` 导入 `lueying_<服务>`;用 Rust 就直接依赖
+  `lueying-extguest`。
+
 ## 包结构
 
 ```
