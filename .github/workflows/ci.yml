@@ -126,6 +126,8 @@ jobs:
           cargo test -p lueying-bypass --locked
           cargo test -p lueying-broker --lib --locked
           cargo test -p lueying-cli --lib --locked
+          # 联网层:Base64 与更新清单解析是平台无关的纯逻辑,Linux 上就能测。
+          cargo test -p lueying-net --lib --locked
 
   windows:
     if: ${{ !cancelled() }}

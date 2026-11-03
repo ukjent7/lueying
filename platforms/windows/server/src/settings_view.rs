@@ -49,6 +49,10 @@ pub mod ids {
     pub const APP_SLOTS: usize = 16;
     pub const BACKUP_EXPORT: &str = "backup-export";
     pub const BACKUP_IMPORT: &str = "backup-import";
+    pub const WEBDAV_URL: &str = "webdav-url";
+    pub const WEBDAV_USERNAME: &str = "webdav-username";
+    pub const WEBDAV_PASSWORD: &str = "webdav-password";
+    pub const WEBDAV_SYNC: &str = "webdav-sync";
     pub const IMPORT_USER: &str = "import-user";
     pub const EXPORT_USER: &str = "export-user";
     pub const CLEAR_USER: &str = "clear-user";
@@ -239,6 +243,17 @@ pub struct PageColors {
     pub accents: Vec<u32>,
 }
 
+/// 云同步里要编辑的项。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WebdavField {
+    /// 远端目录地址。
+    Url,
+    /// Basic 认证账号。
+    Username,
+    /// 口令,只留在本机。
+    Password,
+}
+
 /// 平台侧要去做的事:改配置之外的动作。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -265,6 +280,10 @@ pub enum Action {
     AddApp,
     BackupExport,
     BackupImport,
+    /// 编辑云同步的地址、账号或口令。
+    EditWebdav(WebdavField),
+    /// 立刻做一次云同步。
+    SyncWebdav,
     ImportUser,
     ExportUser,
     ClearUser,
@@ -301,6 +320,8 @@ pub struct Settings {
     pub search: String,
     /// 正在安装的官方扩展/模型 id;下载在后台线程进行。
     pub installing: Option<String>,
+    /// 上次云同步的结果摘要;空表示还没同步过。
+    pub last_sync: String,
 }
 
 impl Default for Settings {
@@ -321,6 +342,7 @@ impl Default for Settings {
             page: PageId::Input,
             search: String::new(),
             installing: None,
+            last_sync: String::new(),
         }
     }
 }
@@ -475,6 +497,10 @@ impl Settings {
             ids::APPS_ADD => Some(Action::AddApp),
             ids::BACKUP_EXPORT => Some(Action::BackupExport),
             ids::BACKUP_IMPORT => Some(Action::BackupImport),
+            ids::WEBDAV_URL => Some(Action::EditWebdav(WebdavField::Url)),
+            ids::WEBDAV_USERNAME => Some(Action::EditWebdav(WebdavField::Username)),
+            ids::WEBDAV_PASSWORD => Some(Action::EditWebdav(WebdavField::Password)),
+            ids::WEBDAV_SYNC => Some(Action::SyncWebdav),
             ids::IMPORT_USER => Some(Action::ImportUser),
             ids::EXPORT_USER => Some(Action::ExportUser),
             ids::CLEAR_USER => Some(Action::ClearUser),

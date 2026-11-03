@@ -20,6 +20,7 @@ fn fetch(args: lueying_broker::FetchArgs) -> Result<lueying_broker::FetchResult,
         timeout_ms: args
             .timeout_ms
             .unwrap_or(lueying_broker::FETCH_DEFAULT_TIMEOUT_MS),
+        credentials: None,
     };
     let response = lueying_net::http::send(&request)?;
     // 文本契约:二进制响应报错,不静默替换字节。

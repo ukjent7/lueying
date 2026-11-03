@@ -2,7 +2,9 @@
 //!
 //! 更新检查、GitHub Release 读取与 WinHTTP 下载都只出现在这里。
 //! `lueying-server` 二进制不引用本 crate,CI 再用导入表断言兜底;
-//! 设置窗通过它联网。
+//! 设置窗通过它联网。Base64 是平台无关的纯工具,单元测试直接跑。
+
+pub mod base64;
 
 pub mod update_manifest;
 

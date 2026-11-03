@@ -390,6 +390,7 @@ fn fetch_with(url: &str, limit: u64, download: bool) -> Result<(u16, Vec<u8>), S
         body: None,
         limit,
         timeout_ms: if download { 60_000 } else { 15_000 },
+        credentials: None,
     })?;
     Ok((response.status, response.body))
 }

@@ -27,6 +27,8 @@ pub struct Request {
     pub body: Option<Vec<u8>>,
     pub limit: u64,
     pub timeout_ms: u32,
+    /// Basic 认证的账号与口令;有就带上 `Authorization` 头。
+    pub credentials: Option<(String, String)>,
 }
 
 /// 一次响应;非 2xx 也照常返回,由调用方判断。
@@ -61,6 +63,7 @@ impl Stream {
             body: None,
             limit: 0,
             timeout_ms,
+            credentials: None,
         };
         let (secure, host, port, path) = split_url(url)?;
         let handle = ResponseHandle::open(&request, secure, &host, port, &path)?;
@@ -179,6 +182,11 @@ impl ResponseHandle {
             header_text.push_str(name);
             header_text.push_str(": ");
             header_text.push_str(value);
+            header_text.push_str("\r\n");
+        }
+        if let Some((user, password)) = &request.credentials {
+            header_text.push_str("Authorization: Basic ");
+            header_text.push_str(&crate::base64::encode(format!("{user}:{password}").as_bytes()));
             header_text.push_str("\r\n");
         }
         header_text.push_str("Accept-Encoding: identity\r\n");

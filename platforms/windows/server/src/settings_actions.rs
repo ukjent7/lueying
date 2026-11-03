@@ -55,7 +55,11 @@ pub fn reload() {
 #[path = "settings_backup.rs"]
 mod backup;
 
+#[path = "settings_sync.rs"]
+mod sync;
+
 pub use backup::{backup_export, backup_import};
+pub use sync::{build_payload, pull, push, sync_once, Outcome, SyncJob};
 
 /// 存盘:写配置并让常驻服务重读。
 pub fn save(settings: &mut Settings) {

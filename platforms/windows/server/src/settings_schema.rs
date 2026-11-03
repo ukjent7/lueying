@@ -779,6 +779,22 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: None,
     },
     SettingDef {
+        key: "webdav_url",
+        title: "WebDAV 同步地址",
+        detail: "远端目录地址(HTTPS);留空表示不做云同步",
+        value: ValueType::Text,
+        default: DefaultValue::Text(""),
+        ui: None,
+    },
+    SettingDef {
+        key: "webdav_username",
+        title: "WebDAV 账号",
+        detail: "Basic 认证账号;留空表示匿名访问",
+        value: ValueType::Text,
+        default: DefaultValue::Text(""),
+        ui: None,
+    },
+    SettingDef {
         key: "bindings",
         title: "扩展热键",
         detail: "组合键 → 命令 id;用 `lueying ext` 或手工编辑维护",

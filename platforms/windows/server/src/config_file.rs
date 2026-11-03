@@ -41,6 +41,10 @@ pub struct FileConfig {
     pub settled_rerank_provider: Option<String>,
     pub bypass_exe: Option<String>,
     pub update_channel: Option<String>,
+    /// WebDAV 同步的远端目录地址。
+    pub webdav_url: Option<String>,
+    /// WebDAV 的 Basic 认证账号。
+    pub webdav_username: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
 }
@@ -235,6 +239,16 @@ pub fn apply(
             None => note(format!("update_channel={value} 不合法")),
         }
     }
+    if let Some(value) = file.webdav_url {
+        if crate::sync::valid_url(&value) {
+            cfg.webdav_url = value.trim().to_string();
+        } else {
+            note(format!("webdav_url={value} 不合法,只接受 HTTPS 地址"));
+        }
+    }
+    if let Some(value) = file.webdav_username {
+        cfg.webdav_username = value.trim().to_string();
+    }
     if let Some(ext) = file.ext {
         for (id, table) in ext {
             if !valid_script_id(&id) {
@@ -330,6 +344,8 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         settled_rerank_provider: cfg.settled_rerank_provider.as_deref(),
         bypass_exe: cfg.bypass_exe.as_deref(),
         update_channel: cfg.update_channel.as_str(),
+        webdav_url: &cfg.webdav_url,
+        webdav_username: &cfg.webdav_username,
         bindings,
         triggers,
         ext: &cfg.ext_settings,
@@ -384,6 +400,8 @@ struct SaveFile<'a> {
     settled_rerank_provider: Option<&'a str>,
     bypass_exe: Option<&'a str>,
     update_channel: &'static str,
+    webdav_url: &'a str,
+    webdav_username: &'a str,
     bindings: BTreeMap<&'a str, &'a str>,
     triggers: BTreeMap<&'a str, &'a str>,
     ext: &'a BTreeMap<String, BTreeMap<String, Value>>,

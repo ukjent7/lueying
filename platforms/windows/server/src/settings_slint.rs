@@ -20,7 +20,7 @@ use lueying_server::settings_model::{self as model, ButtonKind, Control};
 use lueying_server::settings_official;
 use lueying_server::settings_secret;
 use lueying_server::settings_view::{
-    Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState,
+    Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState, WebdavField,
 };
 use lueying_server::theme;
 
@@ -144,6 +144,8 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::OpenApps => with(core, settings_actions::open_apps),
         Action::BackupExport => with(core, settings_actions::backup_export),
         Action::BackupImport => with(core, settings_actions::backup_import),
+        Action::EditWebdav(field) => open_webdav_editor(ui, core, field),
+        Action::SyncWebdav => start_webdav_sync(ui, core),
         Action::ImportUser => with(core, settings_actions::import_user),
         Action::ExportUser => with(core, settings_actions::export_user),
         Action::Diagnostics => with(core, settings_actions::export_diagnostics),
@@ -553,12 +555,14 @@ fn open_secret_editor(ui: &SettingsWindow, core: &Shared, ext: String, key: Stri
         };
         let text = editor.get_body().to_string();
         let _ = editor.hide();
-        let mut guard = lock(&shared);
-        match settings_secret::set(&ext, &key, &text) {
-            Ok(()) => guard.settings.say(Notice::Success, "已保存扩展密钥"),
-            Err(error) => guard
-                .settings
-                .say(Notice::Error, format!("保存失败: {error}")),
+        {
+            let mut guard = lock(&shared);
+            match settings_secret::set(&ext, &key, &text) {
+                Ok(()) => guard.settings.say(Notice::Success, "已保存扩展密钥"),
+                Err(error) => guard
+                    .settings
+                    .say(Notice::Error, format!("保存失败: {error}")),
+            }
         }
         if let Some(main) = main.upgrade() {
             refresh(&main, &shared);
@@ -571,6 +575,248 @@ fn open_secret_editor(ui: &SettingsWindow, core: &Shared, ext: String, key: Stri
         }
     });
     let _ = editor.show();
+}
+
+/// 云同步的单行输入:地址、账号与口令。
+///
+/// 地址与账号改完随「保存」写进配置;口令当场写进本机的口令文件。
+fn open_webdav_editor(ui: &SettingsWindow, core: &Shared, field: WebdavField) {
+    let Ok(editor) = SecretEditorWindow::new() else {
+        return;
+    };
+    let (title, hint, body) = {
+        let guard = lock(core);
+        match field {
+            WebdavField::Url => (
+                "WebDAV 地址",
+                "远端目录地址,例如 https://dav.example.com/ly",
+                guard.settings.cfg.webdav_url.clone(),
+            ),
+            WebdavField::Username => (
+                "WebDAV 账号",
+                "Basic 认证账号;留空表示匿名访问",
+                guard.settings.cfg.webdav_username.clone(),
+            ),
+            WebdavField::Password => (
+                "WebDAV 口令",
+                "只保存在本机;不进配置,也不进同步载荷",
+                lueying_server::sync::read_password(),
+            ),
+        }
+    };
+    editor.set_win_title(title.into());
+    editor.set_hint(hint.into());
+    editor.set_body(body.into());
+    let main = ui.as_weak();
+    let shared = Arc::clone(core);
+    let weak = editor.as_weak();
+    editor.on_save(move || {
+        let Some(editor) = weak.upgrade() else {
+            return;
+        };
+        let text = editor.get_body().to_string();
+        let _ = editor.hide();
+        {
+            let mut guard = lock(&shared);
+            let outcome = match field {
+                WebdavField::Url => {
+                    if lueying_server::sync::valid_url(&text) {
+                        guard.settings.cfg.webdav_url = text.trim().to_string();
+                        Ok(())
+                    } else {
+                        Err("地址不合法,只接受 HTTPS 地址".to_string())
+                    }
+                }
+                WebdavField::Username => {
+                    guard.settings.cfg.webdav_username = text.trim().to_string();
+                    Ok(())
+                }
+                WebdavField::Password => lueying_server::sync::write_password(&text),
+            };
+            match outcome {
+                Ok(()) => guard.settings.say(
+                    Notice::Success,
+                    match field {
+                        WebdavField::Url => "已设置地址;保存后生效",
+                        WebdavField::Username => "已设置账号;保存后生效",
+                        WebdavField::Password => "已保存口令",
+                    },
+                ),
+                Err(error) => guard
+                    .settings
+                    .say(Notice::Error, format!("保存失败: {error}")),
+            }
+        }
+        if let Some(main) = main.upgrade() {
+            refresh(&main, &shared);
+        }
+    });
+    let weak = editor.as_weak();
+    editor.on_cancel(move || {
+        if let Some(editor) = weak.upgrade() {
+            let _ = editor.hide();
+        }
+    });
+    let _ = editor.show();
+}
+
+/// 云同步:取远端、比摘要,该上传就上传,该下载就下载。
+///
+/// 联网的活儿丢到后台线程,窗口全程可用。
+fn start_webdav_sync(ui: &SettingsWindow, core: &Shared) {
+    let job = {
+        let guard = lock(core);
+        let cfg = guard.settings.cfg.clone();
+        settings_actions::SyncJob {
+            url: cfg.webdav_url.trim().to_string(),
+            username: cfg.webdav_username.trim().to_string(),
+            password: lueying_server::sync::read_password(),
+            payload: settings_actions::build_payload(&cfg),
+            cfg,
+        }
+    };
+    if job.url.is_empty() {
+        with(core, |settings| {
+            settings.say(Notice::Error, "先在「同步设置」里填 WebDAV 地址")
+        });
+        return;
+    }
+    let handle = ui.as_weak();
+    let shared = Arc::clone(core);
+    let spawned = std::thread::Builder::new()
+        .name("settings-sync".into())
+        .spawn(move || {
+            let result = settings_actions::sync_once(&job);
+            let _ = handle.upgrade_in_event_loop(move |ui| {
+                match result {
+                    Ok(settings_actions::Outcome::Conflict(remote)) => {
+                        resolve_conflict(&ui, &shared, remote, job)
+                    }
+                    Ok(outcome) => report_sync(&shared, outcome),
+                    Err(error) => with(&shared, |settings| {
+                        settings.say(Notice::Error, format!("同步失败: {error}"))
+                    }),
+                }
+                refresh(&ui, &shared);
+            });
+        });
+    if let Err(error) = spawned {
+        with(core, |settings| {
+            settings.say(Notice::Error, format!("启动同步线程失败: {error}"))
+        });
+    }
+}
+
+/// 同步结果落到提示与设置页。
+fn report_sync(core: &Shared, outcome: settings_actions::Outcome) {
+    let mut guard = lock(core);
+    match outcome {
+        settings_actions::Outcome::UpToDate => {
+            guard.settings.last_sync = "已是最新".to_string();
+            guard.settings.say(Notice::Info, "远端与本机一致,没有改动");
+        }
+        settings_actions::Outcome::Pushed => {
+            guard.settings.last_sync = "已上传".to_string();
+            guard.settings.say(Notice::Success, "已上传到 WebDAV");
+        }
+        settings_actions::Outcome::Pulled => {
+            guard.settings.last_sync = "已下载".to_string();
+            guard.settings.say(Notice::Success, "已从 WebDAV 下载并应用");
+            if let Some(path) = guard.settings.path.clone() {
+                guard.settings.cfg = config::load(&path);
+            }
+        }
+        settings_actions::Outcome::Conflict(_) => {}
+    }
+}
+
+/// 冲突时用哪一边。
+enum ConflictChoice {
+    /// 以本机为准。
+    Local,
+    /// 以远端为准。
+    Remote,
+    /// 这次两边都不动。
+    Cancel,
+}
+
+/// 问用户用哪一边;是=本机,否=远端,取消=不动。
+fn conflict_choice() -> ConflictChoice {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IDNO, IDYES, MB_ICONQUESTION, MB_YESNOCANCEL, MessageBoxW,
+    };
+    use windows::core::HSTRING;
+    let text = "远端与本机都改过,用哪一份?\n\n\
+                是:以本机为准并上传\n否:以远端为准并下载\n取消:这次两边都不动";
+    let answer = unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(text),
+            &HSTRING::from("云同步冲突"),
+            MB_YESNOCANCEL | MB_ICONQUESTION,
+        )
+    };
+    match answer {
+        IDYES => ConflictChoice::Local,
+        IDNO => ConflictChoice::Remote,
+        _ => ConflictChoice::Cancel,
+    }
+}
+
+/// 冲突裁决:以本机为准就上传,以远端为准就下载。
+fn resolve_conflict(
+    ui: &SettingsWindow,
+    core: &Shared,
+    remote: String,
+    job: settings_actions::SyncJob,
+) {
+    match conflict_choice() {
+        ConflictChoice::Local => {
+            let handle = ui.as_weak();
+            let shared = Arc::clone(core);
+            let spawned = std::thread::Builder::new()
+                .name("settings-sync-push".into())
+                .spawn(move || {
+                    let result = settings_actions::push(&job);
+                    let _ = handle.upgrade_in_event_loop(move |ui| {
+                        match result {
+                            Ok(()) => {
+                                let mut guard = lock(&shared);
+                                guard.settings.last_sync = "已上传".to_string();
+                                guard.settings.say(Notice::Success, "已按本机上传到 WebDAV");
+                            }
+                            Err(error) => with(&shared, |settings| {
+                                settings.say(Notice::Error, format!("上传失败: {error}"))
+                            }),
+                        }
+                        refresh(&ui, &shared);
+                    });
+                });
+            if let Err(error) = spawned {
+                with(core, |settings| {
+                    settings.say(Notice::Error, format!("启动上传线程失败: {error}"))
+                });
+            }
+        }
+        ConflictChoice::Remote => match settings_actions::pull(&job, &remote) {
+            Ok(count) => {
+                let mut guard = lock(core);
+                guard.settings.last_sync = "已下载".to_string();
+                guard
+                    .settings
+                    .say(Notice::Success, format!("已按远端恢复 {count} 项"));
+                if let Some(path) = guard.settings.path.clone() {
+                    guard.settings.cfg = config::load(&path);
+                }
+            }
+            Err(error) => with(core, |settings| {
+                settings.say(Notice::Error, format!("下载失败: {error}"))
+            }),
+        },
+        ConflictChoice::Cancel => with(core, |settings| {
+            settings.say(Notice::Info, "已取消同步,两边都没动")
+        }),
+    }
 }
 
 /// 窗内文本编辑器要打开的文件:路径、标题与模板。

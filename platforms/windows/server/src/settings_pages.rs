@@ -129,6 +129,10 @@ impl Settings {
                     title: "按应用配置".to_string(),
                     rows: self.apps_rows(),
                 },
+                Group {
+                    title: "云同步".to_string(),
+                    rows: self.webdav_rows(),
+                },
             ],
             PageId::About => vec![Group {
                 title: PageId::About.title().to_string(),
@@ -513,6 +517,49 @@ impl Settings {
             "版本、配置与服务日志导出成一份文本".to_string(),
             vec![Self::secondary(ids::DIAGNOSTICS, "导出", true)],
         )
+    }
+
+    /// 云同步:地址、账号与口令只在本机,载荷只带配置与词库。
+    fn webdav_rows(&self) -> Vec<Row> {
+        vec![
+            self.action_row(
+                "同步设置",
+                self.webdav_detail(),
+                vec![
+                    Self::secondary(ids::WEBDAV_URL, "地址", true),
+                    Self::secondary(ids::WEBDAV_USERNAME, "账号", true),
+                    Self::secondary(ids::WEBDAV_PASSWORD, "口令", true),
+                ],
+            ),
+            self.action_row(
+                "云同步",
+                if self.last_sync.is_empty() {
+                    "把配置、短语、标点、按应用配置与词库同步到 WebDAV".to_string()
+                } else {
+                    self.last_sync.clone()
+                },
+                vec![Button {
+                    id: Id::new(ids::WEBDAV_SYNC, 0),
+                    text: "同步".to_string(),
+                    kind: ButtonKind::Primary,
+                    enabled: true,
+                }],
+            ),
+        ]
+    }
+
+    /// 同步设置那行的说明:地址与账号。
+    pub(crate) fn webdav_detail(&self) -> String {
+        let url = self.cfg.webdav_url.trim();
+        if url.is_empty() {
+            return "未设置地址;先填 WebDAV 目录地址".to_string();
+        }
+        let user = if self.cfg.webdav_username.trim().is_empty() {
+            "匿名".to_string()
+        } else {
+            self.cfg.webdav_username.trim().to_string()
+        };
+        format!("{url} · 账号 {user}")
     }
 
     /// 扩展声明式设置展开成的分组。

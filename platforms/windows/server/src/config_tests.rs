@@ -119,6 +119,34 @@ fn panel_hotkey_defaults_to_three_modifiers() {
 }
 
 #[test]
+fn webdav_keys_round_trip() {
+    let cfg = AppConfig {
+        webdav_url: "https://dav.example.com/ly".to_string(),
+        webdav_username: "alice".to_string(),
+        ..AppConfig::default()
+    };
+    let path = temp("webdav.toml");
+    save(&path, &cfg).expect("写配置");
+    let text = std::fs::read_to_string(&path).expect("读配置");
+    let loaded = load(&path);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        text.contains("webdav_url = \"https://dav.example.com/ly\""),
+        "{text}"
+    );
+    assert_eq!(loaded.webdav_url, "https://dav.example.com/ly");
+    assert_eq!(loaded.webdav_username, "alice");
+}
+
+#[test]
+fn webdav_url_only_accepts_https_outside_loopback() {
+    let cfg = load_text("webdav-plain", "webdav_url = \"http://dav.example.com/ly\"\n");
+    assert!(cfg.webdav_url.is_empty(), "明文地址不收");
+    let cfg = load_text("webdav-local", "webdav_url = \"http://127.0.0.1:8080/ly\"\n");
+    assert_eq!(cfg.webdav_url, "http://127.0.0.1:8080/ly");
+}
+
+#[test]
 fn ocr_engine_parses_aliases() {
     assert_eq!(load_text("ocr-default", "").ocr_backend, OcrBackend::System);
     for value in ["ppocr", "pp-ocr", "paddle"] {

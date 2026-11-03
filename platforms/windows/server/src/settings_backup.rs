@@ -41,16 +41,7 @@ pub fn backup_export(settings: &mut Settings) {
         settings.say(Notice::Error, "没有可备份的数据");
         return;
     }
-    let mut out = String::from("### lueying-backup v1\n");
-    for (name, content) in &files {
-        let lines = content.lines().count();
-        out.push_str(&format!("### begin: {name} {lines}\n"));
-        if lines > 0 {
-            out.push_str(content.trim_end_matches('\n'));
-            out.push('\n');
-        }
-        out.push_str(&format!("### end: {name}\n"));
-    }
+    let out = crate::sync::pack(&files);
     // 临时文件 + fsync + 改名:失败与断电都不留半截备份。
     let tmp = path.with_extension("bak.tmp");
     let written = std::fs::File::create(&tmp)
@@ -85,11 +76,11 @@ pub fn backup_import(settings: &mut Settings) {
             return;
         }
     };
-    if !text.starts_with("### lueying-backup v1") {
+    if !crate::sync::is_bundle(&text) {
         settings.say(Notice::Error, "这份文件不是掠影备份");
         return;
     }
-    let files = unpack_backup(&text);
+    let files = crate::sync::unpack(&text);
     let mut written = 0usize;
     let mut imported_user = false;
     for (name, content) in &files {
@@ -138,32 +129,4 @@ pub fn backup_import(settings: &mut Settings) {
     } else {
         settings.say(Notice::Error, "备份里没有可恢复的内容");
     }
-}
-
-/// 解析备份文件:`### begin: <名字> <行数>` 之后逐行取声明数量的行,
-/// 随后跳过 `### end:` 行;坏块整块跳过。
-fn unpack_backup(text: &str) -> Vec<(String, String)> {
-    let mut files = Vec::new();
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
-        let Some(rest) = line.strip_prefix("### begin: ") else {
-            continue;
-        };
-        let Some((name, count)) = rest.rsplit_once(' ') else {
-            continue;
-        };
-        let Ok(count) = count.parse::<usize>() else {
-            continue;
-        };
-        let mut content = Vec::with_capacity(count);
-        for _ in 0..count {
-            match lines.next() {
-                Some(line) => content.push(line.to_string()),
-                None => break,
-            }
-        }
-        lines.next_if(|line| line.starts_with("### end:"));
-        files.push((name.to_string(), content.join("\n")));
-    }
-    files
 }

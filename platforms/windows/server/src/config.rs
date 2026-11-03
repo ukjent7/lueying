@@ -275,6 +275,10 @@ pub struct AppConfig {
     pub bypass_exe: Option<String>,
     /// 更新渠道。
     pub update_channel: Channel,
+    /// WebDAV 同步的远端目录地址;空表示没配同步。
+    pub webdav_url: String,
+    /// WebDAV 的 Basic 认证账号;空表示匿名。
+    pub webdav_username: String,
     /// 自定义标点映射,来自 `punct.txt`。
     pub punct: BTreeMap<char, String>,
     /// 按应用覆盖层,来自 `apps.toml`;键是宿主 exe 名小写。
@@ -313,6 +317,8 @@ impl Default for AppConfig {
             settled_rerank_provider: None,
             bypass_exe: None,
             update_channel: Channel::Stable,
+            webdav_url: String::new(),
+            webdav_username: String::new(),
             punct: BTreeMap::new(),
             apps: BTreeMap::new(),
             ext_settings: BTreeMap::new(),
@@ -388,6 +394,18 @@ pub fn extensions_consent_path() -> Option<PathBuf> {
 /// 扩展密钥目录(`%APPDATA%\lueying\secrets`);每个扩展一个 JSON 文件。
 pub fn secrets_dir() -> Option<PathBuf> {
     user_file("secrets")
+}
+
+/// WebDAV 口令文件路径(`%APPDATA%\lueying\webdav-password.txt`)。
+/// 口令不进 `config.toml`,也不进同步载荷。
+pub fn webdav_password_path() -> Option<PathBuf> {
+    user_file("webdav-password.txt")
+}
+
+/// 同步状态文件路径(`%APPDATA%\lueying\webdav-state.txt`):记上次同步
+/// 成功的载荷摘要,用来分辨本机改了还是远端改了。
+pub fn webdav_state_path() -> Option<PathBuf> {
+    user_file("webdav-state.txt")
 }
 
 /// 扩展私有数据目录(`%APPDATA%\lueying\ext-data`);每个扩展一个 JSON 文件。
