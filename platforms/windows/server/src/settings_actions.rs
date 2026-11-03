@@ -627,11 +627,14 @@ pub fn import_user(settings: &mut Settings) {
     }
     settings.groups = groups;
     let mut text = format!("已导入 {} 词", report.imported);
+    if report.no_pinyin > 0 {
+        text.push_str(&format!(",{} 行查不到读音", report.no_pinyin));
+    }
+    if report.skipped > report.no_pinyin {
+        text.push_str(&format!(",跳过 {} 行", report.skipped - report.no_pinyin));
+    }
     if entries != report.imported {
         text.push_str(&format!(",词库现有 {entries} 条"));
-    }
-    if report.skipped > 0 {
-        text.push_str(&format!(",跳过 {} 行", report.skipped));
     }
     settings.say(Notice::Success, text);
 }
