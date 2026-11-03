@@ -74,7 +74,7 @@ pub struct ExtStat {
     pub memory_used: u64,
     /// 内存上限(字节)。
     pub memory_limit: u64,
-    /// 命令/场景调用次数。
+    /// 命令/外观派发次数。
     pub dispatches: u64,
     /// 燃料消耗计数。
     pub steps: u64,

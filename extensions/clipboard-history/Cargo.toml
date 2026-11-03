@@ -1,0 +1,13 @@
+[package]
+name = "clipboard-history"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影官方剪贴板历史扩展:热键唤出胶囊面板"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lueying-extguest.workspace = true
+serde_json = "1"

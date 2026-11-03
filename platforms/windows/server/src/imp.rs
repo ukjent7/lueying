@@ -9,6 +9,9 @@ mod request;
 #[path = "server_ext.rs"]
 mod ext;
 
+#[path = "server_assets.rs"]
+mod assets;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -19,7 +22,7 @@ use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
 use lueying_engine::scheme::Scheme;
-use lueying_engine::{Action, CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
+use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
 use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{LatencyMetrics, Model, Rerank};
@@ -34,6 +37,7 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows::core::HSTRING;
+use assets::{dict_path, load_dict, load_model, single_instance};
 
 /// 当前系统本地时间。日期/时间候选按宿主时区生成,不靠引擎猜 UTC。
 fn local_time() -> CivilTime {
@@ -241,8 +245,6 @@ pub(super) struct State {
     pub(super) commit_token: Mutex<Option<String>>,
     /// 声明式皮肤(skin.toml);重载配置时一并重读。
     pub(super) skin: Mutex<lueying_server::skin::Skin>,
-    /// 停顿重排的提供者缝;默认空槽走内置模型。
-    pub(super) settled_slot: Mutex<lueying_server::seam::SettledSlot>,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
     pub(super) modules: Arc<Modules>,
     /// 自定义短语模块;设置重载时重新读文件。
@@ -320,7 +322,7 @@ pub(super) fn touch_view(state: &State) {
     state.wake_ui.set();
 }
 
-/// 只叫醒候选窗,不宣布新视图;脚本补丁走这条旁路。
+/// 只叫醒候选窗,不宣布新视图;脚本补丁走这条轻量路径。
 pub(super) fn wake_ui(state: &State) {
     state.wake_ui.set();
 }
@@ -541,7 +543,6 @@ pub(super) fn real_main() {
         user,
         commit_token: Mutex::new(None),
         skin: Mutex::new(load_skin()),
-        settled_slot: Mutex::new(lueying_server::seam::SettledSlot::new()),
         modules: crate::modules::registry(
             phrases.clone(),
             Arc::clone(&prediction),
@@ -601,70 +602,6 @@ pub(super) fn real_main() {
     // 窗口循环意外结束时进程也要留着,否则整个输入法跟着退出。
     loop {
         std::thread::park();
-    }
-}
-
-/// 当前会话的单实例锁;返回的句柄要活到进程结束。
-fn single_instance() -> Option<HANDLE> {
-    let pipe = pipe_name();
-    let short = pipe.trim_start_matches(r"\\.\pipe\");
-    let name = HSTRING::from(format!("Local\\{short}"));
-    let handle = unsafe { CreateMutexW(None, true, &name) }.ok()?;
-    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        return None;
-    }
-    Some(handle)
-}
-
-/// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.*)。
-fn dict_path(name: &str) -> Option<std::path::PathBuf> {
-    let mut path = std::env::current_exe().ok()?;
-    path.set_file_name(name);
-    path.exists().then_some(path)
-}
-
-fn load_model(stem: &str) -> Option<Model> {
-    let mut dirs = Vec::new();
-    if let Some(dir) = config::models_dir() {
-        dirs.push(dir);
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.to_path_buf());
-    }
-    for dir in dirs {
-        if !dir.join(format!("{stem}.ort")).is_file() {
-            continue;
-        }
-        match Model::load_keystroke_dir(&dir, stem) {
-            Ok(model) => {
-                println!("重排模型 {stem} ← {}", dir.display());
-                return Some(model);
-            }
-            Err(e) => println!("重排模型 {stem} 不可用: {e}"),
-        }
-    }
-    None
-}
-
-fn load_dict(path: std::path::PathBuf) -> Option<Dictionary> {
-    match Dictionary::from_path(&path) {
-        Ok((d, 0)) if !d.is_empty() => {
-            println!("词典 {} 条 ← {}", d.len(), path.display());
-            Some(d)
-        }
-        Ok((_, bad)) => {
-            println!("{} 有 {bad} 处问题,跳过", path.display());
-            None
-        }
-        Err(e) => {
-            println!("{} 加载失败: {e}", path.display());
-            None
-        }
     }
 }
 
@@ -884,29 +821,6 @@ fn load_skin() -> lueying_server::skin::Skin {
 fn apply_config(state: &State, cfg: AppConfig) {
     // 皮肤文件跟配置一起重读:改完 skin.toml 一次 reload 生效。
     *state.skin.lock().unwrap_or_else(|p| p.into_inner()) = load_skin();
-    // 停顿重排缝:配置点名 bypass 且给了 exe 才装;其余情况都是内置(默认关)。
-    let provider = match cfg.settled_rerank_provider.as_deref() {
-        Some("bypass") => match cfg.bypass_exe.as_deref().map(str::trim) {
-            Some(exe) if !exe.is_empty() => {
-                let bypass = lueying_bypass::Bypass::new(lueying_bypass::BypassConfig {
-                    exe: PathBuf::from(exe),
-                    args: Vec::new(),
-                    call_timeout: std::time::Duration::from_secs(1),
-                });
-                println!("停顿重排:提供者=旁路进程({exe})");
-                Some(Arc::new(lueying_server::seam::BypassSettled::new(bypass))
-                    as Arc<dyn lueying_server::seam::SettledRerank>)
-            }
-            _ => {
-                println!("停顿重排:提供者=bypass 但没配 bypass_exe,用内置模型");
-                None
-            }
-        },
-        _ => None,
-    };
-    let mut slot = lueying_server::seam::SettledSlot::new();
-    slot.set(provider);
-    *state.settled_slot.lock().unwrap_or_else(|p| p.into_inner()) = slot;
     let engine_cfg = cfg.engine();
     let old = state
         .config

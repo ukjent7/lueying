@@ -566,7 +566,7 @@ pub fn scenarios() -> Vec<Scenario> {
                         Check::Top("你好".into()),
                         Check::Hint {
                             text: "你好".into(),
-                            hint: "纠正 ni hao".into(),
+                            hint: "纠自 ni hao".into(),
                         },
                     ],
                 ),
@@ -592,7 +592,7 @@ pub fn scenarios() -> Vec<Scenario> {
                         Check::Top("好".into()),
                         Check::Hint {
                             text: "好".into(),
-                            hint: "纠正 hao".into(),
+                            hint: "纠自 hao".into(),
                         },
                     ],
                 ),

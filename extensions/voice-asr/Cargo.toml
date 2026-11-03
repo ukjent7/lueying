@@ -1,0 +1,13 @@
+[package]
+name = "voice-asr"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影官方离线语音输入扩展:录音、识别、上屏"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lueying-extguest.workspace = true
+serde_json = "1"

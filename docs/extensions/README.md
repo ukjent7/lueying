@@ -93,7 +93,7 @@ nk<TAB>你<TAB>1000
 ```
 
 同一个码下可以有多条,权重大的排前面;码没敲完时,所有以它开头的码都进候选,
-敲全的那个码排在最前。`crates/features` 的 `CodeTable` 读表与查表,
+敲全的那个码排在最前。`extensions/input-schemes` 的 `CodeTable` 读表与查表,
 `CodeScheme` 把它接进方案契约:
 
 ```rust

@@ -11,7 +11,9 @@ use serde::Deserialize;
 
 use crate::ort::{OrtModel, OrtTensor};
 use crate::weights::Tensor;
-use crate::{Block, Config, Matrix, ModelError, SentenceModel, Variant};
+use crate::math::Matrix;
+use crate::model::{Block, Config, SentenceModel, Variant};
+use crate::ModelError;
 
 #[derive(Deserialize)]
 struct Manifest {

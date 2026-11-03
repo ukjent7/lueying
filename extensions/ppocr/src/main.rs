@@ -5,7 +5,7 @@
 //! 原生扩展宿主拉起:计划与词表在启动时加载,之后常驻到空闲回收,模型
 //! 与可执行文件同目录(det.onnx、rec.onnx、dict.txt)。
 //!
-//! 协议与旁路层一致:一行 `{"method":"recognize","args":{"file":...}}`,
+//! 协议与原生扩展宿主一致:一行 `{"method":"recognize","args":{"file":...}}`,
 //! 一行 `{"result":{"text":...,"lang":"ppocr"}}` 或 `{"error":"..."}`。
 //!
 //! 预处理与后处理照 PaddleOCR 的默认值:det 固定 960×960 画布、DB 阈值

@@ -98,7 +98,7 @@ page_size = 5              # 每页候选数量: 3, 5, 9
 ui_layout = "horizontal"   # 候选排列: "horizontal" (横排), "vertical" (竖排)
 ui_font = "standard"       # 候选字号: "small", "standard", "large"
 ui_accent = 0              # 主题强调色下标: 0~5 (或 "蓝", "绿" 等)
-effects = true             # 是否启用场景装饰层
+effects = true             # 是否启用候选窗弹性动效
 
 # 启用的运行期扩展
 extensions = ["shot-ocr"]
@@ -106,7 +106,6 @@ extensions = ["shot-ocr"]
 
 更丰富的个性化定制包括：
 - **界面配色**：编辑 [`%APPDATA%\lueying\skin.toml`](docs/skin.md) 自定义深浅色面板底色与文字颜色。
-- **场景皮肤**：安装[场景皮肤扩展](docs/scene.md)（声明式 scene.toml）加装饰层与动效。
 - **自定义短语与标点**：在图形设置中维护 `phrases.txt` 与 `punct.txt`。
 
 ---
@@ -118,7 +117,6 @@ extensions = ["shot-ocr"]
 - [使用指南](docs/usage.md)：基础操作、`v` 模式、`u` 模式与特殊符号输入。
 - [设置中心与配置速查](docs/settings.md)：图形设置功能、`config.toml` 字段全解与按应用隔离。
 - [界面皮肤定制](docs/skin.md)：声明式十六进制色彩定义与字段说明。
-- [场景皮肤](docs/scene.md)：皮肤扩展的 scene.toml 契约、信号与事件、事件模拟器。
 - [故障排查与诊断](docs/troubleshooting.md)：常见问题解决、日志跟踪与问题反馈规范。
 
 ### 架构与开发

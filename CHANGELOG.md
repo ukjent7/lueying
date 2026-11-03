@@ -7,6 +7,10 @@
 
 ### 新增
 
+- 剪贴板历史官方扩展：宿主后台维护最近 200 条纯文本复制记录，`Win+Shift+V` 唤出胶囊面板（显示最近 60 条），选中即写回剪贴板并注入当前焦点；OCR 与语音识别结果自动带 `OCR`/`语音` 标签沉淀进历史，不额外申请剪贴板权限。
+- 离线语音输入官方扩展：`Ctrl+Alt+V` 录制 8 秒 16 kHz WAV，交给原生 `sensevoice` 扩展做纯 CPU 识别后上屏；音频录制与 ASR 作为宿主服务开放。
+- 设置中心「扩展」页新增「允许扩展自由联网」开关：开启后不再逐域名校验清单白名单，扩展仍需声明 `network` 并经用户同意安装。
+
 - 按键重排升级到 chinese-ime-lm 的 8M/25M 选词模型：8M/25M 均随基础安装包分发；两者直接读取上游 `.ort` 图、`model.json` 与 `vocab.json`，用树内纯 Rust 推理，不引入 ONNX Runtime 原生依赖。上游同池评测有上文 top-1 分别为 90.4% / 91.9%（旧 4.25M / 24.9M 为 79.5% / 87.0%），无上文 8M 为 83.0%（旧 4.25M 为 76.1%）。
 - 评测工具：`tools/bench_shared.py stats` 新增 Wilson 95% 区间、McNemar 精确检验与按来源分桶的 rescue/breakage 统计；E2E 补上纠错候选必须报告 `trusted_dictionary_hit=false` 的检查。
 - 词库导入：设置窗「词库」页的「用户词库 → 导入」除本机导出的原生格式外，还能读标准 TSV 词表（词/拼音/权重）与纯汉字词表；UTF-8、UTF-16、GB18030 都能解码，拼音统一成引擎学习键，权重按对数折算成词频，纯汉字词表的读音从主词典反查。
@@ -14,6 +18,13 @@
 - Linux Wayland 外壳 `lueying-linux`：实现 `zwp_input_method_v2` 与 `zwp_virtual_keyboard_manager_v1`，键盘 grab 后跑完整引擎，未消费按键经虚拟键盘回送；候选窗用 `tiny-skia` 软件绘制到 `wl_shm` 的输入法 popup，支持鼠标点选、翻页与浅/深配色；配置与用户数据走 XDG 路径。
 
 ### 变更
+
+- 候选窗背板优先走 Windows 11 文档化系统背板（`DWMWA_SYSTEMBACKDROP_TYPE` 的 `DWMSBT_TRANSIENTWINDOW`，DWM 合成器托管毛玻璃、底色随系统深浅色），Win11 22H2 之前的系统回退未文档化的 accent 亚克力；macOS 侧液态材质（`NSGlassEffectView`/`NSVisualEffectView`）与三端共用的 `lueying-render` 无头几何不变。
+- 删除 `crates/scene` 声明式场景运行时及其解释器、粒子池、精灵与回放：候选窗动效统一由 `lueying-render` 的 Spring 阻尼弹簧驱动，设置页只保留「弹性动效」开关。
+- 删除 `crates/bypass`：原生扩展宿主并入 `lueying-extwasm::native`，保留常驻进程、空闲回收、Job Object 限额与 AppContainer 沙箱；移除一次性旁路进程与「停顿重排提供者」配置。
+- 核心只保留全拼、简拼与全简混输；双拼、五笔辅助码与形码继续作为官方编译期扩展（`lueying-features`）提供，不再进入核心词图。
+- 用户词库取消词条时间衰减：主词典已有词首次选择记两次使用，词典外新词首次只记一次，连续使用后阶梯晋级；只有 Shift+Delete 能手动删除。
+- 手误与模糊音纠错候选带 `correction` 标记，界面在候选右侧以灰字提示「纠自 <原拼音>」，准确输入仍优先。
 
 - `lueying-lm` 同步上游 `reference` 0.2.1 的批式推理：一次重排的候选共享前缀只算一次，矩阵乘按 8 行分块，词表归一化同样成批；4.25M 单次决策 12.1→4.1–4.2ms、24.9M 72.3→22.7–22.9ms，输出逐位不变。保留词表外字符过滤与 `best_where_margin`。
 - TSF 与服务的管道协议从行 JSON 换成长度前缀 postcard 二进制帧(4 字节小端长度 + 编码体,单帧 1 MiB 上限);管道名升到 `lueying-v2`,两端同包分发,无兼容期。

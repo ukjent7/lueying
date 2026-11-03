@@ -44,7 +44,7 @@ fn with_word(word: &str, key: &str, now: CivilTime) -> Engine {
     let user: SharedUser = Arc::new(RwLock::new(UserDict::new()));
     user.write()
         .unwrap_or_else(|p| p.into_inner())
-        .learn(key, word);
+        .learn(key, word, true);
     let mut e = Engine::new(Arc::new(Dictionary::builtin()), Config::default())
         .with_user(user)
         .with_modules(crate::builtins());

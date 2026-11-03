@@ -34,7 +34,7 @@ const METRICS_HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// 窗口线程持有的脚本通道。
 pub(super) struct Script {
-    /// 最新场景与序号;脚本忙时新场景覆盖旧场景,只补最后一帧。
+    /// 最新外观状态与序号;脚本忙时新状态覆盖旧状态,只补最后一帧。
     latest: Arc<Mutex<Option<(u64, SceneIn)>>>,
     /// 提交序号;晚到的旧补丁按它丢弃,不会盖到新一帧或隐私字段上。
     seq: AtomicU64,
@@ -65,14 +65,14 @@ impl Script {
         }
     }
 
-    /// 提交最新场景;脚本线程忙时只保留最后一帧。
+    /// 提交最新外观状态;脚本线程忙时只保留最后一帧。
     pub(super) fn submit(&self, scene: SceneIn) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         *self.latest.lock().unwrap_or_else(|p| p.into_inner()) = Some((seq, scene));
         let _ = self.wake.try_send(());
     }
 
-    /// 已提交的最新场景序号;比它旧的补丁直接丢弃。
+    /// 已提交的最新外观序号;比它旧的补丁直接丢弃。
     pub(super) fn seq(&self) -> u64 {
         self.seq.load(Ordering::Relaxed)
     }
@@ -87,7 +87,7 @@ impl Script {
     }
 }
 
-/// 脚本线程:跟配置换扩展、跟目录热重载、按最新场景派发。
+/// 脚本线程:跟配置换扩展、跟目录热重载、按最新外观状态派发。
 fn worker(
     state: Arc<State>,
     latest: Arc<Mutex<Option<(u64, SceneIn)>>>,
@@ -95,6 +95,7 @@ fn worker(
     patches: Sender<(u64, Option<ScenePatch>)>,
 ) {
     let mut order: Vec<String> = Vec::new();
+    let mut allow_all_network = false;
     let mut runtime: Option<Runtime> = None;
     let hotkey = Arc::new(services::HotkeyProvider::default());
     let mut bindings = BindingTable::default();
@@ -137,21 +138,28 @@ fn worker(
             next_config = now + CONFIG;
             let want = configured(&state);
             let want_binds = configured_bindings(&state);
+            let want_network_open = state
+                .config
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .allow_all_extension_network;
             let stamp = consent_fingerprint();
             let consent_changed = stamp != consent_stamp;
             consent_stamp = stamp;
-            let order_changed = want != order || consent_changed;
+            let network_changed = want_network_open != allow_all_network;
+            let order_changed = want != order || consent_changed || network_changed;
+            allow_all_network = want_network_open;
             if order_changed {
                 order = want;
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
                 panel_bound.clear();
-                let loaded = load(&order, &hotkey, &privacy, &state.panel_service);
+                let loaded = load(&order, &hotkey, &privacy, &state.panel_service, allow_all_network);
                 runtime = loaded.runtime;
                 skipped = loaded.skipped;
                 next_metrics = Instant::now();
                 reported = None;
-                // 换扩展或关扩展先摘掉旧效果,等新场景的补丁。
+                // 换扩展或关扩展先摘掉旧效果,等新外观的补丁。
                 let _ = patches.send((last_seq, None));
                 wake_ui(&state);
             }
@@ -449,6 +457,7 @@ fn load(
     hotkey: &Arc<services::HotkeyProvider>,
     privacy: &PrivacyCheck,
     panel: &Arc<services::PanelProvider>,
+    allow_all_network: bool,
 ) -> Loaded {
     let limits = Limits::default();
     let mut skipped = Vec::new();
@@ -488,11 +497,6 @@ fn load(
             println!("原生扩展 {id}:由服务提供者按需调用");
             continue;
         }
-        if manifest.is_scene() {
-            // 场景皮肤是纯声明包:候选窗场景层按启用清单加载,这里没有可执行体。
-            println!("场景皮肤 {id}:由候选窗场景层加载");
-            continue;
-        }
         match book.check(&dir, &manifest) {
             Ok(check) if !check.required || check.approved => {
                 if let Some(grant) = &manifest.network {
@@ -529,7 +533,7 @@ fn load(
     }
     registry.set(Service::Capture, Arc::new(services::CaptureProvider));
     registry.set(Service::Ocr, Arc::new(services::OcrProvider::new()));
-    registry.set(Service::Clipboard, Arc::new(services::ClipboardProvider));
+    registry.set(Service::Clipboard, Arc::new(services::ClipboardProvider::new()));
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     // `Arc::clone` 不能从 `&Arc<具体类型>` 直接推出 trait 对象;先克隆具体类型,
@@ -540,8 +544,11 @@ fn load(
     let hotkey: Arc<services::HotkeyProvider> = Arc::clone(hotkey);
     registry.set(Service::Hotkey, hotkey);
     registry.set(Service::Notify, Arc::new(services::NotifyProvider));
+    registry.set(Service::Audio, Arc::new(services::AudioProvider));
+    registry.set(Service::Asr, Arc::new(services::AsrProvider::new()));
     let network = services::NetworkProvider::new(services::network_broker());
     network.set_allow(network_grants);
+    network.set_open_all(allow_all_network);
     registry.set(Service::Network, Arc::new(network));
     // 上下文按级授权:扩展申请了 selected-text 才放行选中文字。
     let context = crate::context::ContextProvider::new();

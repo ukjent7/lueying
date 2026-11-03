@@ -1,99 +1,31 @@
-//! 掠影内置扩展:双拼、自定义短语、辅助码、下一词联想,以及快捷输入、
-//! 表情、英文混输与简繁转换。
+//! 掠影官方内置扩展:自定义短语、下一词联想,以及快捷输入、表情、
+//! 英文混输与简繁转换。双拼与形码在 `extensions/input-schemes`。
 //!
 //! 这些能力都通过 [`lueying_ext`] 的公开契约接入,核心引擎只保留全拼、
 //! 候选生成与学习。宿主按配置选择方案并注册模块。
 
-pub mod aux_code;
-pub mod code;
 pub mod emoji;
 pub mod english;
 pub mod phrases;
 pub mod predict;
 pub mod quick;
 pub mod script;
-pub mod shuangpin;
 mod symbols;
 
 use std::sync::Arc;
 
-pub use aux_code::{AuxCode, AuxLookup, AuxScheme};
-pub use code::{CodeEntry, CodeScheme, CodeTable};
 pub use emoji::EmojiModule;
 pub use english::EnglishModule;
 pub use lueying_ext::Script;
 pub use phrases::CustomPhrases;
+pub use lueying_input_schemes::{
+    AuxCode, AuxLookup, AuxScheme, CodeEntry, CodeScheme, CodeTable, SchemeId, Shuangpin, scheme,
+};
 pub use predict::Prediction;
 pub use quick::QuickModule;
 pub use script::{ScriptModule, convert};
-pub use shuangpin::Shuangpin;
 
-use lueying_ext::{FullPinyin, Module, Modules, Scheme};
-
-/// 宿主可选输入方案。`Full` 是默认值,其余为双拼。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SchemeId {
-    #[default]
-    Full,
-    Xiaohe,
-    Ziranma,
-    Mspy,
-    Sogou,
-}
-
-impl SchemeId {
-    pub const ALL: [Self; 5] = [
-        Self::Full,
-        Self::Xiaohe,
-        Self::Ziranma,
-        Self::Mspy,
-        Self::Sogou,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Xiaohe => "xiaohe",
-            Self::Ziranma => "ziranma",
-            Self::Mspy => "mspy",
-            Self::Sogou => "sogou",
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Full => "全拼",
-            Self::Xiaohe => "小鹤",
-            Self::Ziranma => "自然码",
-            Self::Mspy => "微软",
-            Self::Sogou => "搜狗",
-        }
-    }
-
-    /// 配置里的方案名;无法识别的值退回全拼。
-    pub fn parse(value: &str) -> Self {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "xiaohe" | "flypy" => Self::Xiaohe,
-            "ziranma" | "zrm" => Self::Ziranma,
-            "mspy" | "microsoft" => Self::Mspy,
-            "sogou" => Self::Sogou,
-            _ => Self::Full,
-        }
-    }
-}
-
-/// 构造方案;`aux` 为真时在基础方案上叠加辅助码。
-pub fn scheme(id: SchemeId, aux: bool) -> Arc<dyn Scheme> {
-    let base: Arc<dyn Scheme> = match id {
-        SchemeId::Full => Arc::new(FullPinyin),
-        _ => Arc::new(Shuangpin::by_id(id.as_str()).expect("SchemeId 与双拼布局表必须一一对应")),
-    };
-    if aux {
-        Arc::new(AuxScheme::new(base, AuxCode::builtin()))
-    } else {
-        base
-    }
-}
+use lueying_ext::{Module, Modules};
 
 /// 组合第一批内置模块。自定义短语按宿主给出的文件创建;联想默认启用。
 pub fn registry(phrases: Option<Arc<CustomPhrases>>) -> Arc<Modules> {

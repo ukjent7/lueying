@@ -8,22 +8,15 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
 use lueying_render::panel::{self, Hit, ListFx, Measure, Metrics, Palette, PanelSpec};
-use lueying_scene::{Body, EffectOut, Fill, Item as SceneItem, Layer as SceneLayer, Shape};
-use windows::Win32::Foundation::{GENERIC_READ, HMODULE, HWND};
-use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
-};
+use windows::Win32::Foundation::{HMODULE, HWND};
+use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F};
 use windows::Win32::Graphics::Direct2D::{
-    CLSID_D2D1GaussianBlur, CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
-    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
-    D2D1_PROPERTY_TYPE_FLOAT, D2D1_ROUNDED_RECT, D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-    D2D1_SHADOW_PROP_COLOR, D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext,
-    ID2D1Effect, ID2D1Factory1, ID2D1Image, ID2D1Layer, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_LAYER_OPTIONS1_NONE,
+    D2D1_LAYER_PARAMETERS1, D2D1_ROUNDED_RECT, D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device,
+    ID2D1DeviceContext, ID2D1Factory1, ID2D1Layer, ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0};
 use windows::Win32::Graphics::Direct3D11::{
@@ -48,14 +41,8 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIFactory4,
     IDXGISwapChain1, IDXGISwapChain3,
 };
-use windows::Win32::Graphics::Imaging::{
-    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICBitmapDecoder,
-    IWICBitmapFrameDecode, IWICFormatConverter, IWICImagingFactory, WICBitmapDitherTypeNone,
-    WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
-};
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::core::{Interface, w};
-use windows_numerics::{Matrix3x2, Vector2};
+use windows_numerics::Matrix3x2;
 
 /// 交换链缓冲数;双缓冲配 flip 模型。
 const BUFFER_COUNT: usize = 2;
@@ -79,15 +66,6 @@ pub(super) struct Frame<'a> {
     pub menu: Option<(f32, f32)>,
     /// 悬停的菜单项。
     pub menu_hover: Option<usize>,
-    /// 场景图元;BelowText 在前,above-text 在后(运行时已排好)。
-    pub scene: &'a [SceneItem],
-    /// 场景素材目录;图片与精灵按它解析相对路径。
-    pub scene_dir: &'a Path,
-}
-
-/// 场景素材查询;窗口路径读磁盘,离屏自检没有素材。
-pub(super) trait SceneImages {
-    fn bitmap(&self, dir: &Path, src: &str) -> Option<ID2D1Bitmap1>;
 }
 
 /// 出帧路径的最小接口:画一帧、读回一个像素。
@@ -260,7 +238,6 @@ pub(super) struct Pipeline {
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
     bitmaps: Vec<ID2D1Bitmap1>,
-    images: RefCell<HashMap<PathBuf, Option<ID2D1Bitmap1>>>,
     size: (u32, u32),
 }
 
@@ -322,7 +299,6 @@ impl Pipeline {
                 _target: target,
                 _visual: visual,
                 bitmaps: Vec::new(),
-                images: RefCell::new(HashMap::new()),
                 size: (0, 0),
             };
             pipe.rebuild_surfaces(360, 76)?;
@@ -342,7 +318,6 @@ impl Pipeline {
         }
         // D2D 对后缓冲的引用先放掉,DXGI 才允许 ResizeBuffers。
         self.bitmaps.clear();
-        self.images.borrow_mut().clear();
         unsafe {
             self.swapchain
                 .ResizeBuffers(0, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SWAP_CHAIN_FLAG(0))
@@ -378,56 +353,6 @@ impl Pipeline {
     }
 }
 
-impl SceneImages for Pipeline {
-    /// 加载场景素材;PNG 由系统 WIC 解码,不增加依赖。缺文件返回 None,
-    /// 节点整颗跳过,候选窗照常。
-    fn bitmap(&self, dir: &Path, src: &str) -> Option<ID2D1Bitmap1> {
-        let key = dir.join(src);
-        if let Some(cached) = self.images.borrow().get(&key) {
-            return cached.clone();
-        }
-        let loaded = decode_bitmap(&self.core.dc, &key);
-        if loaded.is_none() {
-            println!("场景素材缺文件或解不开:{}", key.display());
-        }
-        self.images.borrow_mut().insert(key, loaded.clone());
-        loaded
-    }
-}
-
-/// 用 WIC 把图片解成 32bpp 预乘 BGRA 的 D2D 位图。
-fn decode_bitmap(dc: &ID2D1DeviceContext, path: &Path) -> Option<ID2D1Bitmap1> {
-    unsafe {
-        let wic: IWICImagingFactory = CoCreateInstance(
-            &CLSID_WICImagingFactory,
-            None::<&windows::core::IUnknown>,
-            CLSCTX_INPROC_SERVER,
-        )
-        .ok()?;
-        let decoder: IWICBitmapDecoder = wic
-            .CreateDecoderFromFilename(
-                &windows::core::HSTRING::from(path.as_os_str()),
-                None,
-                GENERIC_READ,
-                WICDecodeMetadataCacheOnDemand,
-            )
-            .ok()?;
-        let frame: IWICBitmapFrameDecode = decoder.GetFrame(0).ok()?;
-        let converter: IWICFormatConverter = wic.CreateFormatConverter().ok()?;
-        converter
-            .Initialize(
-                &frame,
-                &GUID_WICPixelFormat32bppPBGRA,
-                WICBitmapDitherTypeNone,
-                None,
-                0.0,
-                WICBitmapPaletteTypeCustom,
-            )
-            .ok()?;
-        dc.CreateBitmapFromWicBitmap(&converter, None).ok()
-    }
-}
-
 impl Target for Pipeline {
     fn paint_frame(&mut self, f: &Frame, text: &Text) -> Result<(), String> {
         let index = unsafe { self.swapchain.GetCurrentBackBufferIndex() } as usize;
@@ -437,7 +362,7 @@ impl Target for Pipeline {
         unsafe {
             dc.SetTarget(&bitmap);
             dc.BeginDraw();
-            paint(&dc, &factory, f, text, &bitmap, &*self);
+            paint(&dc, &factory, f, text, &bitmap);
             dc.EndDraw(None, None)
         }
         .map_err(|e| format!("EndDraw: {e}"))
@@ -498,13 +423,6 @@ impl Offscreen {
     }
 }
 
-impl SceneImages for Offscreen {
-    /// 离屏自检没有场景素材;图片与精灵节点整体跳过。
-    fn bitmap(&self, _dir: &Path, _src: &str) -> Option<ID2D1Bitmap1> {
-        None
-    }
-}
-
 impl Target for Offscreen {
     fn paint_frame(&mut self, f: &Frame, text: &Text) -> Result<(), String> {
         let dc = self.core.dc.clone();
@@ -513,7 +431,7 @@ impl Target for Offscreen {
         unsafe {
             dc.SetTarget(&bitmap);
             dc.BeginDraw();
-            paint(&dc, &factory, f, text, &bitmap, &*self);
+            paint(&dc, &factory, f, text, &bitmap);
             dc.EndDraw(None, None)
         }
         .map_err(|e| format!("EndDraw: {e}"))
@@ -558,18 +476,6 @@ fn read_bgr(
     }
 }
 
-/// 场景素材的来源分辨率:@2x/@3x 写进文件名,没写按 1x。
-fn asset_scale(src: &str) -> f32 {
-    let lower = src.to_ascii_lowercase();
-    if lower.contains("@3x") {
-        3.0
-    } else if lower.contains("@2x") {
-        2.0
-    } else {
-        1.0
-    }
-}
-
 /// 0xRRGGBB 转成与 [`read_bgr`] 同序的 (B, G, R),自检比较才不会错位。
 pub(super) fn rgb(rgb: u32) -> (u8, u8, u8) {
     (
@@ -608,27 +514,6 @@ impl Frame<'_> {
     }
 }
 
-/// 场景配色转主题色。
-fn scene_fill(fill: Fill, palette: &Palette) -> u32 {
-    match fill {
-        Fill::Palette(name) => match name {
-            lueying_scene::PaletteName::Bg => palette.bg,
-            lueying_scene::PaletteName::Border => palette.border,
-            lueying_scene::PaletteName::Text => palette.text,
-            lueying_scene::PaletteName::TextSecondary => palette.text_secondary,
-            lueying_scene::PaletteName::TextTertiary => palette.text_tertiary,
-            lueying_scene::PaletteName::Accent => palette.accent,
-            lueying_scene::PaletteName::OnAccent => palette.on_accent,
-            lueying_scene::PaletteName::Danger => palette.danger,
-            lueying_scene::PaletteName::AccentText => palette.accent_text,
-            lueying_scene::PaletteName::SelectedBg => palette.selected_bg,
-            lueying_scene::PaletteName::SelectedText => palette.selected_text,
-            lueying_scene::PaletteName::Hover => palette.hover,
-        },
-        Fill::Rgba(rgb) => rgb,
-    }
-}
-
 fn rrect(rect: panel::Rect, radius: f32) -> D2D1_ROUNDED_RECT {
     D2D1_ROUNDED_RECT {
         rect: D2D_RECT_F {
@@ -651,36 +536,15 @@ fn d2d_rect(rect: panel::Rect) -> D2D_RECT_F {
     }
 }
 
-/// 特效录制结果:按 `f.scene` 下标对位的模糊/阴影特效图。
-struct Baked {
-    blur: Vec<Option<ID2D1Effect>>,
-    /// 阴影只出影子,本体照常画。
-    shadow: Vec<Option<ID2D1Effect>>,
-    /// 菜单投影;菜单位置固定在 `f.menu`。
-    menu: Option<ID2D1Effect>,
-}
-
-impl Baked {
-    fn empty() -> Self {
-        Self {
-            blur: Vec::new(),
-            shadow: Vec::new(),
-            menu: None,
-        }
-    }
-}
-
 /// 画一帧完整画面;窗口与离屏两条路径共用,像素结果一致。
 ///
-/// 场景图元的坐标是设计单位(缩放由 `metrics` 携带),这里统一乘上
-/// 缩放落到物理像素;面板布局的输出本身就是物理像素,不再变换。
+/// 面板布局的输出本身就是物理像素;窗口层的弹簧位移在窗口位置上限,
+/// 这里不再变换。
 fn paint(
     dc: &ID2D1DeviceContext,
     factory: &ID2D1Factory1,
     f: &Frame,
     text: &Text,
-    target: &ID2D1Bitmap1,
-    images: &dyn SceneImages,
 ) {
     unsafe {
         let s = f.metrics.scale();
@@ -690,9 +554,6 @@ fn paint(
             .CreateSolidColorBrush(&D2D1_COLOR_F::default(), None)
             .expect("建纯色画刷失败");
         dc.Clear(None);
-        // 带特效的场景内容先录进命令表:特效图必须在无图层状态下录制,
-        // 录完再回到后缓冲接着画普通内容。
-        let baked = bake_effects(dc, f, text, target, images);
         let far = D2D_RECT_F {
             left: -100000.0,
             top: -100000.0,
@@ -738,13 +599,10 @@ fn paint(
             s,
             None::<&ID2D1StrokeStyle>,
         );
-        // 场景层:文字下面的先画(含特效图)。
-        paint_scene(dc, f, text, SceneLayer::BelowText, &baked, images);
         preedit_bar(dc, f, text, &brush, width);
         draw_items(dc, f, text, &brush, width, height);
-        paint_scene(dc, f, text, SceneLayer::AboveText, &baked, images);
         if let Some((mx, my)) = f.menu {
-            draw_menu(dc, f, text, &brush, mx, my, &baked);
+            draw_menu(dc, f, text, &brush, mx, my);
         }
         dc.PopLayer();
         if f.opacity < 1.0 {
@@ -762,407 +620,6 @@ fn layer_params(bounds: &D2D_RECT_F, opacity: f32) -> D2D1_LAYER_PARAMETERS1 {
         opacity,
         opacityBrush: std::mem::ManuallyDrop::new(None),
         layerOptions: D2D1_LAYER_OPTIONS1_NONE,
-    }
-}
-
-/// 把带特效的场景内容录进命令表并接上 D2D 内置特效图。
-/// 录制期间目标在命令表与后缓冲之间来回切,必须发生在推图层之前。
-fn bake_effects(
-    dc: &ID2D1DeviceContext,
-    f: &Frame,
-    text: &Text,
-    target: &ID2D1Bitmap1,
-    images: &dyn SceneImages,
-) -> Baked {
-    unsafe {
-        let mut baked = Baked::empty();
-        let s = f.metrics.scale();
-        for item in f.scene {
-            let Some(effect) = item.effect.as_ref() else {
-                baked.blur.push(None);
-                baked.shadow.push(None);
-                continue;
-            };
-            baked.blur.push(None);
-            baked.shadow.push(None);
-            let Ok(cmdlist) = dc.CreateCommandList() else {
-                continue;
-            };
-            let Ok(image) = cmdlist.cast::<ID2D1Image>() else {
-                continue;
-            };
-            let Ok(brush) = dc.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None) else {
-                continue;
-            };
-            dc.SetTransform(&Matrix3x2::scale(s, s));
-            dc.SetTarget(&image);
-            if let Err(e) = scene_item(dc, f, text, item, &brush, images) {
-                println!("场景图元录制约失败:{e}");
-            }
-            cmdlist.Close().ok();
-            dc.SetTarget(target);
-            dc.SetTransform(&Matrix3x2::identity());
-            let image = &image;
-            let effect = match effect {
-                EffectOut::Blur { radius } => {
-                    dc.CreateEffect(&CLSID_D2D1GaussianBlur)
-                        .ok()
-                        .map(|effect: ID2D1Effect| {
-                            effect.SetInput(0, image, true);
-                            let dev = (radius.max(0.0) * s).to_ne_bytes();
-                            let _ = effect.SetValue(
-                                D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0 as u32,
-                                D2D1_PROPERTY_TYPE_FLOAT,
-                                &dev,
-                            );
-                            effect
-                        })
-                }
-                EffectOut::Shadow { color, .. } => {
-                    dc.CreateEffect(&CLSID_D2D1Shadow)
-                        .ok()
-                        .map(|effect: ID2D1Effect| {
-                            effect.SetInput(0, image, true);
-                            let rgba = color.map_or(0x000000, |rgb| scene_fill(rgb, f.palette));
-                            // D2D1_SHADOW_PROP_COLOR 是 float4:R、G、B、A 依次打包。
-                            let bytes = [
-                                ((rgba >> 16) & 0xff) as f32 / 255.0,
-                                ((rgba >> 8) & 0xff) as f32 / 255.0,
-                                (rgba & 0xff) as f32 / 255.0,
-                                0.28,
-                            ]
-                            .iter()
-                            .flat_map(|value| value.to_ne_bytes())
-                            .collect::<Vec<u8>>();
-                            let _ = effect.SetValue(
-                                D2D1_SHADOW_PROP_COLOR.0 as u32,
-                                D2D1_PROPERTY_TYPE_FLOAT,
-                                &bytes,
-                            );
-                            let dev = (3.0 * s).to_ne_bytes();
-                            let _ = effect.SetValue(
-                                D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32,
-                                D2D1_PROPERTY_TYPE_FLOAT,
-                                &dev,
-                            );
-                            effect
-                        })
-                }
-            };
-            match effect {
-                Some(effect) => match item.effect.as_ref() {
-                    Some(EffectOut::Blur { .. }) => {
-                        baked.blur.last_mut().unwrap().replace(effect);
-                    }
-                    Some(EffectOut::Shadow { .. }) => {
-                        baked.shadow.last_mut().unwrap().replace(effect);
-                    }
-                    _ => {}
-                },
-                None => println!("场景特效图建不起来,这一帧走素图"),
-            }
-        }
-        // 菜单投影:把菜单底录进命令表,套阴影特效。
-        if f.menu.is_some() {
-            let s = f.metrics.scale();
-            let (w, h) = (116.0 * s, panel::menu_height(&f.metrics));
-            let Ok(cmdlist) = dc.CreateCommandList() else {
-                return baked;
-            };
-            let Ok(image) = cmdlist.cast::<ID2D1Image>() else {
-                return baked;
-            };
-            let Ok(brush) = dc.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None) else {
-                return baked;
-            };
-            dc.SetTarget(&image);
-            brush.SetColor(&color(0xffffff));
-            dc.FillRoundedRectangle(
-                &rrect(panel::Rect::from_xywh(0.0, 0.0, w, h), 4.0 * s),
-                &brush,
-            );
-            cmdlist.Close().ok();
-            dc.SetTarget(target);
-            if let Ok(effect) = dc.CreateEffect(&CLSID_D2D1Shadow) {
-                effect.SetInput(0, &image, true);
-                let black = [0.0f32, 0.0, 0.0, 0.11]
-                    .iter()
-                    .flat_map(|value| value.to_ne_bytes())
-                    .collect::<Vec<u8>>();
-                let _ = effect.SetValue(
-                    D2D1_SHADOW_PROP_COLOR.0 as u32,
-                    D2D1_PROPERTY_TYPE_FLOAT,
-                    &black,
-                );
-                let dev = (6.0 * s).to_ne_bytes();
-                let _ = effect.SetValue(
-                    D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32,
-                    D2D1_PROPERTY_TYPE_FLOAT,
-                    &dev,
-                );
-                baked.menu = Some(effect);
-            }
-        }
-        baked
-    }
-}
-
-/// 画一个层的场景图元;运行时输出按层排好,这里按层筛。
-fn paint_scene(
-    dc: &ID2D1DeviceContext,
-    f: &Frame,
-    text: &Text,
-    layer: SceneLayer,
-    baked: &Baked,
-    images: &dyn SceneImages,
-) {
-    unsafe {
-        let s = f.metrics.scale();
-        // 特效图在物理像素里;普通图元在设计单位里,乘缩放画。
-        dc.SetTransform(&Matrix3x2::scale(s, s));
-        for (index, item) in f.scene.iter().enumerate() {
-            if item.layer != layer {
-                continue;
-            }
-            match &item.effect {
-                Some(EffectOut::Blur { .. }) => {
-                    // 模糊图替换本体;画之前回到物理像素坐标。
-                    if let Some(effect) = &baked.blur[index] {
-                        if let Ok(output) = effect.GetOutput() {
-                            dc.SetTransform(&Matrix3x2::identity());
-                            let _ = dc.DrawImage(
-                                &output,
-                                None,
-                                None,
-                                D2D1_INTERPOLATION_MODE_LINEAR,
-                                D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                            );
-                            dc.SetTransform(&Matrix3x2::scale(s, s));
-                        }
-                    }
-                }
-                Some(EffectOut::Shadow { offset, .. }) => {
-                    // 阴影垫底,本体照常画在上面。
-                    if let Some(effect) = &baked.shadow[index] {
-                        if let Ok(output) = effect.GetOutput() {
-                            dc.SetTransform(&Matrix3x2::identity());
-                            let shift = Vector2 {
-                                X: offset[0] * s,
-                                Y: offset[1] * s,
-                            };
-                            let _ = dc.DrawImage(
-                                &output,
-                                Some(&shift as *const Vector2),
-                                None,
-                                D2D1_INTERPOLATION_MODE_LINEAR,
-                                D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                            );
-                            dc.SetTransform(&Matrix3x2::scale(s, s));
-                        }
-                    }
-                    let Ok(brush) = dc.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None) else {
-                        continue;
-                    };
-                    let _ = scene_item(dc, f, text, item, &brush, images);
-                }
-                None => {
-                    let Ok(brush) = dc.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None) else {
-                        continue;
-                    };
-                    let _ = scene_item(dc, f, text, item, &brush, images);
-                }
-            }
-        }
-        dc.SetTransform(&Matrix3x2::identity());
-    }
-}
-
-/// 画一个场景图元的内容;调用方已设好设计单位的变换与画刷颜色。
-/// 坐标系:rect 是设计单位,图元画在 rect 里或以 rect 左上角为原点。
-fn scene_item(
-    dc: &ID2D1DeviceContext,
-    f: &Frame,
-    text: &Text,
-    item: &SceneItem,
-    brush: &ID2D1SolidColorBrush,
-    images: &dyn SceneImages,
-) -> Result<(), String> {
-    unsafe {
-        let rect = panel::Rect::from_xywh(item.rect[0], item.rect[1], item.rect[2], item.rect[3]);
-        match &item.body {
-            Body::Shape {
-                shape,
-                radius,
-                stroke,
-                fill,
-            } => {
-                brush.SetColor(&color(scene_fill(*fill, f.palette)));
-                draw_shape(dc, shape, *radius, *stroke, rect, brush)
-            }
-            Body::Image { src } => {
-                let Some(bitmap) = images.bitmap(f.scene_dir, src) else {
-                    return Ok(());
-                };
-                let _ = dc.DrawBitmap(
-                    &bitmap,
-                    Some(&d2d_rect(rect) as *const D2D_RECT_F),
-                    item.opacity,
-                    D2D1_INTERPOLATION_MODE_LINEAR,
-                    None,
-                    None,
-                );
-                Ok(())
-            }
-            Body::Sprite { src, frame, grid } => {
-                let Some(bitmap) = images.bitmap(f.scene_dir, src) else {
-                    return Ok(());
-                };
-                // 图集横向排帧;@2x/@3x 素材按文件名比例换算源矩形。
-                let scale = asset_scale(src);
-                let frame_w = grid[0] as f32 * scale;
-                let frame_h = grid[1] as f32 * scale;
-                let source = D2D_RECT_F {
-                    left: *frame as f32 * frame_w,
-                    top: 0.0,
-                    right: (*frame as f32 + 1.0) * frame_w,
-                    bottom: frame_h,
-                };
-                let _ = dc.DrawBitmap(
-                    &bitmap,
-                    Some(&d2d_rect(rect) as *const D2D_RECT_F),
-                    item.opacity,
-                    D2D1_INTERPOLATION_MODE_LINEAR,
-                    Some(&source as *const D2D_RECT_F),
-                    None,
-                );
-                Ok(())
-            }
-            Body::Text {
-                content,
-                font_size,
-                fill,
-            } => {
-                brush.SetColor(&color(scene_fill(*fill, f.palette)));
-                draw_text(
-                    dc,
-                    text,
-                    content,
-                    *font_size,
-                    &panel::Rect::from_xywh(
-                        rect.left,
-                        rect.top,
-                        rect.width().max(1.0),
-                        rect.height(),
-                    ),
-                    brush,
-                );
-                Ok(())
-            }
-            Body::Particles {
-                shape,
-                fill,
-                particles,
-            } => {
-                brush.SetColor(&color(scene_fill(*fill, f.palette)));
-                for particle in particles {
-                    brush.SetColor(&D2D1_COLOR_F {
-                        a: particle.opacity.clamp(0.0, 1.0) * item.opacity,
-                        ..color(scene_fill(*fill, f.palette))
-                    });
-                    let center = Vector2 {
-                        X: rect.left + particle.x,
-                        Y: rect.top + particle.y,
-                    };
-                    let half = particle.size.max(0.0) * 0.5;
-                    match shape {
-                        Shape::Ellipse => dc.FillEllipse(
-                            &D2D1_ELLIPSE {
-                                point: center,
-                                radiusX: half,
-                                radiusY: half,
-                            },
-                            brush,
-                        ),
-                        _ => dc.FillRectangle(
-                            &D2D_RECT_F {
-                                left: center.X - half,
-                                top: center.Y - half,
-                                right: center.X + half,
-                                bottom: center.Y + half,
-                            },
-                            brush,
-                        ),
-                    }
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-/// 画一个形状;`stroke` 大于 0 画描边,否则整块填充。
-fn draw_shape(
-    dc: &ID2D1DeviceContext,
-    shape: &Shape,
-    radius: f32,
-    stroke: f32,
-    rect: panel::Rect,
-    brush: &ID2D1SolidColorBrush,
-) -> Result<(), String> {
-    unsafe {
-        match shape {
-            Shape::Rect => {
-                if stroke > 0.0 {
-                    dc.DrawRectangle(&d2d_rect(rect), brush, stroke, None::<&ID2D1StrokeStyle>);
-                } else {
-                    dc.FillRectangle(&d2d_rect(rect), brush);
-                }
-            }
-            Shape::RRect => {
-                let rounded = rrect(rect, radius.max(0.0));
-                if stroke > 0.0 {
-                    dc.DrawRoundedRectangle(&rounded, brush, stroke, None::<&ID2D1StrokeStyle>);
-                } else {
-                    dc.FillRoundedRectangle(&rounded, brush);
-                }
-            }
-            Shape::Ellipse => {
-                let ellipse = D2D1_ELLIPSE {
-                    point: Vector2 {
-                        X: (rect.left + rect.right) * 0.5,
-                        Y: (rect.top + rect.bottom) * 0.5,
-                    },
-                    radiusX: rect.width() * 0.5,
-                    radiusY: rect.height() * 0.5,
-                };
-                if stroke > 0.0 {
-                    dc.DrawEllipse(&ellipse, brush, stroke, None::<&ID2D1StrokeStyle>);
-                } else {
-                    dc.FillEllipse(&ellipse, brush);
-                }
-            }
-            Shape::Line { to } => {
-                let width = if stroke > 0.0 { stroke } else { 1.0 };
-                dc.DrawLine(
-                    Vector2 {
-                        X: rect.left,
-                        Y: rect.top,
-                    },
-                    Vector2 {
-                        X: rect.left + to[0],
-                        Y: rect.top + to[1],
-                    },
-                    brush,
-                    width,
-                    None::<&ID2D1StrokeStyle>,
-                );
-            }
-            // 路径图元这一版画成整块填充兜底;矢量路径等官方场景包需要时再接。
-            Shape::Path(_) => {
-                dc.FillRectangle(&d2d_rect(rect), brush);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1424,27 +881,11 @@ fn draw_menu(
     brush: &ID2D1SolidColorBrush,
     x: f32,
     y: f32,
-    baked: &Baked,
 ) {
     unsafe {
         let s = f.metrics.scale();
         let w = 116.0 * s;
         let h = panel::menu_height(&f.metrics);
-        // 轻投影把菜单从候选层上托起来;投影图已在无图层状态录好。
-        if let Some(effect) = &baked.menu {
-            if let Ok(output) = effect.GetOutput() {
-                let _ = dc.DrawImage(
-                    &output,
-                    Some(&Vector2 {
-                        X: x + s,
-                        Y: y + 2.0 * s,
-                    } as *const Vector2),
-                    None,
-                    D2D1_INTERPOLATION_MODE_LINEAR,
-                    D2D1_COMPOSITE_MODE_SOURCE_OVER,
-                );
-            }
-        }
         let body = panel::Rect::from_xywh(x + 0.5 * s, y + 0.5 * s, w - s, h - s);
         brush.SetColor(&color(f.palette.bg));
         dc.FillRoundedRectangle(&rrect(body, 4.0 * s), brush);

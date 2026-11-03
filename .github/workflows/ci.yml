@@ -110,7 +110,10 @@ jobs:
         run: cargo test -p lueying-server --lib --locked
       # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
       - name: Wasm guest 构建
-        run: cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
+          cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
       # 非 Rust 语言也能写扩展:C 头文件与示例 guest 用 clang 编成 wasm,
       # 扩展层单元测试会把这个模块真的跑一遍。本地没有 clang 就跳过。
       - name: C 示例 guest 编译
@@ -127,12 +130,10 @@ jobs:
             -Wl,--no-entry -Wl,--export-memory \
             -o target/c-guest/example.wasm crates/extguest/c/example.c
       # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
-      # 旁路层不带 --lib:测试要用包内 bin 当协议替身,必须一起编。
       # CLI 的子命令解析同样不进 E2E,在这里跑;联网 broker 的协议层同场。
       - name: 扩展层单元测试
         run: |
           cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extsvc -p lueying-extguest --lib --locked
-          cargo test -p lueying-bypass --locked
           cargo test -p lueying-broker --lib --locked
           cargo test -p lueying-cli --lib --locked
           # 联网层:Base64 与更新清单解析是平台无关的纯逻辑,Linux 上就能测。
@@ -156,11 +157,15 @@ jobs:
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
       # 官方 guest:win-e2e 装扩展与发布包都要它;产物拷进仓库路径供运行期读取。
-      - name: 构建 shot-ocr guest
+      - name: 构建官方 guest
         shell: pwsh
         run: |
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
+          cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
           Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
+          Copy-Item target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
       # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。
       - name: 安装 Inno Setup
@@ -230,7 +235,6 @@ jobs:
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success'
         run: |
           cargo test -p lueying-server --lib --release --locked
-          cargo test -p lueying-bypass --release --locked
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
       - name: TSF 构建(静态 CRT)
         env:

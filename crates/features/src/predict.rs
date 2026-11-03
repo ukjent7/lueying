@@ -15,7 +15,7 @@ const MAX_SUGGESTIONS: usize = 3;
 /// 外部联想来源:给前词序列,返回 (词, 全拼)。内置(用户词库搭配)是
 /// 默认;外部来源的结果排在内置联想之后,拼音同样要过前缀过滤。同步
 /// 契约:调用发生在按键路径上,实现必须亚毫秒级(本地小表、预取好的
-/// 缓存);慢模型请在旁路进程自己预取,把现成结果放进来。
+/// 缓存);慢模型请在原生扩展进程自己预取,把现成结果放进来。
 pub trait PredictSource: Send + Sync {
     fn predict(&self, previous: &[&str], limit: usize) -> Vec<(String, String)>;
 }

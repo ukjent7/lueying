@@ -270,6 +270,14 @@ fn effects_set(cfg: &mut AppConfig, value: bool) {
     cfg.effects = value;
 }
 
+fn allow_all_network_get(cfg: &AppConfig) -> bool {
+    cfg.allow_all_extension_network
+}
+
+fn allow_all_network_set(cfg: &mut AppConfig, value: bool) {
+    cfg.allow_all_extension_network = value;
+}
+
 fn predict_get(cfg: &AppConfig) -> bool {
     cfg.predict
 }
@@ -700,13 +708,13 @@ pub static SETTINGS: &[SettingDef] = &[
     },
     SettingDef {
         key: "effects",
-        title: "场景装饰",
-        detail: "场景装饰层;皮肤扩展装好或改盘后一秒内热重载",
+        title: "弹性动效",
+        detail: "候选窗出现、翻页与高亮的弹簧阻尼动效",
         value: ValueType::Bool,
         default: DefaultValue::Bool(true),
         ui: Some(UiDef {
             page: PageId::Candidate,
-            keywords: "效果 动画 外观 场景",
+            keywords: "效果 动画 外观 弹性 弹簧",
             control: toggle(ids::EFFECTS_TOGGLE, effects_get, effects_set),
             visible: always,
         }),
@@ -747,6 +755,23 @@ pub static SETTINGS: &[SettingDef] = &[
             page: PageId::Extensions,
             keywords: "OCR 截图 识别 模型",
             control: segment(ids::OCR, OCR_CHOICES, 60.0, false, ocr_get, ocr_set),
+            visible: always,
+        }),
+    },
+    SettingDef {
+        key: "allow_all_extension_network",
+        title: "允许扩展自由联网",
+        detail: "开启后不再逐个域名确认;扩展仍需在清单里声明网络用途",
+        value: ValueType::Bool,
+        default: DefaultValue::Bool(false),
+        ui: Some(UiDef {
+            page: PageId::Extensions,
+            keywords: "网络 联网 域名 白名单 扩展",
+            control: toggle(
+                ids::ALLOW_ALL_NETWORK,
+                allow_all_network_get,
+                allow_all_network_set,
+            ),
             visible: always,
         }),
     },
@@ -824,22 +849,6 @@ pub static SETTINGS: &[SettingDef] = &[
         detail: "默认关闭;开启后本地工具可凭令牌借用上屏能力",
         value: ValueType::Bool,
         default: DefaultValue::Bool(false),
-        ui: None,
-    },
-    SettingDef {
-        key: "settled_rerank_provider",
-        title: "停顿重排提供者",
-        detail: "写 bypass 走旁路进程;缺省用内置 25M 模型",
-        value: ValueType::Text,
-        default: DefaultValue::Text(""),
-        ui: None,
-    },
-    SettingDef {
-        key: "bypass_exe",
-        title: "旁路进程路径",
-        detail: "停顿重排提供者的可执行文件",
-        value: ValueType::Text,
-        default: DefaultValue::Text(""),
         ui: None,
     },
     SettingDef {

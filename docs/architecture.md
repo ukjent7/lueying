@@ -51,7 +51,7 @@ Windows 侧的输入法表面共用同一套 Direct2D/DirectWrite 绘制代码�
 - **候选窗口**：独立无焦点 Win32 窗口（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`），D3D11 → Direct2D → DirectComposition 交换链呈现；无硬件适配器时用 WARP 软件设备，绘制代码不变。
 - **异常恢复**：设备被摘除或驱动重启时，就地重建交换链与设备上下文，保证打字过程无中断。
 - **状态徽标与面板**：同一绘制层画到 32 位预乘位图，再经分层窗口或 BitBlt 上屏；徽标不占 GPU 资源，并在布局上与候选窗口动态避让。
-- **背板材质**：候选窗底色可交给 DWM accent 亚克力，自绘层只铺半透明内容，圆角由 DWM 裁；系统关闭「透明效果」、高对比度、用户皮肤或调用失败时回自绘实底。
+- **背板材质**：候选窗底色交给 DWM——Win11 22H2+ 用文档化的系统背板（`DWMSBT_TRANSIENTWINDOW`），旧系统回退未文档化的 accent 亚克力；自绘层只铺半透明内容，圆角由 DWM 裁。系统关闭「透明效果」、高对比度、用户皮肤或调用失败时回自绘实底。
 - **动效规格**：出现走弹簧（自落点下方 6pt 弹回，约 260ms）、淡出 90ms、翻页 90ms 滑动；支持随时被按键打断；系统开启「减少动态效果」时直接呈现终态。
 
 macOS 侧的候选窗是 InputMethodKit 外壳：无边框 `NSPanel` + 自绘 `NSView`，底色交给系统材质背板——macOS 26 用液态玻璃 `NSGlassEffectView`，更早的版本退回 `NSVisualEffectView`；系统要求降低透明度或提高对比度时改用自绘实底。出现动效由阻尼弹簧驱动：窗口自下方 6pt 弹回原位，约 260ms 落定；系统开启「减少动态效果」时直接呈现终态。布局、命中与绘制指令仍与 Windows 侧共用 `lueying-render` 的同一份几何。
@@ -68,6 +68,7 @@ macOS 侧的候选窗是 InputMethodKit 外壳：无边框 `NSPanel` + 自绘 `N
 | `%APPDATA%\lueying\apps.toml` | 应用隔离配置 | 针对特定可执行文件的标点与学习规则 |
 | `%APPDATA%\lueying\secrets\<id>.json` | 扩展私密配置 | 仅限当前用户权限，支持原子写入 |
 | `%APPDATA%\lueying\extensions\` | 原生扩展目录 | 按需安装的 PP-OCRv6 识别引擎(独立进程)与 `consent.json` 同意记录 |
+| `%APPDATA%\lueying\clipboard-history.json` | 剪贴板历史 | 最近 200 条纯文本,OCR/语音结果带来源标签 |
 | `%LOCALAPPDATA%\lueying\user.tsv` | 用户个性化词库 | 记录选词历史、造词、搭配与置顶数据 |
 | `%LOCALAPPDATA%\lueying\logs\server.log` | 服务端日志 | 超过 1MB 自动滚动，只保留单份归档 |
 
@@ -82,8 +83,8 @@ macOS 侧的候选窗是 InputMethodKit 外壳：无边框 `NSPanel` + 自绘 `N
   - `Module`：在候选生成与上屏环节对结果进行过滤、重排或改写（如自定义短语、联想）。
 - **运行期扩展（Extism JIT 沙箱）**：
   - 每个扩展一个 worker 线程，`lueying-extmeta` 管理清单与权限，命令与外观在 worker 上同步执行。
-  - 外观扩展仅可访问场景状态并返回主题色补丁，绝不派发候选汉字、按键历史或应用名称。
-  - 场景皮肤扩展（kind=scene）是纯声明包：包内 scene.toml 与素材由候选窗场景层直接加载并热重载，启用列表里第一个皮肤生效；没有可执行体，不进 Wasm 运行时。
+  - 外观扩展仅可访问面板状态并返回主题色补丁，绝不派发候选汉字、按键历史或应用名称。
+  - 原生扩展（PP-OCR、SenseVoice 等）是独立可执行程序，由 `lueying-extwasm::native` 按需拉起，跑在无能力 AppContainer 与 Job Object 限额里，空闲自动回收。
   - 线性内存 16 MiB、值栈 256 KiB、燃料计量（初始化 50M / 命令 200M / 外观 20M）；trap 后实例仍可用，连续 3 次故障自动隔离停用。
   - 截图、识别、面板等服务是阻塞调用，只阻塞扩展 worker；扩展卸载时在 50ms 内取消。
 

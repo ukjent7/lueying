@@ -126,7 +126,7 @@ impl Engine {
                 user.reject(&key, text);
             }
             user.forgive_word(&learn_text);
-            user.learn(&learned, &learn_text);
+            user.learn(&learned, &learn_text, cand.freq > 0);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
             }
@@ -175,7 +175,7 @@ impl Engine {
                 self.user
                     .write()
                     .unwrap_or_else(|p| p.into_inner())
-                    .learn(&key, &text);
+                    .learn(&key, &text, false);
             }
         } else {
             self.phrase = phrase;

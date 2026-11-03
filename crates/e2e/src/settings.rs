@@ -121,7 +121,6 @@ pub fn run(report: &mut String) -> usize {
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let import = settings.activate(&Id::new(ids::IMPORT_LUEXT, 0));
-    let scene_debug = settings.activate(&Id::new(ids::SCENE_DEBUG, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
     let audit = settings.activate(&Id::new(ids::AUDIT, 0));
     let metrics = settings.activate(&Id::new(ids::EXT_METRICS, 0));
@@ -156,7 +155,6 @@ pub fn run(report: &mut String) -> usize {
             && choose == Some(Action::ChooseScript)
             && open == Some(Action::OpenScripts)
             && import == Some(Action::ImportLuext)
-            && scene_debug == Some(Action::SceneDebug)
             && consent == Some(Action::ApproveExtension)
             && audit == Some(Action::OpenExtAudit)
             && metrics == Some(Action::RefreshExtMetrics)
@@ -175,7 +173,7 @@ pub fn run(report: &mut String) -> usize {
                 .as_deref()
                 .is_some_and(|text| text.contains("未安装")),
         format!(
-            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{import:?}/{scene_debug:?}/{consent:?}/{audit:?}/{metrics:?} 切换 {switched}"
+            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{import:?}/{consent:?}/{audit:?}/{metrics:?} 切换 {switched}"
         ),
     );
 

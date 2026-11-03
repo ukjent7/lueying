@@ -1,6 +1,6 @@
 # 双拼输入方案
 
-双拼作为编译期输入方案（`Scheme`）接入掠影引擎。输入时两键即可对应一个完整汉语音节，引擎在边界处将其展开为规范全拼后送入词图解码，全量共享主词典、语言模型、纠错逻辑与用户自学习词库。
+双拼作为官方编译期输入方案扩展（`extensions/input-schemes` 的 `Scheme`）接入掠影引擎。输入时两键即可对应一个完整汉语音节，引擎在边界处将其展开为规范全拼后送入词图解码，全量共享主词典、语言模型、纠错逻辑与用户自学习词库。
 
 ## 内置支持方案
 
@@ -34,6 +34,6 @@ scheme = "xiaohe"
 
 ## 源码实现参考
 
-- `crates/features/src/shuangpin.rs`：双拼键位布局表、按键展开与区间双向映射。
+- `extensions/input-schemes/src/shuangpin.rs`：双拼键位布局表、按键展开与区间双向映射。
 - `crates/engine/src/scheme.rs`：`Scheme` 核心抽象契约。
 - `crates/engine/src/input.rs`：输入流水线展开与学习键归一化处理。

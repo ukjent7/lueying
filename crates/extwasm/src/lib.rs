@@ -30,6 +30,7 @@
 pub mod bindings;
 mod host;
 mod manifest;
+pub mod native;
 mod pack;
 mod runtime;
 
@@ -48,7 +49,8 @@ pub use lueying_extmeta::{
     Setting, SettingValue, When,
 };
 pub use lueying_extproto::{
-    ClipboardText, Delivered, MAX_PATCH_BYTES, MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API,
+    AsrText, AudioRecording, ClipboardHistory, ClipboardHistoryItem, ClipboardText, Delivered,
+    MAX_PATCH_BYTES, MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API,
     SceneIn, ScenePatch, Shot, StoreKeys, StoreValue,
 };
 pub use lueying_extsvc::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry};

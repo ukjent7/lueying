@@ -880,6 +880,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "clipboard-history"
+version = "0.1.0"
+dependencies = [
+ "lueying-extguest",
+ "serde_json",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3283,16 +3291,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-bypass"
-version = "0.1.0"
-dependencies = [
- "lueying-extmeta",
- "lueying-extsvc",
- "serde_json",
- "windows",
-]
-
-[[package]]
 name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
@@ -3301,7 +3299,6 @@ dependencies = [
  "lueying-extmeta",
  "lueying-features",
  "lueying-protocol",
- "lueying-scene",
  "serde_json",
  "toml 1.1.8+spec-1.1.0",
 ]
@@ -3386,10 +3383,20 @@ dependencies = [
  "serde",
  "serde_json",
  "wasmtime",
+ "windows",
 ]
 
 [[package]]
 name = "lueying-features"
+version = "0.1.0"
+dependencies = [
+ "lueying-dict",
+ "lueying-ext",
+ "lueying-input-schemes",
+]
+
+[[package]]
+name = "lueying-input-schemes"
 version = "0.1.0"
 dependencies = [
  "lueying-dict",
@@ -3498,14 +3505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-scene"
-version = "0.1.0"
-dependencies = [
- "serde",
- "toml 1.1.8+spec-1.1.0",
-]
-
-[[package]]
 name = "lueying-server"
 version = "0.1.0"
 dependencies = [
@@ -3514,7 +3513,6 @@ dependencies = [
  "encoding_rs",
  "getrandom 0.4.3",
  "lueying-broker",
- "lueying-bypass",
  "lueying-dict",
  "lueying-engine",
  "lueying-extmeta",
@@ -3524,7 +3522,6 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
- "lueying-scene",
  "lueying-session",
  "serde",
  "serde_json",
@@ -6508,6 +6505,14 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voice-asr"
+version = "0.1.0"
+dependencies = [
+ "lueying-extguest",
+ "serde_json",
+]
 
 [[package]]
 name = "vtable"

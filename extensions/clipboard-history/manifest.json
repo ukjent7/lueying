@@ -1,0 +1,15 @@
+{
+  "id": "clipboard-history",
+  "name": "剪贴板历史",
+  "version": "0.1.0",
+  "api": 4,
+  "wasm": "extension.wasm",
+  "activate": {
+    "hotkeys": ["Win+Shift+V"],
+    "commands": [
+      { "id": "show", "title": "剪贴板历史", "when": "any" }
+    ]
+  },
+  "needs": ["clipboard", "panel", "output", "notify"],
+  "capabilities": ["clipboard"]
+}

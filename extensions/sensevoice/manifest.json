@@ -1,0 +1,9 @@
+{
+  "id": "sensevoice",
+  "name": "SenseVoice 语音识别引擎",
+  "version": "0.1.0",
+  "api": 4,
+  "kind": "native",
+  "exe": "sensevoice.exe",
+  "capabilities": []
+}

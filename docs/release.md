@@ -33,7 +33,7 @@ Windows CI 构建任务依次执行以下步骤：
 5. **数字签名**：
    - **Authenticode 签名**：若配置了 `WINDOWS_PFX_BASE64` 与密码密钥，使用 `signtool` 对安装包进行数字签名。
    - **清单签名**：生成 `lueying-manifest.json` 与 `.sha256`，若配置了 `LUEYING_SIGN_KEY` 则追加 Ed25519 签名。
-6. **创建 GitHub Release**：将安装包、校验文件、`lueying-ppocr.exe`（官方原生扩展，发布构建时已把它的地址与哈希补进官方目录）、更新清单与签名上传至发布版本。
+6. **创建 GitHub Release**：将安装包、校验文件、`lueying-ppocr.exe`（官方原生扩展，发布构建时已把它的地址与哈希补进官方目录）、更新清单与签名上传至发布版本；发布 SenseVoice 时同样上传 `lueying-sensevoice.exe`，用 `cargo run -p xtask -- catalog-exe --id sensevoice --exe <文件> --url <地址>` 补齐目录。
 7. **winget manifest**：用 `cargo run -p xtask -- winget --version <版本> --sha256 <setup 哈希>` 生成三份 manifest，提交到 microsoft/winget-pkgs 开 PR。
 
 ### 签名密钥说明

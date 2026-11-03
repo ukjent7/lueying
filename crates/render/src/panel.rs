@@ -417,7 +417,7 @@ pub struct Frame<'a> {
 /// 画一帧候选面板:圆角底、拼音条、分页与候选行。
 ///
 /// 这是跨平台画布的基准视觉,macOS 直接使用;Windows 的 D2D 路径另有
-/// 场景层与动画,不经过这里。布局与命中仍共用本文件的几何函数。
+/// 动效与合成,不经过这里。布局与命中仍共用本文件的几何函数。
 pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
     let s = frame.metrics.scale();
     let width = panel_width(frame.spec, &frame.metrics, measure);

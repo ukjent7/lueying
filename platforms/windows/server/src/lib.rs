@@ -31,7 +31,6 @@ pub mod settings_view;
 
 mod settings_text;
 
-pub mod seam;
 
 pub mod skin;
 

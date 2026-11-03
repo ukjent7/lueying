@@ -21,7 +21,7 @@
 | | 候选字号 | 小、标准、大（仅缩放候选文字，拼音行保持比例） |
 | | 主题色 | 内置预设强调色（高对比度模式下自动跟随系统） |
 | | 联想与模糊音 | 控制下一词智能联想与全自动模糊音容错 |
-| **扩展** | 官方扩展 | 按需下载管理 PP-OCRv6 离线识别包 |
+| **扩展** | 官方扩展 | 按需下载管理 PP-OCRv6、SenseVoice 与官方工具扩展 |
 | | 脚本扩展列表 | 查看、启用、停用已安装的 Wasm 扩展并审查权限 |
 | | 扩展专属设置 | 动态渲染扩展清单声明的配置项（开关、单选、密钥） |
 | **词库** | 自定义短语 | 窗内文本编辑框维护 `phrases.txt`，保存即生效 |
@@ -60,11 +60,12 @@ page_size = 5                   # 每页候选数量: 3, 5, 9
 ui_layout = "horizontal"        # 候选排列: "horizontal" (横排), "vertical" (竖排)
 ui_font = "standard"            # 字号档位: "small", "standard", "large"
 ui_accent = 0                   # 主题强调色下标: 0~5 或颜色名 (如 "蓝", "绿")
-effects = true                  # 是否启用场景装饰层
+effects = true                  # 是否启用候选窗弹性动效
 
 # 系统与分发
 update_channel = "stable"       # 更新渠道: "stable", "beta"
 extensions = ["shot-ocr"]       # 启用的运行期扩展列表
+allow_all_extension_network = false # 允许扩展自由联网,跳过逐域名白名单
 
 # 云同步(WebDAV)
 webdav_url = ""                 # 远端目录地址,只接受 HTTPS;留空不同步
@@ -111,6 +112,7 @@ punct = false
 
 在「扩展 → 官方扩展」中可按需安装大体积离线资产（地址与哈希固定于 `Catalog/official-extensions.json`，经 SHA-256 校验后安装）：
 - **PP-OCRv6 识别引擎**：原生扩展（约 45 MB，含检测与识别 ONNX 权重），独立进程本地推理，识别不联网；装好后需在「运行期扩展」中同意。
+- **SenseVoice 语音识别引擎**：原生扩展（约 150 MB），纯 CPU 离线推理，供「离线语音输入」扩展调用；装好后需在「运行期扩展」中同意。
 
 8M/25M 神经重排模型随基础安装包分发，无需在扩展页下载。
 

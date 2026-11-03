@@ -10,7 +10,7 @@
 //! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/lueying`
 //! 用法:`cargo run -p xtask -- update-manifest --version 0.2.0 --name lueying-0.2.0-setup.exe --size N --sha256 <hex> --mirror <url> --out dist`
 //! 用法:`cargo run -p xtask -- sign-manifest --manifest dist/lueying-manifest.json --key <种子文件>`
-//! 用法:`cargo run -p xtask -- catalog-exe --exe target/release/ppocr.exe --url <发布资产地址>`
+//! 用法:`cargo run -p xtask -- catalog-exe --id <ppocr|sensevoice> --exe <发布exe> --url <发布资产地址>`
 //! 用法:`cargo run -p xtask -- winget --version 0.2.0 --sha256 <setup哈希> --out dist/winget`
 
 #[path = "dict.rs"]

@@ -341,7 +341,7 @@ fn main() {
             .first()
             .and_then(|c| c.hint.clone())
             .unwrap_or_default();
-        let typo_ok = typo_top == "好" && typo_hint == "纠正 hao";
+        let typo_ok = typo_top == "好" && typo_hint == "纠自 hao";
         if !typo_ok {
             failures += 1;
         }

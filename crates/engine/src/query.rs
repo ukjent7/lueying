@@ -57,6 +57,8 @@ pub struct Candidate {
     pub hint: Option<String>,
     /// 纠正候选的学习键(原串与纠正串不同,不能从 `spans` 反推)。
     pub learn_key: Option<String>,
+    /// 手误纠正产生的候选;界面上用灰字标出原拼音,学习按纠正后的键。
+    pub correction: bool,
     /// 快捷输入(日期/时间/数字金额/符号):不写词库,也不参与词级转移。
     pub quick: bool,
     /// 用户在同键下跳过过该候选:只小幅降权,精确首位保护也会让位。
@@ -95,6 +97,7 @@ impl Candidate {
             groups: 0,
             hint: None,
             learn_key: None,
+            correction: false,
             quick: false,
             rejected: false,
             learn_text: None,
@@ -213,9 +216,17 @@ impl Hit {
         hit
     }
 
-    /// 纯用户词(词典没有):以百万级词频为基准,学习过的词迅速领先。
+    /// 纯用户词(词典没有):按使用次数分三档给基准词频。
+    ///
+    /// 首次出现的自造词只给很低的基准,先落在候选后段;连续使用后
+    /// 逐级抬高,避免一次误学就把陌生词顶到首选。
     fn user_only(word: String, user_freq: u32, total: f64, edits: usize, groups: u8) -> Self {
-        let mut hit = Self::raw(word, 1_000_000.0, user_freq, total, edits);
+        let base = match user_freq {
+            0 | 1 => 1_000.0,
+            2 => 30_000.0,
+            _ => 1_000_000.0,
+        };
+        let mut hit = Self::raw(word, base, user_freq, total, edits);
         hit.groups = groups;
         hit
     }
@@ -581,7 +592,8 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             cand.sentence = false;
             cand.edits = 0;
             cand.groups = 0;
-            cand.hint = Some(format!("纠正 {}", key.replace('\'', " ")));
+            cand.correction = true;
+            cand.hint = Some(format!("纠自 {}", key.replace('\'', " ")));
             cand.learn_key = Some(key);
             kept.push(cand);
         }
@@ -599,7 +611,36 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             best = Some(fixed);
         }
     }
-    best.unwrap_or(built)
+    let Some(mut fixed) = best else {
+        return built;
+    };
+    // 精确输入本来能出整句/整词时,纠错只做后备;准确候选留在前面。
+    // 精确结果为空或明显低分时,高置信纠错直接置顶,原候选紧随其后,
+    // 用户按一下下方向键就能回到原拼音。
+    let original_top = built
+        .cands
+        .iter()
+        .map(|candidate| candidate.score)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let confident = original_top == f64::NEG_INFINITY || best_score > original_top + 4.0;
+    if confident {
+        fixed.cands.extend(built.cands);
+    } else {
+        // 低置信度只放前两条纠正候选,插在精确首选之后,作为第二/第三候选
+        // 提示;准确候选仍占首位,连续下方向键能回到其余原切分。
+        let mut merged = built.cands;
+        let insert = usize::from(!merged.is_empty());
+        for (offset, candidate) in fixed.cands.drain(..).take(2).enumerate() {
+            merged.insert((insert + offset).min(merged.len()), candidate);
+        }
+        fixed.cands = merged;
+    }
+    let mut seen = HashSet::new();
+    fixed
+        .cands
+        .retain(|candidate| seen.insert((candidate.text.clone(), candidate.consume)));
+    fixed.cands.truncate(MAX_CANDS);
+    fixed
 }
 
 /// 排序后的最后一道闸:没打错音时,常用精确整词固定首位。
@@ -608,9 +649,10 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
 /// 完全按分数排,80 倍词频差又会让高频模糊词压过精确词。这里取中间:
 /// 精确常用词占第 1 位,模糊候选从第 2 位开始按分数竞争。
 ///
-/// 学习覆盖优先于精确保护:同一按键下选过一次的词直接回到首位,与微软
-/// 拼音、微信一致;选错了可以 Shift+Delete 忘掉。模糊词同样适用,用户
-/// 既然选了它,就说明这个音的分歧对他没有意义。
+/// 学习覆盖优先于精确保护:同一按键下稳定用过的词直接回到首位,与微软
+/// 拼音、微信一致;词典外的新词第一次只进候选后段,连续用两三次才轮到
+/// 首位。选错了可以 Shift+Delete 忘掉。模糊词同样适用,用户既然选了它,
+/// 就说明这个音的分歧对他没有意义。
 ///
 /// 被跳过过的候选不享受这两层保护:负分已经说明它不符合当前意图,
 /// 再按词频或精确命中把它顶回首位会让跳过学习失去作用。
@@ -626,7 +668,9 @@ fn protect_exact(cands: &mut [Candidate]) {
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.learned && !c.rejected && (c.full || !has_full))
+        .filter(|(_, c)| {
+            c.learned && c.user_freq >= 2 && !c.rejected && (c.full || !has_full)
+        })
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {

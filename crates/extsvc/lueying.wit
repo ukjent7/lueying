@@ -63,6 +63,25 @@ interface clipboard {
     text: string,
   }
   write: func(options: write-options) -> result<string, string>;
+  record history-options {
+    limit: option<u32>,
+  }
+  record history-item {
+    text: string,
+    time: u64,
+    tag: string,
+  }
+  record history-result {
+    items: list<history-item>,
+  }
+  history: func(options: history-options) -> result<history-result, string>;
+  record remember-options {
+    text: string,
+    tag: option<string>,
+  }
+  // 把一条文本静默收进历史,不改系统剪贴板;OCR/语音管道用。
+  remember: func(options: remember-options) -> result<string, string>;
+  clear: func() -> result<string, string>;
 }
 
 // 扩展私有存储:每个扩展一个命名空间,宿主只给该扩展自己的数据。
@@ -157,6 +176,29 @@ interface context {
   selection: func() -> result<selection-result, string>;
 }
 
+// 录音:返回临时 WAV 文件路径与时长。
+interface audio {
+  record record-options {
+    seconds: option<u32>,
+  }
+  record record-result {
+    file: string,
+    seconds: u32,
+  }
+  record: func(options: record-options) -> result<record-result, string>;
+}
+
+// 离线语音识别:输入 WAV 文件路径,输出文字。
+interface asr {
+  record recognize-options {
+    file: string,
+  }
+  record recognize-result {
+    text: string,
+  }
+  recognize: func(options: recognize-options) -> result<recognize-result, string>;
+}
+
 world extension {
   import capture;
   import ocr;
@@ -168,4 +210,6 @@ world extension {
   import notify;
   import network;
   import context;
+  import audio;
+  import asr;
 }

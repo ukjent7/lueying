@@ -1,0 +1,79 @@
+//! Windows Job Object 限额:原生扩展进程的内存与 CPU 速率硬上限。
+//!
+//! 进程刚启动、未通信前挂进 Job;挂不上按启动失败处理,调用方终止
+//! 进程并记一次失败。Job 打开 kill-on-close 且句柄有意不关闭:进程
+//! 的生命周期由 Job 兜底,宿主崩溃也会连坐收走;代价是每次拉起进程
+//! 留一个随宿主退出才关闭的 Job 句柄,常驻复用下开销可以接受。
+
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
+    JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_JOB_MEMORY,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation, SetInformationJobObject,
+};
+use windows::core::PCWSTR;
+
+use super::{Process, ProcessLimiter};
+
+/// Job Object 限额;克隆便宜。
+#[derive(Clone, Debug, Default)]
+pub struct JobLimiter {
+    /// 作业内存硬上限(字节);`None` 不限。
+    pub memory_bytes: Option<u64>,
+    /// CPU 速率硬上限,万分比(1..=10000,10000 = 一个整核);`None` 不限。
+    pub cpu_rate: Option<u32>,
+}
+
+impl JobLimiter {
+    /// 建限额;两项都给 `None` 等于什么都不限。
+    pub fn new(memory_bytes: Option<u64>, cpu_rate: Option<u32>) -> Self {
+        Self {
+            memory_bytes,
+            cpu_rate,
+        }
+    }
+}
+
+impl ProcessLimiter for JobLimiter {
+    fn attach(&self, process: &Process) -> Result<(), String> {
+        unsafe {
+            let job = CreateJobObjectW(None, PCWSTR::null())
+                .map_err(|error| format!("创建 Job 失败: {error}"))?;
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            if let Some(bytes) = self.memory_bytes {
+                info.BasicLimitInformation.LimitFlags |=
+                    JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+                info.JobMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
+                info.ProcessMemoryLimit = usize::try_from(bytes).unwrap_or(usize::MAX);
+            }
+            if let Some(rate) = self.cpu_rate {
+                // CPU 速率只走独立的信息类:LimitFlags 里没有对应位,
+                // 硬挂 JOB_OBJECT_LIMIT_CPU_RATE_CONTROL 会让整次设置报参数错。
+                let mut cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
+                cpu.ControlFlags =
+                    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+                cpu.Anonymous.CpuRate = rate.clamp(1, 10_000);
+                SetInformationJobObject(
+                    job,
+                    JobObjectCpuRateControlInformation,
+                    &cpu as *const _ as _,
+                    std::mem::size_of::<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION>() as u32,
+                )
+                .map_err(|error| format!("设置 CPU 限额失败: {error}"))?;
+            }
+            // 进程随 Job 兜底:宿主崩溃或句柄泄漏,扩展进程也会被收走。
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .map_err(|error| format!("设置 Job 限额失败: {error}"))?;
+            AssignProcessToJobObject(job, process.raw_handle())
+                .map_err(|error| format!("进程挂入 Job 失败: {error}"))?;
+        }
+        Ok(())
+    }
+}

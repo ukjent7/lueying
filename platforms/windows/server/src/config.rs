@@ -255,7 +255,7 @@ pub struct AppConfig {
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
     pub ui_accent: usize,
-    /// 是否启用场景装饰层;关掉就只画素色。
+    /// 是否启用候选窗弹性动效;关掉就直接呈现终态。
     pub effects: bool,
     /// 启用的运行期扩展 id,按组合顺序排列;空表示不启用。
     pub extensions: Vec<String>,
@@ -269,10 +269,6 @@ pub struct AppConfig {
     pub ocr_backend: OcrBackend,
     /// 对外 commit 通道;默认关。开启后本地工具可凭令牌借用上屏能力。
     pub commit_channel: bool,
-    /// 停顿重排提供者:`bypass` 走旁路进程,缺省用内置 25M 模型。
-    pub settled_rerank_provider: Option<String>,
-    /// 旁路可执行文件路径;重排缝的提供者从这里拉起。
-    pub bypass_exe: Option<String>,
     /// 更新渠道。
     pub update_channel: Channel,
     /// WebDAV 同步的远端目录地址;空表示没配同步。
@@ -285,6 +281,9 @@ pub struct AppConfig {
     pub apps: BTreeMap<String, AppOverride>,
     /// 扩展命名空间 `[ext.<id>]`,声明式设置与 `Request::Ext` 共用。
     pub ext_settings: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    /// 允许所有扩展自由联网:开启后不再逐域名校验清单白名单,
+    /// 但仍要求扩展在清单里声明 network 并经用户同意安装。
+    pub allow_all_extension_network: bool,
     /// 读取时收集的问题;保存成功后清空。
     pub config_issues: Vec<ConfigIssue>,
 }
@@ -314,14 +313,13 @@ impl Default for AppConfig {
             ocr_backend: OcrBackend::System,
             // 对外 commit 通道默认关;开启在设置里显式做,令牌随后生成。
             commit_channel: false,
-            settled_rerank_provider: None,
-            bypass_exe: None,
             update_channel: Channel::Stable,
             webdav_url: String::new(),
             webdav_username: String::new(),
             punct: BTreeMap::new(),
             apps: BTreeMap::new(),
             ext_settings: BTreeMap::new(),
+            allow_all_extension_network: false,
             config_issues: Vec::new(),
         }
     }
@@ -521,6 +519,12 @@ pub fn commit_token_path() -> Option<PathBuf> {
 pub fn ext_metrics_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
     Some(base.join("lueying").join("logs").join("ext-metrics.json"))
+}
+
+/// 剪贴板历史(`%APPDATA%\lueying\clipboard-history.json`)。
+pub fn clipboard_history_path() -> Option<PathBuf> {
+    let base = PathBuf::from(std::env::var_os("APPDATA")?);
+    Some(base.join("lueying").join("clipboard-history.json"))
 }
 
 /// 声明式皮肤(`%APPDATA%\lueying\skin.toml`);缺文件用默认主题。

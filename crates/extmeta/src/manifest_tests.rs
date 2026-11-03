@@ -452,39 +452,3 @@ fn rejects_bad_settings() {
     ]);
     assert!(parse(value).is_err());
 }
-
-#[test]
-fn parses_scene_manifest() {
-    let manifest = parse(json!({
-        "id": "glow",
-        "name": "微光",
-        "version": "0.1.0",
-        "api": 4,
-        "kind": "scene"
-    }))
-    .expect("场景皮肤清单应通过");
-    assert!(manifest.is_scene());
-    assert!(!manifest.is_native());
-    assert_eq!(manifest.payload_file(), "");
-}
-
-#[test]
-fn rejects_scene_with_code() {
-    let check = |extra: serde_json::Value| {
-        let mut value = json!({
-            "id": "glow",
-            "name": "微光",
-            "version": "0.1.0",
-            "api": 4,
-            "kind": "scene"
-        });
-        for (key, val) in extra.as_object().expect("对象") {
-            value[key.as_str()] = val.clone();
-        }
-        assert!(parse(value).is_err());
-    };
-    check(json!({"wasm": "extension.wasm"}));
-    check(json!({"exe": "tool.exe"}));
-    check(json!({"needs": ["capture"]}));
-    check(json!({"capabilities": ["capture"]}));
-}

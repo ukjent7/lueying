@@ -25,7 +25,7 @@ pub const EXT_API: u32 = 4;
 pub const MAX_TEXT_CHARS: usize = 4096;
 
 /// 扩展形态。Wasm 在宿主进程内解释执行;原生是独立进程的服务提供者,
-/// 由旁路宿主按需拉起并沙箱化;场景皮肤是纯声明包,候选窗场景层直接加载。
+/// 由扩展宿主按需拉起并沙箱化。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
@@ -34,8 +34,6 @@ pub enum Kind {
     Wasm,
     /// 原生可执行文件。
     Native,
-    /// 场景皮肤:包内 `scene.toml` 与素材,没有任何可执行体。
-    Scene,
 }
 
 /// 扩展清单,对应包内的 `manifest.json`。
@@ -291,11 +289,15 @@ pub enum Service {
     Network,
     /// 读当前窗口的选中文字与上下文;每级单独同意。
     Context,
+    /// 录制麦克风音频。
+    Audio,
+    /// 离线语音转文字。
+    Asr,
 }
 
 impl Service {
     /// 全部服务;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Capture,
         Self::Ocr,
         Self::Clipboard,
@@ -306,6 +308,8 @@ impl Service {
         Self::Notify,
         Self::Network,
         Self::Context,
+        Self::Audio,
+        Self::Asr,
     ];
 
     /// 清单里的服务名;宿主导入的函数名是 `lueying_<服务名>`。
@@ -321,6 +325,8 @@ impl Service {
             Self::Notify => "notify",
             Self::Network => "network",
             Self::Context => "context",
+            Self::Audio => "audio",
+            Self::Asr => "asr",
         }
     }
 
@@ -337,6 +343,8 @@ impl Service {
             Self::Notify => "系统通知",
             Self::Network => "访问外部网络(高敏感)",
             Self::Context => "读取窗口上下文(高敏感)",
+            Self::Audio => "录制麦克风(高敏感)",
+            Self::Asr => "离线语音识别",
         }
     }
 
@@ -353,6 +361,8 @@ impl Service {
             | Self::Notify
             | Self::Network => None,
             Self::Context => Some(Permission::SelectedText),
+            Self::Audio => Some(Permission::Audio),
+            Self::Asr => None,
         }
     }
 }
@@ -371,16 +381,19 @@ pub enum Permission {
     Clipboard,
     /// 读取当前窗口里用户选中的文字。
     SelectedText,
+    /// 录制麦克风。
+    Audio,
 }
 
 impl Permission {
     /// 全部权限;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::CandidateText,
         Self::ScreenCapture,
         Self::Ocr,
         Self::Clipboard,
         Self::SelectedText,
+        Self::Audio,
     ];
 
     /// 清单里的权限名。
@@ -391,6 +404,7 @@ impl Permission {
             Self::Ocr => "ocr",
             Self::Clipboard => "clipboard",
             Self::SelectedText => "selected-text",
+            Self::Audio => "audio",
         }
     }
 
@@ -402,6 +416,7 @@ impl Permission {
             Self::Ocr => "识别文字",
             Self::Clipboard => "读写剪贴板(高敏感)",
             Self::SelectedText => "读取当前窗口选中的文字(高敏感)",
+            Self::Audio => "录制麦克风(高敏感)",
         }
     }
 }
@@ -458,23 +473,6 @@ impl Manifest {
                 }
                 check_entry("可执行文件", &self.exe, "exe")?;
             }
-            Kind::Scene => {
-                if !self.wasm.is_empty() {
-                    return Err("kind=scene 清单不能声明 wasm 模块".into());
-                }
-                if !self.exe.is_empty() {
-                    return Err("kind=scene 清单不能声明 exe".into());
-                }
-                if !self.needs.is_empty() {
-                    return Err("场景皮肤是纯声明包,清单不能声明 needs".into());
-                }
-                if !self.capabilities.is_empty() {
-                    return Err("场景皮肤不执行代码,清单不能声明 capabilities".into());
-                }
-                if self.activate.is_some() {
-                    return Err("场景皮肤是纯声明包,清单不能声明 activate".into());
-                }
-            }
         }
         check_settings(&self.settings)?;
         if !self.capabilities.is_empty() {
@@ -493,24 +491,17 @@ impl Manifest {
         &self.wasm
     }
 
-    /// 主内容文件名:Wasm 模块或原生可执行文件。同意指纹对它算哈希;
-    /// 场景皮肤没有可执行体,返回空串(它们不申请能力,不走同意)。
+    /// 主内容文件名:Wasm 模块或原生可执行文件。同意指纹对它算哈希。
     pub fn payload_file(&self) -> &str {
         match self.kind {
             Kind::Wasm => &self.wasm,
             Kind::Native => &self.exe,
-            Kind::Scene => "",
         }
     }
 
     /// 是否原生扩展(独立进程的服务提供者)。
     pub fn is_native(&self) -> bool {
         self.kind == Kind::Native
-    }
-
-    /// 是否场景皮肤扩展(纯声明包)。
-    pub fn is_scene(&self) -> bool {
-        self.kind == Kind::Scene
     }
 
     /// 是否声明了候选窗外观。

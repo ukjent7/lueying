@@ -9,7 +9,7 @@ use std::path::Path;
 
 pub const PACK_HEADER: &str = "### lueying-pack v2";
 
-/// 二进制文件后缀;Wasm、原生扩展产物与场景素材,按字节块打包。
+/// 二进制文件后缀;Wasm 与原生扩展产物按字节块打包。
 const BINARY_EXTS: &[&str] = &[
     "wasm", "exe", "dll", "onnx", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg", "ttf",
     "otf",

@@ -21,9 +21,10 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 pub use lueying_extproto::{
-    ClipboardText, Delivered, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FetchArgs,
-    FetchResult, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, SelectedText, Shot,
-    StoreKeys, StoreValue,
+    AsrText, AudioRecording, ClipboardHistory, ClipboardHistoryItem, ClipboardText, Delivered,
+    FETCH_DEFAULT_LIMIT,
+    FETCH_DEFAULT_TIMEOUT_MS, FetchArgs, FetchResult, OcrText, PanelResult, SCENE_API, SceneIn,
+    ScenePatch, SelectedText, Shot, StoreKeys, StoreValue,
 };
 
 /// 扩展入口。
@@ -89,6 +90,10 @@ unsafe extern "C" {
     fn host_network(request: u64) -> u64;
     #[link_name = "lueying_context"]
     fn host_context(request: u64) -> u64;
+    #[link_name = "lueying_audio"]
+    fn host_audio(request: u64) -> u64;
+    #[link_name = "lueying_asr"]
+    fn host_asr(request: u64) -> u64;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -183,6 +188,16 @@ unsafe extern "C" fn host_context(_request: u64) -> u64 {
     0
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn host_audio(_request: u64) -> u64 {
+    0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn host_asr(_request: u64) -> u64 {
+    0
+}
+
 /// 截取整块虚拟桌面,返回临时 BMP 的路径与尺寸。
 pub fn capture_shot() -> Result<Shot, String> {
     call_typed(host_capture, "shot", "{}")
@@ -215,6 +230,35 @@ pub fn clipboard_read() -> Result<ClipboardText, String> {
 pub fn clipboard_write(text: &str) -> Result<(), String> {
     let args = json!({ "text": text }).to_string();
     call_unit(host_clipboard, "write", &args)
+}
+
+/// 录一段麦克风音频,返回临时 WAV 路径与时长。
+pub fn audio_record(seconds: u32) -> Result<AudioRecording, String> {
+    let args = json!({ "seconds": seconds }).to_string();
+    call_typed(host_audio, "record", &args)
+}
+
+/// 对 WAV 文件做离线语音识别。
+pub fn asr_recognize(file: &str) -> Result<AsrText, String> {
+    let args = json!({ "file": file }).to_string();
+    call_typed(host_asr, "recognize", &args)
+}
+
+/// 读最近 `limit` 条剪贴板历史,新的在前。
+pub fn clipboard_history(limit: usize) -> Result<ClipboardHistory, String> {
+    let args = json!({ "limit": limit }).to_string();
+    call_typed(host_clipboard, "history", &args)
+}
+
+/// 把文本静默收进剪贴板历史,不改系统剪贴板;`tag` 是来源标签(如 `OCR`)。
+pub fn clipboard_remember(text: &str, tag: &str) -> Result<(), String> {
+    let args = json!({ "text": text, "tag": tag }).to_string();
+    call_unit(host_clipboard, "remember", &args)
+}
+
+/// 清空剪贴板历史。
+pub fn clipboard_history_clear() -> Result<(), String> {
+    call_unit(host_clipboard, "clear", "{}")
 }
 
 /// 读扩展私有存储的一个键。

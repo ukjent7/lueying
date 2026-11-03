@@ -78,6 +78,10 @@ impl OfficialExtension {
     pub fn installed_model(&self) -> bool {
         match self.id.as_str() {
             "ppocr" => crate::config::ppocr_dir().is_some(),
+            "sensevoice" => crate::config::extensions_dir().is_some_and(|dir| {
+                let dir = dir.join("sensevoice");
+                dir.join("manifest.json").is_file() && dir.join("sensevoice.exe").is_file()
+            }),
             _ => false,
         }
     }
@@ -88,6 +92,10 @@ pub const PPOCR_DICT: &str = include_str!("../../../../Catalog/ppocr-dict.txt");
 
 /// PP-OCR 原生扩展的清单:随目录分发,与源码 `extensions/ppocr` 同一份。
 pub const PPOCR_MANIFEST: &str = include_str!("../../../../extensions/ppocr/manifest.json");
+
+/// SenseVoice 原生扩展的清单:随目录分发,与源码 `extensions/sensevoice` 同一份。
+pub const SENSEVOICE_MANIFEST: &str =
+    include_str!("../../../../extensions/sensevoice/manifest.json");
 
 #[cfg(test)]
 #[path = "official_extensions_tests.rs"]

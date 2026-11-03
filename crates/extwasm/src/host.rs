@@ -715,6 +715,8 @@ fn timeout_for(service: Service, method: &str) -> Duration {
         (Service::Ocr, "recognize") => Duration::from_secs(120),
         (Service::Capture, "shot") => Duration::from_secs(30),
         (Service::Network, "fetch") => Duration::from_secs(140),
+        (Service::Audio, "record") => Duration::from_secs(40),
+        (Service::Asr, "recognize") => Duration::from_secs(120),
         _ => Duration::from_secs(10),
     }
 }

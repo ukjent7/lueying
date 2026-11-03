@@ -105,9 +105,9 @@ lueying_extguest::export!(ShotOcr, commands: [run]);
 `Extension` 三个方法都有默认实现:`init`(加载失败可报错)、`command`
 (命令入口,参数与返回值都是 JSON 文本)、`appearance`(每帧外观补丁)。
 服务封装全部是同步函数:`capture_shot`、`ocr_recognize`、`output_deliver`、
-`panel_show`、`clipboard_read/write`、`store_get/set/remove/list`、
+`panel_show`、`clipboard_read/write/history/remember/clear`、`store_get/set/remove/list`、
 `notify_show`、`hotkey_register/unregister/press`、`network_fetch`、
-`context_selection` 与 `timeout_sleep`。`network_fetch` 收 `FetchArgs`
+`context_selection`、`audio_record`、`asr_recognize` 与 `timeout_sleep`。`network_fetch` 收 `FetchArgs`
 (与 WIT `fetch-options` 同形),域名必须在清单白名单里,响应体按 UTF-8
 文本交付;`context_selection` 读当前窗口选中文字,清单要申请
 `selected-text` 权限。
@@ -154,7 +154,7 @@ guest 导出(SDK 宏生成;手写 guest 自己定名):
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `<命令 id>` | `() -> i32` | 每个命令一个;输入是参数 JSON,输出是结果 JSON |
-| `lueying_appearance` | `() -> i32` | 清单 `appearance` 为 true 时必须实现;输入是场景 JSON |
+| `lueying_appearance` | `() -> i32` | 清单 `appearance` 为 true 时必须实现;输入是外观状态 JSON |
 | `lueying_init` | `() -> i32` | 可选;有就调一次,失败即加载失败 |
 
 宿主导入(模块为 `extism:host/user`;只链接清单 `needs` 里声明过的服务):
@@ -162,7 +162,7 @@ guest 导出(SDK 宏生成;手写 guest 自己定名):
 | 导入 | 签名 | 说明 |
 |---|---|---|
 | `lueying_timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
-| `lueying_capture` / `lueying_ocr` / `lueying_output` / `lueying_panel` / `lueying_clipboard` / `lueying_store` / `lueying_hotkey` / `lueying_notify` / `lueying_network` / `lueying_context` | `(request offset) -> offset` | 收一段 JSON 请求,回一段 JSON 响应 |
+| `lueying_capture` / `lueying_ocr` / `lueying_output` / `lueying_panel` / `lueying_clipboard` / `lueying_store` / `lueying_hotkey` / `lueying_notify` / `lueying_network` / `lueying_context` / `lueying_audio` / `lueying_asr` | `(request offset) -> offset` | 收一段 JSON 请求,回一段 JSON 响应 |
 
 服务请求是 `{"method":…,"args":…}`,响应是 `{"ok":true,"value":…}` 或
 `{"ok":false,"error":"…"}`。请求里的 `args` 原样转给服务提供者。
@@ -184,7 +184,7 @@ guest 导出(SDK 宏生成;手写 guest 自己定名):
 | 初始化燃料 | 50 M | 实例化阶段烧完即 trap,加载失败 |
 | 命令燃料 | 200 M | trap,计一次超时 |
 | 外观燃料 | 20 M | trap,计一次超时 |
-| 宿主服务等待 | 面板 600 s、联网 140 s、OCR 120 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
+| 宿主服务等待 | 面板 600 s、联网 140 s、OCR/ASR 120 s、录音 40 s、截图 30 s、其余 10 s | 调用取消,错误信封回给 guest |
 | 命令空闲卸载 | 30 s | worker 与实例整体丢弃;外观包常驻 |
 | 容错熔断 | 连续 3 次失败 | 扩展停用,重新加载或热重载成功后恢复 |
 
@@ -193,7 +193,7 @@ trap 之后实例照旧能用,下一次调用前 Extism 重置内核状态;正�
 
 ## 安全与隐私边界
 
-- guest 看不到候选汉字、按键历史与宿主应用名;场景状态只有页码、候选
+- guest 看不到候选汉字、按键历史与宿主应用名;外观状态只有页码、候选
   数量、主题色与系统外观开关。
 - 密码/隐私字段下:外观不派发、命令与热键不执行、服务调用全部拒绝。
 - 联网只经独立 broker 进程 `lueying-broker.exe`:宿主提供者逐请求核对

@@ -44,6 +44,6 @@ shi`j
 
 ## 源码实现参考
 
-- `crates/features/src/aux_code.rs`：辅助码表索引、匹配与过滤流。
+- `extensions/input-schemes/src/aux_code.rs`：辅助码表索引、匹配与过滤流。
 - `crates/engine/src/input.rs`：分隔符交互解析与候选区间动态适配。
-- `crates/features/data/wubi.txt`：精简五笔字形码表源文件。
+- `extensions/input-schemes/data/wubi.txt`：精简五笔字形码表源文件。

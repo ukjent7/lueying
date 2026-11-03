@@ -184,14 +184,28 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
     files.push(("licenses/README.md".into(), notice.len() as u64));
 
     // 官方起步扩展随安装包分发(Wasm guest + 清单文本);设置窗按需复制到当前用户目录。
+    // 只收带清单的目录:`extensions/input-schemes` 是编译期方案扩展的源码,不进安装包。
     let extensions = root.join("extensions");
     if extensions.is_dir() {
-        copy_tree(
-            &extensions,
-            &args.out.join("extensions"),
-            "extensions",
-            &mut files,
-        )?;
+        let target = args.out.join("extensions");
+        std::fs::create_dir_all(&target)
+            .map_err(|e| format!("创建 {}: {e}", target.display()))?;
+        let entries =
+            std::fs::read_dir(&extensions).map_err(|e| format!("读 {}: {e}", extensions.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读 {}: {e}", extensions.display()))?;
+            let path = entry.path();
+            if !path.is_dir() || !path.join("manifest.json").is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            copy_tree(
+                &path,
+                &target.join(&name),
+                &format!("extensions/{name}"),
+                &mut files,
+            )?;
+        }
     }
     // 官方扩展目录也放一份在发布目录里,供审计与离线检查;程序运行时用
     // 编译期嵌入的同一份文件,不依赖这个副本。

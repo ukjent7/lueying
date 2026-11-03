@@ -1,0 +1,16 @@
+[package]
+name = "lueying-input-schemes"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影官方输入方案扩展:双拼、五笔/仓颉形码与辅助码"
+
+[dependencies]
+# 编译期方案契约:只把击键展开成规范全拼,不接触核心词图。
+lueying-ext.workspace = true
+# 双拼展开后的音节规范化。
+lueying-dict.workspace = true
+
+[dev-dependencies]
+# 形码测试要真跑一遍引擎。
+lueying-engine.workspace = true

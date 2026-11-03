@@ -474,8 +474,6 @@ fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
     let _ = std::fs::remove_dir_all(&backup);
     let (kind, next) = if manifest.is_native() {
         ("原生扩展", "在「运行期扩展」里同意后可用")
-    } else if manifest.is_scene() {
-        ("场景皮肤", "在「运行期扩展」里启用即可")
     } else {
         ("扩展", "在「运行期扩展」里同意后可用")
     };
@@ -525,52 +523,6 @@ pub fn refresh_ext_metrics(settings: &mut Settings) {
         }
         None => settings.say(Notice::Info, "服务还没有写入运行数据"),
     }
-}
-
-/// 拉一帧场景调试快照;只有类型与数值,正文内容永不出服务进程。
-pub fn refresh_scene_debug(settings: &mut Settings) {
-    settings.confirm_clear = false;
-    let scene = call(&Request::SceneDebug).and_then(|reply| reply.scene);
-    match scene {
-        Some(scene) if scene.active => {
-            settings.say(Notice::Success, scene_summary(&scene));
-        }
-        Some(_) => settings.say(
-            Notice::Info,
-            "场景层未启用;在「扩展」页导入并启用一个场景皮肤",
-        ),
-        None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
-    }
-}
-
-/// 快照摘要:最近 64 帧的 p50 与最大耗时,加事件总量与最近几个事件名。
-fn scene_summary(scene: &lueying_protocol::SceneDebugReply) -> String {
-    let mut frames = scene.frame_us.clone();
-    frames.sort_unstable();
-    let pick = |index: usize| {
-        frames
-            .get(index)
-            .map(|us| format!("{:.1} ms", f64::from(*us) / 1000.0))
-    };
-    let frames_text = if frames.is_empty() {
-        "暂无帧数据".to_string()
-    } else {
-        format!(
-            "帧 p50 {} · 最大 {}",
-            pick(frames.len() / 2).unwrap_or_default(),
-            pick(frames.len() - 1).unwrap_or_default()
-        )
-    };
-    let total: u32 = scene.counts.iter().map(|(_, count)| count).sum();
-    let recent = scene
-        .events
-        .iter()
-        .rev()
-        .take(3)
-        .map(|(name, _)| name.as_str())
-        .collect::<Vec<_>>()
-        .join("/");
-    format!("{frames_text};事件 {total} 次,最近 {recent}")
 }
 
 /// 导出用户词库到文件。

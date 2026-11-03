@@ -29,13 +29,13 @@ pub mod ids {
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
+    pub const ALLOW_ALL_NETWORK: &str = "allow-all-network";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";
     pub const IMPORT_LUEXT: &str = "ext-import";
     pub const CONSENT: &str = "consent";
     pub const AUDIT: &str = "audit";
     pub const EXT_METRICS: &str = "ext-metrics";
-    pub const SCENE_DEBUG: &str = "scene-debug";
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
@@ -267,7 +267,6 @@ pub enum Action {
     ApproveExtension,
     OpenExtAudit,
     RefreshExtMetrics,
-    SceneDebug,
     OpenOcrModels,
     /// 安装官方目录里的扩展或模型;id 来自目录项。
     InstallOfficial(String),
@@ -490,7 +489,6 @@ impl Settings {
             ids::CONSENT => Some(Action::ApproveExtension),
             ids::AUDIT => Some(Action::OpenExtAudit),
             ids::EXT_METRICS => Some(Action::RefreshExtMetrics),
-            ids::SCENE_DEBUG => Some(Action::SceneDebug),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),
             ids::APPS => Some(Action::OpenApps),

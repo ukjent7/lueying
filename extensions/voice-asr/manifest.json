@@ -1,0 +1,15 @@
+{
+  "id": "voice-asr",
+  "name": "离线语音输入",
+  "version": "0.1.0",
+  "api": 4,
+  "wasm": "extension.wasm",
+  "activate": {
+    "hotkeys": ["Ctrl+Alt+V"],
+    "commands": [
+      { "id": "dictate", "title": "语音输入", "when": "editable" }
+    ]
+  },
+  "needs": ["audio", "asr", "output", "notify"],
+  "capabilities": ["audio"]
+}

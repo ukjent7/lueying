@@ -242,6 +242,46 @@ pub struct ClipboardText {
     pub text: String,
 }
 
+/// 一段录音的结果。
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioRecording {
+    /// 临时 WAV 文件路径。
+    pub file: String,
+    /// 实际录制时长(秒)。
+    pub seconds: u32,
+}
+
+/// 语音识别结果。
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AsrText {
+    /// 识别出的文字;没有语音时为空串。
+    #[serde(default)]
+    pub text: String,
+}
+
+/// 剪贴板历史的一条记录。
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClipboardHistoryItem {
+    /// 纯文本内容。
+    pub text: String,
+    /// 复制时刻(Unix 毫秒)。
+    pub time: u64,
+    /// 来源标签(如 `OCR`、`语音`);普通复制为空。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tag: String,
+}
+
+/// 剪贴板历史快照,新的在前。
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ClipboardHistory {
+    /// 历史记录。
+    pub items: Vec<ClipboardHistoryItem>,
+}
+
 /// 选中文字读取结果。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

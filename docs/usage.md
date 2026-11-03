@@ -46,8 +46,10 @@
 
 ## 扩展与高级能力
 
-- **[双拼支持](extensions/shuangpin.md)**：内置小鹤、自然码、微软、搜狗等多款主流双拼方案。
+- **[双拼支持](extensions/shuangpin.md)**：官方输入方案扩展内置小鹤、自然码、微软、搜狗等多款主流双拼方案。
 - **[五笔辅助码](extensions/auxiliary-code.md)**：支持在拼音后按 `` ` `` 键追加 1～2 位五笔码缩小候选范围。
 - **[自定义短语](extensions/custom-phrases.md)**：通过纯文本维护专属缩写和快捷短语。
 - **[下一词联想](extensions/prediction.md)**：依据本地写作词序自适应给出后续词建议。
-- **[界面皮肤](skin.md)与[场景皮肤](scene.md)**：`skin.toml` 定制配色，皮肤扩展（scene.toml）加装饰层与动效。
+- **[界面皮肤](skin.md)**：`skin.toml` 定制候选窗配色。
+- **剪贴板历史**：官方扩展，`Win+Shift+V` 唤出最近 60 条（后台最多存 200 条）复制记录，选中即粘贴；OCR 与语音结果自动带标签沉淀。
+- **离线语音输入**：官方扩展，`Ctrl+Alt+V` 录一段话，经纯 CPU `sensevoice` 本地识别后上屏。

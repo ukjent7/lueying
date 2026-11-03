@@ -15,7 +15,7 @@ use lueying_protocol::{Request, pipe_name};
 pub use lueying_extmeta::container::PACK_HEADER;
 
 /// 参与打包的文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
-/// `.wasm` 是唯一的代码,其余是清单、文档与场景皮肤的素材。
+/// `.wasm` 是唯一的代码,其余是清单、文档与素材。
 const PACK_EXTS: &[&str] = &[
     "json", "txt", "md", "wasm", "toml", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg",
 ];
@@ -165,25 +165,6 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
         return Err(format!(
             "清单声明了 {wasm} 但目录里没有;先构建 guest 再打包"
         ));
-    }
-    if manifest.is_scene() {
-        let scene = files.iter().any(|path| {
-            path.strip_prefix(dir)
-                .is_ok_and(|relative| relative == Path::new("scene.toml"))
-        });
-        if !scene {
-            return Err("场景皮肤包里没有 scene.toml".into());
-        }
-        let text = fs::read_to_string(dir.join("scene.toml"))
-            .map_err(|e| format!("读 scene.toml: {e}"))?;
-        if let Err(errors) = lueying_scene::parse("scene.toml", &text) {
-            let joined = errors
-                .iter()
-                .map(|error| error.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(format!("scene.toml 不合法: {joined}"));
-        }
     }
     let mut packed_files: Vec<(String, Vec<u8>)> = Vec::new();
     for path in &files {

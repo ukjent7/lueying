@@ -11,13 +11,22 @@
       "bundled": "extensions/shot-ocr"
     },
     {
-      "id": "glow",
-      "name": "微光",
+      "id": "clipboard-history",
+      "name": "剪贴板历史",
       "version": "0.1.0",
       "kind": "extension",
-      "description": "候选窗场景皮肤：打字时边框泛起呼吸微光；纯声明包，装好启用即生效",
-      "size": "约 2 KB",
-      "bundled": "extensions/glow"
+      "description": "Win+Shift+V 唤出剪贴板历史胶囊，选中即粘贴；纯文本去重、上限 200 条",
+      "size": "约 20 KB",
+      "bundled": "extensions/clipboard-history"
+    },
+    {
+      "id": "voice-asr",
+      "name": "离线语音输入",
+      "version": "0.1.0",
+      "kind": "extension",
+      "description": "Ctrl+Alt+V 录一段话，纯 CPU 离线识别并上屏；需另装 SenseVoice 模型",
+      "size": "约 30 KB",
+      "bundled": "extensions/voice-asr"
     },
     {
       "id": "ppocr",
@@ -44,6 +53,22 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx",
           "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
           "bytes": 21159378
+        }
+      ]
+    },
+    {
+      "id": "sensevoice",
+      "name": "SenseVoice 语音识别引擎",
+      "version": "0.1.0",
+      "kind": "model",
+      "description": "本地离线语音识别引擎(原生扩展,独立进程);装好后语音输入不联网",
+      "size": "约 150 MB",
+      "files": [
+        {
+          "name": "sensevoice.exe",
+          "url": "https://github.com/ukjent7/lueying/releases/download/v0.0.0/lueying-sensevoice.exe",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "bytes": 0
         }
       ]
     }

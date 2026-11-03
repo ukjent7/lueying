@@ -23,8 +23,10 @@ fn catalog_ids_are_unique_and_known() {
         }
     }
     assert!(find("shot-ocr").is_some());
-    assert!(find("glow").is_some());
+    assert!(find("clipboard-history").is_some());
+    assert!(find("voice-asr").is_some());
     assert!(find("ppocr").is_some());
+    assert!(find("sensevoice").is_some());
 }
 
 #[test]
@@ -34,8 +36,12 @@ fn every_download_has_hash_and_size() {
             assert_eq!(file.sha256.len(), 64, "{} 的哈希长度不对", file.name);
             assert!(file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
             if file.bytes == 0 {
-                // ppocr.exe 是发版占位;发布前 xtask catalog-exe 补真实值。
-                assert_eq!(file.name, "ppocr.exe", "{} 缺字节数", file.name);
+                // 原生引擎 exe 是发版占位;发布前由 xtask 补真实值。
+                assert!(
+                    file.name.ends_with(".exe"),
+                    "{} 缺字节数",
+                    file.name
+                );
                 continue;
             }
             assert!(

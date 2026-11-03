@@ -72,9 +72,6 @@ mod ui_d2d_mouse;
 mod ui_d2d_pipe;
 
 #[cfg(windows)]
-mod ui_d2d_scene;
-
-#[cfg(windows)]
 mod ui_d2d_selftest;
 
 #[cfg(windows)]

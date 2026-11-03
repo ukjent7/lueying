@@ -239,8 +239,6 @@ pub enum Request {
     FuzzyStats,
     /// 设置窗读取引擎资源状态(词典与模型的加载情况)。
     Status,
-    /// 设置窗读场景调试快照(帧耗时与抽象事件流,无文字内容)。
-    SceneDebug,
     /// 设置窗只重置组级适应,保留词条。
     ResetFuzzy,
     /// 安装器卸载前让常驻服务干净退出。
@@ -328,7 +326,6 @@ impl Request {
             Self::ImportUser { .. } => "ImportUser",
             Self::FuzzyStats => "FuzzyStats",
             Self::Status => "Status",
-            Self::SceneDebug => "SceneDebug",
             Self::ResetFuzzy => "ResetFuzzy",
             Self::Shutdown => "Shutdown",
             Self::Focus { .. } => "Focus",
@@ -353,7 +350,6 @@ impl Request {
     pub fn privilege(&self) -> Privilege {
         match self {
             Request::Status => Privilege::Read,
-            Request::SceneDebug => Privilege::Read,
             Request::ReloadConfig
             | Request::ClearUser
             | Request::ExportUser
@@ -365,22 +361,6 @@ impl Request {
             _ => Privilege::Host,
         }
     }
-}
-
-/// 场景调试快照:帧耗时与抽象事件流;只有类型与数值,不含任何文字内容。
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SceneDebugReply {
-    /// 场景层是否在跑(候选窗有可用场景)。
-    pub active: bool,
-    /// 最近 64 帧的每帧时长(微秒);空 = 还没画过帧。
-    #[serde(default)]
-    pub frame_us: Vec<u32>,
-    /// 最近 32 条事件:类型名 + 距今毫秒,按发生顺序。
-    #[serde(default)]
-    pub events: Vec<(String, u32)>,
-    /// 各类事件自启动以来的累计次数。
-    #[serde(default)]
-    pub counts: Vec<(String, u32)>,
 }
 
 /// Server → DLL。
@@ -409,9 +389,6 @@ pub struct Reply {
     /// 引擎资源状态(仅 `Status` 应答使用)。
     #[serde(default)]
     pub status: Option<EngineStatus>,
-    /// 场景调试快照(仅 `SceneDebug` 应答使用)。
-    #[serde(default)]
-    pub scene: Option<SceneDebugReply>,
     /// 全部候选(按页切片由 `page`/`page_size` 决定),供 TSF 的
     /// `ITfCandidateListUIElement` 回答宿主与读屏软件。
     #[serde(default)]

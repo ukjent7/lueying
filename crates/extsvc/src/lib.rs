@@ -213,7 +213,7 @@ pub fn methods(service: Service) -> &'static [&'static str] {
     match service {
         Service::Capture => &["shot"],
         Service::Ocr => &["recognize"],
-        Service::Clipboard => &["read", "write"],
+        Service::Clipboard => &["read", "write", "history", "remember", "clear"],
         Service::Store => &["get", "set", "remove", "list"],
         Service::Output => &["deliver"],
         Service::Panel => &["show"],
@@ -221,6 +221,8 @@ pub fn methods(service: Service) -> &'static [&'static str] {
         Service::Notify => &["show"],
         Service::Network => &["fetch"],
         Service::Context => &["selection"],
+        Service::Audio => &["record"],
+        Service::Asr => &["recognize"],
     }
 }
 

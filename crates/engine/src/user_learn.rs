@@ -669,23 +669,23 @@ impl UserDict {
     }
 
     /// 记录一次「在 key 下选了 word」。
-    pub fn learn(&mut self, key: &str, word: &str) {
+    ///
+    /// `known` 表示这个词在主词典里本来就有:已有词首记两次使用,选一次
+    /// 即可回到首位;词典外的人名、临时短语首记一次,先落在候选后段,
+    /// 连续用两三次再逐级晋升。词条不做时间衰减。
+    pub fn learn(&mut self, key: &str, word: &str, known: bool) {
         let ts = now();
         let new_key = !self.map.contains_key(key);
         let entries = self.map.entry(key.to_string()).or_default();
         match entries.iter_mut().find(|e| e.word == word) {
             Some(e) => {
-                e.freq = if ts.saturating_sub(e.ts) > DECAY_SECS {
-                    e.freq / 2 + 1
-                } else {
-                    e.freq.saturating_add(1)
-                };
+                e.freq = e.freq.saturating_add(1);
                 e.ts = ts;
             }
             None => {
                 entries.push(UserEntry {
                     word: word.to_string(),
-                    freq: 1,
+                    freq: if known { 2 } else { 1 },
                     ts,
                 });
                 self.count += 1;

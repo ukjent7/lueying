@@ -59,8 +59,6 @@ fn font_check(
         pager: None,
         menu: None,
         menu_hover: None,
-        scene: &[],
-        scene_dir: std::path::Path::new(""),
     };
     target
         .paint_frame(&frame, text)
@@ -107,8 +105,6 @@ fn check_pixels(
             pager: None,
             menu: None,
             menu_hover: None,
-            scene: &[],
-            scene_dir: std::path::Path::new(""),
         },
         text,
     )?;
@@ -141,8 +137,6 @@ fn check_pixels(
             pager: None,
             menu: Some((8.0, 40.0)),
             menu_hover: None,
-            scene: &[],
-            scene_dir: std::path::Path::new(""),
         },
         text,
     )?;

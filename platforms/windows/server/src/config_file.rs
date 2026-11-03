@@ -38,8 +38,6 @@ pub struct FileConfig {
     pub panel_hotkey: Option<String>,
     pub ocr_engine: Option<String>,
     pub commit_channel: Option<bool>,
-    pub settled_rerank_provider: Option<String>,
-    pub bypass_exe: Option<String>,
     pub update_channel: Option<String>,
     /// WebDAV 同步的远端目录地址。
     pub webdav_url: Option<String>,
@@ -47,6 +45,8 @@ pub struct FileConfig {
     pub webdav_username: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
+    /// 允许所有扩展自由联网。
+    pub allow_all_extension_network: Option<bool>,
 }
 
 /// `fuzzy` 接受 `true`/`false` 或 `"auto"`/`"off"`。
@@ -227,11 +227,8 @@ pub fn apply(
     if let Some(on) = file.commit_channel {
         cfg.commit_channel = on;
     }
-    if let Some(provider) = file.settled_rerank_provider {
-        cfg.settled_rerank_provider = Some(provider);
-    }
-    if let Some(exe) = file.bypass_exe {
-        cfg.bypass_exe = Some(exe);
+    if let Some(on) = file.allow_all_extension_network {
+        cfg.allow_all_extension_network = on;
     }
     if let Some(value) = file.update_channel {
         match Channel::parse(&value) {
@@ -341,13 +338,12 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         panel_hotkey: &cfg.panel_hotkey,
         ocr_engine: cfg.ocr_backend.as_str(),
         commit_channel: cfg.commit_channel,
-        settled_rerank_provider: cfg.settled_rerank_provider.as_deref(),
-        bypass_exe: cfg.bypass_exe.as_deref(),
         update_channel: cfg.update_channel.as_str(),
         webdav_url: &cfg.webdav_url,
         webdav_username: &cfg.webdav_username,
         bindings,
         triggers,
+        allow_all_extension_network: cfg.allow_all_extension_network,
         ext: &cfg.ext_settings,
     };
     let body = toml::to_string_pretty(&file).map_err(|error| format!("配置序列化失败: {error}"))?;
@@ -397,13 +393,12 @@ struct SaveFile<'a> {
     panel_hotkey: &'a str,
     ocr_engine: &'static str,
     commit_channel: bool,
-    settled_rerank_provider: Option<&'a str>,
-    bypass_exe: Option<&'a str>,
     update_channel: &'static str,
     webdav_url: &'a str,
     webdav_username: &'a str,
     bindings: BTreeMap<&'a str, &'a str>,
     triggers: BTreeMap<&'a str, &'a str>,
+    allow_all_extension_network: bool,
     ext: &'a BTreeMap<String, BTreeMap<String, Value>>,
 }
 

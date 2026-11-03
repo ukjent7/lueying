@@ -216,16 +216,6 @@ impl Settings {
                 let control_id = Id::new(*id, 0);
                 let on = get(&self.cfg);
                 match def.key {
-                    "effects" => Control::ButtonsToggle {
-                        items: vec![Button {
-                            id: Id::new(ids::SCENE_DEBUG, 0),
-                            text: "调试".to_string(),
-                            kind: ButtonKind::Secondary,
-                            enabled: true,
-                        }],
-                        toggle: control_id,
-                        toggle_on: on,
-                    },
                     "fuzzy" => Control::ButtonsToggle {
                         items: vec![Button {
                             id: Id::new(ids::RESET_FUZZY, 0),

@@ -4,8 +4,7 @@
 //! 全屏避让同 `ui_place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
 //! 滚轮/翻页箭头、右键菜单与悬停,动效可被按键打断,「减少动态效果」时
 //! 全部走终态。管线在 `ui_d2d_pipe`:硬件优先,没有适配器退 WARP;设备
-//! 被系统摘掉就地整条重建,窗口不换。场景层(`ui_d2d_scene`)随帧推进,
-//! 高对比度、隐私字段下整层停用。`LUEYING_D2D_SELFTEST` 供 CI 自检整条
+//! 被系统摘掉就地整条重建,窗口不换。`LUEYING_D2D_SELFTEST` 供 CI 自检整条
 //! 管线。模式徽标走原生分层窗口(`ui_hud`),不在这条管线上。
 
 use std::sync::atomic::Ordering;
@@ -16,7 +15,6 @@ use lueying_extwasm::{SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
 use lueying_render::Spring;
 use lueying_render::panel::{self, Metrics, PanelSpec};
-use lueying_scene::{EventName, Inputs};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -35,8 +33,7 @@ use windows::core::{BOOL, w};
 use crate::imp::State;
 use crate::ui_d2d_material::{self, Material};
 use crate::ui_d2d_mouse;
-use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
-use crate::ui_d2d_scene::SceneHost;
+use crate::ui_d2d_pipe::{Frame, Pipeline, Text};
 use crate::ui_place::{self, CARET_GAP};
 
 /// 淡入/淡出期间的重绘节奏。
@@ -53,10 +50,6 @@ const SPRING_MASS: f32 = 1.0;
 const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
-/// 场景层的重绘节奏;约 60fps,空闲成本是一帧布局加绘制的电费。
-const SCENE_INTERVAL: Duration = Duration::from_millis(16);
-/// 场景单帧 dt 上限;长时间不画(停靠、后台)后一步跳过,不做慢动作补帧。
-const SCENE_DT_MAX: f64 = 0.1;
 
 /// 启动 D2D 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
 pub(super) fn spawn(state: Arc<State>) {
@@ -105,9 +98,7 @@ pub(super) struct Fx {
     pub(super) mouse: (f32, f32),
     /// 最近一帧的绘制输入;命中测试用它,保证所指即所画。
     pub(super) geometry: Option<Geom>,
-    /// 新组合的第一帧走素色;之后才上场景层,候选一出现就可读。
-    first_frame: bool,
-    /// 本次组合的起点;场景的动画时钟从这儿算。
+    /// 本次组合的起点;出现动画与外观扩展的时钟从这儿算。
     since: Option<Instant>,
     /// 静止位置(屏幕坐标);弹簧只在它附近挪窗口。
     rest: (i32, i32, i32, i32),
@@ -171,16 +162,8 @@ pub(super) struct WinCtx {
     /// 运行期扩展:后台 worker 跑 Extism 插件,这里只收主题色补丁。
     script: crate::ext_host::Script,
     script_accent: Option<u32>,
-    /// 场景层宿主:加载、热重载、信号与事件。
-    scene: SceneHost,
-    /// 隐私字段(密码框):整个场景层停用。
+    /// 隐私字段(密码框):外观扩展开关与补丁停用。
     private: bool,
-    /// 待灌进场景运行时的事件;place 时记账,draw 时消费。
-    pending: Vec<EventName>,
-    /// 上一帧绘制时刻;场景时钟的 dt 从这里算。
-    last_draw: Option<Instant>,
-    /// 窗口左上角(屏幕坐标);场景的光标锚从这儿换算。
-    pos: (i32, i32),
     /// 首帧真正呈现前窗口保持隐藏,避免从停靠点挪到光标处时闪一帧旧内容。
     visible: bool,
     /// 出帧路径彻底走不通:候选窗停用。
@@ -226,7 +209,6 @@ fn window_loop(state: Arc<State>) {
         )
     };
     let script = crate::ext_host::Script::spawn(Arc::clone(&state));
-    let scene = SceneHost::new(&state);
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
@@ -239,11 +221,7 @@ fn window_loop(state: Arc<State>) {
         cursor_hand,
         script,
         script_accent: None,
-        scene,
         private: false,
-        pending: Vec::new(),
-        last_draw: None,
-        pos: (0, 0),
         visible: false,
         dead,
         material: None,
@@ -252,22 +230,11 @@ fn window_loop(state: Arc<State>) {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
     }
     let mut last_version = 0u64;
-    let mut next_scene_frame = Instant::now();
     loop {
         // 空闲时一直等下去:版本号、窗口消息与脚本补丁都会叫醒这里;
-        // 动画与场景活着时按帧推进,其余时间不烧 CPU。
+        // 动画进行时按帧推进,其余时间不烧 CPU。
         let waiting = busy_animating(unsafe { &*ctx });
-        let timeout = if waiting {
-            Some(ANIM_TICK)
-        } else if scene_live(unsafe { &*ctx }) {
-            Some(
-                next_scene_frame
-                    .saturating_duration_since(Instant::now())
-                    .max(Duration::from_millis(1)),
-            )
-        } else {
-            None
-        };
+        let timeout = waiting.then_some(ANIM_TICK);
         wait_for_input(&state, timeout);
         // 无焦点窗口的消息量很小,醒来顺手排干。
         unsafe {
@@ -293,12 +260,9 @@ fn window_loop(state: Arc<State>) {
             ctx.fx.reduce = reduce_motion();
             place(ctx);
         }
-        // 场景目录有变化就热重载;一秒一查,成本是一次文件元数据读取。
+        // 淡入/淡出/滑动进行中按循环节奏重绘。
         let ctx = unsafe { &mut *ctx };
-        ctx.scene.refresh(now, &ctx.state);
-        // 淡入/淡出/滑动进行中按循环节奏重绘;场景活着也按节奏推进。
-        if busy_animating(ctx) || (scene_live(ctx) && now >= next_scene_frame) {
-            next_scene_frame = now + SCENE_INTERVAL;
+        if busy_animating(ctx) {
             animate(ctx);
         }
     }
@@ -308,17 +272,6 @@ fn window_loop(state: Arc<State>) {
 fn busy_animating(ctx: &WinCtx) -> bool {
     let fx = &ctx.fx;
     fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some()
-}
-
-/// 场景层是否活着;活着就要按帧推进。
-fn scene_live(ctx: &WinCtx) -> bool {
-    let fx = &ctx.fx;
-    ctx.scene.live()
-        && scene_enabled(&ctx.state)
-        && !ctx.private
-        && !fx.reduce
-        && fx.last.is_some()
-        && !ctx.dead
 }
 
 /// 等版本号事件、窗口消息或动画帧;`timeout` 为空时一直睡到有事件。
@@ -346,7 +299,6 @@ fn place(ctx: &mut WinCtx) {
     match ui_place::snapshot(&ctx.state) {
         None => {
             // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
-            ctx.pending.extend(ctx.scene.observe(None));
             if ctx.fx.reduce || ctx.fx.last.is_none() {
                 ctx.fx.clear();
                 park(ctx);
@@ -364,7 +316,6 @@ fn place(ctx: &mut WinCtx) {
             }
         }
         Some(snap) => {
-            ctx.pending.extend(ctx.scene.observe(Some(&snap.view)));
             ctx.private = snap.private;
             let view = &snap.view;
             let fresh = ctx.fx.last.is_none() || ctx.fx.hide.is_some();
@@ -377,15 +328,14 @@ fn place(ctx: &mut WinCtx) {
                 ctx.fx.menu_hover = None;
                 ctx.fx.hover = None;
                 ctx.fx.pager = None;
-                // 新组合:第一帧走素色,场景时钟从现在起算。
-                ctx.fx.first_frame = true;
+                // 新组合:出现动画与外观扩展的时钟从现在起算。
                 ctx.fx.since = Some(Instant::now());
                 // 出现动画:窗口从落点下方 6pt 弹回原位;「减少动态效果」直接就位。
                 ctx.fx.enter = match view.caret {
                     Some((l, _, r, b)) => ENTER_DISTANCE * ui_place::scale_at(l.min(r), b),
                     None => ENTER_DISTANCE,
                 };
-                ctx.fx.show = if ctx.fx.reduce {
+                ctx.fx.show = if ctx.fx.reduce || !effects_enabled(&ctx.state) {
                     None
                 } else {
                     let mut spring = Spring::new(SPRING_STIFFNESS, SPRING_DAMPING, SPRING_MASS);
@@ -396,7 +346,10 @@ fn place(ctx: &mut WinCtx) {
             ctx.fx.hide = None;
             style_click_through(ctx.hwnd, false);
             // 只有翻页才滑动;首次展开和继续打字不横向跳。
-            if !ctx.fx.reduce && ctx.fx.page.is_some_and(|page| page != view.page) {
+            if !ctx.fx.reduce
+                && effects_enabled(&ctx.state)
+                && ctx.fx.page.is_some_and(|page| page != view.page)
+            {
                 let previous = ctx.fx.page.unwrap_or(view.page);
                 let direction = if view.page > previous { 1.0 } else { -1.0 };
                 ctx.fx.slide = Some((direction, Instant::now() + PAGE_SLIDE));
@@ -469,7 +422,7 @@ fn submit_scene(ctx: &WinCtx, view: &SessionView, private: bool) {
 
 /// 应用脚本补丁;只有主题色还有效,内容没变就不重绘。
 fn apply_script(ctx: &mut WinCtx, seq: u64, patch: Option<ScenePatch>, redraw_now: bool) {
-    // 旧场景的补丁晚到:新一帧或隐私字段已经提交,直接丢弃。
+    // 旧外观补丁晚到:新一帧或隐私字段已经提交,直接丢弃。
     if seq < ctx.script.seq() {
         return;
     }
@@ -535,7 +488,6 @@ fn layout_window(ctx: &mut WinCtx, rect: (i32, i32, i32, i32)) -> Result<(), Str
     if w <= 0 || h <= 0 {
         return Err("候选窗尺寸为空".to_string());
     }
-    ctx.pos = (x, y);
     unsafe {
         let _ = SetWindowPos(ctx.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
     }
@@ -545,7 +497,7 @@ fn layout_window(ctx: &mut WinCtx, rect: (i32, i32, i32, i32)) -> Result<(), Str
     pipe.rebuild_surfaces(w as u32, h as u32)
 }
 
-/// 动画帧:淡入/淡出/滑动/场景推进中重绘;淡出到期停靠,其余到期走终态。
+/// 动画帧:淡入/淡出/滑动/弹性动效推进中重绘;淡出到期停靠,其余到期走终态。
 fn animate(ctx: &mut WinCtx) {
     if ctx.dead {
         park(ctx);
@@ -591,15 +543,12 @@ fn animate(ctx: &mut WinCtx) {
         }
     }
     let animating = ctx.fx.hide.is_some() || ctx.fx.show.is_some() || ctx.fx.slide.is_some();
-    if let Some(view) = (animating || ctx.scene.live())
-        .then(|| ctx.fx.last.clone())
-        .flatten()
-    {
+    if let Some(view) = animating.then(|| ctx.fx.last.clone()).flatten() {
         draw_view(ctx, &view);
     }
 }
 
-/// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单、场景层,全部换算后交给管线。
+/// 出一帧:透明度(淡出 > 淡入)、列表动效、悬停与菜单,全部换算后交给管线。
 fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     if ctx.dead {
         return;
@@ -630,7 +579,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     }
     let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
     let appearance = lueying_server::theme::Appearance::of_system();
-    // 高对比度由系统接管外观,场景层整个关掉,免得压过系统配色。
+    // 高对比度由系统接管外观,外观扩展整个关掉,免得压过系统配色。
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 脚本主题色只换主色与选中底色;高对比度仍用系统色。
     let colors = match ctx.script_accent {
@@ -646,11 +595,12 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
     // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
     drop(skin);
-    // 材质背板:亚克力由 DWM 出底色,自绘只铺半透明内容层;系统关闭
+    // 材质背板:毛玻璃由 DWM 出底色,自绘只铺半透明内容层;系统关闭
     // 「透明效果」、高对比度、有皮肤或落属性失败时回实底主题。
     let wanted = Material {
         on: !high_contrast && skinless && ui_d2d_material::transparency_enabled(),
         tint: colors.bg,
+        dark: matches!(appearance, lueying_server::theme::Appearance::Dark),
     };
     let glass = match ctx.material {
         Some((cached, applied)) if cached == wanted => applied,
@@ -704,25 +654,6 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     });
     let width = panel::panel_width(&spec, &metrics, &ctx.text);
     let height = panel::panel_height(&spec, &metrics, &ctx.text);
-    // 场景层:隐私字段与高对比度下整层停用;新组合第一帧走素色,
-    // 候选一出现就可读,动效从第二帧起才接上。
-    let first = std::mem::replace(&mut ctx.fx.first_frame, false);
-    let scene_frame = if ctx.scene.live()
-        && scene_enabled(&ctx.state)
-        && !ctx.private
-        && !high_contrast
-        && !first
-    {
-        scene_tick(ctx, view, &spec, &metrics, width, height)
-    } else {
-        None
-    };
-    let scene_dir = ctx
-        .scene
-        .dir()
-        .unwrap_or(std::path::Path::new(""))
-        .to_path_buf();
-    let empty: Vec<lueying_scene::Item> = Vec::new();
     let frame = Frame {
         spec: &spec,
         palette: &palette,
@@ -734,8 +665,6 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         pager: ctx.fx.pager,
         menu,
         menu_hover: ctx.fx.menu_hover,
-        scene: scene_frame.as_deref().unwrap_or(&empty),
-        scene_dir: &scene_dir,
     };
     let drawn = match ctx.pipe.as_mut() {
         Some(pipe) => pipe
@@ -748,79 +677,6 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         return;
     }
     show(ctx);
-}
-
-/// 推进场景运行时一帧:喂信号与待发事件,拿回本帧图元。
-/// 场景坐标是设计单位:布局矩形按缩放除回去,窗口层画的时候再乘回来。
-fn scene_tick(
-    ctx: &mut WinCtx,
-    view: &SessionView,
-    spec: &PanelSpec,
-    metrics: &Metrics,
-    width: f32,
-    height: f32,
-) -> Option<Vec<lueying_scene::Item>> {
-    let s = metrics.scale();
-    let (rate, idle) = ctx.scene.rate_and_idle();
-    let unit = |rect: &panel::Rect| {
-        [
-            rect.left / s,
-            rect.top / s,
-            rect.width() / s,
-            rect.height() / s,
-        ]
-    };
-    let rects: Vec<[f32; 4]> = panel::item_rects(spec, metrics, &ctx.text)
-        .iter()
-        .map(unit)
-        .collect();
-    let selected = spec.items.iter().position(|item| item.selected);
-    let highlight = selected.and_then(|index| rects.get(index).copied());
-    let page_size = view.page_size.max(1);
-    let inputs = Inputs {
-        typing_rate: rate,
-        candidates: rects.len(),
-        page: view.page,
-        page_count: view.candidates.len().div_ceil(page_size).max(1),
-        mode_chinese: view.chinese,
-        selected: view
-            .highlight
-            .saturating_sub(view.page * page_size)
-            .min(rects.len().saturating_sub(1)),
-        idle,
-        panel: [0.0, 0.0, width / s, height / s],
-        preedit: [0.0, 0.0, width / s, panel::PREEDIT_H],
-        highlight,
-        candidate_rects: &rects,
-        // 组合光标多半在窗外(宿主应用里);诚实换算,画出去会被裁掉。
-        caret: {
-            let (wx, wy) = ctx.pos;
-            match view.caret {
-                Some((l, t, r, b)) => [
-                    (l.min(r) - wx) as f32 / s,
-                    (t - wy) as f32 / s,
-                    (r.saturating_sub(l.min(r))) as f32 / s,
-                    (b.saturating_sub(t)) as f32 / s,
-                ],
-                None => [0.0, 0.0, 0.0, 0.0],
-            }
-        },
-        screen: [0.0, 0.0, width / s, height / s],
-    };
-    let now = Instant::now();
-    let dt = if ctx.fx.reduce {
-        0.0
-    } else {
-        ctx.last_draw
-            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f64())
-            .min(SCENE_DT_MAX)
-    };
-    ctx.last_draw = Some(now);
-    let events = std::mem::take(&mut ctx.pending);
-    ctx.scene.record(dt, &inputs, &events);
-    ctx.scene
-        .tick(dt, &inputs, &events)
-        .map(|frame| frame.items)
 }
 
 /// 鼠标/菜单变化后的重绘;淡出窗口不接鼠标,内容与位置都不动。
@@ -896,8 +752,8 @@ fn ex_style(hwnd: HWND) -> u32 {
     unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 }
 }
 
-/// 场景层开关;配置重载后立即生效,与旧的装饰层开关同一把。
-fn scene_enabled(state: &State) -> bool {
+/// 弹性动效开关;配置重载后立即生效。
+fn effects_enabled(state: &State) -> bool {
     state
         .config
         .read()
@@ -926,7 +782,7 @@ fn progress(total: Duration, end: Instant, now: Instant) -> f32 {
     (1.0 - remain.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0)
 }
 
-/// ease_out_quint;窗口动效与场景缓动共用这条曲线。
+/// ease_out_quint;窗口滑动与淡出动效共用这条曲线。
 fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(5)
 }

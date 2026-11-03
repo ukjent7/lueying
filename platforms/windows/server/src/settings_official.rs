@@ -54,7 +54,7 @@ pub fn install(id: &str) -> Result<String, String> {
         return install_bundled(extension);
     }
     install_model(extension)?;
-    if extension.id == "ppocr" {
+    if extension.id == "ppocr" || extension.id == "sensevoice" {
         return Ok(format!(
             "{} 已下载并校验;在「运行期扩展」里同意后可用",
             extension.name
@@ -97,12 +97,10 @@ fn install_bundled(extension: &OfficialExtension) -> Result<String, String> {
             parsed.wasm_main()
         ));
     }
-    let next = if parsed.is_scene() {
-        "在「运行期扩展」里启用即可"
-    } else {
-        "在「运行期扩展」里同意后可用"
-    };
-    Ok(format!("{} 已安装;{next}", extension.name))
+    Ok(format!(
+        "{} 已安装;在「运行期扩展」里同意后可用",
+        extension.name
+    ))
 }
 
 /// 随包扩展在安装目录的 `extensions/`;开发构建回退仓库根目录。
@@ -118,11 +116,12 @@ fn bundled_source(relative: &str) -> PathBuf {
 
 fn install_model(extension: &OfficialExtension) -> Result<(), String> {
     let models = crate::config::models_dir().ok_or("没有可写的模型目录")?;
-    let target_dir = if extension.id == "ppocr" {
-        // PP-OCRv6 是原生扩展:清单、可执行文件与模型同住扩展目录。
+    let native = extension.id == "ppocr" || extension.id == "sensevoice";
+    let target_dir = if native {
+        // 原生引擎:清单、可执行文件与模型同住扩展目录。
         crate::config::extensions_dir()
             .ok_or("没有可写的扩展目录")?
-            .join("ppocr")
+            .join(&extension.id)
     } else {
         models
     };
@@ -135,6 +134,11 @@ fn install_model(extension: &OfficialExtension) -> Result<(), String> {
         write_atomic(
             &target_dir.join("manifest.json"),
             official_extensions::PPOCR_MANIFEST.as_bytes(),
+        )?;
+    } else if extension.id == "sensevoice" {
+        write_atomic(
+            &target_dir.join("manifest.json"),
+            official_extensions::SENSEVOICE_MANIFEST.as_bytes(),
         )?;
     }
     for file in &extension.files {

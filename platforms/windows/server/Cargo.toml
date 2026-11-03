@@ -17,8 +17,6 @@ path = "src/settings_main.rs"
 lueying-broker.workspace = true
 lueying-dict.workspace = true
 lueying-engine.workspace = true
-# 停顿重排缝:旁路提供者按需拉起子进程。
-lueying-bypass.workspace = true
 # 扩展运行指标快照:设置页与 `lueying ext top` 读同一份格式。
 lueying-extmeta.workspace = true
 # 联网边界:设置窗的更新检查与官方扩展下载走这里,常驻 Server 不引用。
@@ -27,8 +25,6 @@ lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:候选窗/徽标/命令面板的布局与命中;设置窗 UI 已由 Slint 承担。
 lueying-render.workspace = true
-# 声明式场景运行时:候选窗外观补丁与场景调试。
-lueying-scene.workspace = true
 # 会话内核:候选视图同步与重排快照,macOS 外壳共用同一份。
 lueying-session.workspace = true
 lueying-protocol = { path = "../../../crates/protocol" }
