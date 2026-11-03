@@ -62,7 +62,7 @@ pub struct Limits {
     /// 线性内存上限(字节);换算成 extism 的页数上限。
     pub memory_bytes: usize,
     /// Wasm 值栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
-    /// 必须明显小于 worker 线程栈([`WORKER_STACK`]）。
+    /// 必须明显小于 worker 线程栈(WORKER_STACK)。
     pub stack_bytes: usize,
     /// 初始化时限(毫秒);指标展示用。
     pub init_ms: u64,
