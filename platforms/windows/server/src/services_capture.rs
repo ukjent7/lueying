@@ -44,7 +44,7 @@ impl Provider for CaptureProvider {
 }
 
 /// 截图区域;虚拟桌面坐标。
-struct Region {
+pub(super) struct Region {
     x: i32,
     y: i32,
     width: i32,

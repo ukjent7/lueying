@@ -33,7 +33,7 @@ use windows::core::{BOOL, w};
 use crate::imp::State;
 use crate::ui_d2d_material::{self, Material};
 use crate::ui_d2d_mouse;
-use crate::ui_d2d_pipe::{Frame, Pipeline, Text};
+use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
 use crate::ui_place::{self, CARET_GAP};
 
 /// 淡入/淡出期间的重绘节奏。

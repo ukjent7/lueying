@@ -72,7 +72,7 @@ impl NetworkProvider {
 }
 
 impl Provider for NetworkProvider {
-    fn call(&self, caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
+    fn call(&self, caller: &str, _method: &str, args: &str, done: Done) -> Result<(), String> {
         let Some(broker) = self.broker.clone() else {
             done.complete(Err("联网 broker 组件缺失;重新安装输入法".into()));
             return Ok(());

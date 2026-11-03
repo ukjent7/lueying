@@ -16,7 +16,7 @@ pub(super) fn notice_kind(tint: u32, colors: &PageColors) -> i32 {
     }
 }
 
-fn slint_button(button: &model::Button) -> Btn {
+pub(super) fn slint_button(button: &model::Button) -> Btn {
     Btn {
         base: button.id.base.clone().into(),
         index: button.id.index as i32,
@@ -121,7 +121,7 @@ pub(super) fn slint_row(row: &model::Row) -> Row {
 }
 
 /// 0xRRGGBB 转 Slint 颜色。
-fn color(rgb: u32) -> slint::Color {
+pub(super) fn color(rgb: u32) -> slint::Color {
     slint::Color::from_rgb_u8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 

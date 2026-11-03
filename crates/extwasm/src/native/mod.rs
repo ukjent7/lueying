@@ -287,6 +287,7 @@ pub fn grant_appcontainer_read(path: &Path) -> Result<(), String> {
     sandbox::grant_read_execute(path)
 }
 
+/// 非 Windows 平台的空操作:没有 AppContainer 概念,直接成功。
 #[cfg(not(windows))]
 pub fn grant_appcontainer_read(_path: &Path) -> Result<(), String> {
     Ok(())

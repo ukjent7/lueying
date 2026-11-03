@@ -362,7 +362,7 @@ impl Target for Pipeline {
         unsafe {
             dc.SetTarget(&bitmap);
             dc.BeginDraw();
-            paint(&dc, &factory, f, text, &bitmap);
+            paint(&dc, &factory, f, text);
             dc.EndDraw(None, None)
         }
         .map_err(|e| format!("EndDraw: {e}"))
@@ -431,7 +431,7 @@ impl Target for Offscreen {
         unsafe {
             dc.SetTarget(&bitmap);
             dc.BeginDraw();
-            paint(&dc, &factory, f, text, &bitmap);
+            paint(&dc, &factory, f, text);
             dc.EndDraw(None, None)
         }
         .map_err(|e| format!("EndDraw: {e}"))
