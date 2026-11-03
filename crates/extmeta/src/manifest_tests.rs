@@ -151,7 +151,8 @@ fn rejects_non_bool_appearance() {
 
 #[test]
 fn rejects_old_api() {
-    for api in [1, 2, 4] {
+    // 旧版本与未来版本都不收:清单只认当前契约。
+    for api in [1, 2, 3, 5] {
         let mut value = base();
         value["api"] = json!(api);
         assert!(parse(value).is_err(), "api={api}");
