@@ -748,7 +748,7 @@ fn conflict_choice() -> ConflictChoice {
         IDNO, IDYES, MB_ICONQUESTION, MB_YESNOCANCEL, MessageBoxW,
     };
     use windows::core::HSTRING;
-    let text = "远端与本机都改过,用哪一份?\n\n\
+    let text = "远端与本机不一致,用哪一份?\n\n\
                 是:以本机为准并上传\n否:以远端为准并下载\n取消:这次两边都不动";
     let answer = unsafe {
         MessageBoxW(

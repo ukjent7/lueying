@@ -414,11 +414,8 @@ pub fn run(report: &mut String) -> usize {
 
     // 云同步:词库页有地址、账号、口令与同步按钮。
     let mut sync_settings = sample_settings();
-    let sync_group = sync_settings
-        .page_view(PageId::Dictionary, &colors())
-        .groups
-        .iter()
-        .find(|group| group.title == "云同步");
+    let sync_page = sync_settings.page_view(PageId::Dictionary, &colors());
+    let sync_group = sync_page.groups.iter().find(|group| group.title == "云同步");
     let sync_labels: Vec<&str> = sync_group
         .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
         .unwrap_or_default();
