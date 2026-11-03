@@ -3412,6 +3412,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "lueying-linux"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "calloop 0.13.0",
+ "calloop-wayland-source",
+ "fontdb",
+ "libc",
+ "lueying-dict",
+ "lueying-engine",
+ "lueying-features",
+ "lueying-protocol",
+ "lueying-render",
+ "lueying-rerank",
+ "lueying-server",
+ "lueying-session",
+ "memfd",
+ "memmap2",
+ "tiny-skia 0.12.0",
+ "wayland-client",
+ "wayland-scanner",
+ "xkbcommon",
+]
+
+[[package]]
 name = "lueying-lm"
 version = "0.3.0"
 dependencies = [

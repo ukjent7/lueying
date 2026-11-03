@@ -359,11 +359,22 @@ impl AppConfig {
     }
 }
 
-/// 配置文件路径(`%APPDATA%` 优先,退回 `%LOCALAPPDATA%`)。
+/// 配置文件路径(`%APPDATA%` 优先,退回 `%LOCALAPPDATA%`;Linux 走 XDG)。
 pub fn path() -> Option<PathBuf> {
-    let base =
-        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    Some(base.join("lueying").join("config.toml"))
+    if let Some(path) = std::env::var_os("LUEYING_CONFIG") {
+        return Some(PathBuf::from(path));
+    }
+    #[cfg(windows)]
+    {
+        let base = PathBuf::from(
+            std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?,
+        );
+        Some(base.join("lueying").join("config.toml"))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(config_dir()?.join("lueying").join("config.toml"))
+    }
 }
 
 /// 按应用覆盖文件路径(`%APPDATA%\lueying\apps.toml`)。
@@ -448,7 +459,17 @@ pub fn models_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("LUEYING_MODEL_DIR") {
         return Some(PathBuf::from(dir));
     }
-    user_file("models")
+    #[cfg(windows)]
+    {
+        user_file("models")
+    }
+    #[cfg(not(windows))]
+    {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+        Some(base.join("lueying").join("models"))
+    }
 }
 
 /// 模型路径:用户目录优先,其次安装目录。重排模型不随基础安装分发时,
@@ -466,9 +487,27 @@ pub fn model_path(name: &str) -> Option<PathBuf> {
 }
 
 fn user_file(name: &str) -> Option<PathBuf> {
-    let base =
-        PathBuf::from(std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?);
-    Some(base.join("lueying").join(name))
+    if let Some(path) = std::env::var_os("LUEYING_CONFIG") {
+        return Path::new(&path).parent().map(|dir| dir.join(name));
+    }
+    #[cfg(windows)]
+    {
+        let base = PathBuf::from(
+            std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA"))?,
+        );
+        Some(base.join("lueying").join(name))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(config_dir()?.join("lueying").join(name))
+    }
+}
+
+#[cfg(not(windows))]
+fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
 }
 
 /// 服务日志路径(`%LOCALAPPDATA%\lueying\logs\server.log`)。

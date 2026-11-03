@@ -1,0 +1,39 @@
+[package]
+name = "lueying-linux"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Linux Wayland 输入法外壳:zwp_input_method_v2 会话与软件渲染候选窗"
+
+[lib]
+name = "lueying_linux"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lueying-linux"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+lueying-dict.workspace = true
+lueying-engine.workspace = true
+lueying-features.workspace = true
+lueying-protocol.workspace = true
+lueying-render.workspace = true
+lueying-rerank.workspace = true
+lueying-server.workspace = true
+lueying-session.workspace = true
+ab_glyph = "0.2.32"
+calloop = "0.13"
+calloop-wayland-source = "0.3"
+fontdb = { version = "0.24", default-features = false, features = [
+    "fs",
+    "memmap",
+    "std",
+] }
+libc = "0.2"
+memfd = "0.6"
+memmap2 = "0.9"
+tiny-skia = "0.12"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+xkbcommon = "0.9"

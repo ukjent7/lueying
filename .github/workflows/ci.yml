@@ -81,6 +81,9 @@ jobs:
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
           prefix-key: linux
+      # Linux 外壳的 xkbcommon 绑定要在编译期链接系统库。
+      - name: 安装 Linux 系统依赖
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
@@ -96,6 +99,9 @@ jobs:
       # 渲染核心(布局几何、弹簧)与平台无关,Linux 上测同一份代码。
       - name: 渲染核心单元测试
         run: cargo test -p lueying-render --lib --locked
+      # Linux 外壳的按键映射、候选分页与重复定时器参数。
+      - name: Linux 外壳单元测试
+        run: cargo test -p lueying-linux --lib --locked
       # 服务端纯逻辑单测:E2E 覆盖不到的边界组合,debug 构建足够。
       - name: 服务端单元测试
         run: cargo test -p lueying-server --lib --locked

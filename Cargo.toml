@@ -35,6 +35,8 @@ members = [
     "platforms/windows/installer",
     # macOS 平台薄层:InputMethodKit 外壳与候选窗画布(仅 macOS 目标编译)
     "platforms/macos/ime",
+    # Linux 平台薄层:Wayland 输入法协议外壳与软件渲染候选窗(仅 Linux 目标编译)
+    "platforms/linux/ime",
     # 验证与工具
     "crates/e2e",
     "platforms/windows/win-e2e",
