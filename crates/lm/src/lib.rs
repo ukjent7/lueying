@@ -2321,7 +2321,7 @@ mod tests {
     mod bounded_encoding;
     mod project_rows;
 
-    use super::{comparable, erf, gelu, should_rerank, CandidateFacts, Compared};
+    use super::{CandidateFacts, Compared, comparable, erf, gelu, should_rerank};
 
     // 一层小模型只使用合成权重，缓存测试不读取外部模型文件。
     fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {

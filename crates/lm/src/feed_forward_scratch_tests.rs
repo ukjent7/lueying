@@ -786,7 +786,9 @@ fn six_layer_feed_forward_paired_budget() {
                 } else {
                     1.03
                 };
-                println!("quantized={quantized} width={width} rows={rows} repeats={repeats} paired_ratio_p50={ratio:.4} budget={budget:.2}");
+                println!(
+                    "quantized={quantized} width={width} rows={rows} repeats={repeats} paired_ratio_p50={ratio:.4} budget={budget:.2}"
+                );
                 if ratio >= budget {
                     failures.push((quantized, width, rows, ratio, budget));
                 }
