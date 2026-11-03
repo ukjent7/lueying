@@ -1,0 +1,64 @@
+# 一次性测量:Extism 运行时相对现有 wasmtime 宿主的依赖树与产物体积。
+# 只在手动触发时跑,测完即删;结论记在记忆与 docs/extensions/wasm.md。
+name: spike-extism
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # 两侧用同一套 profile:lto 与 strip 会让体积不可比。
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_STRIP: "none"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 量依赖树与静态库体积
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          report=/tmp/spike-report.txt
+          : > "$report"
+          measure() {
+            name="$1"; shift
+            dir="/tmp/spike-$name"
+            rm -rf "$dir"; mkdir -p "$dir/src"
+            {
+              printf '[package]\nname = "spike_%s"\nversion = "0.0.0"\nedition = "2021"\n\n[dependencies]\n' "$name"
+              for dep in "$@"; do printf '%s\n' "$dep"; done
+            } > "$dir/Cargo.toml"
+            printf 'pub fn probe() {}\n' > "$dir/src/lib.rs"
+            start=$(date +%s)
+            if ! ( cd "$dir" && CARGO_TARGET_DIR="$dir/target" cargo rustc --release --lib --crate-type staticlib ); then
+              printf '## %s\n构建失败\n' "$name" >> "$report"
+              return 0
+            fi
+            end=$(date +%s)
+            lib="$dir/target/release/libspike_${name}.a"
+            size=$(stat -c%s "$lib")
+            count=$( cd "$dir" && cargo tree -e normal --prefix none | awk '{print $1" "$2}' | sort -u | wc -l )
+            {
+              printf '## %s\n' "$name"
+              printf '静态库 %.1f MiB,编译 %s s,依赖 %s 个\n' \
+                "$(awk -v b="$size" 'BEGIN{printf "%.1f", b/1048576}')" "$((end-start))" "$count"
+              printf '重复版本:\n'
+              ( cd "$dir" && cargo tree --duplicates || true )
+              printf '\n'
+            } >> "$report"
+          }
+          measure ours \
+            'wasmtime = { version = "50", default-features = false, features = ["std", "runtime", "cranelift", "wat"] }' \
+            'serde = { version = "1", features = ["derive"] }' \
+            'serde_json = "1"'
+          measure extism \
+            'extism = "1.41"' \
+            'wasmtime = { version = "50", default-features = false, features = ["std", "runtime", "cranelift", "wat"] }'
+          cat "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
