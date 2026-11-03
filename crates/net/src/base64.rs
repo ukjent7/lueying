@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn encodes_basic_credentials() {
-        assert_eq!(encode(b"alice:s3cret"), "YWxpY2U6czNjcml0");
+        assert_eq!(encode(b"alice:s3cret"), "YWxpY2U6czNjcmV0");
     }
 
     #[test]
