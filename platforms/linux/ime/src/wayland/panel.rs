@@ -168,13 +168,18 @@ impl Panel {
         let width = pixmap.width();
         let height = pixmap.height();
         let size = width as usize * height as usize * 4;
-        let mut file = memfd::MemfdOptions::default()
+        let file = memfd::MemfdOptions::default()
             .create("lueying-panel")
             .ok()?
             .into_file();
         file.set_len(size as u64).ok()?;
         let mut map = unsafe { MmapMut::map_mut(&file).ok()? };
-        for (dst, src) in map.chunks_exact_mut(4).zip(pixmap.data().chunks_exact(4)) {
+        for (dst, src) in map
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(pixmap.data().as_chunks::<4>().0.iter())
+        {
             dst.copy_from_slice(&[src[2], src[1], src[0], src[3]]);
         }
         let pool = self.shm.create_pool(file.as_fd(), size as i32, qh, ());
@@ -219,8 +224,7 @@ impl Canvas for TinyCanvas<'_> {
         let Some(rect) = sk_rect(rect) else {
             return;
         };
-        let _ = self
-            .pixmap
+        self.pixmap
             .fill_rect(rect, &paint(color), Transform::identity(), None);
     }
 
@@ -237,14 +241,13 @@ impl Canvas for TinyCanvas<'_> {
             width,
             ..Stroke::default()
         };
-        let _ = self
-            .pixmap
+        self.pixmap
             .stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
     }
 
     fn fill_rrect(&mut self, rect: Rect, radius: f32, color: Color) {
         if let Some(path) = rrect(rect, radius) {
-            let _ = self.pixmap.fill_path(
+            self.pixmap.fill_path(
                 &path,
                 &paint(color),
                 FillRule::Winding,
@@ -260,9 +263,8 @@ impl Canvas for TinyCanvas<'_> {
                 width,
                 ..Stroke::default()
             };
-            let _ =
-                self.pixmap
-                    .stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
+            self.pixmap
+                .stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
         }
     }
 
@@ -431,7 +433,7 @@ fn load_font() -> Option<FontArc> {
     ];
     let families: Vec<fontdb::Family<'_>> = FAMILIES
         .iter()
-        .map(|name| fontdb::Family::Name(*name))
+        .map(|name| fontdb::Family::Name(name))
         .collect();
     let query = fontdb::Query {
         families: &families,

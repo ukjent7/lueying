@@ -46,10 +46,10 @@ pub fn shared_gram() -> Option<Arc<Gram>> {
 
 /// 载入一档重排模型;文件不存在就返回 `None`,会话自动只用引擎排序。
 pub fn rerank(name: &str) -> Option<Model> {
-    if let Some(dir) = crate::config::models_dir() {
-        if let Ok(bytes) = std::fs::read(dir.join(name)) {
-            return Model::load(&bytes).ok();
-        }
+    if let Some(dir) = crate::config::models_dir()
+        && let Ok(bytes) = std::fs::read(dir.join(name))
+    {
+        return Model::load(&bytes).ok();
     }
     let bytes = data_dirs()
         .into_iter()
