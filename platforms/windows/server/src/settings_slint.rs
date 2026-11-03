@@ -242,9 +242,9 @@ fn refresh(ui: &SettingsWindow, core: &Shared) {
 mod dialogs;
 
 use dialogs::{
-    add_app, choose_script, install_update, notice_kind, open_secret_editor,
+    TextKind, add_app, choose_script, install_update, notice_kind, open_secret_editor,
     open_text_editor, open_webdav_editor, page_colors, slint_row, start_official_install,
-    start_update_check, start_webdav_sync, TextKind,
+    start_update_check, start_webdav_sync,
 };
 
 /// 自检:写报告并返回成败;首行必须是「结果:通过/失败」。

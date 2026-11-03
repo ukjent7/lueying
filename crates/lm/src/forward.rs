@@ -7,8 +7,8 @@ use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
 use crate::math::{
-    gelu, gelu_tanh, layer_norm_into, linear_into, log_normalizer, row_blocks, dot, dot_block,
-    split_qkv_with_suffix_into, HALF_BLOCK, ROW_BLOCK,
+    HALF_BLOCK, ROW_BLOCK, dot, dot_block, gelu, gelu_tanh, layer_norm_into, linear_into,
+    log_normalizer, row_blocks, split_qkv_with_suffix_into,
 };
 use crate::model::{Block, FeedForwardScratch, SentenceModel};
 use crate::weights::Tensor;

@@ -17,10 +17,10 @@ use std::sync::Arc;
 pub use emoji::EmojiModule;
 pub use english::EnglishModule;
 pub use lueying_ext::Script;
-pub use phrases::CustomPhrases;
 pub use lueying_input_schemes::{
     AuxCode, AuxLookup, AuxScheme, CodeEntry, CodeScheme, CodeTable, SchemeId, Shuangpin, scheme,
 };
+pub use phrases::CustomPhrases;
 pub use predict::Prediction;
 pub use quick::QuickModule;
 pub use script::{ScriptModule, convert};

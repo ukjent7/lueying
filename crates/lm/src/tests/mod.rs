@@ -7,9 +7,7 @@ use super::{CandidateFacts, Compared, comparable, erf, gelu, should_rerank};
 fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
     use super::{Block, Config, Matrix, SentenceModel};
     let matrix = |size| Matrix {
-        inner: super::Tensor::Float(
-            (0..size).map(|i| ((i % 17) as f32 - 8.0) / 32.0).collect(),
-        ),
+        inner: super::Tensor::Float((0..size).map(|i| ((i % 17) as f32 - 8.0) / 32.0).collect()),
     };
     std::sync::Arc::new(SentenceModel {
         config: Config {
@@ -233,8 +231,7 @@ fn borrowed_resume_matches_a_truncated_owned_prefix() {
                     .enumerate()
                     .map(|(layer, row)| {
                         if taken > run.hidden.len() {
-                            [row.as_slice(), &run.terminal.get().unwrap().values[layer]]
-                                .concat()
+                            [row.as_slice(), &run.terminal.get().unwrap().values[layer]].concat()
                         } else {
                             row[..width].to_vec()
                         }

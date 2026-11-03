@@ -668,9 +668,7 @@ fn protect_exact(cands: &mut [Candidate]) {
     if let Some(index) = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| {
-            c.learned && c.user_freq >= 2 && !c.rejected && (c.full || !has_full)
-        })
+        .filter(|(_, c)| c.learned && c.user_freq >= 2 && !c.rejected && (c.full || !has_full))
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
         .map(|(i, _)| i)
     {

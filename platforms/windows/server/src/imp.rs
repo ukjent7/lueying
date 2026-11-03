@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
+use assets::{dict_path, load_dict, load_model, single_instance};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
@@ -37,7 +38,6 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows::core::HSTRING;
-use assets::{dict_path, load_dict, load_model, single_instance};
 
 /// 当前系统本地时间。日期/时间候选按宿主时区生成,不靠引擎猜 UTC。
 fn local_time() -> CivilTime {

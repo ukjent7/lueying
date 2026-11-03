@@ -37,11 +37,7 @@ fn every_download_has_hash_and_size() {
             assert!(file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()));
             if file.bytes == 0 {
                 // 原生引擎 exe 是发版占位;发布前由 xtask 补真实值。
-                assert!(
-                    file.name.ends_with(".exe"),
-                    "{} 缺字节数",
-                    file.name
-                );
+                assert!(file.name.ends_with(".exe"), "{} 缺字节数", file.name);
                 continue;
             }
             assert!(

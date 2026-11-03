@@ -188,10 +188,9 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
     let extensions = root.join("extensions");
     if extensions.is_dir() {
         let target = args.out.join("extensions");
-        std::fs::create_dir_all(&target)
-            .map_err(|e| format!("创建 {}: {e}", target.display()))?;
-        let entries =
-            std::fs::read_dir(&extensions).map_err(|e| format!("读 {}: {e}", extensions.display()))?;
+        std::fs::create_dir_all(&target).map_err(|e| format!("创建 {}: {e}", target.display()))?;
+        let entries = std::fs::read_dir(&extensions)
+            .map_err(|e| format!("读 {}: {e}", extensions.display()))?;
         for entry in entries {
             let entry = entry.map_err(|e| format!("读 {}: {e}", extensions.display()))?;
             let path = entry.path();

@@ -30,11 +30,10 @@ impl Provider for AudioProvider {
         std::thread::Builder::new()
             .name("ext-audio-record".into())
             .spawn(move || {
-                let result = record_audio(seconds)
-                    .and_then(|recording| {
-                        serde_json::to_string(&recording)
-                            .map_err(|error| format!("录音结果序列化失败: {error}"))
-                    });
+                let result = record_audio(seconds).and_then(|recording| {
+                    serde_json::to_string(&recording)
+                        .map_err(|error| format!("录音结果序列化失败: {error}"))
+                });
                 done.complete(result);
             })
             .map_err(|error| format!("录音线程启动失败: {error}"))?;
@@ -76,8 +75,11 @@ impl Provider for AsrProvider {
         std::thread::Builder::new()
             .name("ext-asr".into())
             .spawn(move || {
-                let result =
-                    native.call("sensevoice", "recognize", &json!({ "file": &file }).to_string());
+                let result = native.call(
+                    "sensevoice",
+                    "recognize",
+                    &json!({ "file": &file }).to_string(),
+                );
                 // 识别完成(成功或失败)后删掉临时录音,避免磁盘累积。
                 let _ = std::fs::remove_file(&file);
                 if let Ok(payload) = &result {

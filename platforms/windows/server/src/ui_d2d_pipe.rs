@@ -540,12 +540,7 @@ fn d2d_rect(rect: panel::Rect) -> D2D_RECT_F {
 ///
 /// 面板布局的输出本身就是物理像素;窗口层的弹簧位移在窗口位置上限,
 /// 这里不再变换。
-fn paint(
-    dc: &ID2D1DeviceContext,
-    factory: &ID2D1Factory1,
-    f: &Frame,
-    text: &Text,
-) {
+fn paint(dc: &ID2D1DeviceContext, factory: &ID2D1Factory1, f: &Frame, text: &Text) {
     unsafe {
         let s = f.metrics.scale();
         let width = panel::panel_width(f.spec, &f.metrics, text);

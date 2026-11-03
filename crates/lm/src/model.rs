@@ -5,14 +5,12 @@
 
 use std::collections::HashMap;
 
-use crate::forward::{BatchContext, BatchRow, HiddenState, Prefix};
-use crate::math::{dot, dot_i8, Matrix};
-use crate::weights::{Tensor, Weights};
 use crate::ModelError;
+use crate::forward::{BatchContext, BatchRow, HiddenState, Prefix};
+use crate::math::{Matrix, dot, dot_i8};
+use crate::weights::{Tensor, Weights};
 #[cfg(test)]
-use crate::{
-    FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS,
-};
+use crate::{FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS};
 const UNK: u32 = 1;
 const BOS: u32 = 2;
 

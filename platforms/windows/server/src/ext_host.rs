@@ -154,7 +154,13 @@ fn worker(
                 // 旧扩展的注册物随 Scope 消失;热键的 OS 注册在这里一并清掉。
                 hotkey.reset();
                 panel_bound.clear();
-                let loaded = load(&order, &hotkey, &privacy, &state.panel_service, allow_all_network);
+                let loaded = load(
+                    &order,
+                    &hotkey,
+                    &privacy,
+                    &state.panel_service,
+                    allow_all_network,
+                );
                 runtime = loaded.runtime;
                 skipped = loaded.skipped;
                 next_metrics = Instant::now();
@@ -533,7 +539,10 @@ fn load(
     }
     registry.set(Service::Capture, Arc::new(services::CaptureProvider));
     registry.set(Service::Ocr, Arc::new(services::OcrProvider::new()));
-    registry.set(Service::Clipboard, Arc::new(services::ClipboardProvider::new()));
+    registry.set(
+        Service::Clipboard,
+        Arc::new(services::ClipboardProvider::new()),
+    );
     registry.set(Service::Store, Arc::new(services::StoreProvider));
     registry.set(Service::Output, Arc::new(services::OutputProvider));
     // `Arc::clone` 不能从 `&Arc<具体类型>` 直接推出 trait 对象;先克隆具体类型,

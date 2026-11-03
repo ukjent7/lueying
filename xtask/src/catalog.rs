@@ -55,10 +55,10 @@ pub(crate) fn catalog_exe(args: CatalogExeArgs) -> Result<(), String> {
         .map_err(|e| format!("读 {}: {e}", args.catalog.display()))?;
     let mut catalog: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("目录不是合法 JSON: {e}"))?;
-    let Some(entry) = catalog["extensions"]
-        .as_array_mut()
-        .and_then(|list| list.iter_mut().find(|item| item["id"].as_str() == Some(args.id.as_str())))
-    else {
+    let Some(entry) = catalog["extensions"].as_array_mut().and_then(|list| {
+        list.iter_mut()
+            .find(|item| item["id"].as_str() == Some(args.id.as_str()))
+    }) else {
         return Err(format!("目录里没有 {} 条目", args.id));
     };
     let files = entry["files"]

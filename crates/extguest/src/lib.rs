@@ -22,9 +22,8 @@ use serde_json::json;
 
 pub use lueying_extproto::{
     AsrText, AudioRecording, ClipboardHistory, ClipboardHistoryItem, ClipboardText, Delivered,
-    FETCH_DEFAULT_LIMIT,
-    FETCH_DEFAULT_TIMEOUT_MS, FetchArgs, FetchResult, OcrText, PanelResult, SCENE_API, SceneIn,
-    ScenePatch, SelectedText, Shot, StoreKeys, StoreValue,
+    FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FetchArgs, FetchResult, OcrText, PanelResult,
+    SCENE_API, SceneIn, ScenePatch, SelectedText, Shot, StoreKeys, StoreValue,
 };
 
 /// 扩展入口。

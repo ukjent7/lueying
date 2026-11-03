@@ -10,21 +10,20 @@
 //! [`HotkeyProvider::pump`] 在同一线程收取:扩展 `press` 就地兑现,用户
 //! 绑定行号回带给调用方派发。
 
-
-use std::sync::Mutex;
-use std::sync::mpsc;
 use lueying_extwasm::{Done, Provider};
 use serde_json::json;
+use std::sync::Mutex;
+use std::sync::mpsc;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
 };
 
+#[path = "services_audio.rs"]
+mod audio;
 #[path = "services_capture.rs"]
 mod capture;
 #[path = "services_clipboard.rs"]
 mod clipboard;
-#[path = "services_audio.rs"]
-mod audio;
 #[path = "services_hotkey.rs"]
 mod hotkey;
 #[path = "services_network.rs"]
@@ -36,13 +35,13 @@ mod store;
 
 pub use audio::{AsrProvider, AudioProvider};
 pub use capture::CaptureProvider;
+#[cfg(test)]
+use capture::parse_region;
 pub use clipboard::ClipboardProvider;
 pub use hotkey::HotkeyProvider;
 pub use network::{NetworkProvider, network_broker};
 pub use ocr::OcrProvider;
 pub use store::StoreProvider;
-#[cfg(test)]
-use capture::parse_region;
 
 /// 单方法服务的入口守卫:方法名不符时回 provider 侧错误,与 [`Provider`] 约定一致。
 fn one_method(provider: &str, method: &str, expected: &str) -> Result<(), String> {
