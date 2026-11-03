@@ -29,6 +29,8 @@ lueying-rerank.workspace = true
 lueying-render.workspace = true
 # 声明式场景运行时:候选窗外观补丁与场景调试。
 lueying-scene.workspace = true
+# 会话内核:候选视图同步与重排快照,macOS 外壳共用同一份。
+lueying-session.workspace = true
 lueying-protocol = { path = "../../../crates/protocol" }
 # 配置 schema:typed TOML,未知键在读取时拒绝。
 serde = { version = "1", features = ["derive"] }

@@ -1034,53 +1034,5 @@ pub(super) fn sync_pending(s: &mut Session) {
 
 /// 同步会话视图(候选窗渲染的数据源)。
 pub(super) fn refresh_view(s: &mut Session) {
-    if let Some(comp) = s.engine.composition() {
-        // 光标可在拼音串中移动;编辑时在光标处插入标记,长串只保留光标附近
-        // 一段,确保标记不会被候选窗的 220px 单行截断。光标在末尾时不插
-        // 标记,只显示末尾一段。
-        let cursor = comp.cursor.min(comp.raw.len());
-        let len = comp.raw.len();
-        let mut raw = String::new();
-        if cursor < len {
-            let start = cursor.saturating_sub(12);
-            let end = (cursor + 12).min(len);
-            if start > 0 {
-                raw.push('…');
-            }
-            raw.push_str(&comp.raw[start..cursor]);
-            raw.push('|');
-            raw.push_str(&comp.raw[cursor..end]);
-            if end < len {
-                raw.push('…');
-            }
-        } else if len <= 24 {
-            raw.push_str(&comp.raw);
-        } else {
-            raw.push('…');
-            raw.push_str(&comp.raw[len - 24..]);
-        }
-        s.view.raw = raw;
-        s.view.preedit = comp.display.clone();
-        s.view.segments = comp
-            .seg_spans
-            .iter()
-            .map(|(a, b)| comp.raw[*a..*b].to_string())
-            .collect();
-    } else {
-        s.view.raw.clear();
-        s.view.preedit.clear();
-        s.view.segments.clear();
-    }
-    let (texts, hints): (Vec<String>, Vec<String>) = s
-        .engine
-        .candidates_detailed()
-        .iter()
-        .map(|c| (c.text.clone(), c.hint.clone().unwrap_or_default()))
-        .unzip();
-    s.view.candidates = texts;
-    s.view.hints = hints;
-    s.view.page = s.engine.page();
-    s.view.page_size = s.engine.page_size();
-    s.view.highlight = s.engine.highlight();
-    s.view.chinese = s.engine.mode() == Mode::Chinese;
+    lueying_session::refresh(&s.engine, &mut s.view);
 }

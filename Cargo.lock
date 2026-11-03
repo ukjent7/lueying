@@ -3213,6 +3213,7 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
+ "lueying-session",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -3262,6 +3263,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lueying-session"
+version = "0.1.0"
+dependencies = [
+ "lueying-dict",
+ "lueying-engine",
+ "lueying-protocol",
+ "lueying-rerank",
+]
+
+[[package]]
 name = "lueying-server"
 version = "0.1.0"
 dependencies = [
@@ -3280,6 +3291,7 @@ dependencies = [
  "lueying-render",
  "lueying-rerank",
  "lueying-scene",
+ "lueying-session",
  "serde",
  "serde_json",
  "slint",

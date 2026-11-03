@@ -6,7 +6,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, mpsc};
 
-use lueying_rerank::Fact;
 use lueying_rerank::settle::result_is_current;
 
 use crate::imp::{Session, State};
@@ -16,10 +15,8 @@ pub(super) struct Job {
     session: u64,
     /// 发起时的焦点/上下文代次;中途换了输入范围就丢弃。
     seq: u64,
-    revision: u64,
-    context: String,
-    texts: Vec<String>,
-    facts: Vec<Fact>,
+    /// 重排输入快照;上下文、候选与版本号都在里面。
+    snap: lueying_session::Snapshot,
     rerank: Arc<Mutex<lueying_rerank::Rerank>>,
 }
 
@@ -32,29 +29,22 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
         return;
     };
     // 快捷候选固定在本轮插入的位置,4M 模型不能把它们换走;置顶词同理。
-    if s.engine
-        .candidates_detailed()
-        .iter()
-        .any(|cand| cand.quick || cand.pinned)
-    {
+    if lueying_session::pinned_candidates(&s.engine) {
         return;
     }
-    let Some(snap) = crate::settle::snapshot(&s.engine) else {
+    let Some(snap) = lueying_session::snapshot(&s.engine) else {
         return;
     };
     // 没有左邻上下文时,4M 只能按句子自身打分:共享语料上它的排序比引擎
     // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 4M 完全相同。
-    if snap.context.is_empty() {
+    if !lueying_session::sync_worthwhile(&snap) {
         return;
     }
     // 通道满说明上一键的结果还没出来:直接丢掉这一次,排队只会让结果更旧。
     let _ = tx.try_send(Job {
         session,
         seq: s.context_seq,
-        revision: snap.revision,
-        context: snap.context,
-        texts: snap.texts,
-        facts: snap.facts,
+        snap,
         rerank: Arc::clone(rerank),
     });
 }
@@ -72,11 +62,7 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Job>) {
 }
 
 fn run(state: &State, job: &Job) {
-    let promote = {
-        let mut rerank = job.rerank.lock().unwrap_or_else(|p| p.into_inner());
-        let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
-        rerank.decide(&job.context, &texts, &job.facts)
-    };
+    let promote = lueying_session::decide_sync(&job.rerank, &job.snap);
     let Some(index) = promote else {
         return;
     };
@@ -89,7 +75,7 @@ fn run(state: &State, job: &Job) {
     }
     if !result_is_current(
         s.engine.revision(),
-        job.revision,
+        job.snap.revision,
         s.engine.page(),
         s.engine.highlight(),
         s.engine.composition().is_some(),

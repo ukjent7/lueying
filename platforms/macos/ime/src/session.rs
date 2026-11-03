@@ -5,13 +5,13 @@
 //! 每个连接只建自己的引擎与重排缓存。
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Config, Engine, Event, Key, Mode, SharedUser, UserDict};
+use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_protocol::SessionView;
-use lueying_rerank::{Fact, Model, Rerank};
+use lueying_rerank::{Model, Rerank};
 use objc2::Message;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -22,8 +22,8 @@ pub struct Session {
     pub client: Option<Retained<AnyObject>>,
     user: SharedUser,
     user_path: Option<PathBuf>,
-    sync_rerank: Option<Rerank>,
-    settle_rerank: Option<Rerank>,
+    sync_rerank: Option<Mutex<Rerank>>,
+    settle_rerank: Option<Mutex<Rerank>>,
 }
 
 impl Session {
@@ -36,8 +36,9 @@ impl Session {
         let user_path = user_path();
         let user: SharedUser = Arc::new(RwLock::new(load_user(user_path.as_deref())));
         engine = engine.with_user(Arc::clone(&user));
-        let sync_rerank = shared_rerank(SyncModel::Four).map(|model| Rerank::new(&model));
-        let settle_rerank = shared_rerank(SyncModel::TwentyFive).map(|model| Rerank::new(&model));
+        let sync_rerank = shared_rerank(SyncModel::Four).map(|model| Mutex::new(Rerank::new(&model)));
+        let settle_rerank =
+            shared_rerank(SyncModel::TwentyFive).map(|model| Mutex::new(Rerank::new(&model)));
         Self {
             engine,
             view: SessionView::default(),
@@ -88,14 +89,13 @@ impl Session {
 
     /// 停顿重排:在最近的停顿窗口内跑 25M,结果直接改写引擎顺序。
     pub fn settle(&mut self) {
-        let Some(rerank) = self.settle_rerank.as_mut() else {
+        let Some(rerank) = self.settle_rerank.as_ref() else {
             return;
         };
-        let Some((context, texts, facts, fuzzy)) = snapshot(&self.engine) else {
+        let Some(snap) = lueying_session::snapshot(&self.engine) else {
             return;
         };
-        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-        if let Some(index) = rerank.decide_settled(&context, &texts_ref, &facts, &fuzzy)
+        if let Some(index) = lueying_session::decide_settled(rerank, &snap)
             && self.engine.promote(index)
         {
             self.refresh();
@@ -104,58 +104,7 @@ impl Session {
     }
 
     pub fn refresh(&mut self) {
-        if let Some(comp) = self.engine.composition() {
-            let cursor = comp.cursor.min(comp.raw.len());
-            let len = comp.raw.len();
-            let mut raw = String::new();
-            if cursor < len {
-                let start = cursor.saturating_sub(12);
-                let end = (cursor + 12).min(len);
-                if start > 0 {
-                    raw.push('…');
-                }
-                raw.push_str(&comp.raw[start..cursor]);
-                raw.push('|');
-                raw.push_str(&comp.raw[cursor..end]);
-                if end < len {
-                    raw.push('…');
-                }
-            } else if len <= 24 {
-                raw.push_str(&comp.raw);
-            } else {
-                raw.push('…');
-                raw.push_str(&comp.raw[len - 24..]);
-            }
-            self.view.raw = raw;
-            self.view.preedit = comp.display.clone();
-            self.view.segments = comp
-                .seg_spans
-                .iter()
-                .map(|(start, end)| comp.raw[*start..*end].to_string())
-                .collect();
-        } else {
-            self.view.raw.clear();
-            self.view.preedit.clear();
-            self.view.segments.clear();
-        }
-        let (texts, hints): (Vec<String>, Vec<String>) = self
-            .engine
-            .candidates_detailed()
-            .iter()
-            .map(|candidate| {
-                (
-                    candidate.text.clone(),
-                    candidate.hint.clone().unwrap_or_default(),
-                )
-            })
-            .unzip();
-        self.view.candidates = texts;
-        self.view.hints = hints;
-        self.view.page = self.engine.page();
-        self.view.page_size = self.engine.page_size();
-        self.view.highlight = self.engine.highlight();
-        self.view.chinese = self.engine.mode() == Mode::Chinese;
-        self.view.fullwidth = self.engine.fullwidth();
+        lueying_session::refresh(&self.engine, &mut self.view);
     }
 
     /// 保存用户词库;会话关闭或进程退出时调用。
@@ -186,18 +135,21 @@ impl Session {
     }
 
     fn sync_rerank(&mut self) {
-        let Some(rerank) = self.sync_rerank.as_mut() else {
+        let Some(rerank) = self.sync_rerank.as_ref() else {
             return;
         };
-        let Some((context, texts, facts, _)) = snapshot(&self.engine) else {
+        let Some(snap) = lueying_session::snapshot(&self.engine) else {
             return;
         };
         // 没有左邻上下文时 4M 的排序弱于引擎原序,直接跳过。
-        if context.is_empty() {
+        if !lueying_session::sync_worthwhile(&snap) {
             return;
         }
-        let texts_ref: Vec<&str> = texts.iter().map(String::as_str).collect();
-        if let Some(index) = rerank.decide(&context, &texts_ref, &facts)
+        // 快捷候选与置顶词固定在插入位置,重排不能把它们换走。
+        if lueying_session::pinned_candidates(&self.engine) {
+            return;
+        }
+        if let Some(index) = lueying_session::decide_sync(rerank, &snap)
             && self.engine.promote(index)
         {
             self.refresh();
@@ -226,25 +178,6 @@ impl Session {
             crate::controller::clear_marked_text(client);
         }
     }
-}
-
-type Snapshot = (String, Vec<String>, Vec<Fact>, Vec<bool>);
-
-fn snapshot(engine: &Engine) -> Option<Snapshot> {
-    engine.composition()?;
-    let candidates = engine.candidates_detailed();
-    Some((
-        engine.context().to_string(),
-        candidates.iter().map(|c| c.text.clone()).collect(),
-        candidates
-            .iter()
-            .map(|c| Fact {
-                answers_key: c.full,
-                trusted_dictionary_hit: c.trusted,
-            })
-            .collect(),
-        candidates.iter().map(|c| c.edits > 0).collect(),
-    ))
 }
 
 fn data_dirs() -> Vec<PathBuf> {

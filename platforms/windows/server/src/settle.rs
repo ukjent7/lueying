@@ -5,8 +5,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use lueying_engine::Engine;
-use lueying_rerank::Fact;
 use lueying_rerank::debounce::Debounce;
 use lueying_rerank::settle::result_is_current;
 
@@ -23,39 +21,9 @@ pub(super) struct SettleJob {
     session: u64,
     /// 发起时的焦点/上下文代次;中途换了输入范围就丢弃。
     seq: u64,
-    revision: u64,
-    context: String,
-    texts: Vec<String>,
-    facts: Vec<Fact>,
-    fuzzy: Vec<bool>,
+    /// 重排输入快照;上下文、候选与版本号都在里面。
+    snap: lueying_session::Snapshot,
     rerank: Arc<Mutex<lueying_rerank::Rerank>>,
-}
-
-pub(super) struct Snapshot {
-    pub(super) context: String,
-    pub(super) revision: u64,
-    pub(super) texts: Vec<String>,
-    pub(super) facts: Vec<Fact>,
-    pub(super) fuzzy: Vec<bool>,
-}
-
-/// 候选及其事实的一次快照;没有组合时返回 `None`。
-pub(super) fn snapshot(engine: &Engine) -> Option<Snapshot> {
-    engine.composition()?;
-    let cands = engine.candidates_detailed();
-    Some(Snapshot {
-        context: engine.context().to_string(),
-        revision: engine.revision(),
-        texts: cands.iter().map(|c| c.text.clone()).collect(),
-        facts: cands
-            .iter()
-            .map(|c| Fact {
-                answers_key: c.full,
-                trusted_dictionary_hit: c.trusted,
-            })
-            .collect(),
-        fuzzy: cands.iter().map(|c| c.edits > 0).collect(),
-    })
 }
 
 /// 按键后调用:有组合就排队等停顿,没有就撤掉旧任务。
@@ -72,26 +40,18 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
     }
     // 快捷候选必须留在插入位置;停顿重排不能把它们换走,
     // 否则空格上屏的会是另一个词。置顶词同理。
-    if s.engine
-        .candidates_detailed()
-        .iter()
-        .any(|cand| cand.quick || cand.pinned)
-    {
+    if lueying_session::pinned_candidates(&s.engine) {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     }
-    let Some(snap) = snapshot(&s.engine) else {
+    let Some(snap) = lueying_session::snapshot(&s.engine) else {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     };
     let _ = tx.send(SettleMessage::Job(SettleJob {
         session,
         seq: s.context_seq,
-        revision: snap.revision,
-        context: snap.context,
-        texts: snap.texts,
-        facts: snap.facts,
-        fuzzy: snap.fuzzy,
+        snap,
         rerank: Arc::clone(rerank),
     }));
 }
@@ -131,17 +91,14 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                         let external = {
                             let mut slot =
                                 state.settled_slot.lock().unwrap_or_else(|p| p.into_inner());
-                            let texts: Vec<&str> = job.texts.iter().map(String::as_str).collect();
-                            slot.promote(&job.context, &texts)
+                            let texts: Vec<&str> =
+                                job.snap.texts.iter().map(String::as_str).collect();
+                            slot.promote(&job.snap.context, &texts)
                         };
                         let promote = match external {
                             lueying_server::seam::SeamOutcome::Provider(promote) => promote,
                             lueying_server::seam::SeamOutcome::Builtin => {
-                                let mut rerank =
-                                    job.rerank.lock().unwrap_or_else(|p| p.into_inner());
-                                let texts: Vec<&str> =
-                                    job.texts.iter().map(String::as_str).collect();
-                                rerank.decide_settled(&job.context, &texts, &job.facts, &job.fuzzy)
+                                lueying_session::decide_settled(&job.rerank, &job.snap)
                             }
                         };
                         apply(&state, &job, promote);
@@ -165,7 +122,7 @@ fn apply(state: &State, job: &SettleJob, promote: Option<usize>) {
     }
     if !result_is_current(
         s.engine.revision(),
-        job.revision,
+        job.snap.revision,
         s.engine.page(),
         s.engine.highlight(),
         s.engine.composition().is_some(),

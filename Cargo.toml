@@ -19,6 +19,8 @@ members = [
     "crates/bypass",
     # 扩展服务缝:提供者契约与完成队列,平台无关
     "crates/extsvc",
+    # 输入会话内核:候选视图同步与重排决策,Windows 与 macOS 共用
+    "crates/session",
     # 场景运行时:信号、节点、规则与有界表达式,确定性出帧,平台无关
     "crates/scene",
     # 联网边界:更新与下载,常驻 Server 不依赖
@@ -65,6 +67,7 @@ lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-scene = { path = "crates/scene" }
+lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
 slint = { version = "1.18.1", default-features = false, features = [
     "std",
