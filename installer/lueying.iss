@@ -64,6 +64,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#PayloadDir}\lueying-server.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\lueying-broker.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; PrepareToInstall 在复制文件前就要停掉旧服务,所以再嵌一份临时副本。

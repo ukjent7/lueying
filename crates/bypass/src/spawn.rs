@@ -24,6 +24,9 @@ pub(crate) fn spawn_ext(
     if sandboxed {
         return super::sandbox::spawn_suspended(exe, args, readable, limiter);
     }
+    // 沙箱分支只在 Windows 编译;其它平台这两个参数没有去处。
+    #[cfg(not(windows))]
+    let _ = sandboxed;
     let _ = readable;
     let mut command = Command::new(exe);
     command

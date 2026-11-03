@@ -79,6 +79,7 @@ fn v3_sizes(rows: &mut Vec<Row>) {
     let mut parts = Vec::new();
     for name in [
         "lueying-server.exe",
+        "lueying-broker.exe",
         "lueying-settings.exe",
         "lueying-user.exe",
         "lueying_tsf.dll",

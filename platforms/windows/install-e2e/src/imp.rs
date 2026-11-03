@@ -159,6 +159,7 @@ fn real_run() -> Result<String, String> {
         for name in [
             "lueying-user.exe",
             "lueying-server.exe",
+            "lueying-broker.exe",
             "lueying-settings.exe",
             "version.txt",
             "licenses/README.md",
@@ -295,6 +296,7 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     for name in [
         "lueying-user.exe",
         "lueying-server.exe",
+        "lueying-broker.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
     ] {
@@ -441,6 +443,7 @@ fn update_installed(
     for name in [
         "lueying-user.exe",
         "lueying-server.exe",
+        "lueying-broker.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
         "LICENSE",

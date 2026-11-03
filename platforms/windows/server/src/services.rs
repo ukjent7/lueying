@@ -10,7 +10,6 @@
 //! [`HotkeyProvider::pump`] 在同一线程收取:扩展 `press` 就地兑现,用户
 //! 绑定行号回带给调用方派发。
 
-use std::collections::HashMap;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
@@ -581,7 +580,7 @@ impl Provider for NetworkProvider {
             .lock()
             .expect("联网白名单锁")
             .get(caller)
-            .cloned()
+            .map(|allow| allow.to_vec())
             .unwrap_or_default();
         let args: FetchArgs =
             serde_json::from_str(args).map_err(|_| "联网参数不是合法 JSON".to_string())?;
@@ -606,8 +605,10 @@ impl Provider for NetworkProvider {
             .name("ext-network".into())
             .spawn(move || {
                 done.complete(broker.call("fetch", &request).and_then(|payload| {
-                    serde_json::from_str::<FetchResult>(&payload)
-                        .map_err(|error| format!("broker 应答不合法: {error}"))
+                    let reply: FetchResult = serde_json::from_str(&payload)
+                        .map_err(|error| format!("broker 应答不合法: {error}"))?;
+                    serde_json::to_string(&reply)
+                        .map_err(|error| format!("broker 应答序列化失败: {error}"))
                 }));
             })
             .map_err(|error| format!("联网线程启动失败: {error}"))?;

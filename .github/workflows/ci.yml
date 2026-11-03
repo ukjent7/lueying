@@ -221,7 +221,7 @@ jobs:
       - name: 运行时体积门禁
         shell: pwsh
         run: |
-          $names = "lueying-server.exe", "lueying-settings.exe", "lueying-user.exe", "lueying_tsf.dll"
+          $names = "lueying-server.exe", "lueying-broker.exe", "lueying-settings.exe", "lueying-user.exe", "lueying_tsf.dll"
           $bytes = 0
           foreach ($name in $names) {
             $length = (Get-Item "target/release/$name").Length
