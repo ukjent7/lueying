@@ -45,21 +45,24 @@ const PACK_BINS: &[&str] = &[
     "lueying-user.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包带精确词典、8M 同步重排模型与精简语法模型。`main.gram` 缺失时引擎
-/// 退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
-/// 让 Server 无需配置就能发现它。25M 停顿重排与 PP-OCR 模型体积大,
-/// 改为在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
+/// 默认包带精确词典、8M/25M 按键重排模型与精简语法模型。`main.gram` 缺失时
+/// 引擎退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
+/// 让 Server 无需配置就能发现它。PP-OCR 模型体积大,仍在设置窗「官方扩展」里
+/// 按需下载,详见 `Catalog/official-extensions.json`。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
     "main.gram",
     "rerank-8m.ort",
     "rerank-8m.model.json",
     "rerank-8m.vocab.json",
+    "rerank-25m.ort",
+    "rerank-25m.model.json",
+    "rerank-25m.vocab.json",
 ];
-/// 发布体积门禁:0.1.0 历史发布目录 147.7 MiB、安装包 59.8 MiB。
-/// 上限留约 25% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
-const MAX_PAYLOAD_BYTES: u64 = 200 * 1024 * 1024;
-const MAX_SETUP_BYTES: u64 = 85 * 1024 * 1024;
+/// 发布体积门禁:25M 随包后发布目录约 183 MiB、安装包约 95 MiB。
+/// 上限留约 20% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
+const MAX_PAYLOAD_BYTES: u64 = 220 * 1024 * 1024;
+const MAX_SETUP_BYTES: u64 = 120 * 1024 * 1024;
 
 pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     // 只清理自己生成的目录(有 manifest),避免误删用户给的其他路径。

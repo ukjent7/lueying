@@ -2,7 +2,7 @@
 //!
 //! 目录只描述"能装什么"与"从哪装",不信任远端清单:每个下载文件都带
 //! SHA-256 与字节数,安装器逐项校验后才落盘。扩展包本身是 `.luext` 归档(文本块 + Wasm 字节块)
-//! 或随包的本地目录;模型走 `%APPDATA%\lueying\models`。
+//! 或随包的本地目录;扩展模型走 `%APPDATA%\lueying\models`。
 
 use std::sync::LazyLock;
 
@@ -78,13 +78,6 @@ impl OfficialExtension {
     pub fn installed_model(&self) -> bool {
         match self.id.as_str() {
             "ppocr" => crate::config::ppocr_dir().is_some(),
-            "rerank-25m" => [
-                "rerank-25m.ort",
-                "rerank-25m.model.json",
-                "rerank-25m.vocab.json",
-            ]
-            .iter()
-            .all(|name| crate::config::model_path(name).is_some()),
             _ => false,
         }
     }

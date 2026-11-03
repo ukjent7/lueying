@@ -26,8 +26,8 @@ install -Dm755 target/release/lueying-linux /usr/local/bin/lueying-linux
 3. `/usr/local/share/lueying`、`/usr/share/lueying`
 4. 当前目录的 `data`
 
-需要 `main.pyd`(或 `main.tsv`)、可选的 `main.gram`,以及重排模型的三件套
-`rerank-8m.ort` / `.model.json` / `.vocab.json`(可选 `rerank-25m.*`)。
+需要 `main.pyd`(或 `main.tsv`)、可选的 `main.gram`,以及 8M/25M 两档重排模型
+各自的三件套 `rerank-8m.ort` / `.model.json` / `.vocab.json` 与 `rerank-25m.*`。
 缺词典时退回内置词典;缺模型时只用引擎排序。
 
 在合成器配置里启动:

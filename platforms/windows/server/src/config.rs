@@ -474,20 +474,6 @@ pub fn models_dir() -> Option<PathBuf> {
     }
 }
 
-/// 模型路径:用户目录优先,其次安装目录。重排模型不随基础安装分发时,
-/// 下载完成后重启 Server 就能从用户目录加载。
-pub fn model_path(name: &str) -> Option<PathBuf> {
-    if let Some(dir) = models_dir() {
-        let path = dir.join(name);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let mut path = std::env::current_exe().ok()?;
-    path.set_file_name(name);
-    path.is_file().then_some(path)
-}
-
 fn user_file(name: &str) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("LUEYING_CONFIG") {
         return Path::new(&path).parent().map(|dir| dir.join(name));

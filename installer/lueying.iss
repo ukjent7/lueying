@@ -78,15 +78,18 @@ Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifso
 Source: "{#PayloadDir}\licenses\*"; DestDir: "{app}\licenses"; \
     Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#PayloadDir}\main.tsv"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; 安装冒烟只验证安装/注册/卸载,发布目录不带词典与模型;发版时 xtask
-; 会先确认这些文件齐全,--allow-missing-data 只用于本地调试。
+; 安装冒烟只验证安装/注册/卸载;发版时 xtask 会先确认词典与模型文件齐全,
+; --allow-missing-data 只用于本地调试。
 Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; 25M 停顿重排模型与 PP-OCR 模型不随基础安装包分发;设置窗的「官方扩展」
-; 按需下载,逐文件校验 SHA-256 后写入 %APPDATA%\lueying\models。
+Source: "{#PayloadDir}\rerank-25m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\rerank-25m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\rerank-25m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; PP-OCR 模型不随基础安装包分发;设置窗的「官方扩展」按需下载,
+; 逐文件校验 SHA-256 后写入 %APPDATA%\lueying\extensions。
 ; 官方起步扩展(截图 OCR 等)随包分发,作为扩展中心的本地安装源;用户
 ; 在设置窗里点安装后才复制到 %APPDATA%\lueying\extensions。
 Source: "{#PayloadDir}\extensions\*"; DestDir: "{app}\extensions"; \

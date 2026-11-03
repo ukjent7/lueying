@@ -34,10 +34,9 @@
 
 | 数据类型 | 存储路径 | 说明 |
 |---|---|---|
-| 程序与内置词典 | `%ProgramFiles%\lueying\` | 核心二进制文件、mmap 二进制词库 |
+| 程序与内置词典 | `%ProgramFiles%\lueying\` | 核心二进制文件、mmap 二进制词库、8M/25M 重排模型 |
 | 用户主配置 | `%APPDATA%\lueying\config.toml` | 输入方案、界面布局与主题设置 |
 | 自定义短语与标点 | `%APPDATA%\lueying\phrases.txt`、`punct.txt` | 用户自定义编码与符号映射 |
-| 按需模型资产 | `%APPDATA%\lueying\models\` | 25M 重排模型 |
 | 原生扩展 | `%APPDATA%\lueying\extensions\` | 按需安装的 PP-OCRv6 识别引擎 |
 | 用户词库数据 | `%LOCALAPPDATA%\lueying\user.tsv` | 本地自学习、词频统计与置顶词 |
 | 运行日志 | `%LOCALAPPDATA%\lueying\logs\` | 服务端运行日志与审计日志 |
