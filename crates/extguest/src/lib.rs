@@ -18,7 +18,8 @@ use serde_json::json;
 
 pub use lueying_extproto::{
     ClipboardText, Delivered, FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FetchArgs,
-    FetchResult, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot, StoreKeys, StoreValue,
+    FetchResult, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, SelectedText, Shot,
+    StoreKeys, StoreValue,
 };
 
 /// 结果缓冲区的字节数。服务结果超过这个值时宿主回错误信封。
@@ -76,6 +77,8 @@ unsafe extern "C" {
     fn host_hotkey(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
     #[link_name = "network"]
     fn host_network(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
+    #[link_name = "context"]
+    fn host_context(method_ptr: i32, method_len: i32, args_ptr: i32, args_len: i32) -> i32;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -128,6 +131,11 @@ unsafe extern "C" fn host_hotkey(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn host_network(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
+    -1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe extern "C" fn host_context(_a: i32, _b: i32, _c: i32, _d: i32) -> i32 {
     -1
 }
 
@@ -195,6 +203,12 @@ pub fn network_fetch(options: &FetchArgs) -> Result<FetchResult, String> {
     let args =
         serde_json::to_string(options).map_err(|error| format!("联网参数序列化失败: {error}"))?;
     call_typed(host_network, "fetch", &args)
+}
+
+/// 读当前窗口里用户选中的文字;扩展清单要在 `capabilities` 里申请
+/// `selected-text`,没申请就调用失败。没有选中文字时返回空串。
+pub fn context_selection() -> Result<SelectedText, String> {
+    call_typed(host_context, "selection", "")
 }
 
 /// 发一条系统通知;v1 落在宿主日志里。

@@ -220,6 +220,7 @@ pub fn methods(service: Service) -> &'static [&'static str] {
         Service::Hotkey => &["register", "unregister", "press"],
         Service::Notify => &["show"],
         Service::Network => &["fetch"],
+        Service::Context => &["selection"],
     }
 }
 

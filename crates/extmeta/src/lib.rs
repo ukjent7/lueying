@@ -289,11 +289,13 @@ pub enum Service {
     Notify,
     /// 经独立 broker 进程访问清单白名单里的域名;server 保持离线。
     Network,
+    /// 读当前窗口的选中文字与上下文;每级单独同意。
+    Context,
 }
 
 impl Service {
     /// 全部服务;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Capture,
         Self::Ocr,
         Self::Clipboard,
@@ -303,6 +305,7 @@ impl Service {
         Self::Store,
         Self::Notify,
         Self::Network,
+        Self::Context,
     ];
 
     /// 清单里的服务名,也是 Wasm 导入的函数名后缀。
@@ -317,6 +320,7 @@ impl Service {
             Self::Store => "store",
             Self::Notify => "notify",
             Self::Network => "network",
+            Self::Context => "context",
         }
     }
 
@@ -332,6 +336,7 @@ impl Service {
             Self::Store => "读写扩展存储",
             Self::Notify => "系统通知",
             Self::Network => "访问外部网络(高敏感)",
+            Self::Context => "读取窗口上下文(高敏感)",
         }
     }
 
@@ -347,6 +352,7 @@ impl Service {
             | Self::Store
             | Self::Notify
             | Self::Network => None,
+            Self::Context => Some(Permission::SelectedText),
         }
     }
 }
@@ -363,15 +369,18 @@ pub enum Permission {
     Ocr,
     /// 读写剪贴板。
     Clipboard,
+    /// 读取当前窗口里用户选中的文字。
+    SelectedText,
 }
 
 impl Permission {
     /// 全部权限;设置页与诊断按这个顺序列。
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::CandidateText,
         Self::ScreenCapture,
         Self::Ocr,
         Self::Clipboard,
+        Self::SelectedText,
     ];
 
     /// 清单里的权限名。
@@ -381,6 +390,7 @@ impl Permission {
             Self::ScreenCapture => "screen-capture",
             Self::Ocr => "ocr",
             Self::Clipboard => "clipboard",
+            Self::SelectedText => "selected-text",
         }
     }
 
@@ -391,6 +401,7 @@ impl Permission {
             Self::ScreenCapture => "截取屏幕(高敏感)",
             Self::Ocr => "识别文字",
             Self::Clipboard => "读写剪贴板(高敏感)",
+            Self::SelectedText => "读取当前窗口选中的文字(高敏感)",
         }
     }
 }

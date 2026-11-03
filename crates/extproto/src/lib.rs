@@ -242,6 +242,15 @@ pub struct ClipboardText {
     pub text: String,
 }
 
+/// 选中文字读取结果。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedText {
+    /// 用户在当前窗口选中的文字;没有选中时为空串。
+    #[serde(default)]
+    pub text: String,
+}
+
 /// 扩展存储读取结果。
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

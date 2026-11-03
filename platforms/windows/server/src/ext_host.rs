@@ -472,6 +472,7 @@ fn load(
         .unwrap_or_default();
     let mut approved = Vec::new();
     let mut network_grants: Vec<(String, Vec<String>)> = Vec::new();
+    let mut capability_grants: Vec<(String, Vec<String>)> = Vec::new();
     for id in order {
         let dir = root.join(id);
         let manifest = match lueying_extwasm::manifest_at(&dir) {
@@ -496,6 +497,9 @@ fn load(
             Ok(check) if !check.required || check.approved => {
                 if let Some(grant) = &manifest.network {
                     network_grants.push((id.clone(), grant.allow.clone()));
+                }
+                if !manifest.capabilities.is_empty() {
+                    capability_grants.push((id.clone(), manifest.capabilities.clone()));
                 }
                 approved.push(id.clone());
             }
@@ -539,6 +543,10 @@ fn load(
     let network = services::NetworkProvider::new(services::network_broker());
     network.set_allow(network_grants);
     registry.set(Service::Network, Arc::new(network));
+    // 上下文按级授权:扩展申请了 selected-text 才放行选中文字。
+    let context = crate::context::ContextProvider::new();
+    context.set_grants(capability_grants);
+    registry.set(Service::Context, Arc::new(context));
     let gate: ConsentGate = {
         let path = consent_path;
         Arc::new(move |manifest, dir| {

@@ -18,6 +18,9 @@ fn main() {
 }
 
 #[cfg(windows)]
+mod context;
+
+#[cfg(windows)]
 mod ext_audit;
 
 #[cfg(windows)]

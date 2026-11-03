@@ -49,6 +49,8 @@ shot-ocr/
   不收通配符与 scheme,1..=32 条;白名单进同意书,改一条就要重新同意。
 - `capabilities` 与 `needs` 非空时,用户必须先同意;同意记录对
   `manifest.json` 与 `.wasm` 的 SHA-256 做指纹,任一变动都要求重新同意。
+- `capabilities` 里的 `selected-text` 是读当前窗口选中文字的门票;没申请
+  就调不到 `context` 服务,每一级上下文单独同意。
 - 触发词、建议热键与命令只是声明;实际绑定关系由用户的 `config.toml` 决定。
 
 ## Guest SDK
@@ -81,9 +83,11 @@ lueying_extguest::export!(ShotOcr);
 (命令入口,参数与返回值都是 JSON 文本)、`appearance`(每帧外观补丁)。
 服务封装全部是同步函数:`capture_shot`、`ocr_recognize`、`output_deliver`、
 `panel_show`、`clipboard_read/write`、`store_get/set/remove/list`、
-`notify_show`、`hotkey_register/unregister/press`、`network_fetch` 与
-`timeout_sleep`。`network_fetch` 收 `FetchArgs`(与 WIT `fetch-options`
-同形),域名必须在清单白名单里,响应体按 UTF-8 文本交付。
+`notify_show`、`hotkey_register/unregister/press`、`network_fetch`、
+`context_selection` 与 `timeout_sleep`。`network_fetch` 收 `FetchArgs`
+(与 WIT `fetch-options` 同形),域名必须在清单白名单里,响应体按 UTF-8
+文本交付;`context_selection` 读当前窗口选中文字,清单要申请
+`selected-text` 权限。
 
 构建与发布:
 
@@ -114,7 +118,7 @@ guest 导出(全部由 SDK 宏生成,手写 guest 才需要关心):
 |---|---|---|
 | `emit` | `(ptr, len, ok)` | 交回命令/外观的最终结果 |
 | `timeout` | `(ms) -> i32` | 可取消睡眠;扩展卸载时返回 -1 |
-| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` / `network` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
+| `capture` / `ocr` / `output` / `panel` / `clipboard` / `store` / `hotkey` / `notify` / `network` / `context` | `(method ptr, method len, args ptr, args len) -> i32` | 返回写进结果缓冲区的字节数,-1 表示失败 |
 
 服务结果是一个 JSON 信封:成功 `{"ok":true,"value":...}`,失败
 `{"ok":false,"error":"..."}`。宿主把信封写进 guest 的结果缓冲区,
@@ -145,5 +149,7 @@ trap 之后实例不可再用,下一次调用前宿主自动重建;正在执行�
   清单白名单,broker 兜传输的底(HTTPS-only 外部地址、响应体默认 256 KiB
   封顶 512 KiB、时限封顶 120 s);`lueying-server.exe` 保持离线(CI 导入表
   断言)。外观帧不做联网调用,长请求放命令里。
+- 上下文分级:只有清单申请 `selected-text` 的扩展能读当前窗口选中文字;
+  密码框与输入法自家窗口一律不读,读不到就是读不到。
 - 所有服务调用写审计日志(服务、方法与结果),不记录用户正文。
 - 外观补丁只有主题色字段;高对比度下仍返回主题色。

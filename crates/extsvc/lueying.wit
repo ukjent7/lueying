@@ -148,6 +148,15 @@ interface network {
   fetch: func(options: fetch-options) -> result<fetch-result, string>;
 }
 
+// 上下文:读当前窗口里用户选中的文字。每级单独同意,扩展清单要在
+// capabilities 里申请 selected-text 才会放行。
+interface context {
+  record selection-result {
+    text: string,
+  }
+  selection: func() -> result<selection-result, string>;
+}
+
 world extension {
   import capture;
   import ocr;
@@ -158,4 +167,5 @@ world extension {
   import hotkey;
   import notify;
   import network;
+  import context;
 }

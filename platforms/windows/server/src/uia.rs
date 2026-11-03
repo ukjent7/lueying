@@ -6,6 +6,8 @@ use std::ffi::c_void;
 use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use lueying_engine::CONTEXT_KEEP;
 use windows::Win32::Foundation::HWND;
@@ -201,4 +203,114 @@ fn debug(message: &str) {
     if std::env::var_os("LUEYING_DEBUG_UIA").is_some() {
         say(&format!("UIA: {message}"));
     }
+}
+
+/// 选中文字的上限(字符);够用,又不至于把整篇文档塞进扩展。
+const SELECTION_LIMIT: usize = 8192;
+
+/// 选中文字读取器:独立 MTA 线程常驻,COM 与 UIA 实例只初始化一次。
+/// 扩展的 `context` 服务在这里取用户当前选中的文字。
+pub(crate) struct SelectionReader {
+    tx: Mutex<Option<mpsc::Sender<mpsc::Sender<Option<String>>>>>,
+}
+
+impl SelectionReader {
+    /// 读一次选中文字。读不到(没有焦点元素、密码框、自家进程、UIA
+    /// 报错)返回 `None`;没有选中文字时返回空串。
+    pub(crate) fn read(&self) -> Option<String> {
+        let tx = self.tx.lock().ok()?.clone()?;
+        let (reply, wait) = mpsc::channel();
+        tx.send(reply).ok()?;
+        wait.recv_timeout(Duration::from_secs(2)).ok().flatten()
+    }
+}
+
+/// 拉起选中文字读取线程;线程起不来就返回 `None`(调用方按不可用处理)。
+pub(crate) fn selection_reader() -> Option<SelectionReader> {
+    let (tx, rx) = mpsc::channel::<mpsc::Sender<Option<String>>>();
+    let spawned = std::thread::Builder::new()
+        .name("lueying-uia-selection".into())
+        .spawn(move || {
+            if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
+                say("选中文字读取线程 COM 初始化失败");
+                return;
+            }
+            let automation: IUIAutomation = match unsafe {
+                CoCreateInstance(
+                    &CUIAutomation8,
+                    None::<&windows::core::IUnknown>,
+                    CLSCTX_INPROC_SERVER,
+                )
+            } {
+                Ok(automation) => automation,
+                Err(error) => {
+                    say(&format!("选中文字 UIA 创建失败: {error}"));
+                    unsafe { CoUninitialize() };
+                    return;
+                }
+            };
+            if let Ok(automation2) = automation.cast::<IUIAutomation2>() {
+                let _ = unsafe { automation2.SetConnectionTimeout(1000) };
+                let _ = unsafe { automation2.SetTransactionTimeout(1000) };
+            }
+            while let Ok(reply) = rx.recv() {
+                let text =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| selection(&automation)))
+                        .unwrap_or(None);
+                let _ = reply.send(text);
+            }
+            unsafe { CoUninitialize() };
+        });
+    if spawned.is_err() {
+        say("选中文字读取线程启动失败");
+        return None;
+    }
+    Some(SelectionReader {
+        tx: Mutex::new(Some(tx)),
+    })
+}
+
+/// 取焦点元素里选中的文字;密码框与自家进程一律不读。
+fn selection(automation: &IUIAutomation) -> Option<String> {
+    let element = unsafe { automation.GetFocusedElement() }.ok()?;
+    if password(&element) {
+        return None;
+    }
+    if pid(&element) == Some(std::process::id()) {
+        return None;
+    }
+    let pattern: IUIAutomationTextPattern =
+        unsafe { element.GetCurrentPatternAs(UIA_TextPatternId) }.ok()?;
+    let ranges = unsafe { pattern.GetSelection() }.ok()?;
+    let mut text = String::new();
+    // 选区一般是一段;少数宿主会报多段,取前几段就够,多了也不给。
+    for index in 0..8 {
+        let Ok(range) = (unsafe { ranges.GetElement(index) }) else {
+            break;
+        };
+        let Ok(chunk) = (unsafe { range.GetText(-1) }) else {
+            break;
+        };
+        text.push_str(&chunk.to_string());
+    }
+    Some(trim_selection(&text))
+}
+
+/// 选中文字里的控制字符换成空格;换行与制表保留,再截到上限。
+fn trim_selection(text: &str) -> String {
+    let mut out: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() && c != '\n' && c != '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let count = out.chars().count();
+    if count > SELECTION_LIMIT {
+        out = out.chars().skip(count - SELECTION_LIMIT).collect();
+    }
+    out
 }
