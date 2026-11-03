@@ -411,7 +411,10 @@ impl SentenceModel {
             ));
         }
         // `%` rather than `is_multiple_of`, which needs a far newer compiler than anything else here.
-        if config.n_head == 0 || config.n_embd == 0 || config.n_embd % config.n_head != 0 {
+        if config.n_head == 0
+            || config.n_embd == 0
+            || !config.n_embd.is_multiple_of(config.n_head)
+        {
             return Err(ModelError::Geometry(format!(
                 "{} channels do not divide into {} heads",
                 config.n_embd, config.n_head
