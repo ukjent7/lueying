@@ -78,9 +78,13 @@ impl OfficialExtension {
     pub fn installed_model(&self) -> bool {
         match self.id.as_str() {
             "ppocr" => crate::config::ppocr_dir().is_some(),
-            "rerank-25m" => ["rerank-25m.ort", "rerank-25m.model.json", "rerank-25m.vocab.json"]
-                .iter()
-                .all(|name| crate::config::model_path(name).is_some()),
+            "rerank-25m" => [
+                "rerank-25m.ort",
+                "rerank-25m.model.json",
+                "rerank-25m.vocab.json",
+            ]
+            .iter()
+            .all(|name| crate::config::model_path(name).is_some()),
             _ => false,
         }
     }

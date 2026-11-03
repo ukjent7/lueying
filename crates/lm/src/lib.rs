@@ -2369,9 +2369,7 @@ fn gelu(x: f32) -> f32 {
 
 /// `torch.nn.functional.gelu(approximate="tanh")`, used by the 8M keystroke model.
 fn gelu_tanh(x: f32) -> f32 {
-    0.5 * x
-        * (1.0
-            + ((2.0 / std::f32::consts::PI).sqrt() * (x + 0.044_715 * x * x * x)).tanh())
+    0.5 * x * (1.0 + ((2.0 / std::f32::consts::PI).sqrt() * (x + 0.044_715 * x * x * x)).tanh())
 }
 
 /// Abramowitz and Stegun 7.1.26, whose error stays below 1.5e-7 across the range.

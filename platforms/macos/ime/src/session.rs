@@ -37,8 +37,7 @@ impl Session {
         let user: SharedUser = Arc::new(RwLock::new(load_user(user_path.as_deref())));
         engine = engine.with_user(Arc::clone(&user));
         let sync_model = shared_rerank(SyncModel::Eight);
-        let settle_model =
-            shared_rerank(SyncModel::TwentyFive).or_else(|| sync_model.clone());
+        let settle_model = shared_rerank(SyncModel::TwentyFive).or_else(|| sync_model.clone());
         let sync_rerank = sync_model.map(|model| Mutex::new(Rerank::new(&model)));
         let settle_rerank = settle_model.map(|model| Mutex::new(Rerank::new(&model)));
         Self {

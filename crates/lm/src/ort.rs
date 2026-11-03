@@ -64,7 +64,11 @@ impl<'a> Vector<'a> {
     fn table(&self, index: usize) -> Result<Table<'a>, ModelError> {
         let element = self
             .data
-            .get(index.checked_mul(4).ok_or_else(|| bad("vector offset overflows"))?..)
+            .get(
+                index
+                    .checked_mul(4)
+                    .ok_or_else(|| bad("vector offset overflows"))?..,
+            )
             .ok_or(ModelError::Truncated)?;
         let position = u32_at(element, 0)? as usize;
         let target = index
@@ -195,9 +199,7 @@ impl OrtModel {
             return Err(bad("not an ORT flatbuffer"));
         }
         let root = Table::at(bytes, u32_at(bytes, 0)? as usize)?;
-        let model = root
-            .table(1)?
-            .ok_or_else(|| bad("ORT file has no model"))?;
+        let model = root.table(1)?.ok_or_else(|| bad("ORT file has no model"))?;
         let graph = model
             .table(7)?
             .ok_or_else(|| bad("ORT model has no graph"))?;
@@ -233,9 +235,12 @@ impl OrtModel {
                 let data = match tensor.i32(3)?.unwrap_or(0) {
                     // 1 = FLOAT
                     1 => {
-                        let bytes = raw.bytes(0, count.checked_mul(4).ok_or_else(|| {
-                            bad(format!("{name}: raw data overflows"))
-                        })?)?;
+                        let bytes = raw.bytes(
+                            0,
+                            count
+                                .checked_mul(4)
+                                .ok_or_else(|| bad(format!("{name}: raw data overflows")))?,
+                        )?;
                         OrtTensor::Float(
                             bytes
                                 .chunks_exact(4)

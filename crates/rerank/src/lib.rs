@@ -52,10 +52,10 @@ impl Model {
         let ort = read(".ort")?;
         let manifest = read(".model.json")?;
         let vocabulary = read(".vocab.json")?;
-        let manifest = String::from_utf8(manifest)
-            .map_err(|error| format!("{stem}.model.json: {error}"))?;
-        let vocabulary = String::from_utf8(vocabulary)
-            .map_err(|error| format!("{stem}.vocab.json: {error}"))?;
+        let manifest =
+            String::from_utf8(manifest).map_err(|error| format!("{stem}.model.json: {error}"))?;
+        let vocabulary =
+            String::from_utf8(vocabulary).map_err(|error| format!("{stem}.vocab.json: {error}"))?;
         Self::load_keystroke(&ort, &manifest, &vocabulary)
             .map_err(|error| format!("{stem}: {error}"))
     }

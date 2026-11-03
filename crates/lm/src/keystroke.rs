@@ -123,16 +123,17 @@ impl SentenceModel {
         let mut blocks = Vec::with_capacity(config.n_layer);
         for layer in 0..config.n_layer {
             let name = |suffix: &str| format!("model.blocks.{layer}.{suffix}");
-            let matrix = |kind: &str, outputs: usize, inputs: usize| -> Result<Matrix, ModelError> {
-                let bias = format!("model.blocks.{layer}.{kind}.bias");
-                let base = model
-                    .matmuls
-                    .get(&bias)
-                    .ok_or_else(|| ModelError::MissingTensor(bias.clone()))?;
-                Ok(Matrix {
-                    inner: Tensor::Float(dequantize_transposed(&model, base, outputs, inputs)?),
-                })
-            };
+            let matrix =
+                |kind: &str, outputs: usize, inputs: usize| -> Result<Matrix, ModelError> {
+                    let bias = format!("model.blocks.{layer}.{kind}.bias");
+                    let base = model
+                        .matmuls
+                        .get(&bias)
+                        .ok_or_else(|| ModelError::MissingTensor(bias.clone()))?;
+                    Ok(Matrix {
+                        inner: Tensor::Float(dequantize_transposed(&model, base, outputs, inputs)?),
+                    })
+                };
             blocks.push(Block {
                 ln1_weight: plain(&model, &name("ln1.weight"))?,
                 ln1_bias: plain(&model, &name("ln1.bias"))?,

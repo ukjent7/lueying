@@ -50,11 +50,11 @@ pub fn load(dir: &Path) -> Result<Models, String> {
     let vocab = String::from_utf8(read("rerank-8m.vocab.json")?)
         .map_err(|e| format!("rerank-8m.vocab.json: {e}"))?;
     // 截断到一半与空文件都必须在解析阶段被拒；不能带着半份权重进推理。
-    let rejects_bad = Model::load_keystroke(&eight_bytes[..eight_bytes.len() / 2], &manifest, &vocab)
-        .is_err()
-        && Model::load_keystroke(&eight_bytes, "{", &vocab).is_err()
-        && Model::load_keystroke(&eight_bytes, &manifest, "{}").is_err()
-        && Model::load_keystroke(&[], &manifest, &vocab).is_err();
+    let rejects_bad =
+        Model::load_keystroke(&eight_bytes[..eight_bytes.len() / 2], &manifest, &vocab).is_err()
+            && Model::load_keystroke(&eight_bytes, "{", &vocab).is_err()
+            && Model::load_keystroke(&eight_bytes, &manifest, "{}").is_err()
+            && Model::load_keystroke(&[], &manifest, &vocab).is_err();
     Ok(Models {
         four,
         five,
