@@ -57,8 +57,8 @@ fn unknown_prefix_has_no_candidates() {
 #[test]
 fn engine_commits_the_code_candidate() {
     let scheme = Arc::new(CodeScheme::new("demo-code", "演示码", table()));
-    let mut engine = Engine::new(Arc::new(Dictionary::builtin()), Config::default())
-        .with_scheme(scheme);
+    let mut engine =
+        Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_scheme(scheme);
     for key in ['n', 'k'] {
         engine.process(Key::Letter(key));
     }

@@ -3,9 +3,9 @@
 //! 码输入(五笔、仓颉)不吃音节:一个候选吃掉整串输入,与拼音词库是两套
 //! 键空间,因此不学习、不参与模型重排。
 
+use crate::Candidate;
 use crate::query::Built;
 use crate::scheme::CodeCandidate;
-use crate::Candidate;
 
 /// 把码表命中变成候选。整串输入被一个候选吃掉。
 pub(crate) fn build(codes: Vec<CodeCandidate>, raw_len: usize) -> Built {
