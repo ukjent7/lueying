@@ -144,11 +144,7 @@ fn embedding_paired_budget() {
                         let b = timed(new, &model, &tokens, count);
                         (timed(old, &model, &tokens, count), b)
                     };
-                    eprintln!(
-                        "pair width={width} quantized={quantized} rows={rows} pair={pair} old_ns={} new_ns={} count={count}",
-                        a.as_nanos(),
-                        b.as_nanos()
-                    );
+                    eprintln!("pair width={width} quantized={quantized} rows={rows} pair={pair} old_ns={} new_ns={} count={count}", a.as_nanos(), b.as_nanos());
                     ratios.push(b.as_secs_f64() / a.as_secs_f64());
                     old_us.push(a.as_secs_f64() * 1e6 / count as f64);
                     new_us.push(b.as_secs_f64() * 1e6 / count as f64);
@@ -156,10 +152,7 @@ fn embedding_paired_budget() {
                 ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 old_us.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 new_us.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                eprintln!(
-                    "width={width} quantized={quantized} rows={rows} old_us={:.6} new_us={:.6} ratio={:.6} p10={:.6} p90={:.6} count={count}",
-                    old_us[10], new_us[10], ratios[10], ratios[2], ratios[18]
-                );
+                eprintln!("width={width} quantized={quantized} rows={rows} old_us={:.6} new_us={:.6} ratio={:.6} p10={:.6} p90={:.6} count={count}",old_us[10],new_us[10],ratios[10],ratios[2],ratios[18]);
                 if ratios[10] >= 0.95 {
                     failures.push((width, quantized, rows, ratios[10]));
                 }

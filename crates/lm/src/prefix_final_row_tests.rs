@@ -224,17 +224,9 @@ fn paired_shape(model: &SentenceModel, tokens: &[u32], failures: &mut Vec<String
     old_samples.sort_by(f64::total_cmp);
     new_samples.sort_by(f64::total_cmp);
     let budget = if tokens.len() > 1 { 0.98 } else { 1.05 };
-    let description = format!(
-        "layers={} rows={} quantized={} old_us={:.3} new_us={:.3} ratio={:.6} p10={:.6} p90={:.6} budget={budget:.2}",
-        model.config.n_layer,
-        tokens.len(),
-        matches!(model.token.inner, Tensor::Quantized { .. }),
-        old_samples[10],
-        new_samples[10],
-        ratios[10],
-        ratios[2],
-        ratios[18]
-    );
+    let description = format!("layers={} rows={} quantized={} old_us={:.3} new_us={:.3} ratio={:.6} p10={:.6} p90={:.6} budget={budget:.2}",
+        model.config.n_layer, tokens.len(), matches!(model.token.inner, Tensor::Quantized { .. }),
+        old_samples[10], new_samples[10], ratios[10], ratios[2], ratios[18]);
     println!("{description}");
     if ratios[10] >= budget {
         failures.push(description);

@@ -245,15 +245,8 @@ fn paired_shape(
     } else {
         1.05
     };
-    let description = format!(
-        "layers={} quantized={quantized} prefix={prefix} original={original} continued={continued} cold={cold} repeats={repeats} old_us={:.3} new_us={:.3} ratio={:.6} p10={:.6} p90={:.6} budget={budget:.2}",
-        model.blocks.len(),
-        old_times[10],
-        new_times[10],
-        ratios[10],
-        ratios[2],
-        ratios[18]
-    );
+    let description = format!("layers={} quantized={quantized} prefix={prefix} original={original} continued={continued} cold={cold} repeats={repeats} old_us={:.3} new_us={:.3} ratio={:.6} p10={:.6} p90={:.6} budget={budget:.2}",
+        model.blocks.len(), old_times[10], new_times[10], ratios[10], ratios[2], ratios[18]);
     println!("{description}");
     if ratios[10] >= budget {
         failures.push(description);

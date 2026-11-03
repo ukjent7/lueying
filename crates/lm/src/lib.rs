@@ -1,10 +1,6 @@
 //! Reranks candidates the pinyin decoder assembled, using a character-level language model.
 //!
-//! Provenance: vendored from the 水杉输入法 project's `chinese-ime-lm` (Apache-2.0) and
-//! maintained in-tree; the 4M/25M rerank model weights share the same origin.
-//!
-//! The model is produced by `neural/`, and the measurements that shaped this crate are recorded in
-//! `docs/measurements.md`. Two of them are load-bearing and are enforced here rather than left to callers:
+//! The model is produced by [`neural/`](https://github.com/metasequoiaime/chinese-ime-lm/tree/main/neural), and the measurements that shaped this crate are recorded in [`docs/measurements.md`](https://github.com/metasequoiaime/chinese-ime-lm/blob/main/docs/measurements.md). Two of them are load-bearing and are enforced here rather than left to callers:
 //!
 //! Reranking applies only when the engine's leading candidate was assembled by the lattice or the
 //! fallback decoder. An exact dictionary hit on the whole key carries corpus frequency the model
@@ -14,11 +10,7 @@
 //! summed log-probability is larger for fewer characters, so a mixed-length list would rank the
 //! shortest candidate first every time regardless of quality. Scores are per character for the same
 //! reason, and the caller restricts the set it passes in.
-//!
-//! 文件布局:`sentence_model` 放前向与评分,`rerank` 放重排状态机,`tests` 放单元测试。
 
-mod rerank;
-mod sentence_model;
 mod weights;
 
 #[cfg(test)]
@@ -32,9 +24,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use weights::Tensor;
-
-pub use rerank::{Reranker, should_rerank};
+use weights::{Tensor, Weights};
 
 /// A weight matrix, kept in whatever precision the file stored it in.
 ///
@@ -80,8 +70,9 @@ impl Matrix {
     }
 }
 
-/// `CandidateSource` values meaning an exact full-key hit in a dictionary. The ordering is defined
-/// by `quanpin/word_lattice.h` in the engine: `Database` is 0 and `UserDatabase` is 1.
+/// `CandidateSource` values meaning an exact full-key hit in a dictionary. The ordering is defined by `quanpin/word_lattice.h` in the engine: `Database` is 0 and `UserDatabase` is 1.
+///
+/// This numbering belongs to that one engine and means nothing to any other. An engine with its own candidate sources should describe each candidate with [`CandidateFacts`] and call [`Reranker::best_where`], which never consults these values.
 pub const DICTIONARY_SOURCES: [u8; 2] = [0, 1];
 
 /// What the caller knows about one candidate. Neither field can be worked out from the candidate
@@ -97,11 +88,7 @@ pub struct CandidateFacts {
     /// Character count cannot answer this. It happens to agree whenever a key has one segmentation,
     /// which is why it served as a proxy, and it disagrees exactly where correction matters.
     ///
-    /// An engine that advances composition has already computed this, whether or not it calls it
-    /// that: "does this candidate consume the whole key" is the same question as "after selecting it,
-    /// is there more input left to answer". Do not write a second test for it — see
-    /// `docs/measurements.md` for the mapping onto one engine's existing predicate, and for why
-    /// deriving it from the candidate source does not work.
+    /// An engine that advances composition has already computed this, whether or not it calls it that: "does this candidate consume the whole key" is the same question as "after selecting it, is there more input left to answer". Do not write a second test for it — see [`docs/measurements.md`](https://github.com/metasequoiaime/chinese-ime-lm/blob/main/docs/measurements.md) for the mapping onto one engine's existing predicate, and for why deriving it from the candidate source does not work.
     pub answers_key: bool,
     /// This candidate is an exact dictionary hit **that the engine vouches for as evidence of what
     /// the user meant**, not merely a row that came out of a dictionary.
@@ -162,7 +149,11 @@ std::thread_local! {
     static LAST_ENCODED_LENGTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Why a model file was rejected.
+///
+/// Non-exhaustive because the loader is the first thing a hostile file meets, and a check added there later must not be a breaking change for every caller that matches on this.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ModelError {
     #[error("model file is truncated")]
     Truncated,
@@ -204,6 +195,7 @@ struct Block {
 struct FeedForwardScratch {
     normalized: Vec<f32>,
     hidden: Vec<f32>,
+    kernel: LinearScratch,
 }
 
 pub struct SentenceModel {
@@ -271,6 +263,7 @@ struct Prefix<'a> {
 }
 
 // 一段已完成前向的位置；累计分仍由调用者按原顺序计算。
+#[cfg(test)]
 struct TailStates {
     keys: Vec<Vec<f32>>,
     values: Vec<Vec<f32>>,
@@ -299,6 +292,9 @@ struct TailRun {
     terminal: OnceLock<TerminalState>,
 }
 
+/// One candidate at a time: how runs were continued before a decision was planned and run as one
+/// batch. Kept as the reference the batched path is tested against bit for bit.
+#[cfg(test)]
 impl TailRun {
     /// 恢复前 taken 个 token 后的前缀；已有 KV 和按需补算的末行都只借用。
     fn resume(&self, taken: usize, model: &SentenceModel) -> (Prefix<'_>, f32) {
@@ -388,6 +384,1360 @@ impl TailRun {
     }
 }
 
+impl SentenceModel {
+    pub fn load(bytes: &[u8]) -> Result<Self, ModelError> {
+        let mut weights = Weights::parse(bytes)?;
+        let config: Config = serde_json::from_str(weights.metadata("config")?)
+            .map_err(|error| ModelError::Header(error.to_string()))?;
+        let vocabulary: Vec<String> = serde_json::from_str(weights.metadata("vocab")?)
+            .map_err(|error| ModelError::Header(error.to_string()))?;
+        let attribution = weights
+            .metadata("attribution")
+            .unwrap_or_default()
+            .to_owned();
+        let license = weights.metadata("license").unwrap_or_default().to_owned();
+
+        // Every dimension below is multiplied out while checking the tensors, and all of them come
+        // from the file. Bounding them here means the later arithmetic cannot overflow, which is
+        // simpler to be sure of than checking each multiplication.
+        const LARGEST: usize = 1 << 20;
+        if config.vocab > LARGEST
+            || config.n_layer > LARGEST
+            || config.n_embd > LARGEST
+            || config.context > LARGEST
+        {
+            return Err(ModelError::Geometry(
+                "a dimension is larger than any real model".into(),
+            ));
+        }
+        // `%` rather than `is_multiple_of`, which needs a far newer compiler than anything else here.
+        if config.n_head == 0 || config.n_embd == 0 || config.n_embd % config.n_head != 0 {
+            return Err(ModelError::Geometry(format!(
+                "{} channels do not divide into {} heads",
+                config.n_embd, config.n_head
+            )));
+        }
+        if vocabulary.len() != config.vocab {
+            return Err(ModelError::Geometry(format!(
+                "vocabulary holds {} tokens but the configuration says {}",
+                vocabulary.len(),
+                config.vocab
+            )));
+        }
+
+        let index = vocabulary
+            .iter()
+            .enumerate()
+            .filter_map(|(id, token)| {
+                let mut chars = token.chars();
+                match (chars.next(), chars.next()) {
+                    // Reserved tokens are spelled `<pad>` and are addressed by constant, not by text.
+                    (Some(ch), None) => Some((ch, id as u32)),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let mut blocks = Vec::with_capacity(config.n_layer);
+        for layer in 0..config.n_layer {
+            let name = |suffix: &str| format!("blocks.{layer}.{suffix}");
+            blocks.push(Block {
+                ln1_weight: weights.take(&name("ln1.weight"))?,
+                ln1_bias: weights.take(&name("ln1.bias"))?,
+                qkv_weight: Matrix {
+                    inner: weights.take_tensor(&name("qkv.weight"))?,
+                },
+                qkv_bias: weights.take(&name("qkv.bias"))?,
+                proj_weight: Matrix {
+                    inner: weights.take_tensor(&name("proj.weight"))?,
+                },
+                proj_bias: weights.take(&name("proj.bias"))?,
+                ln2_weight: weights.take(&name("ln2.weight"))?,
+                ln2_bias: weights.take(&name("ln2.bias"))?,
+                fc_weight: Matrix {
+                    inner: weights.take_tensor(&name("fc.weight"))?,
+                },
+                fc_bias: weights.take(&name("fc.bias"))?,
+                out_weight: Matrix {
+                    inner: weights.take_tensor(&name("out.weight"))?,
+                },
+                out_bias: weights.take(&name("out.bias"))?,
+            });
+        }
+
+        let model = Self {
+            config,
+            index,
+            token: Matrix {
+                inner: weights.take_tensor("tok.weight")?,
+            },
+            position: weights.take("pos.weight")?,
+            blocks,
+            final_weight: weights.take("ln_f.weight")?,
+            final_bias: weights.take("ln_f.bias")?,
+            attribution,
+            license,
+        };
+        model.check_geometry()?;
+        Ok(model)
+    }
+
+    fn check_geometry(&self) -> Result<(), ModelError> {
+        let Config {
+            vocab,
+            n_embd,
+            context,
+            ..
+        } = self.config;
+        let expect = |name: &str, actual: usize, wanted: usize| {
+            (actual == wanted).then_some(()).ok_or_else(|| {
+                ModelError::Geometry(format!("{name} holds {actual}, wanted {wanted}"))
+            })
+        };
+        let expect_matrix = |name: &str, matrix: &Matrix, rows: usize, columns: usize| {
+            expect(name, matrix.len(), rows * columns)?;
+            if let Tensor::Quantized { scales, .. } = &matrix.inner {
+                expect(&format!("{name}.scale"), scales.len(), rows)?;
+            }
+            Ok(())
+        };
+        expect_matrix("tok.weight", &self.token, vocab, n_embd)?;
+        expect("pos.weight", self.position.len(), context * n_embd)?;
+        expect("ln_f.weight", self.final_weight.len(), n_embd)?;
+        for (layer, block) in self.blocks.iter().enumerate() {
+            expect_matrix(
+                &format!("blocks.{layer}.qkv"),
+                &block.qkv_weight,
+                3 * n_embd,
+                n_embd,
+            )?;
+            expect_matrix(
+                &format!("blocks.{layer}.proj"),
+                &block.proj_weight,
+                n_embd,
+                n_embd,
+            )?;
+            expect_matrix(
+                &format!("blocks.{layer}.fc"),
+                &block.fc_weight,
+                4 * n_embd,
+                n_embd,
+            )?;
+            expect_matrix(
+                &format!("blocks.{layer}.out"),
+                &block.out_weight,
+                n_embd,
+                4 * n_embd,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The corpus attribution carried in the weights file. Both corpora require it to travel with a
+    /// model trained on them, which is why it lives in the file rather than beside it.
+    pub fn attribution(&self) -> &str {
+        &self.attribution
+    }
+
+    /// The licence of the **weights**, as an SPDX identifier, which is not the licence of the code
+    /// that produced them. Empty when the file does not say — older files do not, and a caller that
+    /// needs to know should treat silence as unknown rather than as permission.
+    pub fn license(&self) -> &str {
+        &self.license
+    }
+
+    pub fn context_length(&self) -> usize {
+        self.config.context
+    }
+
+    fn encode(&self, text: &str) -> Vec<u32> {
+        self.encode_limited(text, usize::MAX)
+    }
+
+    /// 模型不会评分窗口之后的 token，编码和保留容量都限制在这个窗口内。
+    fn encode_limited(&self, text: &str, limit: usize) -> Vec<u32> {
+        let tokens: Vec<u32> = text
+            .chars()
+            .take(limit)
+            .map(|ch| self.index.get(&ch).copied().unwrap_or(UNK))
+            .collect();
+        #[cfg(test)]
+        LAST_ENCODED_POINTER.with(|pointer| pointer.set(tokens.as_ptr() as usize));
+        #[cfg(test)]
+        LAST_ENCODED_LENGTH.with(|length| length.set(tokens.len()));
+        tokens
+    }
+
+    /// Mean log-probability per character of each candidate, conditioned on the committed text.
+    ///
+    /// The mean rather than the sum, because candidates of different lengths are otherwise not
+    /// comparable. Callers are expected to pass only candidates that cover the whole key, which
+    /// makes the lengths equal in practice; normalizing anyway means a caller that gets that wrong
+    /// gets a degraded ranking rather than a meaningless one.
+    pub fn score(&self, context: &str, candidates: &[&str]) -> Vec<f32> {
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        let longest = candidates
+            .iter()
+            .map(|text| text.chars().count())
+            .max()
+            .unwrap_or(0);
+        let prefix = self.run_prefix(&self.prefix_tokens(context, longest));
+        let limit = self.config.context.saturating_sub(prefix.length).max(1);
+        let tails: Vec<Vec<u32>> = candidates
+            .iter()
+            .map(|text| self.encode_limited(text, limit))
+            .collect();
+
+        // Candidates of one decision usually share their first characters, and a position's state
+        // depends only on the tokens up to it, so each distinct prefix of a candidate is run once.
+        // `steps[c][i]` is the batch row whose state predicts token `i + 1` of candidate `c`. The
+        // last token of a candidate predicts nothing and is never run.
+        let mut rows: Vec<BatchRow> = Vec::new();
+        let mut known: HashMap<(usize, u32), usize> = HashMap::new();
+        let steps: Vec<Vec<usize>> = tails
+            .iter()
+            .map(|tail| {
+                let mut parent = None;
+                let mut path = Vec::with_capacity(tail.len().saturating_sub(1));
+                for (depth, &token) in tail.iter().enumerate().take(tail.len().saturating_sub(1)) {
+                    let key = (parent.map_or(0, |row| row + 1), token);
+                    let row = *known.entry(key).or_insert_with(|| {
+                        rows.push(BatchRow {
+                            token,
+                            parent,
+                            depth,
+                            context: 0,
+                        });
+                        rows.len() - 1
+                    });
+                    path.push(row);
+                    parent = Some(row);
+                }
+                path
+            })
+            .collect();
+        let hidden = self.run_batch(&[BatchContext::of(&prefix)], &rows).hidden;
+        let mut normalizers = Vec::with_capacity(rows.len());
+        self.log_normalizers_into(&hidden, &mut normalizers);
+
+        let n_embd = self.config.n_embd;
+        tails
+            .iter()
+            .zip(&steps)
+            .map(|(tail, path)| {
+                let Some(&first) = tail.first() else {
+                    return f32::NEG_INFINITY;
+                };
+                // The same additions in the same order as `run_tail`, so the sum is the same f32.
+                let mut running = self.log_probability(&prefix.last_hidden, first);
+                for (&row, &next) in path.iter().zip(&tail[1..]) {
+                    let next = (next as usize).min(self.config.vocab - 1);
+                    running +=
+                        self.token
+                            .dot_row(&hidden[row * n_embd..(row + 1) * n_embd], next, n_embd)
+                            - normalizers[row];
+                }
+                running / tail.len() as f32
+            })
+            .collect()
+    }
+
+    /// The committed text as tokens, opened with `BOS` and trimmed to leave room for the longest
+    /// candidate.
+    ///
+    /// The position table is the hard limit on sequence length, so the context yields rather than
+    /// the candidate: a truncated candidate would be scored on text the user did not type, whereas
+    /// a truncated context only weakens the conditioning.
+    fn prefix_tokens(&self, context: &str, longest: usize) -> Vec<u32> {
+        let room = self.config.context.saturating_sub(longest + 1);
+        // 词表外的字符(常见的是上一句结尾的标点)对条件没有信息量,只会把
+        // 上文结尾变成 <unk>;剥掉它们,上游横评里 25M 的整句有上文 top-1
+        // 从 87.0% 抬到 89.9%(metasequoiaime/chinese-ime-lm #91,sentences-ctx-v1)。
+        let encoded: Vec<u32> = self
+            .encode(context)
+            .into_iter()
+            .filter(|&token| token != UNK)
+            .collect();
+        let start = encoded.len().saturating_sub(room);
+        let mut tokens = Vec::with_capacity(encoded.len() - start + 1);
+        tokens.push(BOS);
+        tokens.extend_from_slice(&encoded[start..]);
+        tokens
+    }
+
+    /// Scores each candidate on its own against the prefix: what `score` did before it ran shared
+    /// prefixes once, kept so the tests can hold the batched path to the same bits.
+    #[cfg(test)]
+    fn score_against(&self, prefix: &Prefix<'_>, candidates: &[&str]) -> Vec<f32> {
+        candidates
+            .iter()
+            .map(|text| {
+                let tail = self.encode(text);
+                if tail.is_empty() {
+                    return f32::NEG_INFINITY;
+                }
+                let limit = self.config.context.saturating_sub(prefix.length).max(1);
+                let tail = &tail[..tail.len().min(limit)];
+                self.score_tail(prefix, tail) / tail.len() as f32
+            })
+            .collect()
+    }
+
+    fn embed(&self, tokens: &[u32], offset: usize) -> Vec<f32> {
+        #[cfg(test)]
+        FORWARD_POSITIONS.with(|count| count.set(count.get() + tokens.len()));
+        let n_embd = self.config.n_embd;
+        let mut x = vec![0.0; tokens.len() * n_embd];
+        for (step, &token) in tokens.iter().enumerate() {
+            let token = (token as usize).min(self.config.vocab - 1);
+            let position = (offset + step).min(self.config.context - 1);
+            let row = &mut x[step * n_embd..(step + 1) * n_embd];
+            let position_row = &self.position[position * n_embd..(position + 1) * n_embd];
+            self.token.embed_row(token, position_row, row);
+        }
+        x
+    }
+
+    /// Runs the prefix and keeps every layer's keys and values.
+    fn run_prefix(&self, tokens: &[u32]) -> Prefix<'static> {
+        let n_embd = self.config.n_embd;
+        let mut x = self.embed(tokens, 0);
+        let mut feed_forward = FeedForwardScratch::default();
+        let mut keys = Vec::with_capacity(self.blocks.len());
+        let mut values = Vec::with_capacity(self.blocks.len());
+        for (layer, block) in self.blocks.iter().enumerate() {
+            self.normalize_attention_into(&x, block, &mut feed_forward);
+            self.qkv_into(block, &mut feed_forward);
+            let (k, v) = split_qkv_with_suffix_into(
+                &feed_forward.hidden,
+                tokens.len(),
+                n_embd,
+                &[],
+                &[],
+                None,
+                &mut feed_forward.normalized,
+            );
+            // 最后一层只消费末位置输出；所有位置的 KV 仍供后续候选使用。
+            let first = if layer + 1 == self.blocks.len() {
+                tokens.len() - 1
+            } else {
+                0
+            };
+            let start = first * n_embd;
+            let attended = self.attention(
+                &feed_forward.normalized[start..],
+                &k,
+                &v,
+                tokens.len() - first,
+                first,
+            );
+            self.project_attention_into(&attended, block, &mut feed_forward);
+            for (slot, &value) in x[start..].iter_mut().zip(&feed_forward.normalized) {
+                *slot += value;
+            }
+            self.feed_forward(&mut x[start..], block, &mut feed_forward);
+            keys.push(k);
+            values.push(v);
+        }
+        let last = (tokens.len() - 1) * n_embd;
+        feed_forward.normalized.resize(n_embd, 0.0);
+        layer_norm_into(
+            &x[last..],
+            &self.final_weight,
+            &self.final_bias,
+            n_embd,
+            &mut feed_forward.normalized,
+        );
+        let last_hidden = Arc::new(HiddenState::new(feed_forward.normalized));
+        Prefix {
+            length: tokens.len(),
+            keys: Cow::Owned(keys),
+            values: Cow::Owned(values),
+            terminal: None,
+            last_hidden,
+        }
+    }
+
+    /// Runs a candidate against a cached prefix and returns its total log-probability.
+    #[cfg(test)]
+    fn score_tail(&self, prefix: &Prefix<'_>, tail: &[u32]) -> f32 {
+        let run = self.run_tail(prefix, tail);
+        run.cumulative[run.cumulative.len() - 1]
+    }
+
+    /// 完整累计分只需要前 length-1 个隐藏状态；末位置留给真正经过它的续跑。
+    ///
+    /// 分段累计仍沿用既有分组：carried + rest，不改变 token 的先后顺序。
+    #[cfg(test)]
+    fn run_tail(&self, prefix: &Prefix<'_>, tail: &[u32]) -> TailRun {
+        let states = self.run_tail_states(
+            prefix.length,
+            &prefix.keys,
+            &prefix.values,
+            prefix.terminal,
+            &tail[..tail.len() - 1],
+        );
+        let mut running = self.log_probability(&prefix.last_hidden, tail[0]);
+        let mut cumulative = Vec::with_capacity(tail.len());
+        cumulative.push(running);
+        for (state, &next) in states.hidden.iter().zip(&tail[1..]) {
+            running += self.log_probability(state, next);
+            cumulative.push(running);
+        }
+        TailRun {
+            base: prefix.length,
+            keys: states.keys,
+            values: states.values,
+            hidden: states.hidden,
+            cumulative,
+            pending: *tail.last().expect("候选至少有一个 token"),
+            terminal: OnceLock::new(),
+        }
+    }
+
+    /// 仅计算需要的因果位置；空段只保留上文 KV，单字评分无需前向。
+    #[cfg(test)]
+    fn run_tail_states(
+        &self,
+        length: usize,
+        prefix_keys: &[Vec<f32>],
+        prefix_values: &[Vec<f32>],
+        terminal: Option<&TerminalState>,
+        tokens: &[u32],
+    ) -> TailStates {
+        // 借用的旧 KV 可能更长，只复制本次续跑可见的位置。
+        let n_embd = self.config.n_embd;
+        let prefix_width = (length - usize::from(terminal.is_some())) * n_embd;
+        if tokens.is_empty() {
+            let copy = |rows: &[Vec<f32>], last: Option<&[Vec<f32>]>| {
+                rows.iter()
+                    .enumerate()
+                    .map(|(layer, row)| {
+                        let mut out = Vec::with_capacity(length * n_embd);
+                        out.extend_from_slice(&row[..prefix_width]);
+                        if let Some(last) = last {
+                            out.extend_from_slice(&last[layer]);
+                        }
+                        out
+                    })
+                    .collect()
+            };
+            return TailStates {
+                keys: copy(prefix_keys, terminal.map(|last| last.keys.as_slice())),
+                values: copy(prefix_values, terminal.map(|last| last.values.as_slice())),
+                hidden: Vec::new(),
+            };
+        }
+        let mut x = self.embed(tokens, length);
+        let mut feed_forward = FeedForwardScratch::default();
+        let mut keys_out = Vec::with_capacity(self.blocks.len());
+        let mut values_out = Vec::with_capacity(self.blocks.len());
+        for (layer, block) in self.blocks.iter().enumerate() {
+            self.normalize_attention_into(&x, block, &mut feed_forward);
+            self.qkv_into(block, &mut feed_forward);
+            let (keys, values) = split_qkv_with_suffix_into(
+                &feed_forward.hidden,
+                tokens.len(),
+                n_embd,
+                &prefix_keys[layer][..prefix_width],
+                &prefix_values[layer][..prefix_width],
+                terminal.map(|last| (last.keys[layer].as_slice(), last.values[layer].as_slice())),
+                &mut feed_forward.normalized,
+            );
+            let attended = self.attention(
+                &feed_forward.normalized,
+                &keys,
+                &values,
+                tokens.len(),
+                length,
+            );
+            self.project_attention_into(&attended, block, &mut feed_forward);
+            for (slot, &value) in x.iter_mut().zip(&feed_forward.normalized) {
+                *slot += value;
+            }
+            self.feed_forward(&mut x, block, &mut feed_forward);
+            keys_out.push(keys);
+            values_out.push(values);
+        }
+        feed_forward.normalized.resize(x.len(), 0.0);
+        layer_norm_into(
+            &x,
+            &self.final_weight,
+            &self.final_bias,
+            n_embd,
+            &mut feed_forward.normalized,
+        );
+
+        TailStates {
+            keys: keys_out,
+            values: values_out,
+            hidden: feed_forward
+                .normalized
+                .chunks_exact(n_embd)
+                .map(|row| Arc::new(HiddenState::new(row.to_vec())))
+                .collect(),
+        }
+    }
+
+    /// Runs a batch of positions that each continue `prefix` or an earlier row of the batch, and
+    /// returns every row's final normalized hidden state, `rows × n_embd`.
+    ///
+    /// This is `run_tail_states` for many candidates at once. A row attends to the prefix and then
+    /// to its own chain of parents, exactly the positions a single candidate's run would have
+    /// before it, so each row's state is bit-for-bit what that run computes; what changes is that
+    /// the matrix products see every row of the decision together and can use the blocked kernel.
+    fn run_batch(&self, contexts: &[BatchContext<'_>], rows: &[BatchRow]) -> BatchStates {
+        let n_embd = self.config.n_embd;
+        if rows.is_empty() {
+            return BatchStates {
+                keys: vec![Vec::new(); self.blocks.len()],
+                values: vec![Vec::new(); self.blocks.len()],
+                hidden: Vec::new(),
+                chains: Vec::new(),
+            };
+        }
+        #[cfg(test)]
+        FORWARD_POSITIONS.with(|count| count.set(count.get() + rows.len()));
+        // Every row's chain of batch rows, root first. Parents always come earlier in the batch.
+        let mut chains: Vec<Vec<usize>> = Vec::with_capacity(rows.len());
+        for (index, row) in rows.iter().enumerate() {
+            let mut chain = match row.parent {
+                Some(parent) => {
+                    debug_assert!(parent < index && rows[parent].depth + 1 == row.depth);
+                    debug_assert_eq!(rows[parent].context, row.context);
+                    chains[parent].clone()
+                }
+                None => {
+                    debug_assert_eq!(row.depth, 0);
+                    Vec::new()
+                }
+            };
+            chain.push(index);
+            chains.push(chain);
+        }
+
+        let mut x = vec![0.0; rows.len() * n_embd];
+        for (row, slot) in rows.iter().zip(x.chunks_exact_mut(n_embd)) {
+            let token = (row.token as usize).min(self.config.vocab - 1);
+            let position =
+                (contexts[row.context].length() + row.depth).min(self.config.context - 1);
+            let position_row = &self.position[position * n_embd..(position + 1) * n_embd];
+            self.token.embed_row(token, position_row, slot);
+        }
+
+        let mut feed_forward = FeedForwardScratch::default();
+        let mut keys = Vec::with_capacity(self.blocks.len());
+        let mut values = Vec::with_capacity(self.blocks.len());
+        let mut attended = vec![0.0; rows.len() * n_embd];
+        let longest = rows
+            .iter()
+            .map(|row| contexts[row.context].length() + row.depth + 1)
+            .max()
+            .unwrap_or(0);
+        let mut scores = vec![0.0; longest];
+        for (layer, block) in self.blocks.iter().enumerate() {
+            self.normalize_attention_into(&x, block, &mut feed_forward);
+            self.qkv_into(block, &mut feed_forward);
+            let mut layer_keys = Vec::with_capacity(rows.len() * n_embd);
+            let mut layer_values = Vec::with_capacity(rows.len() * n_embd);
+            for qkv in feed_forward.hidden.chunks_exact(3 * n_embd) {
+                layer_keys.extend_from_slice(&qkv[n_embd..2 * n_embd]);
+                layer_values.extend_from_slice(&qkv[2 * n_embd..]);
+            }
+            #[cfg(test)]
+            ATTENTION_POSITIONS.with(|count| count.set(count.get() + rows.len()));
+            attended.iter_mut().for_each(|slot| *slot = 0.0);
+            for (((index, row), chain), target) in rows
+                .iter()
+                .enumerate()
+                .zip(&chains)
+                .zip(attended.chunks_exact_mut(n_embd))
+            {
+                let context = contexts[row.context];
+                let length = context.length();
+                let terminal = context
+                    .terminal
+                    .map(|last| (last.keys[layer].as_slice(), last.values[layer].as_slice()));
+                let query = &feed_forward.hidden[index * 3 * n_embd..index * 3 * n_embd + n_embd];
+                let sequence = Sequence {
+                    stored: context.stored,
+                    length,
+                    chain,
+                    width: n_embd,
+                };
+                self.attend(
+                    query,
+                    length + row.depth + 1,
+                    |step| {
+                        sequence.row(
+                            step,
+                            &layer_keys,
+                            &context.keys[layer],
+                            terminal.map(|(key, _)| key),
+                        )
+                    },
+                    |step| {
+                        sequence.row(
+                            step,
+                            &layer_values,
+                            &context.values[layer],
+                            terminal.map(|(_, value)| value),
+                        )
+                    },
+                    &mut scores,
+                    target,
+                );
+            }
+            keys.push(layer_keys);
+            values.push(layer_values);
+            self.project_attention_into(&attended, block, &mut feed_forward);
+            for (slot, &value) in x.iter_mut().zip(&feed_forward.normalized) {
+                *slot += value;
+            }
+            self.feed_forward(&mut x, block, &mut feed_forward);
+        }
+        let mut hidden = vec![0.0; x.len()];
+        layer_norm_into(
+            &x,
+            &self.final_weight,
+            &self.final_bias,
+            n_embd,
+            &mut hidden,
+        );
+        BatchStates {
+            keys,
+            values,
+            hidden,
+            chains,
+        }
+    }
+
+    /// The log normalizer `project` computes, for every row of `hidden` (`rows × n_embd`).
+    ///
+    /// Rows are taken in the same blocks as `linear_into`, so each vocabulary row is widened once
+    /// per block instead of once per state, and the logits of a block are kept only until its
+    /// normalizers are summed. Each normalizer is computed from bit-identical logits, in the same
+    /// order, as `project` would.
+    fn log_normalizers_into(&self, hidden: &[f32], out: &mut Vec<f32>) {
+        let n_embd = self.config.n_embd;
+        let vocab = self.config.vocab;
+        let rows = hidden.len() / n_embd;
+        out.clear();
+        let mut transposed = Vec::new();
+        let mut widened = Vec::new();
+        let mut logits = Vec::new();
+        for (start, size) in row_blocks(rows) {
+            #[cfg(test)]
+            VOCABULARY_PROJECTIONS.with(|count| count.set(count.get() + size));
+            transposed.clear();
+            transposed.resize(size * n_embd, 0.0);
+            for row in 0..size {
+                let source = &hidden[(start + row) * n_embd..(start + row + 1) * n_embd];
+                for (input, &value) in source.iter().enumerate() {
+                    transposed[input * size + row] = value;
+                }
+            }
+            logits.clear();
+            logits.resize(size * vocab, 0.0);
+            for index in 0..vocab {
+                let span = index * n_embd..(index + 1) * n_embd;
+                let (weights, scale): (&[f32], Option<f32>) = match &self.token.inner {
+                    Tensor::Float(values) => (&values[span], None),
+                    Tensor::Quantized { values, scales } => {
+                        widened.clear();
+                        widened.extend(values[span].iter().map(|&value| f32::from(value)));
+                        (&widened, Some(scales[index]))
+                    }
+                };
+                let mut dots = [0.0f32; ROW_BLOCK];
+                match size {
+                    ROW_BLOCK => dots = dot_block::<ROW_BLOCK>(&transposed, weights),
+                    _ => dots[..HALF_BLOCK]
+                        .copy_from_slice(&dot_block::<HALF_BLOCK>(&transposed, weights)),
+                }
+                for (row, dot) in dots[..size].iter().enumerate() {
+                    logits[row * vocab + index] = match scale {
+                        Some(scale) => dot * scale,
+                        None => *dot,
+                    };
+                }
+            }
+            for row in logits.chunks_exact(vocab) {
+                out.push(log_normalizer(row));
+            }
+        }
+        let blocked = out.len();
+        for row in hidden.chunks_exact(n_embd).skip(blocked) {
+            out.push(self.project(row).1);
+        }
+    }
+
+    fn project_attention_into(
+        &self,
+        attended: &[f32],
+        block: &Block,
+        scratch: &mut FeedForwardScratch,
+    ) {
+        scratch.normalized.resize(attended.len(), 0.0);
+        linear_into(
+            attended,
+            &block.proj_weight,
+            &block.proj_bias,
+            self.config.n_embd,
+            self.config.n_embd,
+            &mut scratch.normalized,
+            &mut scratch.kernel,
+        );
+    }
+
+    fn normalize_attention_into(&self, x: &[f32], block: &Block, scratch: &mut FeedForwardScratch) {
+        scratch.normalized.resize(x.len(), 0.0);
+        layer_norm_into(
+            x,
+            &block.ln1_weight,
+            &block.ln1_bias,
+            self.config.n_embd,
+            &mut scratch.normalized,
+        );
+    }
+
+    fn qkv_into(&self, block: &Block, scratch: &mut FeedForwardScratch) {
+        let normalized = &scratch.normalized;
+        scratch.hidden.resize(normalized.len() * 3, 0.0);
+        linear_into(
+            normalized,
+            &block.qkv_weight,
+            &block.qkv_bias,
+            self.config.n_embd,
+            3 * self.config.n_embd,
+            &mut scratch.hidden,
+            &mut scratch.kernel,
+        );
+    }
+
+    fn feed_forward(&self, x: &mut [f32], block: &Block, scratch: &mut FeedForwardScratch) {
+        let n_embd = self.config.n_embd;
+        scratch.normalized.resize(x.len(), 0.0);
+        layer_norm_into(
+            x,
+            &block.ln2_weight,
+            &block.ln2_bias,
+            n_embd,
+            &mut scratch.normalized,
+        );
+        scratch.hidden.resize(x.len() * 4, 0.0);
+        linear_into(
+            &scratch.normalized,
+            &block.fc_weight,
+            &block.fc_bias,
+            n_embd,
+            4 * n_embd,
+            &mut scratch.hidden,
+            &mut scratch.kernel,
+        );
+        for value in &mut scratch.hidden {
+            *value = gelu(*value);
+        }
+        // 第一线性层已消费归一化结果，输出投影可以覆盖同一份存储。
+        linear_into(
+            &scratch.hidden,
+            &block.out_weight,
+            &block.out_bias,
+            4 * n_embd,
+            n_embd,
+            &mut scratch.normalized,
+            &mut scratch.kernel,
+        );
+        for (slot, &value) in x.iter_mut().zip(&scratch.normalized) {
+            *slot += value;
+        }
+    }
+
+    /// 同一隐藏状态的完整词表只投影一次，后续 token 只计算自己的 logit。
+    fn log_probability(&self, hidden: &HiddenState, token: u32) -> f32 {
+        let token = (token as usize).min(self.config.vocab - 1);
+        let offset = hidden
+            .log_normalizer
+            .get_or_init(|| self.project(&hidden.values).1);
+        self.token
+            .dot_row(&hidden.values, token, self.config.n_embd)
+            - offset
+    }
+
+    /// 全词表 logits 与归一化常数保持既有的点积、最高值和指数求和顺序。
+    fn project(&self, hidden: &[f32]) -> (Vec<f32>, f32) {
+        #[cfg(test)]
+        VOCABULARY_PROJECTIONS.with(|count| count.set(count.get() + 1));
+        let n_embd = self.config.n_embd;
+        let mut logits = Vec::with_capacity(self.config.vocab);
+        let mut highest = f32::NEG_INFINITY;
+        match &self.token.inner {
+            Tensor::Float(values) => {
+                for row in values.chunks_exact(n_embd).take(self.config.vocab) {
+                    let logit = dot(hidden, row);
+                    highest = highest.max(logit);
+                    logits.push(logit);
+                }
+            }
+            Tensor::Quantized { values, scales } => {
+                for (row, &scale) in values
+                    .chunks_exact(n_embd)
+                    .zip(&scales[..self.config.vocab])
+                    .take(self.config.vocab)
+                {
+                    let logit = dot_i8(hidden, row) * scale;
+                    highest = highest.max(logit);
+                    logits.push(logit);
+                }
+            }
+        }
+        let sum: f32 = logits.iter().map(|logit| (logit - highest).exp()).sum();
+        let offset = highest + sum.ln();
+        (logits, offset)
+    }
+
+    /// 返回每个 token 的对数概率，公开的完整分布入口仍计算所有行。
+    fn distribution(&self, hidden: &[f32]) -> Vec<f32> {
+        let (mut logits, offset) = self.project(hidden);
+        for logit in &mut logits {
+            *logit -= offset;
+        }
+        logits
+    }
+
+    /// log P(next character | text), over the whole vocabulary.
+    ///
+    /// This is the primitive a search needs: reranking asks the model to judge finished strings,
+    /// while a search asks it what should come next, which is what lets it reach a reading the
+    /// engine never proposed.
+    pub fn next_log_probabilities(&self, text: &str) -> Vec<f32> {
+        let mut tokens = vec![BOS];
+        let encoded = self.encode(text);
+        let room = self.config.context - 1;
+        tokens.extend_from_slice(&encoded[encoded.len().saturating_sub(room)..]);
+        let prefix = self.run_prefix(&tokens);
+        self.distribution(&prefix.last_hidden.values)
+    }
+
+    /// The identifier this model uses for `character`, when it has one.
+    pub fn token(&self, character: char) -> Option<u32> {
+        self.index.get(&character).copied()
+    }
+
+    fn attention(&self, q: &[f32], k: &[f32], v: &[f32], rows: usize, offset: usize) -> Vec<f32> {
+        #[cfg(test)]
+        ATTENTION_POSITIONS.with(|count| count.set(count.get() + rows));
+        let n_embd = self.config.n_embd;
+        let total = k.len() / n_embd;
+        let mut out = vec![0.0; rows * n_embd];
+        let mut scores = vec![0.0; total];
+        for row in 0..rows {
+            // Causal: a query at absolute position `offset + row` may attend to itself and earlier.
+            self.attend(
+                &q[row * n_embd..(row + 1) * n_embd],
+                offset + row + 1,
+                |step| &k[step * n_embd..(step + 1) * n_embd],
+                |step| &v[step * n_embd..(step + 1) * n_embd],
+                &mut scores,
+                &mut out[row * n_embd..(row + 1) * n_embd],
+            );
+        }
+        out
+    }
+
+    /// One query row against the first `visible` positions, every head, added into `target`.
+    ///
+    /// The positions are reached through `key` and `value` rather than as one contiguous buffer, so
+    /// that a batch of candidates can attend to the shared prefix and to its own earlier rows
+    /// without first copying them together. The arithmetic and its order are the same either way.
+    fn attend<'k>(
+        &self,
+        query: &[f32],
+        visible: usize,
+        key: impl Fn(usize) -> &'k [f32],
+        value: impl Fn(usize) -> &'k [f32],
+        scores: &mut [f32],
+        target: &mut [f32],
+    ) {
+        let heads = self.config.n_head;
+        let width = self.config.n_embd / heads;
+        let scale = 1.0 / (width as f32).sqrt();
+        for head in 0..heads {
+            let span = head * width..(head + 1) * width;
+            let query = &query[span.clone()];
+            let mut highest = f32::NEG_INFINITY;
+            for (step, score) in scores[..visible].iter_mut().enumerate() {
+                *score = dot(query, &key(step)[span.clone()]) * scale;
+                highest = highest.max(*score);
+            }
+            let mut sum = 0.0;
+            for score in &mut scores[..visible] {
+                *score = (*score - highest).exp();
+                sum += *score;
+            }
+            let target = &mut target[span.clone()];
+            for (step, &score) in scores[..visible].iter().enumerate() {
+                let weight = score / sum;
+                for (slot, &item) in target.iter_mut().zip(&value(step)[span.clone()]) {
+                    *slot += weight * item;
+                }
+            }
+        }
+    }
+}
+
+/// A model plus the prefix it last ran, so that typing does not re-run the committed text.
+///
+/// The prefix is the expensive half of a short decision — nineteen characters of context cost about
+/// as much as the candidates themselves — and it only changes when something is committed, not on
+/// every keystroke. Holding it across keystrokes is what puts the decision inside a frame.
+pub struct Reranker {
+    /// Shared, because the weights are read-only and a host opens a session per focus change.
+    /// Only the cached prefix belongs to one session.
+    model: Arc<SentenceModel>,
+    cached: Option<(Vec<u32>, Prefix<'static>)>,
+    /// What the previous decision ended up knowing, one entry per candidate it scored: the tokens
+    /// it ran, the state it left the model in, and the log-probability accumulated over them.
+    ///
+    /// A keystroke rescores candidates that are mostly the previous keystroke's candidates with a
+    /// character added, so most of each candidate has already been run. Measured on the sentence
+    /// eval driven through the real runtime, 61% of the characters scored are a prefix of
+    /// something the previous keystroke scored. Keeping only the previous decision bounds this to
+    /// one entry per candidate; keeping more would grow without a ceiling for reuse that was not
+    /// measured to be there.
+    resume: Vec<(Vec<u32>, Arc<TailRun>)>,
+    /// A spare vector whose allocation is reused while the previous decision remains available
+    /// for prefix matching.
+    resume_scratch: Vec<(Vec<u32>, Arc<TailRun>)>,
+    /// `best_where` only needs scores until it has chosen an index; keep that short result buffer
+    /// between keystrokes instead of allocating it for every decision.
+    scores_scratch: Vec<f32>,
+}
+
+impl Reranker {
+    pub fn new(model: Arc<SentenceModel>) -> Self {
+        Self {
+            model,
+            cached: None,
+            resume: Vec::new(),
+            resume_scratch: Vec::new(),
+            scores_scratch: Vec::new(),
+        }
+    }
+
+    pub fn model(&self) -> &SentenceModel {
+        &self.model
+    }
+
+    /// The index of the candidate the model prefers over the engine's leader, or `None` to leave the
+    /// order alone. Both slices are the engine's candidate list in its own order, and the returned
+    /// index refers to that list.
+    ///
+    /// **This infers comparability from character count, which is only a proxy, and it is the wrong
+    /// proxy as soon as the engine corrects what was typed.** Candidates of the leader's length are
+    /// assumed to have answered the same key. That holds while one key has one segmentation, and
+    /// breaks when it does not: `xian` reads as 现 or as 西安, both consuming the whole key, and this
+    /// method compares only whichever of the two matches the leader. Fuzzy pinyin also makes the
+    /// dictionary test wrong here, because `sources` cannot say whether a dictionary hit landed on
+    /// the key the user typed or on a fuzz-expanded variant of it.
+    ///
+    /// Kept because it is the one call an engine using the same source numbering can make without
+    /// supplying anything else. An engine that corrects input should use [`Reranker::best_where`],
+    /// which asks for both facts instead of guessing at them.
+    pub fn best(&mut self, context: &str, texts: &[&str], sources: &[u8]) -> Option<usize> {
+        let width = texts.first().map_or(0, |text| text.chars().count());
+        self.best_where(context, texts, |index| CandidateFacts {
+            answers_key: texts
+                .get(index)
+                .is_some_and(|text| text.chars().count() == width),
+            trusted_dictionary_hit: sources
+                .get(index)
+                .is_some_and(|source| DICTIONARY_SOURCES.contains(source)),
+        })
+    }
+
+    /// The same decision with the caller supplying what only the engine knows about each candidate.
+    ///
+    /// See [`CandidateFacts`] for what the two fields mean and why neither can be derived from the
+    /// candidate strings. The comparable set is every candidate that answers the key, capped at nine;
+    /// the decision is declined when the leader is an exact dictionary hit on the typed key, when the
+    /// leader does not itself answer the key, or when fewer than two candidates do.
+    ///
+    /// **Candidates that answer the key are compared even when they are different numbers of
+    /// characters.** The scores are per-character means for exactly this reason. A summed
+    /// log-probability would rank the shortest candidate first regardless of quality, which is what
+    /// makes a mixed-length list dangerous — but "mixed length" was never the thing to exclude.
+    /// Prefixes and predictive completions have to be excluded because they answer a different key,
+    /// not because of their length, and `answers_key` says so directly.
+    pub fn best_where(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: impl Fn(usize) -> CandidateFacts,
+    ) -> Option<usize> {
+        self.best_where_margin(context, texts, facts, 0.0)
+    }
+
+    /// [`Reranker::best_where`] with a minimum lead. A promotion is declined unless the model's
+    /// preferred candidate beats the engine's leader by at least `min_margin` in mean
+    /// log-probability per character. A zero margin reproduces `best_where`.
+    ///
+    /// Small score gaps are noise: the shared benchmark showed the 4M model lowering top-1 when it
+    /// was allowed to act on them, while clear leads still help. The caller picks the margin because
+    /// it knows which model and latency budget the decision belongs to.
+    pub fn best_where_margin(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: impl Fn(usize) -> CandidateFacts,
+        min_margin: f32,
+    ) -> Option<usize> {
+        let considered = comparable(texts.len(), &facts)?;
+        let mut scores = std::mem::take(&mut self.scores_scratch);
+        self.score_indices_into(
+            context,
+            texts,
+            considered.as_slice().iter().copied(),
+            &mut scores,
+        );
+        let mut best = 0;
+        for (index, score) in scores.iter().enumerate() {
+            if *score > scores[best] {
+                best = index;
+            }
+        }
+        let promoted = (best != 0 && scores[best] - scores[0] >= min_margin)
+            .then_some(considered.as_slice()[best]);
+        self.scores_scratch = scores;
+        promoted
+    }
+
+    /// Mean log-probability per character for each candidate, in the order given.
+    ///
+    /// Exposed because the model's opinion is only one term in the decision: combining it with the
+    /// evidence the engine already has is a different question from letting it decide alone, and
+    /// answering that question needs the numbers rather than the verdict.
+    pub fn log_probabilities(&mut self, context: &str, candidates: &[&str]) -> Vec<f32> {
+        self.score(context, candidates)
+    }
+
+    fn score(&mut self, context: &str, candidates: &[&str]) -> Vec<f32> {
+        let mut scores = Vec::new();
+        self.score_indices_into(context, candidates, 0..candidates.len(), &mut scores);
+        scores
+    }
+
+    fn score_indices_into(
+        &mut self,
+        context: &str,
+        candidates: &[&str],
+        indices: impl Iterator<Item = usize> + Clone,
+        scores: &mut Vec<f32>,
+    ) {
+        let longest = indices
+            .clone()
+            .map(|index| candidates[index].chars().count())
+            .max()
+            .unwrap_or(0);
+        // Keyed on the tokens rather than the context string, because two different contexts that
+        // truncate to the same window are the same prefix and must not invalidate each other.
+        let tokens = self.model.prefix_tokens(context, longest);
+        let matched = self
+            .cached
+            .as_ref()
+            .is_some_and(|(cached, _)| *cached == tokens);
+        if !matched {
+            let prefix = self.model.run_prefix(&tokens);
+            self.cached = Some((tokens, prefix));
+        }
+        let (_, prefix) = self.cached.as_ref().expect("prefix was just computed");
+        let capacity = indices.size_hint().0;
+        let mut previous =
+            std::mem::replace(&mut self.resume, std::mem::take(&mut self.resume_scratch));
+        self.resume.clear();
+        // Every resume point hangs off the old prefix and means nothing against a new one.
+        if !matched {
+            previous.clear();
+        }
+        scores.clear();
+        scores.reserve_exact(capacity);
+        let limit = self
+            .model
+            .config
+            .context
+            .saturating_sub(prefix.length)
+            .max(1);
+        // Plan first, with tokens alone: which earlier run each candidate borrows from and how far,
+        // by the same rules and the same tie-breaking as when every candidate was run on its own
+        // in turn. Then run every new position of the decision in one batch, and only then put the
+        // runs together. A position's state depends only on the tokens before it, so the states are
+        // the ones the one-at-a-time loop computed; the cumulative sums are rebuilt in the order it
+        // added them, so the scores are the same f32.
+        let mut planned: Vec<(Vec<u32>, Known)> = Vec::with_capacity(capacity);
+        let mut candidates_planned: Vec<bool> = Vec::with_capacity(capacity);
+        let mut runs: Vec<PlannedRun> = Vec::new();
+        for index in indices {
+            let tail = self.model.encode_limited(candidates[index], limit);
+            if tail.is_empty() {
+                candidates_planned.push(false);
+                continue;
+            }
+            // An exact match keeps the previous decision's run first, then this decision's.
+            let exact = previous
+                .iter()
+                .enumerate()
+                .map(|(index, (tokens, _))| (tokens, Known::Previous(index)))
+                .chain(planned.iter().map(|(tokens, known)| (tokens, *known)))
+                .find(|(tokens, _)| **tokens == tail)
+                .map(|(_, known)| known);
+            let known = exact.unwrap_or_else(|| {
+                // The longest shared prefix across both decisions; `max_by_key` keeps the last of
+                // equal lengths, so the previous decision's runs win ties, as they always have.
+                let shared = planned
+                    .iter()
+                    .map(|(tokens, known)| (tokens, *known))
+                    .chain(
+                        previous
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (tokens, _))| (tokens, Known::Previous(index))),
+                    )
+                    .map(|(tokens, known)| {
+                        let agreed = tokens
+                            .iter()
+                            .zip(&tail)
+                            .take_while(|(left, right)| left == right)
+                            .count();
+                        (known, agreed.min(tail.len() - 1))
+                    })
+                    .max_by_key(|(_, agreed)| *agreed);
+                runs.push(PlannedRun {
+                    entry: planned.len(),
+                    from: shared.filter(|(_, agreed)| *agreed > 0),
+                    anchor: (0, None, 0),
+                    rows: Vec::new(),
+                    terminal: None,
+                });
+                Known::Computed(runs.len() - 1)
+            });
+            candidates_planned.push(true);
+            planned.push((tail, known));
+        }
+
+        let model = &*self.model;
+        let mut batch = Batch {
+            contexts: vec![BatchContext::of(prefix)],
+            rows: Vec::new(),
+            runs,
+            previous_terminals: vec![None; previous.len()],
+        };
+        for run in 0..batch.runs.len() {
+            let (tail, _) = &planned[batch.runs[run].entry];
+            let (anchor, agreed) = match batch.runs[run].from {
+                Some((known, agreed)) => (batch.anchor(&previous, &planned, known, agreed), agreed),
+                None => ((0, None, 0), 0),
+            };
+            batch.runs[run].anchor = anchor;
+            let (context, mut parent, mut depth) = anchor;
+            for &token in &tail[agreed..tail.len() - 1] {
+                batch.rows.push(BatchRow {
+                    token,
+                    parent,
+                    depth,
+                    context,
+                });
+                parent = Some(batch.rows.len() - 1);
+                depth += 1;
+                batch.runs[run].rows.push(batch.rows.len() - 1);
+            }
+        }
+        let states = model.run_batch(&batch.contexts, &batch.rows);
+        let n_embd = model.config.n_embd;
+        let hidden: Vec<Arc<HiddenState>> = states
+            .hidden
+            .chunks_exact(n_embd)
+            .map(|row| Arc::new(HiddenState::new(row.to_vec())))
+            .collect();
+        let terminal_of = |row: usize| TerminalState {
+            keys: states
+                .keys
+                .iter()
+                .map(|layer| layer[row * n_embd..(row + 1) * n_embd].to_vec())
+                .collect(),
+            values: states
+                .values
+                .iter()
+                .map(|layer| layer[row * n_embd..(row + 1) * n_embd].to_vec())
+                .collect(),
+            hidden: Arc::clone(&hidden[row]),
+        };
+
+        // Every state a log-probability is about to be read from, normalized together.
+        let mut pending: Vec<&Arc<HiddenState>> = Vec::new();
+        let starts: Vec<Arc<HiddenState>> = batch
+            .runs
+            .iter()
+            .map(|run| match run.from {
+                Some((known, agreed)) => {
+                    batch.state(&previous, &planned, &hidden, prefix, known, agreed)
+                }
+                None => Arc::clone(&prefix.last_hidden),
+            })
+            .collect();
+        for state in hidden.iter().chain(&starts) {
+            if state.log_normalizer.get().is_none()
+                && !pending.iter().any(|seen| Arc::ptr_eq(seen, state))
+            {
+                pending.push(state);
+            }
+        }
+        if !pending.is_empty() {
+            let mut gathered = Vec::with_capacity(pending.len() * n_embd);
+            for state in &pending {
+                gathered.extend_from_slice(&state.values);
+            }
+            let mut normalizers = Vec::with_capacity(pending.len());
+            model.log_normalizers_into(&gathered, &mut normalizers);
+            for (state, normalizer) in pending.iter().zip(normalizers) {
+                // Unset a moment ago, and nothing else holds this decision's states.
+                let _ = state.log_normalizer.set(normalizer);
+            }
+        }
+
+        for (index, terminal) in batch.previous_terminals.iter().enumerate() {
+            if let Some(row) = *terminal {
+                let _ = previous[index].1.terminal.set(terminal_of(row));
+            }
+        }
+        let mut built: Vec<Arc<TailRun>> = Vec::with_capacity(batch.runs.len());
+        for (run, start) in batch.runs.iter().zip(&starts) {
+            let (tail, _) = &planned[run.entry];
+            let (context, parent, _) = run.anchor;
+            let context = batch.contexts[context];
+            let chain = match (run.rows.last(), parent) {
+                (Some(&last), _) | (None, Some(last)) => states.chains[last].as_slice(),
+                (None, None) => &[],
+            };
+            let width = (context.length() + chain.len()) * n_embd;
+            let copy = |stored: &[Vec<f32>], computed: &[Vec<f32>], last: Option<&[Vec<f32>]>| {
+                stored
+                    .iter()
+                    .zip(computed)
+                    .enumerate()
+                    .map(|(layer, (stored, computed))| {
+                        let mut out = Vec::with_capacity(width);
+                        out.extend_from_slice(&stored[..context.stored * n_embd]);
+                        if let Some(last) = last {
+                            out.extend_from_slice(&last[layer]);
+                        }
+                        for &row in chain {
+                            out.extend_from_slice(&computed[row * n_embd..(row + 1) * n_embd]);
+                        }
+                        out
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let keys = copy(
+                context.keys,
+                &states.keys,
+                context.terminal.map(|last| last.keys.as_slice()),
+            );
+            let values = copy(
+                context.values,
+                &states.values,
+                context.terminal.map(|last| last.values.as_slice()),
+            );
+            let own = run.rows.iter().map(|&row| &hidden[row]);
+            let (agreed, source) = match run.from {
+                Some((known, agreed)) => (
+                    agreed,
+                    Some(match known {
+                        Known::Previous(index) => Arc::clone(&previous[index].1),
+                        Known::Computed(earlier) => Arc::clone(&built[earlier]),
+                    }),
+                ),
+                None => (0, None),
+            };
+            // The same sums `run_tail` and `TailRun::joined` produced: a fresh running total over
+            // this run's own tokens, each added to the total it continues.
+            let mut running = model.log_probability(start, tail[agreed]);
+            let mut rest = Vec::with_capacity(tail.len() - agreed);
+            rest.push(running);
+            for (state, &next) in own.clone().zip(&tail[agreed + 1..]) {
+                running += model.log_probability(state, next);
+                rest.push(running);
+            }
+            let tail_run = match source {
+                None => TailRun {
+                    base: prefix.length,
+                    keys,
+                    values,
+                    hidden: own.cloned().collect(),
+                    cumulative: rest,
+                    pending: tail[tail.len() - 1],
+                    terminal: OnceLock::new(),
+                },
+                Some(source) => {
+                    let carried = source.cumulative[agreed - 1];
+                    let terminal = (agreed > source.hidden.len()).then(|| {
+                        Arc::clone(
+                            &source
+                                .terminal
+                                .get()
+                                .expect("a run continued past its last state has its terminal")
+                                .hidden,
+                        )
+                    });
+                    TailRun {
+                        base: source.base,
+                        keys,
+                        values,
+                        hidden: source
+                            .hidden
+                            .iter()
+                            .take(agreed)
+                            .cloned()
+                            .chain(terminal)
+                            .chain(own.cloned())
+                            .collect(),
+                        cumulative: source.cumulative[..agreed]
+                            .iter()
+                            .copied()
+                            .chain(rest.iter().map(|value| carried + value))
+                            .collect(),
+                        pending: tail[tail.len() - 1],
+                        terminal: OnceLock::new(),
+                    }
+                }
+            };
+            if let Some(row) = run.terminal {
+                let _ = tail_run.terminal.set(terminal_of(row));
+            }
+            built.push(Arc::new(tail_run));
+        }
+
+        let mut entries = planned.into_iter();
+        for scored in candidates_planned {
+            if !scored {
+                scores.push(f32::NEG_INFINITY);
+                continue;
+            }
+            let (tail, known) = entries.next().expect("one entry per scored candidate");
+            let run = match known {
+                Known::Previous(index) => Arc::clone(&previous[index].1),
+                Known::Computed(index) => Arc::clone(&built[index]),
+            };
+            let total = run.cumulative[tail.len() - 1];
+            scores.push(total / tail.len() as f32);
+            self.resume.push((tail, run));
+        }
+        previous.clear();
+        self.resume_scratch = previous;
+    }
+}
+
 /// Which candidates may be compared, or `None` when the decision should be declined.
 ///
 /// Separate from scoring and free of the model, because this is the part that decides what the
@@ -412,6 +1762,22 @@ fn comparable(count: usize, facts: &impl Fn(usize) -> CandidateFacts) -> Option<
         considered.push(index);
     }
     (considered.len >= 2).then_some(considered)
+}
+
+/// Whether the model should be consulted at all, given the sources the engine reported in order.
+///
+/// Only the leading candidate matters. When it is an exact dictionary hit on the whole key it
+/// carries corpus frequency the model does not have, and reranking measurably loses accuracy.
+///
+/// **Sources alone cannot answer this for an engine that corrects input.** A hit on a fuzz-expanded
+/// key reports the same source as a hit on the typed key while carrying frequency for a word the
+/// user did not ask for. Such an engine should decide with [`CandidateFacts::trusted_dictionary_hit`]
+/// instead, which asks the question this function can only approximate.
+pub fn should_rerank(sources: &[u8]) -> bool {
+    match sources.first() {
+        Some(source) => !DICTIONARY_SOURCES.contains(source),
+        None => false,
+    }
 }
 
 /// Independent accumulators rather than one running sum.
@@ -444,10 +1810,39 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 fn linear(x: &[f32], w: &Matrix, bias: &[f32], inputs: usize, outputs: usize) -> Vec<f32> {
     let mut out = vec![0.0; x.len() / inputs * outputs];
-    linear_into(x, w, bias, inputs, outputs, &mut out);
+    linear_into(
+        x,
+        w,
+        bias,
+        inputs,
+        outputs,
+        &mut out,
+        &mut LinearScratch::default(),
+    );
     out
 }
 
+/// Buffers `linear_into` reuses between calls: the input rows regrouped for the blocked kernel, and
+/// one weight row widened to `f32`.
+#[derive(Default)]
+struct LinearScratch {
+    transposed: Vec<f32>,
+    row: Vec<f32>,
+}
+
+/// `out[m][o] = dot(x[m], w[o]) * scale[o] + bias[o]`, every element bit-for-bit what `dot_row`
+/// gives for that row and column.
+///
+/// Rows are taken eight (or four) at a time against each weight row. A single dot product is bound
+/// by the latency of its two accumulator chains and pays for widening every `i8` it reads; a block
+/// of rows gives the core eight or sixteen independent chains and widens each weight once for the
+/// whole block. That roughly doubles the throughput of the matrix products, which are nearly all of
+/// the time a decision takes. Each element still accumulates in the same eight lanes, in the same
+/// order, and is reduced the same way as `dot`, so the result does not change by a single bit; the
+/// unit tests compare it against the row-at-a-time loop on both quantized and float weights.
+///
+/// Rows left over after the blocks, fewer than four, go through `dot_row` one at a time, which is
+/// as fast as a block for so few rows.
 fn linear_into(
     x: &[f32],
     w: &Matrix,
@@ -455,15 +1850,346 @@ fn linear_into(
     inputs: usize,
     outputs: usize,
     out: &mut [f32],
+    scratch: &mut LinearScratch,
 ) {
     let rows = x.len() / inputs;
-    for row in 0..rows {
+    let blocks = row_blocks(rows);
+    let blocked: usize = blocks.clone().map(|(_, size)| size).sum();
+    // Each block is stored input-major, `[input][row]`, so that one weight times the block's rows
+    // is a contiguous run.
+    scratch.transposed.clear();
+    scratch.transposed.resize(blocked * inputs, 0.0);
+    for (start, size) in blocks.clone() {
+        let target = &mut scratch.transposed[start * inputs..(start + size) * inputs];
+        for row in 0..size {
+            let source = &x[(start + row) * inputs..(start + row + 1) * inputs];
+            for (input, &value) in source.iter().enumerate() {
+                target[input * size + row] = value;
+            }
+        }
+    }
+    if blocked > 0 {
+        for index in 0..outputs {
+            let span = index * inputs..(index + 1) * inputs;
+            let (weights, scale): (&[f32], Option<f32>) = match &w.inner {
+                Tensor::Float(values) => (&values[span], None),
+                Tensor::Quantized { values, scales } => {
+                    scratch.row.clear();
+                    scratch
+                        .row
+                        .extend(values[span].iter().map(|&value| f32::from(value)));
+                    (&scratch.row, Some(scales[index]))
+                }
+            };
+            for (start, size) in blocks.clone() {
+                let block = &scratch.transposed[start * inputs..(start + size) * inputs];
+                let mut dots = [0.0f32; ROW_BLOCK];
+                match size {
+                    ROW_BLOCK => dots = dot_block::<ROW_BLOCK>(block, weights),
+                    _ => {
+                        dots[..HALF_BLOCK].copy_from_slice(&dot_block::<HALF_BLOCK>(block, weights))
+                    }
+                }
+                for (row, dot) in dots[..size].iter().enumerate() {
+                    let value = match scale {
+                        Some(scale) => dot * scale,
+                        None => *dot,
+                    };
+                    out[(start + row) * outputs + index] = value + bias[index];
+                }
+            }
+        }
+    }
+    for row in blocked..rows {
         let source = &x[row * inputs..(row + 1) * inputs];
         let target = &mut out[row * outputs..(row + 1) * outputs];
         for (index, slot) in target.iter_mut().enumerate() {
             *slot = w.dot_row(source, index, inputs) + bias[index];
         }
     }
+}
+
+/// `highest + ln Σ exp(logit − highest)` over a row of logits, with the maximum and the sum taken
+/// in the same order as `SentenceModel::project` takes them.
+fn log_normalizer(logits: &[f32]) -> f32 {
+    let mut highest = f32::NEG_INFINITY;
+    for &logit in logits {
+        highest = highest.max(logit);
+    }
+    let sum: f32 = logits.iter().map(|logit| (logit - highest).exp()).sum();
+    highest + sum.ln()
+}
+
+/// One position of a batched forward: the token at it, the batch row it follows (`None` for the
+/// first position after its context), how many positions after its context it sits, and which of
+/// the batch's contexts it continues.
+struct BatchRow {
+    token: u32,
+    parent: Option<usize>,
+    depth: usize,
+    context: usize,
+}
+
+/// What a batch row attends to before its own chain of rows: the first `stored` rows of a run's
+/// keys and values, then that run's terminal row when it has one.
+#[derive(Clone, Copy)]
+struct BatchContext<'a> {
+    keys: &'a [Vec<f32>],
+    values: &'a [Vec<f32>],
+    stored: usize,
+    terminal: Option<&'a TerminalState>,
+}
+
+impl<'a> BatchContext<'a> {
+    fn of(prefix: &'a Prefix<'_>) -> Self {
+        Self {
+            keys: &prefix.keys,
+            values: &prefix.values,
+            stored: prefix.length - usize::from(prefix.terminal.is_some()),
+            terminal: prefix.terminal,
+        }
+    }
+
+    fn length(&self) -> usize {
+        self.stored + usize::from(self.terminal.is_some())
+    }
+}
+
+/// The positions one batch row attends to, in order: its context's stored rows, the context's
+/// terminal row, then the row's own chain in the batch.
+struct Sequence<'c> {
+    stored: usize,
+    length: usize,
+    chain: &'c [usize],
+    width: usize,
+}
+
+impl Sequence<'_> {
+    fn row<'s>(
+        &self,
+        step: usize,
+        batch: &'s [f32],
+        stored: &'s [f32],
+        terminal: Option<&'s [f32]>,
+    ) -> &'s [f32] {
+        let width = self.width;
+        if step >= self.length {
+            let row = self.chain[step - self.length];
+            &batch[row * width..(row + 1) * width]
+        } else if step < self.stored {
+            &stored[step * width..(step + 1) * width]
+        } else {
+            terminal.expect("a terminal row follows the stored rows")
+        }
+    }
+}
+
+/// What `run_batch` computed: each layer's keys and values for every row (`rows × n_embd`), every
+/// row's final normalized state, and every row's chain of batch rows, root first.
+struct BatchStates {
+    keys: Vec<Vec<f32>>,
+    values: Vec<Vec<f32>>,
+    hidden: Vec<f32>,
+    chains: Vec<Vec<usize>>,
+}
+
+/// A run a candidate can be scored from: one the previous decision left, or one this decision
+/// computes.
+#[derive(Clone, Copy)]
+enum Known {
+    Previous(usize),
+    Computed(usize),
+}
+
+/// A candidate this decision runs: its entry among the decision's candidates, the run it continues
+/// and after how many tokens (`None` to start from the prefix), and where its rows went.
+struct PlannedRun {
+    entry: usize,
+    from: Option<(Known, usize)>,
+    /// The context, the batch row and the depth the run's first own row continues.
+    anchor: (usize, Option<usize>, usize),
+    rows: Vec<usize>,
+    /// The batch row that runs this candidate's last token, when a later candidate continues past it.
+    terminal: Option<usize>,
+}
+
+/// A decision's positions being laid out as one batch.
+struct Batch<'a> {
+    contexts: Vec<BatchContext<'a>>,
+    rows: Vec<BatchRow>,
+    runs: Vec<PlannedRun>,
+    /// The batch row that runs a previous run's last token, for previous runs continued past it.
+    previous_terminals: Vec<Option<usize>>,
+}
+
+impl<'a> Batch<'a> {
+    /// Where a row continuing `known` after `agreed` tokens hangs: its context, its parent row and
+    /// its depth. Adds the context, or the row that runs a terminal token, when it is not there yet.
+    fn anchor(
+        &mut self,
+        previous: &'a [(Vec<u32>, Arc<TailRun>)],
+        planned: &[(Vec<u32>, Known)],
+        known: Known,
+        agreed: usize,
+    ) -> (usize, Option<usize>, usize) {
+        match known {
+            Known::Previous(index) => {
+                let run = &*previous[index].1;
+                let context = |stored, terminal| BatchContext {
+                    keys: &run.keys,
+                    values: &run.values,
+                    stored,
+                    terminal,
+                };
+                if agreed <= run.hidden.len() {
+                    self.contexts.push(context(run.base + agreed, None));
+                    return (self.contexts.len() - 1, None, 0);
+                }
+                if let Some(terminal) = run.terminal.get() {
+                    self.contexts
+                        .push(context(run.base + run.hidden.len(), Some(terminal)));
+                    return (self.contexts.len() - 1, None, 0);
+                }
+                let row = match self.previous_terminals[index] {
+                    Some(row) => row,
+                    None => {
+                        self.contexts
+                            .push(context(run.base + run.hidden.len(), None));
+                        self.rows.push(BatchRow {
+                            token: run.pending,
+                            parent: None,
+                            depth: 0,
+                            context: self.contexts.len() - 1,
+                        });
+                        self.previous_terminals[index] = Some(self.rows.len() - 1);
+                        self.rows.len() - 1
+                    }
+                };
+                (self.rows[row].context, Some(row), 1)
+            }
+            Known::Computed(index) => {
+                let length = planned[self.runs[index].entry].0.len();
+                let start = self.runs[index].from.map_or(0, |(_, agreed)| agreed);
+                if agreed <= start {
+                    return match self.runs[index].from {
+                        Some((known, _)) => self.anchor(previous, planned, known, agreed),
+                        None => (0, None, 0),
+                    };
+                }
+                if agreed < length {
+                    let row = self.runs[index].rows[agreed - start - 1];
+                    return (self.rows[row].context, Some(row), self.rows[row].depth + 1);
+                }
+                let row = match self.runs[index].terminal {
+                    Some(row) => row,
+                    None => {
+                        let (context, parent, depth) =
+                            self.anchor(previous, planned, known, length - 1);
+                        self.rows.push(BatchRow {
+                            token: planned[self.runs[index].entry].0[length - 1],
+                            parent,
+                            depth,
+                            context,
+                        });
+                        self.runs[index].terminal = Some(self.rows.len() - 1);
+                        self.rows.len() - 1
+                    }
+                };
+                (self.rows[row].context, Some(row), self.rows[row].depth + 1)
+            }
+        }
+    }
+
+    /// The state that predicts token `agreed` of a candidate continuing `known`.
+    fn state(
+        &self,
+        previous: &[(Vec<u32>, Arc<TailRun>)],
+        planned: &[(Vec<u32>, Known)],
+        hidden: &[Arc<HiddenState>],
+        prefix: &Prefix<'_>,
+        known: Known,
+        agreed: usize,
+    ) -> Arc<HiddenState> {
+        match known {
+            Known::Previous(index) => {
+                let run = &previous[index].1;
+                if agreed <= run.hidden.len() {
+                    return Arc::clone(&run.hidden[agreed - 1]);
+                }
+                match run.terminal.get() {
+                    Some(terminal) => Arc::clone(&terminal.hidden),
+                    None => Arc::clone(
+                        &hidden[self.previous_terminals[index].expect("terminal row was planned")],
+                    ),
+                }
+            }
+            Known::Computed(index) => {
+                let run = &self.runs[index];
+                let length = planned[run.entry].0.len();
+                let start = run.from.map_or(0, |(_, agreed)| agreed);
+                if agreed <= start {
+                    return match run.from {
+                        Some((known, _)) => {
+                            self.state(previous, planned, hidden, prefix, known, agreed)
+                        }
+                        None => Arc::clone(&prefix.last_hidden),
+                    };
+                }
+                if agreed < length {
+                    return Arc::clone(&hidden[run.rows[agreed - start - 1]]);
+                }
+                Arc::clone(&hidden[run.terminal.expect("terminal row was planned")])
+            }
+        }
+    }
+}
+
+/// Rows of input that `linear_into` multiplies against each weight row together.
+const ROW_BLOCK: usize = 8;
+const HALF_BLOCK: usize = ROW_BLOCK / 2;
+
+/// `(first row, rows)` of each block: as many full blocks as fit, then one half block if four or
+/// more rows remain. Whatever is left is fewer than four rows and is not blocked.
+fn row_blocks(rows: usize) -> impl Iterator<Item = (usize, usize)> + Clone {
+    let full = rows / ROW_BLOCK;
+    let half = usize::from(rows % ROW_BLOCK >= HALF_BLOCK);
+    (0..full)
+        .map(|block| (block * ROW_BLOCK, ROW_BLOCK))
+        .chain((0..half).map(move |_| (full * ROW_BLOCK, HALF_BLOCK)))
+}
+
+/// `R` dot products of one weight row against `R` input rows stored input-major.
+///
+/// Row `r` accumulates exactly as `dot` would on its own: lane `l` of eight sums the products at
+/// inputs `l, l + 8, l + 16, …` in that order, the lanes are summed first to last, and the inputs
+/// past the last multiple of eight are added after that, one at a time. Only the interleaving of
+/// independent sums differs, and that interleaving is what lets them run in parallel.
+#[inline(never)]
+fn dot_block<const R: usize>(block: &[f32], weights: &[f32]) -> [f32; R] {
+    const LANES: usize = 8;
+    let mut partial = [[0.0f32; R]; LANES];
+    for (inputs, weights) in block
+        .chunks_exact(LANES * R)
+        .zip(weights.chunks_exact(LANES))
+    {
+        for lane in 0..LANES {
+            let weight = weights[lane];
+            for row in 0..R {
+                partial[lane][row] += inputs[lane * R + row] * weight;
+            }
+        }
+    }
+    let tail = weights.len() / LANES * LANES;
+    let mut dots = [0.0f32; R];
+    for (row, dot) in dots.iter_mut().enumerate() {
+        let lanes: [f32; LANES] = std::array::from_fn(|lane| partial[lane][row]);
+        let mut total = lanes.iter().sum::<f32>();
+        for (input, weight) in weights.iter().enumerate().skip(tail) {
+            total += block[input * R + row] * weight;
+        }
+        *dot = total;
+    }
+    dots
 }
 
 /// The quantized counterpart of `dot`, with the same eight independent accumulators and the same
@@ -591,7 +2317,609 @@ fn erf(x: f32) -> f32 {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    mod bounded_encoding;
+    mod project_rows;
+
+    use super::{comparable, erf, gelu, should_rerank, CandidateFacts, Compared};
+
+    // 一层小模型只使用合成权重，缓存测试不读取外部模型文件。
+    fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
+        use super::{Block, Config, Matrix, SentenceModel};
+        let matrix = |size| Matrix {
+            inner: super::Tensor::Float(
+                (0..size).map(|i| ((i % 17) as f32 - 8.0) / 32.0).collect(),
+            ),
+        };
+        std::sync::Arc::new(SentenceModel {
+            config: Config {
+                vocab: 8,
+                n_layer: 1,
+                n_head: 2,
+                n_embd: 4,
+                context: 8,
+            },
+            index: ['你', '好', '吗', '我', '很']
+                .into_iter()
+                .enumerate()
+                .map(|(index, character)| (character, index as u32 + 3))
+                .collect(),
+            token: matrix(8 * 4),
+            position: (0..8 * 4)
+                .map(|i| (((i * 7) % 19) as f32 - 9.0) / 64.0)
+                .collect(),
+            blocks: vec![Block {
+                ln1_weight: vec![1.0; 4],
+                ln1_bias: vec![0.0; 4],
+                qkv_weight: matrix(12 * 4),
+                qkv_bias: vec![0.0; 12],
+                proj_weight: matrix(4 * 4),
+                proj_bias: vec![0.0; 4],
+                ln2_weight: vec![1.0; 4],
+                ln2_bias: vec![0.0; 4],
+                fc_weight: matrix(16 * 4),
+                fc_bias: vec![0.0; 16],
+                out_weight: matrix(4 * 16),
+                out_bias: vec![0.0; 4],
+            }],
+            final_weight: vec![1.0; 4],
+            final_bias: vec![0.0; 4],
+            attribution: String::new(),
+            license: String::new(),
+        })
+    }
+
+    #[test]
+    fn cold_batch_shares_forward_positions_and_completed_runs() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let positions = || super::FORWARD_POSITIONS.with(std::cell::Cell::get);
+        let projections = || super::VOCABULARY_PROJECTIONS.with(std::cell::Cell::get);
+        let candidates = ["你好我", "你好很", "你好我", "你好我吗"];
+        for context in ["我", "很"] {
+            let before = (positions(), projections());
+            let scores = reranker.log_probabilities(context, &candidates);
+            assert_eq!(positions() - before.0, 5, "同批共享前缀仍重复前向");
+            assert_eq!(projections() - before.1, 4, "同批共享状态仍重复投影");
+            assert_eq!(scores[0].to_bits(), scores[2].to_bits());
+            assert!(std::sync::Arc::ptr_eq(
+                &reranker.resume[0].1,
+                &reranker.resume[2].1
+            ));
+            for (_, run) in &reranker.resume[1..] {
+                assert!(std::sync::Arc::ptr_eq(
+                    &reranker.resume[0].1.hidden[0],
+                    &run.hidden[0]
+                ));
+            }
+            let retained = std::sync::Arc::downgrade(&reranker.resume[0].1);
+            let before = positions();
+            reranker.log_probabilities(context, &["你好我吗", "你好我", "你好很"]);
+            assert_eq!(positions() - before, 0, "重排完全命中仍做前向");
+            reranker.log_probabilities(context, &[]);
+            assert!(retained.upgrade().is_none(), "本轮复用不应延长缓存寿命");
+        }
+    }
+
+    #[test]
+    fn same_length_reuse_keeps_the_previous_round_tie_order() {
+        let model = cache_test_model();
+        let mut reranker = super::Reranker::new(model.clone());
+        reranker.log_probabilities("我", &["你好", "你吗"]);
+        // 构造有效但独立的旧轮状态，让地址能区分同长匹配的来源。
+        let prefix = &reranker.cached.as_ref().unwrap().1;
+        for (tokens, run) in &mut reranker.resume {
+            *run = std::sync::Arc::new(model.run_tail(prefix, tokens));
+        }
+        let expected = reranker.resume[1].1.hidden[0].clone();
+        reranker.log_probabilities("我", &["你很", "你我"]);
+        for (_, run) in &reranker.resume {
+            assert!(std::sync::Arc::ptr_eq(&expected, &run.hidden[0]));
+        }
+    }
+
+    #[test]
+    fn terminal_forward_waits_for_a_shared_continuation() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let count = || super::FORWARD_POSITIONS.with(std::cell::Cell::get);
+        let before = count();
+        reranker.log_probabilities("我", &["你好", "你吗"]);
+        assert_eq!(
+            count() - before,
+            3,
+            "上文和 BOS 加共享首字，候选末字无需前向"
+        );
+
+        let before = count();
+        reranker.log_probabilities("我", &["你很", "你我"]);
+        assert_eq!(count() - before, 0, "只改末字仍做了前向");
+
+        let before = count();
+        reranker.log_probabilities("我", &["你很好", "你很吗"]);
+        assert_eq!(count() - before, 1, "同一末位置应只按需补算一次");
+
+        let before = count();
+        reranker.log_probabilities("我", &["你很好我", "你很好吗"]);
+        assert_eq!(count() - before, 1, "拼接后的末位置仍应共享补算");
+
+        let before = count();
+        reranker.log_probabilities("我", &["你很好", "你", "你很好"]);
+        assert_eq!(count() - before, 0, "缩短候选不应补算末位置");
+    }
+
+    #[test]
+    fn split_qkv_preserves_prefix_and_row_order() {
+        let qkv = [
+            1.0, -0.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
+        let keys = [21.0, 22.0, 23.0, 24.0];
+        let values = [31.0, 32.0, 33.0, 34.0];
+        let bits = |row: &[f32]| row.iter().map(|value| value.to_bits()).collect::<Vec<_>>();
+        for (prefix_keys, prefix_values) in [(&[][..], &[][..]), (&keys[..], &values[..])] {
+            let (q, k, v) = super::split_qkv(&qkv, 2, 2, prefix_keys, prefix_values);
+            assert_eq!(bits(&q), bits(&[1.0, -0.0, 7.0, 8.0]));
+            let expected_keys = [prefix_keys, &[3.0, 4.0, 9.0, 10.0]].concat();
+            let expected_values = [prefix_values, &[5.0, 6.0, 11.0, 12.0]].concat();
+            assert_eq!(bits(&k), bits(&expected_keys));
+            assert_eq!(bits(&v), bits(&expected_values));
+            let (q, k, v) = super::split_qkv(&[], 0, 2, prefix_keys, prefix_values);
+            assert!(q.is_empty());
+            assert_eq!(bits(&k), bits(prefix_keys));
+            assert_eq!(bits(&v), bits(prefix_values));
+        }
+    }
+
+    #[test]
+    fn a_short_tail_does_not_double_the_retained_kv_capacity() {
+        let model = cache_test_model();
+        let prefix = model.run_prefix(&[super::BOS, 3, 4, 5, 6]);
+        let states = model.run_tail_states(5, &prefix.keys, &prefix.values, None, &[3]);
+        let width = 6 * model.config.n_embd;
+        for row in states.keys.iter().chain(&states.values) {
+            assert_eq!(row.len(), width);
+            assert_eq!(row.capacity(), width, "短尾部保留了几何扩容后的 KV 容量");
+        }
+    }
+
+    #[test]
+    fn ordinary_resume_borrows_the_existing_kv_storage() {
+        let model = cache_test_model();
+        let prefix = model.run_prefix(&model.prefix_tokens("我", 4));
+        let run = model.run_tail(&prefix, &model.encode("你好我很"));
+        let (resumed, _) = run.resume(1, &model);
+        assert_eq!(
+            resumed.keys.as_ptr(),
+            run.keys.as_ptr(),
+            "普通续跑复制了 KV 外层数组"
+        );
+        for (left, right) in resumed.keys.iter().zip(&run.keys) {
+            assert_eq!(left.as_ptr(), right.as_ptr(), "普通续跑复制了 key");
+        }
+        for (left, right) in resumed.values.iter().zip(&run.values) {
+            assert_eq!(left.as_ptr(), right.as_ptr(), "普通续跑复制了 value");
+        }
+    }
+
+    #[test]
+    fn terminal_resume_borrows_the_existing_kv_storage() {
+        let model = cache_test_model();
+        let prefix = model.run_prefix(&model.prefix_tokens("我", 4));
+        for text in ["你", "你好我很"] {
+            let tokens = model.encode(text);
+            let run = model.run_tail(&prefix, &tokens);
+            let (resumed, _) = run.resume(tokens.len(), &model);
+            assert_eq!(
+                resumed.keys.as_ptr(),
+                run.keys.as_ptr(),
+                "末位置续跑复制了 KV 外层数组"
+            );
+            assert_eq!(resumed.values.as_ptr(), run.values.as_ptr());
+            for (left, right) in resumed.keys.iter().zip(&run.keys) {
+                assert_eq!(left.as_ptr(), right.as_ptr(), "末位置续跑复制了 key");
+            }
+            for (left, right) in resumed.values.iter().zip(&run.values) {
+                assert_eq!(left.as_ptr(), right.as_ptr(), "末位置续跑复制了 value");
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_resume_matches_a_truncated_owned_prefix() {
+        let model = cache_test_model();
+        let prefix = model.run_prefix(&model.prefix_tokens("我", 4));
+        let run = model.run_tail(&prefix, &model.encode("你好我很"));
+        for taken in 1..=run.cumulative.len() {
+            let (resumed, carried) = run.resume(taken, &model);
+            let width = resumed.length * model.config.n_embd;
+            let owned = super::Prefix {
+                length: resumed.length,
+                keys: std::borrow::Cow::Owned(
+                    run.keys
+                        .iter()
+                        .enumerate()
+                        .map(|(layer, row)| {
+                            if taken > run.hidden.len() {
+                                [row.as_slice(), &run.terminal.get().unwrap().keys[layer]].concat()
+                            } else {
+                                row[..width].to_vec()
+                            }
+                        })
+                        .collect(),
+                ),
+                values: std::borrow::Cow::Owned(
+                    run.values
+                        .iter()
+                        .enumerate()
+                        .map(|(layer, row)| {
+                            if taken > run.hidden.len() {
+                                [row.as_slice(), &run.terminal.get().unwrap().values[layer]]
+                                    .concat()
+                            } else {
+                                row[..width].to_vec()
+                            }
+                        })
+                        .collect(),
+                ),
+                last_hidden: resumed.last_hidden.clone(),
+                terminal: None,
+            };
+            assert_eq!(carried.to_bits(), run.cumulative[taken - 1].to_bits());
+            for text in ["吗", "吗你", "吗你好"] {
+                let tail = model.encode(text);
+                let actual = model.run_tail(&resumed, &tail);
+                let expected = model.run_tail(&owned, &tail);
+                assert_eq!(actual.base, expected.base);
+                assert_eq!(actual.pending, expected.pending);
+                assert_eq!(actual.keys, expected.keys);
+                assert_eq!(actual.values, expected.values);
+                assert_eq!(actual.hidden.len(), expected.hidden.len());
+                assert_eq!(
+                    actual
+                        .cumulative
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .cumulative
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+                for (left, right) in actual.hidden.iter().zip(&expected.hidden) {
+                    assert_eq!(left.values, right.values);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_character_tail_can_be_extended_without_an_eager_state() {
+        let model = cache_test_model();
+        let mut reranker = super::Reranker::new(model.clone());
+        let count = || super::FORWARD_POSITIONS.with(std::cell::Cell::get);
+        let before = count();
+        reranker.log_probabilities("我", &["你", "我"]);
+        assert_eq!(count() - before, 2, "单字候选只需要上文前向");
+        let before = count();
+        let scores = reranker.log_probabilities("我", &["你好", "你吗"]);
+        assert_eq!(count() - before, 1, "没有已计算候选位置时也应共享末字补算");
+        let fresh = model.score("我", &["你好", "你吗"]);
+        assert_eq!(scores, fresh);
+    }
+
+    #[test]
+    fn identical_candidates_keep_the_completed_run() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let before = reranker.log_probabilities("我", &["你好", "你吗"]);
+        let retained = std::sync::Arc::downgrade(&reranker.resume[0].1);
+        let allocation = reranker.resume[0].1.cumulative.as_ptr();
+        let hidden = reranker.resume[0].1.hidden[0].values.as_ptr();
+        // 重排、增删和重复候选不能消耗其它候选还要借用的旧状态。
+        let after = reranker.log_probabilities("我", &["你吗我", "你好", "你好"]);
+        assert_eq!(before[0].to_bits(), after[1].to_bits());
+        assert_eq!(after[1].to_bits(), after[2].to_bits());
+        for index in [1, 2] {
+            assert_eq!(
+                allocation,
+                reranker.resume[index].1.cumulative.as_ptr(),
+                "完全命中仍重新创建了累计分"
+            );
+            assert_eq!(
+                hidden,
+                reranker.resume[index].1.hidden[0].values.as_ptr(),
+                "完全命中仍重新计算或复制了隐藏状态"
+            );
+        }
+        assert_eq!(reranker.resume.len(), 3);
+        reranker.log_probabilities("我", &["你好"]);
+        assert_eq!(reranker.resume.len(), 1);
+        reranker.log_probabilities("我", &[]);
+        assert!(reranker.resume.is_empty());
+        assert!(retained.upgrade().is_none());
+    }
+
+    #[test]
+    fn fresh_score_moves_encoded_tail_without_copying_it() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        super::LAST_ENCODED_POINTER.with(|pointer| pointer.set(0));
+        reranker.log_probabilities("我", &["你好"]);
+        let encoded = super::LAST_ENCODED_POINTER.with(std::cell::Cell::get);
+        assert_eq!(
+            encoded,
+            reranker.resume[0].0.as_ptr() as usize,
+            "首次评分仍复制了编码 token 缓冲"
+        );
+    }
+
+    #[test]
+    fn reranker_reuses_the_resume_buffer_capacity() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        reranker.log_probabilities("我", &["你好", "你吗"]);
+        reranker.log_probabilities("我", &["你好我", "你吗我"]);
+        let spare = reranker.resume_scratch.as_ptr();
+        assert!(reranker.resume_scratch.capacity() >= reranker.resume.len());
+        assert!(reranker.resume_scratch.capacity() >= 2);
+        reranker.log_probabilities("我", &["你好很", "你吗很"]);
+        assert_eq!(reranker.resume.as_ptr(), spare);
+    }
+
+    #[test]
+    fn best_where_reuses_the_score_buffer_capacity() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let facts = answering(&[true, true]);
+        reranker.best_where("我", &["你好", "你吗"], &facts);
+        let spare = reranker.scores_scratch.as_ptr();
+        assert!(reranker.scores_scratch.capacity() >= 2);
+        reranker.best_where("我", &["你很", "你我"], &facts);
+        assert_eq!(reranker.scores_scratch.as_ptr(), spare);
+    }
+
+    #[test]
+    fn growing_candidate_lists_keep_score_storage_within_the_comparison_budget() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let texts = ["你好"; 9];
+        let facts = answering(&[true; 9]);
+        for count in 2..=texts.len() {
+            reranker.best_where("我", &texts[..count], &facts);
+            assert!(
+                reranker.scores_scratch.capacity() <= texts.len(),
+                "{count} candidates retain capacity {}",
+                reranker.scores_scratch.capacity()
+            );
+        }
+    }
+
+    #[test]
+    fn exact_reuse_moves_encoded_tail_without_copying_it() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        reranker.log_probabilities("我", &["你好"]);
+        super::LAST_ENCODED_POINTER.with(|pointer| pointer.set(0));
+        reranker.log_probabilities("我", &["你好"]);
+        let encoded = super::LAST_ENCODED_POINTER.with(std::cell::Cell::get);
+        assert_eq!(
+            encoded,
+            reranker.resume[0].0.as_ptr() as usize,
+            "复用候选仍复制了编码 token 缓冲"
+        );
+    }
+
+    #[test]
+    fn overlong_candidates_keep_only_the_model_window() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        for text in ["你", "A", "🎹"].map(|unit| unit.repeat(65_536)) {
+            for _ in 0..2 {
+                reranker.log_probabilities("我", &[&text]);
+                let window = reranker.model.config.context - 1;
+                assert_eq!(reranker.resume[0].0.len(), window);
+                assert!(
+                    reranker.resume[0].0.capacity() <= 2 * window,
+                    "候选缓存仍保留窗口之外的编码容量：{}",
+                    reranker.resume[0].0.capacity()
+                );
+                let encoded = super::LAST_ENCODED_LENGTH.with(std::cell::Cell::get);
+                assert_eq!(encoded, window, "仍编码了不会参与评分的尾部");
+            }
+        }
+    }
+
+    #[test]
+    fn shared_prefix_normalization_is_computed_once() {
+        let mut reranker = super::Reranker::new(cache_test_model());
+        let count = || super::VOCABULARY_PROJECTIONS.with(std::cell::Cell::get);
+        let before = count();
+        reranker.log_probabilities("我", &["你好", "你吗"]);
+        // 上文和同批共享的首字状态各投影一次。
+        assert_eq!(count() - before, 2, "同一上文或同批前缀重复投影词表");
+
+        let before = count();
+        reranker.log_probabilities("我", &["你好我", "你好很"]);
+        assert_eq!(count() - before, 1, "同一续跑位置重复投影词表");
+
+        let before = count();
+        reranker.log_probabilities("我", &["你很", "你我"]);
+        assert_eq!(count() - before, 0, "已知归一化常数的共享位置仍重复计算");
+
+        let before = count();
+        reranker.log_probabilities("很", &["你好", "你吗"]);
+        assert_eq!(count() - before, 2, "上下文改变后必须使用新状态");
+    }
+
+    #[test]
+    fn cached_normalization_matches_full_distribution_bits() {
+        let model = cache_test_model();
+        for context in ["", "我", "你好我很"] {
+            let prefix = model.run_prefix(&model.prefix_tokens(context, 4));
+            let run = model.run_tail(&prefix, &[3, 4, 5, 6]);
+            assert!(run.terminal.get().is_none(), "未续跑的末位置不应提前计算");
+            for state in std::iter::once(&prefix.last_hidden).chain(&run.hidden) {
+                let full = model.distribution(&state.values);
+                for token in 0..model.config.vocab + 3 {
+                    let expected = full[token.min(model.config.vocab - 1)];
+                    assert_eq!(
+                        model.log_probability(state, token as u32).to_bits(),
+                        expected.to_bits(),
+                        "单 token 概率与完整分布不同"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reranker_remains_send_and_sync() {
+        fn check<T: Send + Sync>() {}
+        check::<super::Reranker>();
+    }
+
+    /// `answers_key` per candidate, with no candidate an exact dictionary hit.
+    fn answering(flags: &[bool]) -> impl Fn(usize) -> CandidateFacts + '_ {
+        move |index| CandidateFacts {
+            answers_key: flags[index],
+            trusted_dictionary_hit: false,
+        }
+    }
+
+    #[test]
+    fn only_candidates_answering_the_key_are_compared() {
+        // A prefix and a completion sit among the full answers and stay out of the comparison.
+        let flags = [true, false, true, false, true];
+        assert_eq!(
+            comparable(5, &answering(&flags)).unwrap().as_slice(),
+            &[0, 2, 4]
+        );
+    }
+
+    #[test]
+    fn differing_character_counts_are_compared_when_both_answer_the_key() {
+        // The case the old length proxy dropped: `xian` reads as 现 or as 西安, both consuming the
+        // key. Nothing here looks at the text, which is the point — length is not the criterion.
+        assert_eq!(
+            comparable(2, &answering(&[true, true])).unwrap().as_slice(),
+            &[0, 1]
+        );
+    }
+
+    #[test]
+    fn comparable_indices_use_fixed_storage() {
+        let result = comparable(3, &answering(&[true, false, true])).unwrap();
+        assert_eq!(
+            std::mem::size_of_val(&result),
+            std::mem::size_of::<Compared>()
+        );
+    }
+
+    #[test]
+    fn best_where_keeps_original_candidate_indices() {
+        let model = cache_test_model();
+        let texts = ["吗我", "你吗", "你好", "你很"];
+        let considered = [texts[0], texts[2], texts[3]];
+        let expected_scores = super::SentenceModel::score(&model, "我", &considered);
+        let expected = expected_scores
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.total_cmp(right))
+            .map(|(position, _)| [0, 2, 3][position])
+            .expect("at least one comparable candidate");
+
+        let mut reranker = super::Reranker::new(model);
+        let actual = reranker.best_where("我", &texts, answering(&[true, false, true, true]));
+        assert_eq!(actual, (expected != 0).then_some(expected));
+    }
+
+    #[test]
+    fn a_positive_margin_can_decline_a_promotion() {
+        let texts = ["吗我", "你吗", "你好", "你很"];
+        let facts = answering(&[true, false, true, true]);
+        // An unreachable margin leaves the engine order alone.
+        let mut reranker = super::Reranker::new(cache_test_model());
+        assert_eq!(
+            reranker.best_where_margin("我", &texts, &facts, f32::INFINITY),
+            None
+        );
+        // A zero margin is exactly the old behavior.
+        let mut reference = super::Reranker::new(cache_test_model());
+        let expected = reference.best_where("我", &texts, &facts);
+        let mut reranker = super::Reranker::new(cache_test_model());
+        assert_eq!(
+            reranker.best_where_margin("我", &texts, &facts, 0.0),
+            expected
+        );
+    }
+
+    #[test]
+    fn prefix_tokens_drops_characters_outside_the_vocabulary() {
+        let model = cache_test_model();
+        assert_eq!(
+            model.prefix_tokens("🙂我", 4),
+            vec![super::BOS, model.token('我').expect("indexed")]
+        );
+    }
+
+    #[test]
+    fn a_trusted_dictionary_hit_in_the_lead_declines_the_decision() {
+        let facts = |index: usize| CandidateFacts {
+            answers_key: true,
+            trusted_dictionary_hit: index == 0,
+        };
+        assert_eq!(comparable(3, &facts), None);
+        // The same hit anywhere but the lead is only another candidate; it does not veto.
+        let trailing = |index: usize| CandidateFacts {
+            answers_key: true,
+            trusted_dictionary_hit: index == 2,
+        };
+        assert_eq!(comparable(3, &trailing).unwrap().as_slice(), &[0, 1, 2]);
+    }
+
+    #[test]
+    fn a_leader_that_does_not_answer_the_key_declines_the_decision() {
+        // Promoting over a prefix would compare readings of two different keys.
+        assert_eq!(comparable(3, &answering(&[false, true, true])), None);
+    }
+
+    #[test]
+    fn fewer_than_two_comparable_candidates_declines_the_decision() {
+        assert_eq!(comparable(0, &answering(&[])), None);
+        assert_eq!(comparable(1, &answering(&[true])), None);
+        assert_eq!(comparable(3, &answering(&[true, false, false])), None);
+    }
+
+    #[test]
+    fn the_comparison_is_capped_and_keeps_the_leader() {
+        let flags = [true; 12];
+        let considered = comparable(12, &answering(&flags)).expect("all answer the key");
+        assert_eq!(considered.as_slice().len(), super::COMPARED);
+        assert_eq!(considered.as_slice()[0], 0);
+    }
+
+    #[test]
+    fn gate_follows_the_leading_candidate_only() {
+        // Database and UserDatabase lead: the dictionary knows the whole key, leave it alone.
+        assert!(!should_rerank(&[0, 8, 9]));
+        assert!(!should_rerank(&[1, 8]));
+        // Lattice or fallback leads: no frequency evidence, so the model is worth consulting.
+        assert!(should_rerank(&[8, 0, 0]));
+        assert!(should_rerank(&[9, 0]));
+        // Nothing to reorder.
+        assert!(!should_rerank(&[]));
+    }
+
+    #[test]
+    fn erf_matches_known_values() {
+        assert!((erf(0.0) - 0.0).abs() < 1e-6);
+        assert!((erf(0.5) - 0.520_499_9).abs() < 1e-6);
+        assert!((erf(1.0) - 0.842_700_8).abs() < 1e-6);
+        assert!((erf(-1.0) + 0.842_700_8).abs() < 1e-6);
+        assert!((erf(3.0) - 0.999_977_9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gelu_matches_torch_reference() {
+        // Values taken from torch.nn.functional.gelu with its default exact formulation.
+        assert!((gelu(0.0) - 0.0).abs() < 1e-6);
+        assert!((gelu(1.0) - 0.841_344_8).abs() < 1e-6);
+        assert!((gelu(-1.0) + 0.158_655_25).abs() < 1e-6);
+        assert!((gelu(2.0) - 1.954_499_7).abs() < 1e-6);
+    }
+}
 
 #[cfg(test)]
 mod feed_forward_scratch_tests;
@@ -606,7 +2934,4 @@ mod terminal_prefix_tests;
 mod embedding_tests;
 
 #[cfg(test)]
-mod bounded_encoding_tests;
-
-#[cfg(test)]
-mod project_rows_tests;
+mod batched_tests;
