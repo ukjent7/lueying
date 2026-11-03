@@ -99,6 +99,9 @@ jobs:
       # 渲染核心(布局几何、弹簧)与平台无关,Linux 上测同一份代码。
       - name: 渲染核心单元测试
         run: cargo test -p lueying-render --lib --locked
+      # 语言模型的批式前向与逐候选参考实现逐位对照,必须在发布前真跑。
+      - name: 语言模型单元测试
+        run: cargo test -p lueying-lm -p lueying-rerank --lib --locked
       # Linux 外壳的按键映射、候选分页与重复定时器参数。
       - name: Linux 外壳单元测试
         run: cargo test -p lueying-linux --lib --locked
