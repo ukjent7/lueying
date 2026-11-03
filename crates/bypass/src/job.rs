@@ -11,8 +11,7 @@ use windows::Win32::System::JobObjects::{
     JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_JOB_MEMORY,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
     JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
+    JobObjectCpuRateControlInformation, JobObjectExtendedLimitInformation, SetInformationJobObject,
 };
 use windows::core::PCWSTR;
 
