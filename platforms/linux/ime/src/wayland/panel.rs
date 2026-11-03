@@ -169,8 +169,7 @@ impl Panel {
         let height = pixmap.height();
         let size = width as usize * height as usize * 4;
         let mut file = memfd::MemfdOptions::default()
-            .title("lueying-panel")
-            .create()
+            .create("lueying-panel")
             .ok()?
             .into_file();
         file.set_len(size as u64).ok()?;

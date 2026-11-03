@@ -23,7 +23,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let config = crate::config::load();
     let session = Session::new(&config);
     let connection = Connection::connect_to_env()?;
-    let (globals, event_queue) = registry_queue_init::<App>(&connection)?;
+    let (globals, mut event_queue) = registry_queue_init::<App>(&connection)?;
     let qh = event_queue.handle();
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=6, ())?;
     let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ())?;

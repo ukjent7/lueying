@@ -3432,6 +3432,7 @@ dependencies = [
  "memfd",
  "memmap2",
  "tiny-skia 0.12.0",
+ "wayland-backend",
  "wayland-client",
  "wayland-scanner",
  "xkbcommon",

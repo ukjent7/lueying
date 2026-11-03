@@ -448,7 +448,6 @@ impl Dispatch<ZwpInputMethodKeyboardGrabV2, ()> for App {
             Event::RepeatInfo { rate, delay } => {
                 let _ = state.worker.send(Command::RepeatInfo { rate, delay });
             }
-            _ => {}
         }
     }
 }
@@ -618,8 +617,7 @@ fn repeats(key: Key) -> bool {
 
 fn create_fd(name: &str, bytes: &[u8]) -> Option<OwnedFd> {
     let mut file = memfd::MemfdOptions::default()
-        .title(name)
-        .create()
+        .create(name)
         .ok()?
         .into_file();
     file.write_all(bytes).ok()?;
