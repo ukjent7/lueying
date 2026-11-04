@@ -55,17 +55,25 @@ const BASELINE: f64 = 8.34;
 const VALUE_SCALE: f64 = 10_000.0;
 const FORMAT_PREFIX: &str = "Rime::Grammar/";
 
-/// 只读打开的语法模型。
+/// 掠影原生搭配表魔数: `LYCL` (Lueying Collocation) + 版本 1。
+pub const NATIVE_MAGIC: &[u8; 4] = b"LYCL";
+pub const NATIVE_VERSION: u32 = 1;
+pub const NATIVE_HEADER_LEN: usize = 16;
+
+/// 搭配表内核类型: 原生紧凑表或兼容的 Rime 双数组模型。
+enum GramKind {
+    Native { count: usize },
+    Rime { da: usize, units: usize },
+}
+
+/// 只读打开的语法模型 / 搭配表。
 pub struct Gram {
     mmap: Mmap,
-    /// 双数组起点(文件内字节偏移)。
-    da: usize,
-    /// 双数组 unit 数。
-    units: usize,
+    kind: GramKind,
 }
 
 impl Gram {
-    /// 打开 `.gram`;格式不符时返回错误,调用方按「无模型」降级。
+    /// 打开语法模型或原生搭配表;格式不符时返回错误,调用方按「无模型」降级。
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         // SAFETY:mmap 期间文件内容不得被改写。模型按版本目录整体替换
@@ -76,13 +84,41 @@ impl Gram {
 
     fn from_mmap(mmap: Mmap) -> io::Result<Self> {
         let bytes: &[u8] = &mmap;
+        if bytes.starts_with(NATIVE_MAGIC) {
+            if bytes.len() < NATIVE_HEADER_LEN {
+                return Err(io::Error::other("掠影搭配表过短,缺少头部"));
+            }
+            let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+            if version != NATIVE_VERSION {
+                return Err(io::Error::other(format!("不支持的掠影搭配表版本: {version}")));
+            }
+            let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            let expected_size = NATIVE_HEADER_LEN
+                .checked_add(
+                    count
+                        .checked_mul(10)
+                        .ok_or_else(|| io::Error::other("条数溢出"))?,
+                )
+                .ok_or_else(|| io::Error::other("长度溢出"))?;
+            if bytes.len() != expected_size {
+                return Err(io::Error::other(format!(
+                    "掠影搭配表长度不符: 实际 {} 字节, 预期 {expected_size} 字节",
+                    bytes.len()
+                )));
+            }
+            return Ok(Self {
+                mmap,
+                kind: GramKind::Native { count },
+            });
+        }
+
         if bytes.len() < META {
             return Err(io::Error::other("语法模型过短,缺少 metadata"));
         }
         let format_end = bytes[..32].iter().position(|&b| b == 0).unwrap_or(32);
         let format = std::str::from_utf8(&bytes[..format_end]).unwrap_or("");
         if !format.starts_with(FORMAT_PREFIX) {
-            return Err(io::Error::other(format!("不是 rime 语法模型: {format:?}")));
+            return Err(io::Error::other(format!("不是 rime 语法模型或掠影搭配表: {format:?}")));
         }
         let units = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
         let ptr = i32::from_le_bytes(bytes[OFFSET_PTR_AT..OFFSET_PTR_AT + 4].try_into().unwrap());
@@ -94,22 +130,43 @@ impl Gram {
         if da.checked_add(size) != Some(bytes.len()) {
             return Err(io::Error::other("语法模型双数组长度不符"));
         }
-        Ok(Self { mmap, da, units })
+        Ok(Self {
+            mmap,
+            kind: GramKind::Rime { da, units },
+        })
+    }
+
+    #[inline]
+    fn rime_da_units(&self) -> Option<(usize, usize)> {
+        match self.kind {
+            GramKind::Rime { da, units } => Some((da, units)),
+            GramKind::Native { .. } => None,
+        }
+    }
+
+    #[inline]
+    fn rime_units(&self) -> usize {
+        match self.kind {
+            GramKind::Rime { units, .. } => units,
+            GramKind::Native { .. } => 0,
+        }
     }
 
     fn unit(&self, i: usize) -> Option<u32> {
-        let at = self.da.checked_add(i.checked_mul(UNIT)?)?;
+        let (da, _) = self.rime_da_units()?;
+        let at = da.checked_add(i.checked_mul(UNIT)?)?;
         let b: [u8; 4] = self.mmap.get(at..at + UNIT)?.try_into().ok()?;
         Some(u32::from_le_bytes(b))
     }
 
     /// 沿编码串走到底,返回节点下标;任一步失配返回 `None`。
     fn traverse(&self, key: &[u8]) -> Option<usize> {
+        let units = self.rime_units();
         let mut node = 0u32;
         let mut u = self.unit(0)?;
         for &b in key {
             node ^= offset_of(u) ^ u32::from(b);
-            if node as usize >= self.units {
+            if node as usize >= units {
                 return None;
             }
             u = self.unit(node as usize)?;
@@ -129,7 +186,8 @@ impl Gram {
         context_chars: usize,
         whole_prefix: bool,
     ) -> f64 {
-        if node >= self.units {
+        let units = self.rime_units();
+        if node >= units {
             return 0.0;
         }
         let mut best = 0.0f64;
@@ -141,7 +199,7 @@ impl Gram {
         for &b in key {
             used += 1;
             id ^= offset_of(u) ^ u32::from(b);
-            if id as usize >= self.units {
+            if id as usize >= units {
                 break;
             }
             let Some(next) = self.unit(id as usize) else {
@@ -172,14 +230,15 @@ impl Gram {
 
     /// 沿 `key` 找到第一个成词节点;句末 `$` 只取最短的命中,与 librime 一致。
     fn first_common_prefix(&self, key: &[u8], node: usize) -> Option<f64> {
-        if node >= self.units {
+        let units = self.rime_units();
+        if node >= units {
             return None;
         }
         let mut id = node as u32;
         let mut u = self.unit(node)?;
         for &b in key {
             id ^= offset_of(u) ^ u32::from(b);
-            if id as usize >= self.units {
+            if id as usize >= units {
                 break;
             }
             let Some(next) = self.unit(id as usize) else {
@@ -201,16 +260,64 @@ impl Gram {
         None
     }
 
-    /// 给「`context` 之后接 `word`」打分,复刻 librime-octagram 的 `Query`:
-    /// 取所有前文后缀与词前缀组合里的最高分,命中的值加上搭配罚;
-    /// 词尾再查一次 `$` 的句末搭配。没有命中时命中项为 0,最终得到
-    /// `-WEIGHT × BASELINE`,让「完全没有搭配记录」稳定地差于有中等频次记录的词。
-    ///
-    /// 首次调用(前文为空)返回 0,让调用方把「句首」当常数省掉。
-    pub fn score(&self, context: &str, word: &str, is_rear: bool) -> f64 {
-        if context.is_empty() {
-            return 0.0;
+    #[inline]
+    fn native_key_at(&self, idx: usize) -> u64 {
+        let offset = NATIVE_HEADER_LEN + idx * 8;
+        u64::from_le_bytes(self.mmap[offset..offset + 8].try_into().unwrap())
+    }
+
+    #[inline]
+    fn native_score_at(&self, idx: usize, count: usize) -> f64 {
+        let offset = NATIVE_HEADER_LEN + count * 8 + idx * 2;
+        let raw = i16::from_le_bytes(self.mmap[offset..offset + 2].try_into().unwrap());
+        f64::from(raw) / 1000.0
+    }
+
+    /// 二分查找搭配键 `(left, right)` 的加分。
+    pub fn native_find(&self, count: usize, left: &str, right: &str) -> Option<f64> {
+        if count == 0 || left.is_empty() || right.is_empty() {
+            return None;
         }
+        let target = hash_pair(left, right);
+        let mut low = 0;
+        let mut high = count;
+        while low < high {
+            let mid = (low + high) / 2;
+            let k = self.native_key_at(mid);
+            if k < target {
+                low = mid + 1;
+            } else if k > target {
+                high = mid;
+            } else {
+                return Some(self.native_score_at(mid, count));
+            }
+        }
+        None
+    }
+
+    fn score_native(&self, count: usize, context: &str, word: &str, is_rear: bool) -> f64 {
+        let mut best = 0.0f64;
+        // 1. 全词/全前文精准搭配
+        if let Some(s) = self.native_find(count, context, word) {
+            best = best.max(s);
+        }
+        // 2. 逐级缩短前文 (例如 "非常喜欢" -> 查 "喜欢"、"欢")
+        let mut char_indices = context.char_indices();
+        let _ = char_indices.next();
+        for (byte_pos, _) in char_indices {
+            let sub_ctx = &context[byte_pos..];
+            if let Some(s) = self.native_find(count, sub_ctx, word) {
+                best = best.max(s);
+            }
+        }
+        // 3. 句末搭配
+        if is_rear && let Some(s) = self.native_find(count, word, "$") {
+            best = best.max(s);
+        }
+        best
+    }
+
+    fn score_rime(&self, context: &str, word: &str, is_rear: bool) -> f64 {
         let query_chars = QUERY_CHARS.min(MAX_CHARS);
         let ctx = encode_tail(context, query_chars);
         let word_key = encode_head(word, query_chars);
@@ -233,6 +340,40 @@ impl Gram {
         }
         WEIGHT * (hit - BASELINE)
     }
+
+    /// 给「`context` 之后接 `word`」打分。
+    /// 原生格式未命中给 0.0(中性),命中给 PMI 增益;
+    /// 兼容的 Rime 模型保留原有固定未命中惩罚与命中浮动。
+    ///
+    /// 首次调用(前文为空)返回 0,让调用方把「句首」当常数省掉。
+    pub fn score(&self, context: &str, word: &str, is_rear: bool) -> f64 {
+        if context.is_empty() {
+            return 0.0;
+        }
+        match self.kind {
+            GramKind::Native { count } => self.score_native(count, context, word, is_rear),
+            GramKind::Rime { .. } => self.score_rime(context, word, is_rear),
+        }
+    }
+}
+
+/// FNV-1a 64-bit 哈希,用于原生搭配表键 `left\0right`。
+#[inline]
+pub fn hash_pair(left: &str, right: &str) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET_BASIS;
+    for &b in left.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash ^= 0;
+    hash = hash.wrapping_mul(FNV_PRIME);
+    for &b in right.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 #[inline]
@@ -340,5 +481,57 @@ fn char_len(first: u8) -> usize {
         (first & 0x0f) as usize + 1
     } else {
         2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_pair_deterministic() {
+        let h1 = hash_pair("人工", "智能");
+        let h2 = hash_pair("人工", "智能");
+        assert_eq!(h1, h2);
+        assert_ne!(hash_pair("吃", "药"), hash_pair("人工", "智能"));
+    }
+
+    #[test]
+    fn test_native_collocation_table() {
+        let mut pairs = vec![
+            ("人工", "智能", 2.5),
+            ("吃", "药", 1.8),
+            ("不错", "$", 0.9),
+        ];
+        pairs.sort_by_key(|&(l, r, _)| hash_pair(l, r));
+
+        let count = pairs.len();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(NATIVE_MAGIC);
+        bytes.extend_from_slice(&NATIVE_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&(count as u32).to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        for &(l, r, _) in &pairs {
+            bytes.extend_from_slice(&hash_pair(l, r).to_le_bytes());
+        }
+        for &(_, _, s) in &pairs {
+            let val = (s * 1000.0) as i16;
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("test_collocation_{}.bin", std::process::id()));
+        std::fs::write(&test_path, &bytes).unwrap();
+
+        let gram = Gram::open(&test_path).expect("open native collocation table");
+        assert!((gram.score("人工", "智能", false) - 2.5).abs() < 1e-3);
+        assert!((gram.score("吃", "药", false) - 1.8).abs() < 1e-3);
+        assert!((gram.score("前面人工", "智能", false) - 2.5).abs() < 1e-3);
+        assert_eq!(gram.score("陌生", "搭配", false), 0.0);
+        assert!((gram.score("天气", "不错", true) - 0.9).abs() < 1e-3);
+        assert_eq!(gram.score("天气", "不错", false), 0.0);
+
+        let _ = std::fs::remove_file(test_path);
     }
 }

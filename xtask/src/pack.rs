@@ -156,14 +156,11 @@ commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
 版本 0.1.1;随包词典用这份常用词表补入白霜未收录的词,并给多字常用词提频。\
 词频语料来源包括中文维基百科(CC BY-SA 4.0)、LCCC(MIT)与 THUOCL(MIT),\
 详见青简词库头部说明。
-- 万象拼音语法模型子集:CC-BY-4.0,作者 amzxyz,\
-https://github.com/amzxyz/rime-wanxiang-data (LTS);\
-许可 https://creativecommons.org/licenses/by/4.0/;\
-完整模型 sha256 9eedac1d836f3fdafb61b162035c8937253aedc106be40b2b957d9ab64e9ed89。\
-随包的 main.gram 是 WindInput(https://github.com/huanfeng/WindInput,\
-commit a99a7ad35701ff87dac6bd2057b0f594cd004d81)按真实输入语料裁剪出的 5.3MB 子集,\
-未再修改;sha256 c85801930ab5703d28472f86153f37a367287156ef70a523c5a4fb07f6a95147。\
-许可全文见 CC-BY-4.0.txt。
+- 掠影原生紧凑搭配表 (LYCL):Apache-2.0,https://github.com/ukjent7/lueying-gram,\
+版本 v0.1.0;基于点互信息 (PMI) 与现代对话/网络语料 (Tatoeba, FineWeb-2),\
+由掠影输入法工具链原生切分生成 (1.72MB, 180,000 条词对);\
+sha256 6bd18dbb19c6353ad41701dc410c54bc9a2fa1566d1cbc499cbfaa0d663a591f。\
+许可全文见 Apache-2.0.txt。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
 commit 1c90f5ee1b76ecf18d5171ef78a4dc076a0bb0d8 (release rerank-v2);全文见 Apache-2.0.txt。
 - pinyin-ime-keystroke-reranker-8M:Apache-2.0,\

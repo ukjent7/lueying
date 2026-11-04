@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# 下载精简语法模型(约 5.3MB),钉住 WindInput 提交与 sha256。
-# 上游是万象拼音 LTS 语法模型(CC-BY-4.0),WindInput 按真实输入语料裁剪成子集;
-# 我们只作为数据文件随程序分发,不再修改。许可与署名见 licenses/CC-BY-4.0.txt
-# 和打包时生成的 licenses/README.md。
+# 下载掠影原生紧凑搭配表 (约 1.72MB, 180,000 条词对, 基于 PMI 与现代语料)。
+# 采用原生 LYCL 格式, 钉住 GitHub Release 标签与 sha256。
 # 用法:tools/fetch_gram.sh [输出目录]
 set -euo pipefail
 
 OUT="${1:-data}"
 mkdir -p "$OUT"
 
-REV="a99a7ad35701ff87dac6bd2057b0f594cd004d81"
-SHA="c85801930ab5703d28472f86153f37a367287156ef70a523c5a4fb07f6a95147"
-URL="https://raw.githubusercontent.com/huanfeng/WindInput/${REV}/data/schemas/pinyin/grammar/wanxiang-mini.gram"
+TAG="v0.1.0"
+SHA="6bd18dbb19c6353ad41701dc410c54bc9a2fa1566d1cbc499cbfaa0d663a591f"
+URL="https://github.com/ukjent7/lueying-gram/releases/download/${TAG}/main.gram"
 
 # 下到 .part 再改名:失败时不留下一个看着齐全的半截文件。
 curl -fsSL --retry 3 -o "${OUT}/main.gram.part" "$URL"
