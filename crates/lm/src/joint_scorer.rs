@@ -51,7 +51,7 @@ impl Default for MoERouter {
             // 专家0: 全拼专精; 专家1: 简拼缩写专精
             gate_weights: [
                 -2.0, -3.0, 0.5, 0.5, // Expert 0 weights
-                2.0, 3.0, 0.2, -0.2,  // Expert 1 weights
+                2.0, 3.0, 0.2, -0.2, // Expert 1 weights
             ],
             gate_bias: [0.5, -0.5],
         }

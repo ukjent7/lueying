@@ -139,7 +139,13 @@ pub fn decide_sync(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize>
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if !snapshot.raw.is_empty() {
-        guard.decide_joint(&snapshot.context, &snapshot.raw, &texts, &snapshot.facts, None)
+        guard.decide_joint(
+            &snapshot.context,
+            &snapshot.raw,
+            &texts,
+            &snapshot.facts,
+            None,
+        )
     } else {
         guard.decide(&snapshot.context, &texts, &snapshot.facts)
     }

@@ -64,7 +64,11 @@ pub(super) fn corrections(raw: &str) -> Vec<Correction> {
 
     // 3. 漏键插入(含前后鼻音补 g、平翘舌补 h 特殊软惩罚)
     for i in 0..=len {
-        let prev = if i > 0 { Some(bytes[i - 1] as char) } else { None };
+        let prev = if i > 0 {
+            Some(bytes[i - 1] as char)
+        } else {
+            None
+        };
         for inserted in 'a'..='z' {
             let penalty = match (prev, inserted) {
                 // n 后面漏打 g (前后鼻音: an -> ang, in -> ing, en -> eng) 仅罚 0.25
@@ -87,7 +91,11 @@ pub(super) fn corrections(raw: &str) -> Vec<Correction> {
     // 4. 多余键删除(含赘 g、赘 h 特殊软惩罚)
     for i in 0..len {
         let ch = bytes[i] as char;
-        let prev = if i > 0 { Some(bytes[i - 1] as char) } else { None };
+        let prev = if i > 0 {
+            Some(bytes[i - 1] as char)
+        } else {
+            None
+        };
         let penalty = match (prev, ch) {
             (Some('n'), 'g') => 0.25,
             (Some('z' | 'c' | 's'), 'h') => 0.25,

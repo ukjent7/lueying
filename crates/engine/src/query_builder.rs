@@ -203,7 +203,10 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                     0.0
                 };
                 cands.push(State {
-                    score: st.score + node.score + abbrev_adj + gram.bonus(&tail, &node.word, j == raw.len()),
+                    score: st.score
+                        + node.score
+                        + abbrev_adj
+                        + gram.bonus(&tail, &node.word, j == raw.len()),
                     path,
                     // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
                     trusted: st.path.is_empty() && node.trusted,

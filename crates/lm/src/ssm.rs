@@ -127,7 +127,11 @@ impl SsmEngine {
     }
 
     pub fn new_state(&self) -> SsmState {
-        SsmState::new(self.config.n_layer, self.config.n_embd, self.config.state_dim)
+        SsmState::new(
+            self.config.n_layer,
+            self.config.n_embd,
+            self.config.state_dim,
+        )
     }
 
     /// 单步前向递归更新:输入一个 token,隐状态原地更新,返回隐层特征向量。
@@ -152,7 +156,11 @@ impl SsmEngine {
     }
 
     /// 对整句候选在恒定长上下文下打分。
-    pub fn score_candidates(&self, base_state: &SsmState, candidate_tokens: &[Vec<u32>]) -> Vec<f32> {
+    pub fn score_candidates(
+        &self,
+        base_state: &SsmState,
+        candidate_tokens: &[Vec<u32>],
+    ) -> Vec<f32> {
         let mut scores = Vec::with_capacity(candidate_tokens.len());
         for cand in candidate_tokens {
             let mut cand_state = base_state.clone();
@@ -165,7 +173,11 @@ impl SsmEngine {
                 s += final_h[i] * self.head_weight[i];
             }
             // 每字符平均置信度
-            let avg = if !cand.is_empty() { s / cand.len() as f32 } else { s };
+            let avg = if !cand.is_empty() {
+                s / cand.len() as f32
+            } else {
+                s
+            };
             scores.push(avg);
         }
         scores

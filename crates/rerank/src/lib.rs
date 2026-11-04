@@ -14,8 +14,8 @@ mod metrics_tests;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use lueying_lm::ModelError;
 pub use lueying_lm::MemorySlot;
+pub use lueying_lm::ModelError;
 use lueying_lm::{CandidateFacts, Reranker, SentenceModel};
 
 pub use metrics::{LatencyMetrics, LatencySnapshot};
@@ -156,7 +156,14 @@ impl Rerank {
         facts: &[Fact],
         memory: Option<&MemorySlot>,
     ) -> Option<usize> {
-        self.decide_joint_with_margin(context, keystrokes, texts, facts, memory, SYNC_PROMOTE_MARGIN)
+        self.decide_joint_with_margin(
+            context,
+            keystrokes,
+            texts,
+            facts,
+            memory,
+            SYNC_PROMOTE_MARGIN,
+        )
     }
 
     /// 击键-上下文联合重排决策 (支持指定置信间隔 min_margin)

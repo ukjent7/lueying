@@ -187,12 +187,10 @@ impl Reranker {
         min_margin: f32,
     ) -> Option<usize> {
         let considered = comparable(texts.len(), &facts)?;
-        let candidate_slice: Vec<&str> = considered
-            .as_slice()
-            .iter()
-            .map(|&i| texts[i])
-            .collect();
-        let scores = self.model.score_joint(context, keystrokes, &candidate_slice, memory);
+        let candidate_slice: Vec<&str> = considered.as_slice().iter().map(|&i| texts[i]).collect();
+        let scores = self
+            .model
+            .score_joint(context, keystrokes, &candidate_slice, memory);
         if scores.is_empty() {
             return None;
         }

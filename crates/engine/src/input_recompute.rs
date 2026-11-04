@@ -94,7 +94,11 @@ impl Engine {
             }
         }
         // 第三代端到端生成式候选通道 (GeneInput): 在长声母缩写或候选不足时补充直出首选
-        if let Some(generated) = crate::generative::GenerativePipeline::new().generate(&context, &raw, built.cands.first()) {
+        if let Some(generated) = crate::generative::GenerativePipeline::new().generate(
+            &context,
+            &raw,
+            built.cands.first(),
+        ) {
             if !built.cands.iter().any(|c| c.text == generated.text) {
                 let pos = usize::from(!built.cands.is_empty());
                 built.cands.insert(pos.min(built.cands.len()), generated);
