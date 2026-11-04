@@ -47,7 +47,9 @@ impl Gram {
         }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
         if version != VERSION {
-            return Err(io::Error::other(format!("不支持的掠影搭配表版本: {version}")));
+            return Err(io::Error::other(format!(
+                "不支持的掠影搭配表版本: {version}"
+            )));
         }
         let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
         let expected = count
