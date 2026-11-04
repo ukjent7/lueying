@@ -82,7 +82,8 @@ fn is_hanzi(word: &str) -> bool {
 
 /// 键的音节签名字节:每音节取首字母(zh/ch/sh 的首字母恰好就是折叠后的 z/c/s)。
 fn sig_bytes(key: &str) -> impl Iterator<Item = u8> + '_ {
-    key.split('\'').filter_map(|s| s.as_bytes().first().copied())
+    key.split('\'')
+        .filter_map(|s| s.as_bytes().first().copied())
 }
 
 /// 键的音节签名。
