@@ -23,11 +23,11 @@ fetch() {
   mv "${target}.part" "$target"
 }
 
-fetch e036febfb8f7bdf941f1637be127ff539ea95b937a4c2a27f4c6ab897138fc6c rerank-8m.ort
+fetch 19c04188e2ee102bd264925e3ba0a329960de9b70eefcfc87ad95161a665e96c rerank-8m.ort
 fetch 33e2b903a0d576730488864a007e67d518d8c7123572e6f4f77a80487fb5eda5 rerank-8m.model.json
 fetch d7fb2e70de9f0c2c65b822a8fbf604655bfef6d0dcd8f1975d73f1cd5ea7f038 rerank-8m.vocab.json
 
-fetch 827d9ecae4fdfb8ac06d15fbcef827705a55f72ea5e39c96f805f2f1350ee58f rerank-25m.ort
+fetch e2d97b943aa727d01f6efa9c48dde1ffcac079a2b5168564ffbdc5ab7146d922 rerank-25m.ort
 fetch fdeb4f150fd6a9f937b130ccef4f3248436a9b783202e125fd0a2d1fe3661283 rerank-25m.model.json
 fetch d7fb2e70de9f0c2c65b822a8fbf604655bfef6d0dcd8f1975d73f1cd5ea7f038 rerank-25m.vocab.json
 
