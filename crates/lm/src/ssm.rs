@@ -86,8 +86,7 @@ impl SsmBlock {
             let state_offset = i * state_dim;
 
             let mut acc = 0.0;
-            for j in 0..state_dim {
-                let slot = &mut state[state_offset + j];
+            for slot in &mut state[state_offset..state_offset + state_dim] {
                 // 隐状态衰减递归累加
                 *slot = d * *slot + k_val * v_val;
                 acc += *slot;
@@ -96,8 +95,8 @@ impl SsmBlock {
         }
 
         // 残差叠加
-        for i in 0..width {
-            out[i] += x[i];
+        for (out_val, &x_val) in out.iter_mut().zip(x) {
+            *out_val += x_val;
         }
         out
     }
@@ -168,10 +167,7 @@ impl SsmEngine {
             for &tok in cand {
                 final_h = self.step(tok, &mut cand_state);
             }
-            let mut s = 0.0;
-            for i in 0..self.config.n_embd {
-                s += final_h[i] * self.head_weight[i];
-            }
+            let s: f32 = final_h.iter().zip(&self.head_weight).map(|(&h, &w)| h * w).sum();
             // 每字符平均置信度
             let avg = if !cand.is_empty() {
                 s / cand.len() as f32

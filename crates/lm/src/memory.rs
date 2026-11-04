@@ -38,8 +38,8 @@ impl MemorySlot {
         }
         let delta = semantic_direction(text);
         const ALPHA: f32 = 0.08;
-        for i in 0..MEMORY_DIM {
-            self.values[i] = (1.0 - ALPHA) * self.values[i] + ALPHA * delta[i];
+        for (val, &d) in self.values.iter_mut().zip(&delta) {
+            *val = (1.0 - ALPHA) * *val + ALPHA * d;
         }
     }
 
@@ -75,13 +75,10 @@ impl MemoryProjection {
     /// 把 16 维记忆槽投影为隐层维度的连续引导偏置向量。
     pub fn project(&self, slot: &MemorySlot) -> Vec<f32> {
         let mut out = self.bias.clone();
-        for i in 0..self.width {
+        for (i, out_val) in out.iter_mut().enumerate() {
             let row = &self.weight[i * MEMORY_DIM..(i + 1) * MEMORY_DIM];
-            let mut dot = 0.0;
-            for j in 0..MEMORY_DIM {
-                dot += row[j] * slot.values[j];
-            }
-            out[i] += dot;
+            let dot: f32 = row.iter().zip(&slot.values).map(|(&r, &v)| r * v).sum();
+            *out_val += dot;
         }
         out
     }

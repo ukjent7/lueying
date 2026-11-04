@@ -68,9 +68,9 @@ impl MoERouter {
         let feats = [ratio, if is_abbrev { 1.0 } else { 0.0 }, k_len, c_len];
 
         let mut logits = self.gate_bias;
-        for exp in 0..2 {
-            for f in 0..4 {
-                logits[exp] += self.gate_weights[exp * 4 + f] * feats[f];
+        for (exp, logit) in logits.iter_mut().enumerate() {
+            for (f, &feat) in feats.iter().enumerate() {
+                *logit += self.gate_weights[exp * 4 + f] * feat;
             }
         }
 
@@ -234,29 +234,29 @@ fn forward_joint_end(model: &SentenceModel, tokens: &[u32], mem_bias: &[f32]) ->
         };
         let tok_idx = (token as usize).min(model.config.vocab.saturating_sub(1));
         model.token.embed_row(tok_idx, pos_slice, &mut tok_buf);
-        for i in 0..width {
-            h[i] += tok_buf[i];
+        for (h_val, &tok) in h.iter_mut().zip(&tok_buf) {
+            *h_val += tok;
         }
     }
 
     // 叠加层次化记忆槽偏置 (Memory Slot Continuous Prompt Bias)
-    for i in 0..width {
-        h[i] += mem_bias[i];
+    for (h_val, &bias) in h.iter_mut().zip(mem_bias) {
+        *h_val += bias;
     }
 
     // 逐层前向残差混合 (与各 block 的 MLP/LayerNorm 变换保持同轴)
     for block in &model.blocks[..n_layer.min(model.blocks.len())] {
-        for i in 0..width {
+        for (i, h_val) in h.iter_mut().enumerate() {
             let ln = block.ln2_bias.get(i).copied().unwrap_or(0.0);
-            h[i] = (h[i] + ln) * 0.98;
+            *h_val = (*h_val + ln) * 0.98;
         }
     }
 
     // 最终层归一化
-    for i in 0..width {
+    for (i, h_val) in h.iter_mut().enumerate() {
         let w = model.final_weight.get(i).copied().unwrap_or(1.0);
         let b = model.final_bias.get(i).copied().unwrap_or(0.0);
-        h[i] = h[i] * w + b;
+        *h_val = *h_val * w + b;
     }
     h
 }

@@ -135,8 +135,8 @@ impl UserDict {
         }
         let delta = user_semantic_direction(text);
         const ALPHA: f32 = 0.08;
-        for i in 0..16 {
-            self.memory_slot[i] = (1.0 - ALPHA) * self.memory_slot[i] + ALPHA * delta[i];
+        for (slot, &d) in self.memory_slot.iter_mut().zip(&delta) {
+            *slot = (1.0 - ALPHA) * *slot + ALPHA * d;
         }
         self.rev = self.rev.wrapping_add(1);
     }
