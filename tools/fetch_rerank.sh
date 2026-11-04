@@ -16,36 +16,36 @@ fetch() {
 }
 
 fetch msime/pinyin-ime-keystroke-reranker-8M \
-  1ae5be9d7bb35d9e7242171a7a2868103a9e4286 \
-  ceeb3a8def8ed00277063146121fe1ce152eba34006c23844a1c0c0ed188bad4 \
+  ea91fcbc94ab8d801faab250ee02d78ed0de5b77 \
+  e036febfb8f7bdf941f1637be127ff539ea95b937a4c2a27f4c6ab897138fc6c \
   lm_step.ort rerank-8m.ort
 fetch msime/pinyin-ime-keystroke-reranker-8M \
-  1ae5be9d7bb35d9e7242171a7a2868103a9e4286 \
-  eb7ccb2fd2153906ce131891aeaa04cc1092aeb9a22eeb9543aa206443ee7ba5 \
+  ea91fcbc94ab8d801faab250ee02d78ed0de5b77 \
+  33e2b903a0d576730488864a007e67d518d8c7123572e6f4f77a80487fb5eda5 \
   model.json rerank-8m.model.json
 fetch msime/pinyin-ime-keystroke-reranker-8M \
-  1ae5be9d7bb35d9e7242171a7a2868103a9e4286 \
+  ea91fcbc94ab8d801faab250ee02d78ed0de5b77 \
   d7fb2e70de9f0c2c65b822a8fbf604655bfef6d0dcd8f1975d73f1cd5ea7f038 \
   vocab.json rerank-8m.vocab.json
 
 fetch msime/pinyin-ime-keystroke-reranker-25M \
-  c492a22f47445ed53501d214a2de671d87959218 \
-  ad729f94fc10cae0326269e2f089d7747ee8efae3dd2affe365c2740c59a4a93 \
+  9ce963999bd40ebede9f73f7e39a200e8d50f25e \
+  827d9ecae4fdfb8ac06d15fbcef827705a55f72ea5e39c96f805f2f1350ee58f \
   lm_step.ort rerank-25m.ort
 fetch msime/pinyin-ime-keystroke-reranker-25M \
-  c492a22f47445ed53501d214a2de671d87959218 \
-  2a92e6aad513335e0800ff24ef7037acb365d0ae9abb7ae5b92ebf241c065a20 \
+  9ce963999bd40ebede9f73f7e39a200e8d50f25e \
+  fdeb4f150fd6a9f937b130ccef4f3248436a9b783202e125fd0a2d1fe3661283 \
   model.json rerank-25m.model.json
 fetch msime/pinyin-ime-keystroke-reranker-25M \
-  c492a22f47445ed53501d214a2de671d87959218 \
+  9ce963999bd40ebede9f73f7e39a200e8d50f25e \
   d7fb2e70de9f0c2c65b822a8fbf604655bfef6d0dcd8f1975d73f1cd5ea7f038 \
   vocab.json rerank-25m.vocab.json
 
 fetch msime/pinyin-ime-keystroke-reranker-8M \
-  1ae5be9d7bb35d9e7242171a7a2868103a9e4286 \
+  ea91fcbc94ab8d801faab250ee02d78ed0de5b77 \
   cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 \
   LICENSE LICENSE
 fetch msime/pinyin-ime-keystroke-reranker-8M \
-  1ae5be9d7bb35d9e7242171a7a2868103a9e4286 \
-  b64ea435176bc4147d2d76aeded37460e82487b4dd8d8e5d97bae6809a7bbabe \
+  ea91fcbc94ab8d801faab250ee02d78ed0de5b77 \
+  e120d424d4d7d8cc006c7adcd02a748e83a07cdae8f35f31fefd431e56168d1e \
   NOTICE NOTICE

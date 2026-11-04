@@ -165,13 +165,13 @@ commit a99a7ad35701ff87dac6bd2057b0f594cd004d81)按真实输入语料裁剪出�
 未再修改;sha256 c85801930ab5703d28472f86153f37a367287156ef70a523c5a4fb07f6a95147。\
 许可全文见 CC-BY-4.0.txt。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
-commit 8a22e8508138270d2508548b7c1de5fc549120ca;全文见 Apache-2.0.txt。
+commit 1c90f5ee1b76ecf18d5171ef78a4dc076a0bb0d8 (release rerank-v2);全文见 Apache-2.0.txt。
 - pinyin-ime-keystroke-reranker-8M:Apache-2.0,\
 https://huggingface.co/msime/pinyin-ime-keystroke-reranker-8M,\
-revision 1ae5be9d7bb35d9e7242171a7a2868103a9e4286。
+revision ea91fcbc94ab8d801faab250ee02d78ed0de5b77。
 - pinyin-ime-keystroke-reranker-25M:Apache-2.0,\
 https://huggingface.co/msime/pinyin-ime-keystroke-reranker-25M,\
-revision c492a22f47445ed53501d214a2de671d87959218。
+revision 9ce963999bd40ebede9f73f7e39a200e8d50f25e。
 - PP-OCRv6 small det/rec:Apache-2.0,\
 https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx (revision \
 28fe5895c24fd108c19eb3e8479f4ab385fbfc62)、\

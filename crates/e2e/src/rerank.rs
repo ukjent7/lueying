@@ -142,13 +142,13 @@ pub fn run(
     push(
         &mut checks,
         "8M 体积",
-        models.four_size == 8_220_064,
+        models.four_size == 8_220_336,
         format!("{} 字节", models.four_size),
     );
     push(
         &mut checks,
         "25M 体积",
-        models.five_size == 30_834_688,
+        models.five_size == 30_834_960,
         format!("{} 字节", models.five_size),
     );
     push(
@@ -174,9 +174,11 @@ pub fn run(
         "训练语料署名",
         models.four.attribution().contains("C4")
             && models.four.attribution().contains("LCCC")
+            && models.four.attribution().contains("DeepSeek")
             && models.five.attribution().contains("C4")
-            && models.five.attribution().contains("LCCC"),
-        "C4 + LCCC".into(),
+            && models.five.attribution().contains("LCCC")
+            && models.five.attribution().contains("DeepSeek"),
+        "C4 + LCCC + DeepSeek".into(),
     );
     push(
         &mut checks,
