@@ -11,6 +11,7 @@
 
 mod address;
 mod code;
+pub mod generative;
 mod input;
 mod input_commit;
 mod input_edit;
@@ -31,6 +32,7 @@ use lueying_dict::Dictionary;
 pub use lueying_dict::Fuzzy;
 use lueying_dict::gram::Gram;
 
+pub use generative::GenerativePipeline;
 pub use query::Candidate;
 pub use types::{Action, CivilTime, Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;

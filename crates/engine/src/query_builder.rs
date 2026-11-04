@@ -155,6 +155,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             }
             b.units.clear();
             b.spans.clear();
+            b.visits = 0;
             b.run(i, i);
         }
         safe_extend = b.safe_extend;
@@ -182,6 +183,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         if raw.as_bytes()[j - 1] == b'\'' {
             cands.extend(best[j - 1].iter().cloned());
         }
+        let is_abbrev = segment::is_abbrev_sequence(raw);
         for node in &by_end[j] {
             for st in &best[node.start] {
                 // 没有语法模型时不必为每条路径拼前文;生产默认有模型,这里只是
@@ -193,8 +195,15 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                 };
                 let mut path = st.path.clone();
                 path.push((node.word.clone(), node.spans.clone()));
+                // 废除仅命中长词才出简拼整句的限制:对声母缩写序列适当补偿单字切分罚分,
+                // 确保任意连续声母在网格中能稳定向候选池输出连通的整句候选。
+                let abbrev_adj = if is_abbrev && !st.path.is_empty() {
+                    1.4
+                } else {
+                    0.0
+                };
                 cands.push(State {
-                    score: st.score + node.score + gram.bonus(&tail, &node.word, j == raw.len()),
+                    score: st.score + node.score + abbrev_adj + gram.bonus(&tail, &node.word, j == raw.len()),
                     path,
                     // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
                     trusted: st.path.is_empty() && node.trusted,

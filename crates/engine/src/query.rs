@@ -539,12 +539,14 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         raw,
         quick_trigger,
     });
-    // 整句候选只有拆成多个词时才可能是「每个字母都当简拼」拼出来的假整句
-    // (如 `hoa` → 好哦啊);完整拼音的整句和单词命中都按正常输入处理。
+    // 完整拼音整句/单词命中、以及合法连续声母缩写整句都按正常输入处理,
+    // 只有非声母缩写且缺少实体整词的零碎切分(如 `hoa` → 好哦啊)才触发手误纠正。
     let solid = built.cands.iter().any(|c| c.full && !c.sentence);
     let full_pinyin = segment::complete_full(raw);
+    let abbrev_has_full = segment::is_abbrev_sequence(raw) && built.cands.iter().any(|c| c.full);
     if solid
         || (full_pinyin && built.cands.iter().any(|c| c.full))
+        || abbrev_has_full
         || built.safe_extend
         || built.typing_prefix
         || quick_trigger
@@ -558,11 +560,11 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     // 不同纠正串之间可以直接比较。
     let mut best: Option<Built> = None;
     let mut best_score = f64::NEG_INFINITY;
-    for correction in typo::variants(raw) {
+    for correction in typo::corrections(raw) {
         if Instant::now() >= deadline {
             break;
         }
-        if !segment::complete(&correction) {
+        if !segment::complete(&correction.text) {
             continue;
         }
         let mut fixed = builder::build_exact(BuildArgs {
@@ -575,7 +577,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             host,
             previous2,
             previous,
-            raw: &correction,
+            raw: &correction.text,
             quick_trigger,
         });
         let mut kept = Vec::new();
@@ -583,14 +585,15 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             if !cand.full {
                 continue;
             }
-            let key = spans_key(&correction, &cand.spans);
+            let key = spans_key(&correction.text, &cand.spans);
             // 纠正串与原串长度可能不同,音节区间无法可靠映射;整串上屏,
-            // 学习键单独保存纠正后的音节串。
+            // 扣除连续软混淆惩罚,学习键单独保存纠正后的音节串。
+            cand.score -= correction.penalty;
             cand.spans = vec![(0, raw.len())];
             cand.consume = 1;
             cand.trusted = false;
             cand.sentence = false;
-            cand.edits = 0;
+            cand.edits = 1;
             cand.groups = 0;
             cand.correction = true;
             cand.hint = Some(format!("纠自 {}", key.replace('\'', " ")));

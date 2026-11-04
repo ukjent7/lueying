@@ -27,6 +27,7 @@ impl UserDict {
         self.rejects.clear();
         self.pinned.clear();
         self.groups = [GroupStat::default(); GROUP_COUNT];
+        self.memory_slot = [0.0; 16];
         self.rev = self.rev.wrapping_add(1);
     }
 
@@ -115,8 +116,27 @@ impl UserDict {
         if !changed {
             return;
         }
+        self.update_memory_slot(text);
         if self.context.len() > MAX_CONTEXT {
             self.prune_context();
+        }
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 端侧层次化记忆槽 (HuoziIME 2026):读取当前 16 维连续向量。
+    pub fn memory_slot(&self) -> [f32; 16] {
+        self.memory_slot
+    }
+
+    /// 用户选词上屏后根据提交文本对记忆槽做极低算力外积滑动更新 (EMA)。
+    pub fn update_memory_slot(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let delta = user_semantic_direction(text);
+        const ALPHA: f32 = 0.08;
+        for i in 0..16 {
+            self.memory_slot[i] = (1.0 - ALPHA) * self.memory_slot[i] + ALPHA * delta[i];
         }
         self.rev = self.rev.wrapping_add(1);
     }
@@ -756,4 +776,21 @@ impl UserDict {
         }
         self.word_keys = word_keys;
     }
+}
+
+fn user_semantic_direction(text: &str) -> [f32; 16] {
+    let mut vec = [0.0f32; 16];
+    for (i, ch) in text.chars().enumerate() {
+        let h = (ch as u32).wrapping_mul(2654435761).wrapping_add(i as u32);
+        let idx = (h as usize) % 16;
+        let sign = if (h & 0x8000) != 0 { 1.0 } else { -1.0 };
+        vec[idx] += sign;
+    }
+    let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 1e-6 {
+        for v in &mut vec {
+            *v /= norm;
+        }
+    }
+    vec
 }

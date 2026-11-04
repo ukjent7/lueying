@@ -97,6 +97,39 @@ pub fn complete(raw: &str) -> bool {
     reach[0]
 }
 
+/// 判断当前输入是否为声母/简拼缩写序列。
+///
+/// 允许包含隔音符 `'` 与合法的简拼声母字母(含 zh/ch/sh)。
+/// 当用户输入连续声母简拼(如 `wsm`、`hngydm`、`bswszh`)时返回 true,
+/// 指引解码网格与重排流水线按缩写整句通道处理,不落入死板的单字截断或手误纠错。
+pub fn is_abbrev_sequence(raw: &str) -> bool {
+    if raw.is_empty() {
+        return false;
+    }
+    let b = raw.as_bytes();
+    let mut i = 0;
+    let mut count = 0;
+    while i < b.len() {
+        if b[i] == b'\'' {
+            i += 1;
+            continue;
+        }
+        if i + 1 < b.len() && (b[i] == b'z' || b[i] == b'c' || b[i] == b's') && b[i + 1] == b'h' {
+            i += 2;
+            count += 1;
+            continue;
+        }
+        let ch = b[i] as char;
+        if ch.is_ascii_lowercase() && ABBREV_LETTERS.contains(ch) {
+            i += 1;
+            count += 1;
+        } else {
+            return false;
+        }
+    }
+    count >= 2
+}
+
 /// 无候选时的回删粒度:按最长音节贪心走一遍图。
 pub fn first_path(raw: &str) -> Vec<(usize, usize)> {
     let edges = edges(raw);

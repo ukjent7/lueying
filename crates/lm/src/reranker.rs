@@ -175,6 +175,37 @@ impl Reranker {
         promoted
     }
 
+    /// 基于击键-上下文联合打分头 (Keystroke Scorer) 与记忆槽的重排决策:
+    /// Input: [Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]
+    pub fn best_joint_margin(
+        &mut self,
+        context: &str,
+        keystrokes: &str,
+        texts: &[&str],
+        facts: impl Fn(usize) -> CandidateFacts,
+        memory: Option<&crate::memory::MemorySlot>,
+        min_margin: f32,
+    ) -> Option<usize> {
+        let considered = comparable(texts.len(), &facts)?;
+        let candidate_slice: Vec<&str> = considered
+            .as_slice()
+            .iter()
+            .map(|&i| texts[i])
+            .collect();
+        let scores = self.model.score_joint(context, keystrokes, &candidate_slice, memory);
+        if scores.is_empty() {
+            return None;
+        }
+        let mut best = 0;
+        for (index, &score) in scores.iter().enumerate() {
+            if score > scores[best] {
+                best = index;
+            }
+        }
+        let beats_leader = scores[best] - scores[0] >= min_margin;
+        (beats_leader && best != 0).then(|| considered.as_slice()[best])
+    }
+
     /// Mean log-probability per character for each candidate, in the order given.
     ///
     /// Exposed because the model's opinion is only one term in the decision: combining it with the

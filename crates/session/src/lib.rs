@@ -24,6 +24,8 @@ const WINDOW: usize = 12;
 pub struct Snapshot {
     /// 左邻上下文;空串表示没有可用上下文。
     pub context: String,
+    /// 组合按键原始串。
+    pub raw: String,
     /// 发起时的引擎版本号,用来判断推理结果是否已经过期。
     pub revision: u64,
     /// 候选文本。
@@ -94,10 +96,11 @@ pub fn refresh(engine: &Engine, view: &mut SessionView) {
 
 /// 候选及其事实的一次快照;没有组合时返回 `None`。
 pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
-    engine.composition()?;
+    let comp = engine.composition()?;
     let candidates = engine.candidates_detailed();
     Some(Snapshot {
         context: engine.context().to_string(),
+        raw: comp.raw.clone(),
         revision: engine.revision(),
         texts: candidates.iter().map(|c| c.text.clone()).collect(),
         facts: candidates
@@ -126,16 +129,20 @@ pub fn sync_worthwhile(snapshot: &Snapshot) -> bool {
     !snapshot.context.is_empty()
 }
 
-/// 8M 按键重排:返回要提到首位的候选下标。
+/// 8M 按键重排:返回要提到首位的候选下标。优先采用击键-上下文联合选词头。
 pub fn decide_sync(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize> {
     if !sync_worthwhile(snapshot) {
         return None;
     }
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    rerank
+    let mut guard = rerank
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .decide(&snapshot.context, &texts, &snapshot.facts)
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !snapshot.raw.is_empty() {
+        guard.decide_joint(&snapshot.context, &snapshot.raw, &texts, &snapshot.facts, None)
+    } else {
+        guard.decide(&snapshot.context, &texts, &snapshot.facts)
+    }
 }
 
 /// 25M 停顿重排:模型直接给出最终顺序,没有上下文也能用。

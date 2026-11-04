@@ -1,8 +1,7 @@
-//! 错音纠正:整串输入没有任何整句候选时,按一次编辑距离找最像的按键串。
+//! 错音与音素混淆度纠正:基于键盘物理欧氏距离与发音音素两级查找表的软惩罚模型。
 //!
-//! 只处理全小写字母串,顺序是相邻字母调换、相邻键替换、漏键插入、多余键删除;
-//! 多条纠正串都能出整句时,由调用方取打分最高的一条,不先到先得。纠正候选按
-//! 整串上屏,学习键由纠正后的音节串单独保存,不能从原串的字节区间反推。
+//! 替代死板的离散编辑距离与等同规则,为相邻按键调换、物理近邻替换、平翘舌/前后鼻音
+//! 音素混淆及漏键/赘键赋予连续软惩罚(Soft-Penalty),使纠错候选自然融入语言模型打分。
 
 /// 纠正只在这段长度内尝试,过长的串通常不是手误。
 const MAX_TYPO_LEN: usize = 24;
@@ -11,18 +10,25 @@ const MAX_CORRECTIONS: usize = 400;
 
 const KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 
+/// 纠正变体及对应软惩罚分。
+#[derive(Clone, Debug)]
+pub struct Correction {
+    pub text: String,
+    pub penalty: f64,
+}
+
 /// 是否值得尝试纠正:至少两键,且全为小写字母。
 pub(super) fn eligible(raw: &str) -> bool {
     (2..=MAX_TYPO_LEN).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_lowercase())
 }
 
-/// 按「相邻字母调换 → 相邻键替换 → 漏键插入 → 多余键删除」生成纠正串。
-pub(super) fn variants(raw: &str) -> Vec<String> {
+/// 按「相邻字母调换 → 音素/物理键替换 → 漏键插入 → 多余键删除」生成带软惩罚的纠正串。
+pub(super) fn corrections(raw: &str) -> Vec<Correction> {
     let bytes = raw.as_bytes();
     let len = bytes.len();
     let mut out = Vec::new();
 
-    // 调换相邻字母:快速连打时常见,只改一个位置,精度高于补键/删键。
+    // 1. 调换相邻字母:快速连打手误常见,物理相邻字母调换惩罚 0.40
     for i in 0..len.saturating_sub(1) {
         if bytes[i] == bytes[i + 1] {
             continue;
@@ -32,66 +38,142 @@ pub(super) fn variants(raw: &str) -> Vec<String> {
         text.push(bytes[i + 1] as char);
         text.push(bytes[i] as char);
         text.push_str(&raw[i + 2..]);
-        out.push(text);
+        out.push(Correction {
+            text,
+            penalty: 0.40,
+        });
         if out.len() == MAX_CORRECTIONS {
             return out;
         }
     }
 
+    // 2. 音素与物理键位两级混淆替换
     for (i, &byte) in bytes.iter().enumerate() {
-        for replacement in neighbors(byte as char) {
+        let ch = byte as char;
+        for (replacement, penalty) in confused_replacements(ch) {
             let mut text = String::with_capacity(len);
             text.push_str(&raw[..i]);
             text.push(replacement);
             text.push_str(&raw[i + 1..]);
-            out.push(text);
+            out.push(Correction { text, penalty });
             if out.len() == MAX_CORRECTIONS {
                 return out;
             }
         }
     }
 
+    // 3. 漏键插入(含前后鼻音补 g、平翘舌补 h 特殊软惩罚)
     for i in 0..=len {
+        let prev = if i > 0 { Some(bytes[i - 1] as char) } else { None };
         for inserted in 'a'..='z' {
+            let penalty = match (prev, inserted) {
+                // n 后面漏打 g (前后鼻音: an -> ang, in -> ing, en -> eng) 仅罚 0.25
+                (Some('n'), 'g') => 0.25,
+                // z/c/s 后面漏打 h (平翘舌: z -> zh, c -> ch, s -> sh) 仅罚 0.25
+                (Some('z' | 'c' | 's'), 'h') => 0.25,
+                _ => 0.85,
+            };
             let mut text = String::with_capacity(len + 1);
             text.push_str(&raw[..i]);
             text.push(inserted);
             text.push_str(&raw[i..]);
-            out.push(text);
+            out.push(Correction { text, penalty });
             if out.len() == MAX_CORRECTIONS {
                 return out;
             }
         }
     }
 
+    // 4. 多余键删除(含赘 g、赘 h 特殊软惩罚)
     for i in 0..len {
+        let ch = bytes[i] as char;
+        let prev = if i > 0 { Some(bytes[i - 1] as char) } else { None };
+        let penalty = match (prev, ch) {
+            (Some('n'), 'g') => 0.25,
+            (Some('z' | 'c' | 's'), 'h') => 0.25,
+            _ => 0.85,
+        };
         let mut text = String::with_capacity(len - 1);
         text.push_str(&raw[..i]);
         text.push_str(&raw[i + 1..]);
-        out.push(text);
+        out.push(Correction { text, penalty });
         if out.len() == MAX_CORRECTIONS {
             return out;
         }
     }
+
+    // 按软惩罚从小到大排序,优先探索高概率纠错候选
+    out.sort_by(|a, b| a.penalty.total_cmp(&b.penalty));
     out
 }
 
-/// 键盘上与该键相邻的字母,同排左右与上下两排的错位键。
-fn neighbors(c: char) -> Vec<char> {
-    let Some((row, col)) = position(c) else {
-        return Vec::new();
-    };
+/// 兼容老接口的纯文本纠正变体。
+#[allow(dead_code)]
+pub(super) fn variants(raw: &str) -> Vec<String> {
+    corrections(raw).into_iter().map(|c| c.text).collect()
+}
+
+/// 某键的音素混淆与物理近邻替换候选及对应的软惩罚分。
+fn confused_replacements(c: char) -> Vec<(char, f64)> {
     let mut out = Vec::new();
+
+    // 1. 发音音素混淆表 (前后鼻音、平翘舌、易混辅音)
+    let phonetic_pairs: &[(char, f64)] = match c {
+        'n' => &[('l', 0.25)],
+        'l' => &[('n', 0.25), ('r', 0.35)],
+        'f' => &[('h', 0.30)],
+        'h' => &[('f', 0.30)],
+        'r' => &[('l', 0.35)],
+        'z' => &[('c', 0.35), ('s', 0.40)],
+        'c' => &[('z', 0.35), ('s', 0.35)],
+        's' => &[('z', 0.40), ('c', 0.35), ('x', 0.40)],
+        'b' => &[('p', 0.40)],
+        'p' => &[('b', 0.40)],
+        'd' => &[('t', 0.40)],
+        't' => &[('d', 0.40)],
+        'g' => &[('k', 0.40)],
+        'k' => &[('g', 0.40)],
+        'j' => &[('q', 0.45)],
+        'q' => &[('j', 0.45)],
+        _ => &[],
+    };
+
+    for &(replacement, penalty) in phonetic_pairs {
+        out.push((replacement, penalty));
+    }
+
+    // 2. 键盘物理欧氏距离近邻
+    let Some((row, col)) = position(c) else {
+        return out;
+    };
+    let c_pos = (x(row, col), y(row));
+
     for (other_row, keys) in KEY_ROWS.iter().enumerate() {
         if other_row.abs_diff(row) > 1 {
             continue;
         }
         for (other_col, key) in keys.chars().enumerate() {
-            if key != c && (x(other_row, other_col) - x(row, col)).abs() <= 1.0 {
-                out.push(key);
+            if key == c {
+                continue;
+            }
+            let key_pos = (x(other_row, other_col), y(other_row));
+            let dx = c_pos.0 - key_pos.0;
+            let dy = c_pos.1 - key_pos.1;
+            let dist = (dx * dx + dy * dy).sqrt() as f64;
+            if dist <= 1.15 {
+                // 物理相邻按键: 0.60 ~ 0.65
+                let phys_penalty = 0.60 + 0.30 * (dist - 1.0).max(0.0);
+                if let Some(existing) = out.iter_mut().find(|(r, _)| *r == key) {
+                    if phys_penalty < existing.1 {
+                        existing.1 = phys_penalty;
+                    }
+                } else {
+                    out.push((key, phys_penalty));
+                }
             }
         }
     }
+
     out
 }
 
@@ -102,7 +184,12 @@ fn position(c: char) -> Option<(usize, usize)> {
         .find_map(|(row, keys)| keys.chars().position(|key| key == c).map(|col| (row, col)))
 }
 
-/// 三排键盘的相对横向坐标,让上下排的键位错开半格。
+/// 三排键盘横向相对坐标,让上下排键位错开半格。
 fn x(row: usize, col: usize) -> f32 {
     col as f32 + row as f32 * 0.5
+}
+
+/// 纵向坐标。
+fn y(row: usize) -> f32 {
+    row as f32
 }
