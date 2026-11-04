@@ -93,14 +93,6 @@ impl Engine {
                 }
             }
         }
-        // 第三代端到端生成式候选通道 (GeneInput): 在长声母缩写或候选不足时补充直出首选
-        if let Some(generated) = crate::generative::GenerativePipeline::new()
-            .generate(&context, &raw, built.cands.first())
-            .filter(|g| !built.cands.iter().any(|c| c.text == g.text))
-        {
-            let pos = usize::from(!built.cands.is_empty());
-            built.cands.insert(pos.min(built.cands.len()), generated);
-        }
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
         // 邮箱/网址候选排在「可信的整词」之后,但越过未打完的前缀和简拼
         // 硬拼出来的整句;日期/时间等快捷项由快捷模块在模块链里插入。
