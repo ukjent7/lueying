@@ -132,7 +132,7 @@ pub struct Built {
 
 const CHAR_BONUS: f64 = 0.5;
 const USER_W: f64 = 3.0;
-const MAX_CANDS: usize = 40;
+const MAX_CANDS: usize = 128;
 /// 每个 (起点, 终点) 保留的最高分节点数(Viterbi 的束宽)。
 const PER_NODE_CAP: usize = 12;
 /// 索引扫描的访问上限(保护首键延迟)。
@@ -148,7 +148,7 @@ const WORD_PENALTY: f64 = 2.2;
 const ABBREV_PENALTY: f64 = 8.0;
 /// 整句 Viterbi 每档保留几条路径。3 条时模糊扩写会把正确切分挤出束,
 /// 与 librime/清风同为 7 条,长句仍只保留常数级状态。
-const BEAM: usize = 7;
+const BEAM: usize = 64;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
 /// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。

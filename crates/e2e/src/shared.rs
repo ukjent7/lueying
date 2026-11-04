@@ -15,10 +15,10 @@ use std::time::Instant;
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::{Engine, Fuzzy, Key};
-use lueying_rerank::Rerank;
+use lueying_rerank::{Rerank, SETTLE_OVERRIDE_MARGIN};
 
 use crate::bench;
-use crate::rerank::Models;
+use crate::rerank::{Models, Snap};
 
 const CORPUS: &str = include_str!("../../../dicts/eval-shared-v1.tsv");
 const CORPUS_NAME: &str = "shared-v1";
@@ -34,6 +34,8 @@ const GATES: &[(&str, f64, f64)] = &[
 
 /// N-best 诊断的候选池大小:正确答案落在前 N 条整键候选内的比例,即重排的理论上限。
 const POOL_SIZES: [usize; 4] = [9, 32, 64, 128];
+/// 25M 池大小扫描:决策规则与产品的 `decide_settled` 相同,只把 9 条上限换成这些值。
+const POOL_SWEEP: [usize; 3] = [9, 32, 64];
 
 struct Case<'a> {
     category: &'a str,
@@ -202,6 +204,63 @@ fn rank_after(
         .position(|index| bench::matches_normalized(&order[index], expected))
 }
 
+/// 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排。
+fn pinned_or_quick(engine: &Engine) -> bool {
+    engine
+        .candidates_detailed()
+        .iter()
+        .any(|cand| cand.quick || cand.pinned)
+}
+
+/// 25M 停顿重排在池大小 `pool` 下的决策:规则与 `Rerank::decide_settled` 相同,
+/// 只把 9 条上限换成 `pool`。返回提升的下标与决策耗时(ms)。
+fn settle_with_pool(five: &mut Rerank, snap: &Snap, pool: usize) -> (Option<usize>, f64) {
+    let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+    let started = Instant::now();
+    let promote = match snap.facts.first() {
+        None => None,
+        // 精确首位:只允许后置的模糊候选越过,范围是前 `pool` 个文本。
+        Some(leader) if leader.trusted_dictionary_hit && leader.answers_key => {
+            if snap.context.is_empty() {
+                None
+            } else {
+                let head = &texts[..pool.min(texts.len())];
+                let scores = five.scores(&snap.context, head);
+                let mut best = 0;
+                for (index, &score) in scores.iter().enumerate() {
+                    if snap.facts[index].answers_key && snap.fuzzy[index] && score > scores[best] {
+                        best = index;
+                    }
+                }
+                (best != 0 && scores[best] - scores[0] >= SETTLE_OVERRIDE_MARGIN).then_some(best)
+            }
+        }
+        // 首位不回答整键时没有可比的对象,与 `comparable` 一致。
+        Some(leader) if !leader.answers_key => None,
+        // 只比较整键候选,取前 `pool` 条,至少两条才决策。
+        Some(_) => {
+            let considered: Vec<usize> = (0..texts.len())
+                .filter(|&index| snap.facts[index].answers_key)
+                .take(pool)
+                .collect();
+            if considered.len() < 2 {
+                None
+            } else {
+                let subset: Vec<&str> = considered.iter().map(|&index| texts[index]).collect();
+                let scores = five.scores(&snap.context, &subset);
+                let mut best = 0;
+                for (index, &score) in scores.iter().enumerate() {
+                    if score > scores[best] {
+                        best = index;
+                    }
+                }
+                (best != 0).then(|| considered[best])
+            }
+        }
+    };
+    (promote, started.elapsed().as_secs_f64() * 1000.0)
+}
+
 /// 一条候选链路的还原:8M 逐键同步、25M 停顿,与产品里的应用顺序一致。
 /// 同时算出「不经过 8M、25M 直接跑在引擎顺序上」的名次,用来判断同步重排
 /// 是否值得:它换来的即时顺序如果让停顿结果也变差,就该让位。
@@ -214,11 +273,7 @@ fn apply_rerank(
 ) -> RerankSample {
     // 快捷与置顶候选的位置由插入顺序决定,产品链路直接跳过重排;
     // 没有模型调用,也就没有耗时样本。
-    if engine
-        .candidates_detailed()
-        .iter()
-        .any(|cand| cand.quick || cand.pinned)
-    {
+    if pinned_or_quick(engine) {
         let rank = rank_of(engine, expected);
         return ((rank, rank, rank), None);
     }
@@ -275,6 +330,8 @@ struct Outcome {
     /// 正确答案在整键候选池中的名次,以及池子大小。
     full_rank: Option<usize>,
     pool_len: usize,
+    /// 25M 池大小扫描:每个池大小下的(名次, 决策耗时),与 `POOL_SWEEP` 对齐;无模型时为空。
+    sweep: Vec<(Option<usize>, f64)>,
 }
 
 /// 一片用例的评测;每片自带引擎与模型句柄,片间无共享可变状态,
@@ -314,6 +371,26 @@ fn run_chunk(
             .iter()
             .position(|text| bench::matches_normalized(text, &expected));
         let pool_len = pool.len();
+        // 池大小扫描取 apply_rerank 之前的引擎原序,与 `direct` 对照同一输入。
+        let sweep: Vec<(Option<usize>, f64)> = match five.as_mut() {
+            None => Vec::new(),
+            Some(_) if pinned_or_quick(&engine) => vec![(rank, 0.0); POOL_SWEEP.len()],
+            Some(five) => {
+                let snap = crate::rerank::snapshot(&engine);
+                let kept: Vec<bool> = engine
+                    .candidates_detailed()
+                    .iter()
+                    .map(|cand| !cand.no_learn && !cand.quick)
+                    .collect();
+                POOL_SWEEP
+                    .iter()
+                    .map(|&size| {
+                        let (promote, ms) = settle_with_pool(five, &snap, size);
+                        (rank_after(&snap.texts, &kept, promote, &expected), ms)
+                    })
+                    .collect()
+            }
+        };
         let rerank = four
             .as_mut()
             .zip(five.as_mut())
@@ -325,6 +402,7 @@ fn run_chunk(
             rerank,
             full_rank,
             pool_len,
+            sweep,
         });
     }
     out
@@ -359,6 +437,7 @@ pub fn run(
     // N-best 诊断:每个 N 下正确答案落入整键候选池的条数,以及池子大小分布。
     let mut pool_hits = [0usize; POOL_SIZES.len()];
     let mut pool_lens = Vec::with_capacity(cases.len());
+    let mut sweep_metrics: Vec<Metric> = POOL_SWEEP.iter().map(|_| Metric::default()).collect();
 
     // 用例互不依赖,按核数分片并行;每条约 0.8s,单线程 1444 条要近 20 分钟,
     // 是 CI 的最大单项。模型权重在 Arc 后共享,每线程只多一份轻量句柄。
@@ -387,10 +466,14 @@ pub fn run(
             rerank,
             full_rank,
             pool_len,
+            sweep,
         } = outcome;
         pool_lens.push(pool_len);
         for (size, hits) in POOL_SIZES.iter().zip(pool_hits.iter_mut()) {
             *hits += usize::from(full_rank.is_some_and(|index| index < *size));
+        }
+        for (metric, (sweep_rank, sweep_ms)) in sweep_metrics.iter_mut().zip(sweep) {
+            metric.add(sweep_rank, sweep_ms);
         }
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
@@ -525,6 +608,32 @@ pub fn run(
         pct(&mut lens, 95.0),
         pct(&mut lens, 100.0),
     );
+
+    if models.is_some() {
+        text.push_str(
+            "\n### 25M 池大小扫描(引擎原序,仅 25M)\n\n\
+             决策规则与产品 `decide_settled` 相同,只把候选上限从 9 换成池大小。\n\n\
+             | 池大小 | 条数 | top-1 | top-5 | 决策 p95 ms |\n\
+             |---|---:|---:|---:|---:|\n",
+        );
+        let _ = writeln!(
+            text,
+            "| 引擎原序 | {} | {:.1}% | {:.1}% | - |",
+            overall.n,
+            overall.rate(overall.top1),
+            overall.rate(overall.top5),
+        );
+        for (size, metric) in POOL_SWEEP.iter().zip(&sweep_metrics) {
+            let _ = writeln!(
+                text,
+                "| {size} | {} | {:.1}% | {:.1}% | {:.2} |",
+                metric.n,
+                metric.rate(metric.top1),
+                metric.rate(metric.top5),
+                pct(&mut metric.times.clone(), 95.0),
+            );
+        }
+    }
 
     text.push_str("\n### 判定\n\n| 检查 | 结果 |\n|---|---|\n");
     for (category, min_top1, min_top5) in GATES {
