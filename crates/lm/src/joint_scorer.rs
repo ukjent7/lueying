@@ -1,10 +1,10 @@
 //! 击键-上下文联合条件选词头 (Keystroke Scorer) 与 声母缩写轻量 MoE 分流架构。
 //!
 //! 协议规范:
-//!   Input: [Context] [SEP]  [Keystrokes]  [SEP] [Candidate] [END]  ⟶  Score (Scalar)
+//!   Input: `[Context] [SEP]  [Keystrokes]  [SEP] [Candidate] [END]` ⟶  Score (Scalar)
 //!          ≤ 64 汉字        a–z 原始击键串         整句候选
 //!
-//! 在候选末尾 [END] 位置挂轻量线性分类头输出置信度标量,跳过全词表 Softmax 或高维向量投影;
+//! 在候选末尾 `[END]` 位置挂轻量线性分类头输出置信度标量,跳过全词表 Softmax 或高维向量投影;
 //! 模型同时感知敲击拼音与候选汉字,辅以全拼/简拼 MoE 门控路由动态分流。
 
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ use crate::model::SentenceModel;
 pub const SEP_TOKEN: u32 = 3;
 pub const END_TOKEN: u32 = 4;
 
-/// [END] 位置的标量分类头。
+/// `[END]` 位置的标量分类头。
 #[derive(Clone, Debug)]
 pub struct JointScorerHead {
     pub weight: Vec<f32>, // shape: [width]
@@ -215,7 +215,7 @@ impl JointKeystrokeScorer {
     }
 }
 
-/// 快速单通道前向取 [END] 终态向量 (跳过词表 Softmax/Logit 投影)。
+/// 快速单通道前向取 `[END]` 终态向量 (跳过词表 Softmax/Logit 投影)。
 fn forward_joint_end(model: &SentenceModel, tokens: &[u32], mem_bias: &[f32]) -> Vec<f32> {
     let width = model.config.n_embd;
     let n_layer = model.config.n_layer;
