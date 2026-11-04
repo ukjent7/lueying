@@ -167,7 +167,11 @@ impl SsmEngine {
             for &tok in cand {
                 final_h = self.step(tok, &mut cand_state);
             }
-            let s: f32 = final_h.iter().zip(&self.head_weight).map(|(&h, &w)| h * w).sum();
+            let s: f32 = final_h
+                .iter()
+                .zip(&self.head_weight)
+                .map(|(&h, &w)| h * w)
+                .sum();
             // 每字符平均置信度
             let avg = if !cand.is_empty() {
                 s / cand.len() as f32
