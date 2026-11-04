@@ -242,13 +242,13 @@ pub(crate) fn run(args: CollocationArgs) -> Result<(), String> {
         println!("应用错误驱动补表: {:?}", eval_path);
         if let Ok(file) = File::open(eval_path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let trimmed = line.trim();
                 if trimmed.is_empty() || trimmed.starts_with('#') {
                     continue;
                 }
                 // 评估集通常为 TSV, 取最后一列或 target 字段
-                let expected = trimmed.split('\t').last().unwrap_or("").trim();
+                let expected = trimmed.split('\t').next_back().unwrap_or("").trim();
                 if expected.chars().count() >= 2 {
                     let words = segment_clause(expected, &vocab, max_word_len);
                     for w in words.windows(2) {
