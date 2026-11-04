@@ -32,6 +32,9 @@ const GATES: &[(&str, f64, f64)] = &[
     ("context", 60.0, 80.0),
 ];
 
+/// N-best 诊断的候选池大小:正确答案落在前 N 条整键候选内的比例,即重排的理论上限。
+const POOL_SIZES: [usize; 4] = [9, 32, 64, 128];
+
 struct Case<'a> {
     category: &'a str,
     input: &'a str,
@@ -161,6 +164,16 @@ fn rank_of(engine: &Engine, expected: &str) -> Option<usize> {
         .position(|text| bench::matches_normalized(text, expected))
 }
 
+/// 重排池:与 `eval_texts` 同口径,只留整键候选(`full`),即重排真正能比较的那部分。
+fn pool_texts(engine: &Engine) -> Vec<&str> {
+    engine
+        .candidates_detailed()
+        .iter()
+        .filter(|cand| !cand.no_learn && !cand.quick && cand.full)
+        .map(|cand| cand.text.as_str())
+        .collect()
+}
+
 pub(crate) fn pct(values: &mut [f64], p: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -259,6 +272,9 @@ struct Outcome {
     ms: f64,
     top1: String,
     rerank: Option<RerankSample>,
+    /// 正确答案在整键候选池中的名次,以及池子大小。
+    full_rank: Option<usize>,
+    pool_len: usize,
 }
 
 /// 一片用例的评测;每片自带引擎与模型句柄,片间无共享可变状态,
@@ -293,6 +309,11 @@ fn run_chunk(
         let top1 = candidates
             .first()
             .map_or(String::new(), |text| (*text).to_string());
+        let pool = pool_texts(&engine);
+        let full_rank = pool
+            .iter()
+            .position(|text| bench::matches_normalized(text, &expected));
+        let pool_len = pool.len();
         let rerank = four
             .as_mut()
             .zip(five.as_mut())
@@ -302,6 +323,8 @@ fn run_chunk(
             ms,
             top1,
             rerank,
+            full_rank,
+            pool_len,
         });
     }
     out
@@ -333,6 +356,9 @@ pub fn run(
     let mut four_ms = Vec::new();
     let mut five_ms = Vec::new();
     let mut direct_ms = Vec::new();
+    // N-best 诊断:每个 N 下正确答案落入整键候选池的条数,以及池子大小分布。
+    let mut pool_hits = [0usize; POOL_SIZES.len()];
+    let mut pool_lens = Vec::with_capacity(cases.len());
 
     // 用例互不依赖,按核数分片并行;每条约 0.8s,单线程 1444 条要近 20 分钟,
     // 是 CI 的最大单项。模型权重在 Arc 后共享,每线程只多一份轻量句柄。
@@ -359,7 +385,13 @@ pub fn run(
             ms,
             top1,
             rerank,
+            full_rank,
+            pool_len,
         } = outcome;
+        pool_lens.push(pool_len);
+        for (size, hits) in POOL_SIZES.iter().zip(pool_hits.iter_mut()) {
+            *hits += usize::from(full_rank.is_some_and(|index| index < *size));
+        }
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
         if case.category == "daily" || case.category == "frost" {
@@ -467,6 +499,32 @@ pub fn run(
             "\n8M 决策 p95 {four_p95:.2} ms,25M 决策 p95 {five_p95:.2} ms。"
         );
     }
+
+    text.push_str("\n### N-best 上限(整键候选池)\n\n");
+    text.push_str(
+        "重排只能在整键候选里挑,正确答案不在池里就救不回来。下表是正确答案落在前 N 条整键候选内的比例。\n\n",
+    );
+    text.push_str("| N |");
+    for size in POOL_SIZES {
+        let _ = write!(text, " {size} |");
+    }
+    text.push_str("\n|---|");
+    for _ in POOL_SIZES {
+        text.push_str("---:|");
+    }
+    text.push_str("\n| 命中率 |");
+    let total = cases.len().max(1) as f64;
+    for hits in pool_hits {
+        let _ = write!(text, " {:.1}% |", hits as f64 * 100.0 / total);
+    }
+    let mut lens: Vec<f64> = pool_lens.iter().map(|&len| len as f64).collect();
+    let _ = writeln!(
+        text,
+        "\n\n整键候选池大小:中位 {:.0},p95 {:.0},最大 {:.0}。",
+        pct(&mut lens, 50.0),
+        pct(&mut lens, 95.0),
+        pct(&mut lens, 100.0),
+    );
 
     text.push_str("\n### 判定\n\n| 检查 | 结果 |\n|---|---|\n");
     for (category, min_top1, min_top5) in GATES {
