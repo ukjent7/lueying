@@ -121,7 +121,7 @@ fn main() {
         .map(PathBuf::from);
     let gram_path = args
         .iter()
-        .position(|a| a == "--gram")
+        .position(|a| a == "--gram" || a == "--collocation")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from);
     let rerank_dir = args

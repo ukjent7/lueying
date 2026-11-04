@@ -462,17 +462,19 @@ pub(super) fn real_main() {
             (Dictionary::builtin(), "builtin")
         }
     };
-    // 语言模型是可选数据:缺失或格式不符就退化为纯词频,不影响输入。
-    let gram = dict_path("main.gram").and_then(|p| match Gram::open(&p) {
-        Ok(g) => {
-            println!("语法模型 ← {}", p.display());
-            Some(Arc::new(g))
-        }
-        Err(e) => {
-            println!("语法模型 {} 不可用: {e}", p.display());
-            None
-        }
-    });
+    // 语言模型/搭配表是可选数据:缺失或格式不符就退化为纯词频,不影响输入。
+    let gram = dict_path("collocation.bin")
+        .or_else(|| dict_path("main.gram"))
+        .and_then(|p| match Gram::open(&p) {
+            Ok(g) => {
+                println!("搭配表/语法模型 ← {}", p.display());
+                Some(Arc::new(g))
+            }
+            Err(e) => {
+                println!("搭配表/语法模型 {} 不可用: {e}", p.display());
+                None
+            }
+        });
     // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
     let _ = dict.total_weight();
     // 两档神经重排都是可选数据:缺失/损坏就只保留词频候选。

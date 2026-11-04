@@ -1,4 +1,4 @@
-﻿; 掠影拼音输入法安装包。
+; 掠影拼音输入法安装包。
 ;
 ; 安装包负责机器级动作:复制文件、注册 x64 TSF、写卸载项。
 ; 当前用户状态(输入法列表、自启动、旧版快捷方式)交给 lueying-user.exe:
@@ -81,6 +81,7 @@ Source: "{#PayloadDir}\main.tsv"; DestDir: "{app}"; Flags: ignoreversion skipifs
 ; 安装冒烟只验证安装/注册/卸载;发版时 xtask 会先确认词典与模型文件齐全,
 ; --allow-missing-data 只用于本地调试。
 Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\collocation.bin"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

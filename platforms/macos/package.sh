@@ -27,6 +27,7 @@ copy_data() {
 
 copy_data "$ROOT/data/main.pyd" main.pyd
 copy_data "$ROOT/data/main.tsv" main.tsv
+copy_data "$ROOT/data/collocation.bin" collocation.bin
 copy_data "$ROOT/data/main.gram" main.gram
 for name in \
   rerank-8m.ort rerank-8m.model.json rerank-8m.vocab.json \

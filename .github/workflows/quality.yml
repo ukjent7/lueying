@@ -66,16 +66,16 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: data
-          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
+          key: dict-${{ hashFiles('tools/fetch_frost.sh', 'tools/fetch_collocation.sh', 'tools/fetch_gram.sh', 'tools/fetch_ppocr.sh', 'tools/fetch_rerank.sh', 'xtask/src/**', 'xtask/data/**', 'crates/dict/src/**', 'Cargo.lock') }}
       - name: 下载白霜词库
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_frost.sh data/frost
       - name: 下载神经重排模型
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载精简语法模型
+      - name: 下载原生搭配表
         if: steps.dict-cache.outputs.cache-hit != 'true'
-        run: bash tools/fetch_gram.sh data
+        run: bash tools/fetch_collocation.sh data
       - name: 下载 PP-OCRv6 模型
         if: steps.dict-cache.outputs.cache-hit != 'true'
         run: bash tools/fetch_ppocr.sh data/ppocr

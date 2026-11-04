@@ -38,7 +38,11 @@ pub fn shared_gram() -> Option<Arc<Gram>> {
     GRAM.get_or_init(|| {
         data_dirs()
             .into_iter()
-            .find_map(|dir| Gram::open(&dir.join("main.gram")).ok())
+            .find_map(|dir| {
+                Gram::open(&dir.join("collocation.bin"))
+                    .or_else(|_| Gram::open(&dir.join("main.gram")))
+                    .ok()
+            })
             .map(Arc::new)
     })
     .clone()

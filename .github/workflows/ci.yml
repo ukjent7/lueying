@@ -351,10 +351,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载精简语法模型(发布包)
+      - name: 下载原生搭配表(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: bash tools/fetch_gram.sh data
+        run: bash tools/fetch_collocation.sh data
       - name: 下载 PP-OCRv6 模型(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -411,6 +411,7 @@ jobs:
           test -f dist/lueying/licenses/CC-BY-4.0.txt
           test -f dist/lueying/lueying-user.exe
           test -f dist/lueying/lueying_tsf.dll
+          test -f dist/lueying/collocation.bin
           test -f dist/lueying/main.gram
           ls dist/lueying-*-setup.exe >/dev/null
           if [ -n "${VERSION:-}" ]; then

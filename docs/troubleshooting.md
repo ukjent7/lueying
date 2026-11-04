@@ -19,7 +19,7 @@
 通常是核心离线资源缺失导致的引擎降级：
 - 确认安装目录（默认 `%ProgramFiles%\lueying\`）中存在以下核心资产：
   - `main.pyd`：主词典二进制内存映射文件。
-  - `main.gram`：语法搭配模型。
+  - `collocation.bin`（或兼容别名 `main.gram`）：原生搭配表/语法模型。
   - `rerank-8m.ort`、`rerank-8m.model.json`、`rerank-8m.vocab.json`：每键实时同步重排模型。
   - `rerank-25m.ort`、`rerank-25m.model.json`、`rerank-25m.vocab.json`：停顿异步重排模型。
 - 若上述文件损坏或缺失，引擎会自动退回内置微型词典；重新安装可修复核心资源。

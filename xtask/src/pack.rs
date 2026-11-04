@@ -45,13 +45,12 @@ const PACK_BINS: &[&str] = &[
     "lueying-user.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包带精确词典、8M/25M 按键重排模型与精简语法模型。`main.gram` 缺失时
-/// 引擎退回纯词频;发布包由 `tools/fetch_gram.sh` 钉版本,文件名保持 `main.gram`
-/// 让 Server 无需配置就能发现它。PP-OCR 模型体积大,仍在设置窗「官方扩展」里
-/// 按需下载,详见 `Catalog/official-extensions.json`。
+/// 默认包带精确词典、8M/25M 按键重排模型与原生紧凑搭配表。`collocation.bin` 缺失时
+/// 引擎退回纯词频;发布包由 `tools/fetch_collocation.sh` 钉版本。
+/// PP-OCR 模型体积大,仍在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
-    "main.gram",
+    "collocation.bin",
     "rerank-8m.ort",
     "rerank-8m.model.json",
     "rerank-8m.vocab.json",
@@ -96,6 +95,8 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
         let flat = args.data.join(name);
         let source = if flat.exists() {
             flat
+        } else if *name == "collocation.bin" && args.data.join("main.gram").exists() {
+            args.data.join("main.gram")
         } else {
             args.data.join("rerank").join(name)
         };
@@ -106,6 +107,10 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
         } else {
             return Err(format!("缺少数据文件 {}", source.display()));
         }
+    }
+    // main.gram 别名兼容
+    if args.data.join("main.gram").exists() && !args.out.join("main.gram").exists() {
+        let _ = copy_file(&args.data.join("main.gram"), &args.out, "main.gram", &mut files);
     }
     // TSV 是二进制不可用时的兼容回退,可选。
     if args.data.join("main.tsv").exists() {
