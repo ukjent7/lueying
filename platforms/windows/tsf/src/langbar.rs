@@ -104,7 +104,7 @@ impl ModeButton_Impl {
 
     fn about() {
         let text = HSTRING::from(format!(
-            "掠影 {}\nGPL-3.0-or-later\n\n词典:白霜(rime-frost)",
+            "掠影 {}\nGPL-3.0-or-later\n\n词典:掠影词典",
             Self::installed_version()
         ));
         let caption = HSTRING::from("关于掠影");

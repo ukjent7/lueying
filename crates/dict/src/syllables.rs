@@ -1,7 +1,7 @@
 //! 合法拼音音节全集与简拼、模糊音工具。
 //!
 //! 约定:全部 ASCII,词库与学习键里的 ü 一律写作 `v`(`lv`/`nv`/`lve`/`nve`),
-//! 与白霜词库的注音习惯一致;输入另接受 `lue`/`nue` 作为 `lve`/`nve` 的别名。
+//! 输入另接受 `lue`/`nue` 作为 `lve`/`nve` 的别名。
 
 use std::collections::HashSet;
 use std::sync::OnceLock;

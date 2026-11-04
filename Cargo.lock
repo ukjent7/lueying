@@ -7883,7 +7883,6 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
- "lueying-dict",
  "lueying-extmeta",
  "serde_json",
 ]

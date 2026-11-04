@@ -343,25 +343,18 @@ jobs:
       # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
       # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 setup.exe/sha256 并创建 Release;
       # 代码签名是脚手架:配了 secret 才签,没配就维持未签名发布。
-      - name: 下载白霜词库(发布包)
+      - name: 下载词典与搭配表(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
-        run: bash tools/fetch_frost.sh data/frost
+        run: bash tools/fetch_dict.sh data
       - name: 下载神经重排模型(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: bash tools/fetch_rerank.sh data/rerank
-      - name: 下载原生搭配表(发布包)
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: bash tools/fetch_collocation.sh data
       - name: 下载 PP-OCRv6 模型(发布包)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: bash tools/fetch_ppocr.sh data/ppocr
-      - name: 生成发布词典
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        run: cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
       - name: 读取发布版本
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -412,7 +405,6 @@ jobs:
           test -f dist/lueying/lueying-user.exe
           test -f dist/lueying/lueying_tsf.dll
           test -f dist/lueying/collocation.bin
-          test -f dist/lueying/main.gram
           ls dist/lueying-*-setup.exe >/dev/null
           if [ -n "${VERSION:-}" ]; then
             test "$(cat dist/lueying/version.txt)" = "$VERSION"

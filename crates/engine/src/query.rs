@@ -196,7 +196,7 @@ struct Hit {
 }
 
 impl Hit {
-    /// 词典词条。白霜有大量权重 0 的长尾词,按频次 1 计,天然沉底。
+    /// 词典词条。权重为 0 的长尾词按频次 1 计,天然沉底。
     #[allow(clippy::too_many_arguments)]
     fn dict(
         word: String,

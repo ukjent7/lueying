@@ -3,12 +3,11 @@ name = "xtask"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "词典数据管线等仓库任务"
+description = "打包与发布等仓库任务"
 
 [dependencies]
 # 目录补丁用同一条 SHA-256 实现,避免再引一个哈希 crate。
 lueying-extmeta.workspace = true
-lueying-dict.workspace = true
 serde_json = "1"
 # 发布清单签名;与 server 的验签共用同一条 ed25519 实现。
 ed25519-dalek = "3"

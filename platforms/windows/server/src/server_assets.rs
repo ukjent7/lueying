@@ -19,7 +19,7 @@ pub(super) fn single_instance() -> Option<HANDLE> {
     Some(handle)
 }
 
-/// exe 同目录的数据文件(main.pyd / main.tsv / main.gram / rerank-*.*)。
+/// exe 同目录的数据文件(main.pyd / collocation.bin / rerank-*.*)。
 pub(super) fn dict_path(name: &str) -> Option<std::path::PathBuf> {
     let mut path = std::env::current_exe().ok()?;
     path.set_file_name(name);

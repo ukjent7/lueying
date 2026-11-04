@@ -42,17 +42,13 @@
 
 ```sh
 # 1. 抓取外部语料与模型
-bash tools/fetch_frost.sh data/frost
-bash tools/fetch_gram.sh data
+bash tools/fetch_dict.sh data
 bash tools/fetch_rerank.sh data/rerank
 
-# 2. 构建物化二进制词典
-cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
-
-# 3. 运行全量端到端基准
+# 2. 运行全量端到端基准
 cargo run -p lueying-e2e --release --locked -- \
-  --dict data/main.tsv \
-  --gram data/main.gram \
+  --dict data/main.pyd \
+  --gram data/collocation.bin \
   --rerank-dir data/rerank \
   --only-shared
 ```

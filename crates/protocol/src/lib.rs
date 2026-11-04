@@ -445,7 +445,7 @@ pub struct EngineStatus {
     pub dict_words: usize,
     /// 主词典来源:`pyd`、`tsv` 或 `builtin`。
     pub dict_source: String,
-    /// 语法模型(`main.gram`)是否已加载。
+    /// 搭配表(`collocation.bin`)是否已加载。
     pub gram: bool,
     /// 8M 每键同步重排是否已加载。线协议沿用旧字段名，避免新旧进程混跑时读不到。
     #[serde(rename = "rerank4m")]

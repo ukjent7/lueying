@@ -46,7 +46,7 @@ const PACK_BINS: &[&str] = &[
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
 /// 默认包带精确词典、8M/25M 按键重排模型与原生紧凑搭配表。`collocation.bin` 缺失时
-/// 引擎退回纯词频;发布包由 `tools/fetch_collocation.sh` 钉版本。
+/// 引擎退回纯词频;词典与搭配表由 `tools/fetch_dict.sh` 钉版本。
 /// PP-OCR 模型体积大,仍在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
@@ -95,8 +95,6 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
         let flat = args.data.join(name);
         let source = if flat.exists() {
             flat
-        } else if *name == "collocation.bin" && args.data.join("main.gram").exists() {
-            args.data.join("main.gram")
         } else {
             args.data.join("rerank").join(name)
         };
@@ -107,24 +105,6 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
         } else {
             return Err(format!("缺少数据文件 {}", source.display()));
         }
-    }
-    // main.gram 别名兼容
-    if args.data.join("main.gram").exists() && !args.out.join("main.gram").exists() {
-        let _ = copy_file(
-            &args.data.join("main.gram"),
-            &args.out,
-            "main.gram",
-            &mut files,
-        );
-    }
-    // TSV 是二进制不可用时的兼容回退,可选。
-    if args.data.join("main.tsv").exists() {
-        copy_file(
-            &args.data.join("main.tsv"),
-            &args.out,
-            "main.tsv",
-            &mut files,
-        )?;
     }
 
     // 许可与第三方署名随二进制分发。主程序 GPL 放根目录;LM 运行时与两档
@@ -160,17 +140,11 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     let notice = "\
 # 随包第三方许可与署名
 
-- 白霜拼音词库:GPL-3.0,https://github.com/gaboolic/rime-frost,\
-commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
-- 青简常用词表与词频:GPL-3.0-or-later,https://github.com/qingjian-team/qingjian,\
-版本 0.1.1;随包词典用这份常用词表补入白霜未收录的词,并给多字常用词提频。\
-词频语料来源包括中文维基百科(CC BY-SA 4.0)、LCCC(MIT)与 THUOCL(MIT),\
-详见青简词库头部说明。
-- 掠影原生紧凑搭配表 (LYCL v2):GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict,\
-版本 v0.2.0-rc0 (collocation-v2.bin);基于点互信息 (PMI) 与 Ultra-FineWeb、LCCC 语料统计,\
-由掠影输入法工具链原生切分生成 (4.77MiB, 999,863 条词对);\
-sha256 f7a42f8a5de4d3e932c569bc292cee30994af6ab04cd2f087f93a2498ba171d6。\
-许可全文见随包的 LICENSE。
+- 掠影词典:GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict;\
+词频来自 Ultra-FineWeb(Apache-2.0)、FineWeb-2(ODC-By)、LCCC(MIT)与 Common Crawl,\
+读音来自 pinyin-data、phrase-pinyin-data(MIT)、CC-CEDICT(CC BY-SA 4.0)与 g2pW 模型(Apache-2.0)。
+- 掠影搭配表 (LYCL):GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict;\
+与词典同词表、同语料来源构建。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
 commit 1c90f5ee1b76ecf18d5171ef78a4dc076a0bb0d8 (release rerank-v2);全文见 Apache-2.0.txt。
 - pinyin-ime-keystroke-reranker-8M:Apache-2.0,\

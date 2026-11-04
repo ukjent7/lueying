@@ -463,9 +463,7 @@ pub(super) fn real_main() {
         }
     };
     // 语言模型/搭配表是可选数据:缺失或格式不符就退化为纯词频,不影响输入。
-    let gram = dict_path("collocation.bin")
-        .or_else(|| dict_path("main.gram"))
-        .and_then(|p| match Gram::open(&p) {
+    let gram = dict_path("collocation.bin").and_then(|p| match Gram::open(&p) {
             Ok(g) => {
                 println!("搭配表/语法模型 ← {}", p.display());
                 Some(Arc::new(g))

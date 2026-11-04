@@ -30,14 +30,15 @@ pub struct Entry<'a> {
     pub freq: u64,
 }
 
-/// 二进制格式魔数:`PYD1` + 版本 1。
-const MAGIC: &[u8; 8] = b"PYD1\x00\x00\x00\x01";
-/// 记录字节数:word 偏移/长度、key 偏移/长度(4×u32)+ 词频(u64)。
-const REC: usize = 24;
-/// 签名表条目:签名字节池偏移/长度(2×u32)+ 记录下标(u32)。
-const SIG: usize = 12;
-/// 头部长度:魔数 + 条数、字符串池长、签名条数(各 4 字节)。
-const HEAD: usize = MAGIC.len() + 12;
+/// 二进制格式魔数:`PYD2` + 版本 1。
+const MAGIC: &[u8; 8] = b"PYD2\x00\x00\x00\x01";
+/// 记录字节数:word 偏移、key 偏移、词频(3×u32)+ word 长度、key 长度(2×u8)。
+/// 记录按键排序,同键共用字符串池里的一份键。
+const REC: usize = 14;
+/// 签名表条目:记录下标(u32)。签名由键现算,不占字符串池。
+const SIG: usize = 4;
+/// 头部长度:魔数 + 条数、字符串池长(各 4 字节)。
+const HEAD: usize = MAGIC.len() + 8;
 
 /// 词典字节的来源:映射文件或内存。
 enum Backing {
@@ -69,7 +70,7 @@ pub struct Dictionary {
     total: OnceLock<u64>,
 }
 
-/// 词的每个字符都要是 CJK 汉字(白霜数据里偶有符号词条,直接丢弃)。
+/// 词的每个字符都要是 CJK 汉字(符号词条直接丢弃)。
 fn is_hanzi(word: &str) -> bool {
     !word.is_empty()
         && word.chars().all(|c| {
@@ -79,51 +80,55 @@ fn is_hanzi(word: &str) -> bool {
         })
 }
 
-/// 键的音节签名:每音节取首字母(zh/ch/sh 的首字母恰好就是折叠后的 z/c/s)。
-pub fn signature(key: &str) -> String {
-    key.split('\'')
-        .filter_map(|s| s.as_bytes().first().map(|&b| b as char))
-        .collect()
+/// 键的音节签名字节:每音节取首字母(zh/ch/sh 的首字母恰好就是折叠后的 z/c/s)。
+fn sig_bytes(key: &str) -> impl Iterator<Item = u8> + '_ {
+    key.split('\'').filter_map(|s| s.as_bytes().first().copied())
 }
 
-fn push_str(data: &mut Vec<u8>, s: &str) -> (u32, u32) {
+/// 键的音节签名。
+pub fn signature(key: &str) -> String {
+    sig_bytes(key).map(char::from).collect()
+}
+
+fn push_str(data: &mut Vec<u8>, s: &str) -> u32 {
     let off = data.len() as u32;
     data.extend_from_slice(s.as_bytes());
-    (off, s.len() as u32)
+    off
 }
 
 /// 把已排序的 `(词, 键, 词频)` 物化成二进制布局。
 fn pack(raw: &[(String, String, u64)]) -> Vec<u8> {
-    let mut data: Vec<u8> = Vec::with_capacity(raw.len() * 32);
+    let mut data: Vec<u8> = Vec::with_capacity(raw.len() * 20);
     let mut recs: Vec<u8> = Vec::with_capacity(raw.len() * REC);
-    let mut sigs: Vec<(u32, u32, u32)> = Vec::with_capacity(raw.len());
-    for (i, (word, key, freq)) in raw.iter().enumerate() {
-        let (wo, wl) = push_str(&mut data, word);
-        let (ko, kl) = push_str(&mut data, key);
-        for n in [wo, wl, ko, kl] {
-            recs.extend_from_slice(&n.to_le_bytes());
-        }
-        recs.extend_from_slice(&freq.to_le_bytes());
-        let sig = signature(key);
-        let (so, sl) = push_str(&mut data, &sig);
-        sigs.push((so, sl, i as u32));
+    let mut last: Option<(&str, u32)> = None;
+    for (word, key, freq) in raw {
+        let wo = push_str(&mut data, word);
+        // 记录已按键排序,相邻同键共用一份字符串。
+        let ko = match last {
+            Some((prev, off)) if prev == key => off,
+            _ => push_str(&mut data, key),
+        };
+        last = Some((key.as_str(), ko));
+        recs.extend_from_slice(&wo.to_le_bytes());
+        recs.extend_from_slice(&ko.to_le_bytes());
+        recs.extend_from_slice(&u32::try_from(*freq).unwrap_or(u32::MAX).to_le_bytes());
+        recs.push(word.len() as u8);
+        recs.push(key.len() as u8);
     }
     // 签名按字典序排,查询才能二分。
-    sigs.sort_by(|a, b| {
-        let sa = &data[a.0 as usize..(a.0 + a.1) as usize];
-        let sb = &data[b.0 as usize..(b.0 + b.1) as usize];
-        sa.cmp(sb).then(a.2.cmp(&b.2))
+    let mut sigs: Vec<u32> = (0..raw.len() as u32).collect();
+    sigs.sort_by(|&a, &b| {
+        sig_bytes(&raw[a as usize].1)
+            .cmp(sig_bytes(&raw[b as usize].1))
+            .then(a.cmp(&b))
     });
     let mut out = Vec::with_capacity(HEAD + recs.len() + data.len() + sigs.len() * SIG);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&(raw.len() as u32).to_le_bytes());
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(sigs.len() as u32).to_le_bytes());
     out.extend_from_slice(&recs);
     out.extend_from_slice(&data);
-    for (so, sl, idx) in sigs {
-        out.extend_from_slice(&so.to_le_bytes());
-        out.extend_from_slice(&sl.to_le_bytes());
+    for idx in sigs {
         out.extend_from_slice(&idx.to_le_bytes());
     }
     out
@@ -159,6 +164,8 @@ impl Dictionary {
                 .join("'");
             if !is_hanzi(word)
                 || key.is_empty()
+                || word.len() > u8::MAX as usize
+                || key.len() > u8::MAX as usize
                 || word.chars().count() != key.split('\'').count()
                 || !key.split('\'').all(syllables::is_syllable)
             {
@@ -220,19 +227,19 @@ impl Dictionary {
             if bytes.len() < HEAD || &bytes[..MAGIC.len()] != MAGIC {
                 None
             } else {
-                // 头部三个 u32 紧随魔数:条数、字符串池长、签名表条数。
+                // 头部两个 u32 紧随魔数:条数、字符串池长。签名表与记录等长。
                 let n = |i: usize| {
                     let at = MAGIC.len() + i * 4;
                     u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
                 };
-                let (count, data_len, sig_len) = (n(0), n(1), n(2));
+                let (count, data_len) = (n(0), n(1));
                 let recs_at = HEAD;
-                // 32 位宿主上 count/sig_len 来自文件,乘法可能回绕;损坏的头
+                // 32 位宿主上 count 来自文件,乘法可能回绕;损坏的头
                 // 必须整份拒绝,不能靠回绕后的区间碰巧通过长度检查。
                 let layout = || {
                     let data_at = HEAD.checked_add(count.checked_mul(REC)?)?;
                     let sigs_at = data_at.checked_add(data_len)?;
-                    let end = sigs_at.checked_add(sig_len.checked_mul(SIG)?)?;
+                    let end = sigs_at.checked_add(count.checked_mul(SIG)?)?;
                     (end <= bytes.len()).then_some((
                         count,
                         recs_at..data_at,
@@ -291,8 +298,9 @@ impl Dictionary {
 
     fn entry(&self, i: usize) -> Entry<'_> {
         let r = self.rec(i);
-        let u = |n: usize| u32::from_le_bytes(r[n * 4..n * 4 + 4].try_into().unwrap()) as usize;
-        let (wo, wl, ko, kl) = (u(0), u(1), u(2), u(3));
+        let u = |n: usize| u32::from_le_bytes(r[n * 4..n * 4 + 4].try_into().unwrap());
+        let (wo, ko, freq) = (u(0) as usize, u(1) as usize, u(2));
+        let (wl, kl) = (r[12] as usize, r[13] as usize);
         // 区间必须落在字符串池内:越界说明文件损坏,返回空串而非静默读到别处。
         let text = |off: usize, len: usize| {
             let Some(at) = self.data.start.checked_add(off) else {
@@ -309,7 +317,7 @@ impl Dictionary {
         Entry {
             word: text(wo, wl),
             key: text(ko, kl),
-            freq: u64::from_le_bytes(r[16..24].try_into().unwrap()),
+            freq: u64::from(freq),
         }
     }
 
@@ -346,43 +354,40 @@ impl Dictionary {
         lo
     }
 
-    fn sig_at(&self, i: usize) -> (&str, u32) {
+    /// 签名表第 i 项指向的记录下标。
+    fn sig_at(&self, i: usize) -> usize {
         let at = self.sigs.start + i * SIG;
-        let Some(r) = self.backing.get(at..at + SIG) else {
-            return ("", 0);
-        };
-        let off = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
-        let len = u32::from_le_bytes(r[4..8].try_into().unwrap()) as usize;
-        let idx = u32::from_le_bytes(r[8..12].try_into().unwrap());
-        let at = self.data.start.saturating_add(off);
-        let Some(text) = self.backing.get(at..at.saturating_add(len)) else {
-            return ("", 0);
-        };
-        (std::str::from_utf8(text).unwrap_or(""), idx)
+        u32::from_le_bytes(self.backing[at..at + SIG].try_into().unwrap()) as usize
     }
 
-    /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤),最多 `max_visits` 条。
-    pub fn lookup_sig(&self, sig: &str, max_visits: usize) -> Vec<Entry<'_>> {
-        let n = (self.sigs.end - self.sigs.start) / SIG;
-        let (mut lo, mut hi) = (0usize, n);
+    /// 按签名二分:首个签名 `>= sig` 的签名表位置。
+    fn partition_sig(&self, sig: &str) -> usize {
+        let (mut lo, mut hi) = (0usize, self.count);
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if self.sig_at(mid).0 < sig {
+            let idx = self.sig_at(mid);
+            if idx < self.count && sig_bytes(self.key_at(idx)).lt(sig.bytes()) {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
+        lo
+    }
+
+    /// 签名查询:返回该签名的连续区段(调用方再逐音节过滤),最多 `max_visits` 条。
+    pub fn lookup_sig(&self, sig: &str, max_visits: usize) -> Vec<Entry<'_>> {
         let mut out = Vec::new();
-        for i in lo..n {
-            let (s, idx) = self.sig_at(i);
-            if s != sig || out.len() >= max_visits {
+        for i in self.partition_sig(sig)..self.count {
+            let idx = self.sig_at(i);
+            if idx >= self.count || out.len() >= max_visits {
                 break;
             }
-            if idx as usize >= self.count {
+            let entry = self.entry(idx);
+            if !sig_bytes(entry.key).eq(sig.bytes()) {
                 break;
             }
-            out.push(self.entry(idx as usize));
+            out.push(entry);
         }
         out
     }
@@ -409,17 +414,14 @@ impl Dictionary {
 
     /// 是否存在以 `prefix` 开头的签名(简拼混合输入建图剪枝用)。
     pub fn has_sig_prefix(&self, prefix: &str) -> bool {
-        let n = (self.sigs.end - self.sigs.start) / SIG;
-        let (mut lo, mut hi) = (0usize, n);
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            if self.sig_at(mid).0 < prefix {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
+        let at = self.partition_sig(prefix);
+        at < self.count && {
+            let idx = self.sig_at(at);
+            idx < self.count
+                && sig_bytes(self.key_at(idx))
+                    .take(prefix.len())
+                    .eq(prefix.bytes())
         }
-        lo < n && self.sig_at(lo).0.starts_with(prefix)
     }
 
     /// 词频总和(每个词条至少按 1 计),用于把词频归一成对数概率。

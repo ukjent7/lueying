@@ -223,9 +223,7 @@ fn shared_gram() -> Option<Arc<Gram>> {
         data_dirs()
             .into_iter()
             .find_map(|dir| {
-                Gram::open(&dir.join("collocation.bin"))
-                    .or_else(|_| Gram::open(&dir.join("main.gram")))
-                    .ok()
+                Gram::open(&dir.join("collocation.bin")).ok()
             })
             .map(Arc::new)
     })

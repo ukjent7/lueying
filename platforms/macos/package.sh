@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 构建 macOS 输入法 .app 包。产物在 dist/Lueying.app。
-# 数据文件可选:存在 main.pyd/main.gram/rerank-* 就一起打包,
+# 数据文件可选:存在 main.pyd/collocation.bin/rerank-* 就一起打包,
 # 缺失时输入法退回内置词库并关闭重排。
 set -euo pipefail
 
@@ -26,9 +26,7 @@ copy_data() {
 }
 
 copy_data "$ROOT/data/main.pyd" main.pyd
-copy_data "$ROOT/data/main.tsv" main.tsv
 copy_data "$ROOT/data/collocation.bin" collocation.bin
-copy_data "$ROOT/data/main.gram" main.gram
 for name in \
   rerank-8m.ort rerank-8m.model.json rerank-8m.vocab.json \
   rerank-25m.ort rerank-25m.model.json rerank-25m.vocab.json; do

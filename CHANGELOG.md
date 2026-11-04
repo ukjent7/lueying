@@ -19,6 +19,7 @@
 
 ### 变更
 
+- 词典换成自研的掠影词典（[lueying-dict](https://github.com/ukjent7/lueying-dict)）：词频来自开放语料，读音由 g2pW 在真实句子里定音，不再依赖白霜词库；二进制格式升级为 PYD2，同等词条体积减少约 42%。`xtask dict` 与 `tools/fetch_frost.sh`、`tools/fetch_gram.sh`、`tools/fetch_collocation.sh` 一并删除，词典与搭配表统一由 `tools/fetch_dict.sh` 下载。
 - 候选窗背板优先走 Windows 11 文档化系统背板（`DWMWA_SYSTEMBACKDROP_TYPE` 的 `DWMSBT_TRANSIENTWINDOW`，DWM 合成器托管毛玻璃、底色随系统深浅色），Win11 22H2 之前的系统回退未文档化的 accent 亚克力；macOS 侧液态材质（`NSGlassEffectView`/`NSVisualEffectView`）与三端共用的 `lueying-render` 无头几何不变。
 - 删除 `crates/scene` 声明式场景运行时及其解释器、粒子池、精灵与回放：候选窗动效统一由 `lueying-render` 的 Spring 阻尼弹簧驱动，设置页只保留「弹性动效」开关。
 - 删除 `crates/bypass`：原生扩展宿主并入 `lueying-extwasm::native`，保留常驻进程、空闲回收、Job Object 限额与 AppContainer 沙箱；移除一次性旁路进程与「停顿重排提供者」配置。

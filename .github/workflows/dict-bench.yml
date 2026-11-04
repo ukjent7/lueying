@@ -13,9 +13,9 @@ on:
         required: true
         default: 200k 400k 600k 800k
       gram:
-        description: 搭配表 URL,留空用 fetch_collocation.sh 钉住的版本
-        required: false
-        default: ""
+        description: 搭配表资产名
+        required: true
+        default: collocation.bin
 
 permissions:
   contents: read
@@ -34,29 +34,23 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: linux
-      - name: 下载模型与搭配表
-        env:
-          GRAM_URL: ${{ inputs.gram }}
-        run: |
-          bash tools/fetch_rerank.sh data/rerank
-          bash tools/fetch_collocation.sh data
-          if [ -n "$GRAM_URL" ]; then
-            curl -fsSL --retry 3 -o data/collocation.bin "$GRAM_URL"
-            cp -f data/collocation.bin data/main.gram
-          fi
+      - name: 下载模型
+        run: bash tools/fetch_rerank.sh data/rerank
       - name: 构建 E2E
         run: cargo build -p lueying-e2e --release --locked
       - name: 逐档基准
         env:
           TAG: ${{ inputs.tag }}
           TIERS: ${{ inputs.tiers }}
+          GRAM: ${{ inputs.gram }}
         run: |
           base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
           mkdir -p results
+          curl -fsSL --retry 3 -o data/collocation.bin "${base}/${GRAM}"
           for tier in $TIERS; do
             curl -fsSL --retry 3 -o "data/main-${tier}.pyd" "${base}/main-${tier}.pyd"
             # 门限不达标也要继续跑下一档,结论看整张表。
-            ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/main.gram \
+            ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/collocation.bin \
               --rerank-dir data/rerank --only-shared > "results/${tier}.log" 2>&1 || true
             mkdir -p "results/${tier}"
             cp target/bench-shared.json target/bench-shared.tsv target/e2e-report.md "results/${tier}/" || true

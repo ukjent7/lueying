@@ -19,14 +19,10 @@
 词典与模型权重不随 Git 仓库提交，开发时可通过内置脚本拉取并构建：
 
 ```sh
-# 抓取白霜词典、语法搭配与重排模型
-bash tools/fetch_frost.sh data/frost
-bash tools/fetch_gram.sh data
+# 抓取词典、语法搭配与重排模型
+bash tools/fetch_dict.sh data
 bash tools/fetch_rerank.sh data/rerank
 bash tools/fetch_ppocr.sh data/ppocr
-
-# 物化生成二进制内存映射主词典
-cargo run -p xtask --release --locked -- dict --frost data/frost --out data/main.tsv --bin data/main.pyd
 ```
 
 ## 提交前验证指令
@@ -51,7 +47,7 @@ cargo test -p lueying-server --lib --release --locked
 在 Windows 环境下验证真实的输入法宿主注入与安装包打包逻辑：
 
 ```sh
-cargo run -p lueying-e2e --release --locked -- --dict data/main.tsv --gram data/main.gram --rerank-dir data/rerank --bench-fast
+cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
 cargo run -p lueying-win-e2e --release --locked
 cargo run -p lueying-install-e2e --release --locked
 ```

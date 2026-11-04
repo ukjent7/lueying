@@ -77,12 +77,10 @@ Source: "{#PayloadDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion sk
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\licenses\*"; DestDir: "{app}\licenses"; \
     Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-Source: "{#PayloadDir}\main.tsv"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; 安装冒烟只验证安装/注册/卸载;发版时 xtask 会先确认词典与模型文件齐全,
 ; --allow-missing-data 只用于本地调试。
 Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\collocation.bin"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\main.gram"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-8m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
