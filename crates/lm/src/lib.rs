@@ -29,7 +29,7 @@ mod tests;
 use forward::{HiddenState, Prefix, TailRun, TailStates, TerminalState};
 #[cfg(test)]
 use math::{
-    LinearScratch, Matrix, erf, gelu, layer_norm, linear, linear_into, log_normalizer, split_qkv,
+    LinearScratch, Matrix, erf, gelu, layer_norm, linear, linear_into, split_qkv,
     split_qkv_with_suffix, split_qkv_with_suffix_into,
 };
 #[cfg(test)]

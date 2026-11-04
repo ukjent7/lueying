@@ -620,6 +620,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     let original_top = built
         .cands
         .iter()
+        .filter(|candidate| candidate.full)
         .map(|candidate| candidate.score)
         .fold(f64::NEG_INFINITY, f64::max);
     let confident = original_top == f64::NEG_INFINITY || best_score > original_top + 4.0;
@@ -638,7 +639,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     let mut seen = HashSet::new();
     fixed
         .cands
-        .retain(|candidate| seen.insert((candidate.text.clone(), candidate.consume)));
+        .retain(|candidate| seen.insert(candidate.text.clone()));
     fixed.cands.truncate(MAX_CANDS);
     fixed
 }

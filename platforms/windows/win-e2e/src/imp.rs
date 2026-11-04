@@ -8,9 +8,10 @@ mod measure;
 
 use checks::*;
 
-use measure::{
-    chord, commit_latency, create_host_window, key_latency, pump_for, report_tsf_focus,
-    server_memory, tap, type_text, wait_for_tsf_focus,
+pub(crate) use measure::{
+    chord, commit_latency, composing, create_host_window, edit_text, key_input, key_latency,
+    peak_working_set, pump_for, report_tsf_focus, server_memory, tap, type_text,
+    wait_for_tsf_focus,
 };
 
 use std::cell::RefCell;

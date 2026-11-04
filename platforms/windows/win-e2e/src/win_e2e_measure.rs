@@ -38,7 +38,7 @@ pub(super) fn wait_for_tsf_focus(timeout: Duration) -> bool {
     }
 }
 
-fn edit_text(edit: HWND) -> String {
+pub(super) fn edit_text(edit: HWND) -> String {
     let mut buf = [0u16; 512];
     let n = unsafe { GetWindowTextW(edit, &mut buf) };
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
@@ -226,7 +226,7 @@ pub(super) fn server_memory(server_pid: u32) -> Result<String, String> {
 }
 
 /// 当前焦点上下文里是否有 TSF 组合;组合结束即提交落地。
-fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
+pub(super) fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
     let doc = unsafe { thread_mgr.GetFocus() }.map_err(|e| format!("GetFocus: {e}"))?;
     let context = unsafe { doc.GetTop() }.map_err(|e| format!("GetTop: {e}"))?;
     let composition: ITfContextComposition = context
@@ -313,7 +313,7 @@ pub(super) fn type_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn key_input(vk: u16, up: bool) -> INPUT {
+pub(super) fn key_input(vk: u16, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
