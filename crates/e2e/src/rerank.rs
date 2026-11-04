@@ -320,6 +320,90 @@ pub fn run(
         format!("{five_empty:?} → {five_context:?}"),
     );
 
+    // 纠错与切分探针(eval-probes-v1):16 条标准 probe,回答纠错候选重排、跨字数切分与词典保护。
+    const PROBES: &str = include_str!("../../../dicts/eval-probes-v1.jsonl");
+    let (mut hits_a, mut total_a) = (0usize, 0usize);
+    let (mut hits_b, mut total_b) = (0usize, 0usize);
+    let (mut hits_c, mut total_c) = (0usize, 0usize);
+    let (mut hits_d, mut total_d) = (0usize, 0usize);
+
+    for line in PROBES.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let group = val["group"].as_str().unwrap_or("");
+        let gold = val["gold"].as_str().unwrap_or("");
+        let context = val["context"].as_str().unwrap_or("");
+        let Some(cands) = val["candidates"].as_array() else {
+            continue;
+        };
+        let texts: Vec<&str> = cands
+            .iter()
+            .map(|c| c["text"].as_str().unwrap_or(""))
+            .collect();
+        let facts: Vec<Fact> = cands
+            .iter()
+            .map(|c| Fact {
+                answers_key: c["answers_key"].as_bool().unwrap_or(true),
+                trusted_dictionary_hit: c["trusted_dictionary_hit"].as_bool().unwrap_or(false),
+            })
+            .collect();
+
+        // 探针采用无额外 margin 的基准决策判定(replay 原生模式)。
+        let pick = five.decide_with_margin(context, &texts, &facts, 0.0);
+        let top = pick.map_or(texts[0], |i| texts[i]);
+
+        match group {
+            "A" => {
+                total_a += 1;
+                hits_a += usize::from(top == gold);
+            }
+            "B" => {
+                total_b += 1;
+                hits_b += usize::from(top == gold);
+            }
+            "C" => {
+                total_c += 1;
+                // C 组:首条是可信命中,模型应让位(不重排)。
+                hits_c += usize::from(pick.is_none());
+            }
+            "D" => {
+                total_d += 1;
+                // D 组:引擎声明不背书,模型应重排选对候选。
+                hits_d += usize::from(top == gold);
+            }
+            _ => {}
+        }
+    }
+
+    push(
+        &mut checks,
+        "探针A: 纠错候选重排 (≥6/8)",
+        total_a == 8 && hits_a >= 6,
+        format!("{hits_a}/{total_a} 对"),
+    );
+    push(
+        &mut checks,
+        "探针B: 跨字数切分歧义 (3/3)",
+        total_b == 3 && hits_b == 3,
+        format!("{hits_b}/{total_b} 对"),
+    );
+    push(
+        &mut checks,
+        "探针C: 可信词典命中防护 (2/2)",
+        total_c == 2 && hits_c == 2,
+        format!("{hits_c}/{total_c} 未被覆盖"),
+    );
+    push(
+        &mut checks,
+        "探针D: 纠错声明不背书时重排 (≥2/3)",
+        total_d == 3 && hits_d >= 2,
+        format!("{hits_d}/{total_d} 对"),
+    );
+
     // 停顿重载:上下文明确时,模糊候选可以越过可信精确首位。
     let mut fuzzy_engine = fresh();
     fuzzy_engine.set_context("我");

@@ -29,12 +29,14 @@ const GATES: &[(&str, f64, f64)] = &[
     ("daily", 85.0, 90.0),
     ("frost", 65.0, 80.0),
     ("hard", 50.0, 75.0),
+    ("context", 60.0, 80.0),
 ];
 
 struct Case<'a> {
     category: &'a str,
     input: &'a str,
     expected: &'a str,
+    context: &'a str,
 }
 
 struct Item<'a> {
@@ -111,10 +113,12 @@ fn cases() -> (Vec<Case<'static>>, usize) {
             malformed += 1;
             continue;
         };
+        let context = fields.next().unwrap_or("");
         rows.push(Case {
             category,
             input,
             expected,
+            context,
         });
     }
     (rows, malformed)
@@ -271,7 +275,11 @@ fn run_chunk(
     let mut out = Vec::with_capacity(chunk.len());
     for case in chunk {
         engine.process(Key::Esc);
-        engine.clear_context();
+        if case.context.is_empty() {
+            engine.clear_context();
+        } else {
+            engine.set_context(case.context);
+        }
         let started = Instant::now();
         for c in case.input.chars() {
             engine.process(Key::Letter(c));
@@ -354,7 +362,7 @@ pub fn run(
         } = outcome;
         by_category.entry(case.category).or_default().add(rank, ms);
         overall.add(rank, ms);
-        if case.category != "hard" {
+        if case.category == "daily" || case.category == "frost" {
             core.add(rank, ms);
         }
         if let Some(((r4, r5, direct), times)) = rerank {
@@ -373,7 +381,7 @@ pub fn run(
             four_overall.add(r4, ms);
             five_overall.add(r5, ms);
             direct_overall.add(direct, ms);
-            if case.category != "hard" {
+            if case.category == "daily" || case.category == "frost" {
                 four_core.add(r4, ms);
                 five_core.add(r5, ms);
                 direct_core.add(direct, ms);

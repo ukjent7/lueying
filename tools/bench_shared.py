@@ -57,6 +57,7 @@ SOURCES = (
     (ROOT / "dicts" / "eval-clean-extra.tsv", "daily", "msime+windinput"),
     (ROOT / "dicts" / "eval-frost.tsv", "frost", "rime-frost"),
     (ROOT / "dicts" / "eval-neutral.tsv", "hard", "c4-neutral"),
+    (ROOT / "dicts" / "eval-context.tsv", "context", "sentences-ctx-v1"),
 )
 
 NORMALIZE = str.maketrans({"她": "他", "它": "他", "地": "的", "得": "的"})
@@ -72,15 +73,17 @@ def read_corpus(path: Path = CORPUS) -> list[dict[str, str]]:
         if not line or line.startswith("#"):
             continue
         fields = line.split("\t")
-        if len(fields) != 4:
-            raise SystemExit(f"{path}: 需要 4 列,实际 {len(fields)} 列: {line!r}")
-        category, source, pinyin, expected = fields
+        if len(fields) < 4:
+            raise SystemExit(f"{path}: 需要至少 4 列,实际 {len(fields)} 列: {line!r}")
+        category, source, pinyin, expected = fields[:4]
+        context = fields[4] if len(fields) > 4 else ""
         rows.append(
             {
                 "category": category,
                 "source": source,
                 "pinyin": pinyin,
                 "expected": expected,
+                "context": context,
             }
         )
     return rows
@@ -93,6 +96,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     duplicates = 0
     conflicts = 0
     for path, category, source in SOURCES:
+        if not path.exists():
+            continue
         kept = 0
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line or line.startswith("#"):
@@ -101,6 +106,7 @@ def cmd_build(args: argparse.Namespace) -> int:
             if len(fields) < 2:
                 continue
             pinyin, expected = fields[0], fields[1]
+            context = fields[2] if len(fields) > 2 else ""
             if pinyin in seen or expected in seen_text:
                 duplicates += 1
                 if pinyin in seen and seen[pinyin] != (category, expected):
@@ -108,22 +114,27 @@ def cmd_build(args: argparse.Namespace) -> int:
                 continue
             seen[pinyin] = (category, expected)
             seen_text[expected] = (category, pinyin)
-            rows.append((category, source, pinyin, expected))
+            rows.append((category, source, pinyin, expected, context))
             kept += 1
         print(f"{path.relative_to(ROOT)}: {kept} 条 ({category})")
 
     header = [
         "# 跨引擎共享评测集 v1(冻结;语料或列定义变化时换 v2 文件名)",
-        "# 列: category<TAB>source<TAB>pinyin<TAB>expected",
-        "# category: daily=日常手写, frost=白霜脚本, hard=中立难例",
+        "# 列: category<TAB>source<TAB>pinyin<TAB>expected<TAB>context",
+        "# category: daily=日常手写, frost=白霜脚本, hard=中立难例, context=真实上下文整句",
         "# 来源与许可:",
-        "#   daily  metasequoiaime/msime sentences-v1 + huanfeng/WindInput grammar_sentence_eval.rs(GPL-3.0)",
-        "#   frost  gaboolic/rime-frost@fbdf9ef script.lua(GPL-3.0)",
-        "#   hard   metasequoiaime/msime sentences-neutral-v1,C4 中文(ODC-BY)",
+        "#   daily    metasequoiaime/msime sentences-v1 + huanfeng/WindInput grammar_sentence_eval.rs(GPL-3.0)",
+        "#   frost    gaboolic/rime-frost@fbdf9ef script.lua(GPL-3.0)",
+        "#   hard     metasequoiaime/msime sentences-neutral-v1,C4 中文(ODC-BY)",
+        "#   context  metasequoiaime/chinese-ime-lm sentences-ctx-v1(gov:公共领域;dialog:Apache-2.0/MIT)",
         "# 判定归一化: 其它→其他、她/它→他、地/得→的",
         "# 生成: python3 tools/bench_shared.py build",
     ]
-    out = "\n".join(header + ["\t".join(row) for row in rows]) + "\n"
+    lines = header + [
+        f"{cat}\t{src}\t{pin}\t{exp}" + (f"\t{ctx}" if ctx else "")
+        for cat, src, pin, exp, ctx in rows
+    ]
+    out = "\n".join(lines) + "\n"
     CORPUS.write_text(out, encoding="utf-8")
     print(
         f"写出 {CORPUS.relative_to(ROOT)}: {len(rows)} 条,"
@@ -136,11 +147,14 @@ def cmd_export(args: argparse.Namespace) -> int:
     rows = read_corpus()
     if args.category:
         rows = [row for row in rows if row["category"] == args.category]
+    if getattr(args, "strip_context", False):
+        for row in rows:
+            row["context"] = ""
     if not rows:
         raise SystemExit("没有可导出的条目")
     if args.engine == "qingjian":
         # 青简冻结格式: 句子<TAB>拼音<TAB>上文
-        lines = [f"{row['expected']}\t{row['pinyin']}\t" for row in rows]
+        lines = [f"{row['expected']}\t{row['pinyin']}\t{row['context']}" for row in rows]
     elif args.engine == "windinput":
         # 清风 sentence_eval_file: 类别<TAB>拼音<TAB>期望
         lines = [f"{row['category']}\t{row['pinyin']}\t{row['expected']}" for row in rows]
@@ -152,7 +166,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             syllables = sum(1 for ch in row["expected"] if "\u4e00" <= ch <= "\u9fff")
             lines.append(
                 f"{row['category']}-{index}\t{row['pinyin']}\t{row['expected']}\t"
-                f"{max(syllables, 1)}\t{row['category']}\t"
+                f"{max(syllables, 1)}\t{row['category']}\t{row['context']}"
             )
     else:
         raise SystemExit(f"未知引擎 {args.engine}")
@@ -373,7 +387,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             )
         if kind == "items":
             overall = item_metric(rows)
-            core = item_metric([row for row in rows if row.get("category") != "hard"])
+            core = item_metric([row for row in rows if row.get("category") in ("daily", "frost")])
         else:
             overall = {
                 key: weighted(list(categories.values()), key)
@@ -383,7 +397,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             core_metrics = [
                 metric
                 for category, metric in categories.items()
-                if category != "hard"
+                if category in ("daily", "frost")
             ]
             core = {
                 key: weighted(core_metrics, key)
@@ -584,6 +598,54 @@ def cmd_import_msime(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_context_gain(args: argparse.Namespace) -> int:
+    stripped_meta, stripped = read_item_results(Path(args.stripped))
+    context_meta, with_ctx = read_item_results(Path(args.with_context))
+    shared = sorted(set(stripped) & set(with_ctx))
+    if not shared:
+        raise SystemExit("两份结果没有共同条目")
+    groups: dict[str, list[tuple[str, str]]] = {}
+    for key in shared:
+        groups.setdefault(key[0], []).append(key)
+
+    lines = [
+        "# 上文增益分析",
+        "",
+        f"对照组(无上文):`{stripped_meta.get('engine', Path(args.stripped).stem)}`; "
+        f"实验组(带上文):`{context_meta.get('engine', Path(args.with_context).stem)}`。",
+        f"共同条目 {len(shared)} 条。",
+        "",
+        "| 类别 | n | 无上文 top-1 [Wilson 95%] | 带上文 top-1 [Wilson 95%] | 增益 Δpp | McNemar p | rescue | breakage |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+
+    def calc_row(label: str, keys: list[tuple[str, str]]) -> str:
+        n = len(keys)
+        base = sum(stripped[k] for k in keys)
+        cand = sum(with_ctx[k] for k in keys)
+        rescue = sum(1 for k in keys if not stripped[k] and with_ctx[k])
+        breakage = sum(1 for k in keys if stripped[k] and not with_ctx[k])
+        low_a, high_a = wilson_interval(base, n)
+        low_b, high_b = wilson_interval(cand, n)
+        delta = (cand - base) * 100.0 / n
+        p = mcnemar_exact(rescue, breakage)
+        return (
+            f"| {label} | {n} | {base * 100.0 / n:.1f}% [{low_a:.1f}, {high_a:.1f}] | "
+            f"{cand * 100.0 / n:.1f}% [{low_b:.1f}, {high_b:.1f}] | {delta:+.1f} | {p:.4f} | {rescue} | {breakage} |"
+        )
+
+    lines.append(calc_row("全量", shared))
+    for cat in sorted(groups):
+        lines.append(calc_row(cat, groups[cat]))
+    lines.append("")
+    text = "\n".join(lines) + "\n"
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"写出 {args.out}")
+    sys.stdout.write(text)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -594,6 +656,7 @@ def main() -> int:
     export = sub.add_parser("export", help="导出青简/清风/水杉可读的输入文件")
     export.add_argument("--engine", choices=("qingjian", "windinput", "msime"), required=True)
     export.add_argument("--category", help="只导出某一类")
+    export.add_argument("--strip-context", action="store_true", help="强制剥离上文以作对照")
     export.add_argument("--out", required=True, help="输出路径,- 表示 stdout")
     export.set_defaults(func=cmd_export)
 
@@ -607,6 +670,12 @@ def main() -> int:
     stats.add_argument("candidate", help="候选统一结果 TSV")
     stats.add_argument("--out", help="同时写入该路径")
     stats.set_defaults(func=cmd_stats)
+
+    ctx_gain = sub.add_parser("context-gain", help="量化上文带来的命中增益(对照无上文与带上文结果)")
+    ctx_gain.add_argument("stripped", help="剥离上文(或无上文)的统一结果 TSV")
+    ctx_gain.add_argument("with_context", help="带上文的统一结果 TSV")
+    ctx_gain.add_argument("--out", help="同时写入该路径")
+    ctx_gain.set_defaults(func=cmd_context_gain)
 
     qingjian = sub.add_parser("import-qingjian", help="青简 --eval-details JSONL → 统一逐条结果")
     qingjian.add_argument("--details", required=True)

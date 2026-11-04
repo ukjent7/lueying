@@ -130,6 +130,21 @@ impl Rerank {
         result
     }
 
+    /// 返回模型建议移到首位的候选下标;`None` 表示保持引擎顺序。
+    /// 指定最小领先幅度(`min_margin`),传入 `0.0` 即为原始 `best_where`。
+    pub fn decide_with_margin(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        min_margin: f32,
+    ) -> Option<usize> {
+        let started = Instant::now();
+        let result = self.decide_inner_with_margin(context, texts, facts, min_margin);
+        self.metrics.record(started.elapsed());
+        result
+    }
+
     fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
         self.decide_inner_with_margin(context, texts, facts, SYNC_PROMOTE_MARGIN)
     }
