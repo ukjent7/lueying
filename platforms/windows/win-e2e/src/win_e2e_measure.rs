@@ -15,7 +15,7 @@ fn tsf_focus_state() -> Result<(), String> {
         .map_err(|e| format!("文档管理器无上下文: {e}"))
 }
 
-pub(super) fn report_tsf_focus() {
+pub(crate) fn report_tsf_focus() {
     match tsf_focus_state() {
         Ok(()) => println!("TSF focus: 文档管理器有顶层上下文"),
         Err(e) => println!("TSF focus: {e}"),
@@ -23,7 +23,7 @@ pub(super) fn report_tsf_focus() {
 }
 
 /// 等 TSF 文档管理器就绪;期间持续泵消息,让 RichEdit 完成焦点/文档绑定。
-pub(super) fn wait_for_tsf_focus(timeout: Duration) -> bool {
+pub(crate) fn wait_for_tsf_focus(timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         if tsf_focus_state().is_ok() {
@@ -38,7 +38,7 @@ pub(super) fn wait_for_tsf_focus(timeout: Duration) -> bool {
     }
 }
 
-pub(super) fn edit_text(edit: HWND) -> String {
+pub(crate) fn edit_text(edit: HWND) -> String {
     let mut buf = [0u16; 512];
     let n = unsafe { GetWindowTextW(edit, &mut buf) };
     String::from_utf16_lossy(&buf[..n.max(0) as usize])
@@ -55,7 +55,7 @@ const KEY_P95_LIMIT_MS: f64 = 60.0;
 /// 又能抓住泄漏或大对象常驻。
 const SERVER_MEMORY_LIMIT_MB: u64 = 128;
 
-pub(super) fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
+pub(crate) fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
     const ROUNDS: usize = 5;
     let mut samples = Vec::with_capacity(ROUNDS);
     for round in 0..ROUNDS {
@@ -101,7 +101,7 @@ pub(super) fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<St
 /// 键事件已被 DLL 交给 Server 并把组句写回)。BeginUIElement 与首次
 /// 候选更新不保证触发 UpdateUIElement,不能拿 UI 元素更新当观测点。
 /// 引擎门限在 lueying-e2e 卡,这里只抓组合通道整体停摆或秒级回归。
-pub(super) fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> {
+pub(crate) fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> {
     const ROUNDS: usize = 3;
     const KEYS: [char; 5] = ['w', 'o', 'a', 'i', 'n'];
     let applied = || {
@@ -171,7 +171,7 @@ pub(crate) fn peak_working_set(pid: u32) -> Result<u64, String> {
 
 /// Server 工作集基线:优先测 runner 自己拉起的进程,不在了再按 exe 名找
 /// (TSF 断线后会懒拉起新实例)。只抓失控级增长,细粒度波动仅记录。
-pub(super) fn server_memory(server_pid: u32) -> Result<String, String> {
+pub(crate) fn server_memory(server_pid: u32) -> Result<String, String> {
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
@@ -226,7 +226,7 @@ pub(super) fn server_memory(server_pid: u32) -> Result<String, String> {
 }
 
 /// 当前焦点上下文里是否有 TSF 组合;组合结束即提交落地。
-pub(super) fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
+pub(crate) fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
     let doc = unsafe { thread_mgr.GetFocus() }.map_err(|e| format!("GetFocus: {e}"))?;
     let context = unsafe { doc.GetTop() }.map_err(|e| format!("GetTop: {e}"))?;
     let composition: ITfContextComposition = context
@@ -239,7 +239,7 @@ pub(super) fn composing(thread_mgr: &ITfThreadMgr) -> Result<bool, String> {
     Ok(fetched > 0)
 }
 
-pub(super) fn create_host_window() -> Result<(HWND, HWND), String> {
+pub(crate) fn create_host_window() -> Result<(HWND, HWND), String> {
     // RichEdit 自己实现 ITextStoreACP 并创建 TSF 文档管理器,普通 EDIT 只走 IMM32。
     let msftedit = unsafe { LoadLibraryW(&HSTRING::from("Msftedit.dll")) }
         .map_err(|e| format!("加载 Msftedit.dll: {e}"))?;
@@ -305,7 +305,7 @@ fn vk_of(c: char) -> u16 {
     c.to_ascii_uppercase() as u16
 }
 
-pub(super) fn type_text(text: &str) -> Result<(), String> {
+pub(crate) fn type_text(text: &str) -> Result<(), String> {
     for c in text.chars() {
         tap(vk_of(c))?;
         pump_for(Duration::from_millis(60));
@@ -313,7 +313,7 @@ pub(super) fn type_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn key_input(vk: u16, up: bool) -> INPUT {
+pub(crate) fn key_input(vk: u16, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -332,7 +332,7 @@ pub(super) fn key_input(vk: u16, up: bool) -> INPUT {
     }
 }
 
-pub(super) fn tap(vk: u16) -> Result<(), String> {
+pub(crate) fn tap(vk: u16) -> Result<(), String> {
     let sent = unsafe {
         SendInput(
             &[key_input(vk, false), key_input(vk, true)],
@@ -346,7 +346,7 @@ pub(super) fn tap(vk: u16) -> Result<(), String> {
 }
 
 /// 修饰键 + 普通键的组合(按下修饰键、按键、抬键、抬修饰键)。
-pub(super) fn chord(modifier: u16, vk: u16) -> Result<(), String> {
+pub(crate) fn chord(modifier: u16, vk: u16) -> Result<(), String> {
     let sent = unsafe {
         SendInput(
             &[
@@ -365,7 +365,7 @@ pub(super) fn chord(modifier: u16, vk: u16) -> Result<(), String> {
 }
 
 /// 泵消息一段时间(异步编辑会话的回调要靠消息循环驱动)。
-pub(super) fn pump_for(dur: Duration) {
+pub(crate) fn pump_for(dur: Duration) {
     let deadline = Instant::now() + dur;
     while Instant::now() < deadline {
         let mut msg = MSG::default();

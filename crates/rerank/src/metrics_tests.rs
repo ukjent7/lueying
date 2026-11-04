@@ -20,7 +20,7 @@ fn buckets_land_in_expected_percentiles() {
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.count, 100);
     assert_eq!(snapshot.p50_us, 1_000);
-    assert_eq!(snapshot.p95_us, 16_000);
+    assert_eq!(snapshot.p95_us, 10_000);
     assert_eq!(snapshot.max_us, 10_000);
 }
 

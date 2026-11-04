@@ -665,14 +665,6 @@ fn log_schedules_delete(log: &Path, needle: &str) -> bool {
     false
 }
 
-fn system32(name: &str) -> PathBuf {
-    std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("System32")
-        .join(name)
-}
-
 /// TSF profile 是否在当前用户的输入法列表里。profile 管理器在 CI 会话里
 /// 可能一直不返回,限时查询,别把 E2E 拖住。
 fn profile_enabled() -> Result<bool, String> {
