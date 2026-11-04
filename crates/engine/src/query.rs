@@ -4,8 +4,8 @@
 //! 也不会因为路径数上限漏掉正确切分。整句分 = Σ 词节点分 + Σ 搭配分。
 //!
 //! 词节点分把词频归一成对数概率(`ln(freq/total)`),再减每词固定罚:拆成更多
-//! 高频碎片的路径要额外付出每词一份的归一化代价。搭配分来自 rime `.gram`
-//! 模型(可缺省),按 librime-octagram 的搭配/未搭配/句末罚参与整句排序。
+//! 高频碎片的路径要额外付出每词一份的归一化代价。搭配分来自搭配表(LYCL,可缺省):
+//! 命中给 PMI 增益,未命中为 0,参与整句排序。
 //!
 //! 文件布局:`query_querier` 放查询缓存,`query_builder` 放词图枚举与解码。
 
@@ -401,7 +401,7 @@ struct Node {
 type Step = (String, Vec<(usize, usize)>);
 type Path = Vec<Step>;
 
-/// 搭配分:前文尾 -> 当前词的 `.gram` 打分。查询结果按 (前文,词,句末) 缓存。
+/// 搭配分:前文尾 -> 当前词的搭配表打分。查询结果按 (前文,词,句末) 缓存。
 struct Grammar<'a> {
     gram: Option<&'a Gram>,
     cache: &'a mut HashMap<(String, String, bool), f64>,

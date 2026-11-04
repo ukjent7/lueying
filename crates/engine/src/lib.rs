@@ -61,7 +61,7 @@ pub const CONTEXT_KEEP: usize = 128;
 pub struct Engine {
     /// 词典跨会话共享(Server 进程里多个宿主会话共用一份)。
     dict: std::sync::Arc<Dictionary>,
-    /// 可选的 rime `.gram` 语言模型;缺失或损坏时整句退化为纯词频。
+    /// 可选的搭配表(LYCL);缺失或损坏时整句退化为纯词频。
     gram: Option<std::sync::Arc<Gram>>,
     /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
     gram_cache: std::collections::HashMap<(String, String, bool), f64>,

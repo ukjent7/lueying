@@ -28,9 +28,6 @@ mod catalog;
 #[path = "winget.rs"]
 mod winget;
 
-#[path = "collocation.rs"]
-mod collocation;
-
 enum Task {
     Dict(dict::Args),
     Pack(pack::PackArgs),
@@ -38,7 +35,6 @@ enum Task {
     SignManifest(manifest::SignArgs),
     CatalogExe(catalog::CatalogExeArgs),
     Winget(winget::WingetArgs),
-    Collocation(collocation::CollocationArgs),
 }
 
 fn main() {
@@ -48,9 +44,6 @@ fn main() {
         match a.as_str() {
             "dict" => task = Some(Task::Dict(dict::parse_dict(&mut it))),
             "pack" => task = Some(Task::Pack(pack::parse_pack(&mut it))),
-            "collocation" => {
-                task = Some(Task::Collocation(collocation::parse_collocation(&mut it)))
-            }
             "update-manifest" => {
                 task = Some(Task::UpdateManifest(manifest::parse_update_manifest(
                     &mut it,
@@ -74,10 +67,9 @@ fn main() {
         Some(Task::SignManifest(args)) => manifest::sign_manifest(args),
         Some(Task::CatalogExe(args)) => catalog::catalog_exe(args),
         Some(Task::Winget(args)) => winget::winget(args),
-        Some(Task::Collocation(args)) => collocation::run(args),
         None => {
             eprintln!(
-                "用法: xtask dict ... | xtask pack ... | xtask collocation ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ... | xtask winget ..."
+                "用法: xtask dict ... | xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ... | xtask winget ..."
             );
             std::process::exit(2);
         }

@@ -166,11 +166,11 @@ commit fbdf9efc4a5036db5f37b97323e1b936e8fe993c。
 版本 0.1.1;随包词典用这份常用词表补入白霜未收录的词,并给多字常用词提频。\
 词频语料来源包括中文维基百科(CC BY-SA 4.0)、LCCC(MIT)与 THUOCL(MIT),\
 详见青简词库头部说明。
-- 掠影原生紧凑搭配表 (LYCL):Apache-2.0,https://github.com/ukjent7/lueying-gram,\
-版本 v0.1.0;基于点互信息 (PMI) 与现代对话/网络语料 (Tatoeba, FineWeb-2),\
-由掠影输入法工具链原生切分生成 (1.72MB, 180,000 条词对);\
-sha256 6bd18dbb19c6353ad41701dc410c54bc9a2fa1566d1cbc499cbfaa0d663a591f。\
-许可全文见 Apache-2.0.txt。
+- 掠影原生紧凑搭配表 (LYCL v2):GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict,\
+版本 v0.2.0-rc0 (collocation-v2.bin);基于点互信息 (PMI) 与 Ultra-FineWeb、LCCC 语料统计,\
+由掠影输入法工具链原生切分生成 (4.77MiB, 999,863 条词对);\
+sha256 f7a42f8a5de4d3e932c569bc292cee30994af6ab04cd2f087f93a2498ba171d6。\
+许可全文见随包的 LICENSE。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
 commit 1c90f5ee1b76ecf18d5171ef78a4dc076a0bb0d8 (release rerank-v2);全文见 Apache-2.0.txt。
 - pinyin-ime-keystroke-reranker-8M:Apache-2.0,\

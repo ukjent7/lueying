@@ -17,7 +17,7 @@ use std::ops::{Deref, Range};
 use std::path::Path;
 use std::sync::OnceLock;
 
-pub use gram::{Gram, hash_pair};
+pub use gram::Gram;
 use memmap2::Mmap;
 pub use syllables::Fuzzy;
 
