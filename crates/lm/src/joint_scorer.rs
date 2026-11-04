@@ -148,7 +148,7 @@ impl JointKeystrokeScorer {
         }
     }
 
-    /// 编码输入串: [Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]
+    /// 编码输入串: `[Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]`
     pub fn build_sequence(
         index: &HashMap<char, u32>,
         context: &str,

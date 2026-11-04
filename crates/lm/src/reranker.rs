@@ -176,7 +176,7 @@ impl Reranker {
     }
 
     /// 基于击键-上下文联合打分头 (Keystroke Scorer) 与记忆槽的重排决策:
-    /// Input: [Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]
+    /// Input: `[Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]`
     pub fn best_joint_margin(
         &mut self,
         context: &str,

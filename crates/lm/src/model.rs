@@ -363,7 +363,7 @@ impl SentenceModel {
     }
 
     /// 击键-上下文联合条件选词评分 (Keystroke Joint Scorer):
-    /// [Context] [SEP] [Keystrokes] [SEP] [Candidate] [END] ⟶ Score (Scalar)
+    /// `[Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]` ⟶ Score (Scalar)
     pub fn score_joint(
         &self,
         context: &str,
