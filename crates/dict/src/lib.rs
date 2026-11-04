@@ -17,8 +17,8 @@ use std::ops::{Deref, Range};
 use std::path::Path;
 use std::sync::OnceLock;
 
+pub use gram::{Gram, hash_pair};
 use memmap2::Mmap;
-pub use gram::{hash_pair, Gram};
 pub use syllables::Fuzzy;
 
 /// 一条词条(借用词典内部的字节区间)。

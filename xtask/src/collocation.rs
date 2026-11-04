@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use lueying_dict::gram::{hash_pair, NATIVE_MAGIC, NATIVE_VERSION};
+use lueying_dict::gram::{NATIVE_MAGIC, NATIVE_VERSION, hash_pair};
 
 pub(crate) struct CollocationArgs {
     dict: Option<PathBuf>,
@@ -159,8 +159,8 @@ pub(crate) fn run(args: CollocationArgs) -> Result<(), String> {
 
     let mut corpus_files = Vec::new();
     if args.corpus.is_dir() {
-        let entries = std::fs::read_dir(&args.corpus)
-            .map_err(|e| format!("读取语料目录失败: {e}"))?;
+        let entries =
+            std::fs::read_dir(&args.corpus).map_err(|e| format!("读取语料目录失败: {e}"))?;
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_file() {
@@ -207,13 +207,17 @@ pub(crate) fn run(args: CollocationArgs) -> Result<(), String> {
                 }
 
                 for w in words.windows(2) {
-                    *bigrams.entry((w[0].to_string(), w[1].to_string())).or_insert(0) += 1;
+                    *bigrams
+                        .entry((w[0].to_string(), w[1].to_string()))
+                        .or_insert(0) += 1;
                     total_pairs += 1;
                 }
 
                 // 记录句末搭配 (末词 -> $)
                 if let Some(&last) = words.last() {
-                    *bigrams.entry((last.to_string(), "$".to_string())).or_insert(0) += 1;
+                    *bigrams
+                        .entry((last.to_string(), "$".to_string()))
+                        .or_insert(0) += 1;
                     total_pairs += 1;
                 }
             }
@@ -307,7 +311,11 @@ pub(crate) fn run(args: CollocationArgs) -> Result<(), String> {
             left,
             right,
             score,
-            importance: if is_boosted { importance * 100.0 } else { importance },
+            importance: if is_boosted {
+                importance * 100.0
+            } else {
+                importance
+            },
         });
     }
 
@@ -346,20 +354,28 @@ pub(crate) fn run(args: CollocationArgs) -> Result<(), String> {
     }
     let mut out_file = File::create(&args.out).map_err(|e| format!("创建输出文件失败: {e}"))?;
 
-    out_file.write_all(NATIVE_MAGIC).map_err(|e| e.to_string())?;
+    out_file
+        .write_all(NATIVE_MAGIC)
+        .map_err(|e| e.to_string())?;
     out_file
         .write_all(&NATIVE_VERSION.to_le_bytes())
         .map_err(|e| e.to_string())?;
     out_file
         .write_all(&(final_count as u32).to_le_bytes())
         .map_err(|e| e.to_string())?;
-    out_file.write_all(&0u32.to_le_bytes()).map_err(|e| e.to_string())?;
+    out_file
+        .write_all(&0u32.to_le_bytes())
+        .map_err(|e| e.to_string())?;
 
     for &(k, _) in &table {
-        out_file.write_all(&k.to_le_bytes()).map_err(|e| e.to_string())?;
+        out_file
+            .write_all(&k.to_le_bytes())
+            .map_err(|e| e.to_string())?;
     }
     for &(_, v) in &table {
-        out_file.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+        out_file
+            .write_all(&v.to_le_bytes())
+            .map_err(|e| e.to_string())?;
     }
     out_file.flush().map_err(|e| e.to_string())?;
 

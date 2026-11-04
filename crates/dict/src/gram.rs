@@ -90,7 +90,9 @@ impl Gram {
             }
             let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
             if version != NATIVE_VERSION {
-                return Err(io::Error::other(format!("不支持的掠影搭配表版本: {version}")));
+                return Err(io::Error::other(format!(
+                    "不支持的掠影搭配表版本: {version}"
+                )));
             }
             let count = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
             let expected_size = NATIVE_HEADER_LEN
@@ -118,7 +120,9 @@ impl Gram {
         let format_end = bytes[..32].iter().position(|&b| b == 0).unwrap_or(32);
         let format = std::str::from_utf8(&bytes[..format_end]).unwrap_or("");
         if !format.starts_with(FORMAT_PREFIX) {
-            return Err(io::Error::other(format!("不是 rime 语法模型或掠影搭配表: {format:?}")));
+            return Err(io::Error::other(format!(
+                "不是 rime 语法模型或掠影搭配表: {format:?}"
+            )));
         }
         let units = u32::from_le_bytes(bytes[36..40].try_into().unwrap()) as usize;
         let ptr = i32::from_le_bytes(bytes[OFFSET_PTR_AT..OFFSET_PTR_AT + 4].try_into().unwrap());
@@ -498,11 +502,7 @@ mod tests {
 
     #[test]
     fn test_native_collocation_table() {
-        let mut pairs = vec![
-            ("人工", "智能", 2.5),
-            ("吃", "药", 1.8),
-            ("不错", "$", 0.9),
-        ];
+        let mut pairs = vec![("人工", "智能", 2.5), ("吃", "药", 1.8), ("不错", "$", 0.9)];
         pairs.sort_by_key(|&(l, r, _)| hash_pair(l, r));
 
         let count = pairs.len();
