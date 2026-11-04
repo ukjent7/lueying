@@ -16,6 +16,10 @@ on:
         description: 搭配表资产名
         required: true
         default: collocation.bin
+      patch:
+        description: 构建前对 query.rs 执行的 sed -E 脚本,扫引擎常量用
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -36,6 +40,13 @@ jobs:
           prefix-key: linux
       - name: 下载模型
         run: bash tools/fetch_rerank.sh data/rerank
+      - name: 调整引擎常量
+        if: inputs.patch != ''
+        env:
+          PATCH: ${{ inputs.patch }}
+        run: |
+          sed -i -E "$PATCH" crates/engine/src/query.rs
+          git diff --stat --exit-code && exit 1 || git diff
       - name: 构建 E2E
         run: cargo build -p lueying-e2e --release --locked
       - name: 逐档基准
