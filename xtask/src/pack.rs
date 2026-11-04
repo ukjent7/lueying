@@ -110,7 +110,12 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     }
     // main.gram 别名兼容
     if args.data.join("main.gram").exists() && !args.out.join("main.gram").exists() {
-        let _ = copy_file(&args.data.join("main.gram"), &args.out, "main.gram", &mut files);
+        let _ = copy_file(
+            &args.data.join("main.gram"),
+            &args.out,
+            "main.gram",
+            &mut files,
+        );
     }
     // TSV 是二进制不可用时的兼容回退,可选。
     if args.data.join("main.tsv").exists() {
