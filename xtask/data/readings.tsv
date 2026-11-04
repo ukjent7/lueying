@@ -1,0 +1,16 @@
+# 口语异读:白霜词表只收标准读音(zhe/na),口语的 zhei/nei 会被拆成
+# 同音字词,例如 zheige→「贼个」、neige→「内个」。这里补同一词的另一读音,
+# 词频沿用该词最高频读音,两种读法排序一致;格式:词<TAB>音节。
+# 只收打字时常见的组合,不把「这次/这里」等通常读 zhe/na 的词也加进来。
+这个	zhei'ge
+这些	zhei'xie
+这么	zhei'me
+这样	zhei'yang
+这会儿	zhei'hui'er
+那个	nei'ge
+哪个	nei'ge
+那些	nei'xie
+哪些	nei'xie
+那么	nei'me
+那样	nei'yang
+那会儿	nei'hui'er
