@@ -115,12 +115,6 @@ pub(super) fn corrections(raw: &str) -> Vec<Correction> {
     out
 }
 
-/// 兼容老接口的纯文本纠正变体。
-#[allow(dead_code)]
-pub(super) fn variants(raw: &str) -> Vec<String> {
-    corrections(raw).into_iter().map(|c| c.text).collect()
-}
-
 /// 某键的音素混淆与物理近邻替换候选及对应的软惩罚分。
 fn confused_replacements(c: char) -> Vec<(char, f64)> {
     let mut out = Vec::new();
