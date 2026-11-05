@@ -45,10 +45,10 @@ impl Provider for CaptureProvider {
 
 /// 截图区域;虚拟桌面坐标。
 pub(super) struct Region {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
 }
 
 /// `{"region":{"x":..,"y":..,"width":..,"height":..}}` 或缺省整屏。

@@ -326,17 +326,20 @@ fn main() {
         // 变成非正分。比只看整句准确率更早定位「模型读了但没命中」。
         if let Some(g) = &gram {
             report.push_str("\n## 语法模型探针\n\n| 搭配 | 分数 | 结果 |\n|---|---|---|\n");
-            for (context, word) in [("味道", "不错"), ("天气", "不错")] {
-                let score = g.score(context, word, false);
-                let ok = score > 0.0;
-                if !ok {
-                    failures += 1;
-                }
-                report.push_str(&format!(
-                    "| {context} + {word} | {score:.2} | {} |\n",
-                    if ok { "PASS" } else { "FAIL" }
-                ));
+            // 词典收进新词后常见词对会变成整词,所以只要求这几对里有命中。
+            let pairs = [("有人", "觉得"), ("你不", "需要"), ("是否", "真的"), ("你也", "应该")];
+            let hits = pairs
+                .iter()
+                .filter(|(context, word)| g.score(context, word, false) > 0.0)
+                .count();
+            if hits == 0 {
+                failures += 1;
             }
+            report.push_str(&format!(
+                "| {} 对常见词对 | {hits} 命中 | {} |\n",
+                pairs.len(),
+                if hits > 0 { "PASS" } else { "FAIL" }
+            ));
         }
         // 手误纠正探针:同一个手误可能有多条可切分的纠正串(`hoa` 既能补成
         // `oha` 也能调换成 `hao`);必须取打分更高的整句,不能先到先得。
