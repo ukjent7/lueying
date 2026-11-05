@@ -13,7 +13,7 @@ use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
 use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
 
-use crate::extwasm_harness::command_guest;
+use crate::extwasm::harness::command_guest;
 use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{

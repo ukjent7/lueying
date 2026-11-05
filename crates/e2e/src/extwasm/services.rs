@@ -12,7 +12,7 @@ use std::time::Duration;
 use lueying_extwasm::bindings::{BindingTable, Input};
 use lueying_extwasm::{Done, Limits, Provider, Registry, Runtime, Service, When};
 
-use crate::extwasm_harness::{command_manifest, service_guest, write_pack};
+use crate::extwasm::harness::{command_manifest, service_guest, write_pack};
 use crate::harness::{Temp, push};
 
 /// 服务缝:needs 门控与缺提供者的错误回传。

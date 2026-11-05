@@ -12,7 +12,7 @@ use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json,
 use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat};
 use lueying_extwasm::{ExtState, Limits, MAX_FAULTS, Pack, Runtime};
 
-use crate::extwasm_harness::{command_guest, command_manifest, loop_guest, write_pack};
+use crate::extwasm::harness::{command_guest, command_manifest, loop_guest, write_pack};
 use crate::harness::Temp;
 
 const GOOD: &str = r#"{"ok":true}"#;

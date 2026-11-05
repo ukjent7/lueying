@@ -10,11 +10,14 @@
 //! 7. 热重载写坏文件后,正在用的扩展被弄没。
 //! 8. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
 
+pub(crate) mod harness;
+pub(crate) mod services;
+
 use std::time::{Duration, Instant};
 
 use lueying_extwasm::{Limits, Pack, Poll, Runtime, SceneIn};
 
-use crate::extwasm_harness::{
+use crate::extwasm::harness::{
     appearance_guest, appearance_manifest, command_guest, command_manifest, error_guest, hog_guest,
     init_loop_guest, load_or_fail, loop_guest, once_trap_appearance_guest, plain_manifest,
     raw_manifest, sleep_guest, trap_guest, write_pack,

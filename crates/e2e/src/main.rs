@@ -7,16 +7,12 @@ mod bench;
 mod consent;
 mod extensions;
 mod extwasm;
-mod extwasm_harness;
-mod extwasm_services;
 mod features;
 mod harness;
 mod metrics;
 mod modules;
 mod quick;
 mod render;
-mod render_panel;
-mod render_ui;
 mod rerank;
 mod scenarios;
 mod settings;
@@ -237,7 +233,7 @@ fn main() {
     failures += extwasm::run(&mut report);
 
     // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
-    failures += extwasm_services::run(&mut report);
+    failures += extwasm::services::run(&mut report);
 
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);
