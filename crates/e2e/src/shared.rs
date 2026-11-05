@@ -792,7 +792,9 @@ pub fn run(
     let _ = writeln!(tsv, "# schema={SCHEMA}");
     let _ = writeln!(tsv, "# engine=lueying {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(tsv, "# corpus={corpus_name}");
-    tsv.push_str("# kind=items\ncategory\tinput\texpected\trank\ttop1\tms\tsettled_rank\tsettled_top1\n");
+    tsv.push_str(
+        "# kind=items\ncategory\tinput\texpected\trank\ttop1\tms\tsettled_rank\tsettled_top1\n",
+    );
     for item in &items {
         let _ = writeln!(
             tsv,
