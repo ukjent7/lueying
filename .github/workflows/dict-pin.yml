@@ -1,0 +1,40 @@
+# 把 tools/fetch_dict.sh 钉到 lueying-dict 的某个 Release,看过 dict-bench 结果后手动触发。
+name: dict-pin
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: lueying-dict Release 标签
+        required: true
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 更新标签与校验和
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
+          sha() { curl -fsSL --retry 3 "${base}/$1" | sha256sum | cut -d' ' -f1; }
+          sed -i -E "s/^TAG=\".*\"/TAG=\"${TAG}\"/" tools/fetch_dict.sh
+          sed -i -E "s/^fetch [0-9a-f]{64} main\.pyd/fetch $(sha main.pyd) main.pyd/" tools/fetch_dict.sh
+          sed -i -E "s/^fetch [0-9a-f]{64} collocation\.bin/fetch $(sha collocation.bin) collocation.bin/" tools/fetch_dict.sh
+      - name: 提交并跑 CI
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "dict-bot"
+          git config user.email "dict-bot@users.noreply.github.com"
+          git commit -am "chore(dict): 词典钉到 ${TAG}"
+          git push
+          # GITHUB_TOKEN 的推送不触发工作流,手动补上。
+          gh workflow run ci.yml --ref main
+          gh workflow run quality.yml --ref main
