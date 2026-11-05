@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use lueying_extsvc::Registry;
+use crate::Registry;
 
 use super::*;
 use crate::test_guest::{self, Temp};

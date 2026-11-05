@@ -3366,20 +3366,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-extsvc"
-version = "0.1.0"
-dependencies = [
- "lueying-extmeta",
-]
-
-[[package]]
 name = "lueying-extwasm"
 version = "0.1.0"
 dependencies = [
  "extism",
  "lueying-extmeta",
  "lueying-extproto",
- "lueying-extsvc",
  "serde",
  "serde_json",
  "wasmtime",

@@ -139,7 +139,7 @@ jobs:
       # CLI 的子命令解析同样不进 E2E,在这里跑;联网 broker 的协议层同场。
       - name: 扩展层单元测试
         run: |
-          cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extsvc -p lueying-extguest --lib --locked
+          cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extguest --lib --locked
           cargo test -p lueying-broker --lib --locked
           cargo test -p lueying-cli --lib --locked
           # 联网层:Base64 与更新清单解析是平台无关的纯逻辑,Linux 上就能测。

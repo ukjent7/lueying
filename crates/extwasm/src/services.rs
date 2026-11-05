@@ -4,7 +4,7 @@
 //! 提供者由宿主进程在启动时装进 [`Registry`];Wasm guest 通过宿主导入
 //! 发起调用,宿主在这一层阻塞等待结果。提供者可以选择同步完成,也可以
 //! 把 [`Done`] 交给截图/识别/面板线程异步完成;调用方只看见一个
-//! `Result<String, String>`。接口的记录文件是 [`crate::WIT`](`lueying.wit`)。
+//! `Result<String, String>`。接口的记录文件是 `lueying.wit`。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use lueying_extmeta::Service;
 
 /// 服务缝 IDL 原文;测试按它核对方法白名单。
+#[cfg(test)]
 pub const WIT: &str = include_str!("../lueying.wit");
 
 /// 隐私字段检查:返回 `true` 时所有扩展服务调用都拒绝。
@@ -227,5 +228,5 @@ pub fn methods(service: Service) -> &'static [&'static str] {
 }
 
 #[cfg(test)]
-#[path = "registry_tests.rs"]
-mod registry_tests;
+#[path = "services_tests.rs"]
+mod tests;

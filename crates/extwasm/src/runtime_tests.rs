@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lueying_extsvc::Registry;
+use crate::Registry;
 
 use super::*;
 use crate::Limits;

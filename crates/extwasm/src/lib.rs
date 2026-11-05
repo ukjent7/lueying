@@ -6,7 +6,7 @@
 //!
 //! 每个已加载扩展占一个 worker 线程,线程内持有插件与实例。命令在
 //! worker 上串行执行,截图/识别/面板这类宿主服务是阻塞调用:宿主把调用
-//! 交给 [`lueying_extsvc`] 的提供者,等它经 [`Done`] 回传,期间不碰引擎
+//! 交给服务缝的提供者,等它经 [`Done`] 回传,期间不碰引擎
 //! 线程。外观派发同样在 worker 上跑,候选窗线程只拿合并后的补丁。
 //!
 //! # ABI
@@ -33,6 +33,7 @@ mod manifest;
 pub mod native;
 mod pack;
 mod runtime;
+mod services;
 
 #[cfg(test)]
 mod test_guest;
@@ -53,9 +54,9 @@ pub use lueying_extproto::{
     MAX_PATCH_BYTES, MAX_RESULT_BYTES, OcrText, PanelResult, SCENE_API, SceneIn, ScenePatch, Shot,
     StoreKeys, StoreValue,
 };
-pub use lueying_extsvc::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry};
 pub use pack::{Pack, Poll};
 pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope, manifest_at};
+pub use services::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Registry};
 
 /// 热加载前的同意检查;返回 `Err` 时新内容不生效,旧版本继续跑。
 pub type ConsentGate = Arc<dyn Fn(&Manifest, &Path) -> Result<(), String> + Send + Sync>;

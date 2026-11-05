@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use lueying_extmeta::Service;
 
-use crate::{AuditOutcome, AuditSink, Done, Provider, Registry, WIT, methods};
+use super::{AuditOutcome, AuditSink, Done, Provider, Registry, WIT, methods};
 
 const WAIT: Duration = Duration::from_secs(2);
 

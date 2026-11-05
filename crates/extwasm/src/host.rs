@@ -6,7 +6,7 @@
 //! 插件也能直接放进扩展目录。
 //!
 //! 命令与外观都在 worker 上串行执行;宿主服务是阻塞调用:宿主把调用交给
-//! [`lueying_extsvc`] 的提供者,等它经 [`Done`] 回传,期间不碰引擎线程。
+//! 服务缝的提供者,等它经 [`Done`] 回传,期间不碰引擎线程。
 //!
 //! # ABI
 //!
@@ -36,9 +36,9 @@ use extism::{
     Val, ValType, Wasm,
 };
 use lueying_extproto::{MAX_RESULT_BYTES, SceneIn, ScenePatch};
-use lueying_extsvc::Registry;
 
 use crate::Manifest;
+use crate::Registry;
 use crate::manifest::Service;
 
 /// worker 线程的宿主栈;extism 内核、wasm 帧(wasmtime 把

@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lueying_extmeta::metrics::{ExtStat, ExtState};
-use lueying_extsvc::Registry;
 
 use crate::ConsentGate;
 use crate::MAX_FAULTS;
 use crate::MAX_WASM_BYTES;
+use crate::Registry;
 use crate::host::{Finished, Limits, Worker};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
 use crate::{SceneIn, ScenePatch};

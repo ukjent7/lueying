@@ -13,9 +13,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lueying_extmeta::metrics::{ExtStat, ExtState};
-use lueying_extsvc::Registry;
 
 use crate::ConsentGate;
+use crate::Registry;
 use crate::host::{Finished, Limits};
 use crate::manifest::{Manifest, When};
 use crate::pack::{self, Pack, Poll};
