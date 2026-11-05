@@ -265,7 +265,9 @@ impl Rerank {
                     fact.answers_key = false;
                 }
             }
-            let short = texts.first().is_some_and(|text| text.chars().count() <= SHORT_CHARS);
+            let short = texts
+                .first()
+                .is_some_and(|text| text.chars().count() <= SHORT_CHARS);
             let margin = if short { SHORT_MARGIN } else { 0.0 };
             return self.decide_inner_with_margin(context, texts, &exact, margin);
         }
