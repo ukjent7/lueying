@@ -320,6 +320,27 @@ fn parses_native_manifest() {
 }
 
 #[test]
+fn native_manifest_may_subscribe_to_candidate_state() {
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("overlay.exe");
+    value.as_object_mut().unwrap().remove("wasm");
+    value.as_object_mut().unwrap().remove("activate");
+    value["needs"] = json!([]);
+    value["events"] = json!(["candidate-state"]);
+    let manifest = parse(value).expect("原生扩展可以订阅候选窗事件");
+    assert!(manifest.subscribes(Event::CandidateState));
+    assert!(!manifest.may_read_candidate_text());
+}
+
+#[test]
+fn wasm_manifest_cannot_subscribe_to_events() {
+    let mut value = shot_ocr();
+    value["events"] = json!(["candidate-state"]);
+    assert!(parse(value).is_err());
+}
+
+#[test]
 fn rejects_bad_native_manifests() {
     // native 还声明 wasm 模块。
     let mut value = shot_ocr();

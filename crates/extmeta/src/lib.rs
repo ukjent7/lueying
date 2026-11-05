@@ -66,6 +66,9 @@ pub struct Manifest {
     /// 需要的宿主服务;宿主只链接这里声明过的导入。
     #[serde(default)]
     pub needs: Vec<Service>,
+    /// 订阅的宿主事件;只有原生扩展能订阅,宿主只推送,不接收回调。
+    #[serde(default)]
+    pub events: Vec<Event>,
     /// 申请的权限;授权页与同意记录用。
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -367,6 +370,14 @@ impl Service {
     }
 }
 
+/// 宿主推给原生扩展的事件。扩展只读,不能借它回调宿主。
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum Event {
+    /// 候选窗状态:显示与否、位置与组合内容(文字需要 candidate-text 权限)。
+    CandidateState,
+}
+
 /// 扩展能申请的权限。默认一个都不给。
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
@@ -479,6 +490,9 @@ impl Manifest {
             check_capabilities(&self.capabilities)?;
         }
         check_services(&self.needs)?;
+        if !self.events.is_empty() && self.kind != Kind::Native {
+            return Err("只有原生扩展能订阅宿主事件".into());
+        }
         check_network(self)?;
         if let Some(activate) = &self.activate {
             activate.validate()?;
@@ -525,6 +539,18 @@ impl Manifest {
     /// 是否有需要宿主链接的服务。
     pub fn needs(&self, service: Service) -> bool {
         self.needs.contains(&service)
+    }
+
+    /// 是否订阅了某个宿主事件。
+    pub fn subscribes(&self, event: Event) -> bool {
+        self.events.contains(&event)
+    }
+
+    /// 是否申请了 `candidate-text` 权限,即能否收到候选文字。
+    pub fn may_read_candidate_text(&self) -> bool {
+        self.capabilities
+            .iter()
+            .any(|cap| cap == Permission::CandidateText.key())
     }
 }
 

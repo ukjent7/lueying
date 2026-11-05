@@ -566,6 +566,7 @@ pub(super) fn real_main() {
     if state.settle_tx.is_some() {
         crate::settle::spawn(Arc::clone(&state), settle_rx);
     }
+    crate::candidate_events::spawn_subscribers();
     if state.sync_tx.is_some() {
         crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
     }

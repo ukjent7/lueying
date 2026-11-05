@@ -39,6 +39,7 @@ mod modules;
 mod pipe;
 
 #[cfg(windows)]
+mod candidate_events;
 mod settle;
 
 #[cfg(windows)]

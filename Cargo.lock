@@ -3516,6 +3516,7 @@ dependencies = [
  "lueying-dict",
  "lueying-engine",
  "lueying-extmeta",
+ "lueying-extproto",
  "lueying-extwasm",
  "lueying-features",
  "lueying-net",

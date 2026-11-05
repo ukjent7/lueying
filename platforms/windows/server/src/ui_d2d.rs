@@ -11,6 +11,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
+use lueying_extproto::candidate::CandidateState;
 use lueying_extwasm::{SceneIn, ScenePatch};
 use lueying_protocol::SessionView;
 use lueying_render::Spring;
@@ -157,6 +158,8 @@ pub(super) struct Geom {
 
 /// 窗口过程持有的上下文;窗口与线程同生命周期,进程退出一起回收。
 pub(super) struct WinCtx {
+    /// 上一次发布给原生扩展的候选窗状态;内容没变就不再发。
+    sent: Option<CandidateState>,
     /// 候选窗窗口。
     pub(super) hwnd: HWND,
     pub(super) state: Arc<State>,
@@ -220,6 +223,7 @@ fn window_loop(state: Arc<State>) {
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
+        sent: None,
         hwnd,
         state: Arc::clone(&state),
         fx: Fx::default(),
@@ -322,6 +326,7 @@ fn place(ctx: &mut WinCtx) {
                 ctx.fx.pager = None;
                 style_click_through(ctx.hwnd, true);
             }
+            publish_state(ctx, None);
         }
         Some(snap) => {
             ctx.private = snap.private;
@@ -398,6 +403,7 @@ fn place(ctx: &mut WinCtx) {
             ctx.fx.last = Some(view.clone());
             submit_scene(ctx, view, snap.private);
             draw_view(ctx, view);
+            publish_state(ctx, Some(view));
         }
     }
 }
@@ -886,4 +892,31 @@ fn park(ctx: &mut WinCtx) {
     }
     let (x, y) = ui_place::park_point();
     ui_place::park(ctx.hwnd, x, y);
+    publish_state(ctx, None);
+}
+
+/// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
+/// 私密字段的文字在这里就留空,扩展拿不到。
+fn publish_state(ctx: &mut WinCtx, view: Option<&SessionView>) {
+    let (x, y, w, h) = ctx.fx.rest;
+    let private = ctx.private;
+    let mut state = CandidateState {
+        visible: ctx.visible,
+        composing: view.is_some(),
+        rect: [x, y, w, h],
+        private,
+        ..CandidateState::default()
+    };
+    if let Some(view) = view.filter(|_| !private) {
+        state.raw.clone_from(&view.raw);
+        state.page = view.page;
+        state.page_size = view.page_size;
+        state.highlight = view.highlight;
+        state.candidates.clone_from(&view.candidates);
+    }
+    if ctx.sent.as_ref() == Some(&state) {
+        return;
+    }
+    crate::candidate_events::publish(state.clone());
+    ctx.sent = Some(state);
 }

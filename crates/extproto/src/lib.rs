@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod candidate;
+
 /// 场景协议版本。guest 在清单里不声明版本,宿主与 SDK 同步升级。
 /// 2:补丁删掉 SkSL 效果槽位,只保留主题色。
 pub const SCENE_API: u32 = 2;
