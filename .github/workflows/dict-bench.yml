@@ -21,6 +21,22 @@ on:
         required: false
         default: ""
 
+  # lueying-dict 的 pipeline 发布后直接调用,公开仓库之间不需要令牌。
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      tiers:
+        type: string
+        required: true
+      gram:
+        type: string
+        default: collocation.bin
+      patch:
+        type: string
+        default: ""
+
 permissions:
   contents: read
 
@@ -34,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ukjent7/lueying
           persist-credentials: false
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
