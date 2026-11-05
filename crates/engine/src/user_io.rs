@@ -495,4 +495,5 @@ impl UserDict {
 }
 
 #[cfg(test)]
+#[path = "user_io_tests.rs"]
 mod tests;
