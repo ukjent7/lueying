@@ -14,7 +14,7 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::{wl_compositor, wl_seat, wl_shm};
 
 use crate::session::Session;
-use app::App;
+use app::{App, Protocol};
 use panel::Panel;
 use protocol::input_method::zwp_input_method_manager_v2::ZwpInputMethodManagerV2;
 use protocol::virtual_keyboard::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
@@ -42,16 +42,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let loop_signal = event_loop.get_signal();
     let (worker_events, worker_channel) = calloop::channel::channel();
     let worker = worker::spawn(worker_events);
-    let mut app = App::new(
-        session,
-        panel,
+    let protocol = Protocol {
         input_method,
         keyboard_grab,
         virtual_keyboard,
-        worker,
-        qh,
-        loop_signal,
-    );
+    };
+    let mut app = App::new(session, panel, protocol, worker, qh, loop_signal);
     event_queue.roundtrip(&mut app)?;
 
     let handle = event_loop.handle();

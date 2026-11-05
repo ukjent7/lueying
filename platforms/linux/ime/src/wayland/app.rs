@@ -40,12 +40,17 @@ struct Repeat {
     forward: bool,
 }
 
+/// 输入法协议对象。`keyboard_grab` 只为持有:丢弃即放开硬件键盘。
+pub struct Protocol {
+    pub input_method: ZwpInputMethodV2,
+    pub keyboard_grab: ZwpInputMethodKeyboardGrabV2,
+    pub virtual_keyboard: ZwpVirtualKeyboardV1,
+}
+
 pub struct App {
     pub session: Session,
     pub panel: Panel,
-    input_method: ZwpInputMethodV2,
-    _keyboard_grab: ZwpInputMethodKeyboardGrabV2,
-    virtual_keyboard: ZwpVirtualKeyboardV1,
+    protocol: Protocol,
     worker: Sender<Command>,
     qh: QueueHandle<App>,
     loop_signal: LoopSignal,
@@ -60,13 +65,10 @@ pub struct App {
 }
 
 impl App {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Session,
         panel: Panel,
-        input_method: ZwpInputMethodV2,
-        keyboard_grab: ZwpInputMethodKeyboardGrabV2,
-        virtual_keyboard: ZwpVirtualKeyboardV1,
+        protocol: Protocol,
         worker: Sender<Command>,
         qh: QueueHandle<App>,
         loop_signal: LoopSignal,
@@ -74,9 +76,7 @@ impl App {
         Self {
             session,
             panel,
-            input_method,
-            _keyboard_grab: keyboard_grab,
-            virtual_keyboard,
+            protocol,
             worker,
             qh,
             loop_signal,
@@ -114,7 +114,7 @@ impl App {
     /// 把提交串与当前预编辑一次性发给客户端,并重画候选窗。
     fn flush(&mut self, commit: Option<&str>) {
         if let Some(text) = commit {
-            self.input_method.commit_string(text.to_string());
+            self.protocol.input_method.commit_string(text.to_string());
         }
         let display = self
             .session
@@ -123,9 +123,9 @@ impl App {
             .map(|composition| composition.display.clone())
             .unwrap_or_default();
         let cursor = display.len() as i32;
-        self.input_method
-            .set_preedit_string(display, cursor, cursor);
-        self.input_method.commit(self.done_count);
+        let input_method = &self.protocol.input_method;
+        input_method.set_preedit_string(display, cursor, cursor);
+        input_method.commit(self.done_count);
         self.redraw();
     }
 
@@ -223,8 +223,8 @@ impl App {
     }
 
     fn forward_key(&self, time: u32, evdev: u32, pressed: bool) {
-        self.virtual_keyboard
-            .key(time, evdev, if pressed { 1 } else { 0 });
+        let keyboard = &self.protocol.virtual_keyboard;
+        keyboard.key(time, evdev, if pressed { 1 } else { 0 });
     }
 
     fn install_keymap(&mut self, fd: OwnedFd, size: u32, format: WEnum<wl_keyboard::KeymapFormat>) {
@@ -251,8 +251,8 @@ impl App {
             .into_bytes();
         bytes.push(0);
         if let Some(fd) = create_fd("lueying-keymap", &bytes) {
-            self.virtual_keyboard
-                .keymap(1, fd.as_fd(), bytes.len() as u32);
+            let keyboard = &self.protocol.virtual_keyboard;
+            keyboard.keymap(1, fd.as_fd(), bytes.len() as u32);
         }
         self.xkb = Some(Xkb {
             state: State::new(&keymap),
@@ -264,8 +264,8 @@ impl App {
             xkb.state
                 .update_mask(depressed, latched, locked, 0, 0, group);
         }
-        self.virtual_keyboard
-            .modifiers(depressed, latched, locked, group);
+        let keyboard = &self.protocol.virtual_keyboard;
+        keyboard.modifiers(depressed, latched, locked, group);
     }
 
     fn hover(&mut self) {
