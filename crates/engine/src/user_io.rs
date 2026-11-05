@@ -451,7 +451,11 @@ impl UserDict {
                 .or_default()
                 .push(key.to_string());
         }
-        if self.word_keys.get(word).is_none_or(|old| old.len() < key.len()) {
+        if self
+            .word_keys
+            .get(word)
+            .is_none_or(|old| old.len() < key.len())
+        {
             self.word_keys.insert(word.to_string(), key.to_string());
         }
         true
@@ -471,7 +475,10 @@ fn stamp(count: &str, ts: &str) -> Option<(u32, u64)> {
 
 /// 控制行的标记;这些前缀的行按控制行读,不会落进普通词条。
 fn is_control(key: &str) -> bool {
-    matches!(key, "@group" | "@context" | "@transition" | "@trigram" | "@app" | "@reject" | "@pin")
+    matches!(
+        key,
+        "@group" | "@context" | "@transition" | "@trigram" | "@app" | "@reject" | "@pin"
+    )
 }
 
 #[cfg(test)]
