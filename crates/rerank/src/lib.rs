@@ -91,7 +91,7 @@ pub struct Fact {
 pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
 /// 没有上文时,这么短的首位算短句,要领先 [`SHORT_MARGIN`] 才换。
 const SHORT_CHARS: usize = 4;
-const SHORT_MARGIN: f32 = 0.5;
+const SHORT_MARGIN: f32 = 1.0;
 
 /// 8M 同步重排的最小领先幅度(每字符平均对数概率)。
 ///
