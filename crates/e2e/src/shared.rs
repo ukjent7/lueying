@@ -51,6 +51,9 @@ struct Item<'a> {
     rank: i64,
     top1: String,
     ms: f64,
+    /// 全链路重排后的名次与首选;没有模型时等于引擎结果。
+    settled_rank: i64,
+    settled_top1: String,
 }
 
 #[derive(Default)]
@@ -327,6 +330,7 @@ struct Outcome {
     ms: f64,
     top1: String,
     rerank: Option<RerankSample>,
+    settled_top1: String,
     /// 正确答案在整键候选池中的名次,以及池子大小。
     full_rank: Option<usize>,
     pool_len: usize,
@@ -395,11 +399,13 @@ fn run_chunk(
             .as_mut()
             .zip(five.as_mut())
             .map(|(four, five)| apply_rerank(&mut engine, four, five, &expected));
+        let settled_top1 = engine.candidates().first().cloned().unwrap_or_default();
         out.push(Outcome {
             rank,
             ms,
             top1,
             rerank,
+            settled_top1,
             full_rank,
             pool_len,
             sweep,
@@ -478,10 +484,12 @@ pub fn run(
             ms,
             top1,
             rerank,
+            settled_top1,
             full_rank,
             pool_len,
             sweep,
         } = outcome;
+        let settled_rank = rerank.as_ref().map_or(rank, |((_, r5, _), _)| *r5);
         pool_lens.push(pool_len);
         for (size, hits) in POOL_SIZES.iter().zip(pool_hits.iter_mut()) {
             *hits += usize::from(full_rank.is_some_and(|index| index < *size));
@@ -528,6 +536,8 @@ pub fn run(
             rank: rank.map_or(-1, |index| index as i64),
             top1,
             ms,
+            settled_rank: settled_rank.map_or(-1, |index| index as i64),
+            settled_top1,
         });
     }
 
@@ -782,17 +792,19 @@ pub fn run(
     let _ = writeln!(tsv, "# schema={SCHEMA}");
     let _ = writeln!(tsv, "# engine=lueying {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(tsv, "# corpus={corpus_name}");
-    tsv.push_str("# kind=items\ncategory\tinput\texpected\trank\ttop1\tms\n");
+    tsv.push_str("# kind=items\ncategory\tinput\texpected\trank\ttop1\tms\tsettled_rank\tsettled_top1\n");
     for item in &items {
         let _ = writeln!(
             tsv,
-            "{}\t{}\t{}\t{}\t{}\t{:.3}",
+            "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}",
             item.category,
             escape(item.input),
             escape(item.expected),
             item.rank,
             escape(&item.top1),
             item.ms,
+            item.settled_rank,
+            escape(&item.settled_top1),
         );
     }
     if let Err(error) = std::fs::write("target/bench-shared.tsv", tsv) {
