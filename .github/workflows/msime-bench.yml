@@ -43,12 +43,17 @@ jobs:
           chmod -R u+w "$RUNNER_TEMP/full"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/full/sentence-model-desktop.safetensors" \
             "$(jq -r '.artifacts[0].url' resources/settled-model.lock.json)"
+          # convert_eval 按锁文件核对资源目录,增减模型要带上对应的锁。
+          lock=resources/desktop-dictionary.lock.json
+          jq 'del(.artifacts[] | select(.name == "sentence-model.safetensors"))' "$lock" > "$RUNNER_TEMP/default.lock.json"
+          cp "$lock" "$RUNNER_TEMP/keyboard.lock.json"
+          jq --slurpfile extra resources/settled-model.lock.json '.artifacts += $extra[0].artifacts' "$lock" > "$RUNNER_TEMP/full.lock.json"
           for arm in default keyboard full; do
             dir="$RUNNER_TEMP/$arm"
             [ "$arm" = keyboard ] && dir="$resources"
             for corpus in shared extra; do
-              ./target/release/examples/convert_eval --resources "$dir" --set "../results/$corpus.tsv" \
-                --dump "../results/$arm-$corpus.jsonl" > /dev/null
+              ./target/release/examples/convert_eval --resources "$dir" --resource-lock "$RUNNER_TEMP/$arm.lock.json" \
+                --set "../results/$corpus.tsv" --dump "../results/$arm-$corpus.jsonl" > /dev/null
               python3 ../tools/bench_shared.py import-msime --dump "../results/$arm-$corpus.jsonl" \
                 --out "../results/$arm-$corpus.tsv"
             done
