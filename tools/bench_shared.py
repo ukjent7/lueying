@@ -6,6 +6,7 @@
 
 子命令:
     build             从 dicts/ 现有外部语料生成共享语料
+    build-v2          从 sentences-ctx-v1 生成 V2 开发集与测试集
     export            导出青简 / 清风 / 水杉评测器可读的输入文件
     import-qingjian   把青简 --eval-details 的 JSONL 转成统一逐条结果
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
@@ -41,16 +42,19 @@ rank 是期望答案在候选里的 0 基下标,-1 表示不在候选里。百�
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import statistics
 import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "dicts" / "eval-shared-v1.tsv"
 SCHEMA = "lueying-bench-v1"
 CORPUS_NAME = "shared-v1"
+V2_CONTEXT = 64
 
 # 顺序决定去重时谁留下:日常句优先,白霜脚本次之,中立难例最后。
 SOURCES = (
@@ -140,6 +144,34 @@ def cmd_build(args: argparse.Namespace) -> int:
         f"写出 {CORPUS.relative_to(ROOT)}: {len(rows)} 条,"
         f"去重 {duplicates} 条,其中答案冲突 {conflicts} 条"
     )
+    return 0
+
+
+def cmd_build_v2(args: argparse.Namespace) -> int:
+    """从 sentences-ctx-v1 全量生成 V2 的开发集与测试集。
+
+    按 crc32(unit) 分半,同一篇文档或同一段对话不会跨两边。偶数半是词典学 EM 权重用的
+    开发集,调参只看它;奇数半是测试集,只在发版时跑。
+    """
+    with gzip.open(args.source, "rt", encoding="utf-8") as f:
+        cases = [json.loads(line) for line in f]
+    halves: dict[str, list[str]] = {"dev": [], "test": []}
+    for case in cases:
+        domain = "writing" if case["source"] == "gov" else "dialog"
+        category = f"{case['level']}-{case['style']}-{domain}"
+        context = case["context"].replace("\t", " ").replace("\n", " ")[-V2_CONTEXT:]
+        half = "dev" if zlib.crc32(case["unit"].encode()) % 2 == 0 else "test"
+        halves[half].append(f"{category}\t{case['source']}\t{case['input']}\t{case['gold']}\t{context}")
+    head = (
+        "# 共享语料 V2:chinese-ime-lm eval/sentences-ctx-v1 全量,{half} 半。\n"
+        "# 列: category<TAB>source<TAB>pinyin<TAB>expected<TAB>context(上文取最后 {size} 字)\n"
+        "# category: <clause|word>-<full|initials|mixed>-<writing|dialog>\n"
+        "# 来源与许可: gov 公共领域;kdconv、crosswoz Apache-2.0;risawoz MIT\n"
+    )
+    for half, lines in halves.items():
+        path = ROOT / "dicts" / f"eval-v2-{half}.tsv"
+        path.write_text(head.format(half=half, size=V2_CONTEXT) + "\n".join(lines) + "\n", encoding="utf-8")
+        print(f"写出 {path.relative_to(ROOT)}: {len(lines)} 条")
     return 0
 
 
@@ -293,17 +325,39 @@ def timing(rows: list[dict[str, str]], column: str) -> dict[str, float] | None:
     }
 
 
+def cost(rows: list[dict[str, str]]) -> dict[str, float] | None:
+    """打出一句话的成本:选词与翻页次数,以及根本打不出来的比例。"""
+    picks = [int(row["picks"]) for row in rows if row.get("picks")]
+    if not picks:
+        return None
+    done = [value for value in picks if value > 0]
+    pages = [int(row["pages"]) for row in rows if row.get("pages")]
+    return {
+        "picks": round(statistics.fmean(done), 3) if done else 0.0,
+        "pages": round(statistics.fmean(pages), 3),
+        "stuck": round((len(picks) - len(done)) * 100.0 / len(picks), 2),
+    }
+
+
 def summarize_rows(rows: list[dict[str, str]]) -> dict[str, object]:
     categories = sorted({row["category"] for row in rows})
     by_category = {
         category: {
-            stage: rates([row for row in rows if row["category"] == category], stage)
-            for stage in STAGES
+            **{stage: rates([row for row in rows if row["category"] == category], stage) for stage in STAGES},
+            "cost": cost([row for row in rows if row["category"] == category]),
         }
         for category in categories
     }
     out: dict[str, object] = {
         "all": {stage: rates(rows, stage) for stage in STAGES},
+        # 宏平均:每类同权,不让条数最多的一类决定总分。
+        "macro": {
+            stage: {
+                key: round(statistics.fmean(c[stage][key] for c in by_category.values()), 2)
+                for key in ("top1", "top5")
+            }
+            for stage in STAGES
+        },
         "categories": by_category,
         "ms": {column: timing(rows, column) for column in ("ms", "ms_8m", "ms_25m")},
     }
@@ -511,6 +565,10 @@ def main() -> int:
 
     build = sub.add_parser("build", help="从现有外部语料生成共享语料")
     build.set_defaults(func=cmd_build)
+
+    build_v2 = sub.add_parser("build-v2", help="从 sentences-ctx-v1 生成 V2 开发集与测试集")
+    build_v2.add_argument("--source", required=True, help="sampled.jsonl.gz")
+    build_v2.set_defaults(func=cmd_build_v2)
 
     export = sub.add_parser("export", help="导出青简/清风/水杉可读的输入文件")
     export.add_argument("--engine", choices=("qingjian", "windinput", "msime"), required=True)

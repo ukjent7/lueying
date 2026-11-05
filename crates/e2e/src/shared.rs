@@ -19,7 +19,9 @@ const CORPUS: &str = include_str!("../../../dicts/eval-shared-v1.tsv");
 const CORPUS_NAME: &str = "eval-shared-v1";
 const SCHEMA: &str = "lueying-bench-v1";
 const COLUMNS: &str = "category\tinput\texpected\trank\ttop1\tms\t\
-    rank_8m\trank_settled\ttop1_settled\tpool_rank\tpool_len\tms_8m\tms_25m";
+    rank_8m\trank_settled\ttop1_settled\tpool_rank\tpool_len\tms_8m\tms_25m\tpicks\tpages";
+/// 逐段选词的上限,足够覆盖语料里最长的句子。
+const MAX_PICKS: usize = 16;
 
 struct Case<'a> {
     category: &'a str,
@@ -73,6 +75,43 @@ pub(crate) fn pct(values: &mut [f64], p: f64) -> f64 {
     values[((p / 100.0) * (values.len() - 1) as f64).round() as usize]
 }
 
+/// 模拟用户把句子打出来的成本:每次选能接上剩余文字的最长候选,需要时翻页。
+/// 返回选词次数与翻页次数;打不出来时选词次数为 -1。
+fn input_cost(engine: &mut Engine, expected: &str) -> (i64, i64) {
+    let size = engine.page_size();
+    let mut rest = expected.to_string();
+    let (mut picks, mut pages) = (0, 0);
+    for _ in 0..MAX_PICKS {
+        let best = engine
+            .candidates()
+            .iter()
+            .enumerate()
+            .map(|(at, text)| (at, bench::normalize(text)))
+            .filter(|(_, text)| !text.is_empty() && rest.starts_with(text.as_str()))
+            .max_by_key(|(at, text)| (text.chars().count(), std::cmp::Reverse(*at)));
+        let Some((at, text)) = best else {
+            return (-1, pages);
+        };
+        for _ in 0..at / size {
+            engine.process(Key::PageDown);
+        }
+        pages += (at / size) as i64;
+        let Ok(digit) = u8::try_from(at % size + 1) else {
+            return (-1, pages);
+        };
+        engine.process(Key::Digit(digit));
+        picks += 1;
+        rest = rest[text.len()..].to_string();
+        if rest.is_empty() {
+            return (picks, pages);
+        }
+        if engine.composition().is_none() {
+            return (-1, pages);
+        }
+    }
+    (-1, pages)
+}
+
 /// 一条用例的逐条结果,列序同 `COLUMNS`。
 struct Outcome {
     rank: i64,
@@ -85,6 +124,8 @@ struct Outcome {
     pool_len: usize,
     ms_8m: f64,
     ms_25m: f64,
+    picks: i64,
+    pages: i64,
 }
 
 /// 还原产品链路:8M 逐键同步、25M 停顿。快捷与置顶候选的位置由插入顺序决定,
@@ -137,6 +178,8 @@ fn run_chunk(
     models: Option<&Models>,
 ) -> Vec<Outcome> {
     let mut engine = bench::make_engine(dict, gram, Fuzzy::auto());
+    // 成本模拟要真的选词,不关学习的话前面的用例会抬高后面的答案。
+    engine.set_learning(false);
     let mut four = models.map(|m| Rerank::new(&m.four));
     let mut five = models.map(|m| Rerank::new(&m.five));
     let mut out = Vec::with_capacity(chunk.len());
@@ -176,17 +219,21 @@ fn run_chunk(
         let top1_settled = bench::eval_texts(&engine)
             .first()
             .map_or(String::new(), |text| (*text).to_string());
+        let rank_settled = rank_of(&engine, &expected);
+        let (picks, pages) = input_cost(&mut engine, &expected);
         out.push(Outcome {
             rank,
             top1,
             ms,
             rank_8m,
-            rank_settled: rank_of(&engine, &expected),
+            rank_settled,
             top1_settled,
             pool_rank,
             pool_len,
             ms_8m,
             ms_25m,
+            picks,
+            pages,
         });
     }
     out
@@ -242,7 +289,7 @@ pub fn run(
     for (case, item) in picked.iter().zip(outcomes.into_iter().flatten()) {
         let _ = writeln!(
             tsv,
-            "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}",
+            "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}",
             case.category,
             escape(case.input),
             escape(case.expected),
@@ -256,6 +303,8 @@ pub fn run(
             item.pool_len,
             item.ms_8m,
             item.ms_25m,
+            item.picks,
+            item.pages,
         );
     }
     let path = format!("target/bench/{name}.{at}.tsv");

@@ -22,6 +22,10 @@ on:
         description: 构建前对 query.rs 与 rerank 执行的 sed -E 脚本,扫常量用
         required: false
         default: ""
+      test:
+        description: 同时跑 V2 测试集,只在发版时勾
+        type: boolean
+        default: false
   # lueying-dict 的 pipeline 发布后直接调用,公开仓库之间不需要令牌。
   workflow_call:
     inputs:
@@ -37,6 +41,9 @@ on:
       patch:
         type: string
         default: ""
+      test:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -120,9 +127,12 @@ jobs:
       - name: 跑分片
         env:
           SHARD: ${{ matrix.shard }}
+          TEST: ${{ inputs.test }}
         run: |
           chmod +x lueying-e2e
-          for corpus in "" "--corpus dicts/eval-extra-v1.tsv"; do
+          corpora=("" "--corpus dicts/eval-extra-v1.tsv" "--corpus dicts/eval-v2-dev.tsv")
+          if [ "$TEST" = true ]; then corpora+=("--corpus dicts/eval-v2-test.tsv"); fi
+          for corpus in "${corpora[@]}"; do
             ./lueying-e2e --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank \
               --only-shared --shard "$SHARD/4" $corpus
           done

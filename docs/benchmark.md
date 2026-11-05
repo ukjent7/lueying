@@ -61,6 +61,12 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 `summary.json` 按语料、类别和链路层（`engine`、`8m`、`settled`）给出 top-1/3/5、MRR、Wilson 区间、耗时与候选池覆盖；`--gate` 在门限不达标时退出码非零。CI 的 `dict-bench` 工作流把这些放在 `bench` artifact 里。
 
+## V2 开发集与测试集
+
+`dicts/eval-v2-dev.tsv` 和 `dicts/eval-v2-test.tsv` 来自 chinese-ime-lm 的 `sentences-ctx-v1` 全量：2026 年 9–10 月的政府文件和众包对话测试集，文字不在词典语料和重排模型的训练语料里。按 `category` 分为词级和分句、全拼/简拼/混输、书面和对话，共 12 类。
+
+按文档切成两半，**调参只看开发集，测试集只在发版时跑**（`dict-bench` 勾选 `test`）。`summary.json` 的 `macro` 是各类同权的平均，`cost` 是逐段选词打出整句要选几次、翻几页。
+
 ## 跨引擎对比机制
 
 通过 `tools/bench_shared.py` 工具，可将同一份 `eval-shared-v1.tsv` 导出至其他输入引擎运行，并统一收敛结果以生成横向对比报告：

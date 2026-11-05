@@ -31,6 +31,7 @@ jobs:
           mkdir -p results
           python3 tools/bench_shared.py export --engine msime --out results/shared.tsv
           python3 tools/bench_shared.py export --engine msime --corpus dicts/eval-extra-v1.tsv --out results/extra.tsv
+          python3 tools/bench_shared.py export --engine msime --corpus dicts/eval-v2-dev.tsv --out results/v2.tsv
           cd msime
           resources=$(cargo run --release -p msime-client-core --example install_resources -- "$RUNNER_TEMP/resources" | tail -1)
           cargo build --release -p msime-input-runtime --example convert_eval
@@ -51,7 +52,7 @@ jobs:
           for arm in default keyboard full; do
             dir="$RUNNER_TEMP/$arm"
             [ "$arm" = keyboard ] && dir="$resources"
-            for corpus in shared extra; do
+            for corpus in shared extra v2; do
               ./target/release/examples/convert_eval --resources "$dir" --resource-lock "$RUNNER_TEMP/$arm.lock.json" \
                 --set "../results/$corpus.tsv" --dump "../results/$arm-$corpus.jsonl" > /dev/null
               python3 ../tools/bench_shared.py import-msime --dump "../results/$arm-$corpus.jsonl" \
