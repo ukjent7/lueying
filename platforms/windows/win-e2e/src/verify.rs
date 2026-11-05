@@ -257,8 +257,8 @@ fn uia_focus_probe() -> Result<(UIA_CONTROLTYPE_ID, UIA_CONTROLTYPE_ID, UIA_CONT
 }
 
 /// V1:Windows.Media.Ocr。独立 MTA 线程里跑,避免占 E2E 的 STA。
-/// 普通 push 测「语言包缺失时的行为」;workflow_dispatch 会先装 zh-CN
-/// OCR 能力,届时同一段代码给出中文识别质量。
+/// CI 托管 runner 装不上 zh-CN OCR 能力包,这里只测「语言包缺失时的行为」;
+/// 装好了同一段代码会给出中文识别质量。
 fn v1_ocr(rows: &mut Vec<Row>) {
     let (tx, rx) = mpsc::channel();
     let spawned = std::thread::Builder::new()
@@ -361,7 +361,7 @@ fn ocr_inner() -> Result<(Verdict, String), String> {
         )
     } else {
         format!(
-            "zh 语言包缺失(可用语言 {tags:?}),走了用户语言回退;这是语言包缺失时输入法应有的行为样本。识别文本:「{text}」。手动触发 CI 会先装 zh-CN 能力再复测质量。"
+            "zh 语言包缺失(可用语言 {tags:?}),走了用户语言回退;这是语言包缺失时输入法应有的行为样本。识别文本:「{text}」。"
         )
     };
     Ok((verdict, note))
