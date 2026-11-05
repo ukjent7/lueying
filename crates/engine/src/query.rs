@@ -172,6 +172,9 @@ const LONG_INPUT_BYTES: usize = 30;
 const MAX_FUZZY_KEYS_LONG: usize = 8;
 /// 精确整词达到这个频次就不补全;1 表示只要词典里有整词就不猜用户少打了字母。
 const COMPLETION_EXACT_MIN_FREQ: u64 = 1;
+/// 补全词频超过精确词这么多倍时,精确词只是语料碎片,不能挡住补全:
+/// `niha` 的「你哈」不该挡住「你好」,`nanshen` 的「男神」仍挡住「男生」。
+const COMPLETION_OVERRIDE_RATIO: u64 = 16;
 /// 补全只面向词,不面向整句。四音节以上的输入按句子处理,避免长句每次
 /// 按键都去枚举末音节,把整句候选挤出首页。
 const COMPLETION_MAX_SYLLABLES: usize = 4;
@@ -541,7 +544,11 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     });
     // 完整拼音整句/单词命中、以及合法连续声母缩写整句都按正常输入处理,
     // 只有非声母缩写且缺少实体整词的零碎切分(如 `hoa` → 好哦啊)才触发手误纠正。
-    let solid = built.cands.iter().any(|c| c.full && !c.sentence);
+    // 只看单节点整词:宽束下多词模糊路径也会存活,它们不是实体整词。
+    let solid = built
+        .cands
+        .iter()
+        .any(|c| c.full && !c.sentence && c.words.len() == 1);
     let full_pinyin = segment::complete_full(raw);
     let abbrev_has_full = segment::is_abbrev_sequence(raw) && built.cands.iter().any(|c| c.full);
     if solid
@@ -688,7 +695,7 @@ fn protect_exact(cands: &mut [Candidate]) {
             !c.rejected
                 && c.full
                 && c.edits == 0
-                && (c.trusted && c.freq >= EXACT_PROTECT_MIN_FREQ
+                && (c.trusted && !leader_is_completion && c.freq >= EXACT_PROTECT_MIN_FREQ
                     || c.sentence
                         && !leader_is_completion
                         && c.score + EXACT_SENTENCE_MARGIN >= leader)

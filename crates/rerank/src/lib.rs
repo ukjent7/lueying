@@ -262,12 +262,15 @@ impl Rerank {
             return None;
         }
         let mut best = 0;
+        // 模糊候选要赢过所有整键候选才算:「第」后打 si,分最高的是精确的「四」,
+        // 不能因为「是」赢了首位的「死」就把它提上来。
         for (index, &score) in scores.iter().enumerate().take(9) {
-            if facts[index].answers_key && fuzzy[index] && score > scores[best] {
+            if facts[index].answers_key && score > scores[best] {
                 best = index;
             }
         }
-        (best != 0 && scores[best] - scores[0] >= SETTLE_OVERRIDE_MARGIN).then_some(best)
+        (fuzzy[best] && best != 0 && scores[best] - scores[0] >= SETTLE_OVERRIDE_MARGIN)
+            .then_some(best)
     }
 
     /// 每条候选的每字符平均对数概率,按输入顺序返回。评测与诊断用。

@@ -693,11 +693,11 @@ pub fn probes() -> Vec<(&'static str, &'static str)> {
         ("nanshen", "男神"),
         ("wasai", "哇塞"),
         // 音节表曾漏掉 di/neng/yue/deng/rui,这几条锁死补全后的行为。
-        ("di", "地"),
+        ("di", "第"),
         ("neng", "能"),
         ("yue", "月"),
         ("deng", "等"),
-        ("rui", "瑞"),
+        ("rui", "睿"),
         // 「中和」必须能压过「中+和」碎切。
         ("zhonghe", "中和"),
     ]

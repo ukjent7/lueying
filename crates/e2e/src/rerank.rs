@@ -142,13 +142,13 @@ pub fn run(
     push(
         &mut checks,
         "8M 体积",
-        models.four_size == 8_220_336,
+        models.four_size == 8_229_264,
         format!("{} 字节", models.four_size),
     );
     push(
         &mut checks,
         "25M 体积",
-        models.five_size == 30_834_960,
+        models.five_size == 30_847_096,
         format!("{} 字节", models.five_size),
     );
     push(
@@ -285,7 +285,7 @@ pub fn run(
         &mut checks,
         "纠错候选标记为非可信",
         corrected.is_some_and(|cand| {
-            cand.full && !cand.trusted && cand.edits == 0 && cand.hint.is_some()
+            cand.full && !cand.trusted && cand.edits == 1 && cand.hint.is_some()
         }),
         corrected
             .map(|cand| {

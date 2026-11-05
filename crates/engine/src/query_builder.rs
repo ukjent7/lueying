@@ -273,12 +273,17 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         cand.score += user.transition_bonus(previous, &cand.words);
         cand.score += user.trigram_bonus(previous2, previous, &cand.words);
     }
-    // 整串没有精确词典词时,尝试把末音节补成更长的音节。像 `bulianhougu`
-    // 这种少打末尾字母的输入,精确图只能给出碎词;补全让整词也有机会进首页。
-    if !full.iter().any(|c| exact_full_word(raw, c)) {
-        let completed = completion_candidates(raw, dict, total);
-        full.extend(completed);
-    }
+    // 把末音节补成更长的音节。像 `bulianhougu` 这种少打末尾字母的输入,精确图
+    // 只能给出碎词;补全让整词也有机会进首页。有精确词时补全要比它常用得多才算。
+    let exact = full
+        .iter()
+        .filter(|c| exact_full_word(raw, c))
+        .map(|c| c.freq)
+        .max()
+        .unwrap_or(0);
+    let floor = exact.saturating_mul(COMPLETION_OVERRIDE_RATIO);
+    let completed = completion_candidates(raw, dict, total);
+    full.extend(completed.into_iter().filter(|c| c.freq >= floor));
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 同一句话可能由多种切分拼出,上屏文本完全相同;先按文本去重再占首页
     // 名额,否则重复整句会把前缀词挤进第一页,逐段上屏入口的位置忽前忽后。

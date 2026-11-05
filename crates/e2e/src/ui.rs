@@ -33,6 +33,17 @@ fn type_into(engine: &mut Engine, raw: &str) {
     }
 }
 
+/// 按序号选第 `slot` 条候选;前缀词排在第六位,要先翻到它所在的页。
+fn pick(engine: &mut Engine, slot: usize) -> Vec<Event> {
+    let size = engine.page_size();
+    for _ in 0..slot / size {
+        engine.process(Key::PageDown);
+    }
+    u8::try_from(slot % size + 1)
+        .map(|digit| engine.process(Key::Digit(digit)))
+        .unwrap_or_default()
+}
+
 /// 用户词库导出里是否还有某个词(行格式:`键<TAB>词<TAB>频次<TAB>时间戳`)。
 fn learned(export: &str, word: &str) -> bool {
     export
@@ -449,8 +460,7 @@ pub fn run(report: &mut String) -> usize {
     type_into(&mut e, "jintiantianqi");
     let slot = e.candidates().iter().position(|c| c == "今天");
     let picked: Vec<String> = slot
-        .and_then(|index| u8::try_from(index + 1).ok())
-        .map(|digit| e.process(Key::Digit(digit)))
+        .map(|index| pick(&mut e, index))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|event| match event {
@@ -481,8 +491,8 @@ pub fn run(report: &mut String) -> usize {
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
     let slot = e.candidates().iter().position(|c| c == "今天");
-    if let Some(digit) = slot.and_then(|index| u8::try_from(index + 1).ok()) {
-        e.process(Key::Digit(digit));
+    if let Some(index) = slot {
+        pick(&mut e, index);
     }
     let before = e.composition().map(|comp| comp.raw.clone());
     type_into(&mut e, "h");

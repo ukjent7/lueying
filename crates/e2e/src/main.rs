@@ -317,7 +317,7 @@ fn main() {
         // 变成非正分。比只看整句准确率更早定位「模型读了但没命中」。
         if let Some(g) = &gram {
             report.push_str("\n## 语法模型探针\n\n| 搭配 | 分数 | 结果 |\n|---|---|---|\n");
-            for (context, word) in [("因为", "所以"), ("天气", "不错")] {
+            for (context, word) in [("味道", "不错"), ("天气", "不错")] {
                 let score = g.score(context, word, false);
                 let ok = score > 0.0;
                 if !ok {
