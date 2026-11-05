@@ -181,14 +181,20 @@ impl UserDict {
         for (host, words) in in_key_order(&self.apps) {
             for (word, stat) in in_key_order(words) {
                 if stat.count > 0 {
-                    out.push_str(&format!("@app\t{host}\t{word}\t{}\t{}\n", stat.count, stat.ts));
+                    out.push_str(&format!(
+                        "@app\t{host}\t{word}\t{}\t{}\n",
+                        stat.count, stat.ts
+                    ));
                 }
             }
         }
         for (key, words) in in_key_order(&self.rejects) {
             for (word, stat) in in_key_order(words) {
                 if stat.count > 0 {
-                    out.push_str(&format!("@reject\t{key}\t{word}\t{}\t{}\n", stat.count, stat.ts));
+                    out.push_str(&format!(
+                        "@reject\t{key}\t{word}\t{}\t{}\n",
+                        stat.count, stat.ts
+                    ));
                 }
             }
         }
