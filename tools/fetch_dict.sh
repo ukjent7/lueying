@@ -6,7 +6,7 @@ set -euo pipefail
 OUT="${1:-data}"
 mkdir -p "$OUT"
 
-TAG="v0.2.0-rc1"
+TAG="v0.2.0"
 BASE="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
 
 # 下到 .part 再改名:失败时不留下一个看着齐全的半截文件。
@@ -17,5 +17,5 @@ fetch() {
   mv "${OUT}/${name}.part" "${OUT}/${name}"
 }
 
-fetch fef595c528ff2ac8270e713519220a4c697e7abeef4d94541d2b573b24679f6c main.pyd
-fetch 0cd7a5a711d5a0f0c55ea8216064b2c19771ca3f704807ee5e9001f190983992 collocation.bin
+fetch 6f43573d267667823142375b6952e25b4ec38e6b20f2af2f3b171866074c1340 main.pyd
+fetch 5644dac72b696d250fbe58cd19f78caa0035f5412dee6286a5b737468c1d75d2 collocation.bin
