@@ -184,7 +184,7 @@ fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
 /// 官方 shot-ocr 包:仓库里随安装包分发的同一份清单与 guest,配假提供者跑通。
 /// 断言调用顺序、参数透传与结果(OCR 结果两端空白由扩展自己裁掉)。
 fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
-    const MANIFEST: &str = include_str!("../../../extensions/shot-ocr/manifest.json");
+    const MANIFEST: &str = include_str!("../../../../extensions/shot-ocr/manifest.json");
     const OCR_TEXT: &str = "  掠影黄金文本\n";
 
     let wasm_path =
