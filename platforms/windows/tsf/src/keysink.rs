@@ -183,6 +183,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             self.request(Request::TogglePunct).is_some()
         }))
         .unwrap_or(false);
+        log(&format!("保留键 Ctrl+. 应答={handled}"));
         // Server 不在时把键还给应用,不能静默吞掉。
         Ok(handled.into())
     }

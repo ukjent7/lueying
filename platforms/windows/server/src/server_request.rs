@@ -559,10 +559,13 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             };
             // Ctrl+. 是隐藏快捷键;借模式徽标短暂显示「，。」或「,.」,让用户知道切换结果。
             let label = if cfg.chinese_punct { "，。" } else { ",." };
-            if let Some(path) = &state.config_path
-                && let Err(e) = config::save(path, &cfg)
-            {
-                println!("保存配置 {} 失败: {e}", path.display());
+            println!("切换中文标点 → {}", cfg.chinese_punct);
+            match &state.config_path {
+                Some(path) => match config::save(path, &cfg) {
+                    Ok(()) => println!("配置已保存 {}", path.display()),
+                    Err(e) => println!("保存配置 {} 失败: {e}", path.display()),
+                },
+                None => println!("切换中文标点未保存: 没有配置路径"),
             }
             apply_config(state, cfg);
             show_hud(state, label, None);
