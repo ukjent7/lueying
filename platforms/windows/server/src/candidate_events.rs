@@ -98,9 +98,13 @@ fn subscriber(dir: &Path, book: &ConsentBook) -> Option<(String, bool, NativeHos
         readable: vec![dir.to_path_buf()],
         sandboxed: true,
     };
-    let host = NativeHost::new(config)
-        .with_limiter(Arc::new(JobLimiter::new(Some(MEMORY_LIMIT), None)));
-    Some((manifest.id.clone(), manifest.may_read_candidate_text(), host))
+    let host =
+        NativeHost::new(config).with_limiter(Arc::new(JobLimiter::new(Some(MEMORY_LIMIT), None)));
+    Some((
+        manifest.id.clone(),
+        manifest.may_read_candidate_text(),
+        host,
+    ))
 }
 
 /// 投递线程:取最新快照,按权限裁剪后发给扩展。连续失败只记一行日志。
