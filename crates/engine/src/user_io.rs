@@ -260,215 +260,8 @@ impl UserDict {
     pub fn import(&mut self, text: &str) {
         let mut changed = false;
         for line in text.lines() {
-            let mut parts = line.split('\t');
-            let Some(k) = parts.next() else {
-                continue;
-            };
-            if k == "@group" {
-                let (Some(name), Some(value), None) = (parts.next(), parts.next(), parts.next())
-                else {
-                    continue;
-                };
-                let Some((count, ts)) = value.split_once(':') else {
-                    continue;
-                };
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                let Some(index) = FUZZY_GROUPS.iter().position(|group| *group == name) else {
-                    continue;
-                };
-                let stat = &mut self.groups[index];
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@context" {
-                let (Some(left), Some(right), Some(count), Some(ts), None) = (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) else {
-                    continue;
-                };
-                let (Some(left), Some(right)) = (single_char(left), single_char(right)) else {
-                    continue;
-                };
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                if !is_hanzi(left) || !is_hanzi(right) || count == 0 {
-                    continue;
-                }
-                let stat = self.context.entry((left, right)).or_default();
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@transition" {
-                let (Some(left), Some(right), Some(count), Some(ts), None) = (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) else {
-                    continue;
-                };
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                if left.is_empty() || right.is_empty() || count == 0 {
-                    continue;
-                }
-                let stat = self
-                    .transitions
-                    .entry(left.to_string())
-                    .or_default()
-                    .entry(right.to_string())
-                    .or_default();
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@trigram" {
-                let (Some(left), Some(mid), Some(right), Some(count), Some(ts), None) = (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) else {
-                    continue;
-                };
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                if left.is_empty() || mid.is_empty() || right.is_empty() || count == 0 {
-                    continue;
-                }
-                let stat = self
-                    .trigrams
-                    .entry(left.to_string())
-                    .or_default()
-                    .entry(mid.to_string())
-                    .or_default()
-                    .entry(right.to_string())
-                    .or_default();
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@app" {
-                let (Some(host), Some(word), Some(count), Some(ts), None) = (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) else {
-                    continue;
-                };
-                let host = host.trim().to_ascii_lowercase();
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                if host.is_empty() || word.is_empty() || count == 0 {
-                    continue;
-                }
-                let stat = self
-                    .apps
-                    .entry(host)
-                    .or_default()
-                    .entry(word.to_string())
-                    .or_default();
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@reject" {
-                let (Some(key), Some(word), Some(count), Some(ts), None) = (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) else {
-                    continue;
-                };
-                let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
-                    continue;
-                };
-                if key.is_empty() || word.is_empty() || count == 0 {
-                    continue;
-                }
-                let stat = self
-                    .rejects
-                    .entry(key.to_string())
-                    .or_default()
-                    .entry(word.to_string())
-                    .or_default();
-                stat.count = stat.count.max(count);
-                stat.ts = stat.ts.max(ts);
-                changed = true;
-                continue;
-            }
-            if k == "@pin" {
-                let (Some(key), Some(word), None) = (parts.next(), parts.next(), parts.next())
-                else {
-                    continue;
-                };
-                if key.is_empty() || word.is_empty() {
-                    continue;
-                }
-                self.pinned.insert(key.to_string(), word.to_string());
-                changed = true;
-                continue;
-            }
-            let (Some(w), Some(f), Some(t), None) =
-                (parts.next(), parts.next(), parts.next(), parts.next())
-            else {
-                continue;
-            };
-            if let (Ok(freq), Ok(ts)) = (f.parse::<u32>(), t.parse::<u64>())
-                && !k.is_empty()
-                && !w.is_empty()
-            {
-                let new_key = !self.map.contains_key(k);
-                let entries = self.map.entry(k.to_string()).or_default();
-                match entries.iter_mut().find(|e| e.word == w) {
-                    Some(e) => {
-                        e.freq = e.freq.max(freq);
-                        e.ts = e.ts.max(ts);
-                    }
-                    None => {
-                        entries.push(UserEntry {
-                            word: w.to_string(),
-                            freq,
-                            ts,
-                        });
-                        self.count += 1;
-                    }
-                }
-                if new_key {
-                    self.by_shape
-                        .entry(shape(k))
-                        .or_default()
-                        .push(k.to_string());
-                }
-                if self.word_keys.get(w).is_none_or(|old| old.len() < k.len()) {
-                    self.word_keys.insert(w.to_string(), k.to_string());
-                }
-                changed = true;
-            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            changed |= self.import_fields(&fields);
         }
         if self.count > MAX_ENTRIES {
             self.prune();
@@ -492,6 +285,193 @@ impl UserDict {
             self.rev = self.rev.wrapping_add(1);
         }
     }
+
+    /// 按字段切片分派一行;字段数或取值不对的行返回 `false`。
+    fn import_fields(&mut self, fields: &[&str]) -> bool {
+        match *fields {
+            ["@group", name, value] => self.import_group(name, value),
+            ["@context", left, right, count, ts] => self.import_context(left, right, count, ts),
+            ["@transition", left, right, count, ts] => {
+                self.import_transition(left, right, count, ts)
+            }
+            ["@trigram", left, mid, right, count, ts] => {
+                self.import_trigram(left, mid, right, count, ts)
+            }
+            ["@app", host, word, count, ts] => self.import_app(host, word, count, ts),
+            ["@reject", key, word, count, ts] => self.import_reject(key, word, count, ts),
+            ["@pin", key, word] => self.import_pin(key, word),
+            [key, word, freq, ts] if !is_control(key) => self.import_word(key, word, freq, ts),
+            _ => false,
+        }
+    }
+
+    fn import_group(&mut self, name: &str, value: &str) -> bool {
+        let Some((count, ts)) = value.split_once(':') else {
+            return false;
+        };
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        let Some(index) = FUZZY_GROUPS.iter().position(|group| *group == name) else {
+            return false;
+        };
+        let stat = &mut self.groups[index];
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_context(&mut self, left: &str, right: &str, count: &str, ts: &str) -> bool {
+        let (Some(left), Some(right)) = (single_char(left), single_char(right)) else {
+            return false;
+        };
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        if !is_hanzi(left) || !is_hanzi(right) || count == 0 {
+            return false;
+        }
+        let stat = self.context.entry((left, right)).or_default();
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_transition(&mut self, left: &str, right: &str, count: &str, ts: &str) -> bool {
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        if left.is_empty() || right.is_empty() || count == 0 {
+            return false;
+        }
+        let stat = self
+            .transitions
+            .entry(left.to_string())
+            .or_default()
+            .entry(right.to_string())
+            .or_default();
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_trigram(
+        &mut self,
+        left: &str,
+        mid: &str,
+        right: &str,
+        count: &str,
+        ts: &str,
+    ) -> bool {
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        if left.is_empty() || mid.is_empty() || right.is_empty() || count == 0 {
+            return false;
+        }
+        let stat = self
+            .trigrams
+            .entry(left.to_string())
+            .or_default()
+            .entry(mid.to_string())
+            .or_default()
+            .entry(right.to_string())
+            .or_default();
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_app(&mut self, host: &str, word: &str, count: &str, ts: &str) -> bool {
+        let host = host.trim().to_ascii_lowercase();
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        if host.is_empty() || word.is_empty() || count == 0 {
+            return false;
+        }
+        let stat = self
+            .apps
+            .entry(host)
+            .or_default()
+            .entry(word.to_string())
+            .or_default();
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_reject(&mut self, key: &str, word: &str, count: &str, ts: &str) -> bool {
+        let Some((count, ts)) = stamp(count, ts) else {
+            return false;
+        };
+        if key.is_empty() || word.is_empty() || count == 0 {
+            return false;
+        }
+        let stat = self
+            .rejects
+            .entry(key.to_string())
+            .or_default()
+            .entry(word.to_string())
+            .or_default();
+        absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    fn import_pin(&mut self, key: &str, word: &str) -> bool {
+        if key.is_empty() || word.is_empty() {
+            return false;
+        }
+        self.pinned.insert(key.to_string(), word.to_string());
+        true
+    }
+
+    /// 普通词条行:`键<TAB>词<TAB>频次<TAB>时间戳`,同键同词取较大的频次。
+    fn import_word(&mut self, key: &str, word: &str, freq: &str, ts: &str) -> bool {
+        let Some((freq, ts)) = stamp(freq, ts) else {
+            return false;
+        };
+        if key.is_empty() || word.is_empty() {
+            return false;
+        }
+        let new_key = !self.map.contains_key(key);
+        let entries = self.map.entry(key.to_string()).or_default();
+        match entries.iter_mut().find(|e| e.word == word) {
+            Some(e) => {
+                e.freq = e.freq.max(freq);
+                e.ts = e.ts.max(ts);
+            }
+            None => {
+                entries.push(UserEntry {
+                    word: word.to_string(),
+                    freq,
+                    ts,
+                });
+                self.count += 1;
+            }
+        }
+        if new_key {
+            self.by_shape
+                .entry(shape(key))
+                .or_default()
+                .push(key.to_string());
+        }
+        if self.word_keys.get(word).is_none_or(|old| old.len() < key.len()) {
+            self.word_keys.insert(word.to_string(), key.to_string());
+        }
+        true
+    }
+}
+
+/// 同一条统计取较大的计数与较新的时间戳。
+fn absorb(count: &mut u32, ts: &mut u64, new_count: u32, new_ts: u64) {
+    *count = (*count).max(new_count);
+    *ts = (*ts).max(new_ts);
+}
+
+/// 计数与时间戳两个字段;任一不是数字就整行作废。
+fn stamp(count: &str, ts: &str) -> Option<(u32, u64)> {
+    Some((count.parse().ok()?, ts.parse().ok()?))
+}
+
+/// 控制行的标记;这些前缀的行按控制行读,不会落进普通词条。
+fn is_control(key: &str) -> bool {
+    matches!(key, "@group" | "@context" | "@transition" | "@trigram" | "@app" | "@reject" | "@pin")
 }
 
 #[cfg(test)]
