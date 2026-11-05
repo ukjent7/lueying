@@ -142,7 +142,9 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
 
 - 掠影词典:GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict;\
 词频来自 Ultra-FineWeb(Apache-2.0)、FineWeb-2(ODC-By)、LCCC(MIT)与 Common Crawl,\
-读音来自 pinyin-data、phrase-pinyin-data(MIT)、CC-CEDICT(CC BY-SA 4.0)与 g2pW 模型(Apache-2.0)。
+读音来自 pinyin-data、phrase-pinyin-data(MIT)、CC-CEDICT(CC BY-SA 4.0)与 g2pW 模型(Apache-2.0);\
+新词候选的词形来自万象词库(CC BY 4.0,作者 amzxyz,https://github.com/amzxyz/rime-wanxiang)\
+与白霜词库(GPL-3.0,https://github.com/gaboolic/rime-frost),词频与读音不取自这两者。
 - 掠影搭配表 (LYCL):GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict;\
 与词典同词表、同语料来源构建。
 - chinese-ime-lm:Apache-2.0,https://github.com/metasequoiaime/chinese-ime-lm,\
