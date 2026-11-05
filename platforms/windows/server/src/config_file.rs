@@ -358,27 +358,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
     ))
 }
 
-/// 渲染 `apps.toml`:每个 exe 一节。
-pub fn render_apps(apps: &BTreeMap<String, AppOverride>) -> Result<String, String> {
-    let layers: BTreeMap<String, AppLayer> = apps
-        .iter()
-        .map(|(host, over)| {
-            (
-                host.clone(),
-                AppLayer {
-                    punct: over.punct,
-                    learning: over.learning,
-                },
-            )
-        })
-        .collect();
-    let body = toml::to_string_pretty(&layers)
-        .map_err(|error| format!("按应用配置序列化失败: {error}"))?;
-    Ok(format!(
-        "# 掠影按应用配置(TOML)。节名是宿主进程的 exe 名(小写)。\n\n{body}"
-    ))
-}
-
 #[derive(Serialize)]
 struct SaveFile<'a> {
     page_size: usize,

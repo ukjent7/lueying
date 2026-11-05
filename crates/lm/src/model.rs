@@ -478,30 +478,13 @@ impl SentenceModel {
     }
 
     /// 返回每个 token 的对数概率，公开的完整分布入口仍计算所有行。
+    #[cfg(test)]
     pub(crate) fn distribution(&self, hidden: &[f32]) -> Vec<f32> {
         let (mut logits, offset) = self.project(hidden);
         for logit in &mut logits {
             *logit -= offset;
         }
         logits
-    }
-
-    /// log P(next character | text), over the whole vocabulary.
-    ///
-    /// This is the primitive a search needs: reranking asks the model to judge finished strings,
-    /// while a search asks it what should come next, which is what lets it reach a reading the
-    /// engine never proposed.
-    pub fn next_log_probabilities(&self, text: &str) -> Vec<f32> {
-        let mut tokens = vec![BOS];
-        let encoded = self.encode(text);
-        let room = if self.variant.window == 0 {
-            self.config.context - 1
-        } else {
-            self.variant.window
-        };
-        tokens.extend_from_slice(&encoded[encoded.len().saturating_sub(room)..]);
-        let prefix = self.run_prefix(&tokens);
-        self.distribution(&prefix.last_hidden.values)
     }
 
     /// The identifier this model uses for `character`, when it has one.

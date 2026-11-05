@@ -66,22 +66,6 @@ pub fn install_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// 安装目标目录,与 Inno 安装包的默认目录 `{autopf}\lueying` 一致;
-/// `LUEYING_INSTALL_DIR` 只给自动化测试隔离用。
-pub fn install_target() -> PathBuf {
-    if let Some(dir) = std::env::var_os("LUEYING_INSTALL_DIR") {
-        return PathBuf::from(dir);
-    }
-    if let Some(dir) = std::env::var_os("ProgramFiles") {
-        return PathBuf::from(dir).join("lueying");
-    }
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Programs")
-        .join("lueying")
-}
-
 /// 按渠道查询更新。稳定渠道看 latest(不含预发布);测试渠道看最近
 /// 20 条 Release(含预发布),取首个比当前新的——列表按时间倒序,
 /// 首条就是 GitHub 上的最新版,版本号比较兜底乱序。

@@ -634,21 +634,6 @@ pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-/// 保存按应用层。
-pub fn save_apps(apps: &BTreeMap<String, AppOverride>) -> std::io::Result<()> {
-    let Some(path) = apps_path() else {
-        return Ok(());
-    };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let text = crate::config_file::render_apps(apps)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
-}
-
 /// 运行期扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。
 pub(crate) fn valid_script_id(id: &str) -> bool {
     let mut chars = id.chars();

@@ -1,51 +1,12 @@
 //! 官方扩展/模型的安装动作:下载、校验、原子落盘。
 //!
-//! 设置窗只点一下按钮,真正的网络与文件操作在后台线程;完成后回窗口
-//! 消息。目录里的每一项都带 SHA-256 与字节数,校验不过就不写目标文件。
+//! 调用方负责放到后台线程;网络与文件操作都在这里完成。目录里的每一项都带
+//! SHA-256 与字节数,校验不过就不写目标文件。
 
-use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 use crate::official_extensions::{self, OfficialExtension};
-
-/// 安装完成消息;设置窗用它刷新目录与状态。
-pub const WM_OFFICIAL_DONE: u32 = WM_APP + 4;
-
-/// 后台安装结果:线程写,窗口线程取。
-static RESULT: Mutex<Option<Result<String, String>>> = Mutex::new(None);
-
-/// 启动后台安装;同一时间只允许装一项。
-pub fn start(hwnd: HWND, id: String) {
-    *RESULT.lock().unwrap_or_else(|poison| poison.into_inner()) = None;
-    let raw = hwnd.0 as usize;
-    let spawned = std::thread::Builder::new()
-        .name("settings-official".into())
-        .spawn(move || {
-            let result = install(&id);
-            *RESULT.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(result);
-            unsafe {
-                let hwnd = HWND(raw as *mut c_void);
-                let _ = PostMessageW(Some(hwnd), WM_OFFICIAL_DONE, WPARAM(0), LPARAM(0));
-            }
-        });
-    if let Err(error) = spawned {
-        *RESULT.lock().unwrap_or_else(|poison| poison.into_inner()) =
-            Some(Err(format!("启动安装线程失败: {error}")));
-    }
-}
-
-/// 取走后台结果。
-pub fn take_result() -> Option<Result<String, String>> {
-    RESULT
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take()
-}
 
 /// 安装一项官方目录内容;返回给用户的完成说明。
 pub fn install(id: &str) -> Result<String, String> {
