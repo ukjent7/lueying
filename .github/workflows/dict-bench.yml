@@ -119,8 +119,8 @@ jobs:
         run: |
           if [ -n "$TAG" ]; then
             base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
-            curl -fsSL --retry 3 -o data/main.pyd "${base}/main-${TIER}.pyd"
-            curl -fsSL --retry 3 -o data/collocation.bin "${base}/${GRAM}"
+            curl -fsSL --retry 5 --retry-delay 15 -o data/main.pyd "${base}/main-${TIER}.pyd"
+            curl -fsSL --retry 5 --retry-delay 15 -o data/collocation.bin "${base}/${GRAM}"
           else
             bash tools/fetch_dict.sh data
           fi

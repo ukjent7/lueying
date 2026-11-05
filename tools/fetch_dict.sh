@@ -12,7 +12,7 @@ BASE="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
 # 下到 .part 再改名:失败时不留下一个看着齐全的半截文件。
 fetch() {
   local sha="$1" name="$2"
-  curl -fsSL --retry 3 -o "${OUT}/${name}.part" "${BASE}/${name}"
+  curl -fsSL --retry 5 --retry-delay 15 -o "${OUT}/${name}.part" "${BASE}/${name}"
   echo "${sha}  ${OUT}/${name}.part" | sha256sum -c --quiet
   mv "${OUT}/${name}.part" "${OUT}/${name}"
 }

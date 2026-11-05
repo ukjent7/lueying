@@ -24,7 +24,7 @@ download() {
     if [ -f "$target" ] && echo "$sha  $target" | sha256sum -c --quiet 2>/dev/null; then
         return
     fi
-    curl -fsSL --retry 3 -o "${target}.part" "$url"
+    curl -fsSL --retry 5 --retry-delay 15 -o "${target}.part" "$url"
     echo "$sha  ${target}.part" | sha256sum -c --quiet
     mv "${target}.part" "$target"
 }
@@ -33,7 +33,7 @@ download "$DET_URL" "$DET_SHA" "$OUT/det.onnx"
 download "$REC_URL" "$REC_SHA" "$OUT/rec.onnx"
 
 if [ ! -f "$OUT/dict.txt" ] || ! echo "$DICT_SHA  $OUT/dict.txt" | sha256sum -c --quiet 2>/dev/null; then
-    curl -fsSL --retry 3 -o "$OUT/inference.yml.part" "$REC_YML"
+    curl -fsSL --retry 5 --retry-delay 15 -o "$OUT/inference.yml.part" "$REC_YML"
     # 取 character_dict 下的列表项,再按 YAML 单引号规则去引号。
     awk '
         /^[[:space:]]*character_dict:/ { in_dict = 1; next }

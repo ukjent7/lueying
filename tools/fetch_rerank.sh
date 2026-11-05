@@ -18,7 +18,7 @@ fetch() {
     return
   fi
   local url="${BASE_URL}/${name}"
-  curl -fsSL --retry 3 -o "${target}.part" "$url"
+  curl -fsSL --retry 5 --retry-delay 15 -o "${target}.part" "$url"
   echo "${sha}  ${target}.part" | sha256sum -c --quiet
   mv "${target}.part" "$target"
 }
