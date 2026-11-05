@@ -493,3 +493,6 @@ impl UserDict {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

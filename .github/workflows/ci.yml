@@ -93,6 +93,9 @@ jobs:
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
+      # 引擎没有别处的测试入口;导入/导出的特征测试在这里跑。
+      - name: 引擎单元测试
+        run: cargo test -p lueying-engine --lib --locked
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:
