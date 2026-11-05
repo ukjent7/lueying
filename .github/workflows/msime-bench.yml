@@ -1,0 +1,44 @@
+# 水杉在共享语料上的逐条结果,手动触发,和 dict-bench 的报告并排比较。
+name: msime-bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: metasequoiaime/msime 的分支或提交
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: metasequoiaime/msime
+          ref: ${{ inputs.ref }}
+          path: msime
+          persist-credentials: false
+      - name: 跑共享语料
+        run: |
+          mkdir -p results
+          python3 tools/bench_shared.py export --engine msime --out results/msime.tsv
+          cd msime
+          resources=$(cargo run --release -p msime-client-core --example install_resources -- "$RUNNER_TEMP/resources" | tail -1)
+          cargo run --release -p msime-input-runtime --example convert_eval -- \
+            --resources "$resources" --set ../results/msime.tsv --dump ../results/msime.jsonl
+          cd ..
+          python3 tools/bench_shared.py import-msime --dump results/msime.jsonl --out results/msime-result.tsv
+      - name: 上传结果
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msime-bench
+          path: results
