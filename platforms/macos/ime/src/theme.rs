@@ -6,5 +6,9 @@ use objc2_app_kit::NSAppearance;
 /// 跟随系统当前绘制外观;名称里带 Dark 即深色。
 pub fn current() -> Palette {
     let name = NSAppearance::currentDrawingAppearance().name().to_string();
-    if name.contains("Dark") { Palette::DARK } else { Palette::LIGHT }
+    if name.contains("Dark") {
+        Palette::DARK
+    } else {
+        Palette::LIGHT
+    }
 }
