@@ -1,8 +1,8 @@
 //! 设置窗独立进程:输入方案、候选外观、标点、词库数据与更新。
 //!
 //! 窗口是 Slint(winit 后端 + femtovg GPU 渲染,无头环境回退软件渲染);页面模型在
-//! `lueying_server::settings_view`,宿主接线在 `settings_slint`,
-//! 平台侧动作在 `settings_actions`。保存写 `config.toml`,再经命名
+//! `lueying_server::settings::view`,宿主接线在 `settings_slint`,
+//! 平台侧动作在 `settings::actions`。保存写 `config.toml`,再经命名
 //! 管道让常驻 Server 立即重载。
 //!
 //! `--selftest <报告路径>` 跑一遍自检:模型五页铺得开、关键控件在位、
@@ -17,7 +17,7 @@ mod settings_slint;
 fn main() {
     // 平台无关:脚本与 AI agent 读取设置元数据,不需要启动窗口。
     if std::env::args().nth(1).as_deref() == Some("--dump-config-schema") {
-        println!("{}", lueying_server::settings_schema::config_schema_text());
+        println!("{}", lueying_server::settings::schema::config_schema_text());
         return;
     }
     #[cfg(windows)]

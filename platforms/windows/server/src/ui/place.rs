@@ -1,6 +1,6 @@
 //! 候选窗与模式徽标共用的 Win32 摆位、DPI 与会话快照助手。
 //!
-//! 候选窗(`ui_d2d.rs`)与模式徽标(`ui_hud.rs`)共用同一套停靠点、
+//! 候选窗(`ui::d2d.rs`)与模式徽标(`ui::hud.rs`)共用同一套停靠点、
 //! 逐显示器 DPI、工作区夹取与全屏避让;"画什么"由会话快照决定。
 
 use lueying_protocol::SessionView;

@@ -431,7 +431,7 @@ pub(super) fn panel_selftest() {
         .nth(2)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/panel-selftest.txt"));
-    let result = crate::ui_panel::selftest(&report);
+    let result = crate::ui::panel::selftest(&report);
     std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
@@ -581,7 +581,7 @@ pub(super) fn real_main() {
     // D2D 渲染管线自检(E2E 打开):WARP 离屏出一帧、读回像素,结论写日志;
     // 不依赖管道与真实输入,无 UI 环境也能跑。
     if std::env::var_os("LUEYING_D2D_SELFTEST").is_some() {
-        crate::ui_d2d_selftest::selftest();
+        crate::ui::d2d::selftest::selftest();
         crate::ext_selftest::run();
     }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。

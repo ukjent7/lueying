@@ -1,6 +1,6 @@
 //! 设置窗的平台侧动作:管道、文件对话框、备份与自动更新。
 //!
-//! 页面与配置改动在 [`crate::settings_view`];这里只做「要动文件系统、
+//! 页面与配置改动在 [`crate::settings::view`];这里只做「要动文件系统、
 //! 要问常驻服务」的事,以及那些离不开 Windows API 的对话框。
 
 use std::io::{BufReader, Write};
@@ -9,7 +9,7 @@ use std::process::Command;
 
 use crate::config::{self, AppOverride};
 use crate::dict_import;
-use crate::settings_view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
+use crate::settings::view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use lueying_extmeta::metrics::ExtMetrics;
 use lueying_extwasm::{ConsentBook, ConsentCheck};
 use lueying_net::update;
@@ -56,10 +56,8 @@ pub fn reload() {
     let _ = send(&Request::ReloadConfig);
 }
 
-#[path = "settings_backup.rs"]
 mod backup;
 
-#[path = "settings_sync.rs"]
 mod sync;
 
 pub use backup::{backup_export, backup_import};
@@ -72,7 +70,7 @@ pub fn save(settings: &mut Settings) {
         settings.say(Notice::Error, "没有可写的配置路径");
         return;
     };
-    let dropped = crate::settings_ext::normalize(&mut settings.cfg, &settings.scripts);
+    let dropped = crate::settings::ext::normalize(&mut settings.cfg, &settings.scripts);
     match config::save(&path, &settings.cfg) {
         Ok(()) => {
             settings.cfg.config_issues.clear();
@@ -762,5 +760,4 @@ fn tail_text(bytes: &[u8], limit: usize) -> String {
 }
 
 #[cfg(test)]
-#[path = "settings_actions_tests.rs"]
 mod tests;

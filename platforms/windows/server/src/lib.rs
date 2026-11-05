@@ -17,19 +17,7 @@ pub mod host_panel;
 
 pub mod official_extensions;
 
-pub mod settings_consent;
-
-pub mod settings_ext;
-
-pub mod settings_model;
-
-pub mod settings_secret;
-
-pub mod settings_schema;
-
-pub mod settings_view;
-
-mod settings_text;
+pub mod settings;
 
 pub mod skin;
 
@@ -41,12 +29,6 @@ pub mod ui_surface;
 
 #[cfg(windows)]
 pub mod services;
-
-#[cfg(windows)]
-pub mod settings_actions;
-
-#[cfg(windows)]
-pub mod settings_official;
 
 #[cfg(windows)]
 pub mod theme;

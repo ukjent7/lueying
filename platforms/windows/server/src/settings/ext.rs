@@ -9,9 +9,9 @@ use lueying_extmeta::{Manifest, Setting, SettingValue};
 use serde_json::Value;
 
 use crate::config::AppConfig;
-use crate::settings_consent::ScriptEntry;
-use crate::settings_model::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
-use crate::settings_view::ids;
+use crate::settings::consent::ScriptEntry;
+use crate::settings::model::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
+use crate::settings::view::ids;
 
 /// 一页最多渲染的字段数;超出的值仍可在 `config.toml` 里手改。
 pub const MAX_FIELDS: usize = ids::EXT_FIELDS;
@@ -92,7 +92,7 @@ fn field(slot: usize, script: &ScriptEntry, setting: &Setting, cfg: &AppConfig) 
         }
     } else if setting.is_secret() {
         Kind::Secret {
-            filled: crate::settings_secret::has(&script.id, setting.key()),
+            filled: crate::settings::secret::has(&script.id, setting.key()),
         }
     } else {
         let selected = match &value {
@@ -243,7 +243,7 @@ pub fn values(ext: &str, settings: &[Setting], stored: Option<&BTreeMap<String, 
         let value = setting.resolve(stored.and_then(|table| table.get(setting.key())));
         object.insert(setting.key().to_string(), value.to_json());
     }
-    crate::settings_secret::merge(ext, settings, &mut object);
+    crate::settings::secret::merge(ext, settings, &mut object);
     Value::Object(object)
 }
 
@@ -268,5 +268,4 @@ pub fn slot(base: &str) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[path = "settings_ext_tests.rs"]
 mod tests;

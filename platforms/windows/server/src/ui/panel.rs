@@ -40,9 +40,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use crate::imp::{ExtInvoke, State};
-use crate::ui_place;
+use crate::ui::place;
 
-#[path = "ui_panel_host.rs"]
 mod host;
 
 /// 窗口类名;自检按它确认面板已拿到前台。
@@ -244,8 +243,8 @@ impl PanelWindow {
                 Some((point.x, point.y))
             });
         let work = anchor
-            .and_then(|(x, y)| ui_place::monitor_info_at(x, y))
-            .map_or_else(ui_place::primary_work_area, |info| info.rcWork);
+            .and_then(|(x, y)| place::monitor_info_at(x, y))
+            .map_or_else(place::primary_work_area, |info| info.rcWork);
         let width = work.right - work.left;
         let height = work.bottom - work.top;
         (
@@ -533,7 +532,7 @@ unsafe extern "system" fn wnd_proc(
 ///
 /// 独立进程跑(`lueying-server.exe --panel-selftest <报告>`),不碰管道、
 /// 单实例锁与 TSF;CI 由 win-e2e 拉起并读报告。
-pub(super) fn selftest(report: &Path) -> Result<(), String> {
+pub(crate) fn selftest(report: &Path) -> Result<(), String> {
     let mut lines = vec!["命令面板自检".to_string()];
     let result = selftest_run(&mut lines);
     match &result {

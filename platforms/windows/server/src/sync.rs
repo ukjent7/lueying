@@ -4,7 +4,7 @@
 //! - 载荷:与设置窗「配置备份」同一份文本格式,能打包、解包与算摘要。
 //! - 判定:记下上次同步成功的摘要,就能分清本机改了、远端改了还是两边都改。
 //! - 传输:HTTPS + Basic 认证的 WebDAV 读写,住在设置窗那侧(见
-//!   `settings_actions`),常驻服务不碰网络。
+//!   `settings::actions`),常驻服务不碰网络。
 //!
 //! 口令不进配置也不进载荷:地址与账号在 `config.toml`,口令放
 //! `%APPDATA%\lueying\webdav-password.txt`,只留在本机。

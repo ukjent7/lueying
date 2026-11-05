@@ -65,7 +65,7 @@ fn check() -> Result<(), String> {
 
 /// 设置页的扩展列表要能读到这个包(只读清单,不加载 Wasm)。
 fn check_listing(id: &str) -> Result<(), String> {
-    let listed = lueying_server::settings_actions::installed_scripts();
+    let listed = lueying_server::settings::actions::installed_scripts();
     if listed.iter().any(|script| script.id == id) {
         Ok(())
     } else {

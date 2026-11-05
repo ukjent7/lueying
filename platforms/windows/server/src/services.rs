@@ -18,19 +18,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
 };
 
-#[path = "services_audio.rs"]
 mod audio;
-#[path = "services_capture.rs"]
 mod capture;
-#[path = "services_clipboard.rs"]
 mod clipboard;
-#[path = "services_hotkey.rs"]
 mod hotkey;
-#[path = "services_network.rs"]
 mod network;
-#[path = "services_ocr.rs"]
 mod ocr;
-#[path = "services_store.rs"]
 mod store;
 
 pub use audio::{AsrProvider, AudioProvider};
@@ -73,7 +66,7 @@ pub struct PanelJob {
     pub done: Done,
 }
 
-/// 宿主选择面板;窗口线程由 `ui_panel_host::spawn` 装填,未启动时明确报错。
+/// 宿主选择面板;窗口线程由 `ui::panel::host::spawn` 装填,未启动时明确报错。
 #[derive(Default)]
 pub struct PanelProvider {
     sender: Mutex<Option<mpsc::SyncSender<PanelJob>>>,
@@ -200,5 +193,4 @@ fn unicode_input(unit: u16, up: bool) -> INPUT {
 }
 
 #[cfg(test)]
-#[path = "services_tests.rs"]
-mod services_tests;
+mod tests;

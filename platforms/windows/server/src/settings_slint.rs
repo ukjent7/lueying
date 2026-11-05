@@ -1,6 +1,6 @@
 //! 设置窗:Slint(winit 后端 + femtovg GPU 渲染,软件渲染兜底)承载页面,视觉对齐 macOS 27
-//! 系统设置。页面模型在 `lueying_server::settings_view` 与
-//! `settings_model`,平台侧动作在 `settings_actions`;这里只做三件事:
+//! 系统设置。页面模型在 `lueying_server::settings::view` 与
+//! `settings::model`,平台侧动作在 `settings::actions`;这里只做三件事:
 //! 把模型灌进 Slint 属性、把回调翻译回 `Settings::activate`、把要碰
 //! 文件系统与网络的动作放到后台线程再回事件循环。
 //!
@@ -15,11 +15,11 @@ use lueying_protocol::Request;
 
 use lueying_server::accents::ACCENTS;
 use lueying_server::config::{self, AppConfig};
-use lueying_server::settings_actions;
-use lueying_server::settings_model::{self as model, ButtonKind, Control};
-use lueying_server::settings_official;
-use lueying_server::settings_secret;
-use lueying_server::settings_view::{
+use lueying_server::settings::actions;
+use lueying_server::settings::model::{self as model, ButtonKind, Control};
+use lueying_server::settings::official;
+use lueying_server::settings::secret;
+use lueying_server::settings::view::{
     Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState, WebdavField,
 };
 use lueying_server::theme;
@@ -57,14 +57,14 @@ pub fn run() {
         settings.say(Notice::Error, message);
     }
     settings.path = path;
-    settings.groups = settings_actions::call(&Request::FuzzyStats)
+    settings.groups = actions::call(&Request::FuzzyStats)
         .map(|reply| reply.groups)
         .unwrap_or_default();
-    settings.status = settings_actions::call(&Request::Status).and_then(|reply| reply.status);
+    settings.status = actions::call(&Request::Status).and_then(|reply| reply.status);
     settings.current = update::current_version();
-    settings.scripts = settings_actions::installed_scripts();
-    settings.ppocr_ready = settings_actions::ppocr_ready();
-    settings.ext_metrics = settings_actions::read_ext_metrics();
+    settings.scripts = actions::installed_scripts();
+    settings.ppocr_ready = actions::ppocr_ready();
+    settings.ext_metrics = actions::read_ext_metrics();
 
     let core: Shared = Arc::new(Mutex::new(Core {
         settings,
@@ -110,7 +110,7 @@ pub fn run() {
     let shared_close = Arc::clone(&core);
     ui.on_save_hotkey(move || {
         let mut guard = lock(&shared_close);
-        settings_actions::save(&mut guard.settings);
+        actions::save(&mut guard.settings);
     });
     let handle = ui.as_weak();
     ui.on_escape(move || {
@@ -132,26 +132,26 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::Close => {
             let _ = ui.hide();
         }
-        Action::Save => with(core, settings_actions::save),
-        Action::ResetFuzzy => with(core, settings_actions::reset_fuzzy),
-        Action::OpenScripts => with(core, settings_actions::open_scripts),
-        Action::ImportLuext => with(core, settings_actions::import_luext),
-        Action::ApproveExtension => with(core, settings_actions::approve_extension),
-        Action::OpenExtAudit => with(core, settings_actions::open_ext_audit),
-        Action::RefreshExtMetrics => with(core, settings_actions::refresh_ext_metrics),
-        Action::OpenOcrModels => with(core, settings_actions::open_ocr_models),
-        Action::OpenApps => with(core, settings_actions::open_apps),
-        Action::BackupExport => with(core, settings_actions::backup_export),
-        Action::BackupImport => with(core, settings_actions::backup_import),
+        Action::Save => with(core, actions::save),
+        Action::ResetFuzzy => with(core, actions::reset_fuzzy),
+        Action::OpenScripts => with(core, actions::open_scripts),
+        Action::ImportLuext => with(core, actions::import_luext),
+        Action::ApproveExtension => with(core, actions::approve_extension),
+        Action::OpenExtAudit => with(core, actions::open_ext_audit),
+        Action::RefreshExtMetrics => with(core, actions::refresh_ext_metrics),
+        Action::OpenOcrModels => with(core, actions::open_ocr_models),
+        Action::OpenApps => with(core, actions::open_apps),
+        Action::BackupExport => with(core, actions::backup_export),
+        Action::BackupImport => with(core, actions::backup_import),
         Action::EditWebdav(field) => open_webdav_editor(ui, core, field),
         Action::SyncWebdav => start_webdav_sync(ui, core),
-        Action::ImportUser => with(core, settings_actions::import_user),
-        Action::ExportUser => with(core, settings_actions::export_user),
-        Action::Diagnostics => with(core, settings_actions::export_diagnostics),
+        Action::ImportUser => with(core, actions::import_user),
+        Action::ExportUser => with(core, actions::export_user),
+        Action::Diagnostics => with(core, actions::export_diagnostics),
         Action::ClearUser => {
             let mut guard = lock(core);
             if guard.settings.confirm_clear {
-                settings_actions::clear_user(&mut guard.settings);
+                actions::clear_user(&mut guard.settings);
             } else {
                 guard.settings.confirm_clear = true;
                 guard.settings.say(Notice::Info, "再点一次确认清空");

@@ -150,7 +150,7 @@ pub(super) fn page_colors(colors: &theme::Colors, appearance: theme::Appearance)
 pub(super) fn choose_script(ui: &SettingsWindow, core: &Shared) {
     let scripts = {
         let mut guard = lock(core);
-        guard.settings.scripts = settings_actions::installed_scripts();
+        guard.settings.scripts = actions::installed_scripts();
         if guard.settings.scripts.is_empty() {
             guard
                 .settings
@@ -190,14 +190,14 @@ pub(super) fn choose_script(ui: &SettingsWindow, core: &Shared) {
             // 确认框是模态泵,期间不能握着状态锁。
             let mut approved_now = false;
             if script.consent != ConsentState::Approved {
-                let text = lueying_server::settings_consent::prompt(script);
+                let text = lueying_server::settings::consent::prompt(script);
                 if !confirm(&text, "扩展授权") {
                     lock(core)
                         .settings
                         .say(Notice::Info, format!("未同意 {name},扩展保持停用"));
                     return;
                 }
-                if let Err(error) = settings_actions::approve_package(&id) {
+                if let Err(error) = actions::approve_package(&id) {
                     lock(core)
                         .settings
                         .say(Notice::Error, format!("同意失败: {error}"));
@@ -207,7 +207,7 @@ pub(super) fn choose_script(ui: &SettingsWindow, core: &Shared) {
             }
             let mut guard = lock(core);
             if approved_now {
-                guard.settings.scripts = settings_actions::installed_scripts();
+                guard.settings.scripts = actions::installed_scripts();
             }
             if let Some(index) = guard.settings.scripts.iter().position(|item| item.id == id) {
                 guard.settings.select_script(Some(index));
@@ -223,7 +223,7 @@ pub(super) fn choose_script(ui: &SettingsWindow, core: &Shared) {
 pub(super) fn add_app(ui: &SettingsWindow, core: &Shared) {
     let apps = {
         let guard = lock(core);
-        settings_actions::running_apps(&guard.settings.cfg.apps)
+        actions::running_apps(&guard.settings.cfg.apps)
     };
     if apps.is_empty() {
         with(core, |settings| {
@@ -317,7 +317,7 @@ pub(super) fn open_secret_editor(
     };
     editor.set_win_title(format!("扩展密钥 · {title}").into());
     editor.set_hint("只保存在本机;留空并保存即删除".into());
-    editor.set_body(settings_secret::get(&ext, &key).unwrap_or_default().into());
+    editor.set_body(secret::get(&ext, &key).unwrap_or_default().into());
     let main = ui.as_weak();
     let shared = Arc::clone(core);
     let weak = editor.as_weak();
@@ -329,7 +329,7 @@ pub(super) fn open_secret_editor(
         let _ = editor.hide();
         {
             let mut guard = lock(&shared);
-            match settings_secret::set(&ext, &key, &text) {
+            match secret::set(&ext, &key, &text) {
                 Ok(()) => guard.settings.say(Notice::Success, "已保存扩展密钥"),
                 Err(error) => guard
                     .settings
@@ -439,11 +439,11 @@ pub(super) fn start_webdav_sync(ui: &SettingsWindow, core: &Shared) {
     let job = {
         let guard = lock(core);
         let cfg = guard.settings.cfg.clone();
-        settings_actions::SyncJob {
+        actions::SyncJob {
             url: cfg.webdav_url.trim().to_string(),
             username: cfg.webdav_username.trim().to_string(),
             password: lueying_server::sync::read_password(),
-            payload: settings_actions::build_payload(&cfg),
+            payload: actions::build_payload(&cfg),
             cfg,
         }
     };
@@ -458,10 +458,10 @@ pub(super) fn start_webdav_sync(ui: &SettingsWindow, core: &Shared) {
     let spawned = std::thread::Builder::new()
         .name("settings-sync".into())
         .spawn(move || {
-            let result = settings_actions::sync_once(&job);
+            let result = actions::sync_once(&job);
             let _ = handle.upgrade_in_event_loop(move |ui| {
                 match result {
-                    Ok(settings_actions::Outcome::Conflict(remote)) => {
+                    Ok(actions::Outcome::Conflict(remote)) => {
                         resolve_conflict(&ui, &shared, remote, job)
                     }
                     Ok(outcome) => report_sync(&shared, outcome),
@@ -480,18 +480,18 @@ pub(super) fn start_webdav_sync(ui: &SettingsWindow, core: &Shared) {
 }
 
 /// 同步结果落到提示与设置页。
-fn report_sync(core: &Shared, outcome: settings_actions::Outcome) {
+fn report_sync(core: &Shared, outcome: actions::Outcome) {
     let mut guard = lock(core);
     match outcome {
-        settings_actions::Outcome::UpToDate => {
+        actions::Outcome::UpToDate => {
             guard.settings.last_sync = "已是最新".to_string();
             guard.settings.say(Notice::Info, "远端与本机一致,没有改动");
         }
-        settings_actions::Outcome::Pushed => {
+        actions::Outcome::Pushed => {
             guard.settings.last_sync = "已上传".to_string();
             guard.settings.say(Notice::Success, "已上传到 WebDAV");
         }
-        settings_actions::Outcome::Pulled => {
+        actions::Outcome::Pulled => {
             guard.settings.last_sync = "已下载".to_string();
             guard
                 .settings
@@ -500,7 +500,7 @@ fn report_sync(core: &Shared, outcome: settings_actions::Outcome) {
                 guard.settings.cfg = config::load(&path);
             }
         }
-        settings_actions::Outcome::Conflict(_) => {}
+        actions::Outcome::Conflict(_) => {}
     }
 }
 
@@ -542,7 +542,7 @@ fn resolve_conflict(
     ui: &SettingsWindow,
     core: &Shared,
     remote: String,
-    job: settings_actions::SyncJob,
+    job: actions::SyncJob,
 ) {
     match conflict_choice() {
         ConflictChoice::Local => {
@@ -551,7 +551,7 @@ fn resolve_conflict(
             let spawned = std::thread::Builder::new()
                 .name("settings-sync-push".into())
                 .spawn(move || {
-                    let result = settings_actions::push(&job);
+                    let result = actions::push(&job);
                     let _ = handle.upgrade_in_event_loop(move |ui| {
                         match result {
                             Ok(()) => {
@@ -572,7 +572,7 @@ fn resolve_conflict(
                 });
             }
         }
-        ConflictChoice::Remote => match settings_actions::pull(&job, &remote) {
+        ConflictChoice::Remote => match actions::pull(&job, &remote) {
             Ok(count) => {
                 let mut guard = lock(core);
                 guard.settings.last_sync = "已下载".to_string();
@@ -675,7 +675,7 @@ pub(super) fn open_text_editor(ui: &SettingsWindow, core: &Shared, kind: TextKin
         let mut guard = lock(&shared);
         match write_text(&path, &body) {
             Ok(()) => {
-                settings_actions::reload();
+                actions::reload();
                 guard
                     .settings
                     .say(Notice::Success, format!("已保存{}", kind.title()));
@@ -757,7 +757,7 @@ pub(super) fn install_update(ui: &SettingsWindow, core: &Shared) {
         let Some(release) = guard.release.clone() else {
             return;
         };
-        if !settings_actions::install_update(&mut guard.settings, &release) {
+        if !actions::install_update(&mut guard.settings, &release) {
             return;
         }
         guard
@@ -771,7 +771,7 @@ pub(super) fn install_update(ui: &SettingsWindow, core: &Shared) {
     let spawned = std::thread::Builder::new()
         .name("settings-update".into())
         .spawn(move || {
-            let result = settings_actions::download_and_run_installer(&release);
+            let result = actions::download_and_run_installer(&release);
             let _ = handle.upgrade_in_event_loop(move |ui| {
                 let mut guard = lock(&shared);
                 match result {
@@ -807,12 +807,12 @@ pub(super) fn start_official_install(ui: &SettingsWindow, core: &Shared, id: Str
     let spawned = std::thread::Builder::new()
         .name("settings-official".into())
         .spawn(move || {
-            let result = settings_official::install(&id);
+            let result = official::install(&id);
             let _ = handle.upgrade_in_event_loop(move |ui| {
                 let mut guard = lock(&shared);
                 guard.settings.installing = None;
-                guard.settings.scripts = settings_actions::installed_scripts();
-                guard.settings.ppocr_ready = settings_actions::ppocr_ready();
+                guard.settings.scripts = actions::installed_scripts();
+                guard.settings.ppocr_ready = actions::ppocr_ready();
                 match result {
                     Ok(message) => guard.settings.say(Notice::Success, message),
                     Err(error) => guard.settings.say(Notice::Error, error),

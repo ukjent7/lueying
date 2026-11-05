@@ -36,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use crate::imp::State;
-use crate::ui_place;
+use crate::ui::place;
 
 /// 窗口类名;自检按它确认面板已拿到前台。
 const CLASS: windows::core::PCWSTR = w!("lueying-host-panel");
@@ -228,8 +228,8 @@ impl HostWindow {
                 Some((point.x, point.y))
             });
         let work = anchor
-            .and_then(|(x, y)| ui_place::monitor_info_at(x, y))
-            .map_or_else(ui_place::primary_work_area, |info| info.rcWork);
+            .and_then(|(x, y)| place::monitor_info_at(x, y))
+            .map_or_else(place::primary_work_area, |info| info.rcWork);
         let width = work.right - work.left;
         let height = work.bottom - work.top;
         (

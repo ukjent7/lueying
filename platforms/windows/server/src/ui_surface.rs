@@ -2,7 +2,7 @@
 //!
 //! 徽标走分层窗口(`UpdateLayeredWindow`),命令面板与选择面板是不透明
 //! 窗口(`BitBlt`)。三条路共用同一块 DIB 与同一套 Direct2D/DirectWrite
-//! 绘制代码;候选窗的 GPU 路径在 `ui_d2d_pipe`,不经过这里。
+//! 绘制代码;候选窗的 GPU 路径在 `ui::d2d::pipe`,不经过这里。
 
 use std::collections::HashMap;
 use std::ffi::c_void;

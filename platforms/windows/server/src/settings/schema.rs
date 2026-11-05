@@ -10,7 +10,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
-use crate::settings_view::ids;
+use crate::settings::view::ids;
 use lueying_features::SchemeId;
 
 /// 设置窗左栏的页面。
@@ -887,5 +887,4 @@ pub static SETTINGS: &[SettingDef] = &[
 ];
 
 #[cfg(test)]
-#[path = "settings_schema_tests.rs"]
 mod tests;

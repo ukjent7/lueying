@@ -1,15 +1,15 @@
 //! 设置页的静态构建:配置铺成分组、设置行与各栏详情文案。
 //!
-//! `settings_view` 的 `#[path]` 子模块(src 保持扁平):字段可见性
+//! `settings::view` 的子模块:字段可见性
 //! 不变,方法仍是 `Settings` 的 inherent impl,调用方路径不变。
 
 use super::*;
 
 use crate::config::OcrBackend;
-use crate::settings_model::{
+use crate::settings::model::{
     Button, ButtonKind, CandidatePreview, Control, Group, NavItem, Page, Row, SegmentOption,
 };
-use crate::settings_schema::{self, ControlDef, PageId, SettingDef};
+use crate::settings::schema::{self, ControlDef, PageId, SettingDef};
 
 impl Settings {
     /// 当前页面:左栏导航 + 右栏设置卡片。
@@ -143,7 +143,7 @@ impl Settings {
                         control: Control::None,
                     },
                     self.setting_row(
-                        settings_schema::find(ids::CHANNEL).expect("更新渠道在 schema 里"),
+                        schema::find(ids::CHANNEL).expect("更新渠道在 schema 里"),
                         colors,
                     ),
                     self.diagnostics_row(),
@@ -172,7 +172,7 @@ impl Settings {
 
     /// 一页里由 schema 生成的简单设置行。
     fn setting_rows(&self, page: PageId, colors: &PageColors) -> Vec<Row> {
-        settings_schema::on_page(page)
+        schema::on_page(page)
             .filter(|def| def.ui.as_ref().is_none_or(|ui| (ui.visible)(&self.cfg)))
             .map(|def| self.setting_row(def, colors))
             .collect()
@@ -372,12 +372,12 @@ impl Settings {
     fn consent_row(&self) -> Row {
         self.action_row(
             "扩展授权",
-            crate::settings_consent::detail(&self.cfg.extensions, &self.scripts),
+            crate::settings::consent::detail(&self.cfg.extensions, &self.scripts),
             vec![Button {
                 id: Id::new(ids::CONSENT, 0),
                 text: "同意".to_string(),
                 kind: ButtonKind::Primary,
-                enabled: crate::settings_consent::approve_enabled(
+                enabled: crate::settings::consent::approve_enabled(
                     &self.cfg.extensions,
                     &self.scripts,
                 ),
@@ -554,12 +554,12 @@ impl Settings {
 
     /// 扩展声明式设置展开成的分组。
     fn ext_setting_groups(&self) -> Vec<Group> {
-        crate::settings_ext::groups(&self.cfg.extensions, &self.scripts, &self.cfg)
+        crate::settings::ext::groups(&self.cfg.extensions, &self.scripts, &self.cfg)
     }
 
     /// 当前页面上实际渲染的扩展字段。
-    pub(crate) fn ext_fields(&self) -> Vec<crate::settings_ext::Field> {
-        crate::settings_ext::fields(&self.cfg.extensions, &self.scripts, &self.cfg)
+    pub(crate) fn ext_fields(&self) -> Vec<crate::settings::ext::Field> {
+        crate::settings::ext::fields(&self.cfg.extensions, &self.scripts, &self.cfg)
     }
 
     /// 头部右侧的更新按钮。

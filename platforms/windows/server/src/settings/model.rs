@@ -2,7 +2,7 @@
 //!
 //! 只描述「长什么样、每个控件叫什么」,不碰绘制与几何;Windows 侧把它
 //! 转成 Slint 结构渲染,Linux E2E 直接断言这份数据。控件 id 的前缀在
-//! [`crate::settings_view::ids`]。
+//! [`crate::settings::view::ids`]。
 
 /// 控件标识:同类控件共用前缀,组内按下标区分。
 #[derive(Clone, PartialEq, Eq, Debug)]

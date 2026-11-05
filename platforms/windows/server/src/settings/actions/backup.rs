@@ -1,6 +1,6 @@
 //! 配置备份的导出、导入与块解析。
 //!
-//! `settings_actions` 的 `#[path]` 子模块(src 保持扁平);文件对话框
+//! `settings::actions` 的子模块;文件对话框
 //! 与时间戳助手经 `super::*` 取用。
 
 use super::*;

@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use crate::imp::State;
-use crate::ui_place;
+use crate::ui::place;
 
 /// 徽标与光标之间的距离(逻辑像素)。
 const GAP: f32 = 4.0;
@@ -105,7 +105,7 @@ fn hud_loop(state: Arc<State>) {
             current = hud_view(&state);
             appearance = theme::Appearance::of_system();
             accent = accent_of(&state);
-            reduce = crate::ui_d2d::reduce_motion();
+            reduce = crate::ui::d2d::reduce_motion();
         }
         let expired = current
             .as_ref()
@@ -184,7 +184,7 @@ fn hud_view(state: &State) -> Option<HudView> {
 
 /// 主题色下标。
 fn accent_of(state: &State) -> usize {
-    ui_place::ui_options(state).2
+    place::ui_options(state).2
 }
 
 /// 徽标摆位:平时贴在光标下方;候选窗在同一侧时翻到另一侧,两者不互相遮挡。
@@ -195,9 +195,9 @@ fn place(state: &State, view: &HudView) -> Option<(i32, i32, i32, i32)> {
         .map(|(l, t, r, b)| (l.min(r), t.min(b), l.max(r), b.max(t)));
     let host_pid = (state.active.load(Ordering::Relaxed) >> 32) as u32;
     let (anchor_x, anchor_y, work) = match caret {
-        Some((l, _, r, b)) => (l + (r - l) / 2, b, ui_place::work_area_at(l, b)),
+        Some((l, _, r, b)) => (l + (r - l) / 2, b, place::work_area_at(l, b)),
         None => {
-            let work = ui_place::primary_work_area();
+            let work = place::primary_work_area();
             (
                 work.left + (work.right - work.left) / 2,
                 work.top + (work.bottom - work.top) * 2 / 3,
@@ -205,15 +205,15 @@ fn place(state: &State, view: &HudView) -> Option<(i32, i32, i32, i32)> {
             )
         }
     };
-    if ui_place::foreground_fullscreen_at(anchor_x, anchor_y, host_pid) {
+    if place::foreground_fullscreen_at(anchor_x, anchor_y, host_pid) {
         return None;
     }
-    let scale = ui_place::scale_at(anchor_x, anchor_y);
+    let scale = place::scale_at(anchor_x, anchor_y);
     let w = (badge::WIDTH * scale) as i32;
     let h = (badge::HEIGHT * scale) as i32;
     let gap = (GAP * scale) as i32;
     // 候选窗在哪一侧,徽标就去另一侧。
-    let composing = ui_place::in_composition(state);
+    let composing = place::in_composition(state);
     let candidate_above = state.candidate_above.load(Ordering::Relaxed);
     let prefer_below = !composing || !candidate_above;
     let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
@@ -284,7 +284,7 @@ fn create_window() -> Result<HWND, String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         ensure_class(HINSTANCE(hmodule.0))?;
-        let (park_x, park_y) = ui_place::park_point();
+        let (park_x, park_y) = place::park_point();
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT,
             w!("lueying-mode-hud"),
@@ -340,6 +340,6 @@ fn park(hwnd: HWND, visible: &mut bool) {
         }
         *visible = false;
     }
-    let (x, y) = ui_place::park_point();
-    ui_place::park(hwnd, x, y);
+    let (x, y) = place::park_point();
+    place::park(hwnd, x, y);
 }

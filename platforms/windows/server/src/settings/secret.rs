@@ -131,5 +131,4 @@ fn secure_file(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "settings_secret_tests.rs"]
 mod tests;

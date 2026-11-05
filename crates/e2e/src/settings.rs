@@ -11,8 +11,8 @@ use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_extmeta::{Setting, SettingValue};
 use lueying_features::SchemeId;
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
-use lueying_server::settings_model::{self as ui, Id};
-use lueying_server::settings_view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
+use lueying_server::settings::model::{self as ui, Id};
+use lueying_server::settings::view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
 
 use crate::harness::push;
 

@@ -1,7 +1,7 @@
 //! 候选窗的鼠标交互:悬停、点选、翻页与右键菜单。
 //!
 //! 命中几何由渲染核心给(`lueying_render::panel`),这里只把命中翻译成
-//! 服务端请求;窗口、摆位与绘制都在 `ui_d2d`。
+//! 服务端请求;窗口、摆位与绘制都在 `ui::d2d`。
 
 use std::sync::atomic::Ordering;
 
@@ -14,12 +14,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::imp::State;
-use crate::ui_d2d::{WinCtx, menu_origin, redraw};
-use crate::ui_place;
+use crate::ui::d2d::{WinCtx, menu_origin, redraw};
+use crate::ui::place;
 
 /// 可交互:有激活会话且服务端候选窗在显示(组合中)。
 fn interactive(state: &State) -> bool {
-    state.active.load(Ordering::Relaxed) != 0 && ui_place::composing(state)
+    state.active.load(Ordering::Relaxed) != 0 && place::composing(state)
 }
 
 /// 鼠标位置是否落在可点区域(候选行/箭头/菜单);WM_SETCURSOR 用。

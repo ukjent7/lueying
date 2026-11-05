@@ -53,28 +53,4 @@ mod uia;
 mod ui;
 
 #[cfg(windows)]
-mod ui_hud;
-
-#[cfg(windows)]
-mod ui_panel;
-
-#[cfg(windows)]
-mod ui_place;
-
-#[cfg(windows)]
-mod ui_d2d;
-
-#[cfg(windows)]
-mod ui_d2d_material;
-
-#[cfg(windows)]
-mod ui_d2d_mouse;
-
-#[cfg(windows)]
-mod ui_d2d_pipe;
-
-#[cfg(windows)]
-mod ui_d2d_selftest;
-
-#[cfg(windows)]
 mod user_store;

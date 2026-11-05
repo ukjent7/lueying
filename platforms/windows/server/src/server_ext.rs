@@ -98,13 +98,13 @@ pub(crate) fn command_run(state: &State, id: &str) -> Result<serde_json::Value, 
 
 /// `Ext` 的 `settings.get`:清单默认值 + 配置里的当前值。
 pub(crate) fn settings_get(state: &State, id: &str) -> Result<serde_json::Value, String> {
-    let settings = lueying_server::settings_ext::manifest_settings(id)
+    let settings = lueying_server::settings::ext::manifest_settings(id)
         .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
     if settings.is_empty() {
         return Err(format!("扩展 {id} 没有声明式设置"));
     }
     let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
-    Ok(lueying_server::settings_ext::values(
+    Ok(lueying_server::settings::ext::values(
         id,
         &settings,
         cfg.ext_settings.get(id),
@@ -117,7 +117,7 @@ pub(crate) fn settings_set(
     id: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let settings = lueying_server::settings_ext::manifest_settings(id)
+    let settings = lueying_server::settings::ext::manifest_settings(id)
         .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
     if settings.is_empty() {
         return Err(format!("扩展 {id} 没有声明式设置"));
@@ -150,12 +150,12 @@ pub(crate) fn settings_set(
             let Some(text) = value.as_str() else {
                 return Err(format!("密钥设置 {key} 必须是文本"));
             };
-            lueying_server::settings_secret::set(id, key, text)?;
+            lueying_server::settings::secret::set(id, key, text)?;
         } else {
             table.insert(key.clone(), value.clone());
         }
     }
-    let full = lueying_server::settings_ext::values(id, &settings, Some(&table));
+    let full = lueying_server::settings::ext::values(id, &settings, Some(&table));
     let mut cfg = state
         .config
         .read()

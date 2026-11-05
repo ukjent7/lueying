@@ -1,11 +1,11 @@
 //! D2D 候选窗:Win32 无焦点弹出窗 + DirectComposition 合成交换链 + Direct2D。
 //!
 //! 候选窗:独立线程自建消息泵,等版本号事件、窗口消息与动画帧;摆位、停靠、DPI 与
-//! 全屏避让同 `ui_place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
+//! 全屏避让同 `ui::place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
 //! 滚轮/翻页箭头、右键菜单与悬停,动效可被按键打断,「减少动态效果」时
-//! 全部走终态。管线在 `ui_d2d_pipe`:硬件优先,没有适配器退 WARP;设备
+//! 全部走终态。管线在 `ui::d2d::pipe`:硬件优先,没有适配器退 WARP;设备
 //! 被系统摘掉就地整条重建,窗口不换。`LUEYING_D2D_SELFTEST` 供 CI 自检整条
-//! 管线。模式徽标走原生分层窗口(`ui_hud`),不在这条管线上。
+//! 管线。模式徽标走原生分层窗口(`ui::hud`),不在这条管线上。
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
@@ -31,11 +31,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, w};
 
+mod material;
+mod mouse;
+mod pipe;
+pub(crate) mod selftest;
+
 use crate::imp::State;
-use crate::ui_d2d_material::{self, Material};
-use crate::ui_d2d_mouse;
-use crate::ui_d2d_pipe::{Frame, Pipeline, Target, Text};
-use crate::ui_place::{self, CARET_GAP};
+use crate::ui::d2d::material::Material;
+use crate::ui::d2d::pipe::{Frame, Pipeline, Target, Text};
+use crate::ui::place::{self, CARET_GAP};
 
 /// 淡入/淡出期间的重绘节奏。
 const ANIM_TICK: Duration = Duration::from_millis(5);
@@ -307,7 +311,7 @@ fn place(ctx: &mut WinCtx) {
         park(ctx);
         return;
     }
-    match ui_place::snapshot(&ctx.state) {
+    match place::snapshot(&ctx.state) {
         None => {
             // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
             if ctx.fx.reduce || ctx.fx.last.is_none() {
@@ -344,7 +348,7 @@ fn place(ctx: &mut WinCtx) {
                 ctx.fx.since = Some(Instant::now());
                 // 出现动画:窗口从落点下方 6pt 弹回原位;「减少动态效果」直接就位。
                 ctx.fx.enter = match view.caret {
-                    Some((l, _, r, b)) => ENTER_DISTANCE * ui_place::scale_at(l.min(r), b),
+                    Some((l, _, r, b)) => ENTER_DISTANCE * place::scale_at(l.min(r), b),
                     None => ENTER_DISTANCE,
                 };
                 ctx.fx.show = if ctx.fx.reduce || !effects_enabled(&ctx.state) {
@@ -410,7 +414,7 @@ fn place(ctx: &mut WinCtx) {
 /// 把当前面板状态交给脚本线程;补丁晚一帧到,不影响这一帧。
 fn submit_scene(ctx: &WinCtx, view: &SessionView, private: bool) {
     let now = Instant::now();
-    let (_, _, accent) = ui_place::ui_options(&ctx.state);
+    let (_, _, accent) = place::ui_options(&ctx.state);
     let appearance = lueying_server::theme::Appearance::of_system();
     let colors = lueying_server::theme::colors_with(appearance, accent);
     let page_size = view.page_size.max(1);
@@ -457,7 +461,7 @@ fn apply_script(ctx: &mut WinCtx, seq: u64, patch: Option<ScenePatch>, redraw_no
 
 /// 光标位置算出的候选窗矩形(x, y, 宽, 高);宽为 0 表示这次不弹。
 fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
-    let (layout, ui_font, _) = ui_place::ui_options(&ctx.state);
+    let (layout, ui_font, _) = place::ui_options(&ctx.state);
     let host_pid = (ctx.state.active.load(Ordering::Relaxed) >> 32) as u32;
     let Some((l, t, r, b)) = view.caret else {
         ctx.fx.above = None;
@@ -466,14 +470,14 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
     };
     let left = l.min(r);
     // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
-    let scale = ui_place::scale_at(left, b);
+    let scale = place::scale_at(left, b);
     let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let mut spec = ui_place::spec_of(view, layout);
+    let mut spec = place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = ui_place::measure_width(view, layout, &metrics, &ctx.text);
+    spec.width = place::measure_width(view, layout, &metrics, &ctx.text);
     let mut w = panel::panel_width(&spec, &metrics, &ctx.text) as i32;
     let h = panel::panel_height(&spec, &metrics, &ctx.text) as i32;
-    let work = ui_place::work_area_at(left, b);
+    let work = place::work_area_at(left, b);
     w = w.min((work.right - work.left).max(1));
     // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
     // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
@@ -496,7 +500,7 @@ fn caret_rect(ctx: &mut WinCtx, view: &SessionView) -> (i32, i32, i32, i32) {
         (if prefer_above { over } else { below }).clamp(work.top, (work.bottom - h).max(work.top));
     let x = left.clamp(work.left, (work.right - w).max(work.left));
     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
-    let hidden = ui_place::foreground_fullscreen_at(left, b, host_pid);
+    let hidden = place::foreground_fullscreen_at(left, b, host_pid);
     let w = if hidden { 0 } else { w };
     (x, y, w, h)
 }
@@ -599,7 +603,7 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
             }
         }
     }
-    let (layout, ui_font, accent) = ui_place::ui_options(&ctx.state);
+    let (layout, ui_font, accent) = place::ui_options(&ctx.state);
     let appearance = lueying_server::theme::Appearance::of_system();
     // 高对比度由系统接管外观,外观扩展整个关掉,免得压过系统配色。
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
@@ -620,27 +624,27 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     // 材质背板:毛玻璃由 DWM 出底色,自绘只铺半透明内容层;系统关闭
     // 「透明效果」、高对比度、有皮肤或落属性失败时回实底主题。
     let wanted = Material {
-        on: !high_contrast && skinless && ui_d2d_material::transparency_enabled(),
+        on: !high_contrast && skinless && material::transparency_enabled(),
         tint: colors.bg,
         dark: matches!(appearance, lueying_server::theme::Appearance::Dark),
     };
     let glass = match ctx.material {
         Some((cached, applied)) if cached == wanted => applied,
         _ => {
-            let applied = ui_d2d_material::apply(ctx.hwnd, wanted);
+            let applied = material::apply(ctx.hwnd, wanted);
             ctx.material = Some((wanted, applied));
             applied
         }
     };
     // 摆位时已把窗口放到光标屏;动效重绘沿用同一份缩放。
     let scale = match view.caret {
-        Some((l, _, r, b)) => ui_place::scale_at(l.min(r), b),
+        Some((l, _, r, b)) => place::scale_at(l.min(r), b),
         None => 1.0,
     };
     let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let mut spec = ui_place::spec_of(view, layout);
+    let mut spec = place::spec_of(view, layout);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = ui_place::measure_width(view, layout, &metrics, &ctx.text);
+    spec.width = place::measure_width(view, layout, &metrics, &ctx.text);
     let now = Instant::now();
     // 出现靠弹簧位移,透明度恒为 1;淡出仍按旧节奏渐隐。
     let opacity = if let Some(end) = ctx.fx.hide {
@@ -753,7 +757,7 @@ unsafe extern "system" fn wnd_proc(
     }
     match msg {
         WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_SETCURSOR => unsafe {
-            ui_d2d_mouse::on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
+            mouse::on_mouse(&mut *ctx, hwnd, msg, wparam, lparam)
         },
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
@@ -821,7 +825,7 @@ pub(super) fn create_window() -> Result<HWND, String> {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         ensure_class(HINSTANCE(hmodule.0))?;
         let class = w!("lueying-d2d-candidate");
-        let (park_x, park_y) = ui_place::park_point();
+        let (park_x, park_y) = place::park_point();
         let hwnd = CreateWindowExW(
             // NOREDIRECTIONBITMAP:窗口自身不画,画面由 DComp 视觉树给出。
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
@@ -887,8 +891,8 @@ fn park(ctx: &mut WinCtx) {
         }
         ctx.visible = false;
     }
-    let (x, y) = ui_place::park_point();
-    ui_place::park(ctx.hwnd, x, y);
+    let (x, y) = place::park_point();
+    place::park(ctx.hwnd, x, y);
     publish_state(ctx, None);
 }
 

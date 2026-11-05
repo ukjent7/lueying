@@ -8,12 +8,12 @@ use lueying_extmeta::metrics::ExtMetrics;
 use lueying_protocol::EngineStatus;
 
 use crate::config::AppConfig;
-use crate::settings_model::Id;
-use crate::settings_schema::ControlDef;
+use crate::settings::model::Id;
+use crate::settings::schema::ControlDef;
 
-pub use crate::settings_schema::PageId;
+pub use crate::settings::schema::PageId;
 
-pub use crate::settings_consent::{ConsentState, ScriptEntry};
+pub use crate::settings::consent::{ConsentState, ScriptEntry};
 
 /// 控件 id 的前缀。分段组用「前缀 + 格下标」,其余控件用「前缀 + 0」。
 pub mod ids {
@@ -347,7 +347,6 @@ impl Default for Settings {
     }
 }
 
-#[path = "settings_pages.rs"]
 mod pages;
 
 impl Settings {
@@ -446,7 +445,7 @@ impl Settings {
             }
             return None;
         }
-        if let Some(def) = crate::settings_schema::find(&id.base) {
+        if let Some(def) = crate::settings::schema::find(&id.base) {
             let Some(ui) = &def.ui else {
                 return None;
             };
@@ -464,7 +463,7 @@ impl Settings {
             self.clear_notice();
             return None;
         }
-        if let Some(slot) = crate::settings_ext::slot(&id.base) {
+        if let Some(slot) = crate::settings::ext::slot(&id.base) {
             let field = self
                 .ext_fields()
                 .into_iter()
@@ -476,7 +475,7 @@ impl Settings {
                     field.title.clone(),
                 ));
             }
-            if crate::settings_ext::apply(&mut self.cfg, &field, id.index) {
+            if crate::settings::ext::apply(&mut self.cfg, &field, id.index) {
                 self.clear_notice();
             }
             return None;
@@ -513,7 +512,7 @@ impl Settings {
 
     /// 左右键改分段组的值;返回有没有改成。
     pub fn shift(&mut self, id: &Id, delta: isize) -> bool {
-        if let Some(def) = crate::settings_schema::find(&id.base) {
+        if let Some(def) = crate::settings::schema::find(&id.base) {
             let Some(ui) = &def.ui else {
                 return false;
             };
@@ -528,7 +527,7 @@ impl Settings {
             self.activate(&Id::new(id.base.clone(), next));
             return true;
         }
-        if let Some(slot) = crate::settings_ext::slot(&id.base) {
+        if let Some(slot) = crate::settings::ext::slot(&id.base) {
             let Some(field) = self
                 .ext_fields()
                 .into_iter()
@@ -536,14 +535,14 @@ impl Settings {
             else {
                 return false;
             };
-            let crate::settings_ext::Kind::Choice { options, selected } = &field.kind else {
+            let crate::settings::ext::Kind::Choice { options, selected } = &field.kind else {
                 return false;
             };
             if options.is_empty() {
                 return false;
             }
             let next = (*selected as isize + delta).rem_euclid(options.len() as isize) as usize;
-            crate::settings_ext::apply(&mut self.cfg, &field, next);
+            crate::settings::ext::apply(&mut self.cfg, &field, next);
             self.clear_notice();
             return true;
         }
@@ -552,22 +551,22 @@ impl Settings {
 
     /// 这个前缀是不是分段组。
     pub fn is_segment(base: &str) -> bool {
-        crate::settings_schema::find(base).is_some_and(|def| {
+        crate::settings::schema::find(base).is_some_and(|def| {
             def.ui
                 .as_ref()
                 .is_some_and(|ui| matches!(&ui.control, ControlDef::Segment { .. }))
-        }) || crate::settings_ext::slot(base).is_some()
+        }) || crate::settings::ext::slot(base).is_some()
     }
 
     /// 分段组当前选中的是第几格。
     pub fn selected(&self, base: &str) -> usize {
-        if let Some(ui) = crate::settings_schema::find(base).and_then(|def| def.ui.as_ref()) {
+        if let Some(ui) = crate::settings::schema::find(base).and_then(|def| def.ui.as_ref()) {
             match &ui.control {
                 ControlDef::Toggle { get, .. } => return usize::from(get(&self.cfg)),
                 ControlDef::Segment { get, .. } => return get(&self.cfg),
             }
         }
-        if let Some(slot) = crate::settings_ext::slot(base) {
+        if let Some(slot) = crate::settings::ext::slot(base) {
             return self
                 .ext_fields()
                 .into_iter()
@@ -595,8 +594,7 @@ impl Settings {
     }
 }
 
-pub use crate::settings_text::status_detail;
+pub use crate::settings::text::status_detail;
 
 #[cfg(test)]
-#[path = "settings_view_tests.rs"]
 mod tests;

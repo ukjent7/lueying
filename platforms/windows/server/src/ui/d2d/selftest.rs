@@ -7,10 +7,10 @@
 use lueying_render::panel::{self, Item, Layout, Metrics, Palette, PanelSpec, PreeditBar};
 use lueying_server::theme;
 
-use crate::ui_d2d_pipe::{Frame, Target, Text, rgb};
+use crate::ui::d2d::pipe::{Frame, Target, Text, rgb};
 
 /// CI 自检:离屏 WARP 出帧 + 像素断言,结论写日志。
-pub(super) fn selftest() {
+pub(crate) fn selftest() {
     let Ok(text) = Text::new() else {
         println!("D2D 自检失败:文字引擎起不来");
         return;
@@ -20,7 +20,7 @@ pub(super) fn selftest() {
     let width = panel::panel_width(&spec, &metrics, &text) as u32;
     let height = panel::panel_height(&spec, &metrics, &text) as u32;
     let palette = theme::palette(theme::colors_with(theme::Appearance::Light, 0));
-    let mut target = match crate::ui_d2d_pipe::Offscreen::new(width, height) {
+    let mut target = match crate::ui::d2d::pipe::Offscreen::new(width, height) {
         Ok(target) => target,
         Err(e) => {
             println!("D2D 自检失败:离屏渲染建管线 {e}");

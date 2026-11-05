@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::OcrBackend;
-use crate::settings_model::Id;
-use crate::settings_schema::PageId;
+use crate::settings::model::Id;
+use crate::settings::schema::PageId;
 use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
@@ -107,10 +107,10 @@ fn consent_detail_reports_pending_and_changed() {
         ..Settings::default()
     };
     let detail = |settings: &Settings| {
-        crate::settings_consent::detail(&settings.cfg.extensions, &settings.scripts)
+        crate::settings::consent::detail(&settings.cfg.extensions, &settings.scripts)
     };
     let enabled = |settings: &Settings| {
-        crate::settings_consent::approve_enabled(&settings.cfg.extensions, &settings.scripts)
+        crate::settings::consent::approve_enabled(&settings.cfg.extensions, &settings.scripts)
     };
     assert!(detail(&settings).contains("选择运行期扩展"));
     settings.cfg.extensions = vec!["shot".to_string()];
@@ -166,7 +166,7 @@ fn webdav_rows_and_actions() {
     settings.set_page(PageId::Dictionary);
     let page = settings.page_view(
         PageId::Dictionary,
-        &crate::settings_view::PageColors::default(),
+        &crate::settings::view::PageColors::default(),
     );
     let group = page
         .groups
@@ -210,7 +210,7 @@ fn search_spans_pages_and_clears_on_navigation() {
     let mut settings = Settings::default();
     settings.set_search("辅助码");
     assert!(settings.searching());
-    let page = settings.page(&crate::settings_view::PageColors::default());
+    let page = settings.page(&crate::settings::view::PageColors::default());
     assert_eq!(page.title, "搜索");
     assert!(page.active_nav == usize::MAX);
     assert!(
@@ -223,7 +223,7 @@ fn search_spans_pages_and_clears_on_navigation() {
     assert!(!settings.searching());
     assert_eq!(
         settings
-            .page(&crate::settings_view::PageColors::default())
+            .page(&crate::settings::view::PageColors::default())
             .active_nav,
         1
     );
@@ -234,13 +234,13 @@ fn candidate_page_starts_with_preview() {
     let settings = Settings::default();
     let page = settings.page_view(
         PageId::Candidate,
-        &crate::settings_view::PageColors::default(),
+        &crate::settings::view::PageColors::default(),
     );
     let first = &page.groups[0].rows[0];
     assert_eq!(first.label, "候选窗预览");
     assert!(matches!(
         first.control,
-        crate::settings_model::Control::Preview { .. }
+        crate::settings::model::Control::Preview { .. }
     ));
 }
 
