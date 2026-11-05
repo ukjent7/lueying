@@ -123,8 +123,6 @@ pub struct UserDict {
     pinned: HashMap<String, String>,
     /// 各模糊组的连续选择次数,与词条一起持久化。
     groups: [GroupStat; GROUP_COUNT],
-    /// 端侧层次化连续记忆槽 (HuoziIME 2026), 16 维连续滑动向量
-    memory_slot: [f32; 16],
     /// 内容每次变化自增;持久化线程据此决定是否写盘。
     rev: u64,
 }

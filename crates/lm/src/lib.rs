@@ -17,12 +17,10 @@ mod math;
 mod model;
 mod ort;
 mod reranker;
-pub mod ssm;
 mod weights;
 
 pub use model::SentenceModel;
 pub use reranker::{Reranker, should_rerank};
-pub use ssm::{SsmBlock, SsmConfig, SsmEngine, SsmState};
 
 #[cfg(test)]
 mod tests;
