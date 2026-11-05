@@ -538,12 +538,7 @@ fn conflict_choice() -> ConflictChoice {
 }
 
 /// 冲突裁决:以本机为准就上传,以远端为准就下载。
-fn resolve_conflict(
-    ui: &SettingsWindow,
-    core: &Shared,
-    remote: String,
-    job: actions::SyncJob,
-) {
+fn resolve_conflict(ui: &SettingsWindow, core: &Shared, remote: String, job: actions::SyncJob) {
     match conflict_choice() {
         ConflictChoice::Local => {
             let handle = ui.as_weak();
