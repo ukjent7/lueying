@@ -327,7 +327,12 @@ fn main() {
         if let Some(g) = &gram {
             report.push_str("\n## 语法模型探针\n\n| 搭配 | 分数 | 结果 |\n|---|---|---|\n");
             // 词典收进新词后常见词对会变成整词,所以只要求这几对里有命中。
-            let pairs = [("有人", "觉得"), ("你不", "需要"), ("是否", "真的"), ("你也", "应该")];
+            let pairs = [
+                ("有人", "觉得"),
+                ("你不", "需要"),
+                ("是否", "真的"),
+                ("你也", "应该"),
+            ];
             let hits = pairs
                 .iter()
                 .filter(|(context, word)| g.score(context, word, false) > 0.0)
