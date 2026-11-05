@@ -32,6 +32,7 @@ pub enum AuditOutcome {
 ///
 /// `caller` 是扩展 id;参数文本可能含用户内容,这里只给服务名与方法名。
 pub trait AuditSink: Send + Sync {
+    /// 记录一次服务调用的结果。
     fn record(&self, caller: &str, service: &str, method: &str, outcome: AuditOutcome, note: &str);
 }
 
@@ -53,6 +54,7 @@ impl Done {
 /// 服务方法的 JSON 文本;结果必须经 `done` 回传,返回值只表示「调用
 /// 有没有发出去」(`Err` 表示参数坏到连结果都造不出来)。
 pub trait Provider: Send + Sync {
+    /// 接收一次已核过方法名的调用,结果经 `done` 回传。
     fn call(&self, caller: &str, method: &str, args: &str, done: Done) -> Result<(), String>;
 }
 
