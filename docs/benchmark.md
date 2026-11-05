@@ -53,7 +53,13 @@ cargo run -p lueying-e2e --release --locked -- \
   --only-shared
 ```
 
-执行后将自动生成 `target/bench-shared.tsv`、`target/bench-shared.json` 及 Markdown 格式的完整汇总报告。在日常提交自测中，可附加 `--bench-fast` 参数仅跑抽样用例。
+执行后在 `target/bench/` 生成逐条结果 `<语料>.<分片>.tsv`。`--corpus <文件>` 换用其他语料，`--shard 1/4` 只跑其中一片。指标不在 Rust 里算，用工具汇总：
+
+```sh
+python3 tools/bench_shared.py summarize target/bench --print
+```
+
+`summary.json` 按语料、类别和链路层（`engine`、`8m`、`settled`）给出 top-1/3/5、MRR、Wilson 区间、耗时与候选池覆盖；`--gate` 在门限不达标时退出码非零。CI 的 `dict-bench` 工作流把这些放在 `bench` artifact 里。
 
 ## 跨引擎对比机制
 
@@ -63,14 +69,11 @@ cargo run -p lueying-e2e --release --locked -- \
 # 导出统一评测输入
 python3 tools/bench_shared.py export --engine <目标引擎> --out /tmp/eval-input.tsv
 
-# 运行对比生成并排表格
-python3 tools/bench_shared.py compare target/bench-shared.tsv /tmp/engine1-result.tsv /tmp/engine2-result.tsv
-
-# 两份逐条结果做 Wilson 95% 区间与 McNemar 精确检验
-python3 tools/bench_shared.py stats target/bench-shared.tsv /tmp/engine1-result.tsv
+# 逐条对比:路径可以是目录或文件,后面可跟 :engine、:8m、:settled 指定链路层
+python3 tools/bench_shared.py diff /tmp/engine1-result.tsv target/bench:settled --samples 5
 ```
 
-`stats` 按类别分别给出 top-1 的 Wilson 区间、配对差、McNemar 精确 p 值以及 rescue/breakage 条数。n=60 时区间半宽约 ±13pp，比较模型请看差值和不一致对，不要用单次汇总下结论。
+`diff` 输出 JSON，按类别给出增量、McNemar 精确 p 值、rescued/broken 条数和被改坏的样本。n=60 时区间半宽约 ±13pp，比较模型请看差值和不一致对，不要用单次汇总下结论。水杉的三种配置由 `msime-bench` 工作流跑出，结果可直接交给 `diff`。
 
 ### 评测原则
 

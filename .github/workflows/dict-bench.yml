@@ -1,35 +1,36 @@
-# 词典体积 × 准确率扫描:同一份引擎、搭配表与重排模型,逐档跑共享语料基准。
-# 词典由 lueying-dict 的 Release 提供;手动触发,结果在 Summary 与 artifact 里。
+# 词典与引擎的共享语料基准:编译一次,按档位 × 分片铺到多台 runner,合并成 summary.json。
+# 机器读 artifact 里的逐条 TSV 与 summary.json;比较两次运行用 tools/bench_shared.py diff。
+# tag 留空时测 fetch_dict.sh 钉住的词典(档位名 main),quality 这样调用。
 name: dict-bench
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: lueying-dict Release 标签
-        required: true
+        description: lueying-dict Release 标签,留空用钉住的词典
+        required: false
+        default: ""
       tiers:
         description: 空格分隔的档位,对应资产 main-<档位>.pyd
         required: true
-        default: 200k 400k 600k 800k
+        default: main
       gram:
         description: 搭配表资产名
-        required: true
+        required: false
         default: collocation.bin
       patch:
         description: 构建前对 query.rs 执行的 sed -E 脚本,扫引擎常量用
         required: false
         default: ""
-
   # lueying-dict 的 pipeline 发布后直接调用,公开仓库之间不需要令牌。
   workflow_call:
     inputs:
       tag:
         type: string
-        required: true
+        default: ""
       tiers:
         type: string
-        required: true
+        default: main
       gram:
         type: string
         default: collocation.bin
@@ -44,9 +45,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  bench:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
+    outputs:
+      tiers: ${{ steps.tiers.outputs.json }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,8 +58,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: linux
-      - name: 下载模型
-        run: bash tools/fetch_rerank.sh data/rerank
       - name: 调整引擎常量
         if: inputs.patch != ''
         env:
@@ -66,33 +67,105 @@ jobs:
           git diff --stat --exit-code && exit 1 || git diff
       - name: 构建 E2E
         run: cargo build -p lueying-e2e --release --locked
-      - name: 逐档基准
+      - name: 展开档位
+        id: tiers
+        env:
+          TIERS: ${{ inputs.tiers }}
+        run: echo "json=$(jq -cn --arg t "$TIERS" '$t | split(" ") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-bin
+          path: target/release/lueying-e2e
+          retention-days: 1
+
+  run:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: ${{ fromJSON(needs.build.outputs.tiers) }}
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ukjent7/lueying
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-bin
+      - name: 缓存重排模型
+        id: models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: data/rerank
+          key: rerank-${{ hashFiles('tools/fetch_rerank.sh') }}
+      - name: 下载重排模型
+        if: steps.models.outputs.cache-hit != 'true'
+        run: bash tools/fetch_rerank.sh data/rerank
+      - name: 下载词典
         env:
           TAG: ${{ inputs.tag }}
-          TIERS: ${{ inputs.tiers }}
+          TIER: ${{ matrix.tier }}
           GRAM: ${{ inputs.gram }}
         run: |
-          base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
-          mkdir -p results
-          curl -fsSL --retry 3 -o data/collocation.bin "${base}/${GRAM}"
-          for tier in $TIERS; do
-            curl -fsSL --retry 3 -o "data/main-${tier}.pyd" "${base}/main-${tier}.pyd"
-            # 门限不达标也要继续跑下一档,结论看整张表。
-            ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/collocation.bin \
-              --rerank-dir data/rerank --only-shared > "results/${tier}.log" 2>&1 || true
-            mkdir -p "results/${tier}/extra"
-            cp target/bench-shared.json target/bench-shared.tsv target/e2e-report.md "results/${tier}/" || true
-            ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/collocation.bin \
-              --rerank-dir data/rerank --only-shared --corpus dicts/eval-extra-v1.tsv >> "results/${tier}.log" 2>&1 || true
-            cp target/bench-shared.tsv target/e2e-report.md "results/${tier}/extra/" || true
-            {
-              echo "## ${tier}: $(stat -c %s "data/main-${tier}.pyd" | awk '{printf "%.2f MiB", $1/1048576}')"
-              cat "results/${tier}/e2e-report.md" || true
-            } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$TAG" ]; then
+            base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
+            curl -fsSL --retry 3 -o data/main.pyd "${base}/main-${TIER}.pyd"
+            curl -fsSL --retry 3 -o data/collocation.bin "${base}/${GRAM}"
+          else
+            bash tools/fetch_dict.sh data
+          fi
+      - name: 跑分片
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          chmod +x lueying-e2e
+          for corpus in "" "--corpus dicts/eval-extra-v1.tsv"; do
+            ./lueying-e2e --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank \
+              --only-shared --shard "$SHARD/4" $corpus
           done
-      - name: 上传结果
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dict-bench-${{ inputs.tag }}
+          name: items-${{ matrix.tier }}-${{ matrix.shard }}
+          path: target/bench/*.tsv
+          retention-days: 1
+
+  report:
+    needs: run
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ukjent7/lueying
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: items-*
+          path: items
+      - name: 合并
+        run: |
+          status=0
+          for dir in items/*; do
+            name=$(basename "$dir")
+            tier=${name#items-}
+            tier=${tier%-*}
+            mkdir -p "results/$tier"
+            cp "$dir"/*.tsv "results/$tier/"
+          done
+          for tier in results/*; do
+            python3 tools/bench_shared.py summarize "$tier" --gate || status=1
+            jq -r --arg t "$(basename "$tier")" 'to_entries[] | .key as $c | .value.categories | to_entries[]
+              | "| \($t) | \($c) | \(.key) | \(.value.settled.n) | \(.value.engine.top1) | \(.value.settled.top1) | \(.value.settled.top5) |"' \
+              "$tier/summary.json" >> rows.txt
+          done
+          { echo "| 档位 | 语料 | 类别 | 条数 | 引擎 top1 | 全链路 top1 | top5 |"; echo "|---|---|---|---:|---:|---:|---:|"; cat rows.txt; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench
           path: results

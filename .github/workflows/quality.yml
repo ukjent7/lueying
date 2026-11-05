@@ -1,12 +1,17 @@
-# 全量语料与安装冒烟的定时检查。每次 push/PR 的快速门禁在 ci.yml;
-# 这里保留成本更高的全量基准与安装链路,每小时看一次默认分支。
-# 同一提交成功跑过就跳过;需要立刻验证时手动 workflow_dispatch。
+# 真实词典与安装链路的定时检查。每次 push/PR 的快速门禁在 ci.yml;
+# 这里每小时看一次默认分支:场景、抽样候选基准、共享语料基准并行跑。
+# 同一提交成功跑过就跳过;需要立刻验证时手动 workflow_dispatch,勾 full 跑全量候选基准。
 name: quality
 
 on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      full:
+        description: 跑全量候选基准(约 30 分钟)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -49,8 +54,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # 全量语料 + 共享语料实测 45~60 分钟,给足余量避免中途丢报告。
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,7 +86,6 @@ jobs:
         env:
           LUEYING_PPOCR_DIR: ${{ github.workspace }}/data/ppocr
         run: cargo test -p ppocr --release --locked -- --include-ignored
-      # 全量语料 + 神经重排 + 长期学习 + 共享语料,一次拿到完整报告。
       - name: 构建官方 guest
         run: |
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
@@ -91,8 +94,8 @@ jobs:
           cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
           cp target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
           cp target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
-      - name: 主词典 E2E + 全量候选准确率基准
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench --bench-shared
+      - name: 主词典 E2E + 候选准确率基准
+        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--bench' || '--bench-fast' }}
       - name: 报告摘要
         if: always()
         shell: bash
@@ -108,8 +111,13 @@ jobs:
           path: |
             target/e2e-report.md
             target/bench-report.md
-            target/bench-shared.json
-            target/bench-shared.tsv
+            target/e2e-failures.txt
+
+  # 共享语料基准单独铺开,不和上面的场景串行。
+  shared:
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
+    uses: ./.github/workflows/dict-bench.yml
 
   windows:
     needs: preflight

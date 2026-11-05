@@ -10,11 +10,11 @@
     import-qingjian   把青简 --eval-details 的 JSONL 转成统一逐条结果
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
     import-msime      把水杉 convert_eval --dump 的 JSONL 转成统一逐条结果
-    compare           并排比较多份统一结果,输出 Markdown
-    stats             对两份逐条结果做 Wilson 区间与 McNemar 精确检验
+    summarize         把逐条结果(可含分片)合成 summary.json,含门限判定
+    diff              逐条对比两份结果:增量、McNemar p 与被改坏的样本,JSON 输出
 
 统一结果 TSV 的头部用 `# key=value` 记录 schema/engine/corpus/kind:
-    kind=items    category input expected rank top1 ms
+    kind=items    category input expected rank top1 ms [rank_8m rank_settled top1_settled pool_rank pool_len ms_8m ms_25m]
     kind=summary  category n top1 top3 top5 mrr ms_avg ms_p99
 
 rank 是期望答案在候选里的 0 基下标,-1 表示不在候选里。百分比一律用 0-100。
@@ -35,7 +35,7 @@ rank 是期望答案在候选里的 0 基下标,-1 表示不在候选里。百�
           --resources <已校验资源目录> --set /tmp/msime.tsv --dump /tmp/msime.jsonl)
         python3 tools/bench_shared.py import-msime --dump /tmp/msime.jsonl --out /tmp/msime-result.tsv
     对比:
-        python3 tools/bench_shared.py compare target/bench-shared.tsv /tmp/qj-result.tsv /tmp/wind-result.tsv /tmp/msime-result.tsv
+        python3 tools/bench_shared.py diff target/bench /tmp/msime-result.tsv --samples 5
 """
 
 from __future__ import annotations
@@ -210,68 +210,10 @@ def percent(value: str) -> float | None:
     return float(value.rstrip("%"))
 
 
-def item_metric(rows: list[dict[str, str]]) -> dict[str, float | int | None]:
-    n = len(rows)
-    ranks = []
-    times = []
-    for row in rows:
-        raw = row.get("rank", "")
-        if raw not in ("", "-"):
-            rank = int(raw)
-            if rank >= 0:
-                ranks.append(rank)
-        raw_ms = row.get("ms", "")
-        if raw_ms not in ("", "-"):
-            times.append(float(raw_ms))
-    top1 = sum(1 for rank in ranks if rank == 0)
-    top3 = sum(1 for rank in ranks if rank < 3)
-    top5 = sum(1 for rank in ranks if rank < 5)
-    mrr = sum(1.0 / (rank + 1) for rank in ranks)
-    return {
-        "n": n,
-        "top1": top1 * 100.0 / n if n else None,
-        "top3": top3 * 100.0 / n if n else None,
-        "top5": top5 * 100.0 / n if n else None,
-        "mrr": mrr / n if n else None,
-        "ms_avg": statistics.fmean(times) if times else None,
-        "ms_p99": percentile(times, 0.99) if times else None,
-    }
-
-
 def percentile(values: list[float], q: float) -> float:
     ordered = sorted(values)
     index = min(len(ordered) - 1, int(q * (len(ordered) - 1)))
     return ordered[index]
-
-
-def summary_metric(row: dict[str, str]) -> dict[str, float | int | None]:
-    return {
-        "n": int(row.get("n", "0")),
-        "top1": percent(row.get("top1", "")),
-        "top3": percent(row.get("top3", "")),
-        "top5": percent(row.get("top5", "")),
-        "mrr": percent(row.get("mrr", "")),
-        "ms_avg": percent(row.get("ms_avg", "")),
-        "ms_p99": percent(row.get("ms_p99", "")),
-    }
-
-
-def weighted(metrics: list[dict[str, float | int | None]], key: str) -> float | None:
-    pairs = [(m[key], m["n"]) for m in metrics if m.get(key) is not None and m["n"]]
-    total = sum(n for _, n in pairs)
-    return sum(float(value) * n for value, n in pairs) / total if total else None
-
-
-def fmt(value: float | None, suffix: str = "") -> str:
-    if value is None:
-        return "-"
-    if isinstance(value, int):
-        return f"{value}{suffix}"
-    return f"{value:.1f}{suffix}"
-
-
-def fmt_mrr(value: float | None) -> str:
-    return "-" if value is None else f"{value:.3f}"
 
 
 def wilson_interval(successes: int, total: int) -> tuple[float, float]:
@@ -299,187 +241,152 @@ def mcnemar_exact(rescue: int, breakage: int) -> float:
     return min(1.0, 2.0 * tail / (2**discordant))
 
 
-def read_item_results(path: Path) -> tuple[dict[str, str], dict[tuple[str, str], bool]]:
-    meta, kind, rows = read_result(path)
-    if kind != "items":
-        raise SystemExit(f"{path}: stats 需要 kind=items 的逐条结果")
-    outcomes: dict[tuple[str, str], bool] = {}
-    for row in rows:
-        key = (row.get("category", "unknown"), row.get("input", ""))
-        rank = row.get("rank", "")
-        outcomes[key] = rank == "0"
-    return meta, outcomes
+STAGES = {"engine": "rank", "8m": "rank_8m", "settled": "rank_settled"}
+POOLS = (9, 32, 64, 128)
+# 每类的最低线:只防整条链路系统性退步,按引擎层算,数值与全量基准的外部下限一致。
+GATES = {"daily": (85.0, 90.0), "frost": (65.0, 80.0), "hard": (50.0, 75.0), "context": (60.0, 80.0)}
 
 
-def cmd_stats(args: argparse.Namespace) -> int:
-    baseline_meta, baseline = read_item_results(Path(args.baseline))
-    candidate_meta, candidate = read_item_results(Path(args.candidate))
-    shared = sorted(set(baseline) & set(candidate))
-    if not shared:
-        raise SystemExit("两份结果的 category+input 没有交集")
-
-    groups: dict[str, list[tuple[str, str]]] = {}
-    for key in shared:
-        groups.setdefault(key[0], []).append(key)
-
-    def row(label: str, keys: list[tuple[str, str]]) -> str:
-        n = len(keys)
-        base = sum(baseline[key] for key in keys)
-        cand = sum(candidate[key] for key in keys)
-        rescue = sum(1 for key in keys if not baseline[key] and candidate[key])
-        breakage = sum(1 for key in keys if baseline[key] and not candidate[key])
-        low_a, high_a = wilson_interval(base, n)
-        low_b, high_b = wilson_interval(cand, n)
-        delta = (cand - base) * 100.0 / n
-        p = mcnemar_exact(rescue, breakage)
-        return (
-            f"| {label} | {n} | {base * 100.0 / n:.1f}% "
-            f"[{low_a:.1f}, {high_a:.1f}] | {cand * 100.0 / n:.1f}% "
-            f"[{low_b:.1f}, {high_b:.1f}] | {delta:+.1f} | {p:.4f} | {rescue} | {breakage} |"
-        )
-
-    lines = [
-        "# 共享语料显著性",
-        "",
-        f"基线:`{baseline_meta.get('engine', Path(args.baseline).stem)}`;"
-        f"候选:`{candidate_meta.get('engine', Path(args.candidate).stem)}`。",
-        f"共同条目 {len(shared)} 条"
-        + (f",未配对 {len(set(baseline) ^ set(candidate))} 条已跳过。" if set(baseline) != set(candidate) else "。"),
-        "",
-        "| 类别 | n | 基线 top-1 [Wilson 95%] | 候选 top-1 [Wilson 95%] | Δpp | McNemar p | rescue | breakage |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
-        row("全量", shared),
-    ]
-    for category in sorted(groups):
-        lines.append(row(category, groups[category]))
-    lines.extend(
-        [
-            "",
-            "Wilson 区间按 top-1 比例计算;McNemar 精确检验使用不一致对的二项分布。"
-            "n=60 时区间半宽约 ±13pp,应看 Δpp 与 rescue/breakage,不要用单次汇总下结论。",
-        ]
-    )
-    text = "\n".join(lines) + "\n"
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"写出 {args.out}")
-    sys.stdout.write(text)
-    return 0
+def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """读一份或多份逐条结果,分片在这里合并。"""
+    meta: dict[str, str] = {}
+    rows: list[dict[str, str]] = []
+    for path in paths:
+        part_meta, kind, part = read_result(path)
+        if kind != "items":
+            raise SystemExit(f"{path}: 需要 kind=items 的逐条结果")
+        meta.update(part_meta)
+        rows.extend(part)
+    return meta, rows
 
 
-def cmd_compare(args: argparse.Namespace) -> int:
-    corpus = read_corpus()
-    corpus_by_category: dict[str, int] = {}
-    for row in corpus:
-        corpus_by_category[row["category"]] = corpus_by_category.get(row["category"], 0) + 1
+def rank_in(row: dict[str, str], stage: str) -> int:
+    """没有这一层的结果(其他引擎)时退回 rank。"""
+    raw = row.get(STAGES[stage]) or row.get("rank") or "-1"
+    return int(raw)
 
-    engines: list[dict] = []
-    for raw_path in args.results:
-        path = Path(raw_path)
-        meta, kind, rows = read_result(path)
-        by_category: dict[str, list[dict[str, str]]] = {}
-        for row in rows:
-            by_category.setdefault(row.get("category", "unknown"), []).append(row)
-        categories = {}
-        for category, group in by_category.items():
-            categories[category] = (
-                item_metric(group) if kind == "items" else summary_metric(group[0])
-            )
-        if kind == "items":
-            overall = item_metric(rows)
-            core = item_metric([row for row in rows if row.get("category") in ("daily", "frost")])
-        else:
-            overall = {
-                key: weighted(list(categories.values()), key)
-                for key in ("top1", "top3", "top5", "mrr", "ms_avg", "ms_p99")
+
+def rates(rows: list[dict[str, str]], stage: str) -> dict[str, float | int]:
+    ranks = [rank_in(row, stage) for row in rows]
+    hit = [rank for rank in ranks if rank >= 0]
+    n = len(rows)
+    low, high = wilson_interval(sum(rank == 0 for rank in hit), n)
+    return {
+        "n": n,
+        "top1": round(sum(rank == 0 for rank in hit) * 100.0 / n, 2),
+        "top1_ci": [round(low, 2), round(high, 2)],
+        "top3": round(sum(rank < 3 for rank in hit) * 100.0 / n, 2),
+        "top5": round(sum(rank < 5 for rank in hit) * 100.0 / n, 2),
+        "mrr": round(sum(1.0 / (rank + 1) for rank in hit) / n, 4),
+        "missing": round((n - len(hit)) * 100.0 / n, 2),
+    }
+
+
+def timing(rows: list[dict[str, str]], column: str) -> dict[str, float] | None:
+    values = [float(row[column]) for row in rows if float(row.get(column) or 0) > 0]
+    if not values:
+        return None
+    return {
+        "avg": round(statistics.fmean(values), 2),
+        "p95": round(percentile(values, 0.95), 2),
+        "p99": round(percentile(values, 0.99), 2),
+    }
+
+
+def summarize_rows(rows: list[dict[str, str]]) -> dict[str, object]:
+    categories = sorted({row["category"] for row in rows})
+    by_category = {
+        category: {
+            stage: rates([row for row in rows if row["category"] == category], stage)
+            for stage in STAGES
+        }
+        for category in categories
+    }
+    out: dict[str, object] = {
+        "all": {stage: rates(rows, stage) for stage in STAGES},
+        "categories": by_category,
+        "ms": {column: timing(rows, column) for column in ("ms", "ms_8m", "ms_25m")},
+    }
+    pool = [int(row["pool_rank"]) for row in rows if row.get("pool_rank")]
+    if pool:
+        out["pool_hit"] = {
+            str(size): round(sum(0 <= rank < size for rank in pool) * 100.0 / len(pool), 2)
+            for size in POOLS
+        }
+    return out
+
+
+def gate_failures(summary: dict[str, object]) -> list[str]:
+    failed = []
+    categories = summary["categories"]
+    for category, (top1, top5) in GATES.items():
+        metric = categories.get(category, {}).get("engine") if categories else None
+        if metric and (metric["top1"] < top1 or metric["top5"] < top5):
+            failed.append(f"{category}: top1 {metric['top1']} < {top1} 或 top5 {metric['top5']} < {top5}")
+    return failed
+
+
+def cmd_summarize(args: argparse.Namespace) -> int:
+    """把一个目录下的分片合成 summary.json;每份语料一节。"""
+    groups: dict[str, list[Path]] = {}
+    for path in sorted(Path(args.dir).glob("*.tsv")):
+        groups.setdefault(path.name.split(".")[0], []).append(path)
+    if not groups:
+        raise SystemExit(f"{args.dir}: 没有结果")
+    summary: dict[str, object] = {}
+    failed: list[str] = []
+    for corpus, paths in groups.items():
+        meta, rows = read_items(paths)
+        section = summarize_rows(rows)
+        section["engine_name"] = meta.get("engine", "")
+        section["gate_failures"] = gate_failures(section)
+        failed += section["gate_failures"]
+        summary[corpus] = section
+    text = json.dumps(summary, ensure_ascii=False, indent=1)
+    Path(args.dir, "summary.json").write_text(text, encoding="utf-8")
+    print(text if args.print else f"写出 {args.dir}/summary.json")
+    return 1 if args.gate and failed else 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """逐条对比两份结果:每类的增量、McNemar p 与翻转样本,JSON 输出。"""
+    def load(spec: str) -> tuple[dict[tuple[str, str], dict[str, str]], str]:
+        path, _, stage = spec.partition(":")
+        target = Path(path)
+        paths = sorted(target.glob("*.tsv")) if target.is_dir() else [target]
+        rows = read_items(paths)[1]
+        return {(row["category"], row["input"]): row for row in rows}, stage or "settled"
+
+    base, base_stage = load(args.base)
+    cand, cand_stage = load(args.candidate)
+    keys = [key for key in base if key in cand]
+    out: dict[str, object] = {"common": len(keys)}
+    for category in sorted({key[0] for key in keys}) + ["all"]:
+        scope = [key for key in keys if category in ("all", key[0])]
+        entry: dict[str, object] = {"n": len(scope)}
+        for top in (1, 5):
+            def hit(row: dict[str, str], stage: str) -> bool:
+                return 0 <= rank_in(row, stage) < top
+
+            rescued = [key for key in scope if hit(cand[key], cand_stage) and not hit(base[key], base_stage)]
+            broken = [key for key in scope if hit(base[key], base_stage) and not hit(cand[key], cand_stage)]
+            entry[f"top{top}"] = {
+                "delta": round((len(rescued) - len(broken)) * 100.0 / len(scope), 2),
+                "rescued": len(rescued),
+                "broken": len(broken),
+                "p": round(mcnemar_exact(len(rescued), len(broken)), 5),
             }
-            overall["n"] = sum(int(metric["n"]) for metric in categories.values())
-            core_metrics = [
-                metric
-                for category, metric in categories.items()
-                if category in ("daily", "frost")
-            ]
-            core = {
-                key: weighted(core_metrics, key)
-                for key in ("top1", "top3", "top5", "mrr", "ms_avg", "ms_p99")
-            }
-            core["n"] = sum(int(metric["n"]) for metric in core_metrics)
-        engines.append(
-            {
-                "name": meta.get("engine", path.stem),
-                "kind": kind,
-                "categories": categories,
-                "core": core,
-                "overall": overall,
-                "path": path,
-            }
-        )
-
-    engines.sort(key=lambda engine: engine["overall"]["top1"] or -1, reverse=True)
-
-    lines = [
-        "# 共享语料基准对比",
-        "",
-        f"语料:`{CORPUS_NAME}`({len(corpus)} 条)。判定归一化:其它→其他、她/它→他、地/得→的。",
-        "`rank` 由各引擎的候选列表按同一归一化重算;汇总档缺少的指标显示为 `-`。",
-        "",
-        "| 引擎 | 类别 | 条数 | top-1 | top-3 | top-5 | MRR | 平均 ms | p99 ms |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for engine in engines:
-        for category in sorted(engine["categories"]):
-            metric = engine["categories"][category]
-            lines.append(
-                f"| {engine['name']} | {category} | {metric['n']} | "
-                f"{fmt(metric['top1'], '%')} | {fmt(metric['top3'], '%')} | "
-                f"{fmt(metric['top5'], '%')} | {fmt_mrr(metric['mrr'])} | "
-                f"{fmt(metric['ms_avg'], '')} | {fmt(metric['ms_p99'], '')} |"
-            )
-        metric = engine["core"]
-        lines.append(
-            f"| {engine['name']} | **核心** | {metric['n']} | "
-            f"{fmt(metric['top1'], '%')} | {fmt(metric['top3'], '%')} | "
-            f"{fmt(metric['top5'], '%')} | {fmt_mrr(metric['mrr'])} | "
-            f"{fmt(metric['ms_avg'], '')} | {fmt(metric['ms_p99'], '')} |"
-        )
-        metric = engine["overall"]
-        lines.append(
-            f"| {engine['name']} | **全量** | {metric['n']} | "
-            f"{fmt(metric['top1'], '%')} | {fmt(metric['top3'], '%')} | "
-            f"{fmt(metric['top5'], '%')} | {fmt_mrr(metric['mrr'])} | "
-            f"{fmt(metric['ms_avg'], '')} | {fmt(metric['ms_p99'], '')} |"
-        )
-
-    lines.extend(["", "## 覆盖检查", "", "| 结果 | 类型 | 缺失 | 多余 | 条数不符 |", "|---|---|---:|---:|---:|"])
-    for engine in engines:
-        if engine["kind"] == "items":
-            got = {
-                category: int(metric["n"])
-                for category, metric in engine["categories"].items()
-            }
-            missing = sum(
-                max(0, corpus_by_category.get(category, 0) - got.get(category, 0))
-                for category in corpus_by_category
-            )
-            extra = sum(max(0, got.get(category, 0) - corpus_by_category.get(category, 0)) for category in got)
-            mismatch = "-"
-        else:
-            missing = "-"
-            extra = "-"
-            mismatch = sum(
-                1
-                for category, count in corpus_by_category.items()
-                if engine["categories"].get(category, {}).get("n") != count
-            )
-        lines.append(
-            f"| {engine['name']} | {engine['kind']} | {missing} | {extra} | {mismatch} |"
-        )
-
-    text = "\n".join(lines) + "\n"
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"写出 {args.out}")
-    sys.stdout.write(text)
+            if top == 1 and category != "all" and args.samples:
+                entry["broken_samples"] = [
+                    {
+                        "input": key[1],
+                        "expected": base[key].get("expected", ""),
+                        "got": cand[key].get("top1_settled") or cand[key].get("top1", ""),
+                    }
+                    for key in broken[: args.samples]
+                ]
+        out[category] = entry
+    print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0
 
 
@@ -598,54 +505,6 @@ def cmd_import_msime(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_context_gain(args: argparse.Namespace) -> int:
-    stripped_meta, stripped = read_item_results(Path(args.stripped))
-    context_meta, with_ctx = read_item_results(Path(args.with_context))
-    shared = sorted(set(stripped) & set(with_ctx))
-    if not shared:
-        raise SystemExit("两份结果没有共同条目")
-    groups: dict[str, list[tuple[str, str]]] = {}
-    for key in shared:
-        groups.setdefault(key[0], []).append(key)
-
-    lines = [
-        "# 上文增益分析",
-        "",
-        f"对照组(无上文):`{stripped_meta.get('engine', Path(args.stripped).stem)}`; "
-        f"实验组(带上文):`{context_meta.get('engine', Path(args.with_context).stem)}`。",
-        f"共同条目 {len(shared)} 条。",
-        "",
-        "| 类别 | n | 无上文 top-1 [Wilson 95%] | 带上文 top-1 [Wilson 95%] | 增益 Δpp | McNemar p | rescue | breakage |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-
-    def calc_row(label: str, keys: list[tuple[str, str]]) -> str:
-        n = len(keys)
-        base = sum(stripped[k] for k in keys)
-        cand = sum(with_ctx[k] for k in keys)
-        rescue = sum(1 for k in keys if not stripped[k] and with_ctx[k])
-        breakage = sum(1 for k in keys if stripped[k] and not with_ctx[k])
-        low_a, high_a = wilson_interval(base, n)
-        low_b, high_b = wilson_interval(cand, n)
-        delta = (cand - base) * 100.0 / n
-        p = mcnemar_exact(rescue, breakage)
-        return (
-            f"| {label} | {n} | {base * 100.0 / n:.1f}% [{low_a:.1f}, {high_a:.1f}] | "
-            f"{cand * 100.0 / n:.1f}% [{low_b:.1f}, {high_b:.1f}] | {delta:+.1f} | {p:.4f} | {rescue} | {breakage} |"
-        )
-
-    lines.append(calc_row("全量", shared))
-    for cat in sorted(groups):
-        lines.append(calc_row(cat, groups[cat]))
-    lines.append("")
-    text = "\n".join(lines) + "\n"
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"写出 {args.out}")
-    sys.stdout.write(text)
-    return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -661,22 +520,17 @@ def main() -> int:
     export.add_argument("--out", required=True, help="输出路径,- 表示 stdout")
     export.set_defaults(func=cmd_export)
 
-    compare = sub.add_parser("compare", help="并排比较多份统一结果")
-    compare.add_argument("results", nargs="+", help="统一结果 TSV")
-    compare.add_argument("--out", help="同时写入该路径")
-    compare.set_defaults(func=cmd_compare)
+    summarize = sub.add_parser("summarize", help="目录下的逐条结果(可含分片)→ summary.json")
+    summarize.add_argument("dir")
+    summarize.add_argument("--gate", action="store_true", help="门限不达标时退出码非零")
+    summarize.add_argument("--print", action="store_true", help="同时打印到标准输出")
+    summarize.set_defaults(func=cmd_summarize)
 
-    stats = sub.add_parser("stats", help="两份逐条结果的 Wilson 区间与 McNemar 检验")
-    stats.add_argument("baseline", help="基线统一结果 TSV")
-    stats.add_argument("candidate", help="候选统一结果 TSV")
-    stats.add_argument("--out", help="同时写入该路径")
-    stats.set_defaults(func=cmd_stats)
-
-    ctx_gain = sub.add_parser("context-gain", help="量化上文带来的命中增益(对照无上文与带上文结果)")
-    ctx_gain.add_argument("stripped", help="剥离上文(或无上文)的统一结果 TSV")
-    ctx_gain.add_argument("with_context", help="带上文的统一结果 TSV")
-    ctx_gain.add_argument("--out", help="同时写入该路径")
-    ctx_gain.set_defaults(func=cmd_context_gain)
+    diff = sub.add_parser("diff", help="逐条对比两份结果,JSON 输出;路径后可跟 :engine/:8m/:settled")
+    diff.add_argument("base")
+    diff.add_argument("candidate")
+    diff.add_argument("--samples", type=int, default=0, help="每类列多少条被改坏的样本")
+    diff.set_defaults(func=cmd_diff)
 
     qingjian = sub.add_parser("import-qingjian", help="青简 --eval-details JSONL → 统一逐条结果")
     qingjian.add_argument("--details", required=True)

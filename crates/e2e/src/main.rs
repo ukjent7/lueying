@@ -136,7 +136,6 @@ fn main() {
     } else {
         None
     };
-    let bench_shared = args.iter().any(|a| a == "--bench-shared");
     let only_shared = args.iter().any(|a| a == "--only-shared");
 
     // `--only-shared`:独立基准 job 只跑共享语料,与场景 E2E 并行,互不拖累。
@@ -167,19 +166,19 @@ fn main() {
             }
             None => None,
         };
-        let mut report = String::from("# 跨引擎共享语料基准(shared-v1)\n\n");
-        let corpus = args
-            .iter()
-            .position(|a| a == "--corpus")
-            .and_then(|at| args.get(at + 1));
-        let failures = shared::run(
-            Arc::new(dict),
-            gram,
-            models.as_ref(),
-            corpus.map(String::as_str),
-            &mut report,
-        );
-        finish(&report, failures);
+        let value = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .and_then(|at| args.get(at + 1))
+        };
+        // `--shard 1/4`:多台 runner 各跑一片,结果由 bench_shared.py 合并。
+        let shard = value("--shard")
+            .and_then(|text| text.split_once('/'))
+            .and_then(|(at, total)| Some((at.parse().ok()?, total.parse().ok()?)))
+            .unwrap_or((0, 1));
+        let corpus = value("--corpus").map(String::as_str);
+        let failures = shared::run(Arc::new(dict), gram, models.as_ref(), corpus, shard);
+        std::process::exit(i32::from(failures > 0));
     }
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");
@@ -412,8 +411,7 @@ fn main() {
         }
 
         // 神经重排:同一份主词典与语法模型,先基线再 8M 同步、25M 停顿。
-        // 模型句柄留给共享语料基准再用一次,那条链路才代表产品实际排序。
-        let models = if let Some(dir) = &rerank_dir {
+        if let Some(dir) = &rerank_dir {
             match rerank::load(dir) {
                 Ok(models) => {
                     let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
@@ -423,17 +421,13 @@ fn main() {
                         "\n> 神经重排耗时 {:.1}s\n",
                         started.elapsed().as_secs_f64()
                     ));
-                    Some(models)
                 }
                 Err(e) => {
                     failures += 1;
                     report.push_str(&format!("\n## 神经重排\n\n模型加载失败: {e}\n"));
-                    None
                 }
             }
-        } else {
-            None
-        };
+        }
 
         // 候选准确率基准:模糊音、语法模型、长期学习在同一份报告里对比。
         if let Some(mode) = bench {
@@ -442,17 +436,6 @@ fn main() {
             failures += bench::run(dict, gram, &mut report, mode);
             report.push_str(&format!(
                 "\n> 候选基准耗时 {:.1}s\n",
-                started.elapsed().as_secs_f64()
-            ));
-        }
-
-        // 跨引擎共享语料:固定外部句子与归一化,结果可直接与青简/清风并排比较。
-        if bench_shared {
-            let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
-            let started = Instant::now();
-            failures += shared::run(dict, gram, models.as_ref(), None, &mut report);
-            report.push_str(&format!(
-                "\n> 共享语料基准耗时 {:.1}s\n",
                 started.elapsed().as_secs_f64()
             ));
         }
@@ -466,21 +449,19 @@ fn main() {
         eprintln!("--bench / --bench-fast 需要同时提供 --dict 主词典");
         std::process::exit(2);
     }
-    if bench_shared && rerank_inputs.is_none() {
-        eprintln!("--bench-shared 需要同时提供 --dict 主词典");
-        std::process::exit(2);
-    }
 
     finish(&report, failures);
 }
 
-/// 报告落盘、打印并按失败数给退出码;`--only-shared` 的早退分支也走这里。
+/// 报告落盘、打印并按失败数给退出码。失败行单独落一份,不用翻完整报告。
 fn finish(report: &str, failures: usize) -> ! {
     let out = std::path::Path::new("target/e2e-report.md");
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let _ = std::fs::write(out, report);
+    let failed: Vec<&str> = report.lines().filter(|l| l.contains("| FAIL |")).collect();
+    let _ = std::fs::write("target/e2e-failures.txt", failed.join("\n"));
     println!("{report}");
     println!("报告已写入 {}", out.display());
     if failures > 0 {
