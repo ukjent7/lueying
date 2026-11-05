@@ -239,6 +239,8 @@ pub struct AppOverride {
 pub struct AppConfig {
     pub page_size: usize,
     pub chinese_punct: bool,
+    /// 停顿后 25M 重排是否允许换首选;关闭后首选只随按键变化。
+    pub settled_promote: bool,
     pub fuzzy: Fuzzy,
     pub shift_toggle: bool,
     pub traditional: bool,
@@ -293,6 +295,7 @@ impl Default for AppConfig {
         Self {
             page_size: 5,
             chinese_punct: true,
+            settled_promote: true,
             // 零配置:模糊音默认自动召回,设置页不再逐项开关。
             fuzzy: Fuzzy::auto(),
             shift_toggle: true,

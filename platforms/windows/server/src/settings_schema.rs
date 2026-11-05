@@ -270,6 +270,14 @@ fn effects_set(cfg: &mut AppConfig, value: bool) {
     cfg.effects = value;
 }
 
+fn settled_promote_get(cfg: &AppConfig) -> bool {
+    cfg.settled_promote
+}
+
+fn settled_promote_set(cfg: &mut AppConfig, value: bool) {
+    cfg.settled_promote = value;
+}
+
 fn allow_all_network_get(cfg: &AppConfig) -> bool {
     cfg.allow_all_extension_network
 }
@@ -716,6 +724,23 @@ pub static SETTINGS: &[SettingDef] = &[
             page: PageId::Candidate,
             keywords: "效果 动画 外观 弹性 弹簧",
             control: toggle(ids::EFFECTS_TOGGLE, effects_get, effects_set),
+            visible: always,
+        }),
+    },
+    SettingDef {
+        key: "settled_promote",
+        title: "停顿后换首选",
+        detail: "输入停顿后允许高精度模型调整首选;关闭后首选只随按键变化",
+        value: ValueType::Bool,
+        default: DefaultValue::Bool(true),
+        ui: Some(UiDef {
+            page: PageId::Candidate,
+            keywords: "换首选 停顿 重排 首选 候选",
+            control: toggle(
+                ids::SETTLED_PROMOTE_TOGGLE,
+                settled_promote_get,
+                settled_promote_set,
+            ),
             visible: always,
         }),
     },

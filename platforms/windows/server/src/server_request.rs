@@ -88,6 +88,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 private: false,
                 context_epoch: 0,
                 context_seq: 0,
+                settle_pick: None,
             });
             state
                 .sessions
@@ -205,6 +206,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
         }
         Request::Sync { session } => {
             let Some(reply) = state.with_session(session, |s| {
+                crate::settle::take_pick(s);
                 let mut reply = s.ui_reply.take().unwrap_or_default();
                 reply.preedit = s.view.preedit.clone();
                 reply.chinese = state.chinese.load(Ordering::Relaxed);

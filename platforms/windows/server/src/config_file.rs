@@ -21,6 +21,7 @@ use crate::config::{
 pub struct FileConfig {
     pub page_size: Option<usize>,
     pub chinese_punct: Option<bool>,
+    pub settled_promote: Option<bool>,
     pub fuzzy: Option<FuzzyValue>,
     pub shift_toggle: Option<bool>,
     pub traditional: Option<bool>,
@@ -102,6 +103,9 @@ pub fn apply(
     }
     if let Some(on) = file.chinese_punct {
         cfg.chinese_punct = on;
+    }
+    if let Some(on) = file.settled_promote {
+        cfg.settled_promote = on;
     }
     if let Some(fuzzy) = file.fuzzy {
         match fuzzy {
@@ -323,6 +327,7 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
     let file = SaveFile {
         page_size: cfg.page_size,
         chinese_punct: cfg.chinese_punct,
+        settled_promote: cfg.settled_promote,
         fuzzy: if cfg.fuzzy.is_off() { "off" } else { "auto" },
         shift_toggle: cfg.shift_toggle,
         traditional: cfg.traditional,
@@ -378,6 +383,7 @@ pub fn render_apps(apps: &BTreeMap<String, AppOverride>) -> Result<String, Strin
 struct SaveFile<'a> {
     page_size: usize,
     chinese_punct: bool,
+    settled_promote: bool,
     fuzzy: &'static str,
     shift_toggle: bool,
     traditional: bool,

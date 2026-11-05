@@ -50,6 +50,8 @@ const SPRING_MASS: f32 = 1.0;
 const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 翻页时候选内容横向滑入,90ms 内归位。
 const PAGE_SLIDE: Duration = Duration::from_millis(90);
+/// 停顿重排换了首选时,候选列表轻微变暗再亮起的时长。
+const PROMOTE_FLASH: Duration = Duration::from_millis(160);
 
 /// 启动 D2D 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
 pub(super) fn spawn(state: Arc<State>) {
@@ -82,6 +84,10 @@ pub(super) struct Fx {
     slide: Option<(f32, Instant)>,
     /// 上一帧的页码,用来判断翻页方向。
     page: Option<usize>,
+    /// 换首选提示的截止时刻。
+    flash: Option<Instant>,
+    /// 上一次看到的换首选次数;变化即触发一次提示。
+    promotions: u32,
     /// 本次组合里候选窗在光标上方还是下方;同一次组合内保持不变。
     above: Option<bool>,
     /// 系统「减少动态效果」;开启后全部动效走终态。
@@ -109,6 +115,8 @@ impl Fx {
     fn clear(&mut self) {
         *self = Fx {
             reduce: self.reduce,
+            // 次数跨组合保留,重新出现时不被当成一次新的换首选。
+            promotions: self.promotions,
             ..Fx::default()
         };
     }
@@ -271,7 +279,7 @@ fn window_loop(state: Arc<State>) {
 /// 淡入/淡出/滑动是否还在推进。
 fn busy_animating(ctx: &WinCtx) -> bool {
     let fx = &ctx.fx;
-    fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some()
+    fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some() || fx.flash.is_some()
 }
 
 /// 等版本号事件、窗口消息或动画帧;`timeout` 为空时一直睡到有事件。
@@ -357,6 +365,12 @@ fn place(ctx: &mut WinCtx) {
                 ctx.fx.pager = None;
             }
             ctx.fx.page = Some(view.page);
+            if view.promotions != ctx.fx.promotions {
+                ctx.fx.promotions = view.promotions;
+                if !ctx.fx.reduce && effects_enabled(&ctx.state) {
+                    ctx.fx.flash = Some(Instant::now() + PROMOTE_FLASH);
+                }
+            }
             let rect = caret_rect(ctx, view);
             if rect.2 == 0 {
                 // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
@@ -514,6 +528,9 @@ fn animate(ctx: &mut WinCtx) {
     if ctx.fx.slide.is_some_and(|(_, end)| now >= end) {
         ctx.fx.slide = None;
     }
+    if ctx.fx.flash.is_some_and(|end| now >= end) {
+        ctx.fx.flash = None;
+    }
     // 出现弹簧推进一帧;窗口跟着弹簧值落位,落定精确停在静止位置。
     let mut settled = false;
     if let Some(spring) = ctx.fx.show.as_mut() {
@@ -626,12 +643,20 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
     } else {
         1.0
     };
-    let list = match ctx.fx.slide {
-        Some((direction, end)) if now < end => {
+    let list = match (ctx.fx.slide, ctx.fx.flash) {
+        (Some((direction, end)), _) if now < end => {
             let delta = ease_out_quint(progress(PAGE_SLIDE, end, now));
             panel::ListFx {
                 dx: direction * 10.0 * metrics.scale() * (1.0 - delta),
                 opacity: 0.55 + 0.45 * delta,
+            }
+        }
+        (_, Some(end)) if now < end => {
+            // 换首选:列表只轻微变暗再亮起,不横向移动。
+            let delta = ease_out_quint(progress(PROMOTE_FLASH, end, now));
+            panel::ListFx {
+                dx: 0.0,
+                opacity: 0.72 + 0.28 * delta,
             }
         }
         _ => panel::ListFx::NEUTRAL,

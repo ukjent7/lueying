@@ -59,6 +59,8 @@ pub(super) struct Session {
     pub(super) view: SessionView,
     /// `Key` 的预演结果,`TakeKey` 取走(DLL 在 OnKeyDown 应用到文档)。
     pub(super) pending: Option<Reply>,
+    /// 停顿重排算出、等下一次 `Sync` 生效的首选。
+    pub(super) settle_pick: Option<crate::settle::SettlePick>,
     /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
     pub(super) ui_reply: Option<Reply>,
     /// 8M 每键重排:后台线程独占推理,前缀缓存随会话存活。

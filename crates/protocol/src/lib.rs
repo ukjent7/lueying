@@ -478,6 +478,8 @@ pub struct SessionView {
     pub highlight: usize,
     pub chinese: bool,
     pub fullwidth: bool,
+    /// 停顿重排换过首选的次数;候选窗据此做一次轻微提示。
+    pub promotions: u32,
     pub caret: Option<(i32, i32, i32, i32)>,
     pub host: String,
 }

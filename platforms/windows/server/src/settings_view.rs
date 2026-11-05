@@ -29,6 +29,7 @@ pub mod ids {
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
+    pub const SETTLED_PROMOTE_TOGGLE: &str = "settled-promote-toggle";
     pub const ALLOW_ALL_NETWORK: &str = "allow-all-network";
     pub const SCRIPTS: &str = "scripts";
     pub const SCRIPTS_DIR: &str = "scripts-dir";

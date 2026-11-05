@@ -8,9 +8,16 @@ use std::time::{Duration, Instant};
 use lueying_rerank::debounce::Debounce;
 use lueying_rerank::settle::result_is_current;
 
-use crate::imp::{Session, State, refresh_view};
+use crate::imp::{Session, State, refresh_view, sync_pending};
 
 const DELAY_MS: u64 = 120;
+
+/// 停顿重排算出的首选,等 TSF 下一次 `Sync` 与内联文字一起生效。
+#[derive(Clone, Copy)]
+pub(super) struct SettlePick {
+    index: usize,
+    revision: u64,
+}
 
 pub(super) enum SettleMessage {
     Job(SettleJob),
@@ -28,6 +35,15 @@ pub(super) struct SettleJob {
 
 /// 按键后调用:有组合就排队等停顿,没有就撤掉旧任务。
 pub(super) fn schedule(state: &State, session: u64, s: &Session) {
+    // 开关关掉时不排任何停顿任务,首选只随按键变化。
+    if !state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .settled_promote
+    {
+        return;
+    }
     let Some(tx) = state.settle_tx.as_ref() else {
         return;
     };
@@ -116,12 +132,32 @@ fn apply(state: &State, job: &SettleJob, promote: Option<usize>) {
     ) {
         return;
     }
-    if s.engine.promote(index) {
-        refresh_view(&mut s);
-        crate::imp::sync_pending(&mut s);
-        if handle.publish(&s) {
-            crate::imp::touch_view(state);
-        }
+    // 只记下待生效的首选,不改引擎也不刷新候选窗。内联文字要等 TSF 的下一次 Sync
+    // 才写回文档;候选窗若先变,空格上屏的就是用户没看到的那个。
+    s.settle_pick = Some(SettlePick {
+        index,
+        revision: job.snap.revision,
+    });
+}
+
+/// `Sync` 时调用:停顿算出的首选仍然有效,就在这一刻与内联文字一起切过去。
+pub(super) fn take_pick(s: &mut Session) {
+    let Some(pick) = s.settle_pick.take() else {
+        return;
+    };
+    if !result_is_current(
+        s.engine.revision(),
+        pick.revision,
+        s.engine.page(),
+        s.engine.highlight(),
+        s.engine.composition().is_some(),
+    ) {
+        return;
+    }
+    if s.engine.promote(pick.index) {
+        refresh_view(s);
+        sync_pending(s);
+        s.view.promotions = s.view.promotions.wrapping_add(1);
     }
 }
 
