@@ -191,7 +191,10 @@ jobs:
             for file in "$tier"/*.gpg; do
               if [ -f "$file" ]; then printf %s "$EVAL_KEY" | $GPG --decrypt -o "${file%.gpg}" "$file"; fi
             done
-            python3 tools/bench_shared.py summarize "$tier" --gate || status=1
+            # 门限只卡随包的档位,小档位用来看体积和准确率的取舍。
+            gate=""
+            case "$(basename "$tier")" in main|600k) gate=--gate ;; esac
+            python3 tools/bench_shared.py summarize "$tier" $gate || status=1
             rm -f "$tier"/eval-private-*.tsv
             jq -r --arg t "$(basename "$tier")" 'to_entries[] | .key as $c | .value.categories | to_entries[]
               | "| \($t) | \($c) | \(.key) | \(.value.settled.n) | \(.value.engine.top1) | \(.value.settled.top1) | \(.value.settled.top5) |"' \
