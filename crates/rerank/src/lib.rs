@@ -89,6 +89,9 @@ pub struct Fact {
 /// 停顿重排越过精确首位的门槛(每字符平均对数概率)。
 /// 只让上下文明确的模糊候选小幅领先时才改首选,快速连打时仍保持稳定。
 pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
+/// 没有上文时,这么短的首位算短句,要领先 [`SHORT_MARGIN`] 才换。
+const SHORT_CHARS: usize = 4;
+const SHORT_MARGIN: f32 = 0.5;
 
 /// 8M 同步重排的最小领先幅度(每字符平均对数概率)。
 ///
@@ -251,8 +254,20 @@ impl Rerank {
         let leader = facts.first()?;
         if !leader.trusted_dictionary_hit || !leader.answers_key {
             // 25M 比 8M 准,首位不是可信整键命中时保留它原有的完整决策,
-            // 不套用同步重排的门槛。
-            return self.decide_inner_with_margin(context, texts, facts, 0.0);
+            // 不套用同步重排的门槛。没有上文时模型只能比字频:精确首位不让给模糊
+            // 候选(开发呢 → 开发了),短句也要明显领先(市场吗 → 市场买)才换。
+            if !context.is_empty() {
+                return self.decide_inner_with_margin(context, texts, facts, 0.0);
+            }
+            let mut exact = facts.to_vec();
+            if !fuzzy.first().copied().unwrap_or(false) {
+                for (fact, _) in exact.iter_mut().zip(fuzzy).filter(|(_, fuzzy)| **fuzzy) {
+                    fact.answers_key = false;
+                }
+            }
+            let short = texts.first().is_some_and(|text| text.chars().count() <= SHORT_CHARS);
+            let margin = if short { SHORT_MARGIN } else { 0.0 };
+            return self.decide_inner_with_margin(context, texts, &exact, margin);
         }
         if context.is_empty() {
             return None;

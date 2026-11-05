@@ -19,7 +19,7 @@ on:
         required: false
         default: collocation.bin
       patch:
-        description: 构建前对 query.rs 执行的 sed -E 脚本,扫引擎常量用
+        description: 构建前对 query.rs 与 rerank 执行的 sed -E 脚本,扫常量用
         required: false
         default: ""
   # lueying-dict 的 pipeline 发布后直接调用,公开仓库之间不需要令牌。
@@ -63,7 +63,7 @@ jobs:
         env:
           PATCH: ${{ inputs.patch }}
         run: |
-          sed -i -E "$PATCH" crates/engine/src/query.rs
+          sed -i -E "$PATCH" crates/engine/src/query.rs crates/rerank/src/lib.rs
           git diff --stat --exit-code && exit 1 || git diff
       - name: 构建 E2E
         run: cargo build -p lueying-e2e --release --locked
