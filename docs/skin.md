@@ -1,17 +1,13 @@
-# 界面皮肤
+# 皮肤
 
-掠影通过 `%APPDATA%\lueying\skin.toml` 提供声明式色彩定义，允许用户精确覆盖候选窗口在深浅色模式下的各项配色。
-
-## 配置文件规范
-
-在 `%APPDATA%\lueying\skin.toml` 中定义 `[light]` 与 `[dark]` 两张色值表。色值采用 TOML 十六进制整数格式（`0xRRGGBB`）：
+`%APPDATA%\lueying\skin.toml` 用来覆盖候选窗的配色。文件分 `[light]` 与 `[dark]` 两张表，颜色写成 `0xRRGGBB`。没写的键使用主题默认值。
 
 ```toml
 [light]
-surface = 0xffffff          # 候选窗口主面板底色
-accent = 0x0a7d32           # 主题强调色
-selected_bg = 0xe6f4ea      # 当前选中候选的背景色
-selected_text = 0x0a7d32    # 当前选中候选的文字颜色
+surface = 0xffffff
+accent = 0x0a7d32
+selected_bg = 0xe6f4ea
+selected_text = 0x0a7d32
 
 [dark]
 surface = 0x101418
@@ -20,31 +16,16 @@ selected_bg = 0x1f2b23
 selected_text = 0x81c995
 ```
 
-修改文件后，在图形设置页保存任意项或运行 `lueying ext reload` 即可热生效，无须重启服务。
+| 键 | 用途 |
+|---|---|
+| `bg` | 候选窗外层底色 |
+| `surface`、`surface_alt`、`segment` | 面板底色、次级底色、分段底色 |
+| `border`、`border_strong` | 普通描边、强调描边 |
+| `text`、`text_secondary`、`text_tertiary` | 主文字、序号与拼音、辅助提示 |
+| `accent`、`accent_hover`、`accent_text`、`on_accent` | 强调色、悬停色、强调上的文字 |
+| `hover` | 列表项悬停底色 |
+| `selected_bg`、`selected_text` | 高亮候选的底色与文字 |
+| `off_bg`、`knob_off` | 设置开关关闭时的底色与滑块 |
+| `success`、`danger`、`danger_soft` | 状态色 |
 
-## 配色键定义
-
-所有键值均对应内置渲染主题字段，未特别指定的键自动沿用默认主题配色：
-
-| 字段键名 | 含义说明 | 适用场景 |
-|---|---|---|
-| `bg` | 候选窗口外层底色 | 窗口外边距与极简边框 |
-| `surface` | 面板主底色 | 候选词列表核心展示区 |
-| `surface_alt` | 次级面板底色 | 拼音编码行与辅助信息区 |
-| `border` / `border_strong` | 基础描边 / 强调描边 | 窗口外框与输入控件分界线 |
-| `text` | 主文字颜色 | 候选词汉字文本 |
-| `text_secondary` | 次级文字颜色 | 候选序号（1~9）与拼音字母 |
-| `text_tertiary` | 弱化文字颜色 | 注音、辅助码提示与快捷指示 |
-| `accent` | 主题强调色 | 首选指示器与强调重点 |
-| `accent_hover` | 悬停强调色 | 鼠标悬停时的激活反馈色 |
-| `on_accent` | 强调色上的反差文本 | 高亮实底上的反白文字 |
-| `selected_bg` | 选中高亮项底色 | 当前高亮候选词的背景块 |
-| `selected_text` | 选中高亮项文本色 | 当前高亮候选词的文本渲染色 |
-| `hover` | 基础悬停色 | 列表项鼠标悬浮背景 |
-
-## 约束
-
-- **无障碍优先原则**：当系统启用「高对比度模式」时，自定义 `skin.toml` 会被整份忽略，色彩渲染严格交由 Windows 系统无障碍令牌接管。
-- **容错降级**：出现无法识别的键名或格式错误时，输入法回退到默认主题并将原因记录在服务日志中；单键值超出 `0xFFFFFF` 时仅丢弃该键。
-- **色彩职责**：`skin.toml` 只负责基础颜色体系的静态定义，不产生动态效果，也不参与合成材质。
-
+格式或键名有误时，对应的键会被忽略并记入日志。颜色超出 `0xFFFFFF` 的键同样忽略。高对比度模式下 `skin.toml` 完全不生效。

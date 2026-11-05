@@ -1,91 +1,61 @@
-# 候选评测与基准
+# 评测
 
-为了客观衡量候选词的召回质量与排序准确率，掠影采用独立冻结的评测语料集进行端到端量化评测，词典只参与候选解码，绝不参与测试用例构造。
+## 语料
 
-## 评测语料设计
+`dicts/eval-shared-v1.tsv` 是冻结的端到端语料，共 1544 条，分四类：
 
-基准语料固定存储于 `dicts/eval-shared-v1.tsv`，字段格式为：`category`（类别）、`source`（来源）、`pinyin`（输入拼音）、`expected`（期望文本）。
-
-| 类别标识 | 用例数量 | 语料来源与特征 |
+| 类别 | 条数 | 说明 |
 |---|---:|---|
-| `daily` | 246 条 | 常见日常会话与通用文本，测试基础成句与常用搭配 |
-| `frost` | 93 条 | 白霜经典长短句用例 |
-| `hard` | 1,105 条 | 歧义与中立难例（C4 中文语料构造），用于压力测试分词与重排算法 |
-| **合计** | **1,444 条** | 经过严格去重与合规清洗 |
+| `daily` | 246 | 日常会话与通用文本 |
+| `hard` | 1105 | 歧义与中立的难例，压力测试分词与重排 |
+| `context` | 100 | 带上文的用例，检验上下文重排 |
+| `frost` | 93 | 早期长句样本，类别名沿用旧名称 |
 
-### 评测归一化规则
-为了消除无关异体字干扰并支持横向对比，评测对输出文本实施统一定则：
-- `其它` → `其他`
-- `她` / `它` → `他`
-- `地` / `得` → `的`
+用例不由词典构造。词典只参与候选生成。比对时对期望文本与候选统一归一化：`其它`→`其他`，`她`、`它`→`他`，`地`、`得`→`的`。
 
-## 指标体系与质量门限
+## 门限
 
-评测系统考察以下关键指标：
-- **Top-1 / Top-3 / Top-5 准确率**：期望文本出现在对应候选档位的比例。
-- **MRR（平均倒数排名）**：衡量期望结果在候选列表中排位的紧凑程度。
-- **延迟预算门限**：端到端击键响应 p95 ≤ 60ms；8M 实时同步重排 p95 ≤ 40ms；25M 异步重排 p95 ≤ 800ms。
+CI 对每类的 top-1 与 top-5 设门限（`tools/bench_shared.py` 中的 `GATES`）：
 
-### 基准表现参考
+| 类别 | top-1 | top-5 |
+|---|---:|---:|
+| `daily` | 85% | 90% |
+| `hard` | 50% | 75% |
+| `frost` | 65% | 80% |
+| `context` | 60% | 80% |
 
-在标准生产配置下（启用语法搭配模型与神经重排模型）：
+门限是底线，不是目标。
 
-| 测试类别 | Top-1 | Top-3 | Top-5 | MRR | CI 准入门限（Top-1 / Top-5） |
-|---|---:|---:|---:|---:|---|
-| `daily` | ≥ 93.0% | ≥ 95.0% | ≥ 96.0% | ≥ 0.940 | 85.0% / 90.0% |
-| `frost` | ≥ 72.0% | ≥ 81.0% | ≥ 87.0% | ≥ 0.770 | 65.0% / 80.0% |
-| `hard` | ≥ 57.0% | ≥ 73.0% | ≥ 79.0% | ≥ 0.660 | 50.0% / 75.0% |
-
-## 本地复现步骤
-
-开发者可在开发环境中完整执行基准评估：
+## 复现
 
 ```sh
-# 1. 抓取外部语料与模型
 bash tools/fetch_dict.sh data
 bash tools/fetch_rerank.sh data/rerank
-
-# 2. 运行全量端到端基准
 cargo run -p lueying-e2e --release --locked -- \
-  --dict data/main.pyd \
-  --gram data/collocation.bin \
-  --rerank-dir data/rerank \
-  --only-shared
-```
-
-执行后在 `target/bench/` 生成逐条结果 `<语料>.<分片>.tsv`。`--corpus <文件>` 换用其他语料，`--shard 1/4` 只跑其中一片。指标不在 Rust 里算，用工具汇总：
-
-```sh
+  --dict data/main.pyd --gram data/collocation.bin \
+  --rerank-dir data/rerank --only-shared
 python3 tools/bench_shared.py summarize target/bench --print
 ```
 
-`summary.json` 按语料、类别和链路层（`engine`、`8m`、`settled`）给出 top-1/3/5、MRR、Wilson 区间、耗时与候选池覆盖；`--gate` 在门限不达标时退出码非零。CI 的 `dict-bench` 工作流把这些放在 `bench` artifact 里。
+逐条结果写入 `target/bench/<语料>.<分片>.tsv`。`--corpus <文件>` 换用其他语料，`--shard <序号>/<总数>` 只跑其中一片。`summarize --gate` 在不达门限时返回非零退出码。
+
+`summary.json` 按语料、类别与链路（`engine`、`8m`、`settled`）给出 top-1/3/5、MRR、Wilson 区间、耗时、候选池覆盖，以及逐段选词打出整句的按键成本（选词次数与翻页数）。`macro` 是各类等权平均。
 
 ## V2 开发集与测试集
 
-`dicts/eval-v2-dev.tsv` 和 `dicts/eval-v2-test.tsv` 来自 chinese-ime-lm 的 `sentences-ctx-v1` 全量：2026 年 9–10 月的政府文件和众包对话测试集，文字不在词典语料和重排模型的训练语料里。按 `category` 分为词级和分句、全拼/简拼/混输、书面和对话，共 12 类。
+- `dicts/eval-v2-dev.tsv`：调参只看这一份。
+- `dicts/eval-v2-test.tsv`：只在发版前看，`dict-bench` 工作流勾选 `test` 时才运行。
 
-按文档切成两半，**调参只看开发集，测试集只在发版时跑**（`dict-bench` 勾选 `test`）。`summary.json` 的 `macro` 是各类同权的平均，`cost` 是逐段选词打出整句要选几次、翻几页。
+两份来自 chinese-ime-lm 的 `sentences-ctx-v1`，文本不在词典与重排模型的训练语料中。
 
 ## 私有语料
 
-`dicts/eval-private.tar.gpg` 是手动收集的评论区文字，用 GnuPG 以 AES-256 对称加密，只用于测试，不参与训练或选词。密钥在仓库密钥 `EVAL_KEY` 里，没有密钥时 CI 跳过这份语料。公开的只有 `summary.json` 里的汇总数字，逐条结果加密后才上传。
+`dicts/eval-private.tar.gpg` 是加密的真实评论区文本，只用于评测，不参与训练。它用 GnuPG 以 AES-256 对称加密，密钥是仓库的 `EVAL_KEY`。没有密钥时 CI 跳过这份语料。公开产物只包含汇总数字。
 
-## 跨引擎对比机制
-
-通过 `tools/bench_shared.py` 工具，可将同一份 `eval-shared-v1.tsv` 导出至其他输入引擎运行，并统一收敛结果以生成横向对比报告：
+## 跨引擎对比
 
 ```sh
-# 导出统一评测输入
-python3 tools/bench_shared.py export --engine <目标引擎> --out /tmp/eval-input.tsv
-
-# 逐条对比:路径可以是目录或文件,后面可跟 :engine、:8m、:settled 指定链路层
-python3 tools/bench_shared.py diff /tmp/engine1-result.tsv target/bench:settled --samples 5
+python3 tools/bench_shared.py diff <结果A> <结果B> --samples 5
 ```
 
-`diff` 输出 JSON，按类别给出增量、McNemar 精确 p 值、rescued/broken 条数和被改坏的样本。n=60 时区间半宽约 ±13pp，比较模型请看差值和不一致对，不要用单次汇总下结论。水杉的三种配置由 `msime-bench` 工作流跑出，结果可直接交给 `diff`。
-
-### 评测原则
-
-1. **同构对比**：跨引擎对比必须记录对应的词典规模、模型参数量与执行日期，避免脱离约束单独比较准确率。
-2. **纯粹隔离**：临时测试报告与过程文件生成于 `target/` 或系统临时目录，严禁提交至版本仓库。
+输出各类的增量、McNemar 精确检验的 p 值，以及被改好与改坏的样本。n = 60 时置信区间半宽约 ±13 个百分点，比较时看差值与不一致的样本对，不要只看单次汇总。

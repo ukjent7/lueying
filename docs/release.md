@@ -1,61 +1,50 @@
-# 版本发布
+# 发布
 
-掠影采用 Git Tag 驱动的自动化持续交付流程。安装包构建、更新清单签名与 GitHub Release 发布均由 CI 工作流自动完成，确保交付物的一致性与可追溯性。
+发布由 Git 标签触发。安装包、更新清单与 GitHub Release 由 CI 生成。
 
-## 发布前检查清单
+## 发版前
 
-在推送发布 Tag 前，必须完成以下验证：
+1. 在 `CHANGELOG.md` 写 `## [x.y.z] - YYYY-MM-DD` 段落。CI 用它作为 Release 说明，缺失时打包失败。
+2. `main` 的 CI 全部通过，包括 Windows E2E 与安装卸载冒烟。
+3. `tools/fetch_*.sh` 中固定的词典、模型与官方扩展哈希仍有效。
 
-1. **更新日志**：在 `CHANGELOG.md` 中编写面向用户的 `## [x.y.z] - YYYY-MM-DD` 变更说明；CI 将提取该段内容作为 GitHub Release 的发版说明。
-2. **主干质量状态**：确认 `main` 分支的持续集成（CI）全部通过，特别是真实 TSF E2E 与安装/卸载冒烟测试。
-3. **外部资产完备性**：确认 `tools/fetch_*.sh` 锁定的词典、语法搭配与重排模型地址依然有效，SHA-256 校验和保持一致。
-4. **支持架构确认**：确认 `installer/lueying.iss` 的 `ArchitecturesAllowed` 符合支持预期（当前仅支持 x64）。
-
-## Tag 规范与触发
+## 打标签
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-- Tag 名称必须遵循语义化版本格式：`vX.Y.Z`（正式版）或 `vX.Y.Z-<预发布标识>`（如 `v0.2.0-beta.1`）。
-- 带有预发布标识的 Tag 会被 CI 自动标记为 Pre-release，不会被稳定版客户端作为 `latest` 拉取。
-- 若 `CHANGELOG.md` 中缺少对应版本的变更描述，CI 打包任务将直接中止失败。
+`vX.Y.Z` 为正式版。`vX.Y.Z-<标识>`（如 `v0.3.0-beta.1`）标为预发布，稳定渠道不会拉取。
 
-## 自动化流水线与产物
+## 产物
 
-Windows CI 构建任务依次执行以下步骤：
+| 文件 | 说明 |
+|---|---|
+| `lueying-<版本>-setup.exe` | 安装包（x64） |
+| `*.sha256` | 安装包的校验值 |
+| `lueying-manifest.json` | 更新清单；配置了 `LUEYING_SIGN_KEY` 时附 Ed25519 签名 |
+| `lueying-ppocr.exe`、`lueying-sensevoice.exe` | 原生官方扩展；地址与哈希写入官方目录 |
 
-1. **核心组件构建**：编译 64 位服务端、设置中心、PP-OCR 原生扩展及安装辅助程序。
-2. **TSF 薄壳编译**：使用静态 C 运行时（Static CRT）构建 x64 `lueying_tsf.dll`。
-3. **端到端测试与指标断言**：运行全链路宿主 E2E 测试，验证运行时体积（≤ 90 MiB）、常驻内存工作集（≤ 128 MB）与交互延迟（p95 ≤ 60ms）。
-4. **安装包打包**：整合词典与模型资源，生成 `version.txt` 与结构化清单，编译输出 `lueying-<version>-setup.exe`。
-5. **数字签名**：
-   - **Authenticode 签名**：若配置了 `WINDOWS_PFX_BASE64` 与密码密钥，使用 `signtool` 对安装包进行数字签名。
-   - **清单签名**：生成 `lueying-manifest.json` 与 `.sha256`，若配置了 `LUEYING_SIGN_KEY` 则追加 Ed25519 签名。
-6. **创建 GitHub Release**：将安装包、校验文件、`lueying-ppocr.exe`（官方原生扩展，发布构建时已把它的地址与哈希补进官方目录）、更新清单与签名上传至发布版本；发布 SenseVoice 时同样上传 `lueying-sensevoice.exe`，用 `cargo run -p xtask -- catalog-exe --id sensevoice --exe <文件> --url <地址>` 补齐目录。
-7. **winget manifest**：用 `cargo run -p xtask -- winget --version <版本> --sha256 <setup 哈希>` 生成三份 manifest，提交到 microsoft/winget-pkgs 开 PR。
+`cargo run -p xtask -- winget` 生成 winget manifest，需要另外向 microsoft/winget-pkgs 提交 PR。
 
-### 签名密钥说明
+## 签名
 
-| 密钥名称 | 作用 | 缺失时的行为 |
+| 密钥 | 作用 | 缺失时 |
 |---|---|---|
-| `WINDOWS_PFX_BASE64` | Authenticode 证书 PFX 编码 | 输出未签名安装包，Windows SmartScreen 可能出现拦截提示 |
-| `WINDOWS_PFX_PASSWORD` | PFX 证书密码 | 同上 |
-| `LUEYING_SIGN_KEY` | 更新清单 Ed25519 私钥种子 | 清单未签名，客户端降级使用基础 `.sha256` 校验 |
+| `WINDOWS_PFX_BASE64`、`WINDOWS_PFX_PASSWORD` | Authenticode 签名 | 安装包不签名，SmartScreen 可能拦截 |
+| `LUEYING_SIGN_KEY` | 清单的 Ed25519 私钥种子 | 清单不签名，客户端只做 `.sha256` 校验 |
 
-## 发布后验证流程
+## 发布后验证
 
-在干净的 Windows 11 24H2 x64 测试机上验证新版本：
+在干净的 Windows 11 24H2 x64 上：
 
-1. 运行 `lueying-<version>-setup.exe`，确认安装顺畅，64 位宿主应用可正常唤出输入法。
-2. 确认安装目录中 `version.txt` 与 Release 版本完全吻合。
-3. 从上一稳定版打开「掠影设置 → 关于 → 检查更新」，验证清单校验、静默更新与版本平滑迁移。
-4. 验证升级后 `%APPDATA%\lueying` 中的用户设置与自学习词库完整保留。
-5. 执行卸载，验证 TSF 注册表项、服务自启与临时文件均按预期清理。
+1. 安装新版，输入法可用。
+2. 安装目录中的 `version.txt` 与 Release 版本一致。
+3. 从旧版「关于」检查更新，验证清单与升级。
+4. 确认 `%APPDATA%\lueying` 中的配置与 `user.tsv` 保留。
+5. 卸载，确认输入法注册与自启项已清理。
 
-## 回滚与应急
+## 回滚
 
-客户端无自动降级逻辑。已发布的版本若发现致命缺陷：
-- 建议立即发布更高的小版本号执行热修复。
-- 或在 GitHub Release 中撤回受影响资产并发布置顶公告。严禁擅自删除已被客户端引用的 Ed25519 签名文件，以免造成旧版客户端更新链死锁。
+客户端没有自动降级。发现严重问题时发布更高的修订版本。确需撤回时，在 Release 中下架资产并置顶说明。不要删除已发布的清单签名，否则旧版本的更新链会断。
