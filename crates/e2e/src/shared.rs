@@ -145,13 +145,10 @@ fn apply_rerank(
     }
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-    let raw = engine
-        .composition()
-        .map_or_else(String::new, |comp| comp.raw.clone());
     let started = Instant::now();
-    // 与 `lueying_session::decide_sync` 一致:没有上文就跳过,有上文走联合选词头。
+    // 与 `lueying_session::decide_sync` 一致:没有上文就跳过。
     let promote = (!snap.context.is_empty())
-        .then(|| four.decide_joint(&snap.context, &raw, &texts, &snap.facts, None))
+        .then(|| four.decide(&snap.context, &texts, &snap.facts))
         .flatten();
     let ms_8m = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {

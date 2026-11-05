@@ -542,7 +542,7 @@ def cmd_import_msime(args: argparse.Namespace) -> int:
         normalized = [normalize(text) for text in candidates]
         rank = normalized.index(want) if want in normalized else -1
         top1 = candidates[0] if candidates else ""
-        category = str(case.get("id", "")).split("-", 1)[0] or "unknown"
+        category = str(case.get("id", "")).rsplit("-", 1)[0] or "unknown"
         rows.append((category, str(case.get("input", "")), expected, str(rank), top1, "0.000"))
 
     lines = [

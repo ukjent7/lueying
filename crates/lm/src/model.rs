@@ -362,19 +362,6 @@ impl SentenceModel {
             .collect()
     }
 
-    /// 击键-上下文联合条件选词评分 (Keystroke Joint Scorer):
-    /// `[Context] [SEP] [Keystrokes] [SEP] [Candidate] [END]` ⟶ Score (Scalar)
-    pub fn score_joint(
-        &self,
-        context: &str,
-        keystrokes: &str,
-        candidates: &[&str],
-        memory: Option<&crate::memory::MemorySlot>,
-    ) -> Vec<f32> {
-        let scorer = crate::joint_scorer::JointKeystrokeScorer::new(self.config.n_embd);
-        scorer.score_candidates(self, context, keystrokes, candidates, memory)
-    }
-
     /// The committed text as tokens, opened with `BOS` and trimmed to leave room for the longest
     /// candidate.
     ///

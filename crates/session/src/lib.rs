@@ -129,26 +129,16 @@ pub fn sync_worthwhile(snapshot: &Snapshot) -> bool {
     !snapshot.context.is_empty()
 }
 
-/// 8M 按键重排:返回要提到首位的候选下标。优先采用击键-上下文联合选词头。
+/// 8M 按键重排:返回要提到首位的候选下标。
 pub fn decide_sync(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize> {
     if !sync_worthwhile(snapshot) {
         return None;
     }
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    let mut guard = rerank
+    rerank
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !snapshot.raw.is_empty() {
-        guard.decide_joint(
-            &snapshot.context,
-            &snapshot.raw,
-            &texts,
-            &snapshot.facts,
-            None,
-        )
-    } else {
-        guard.decide(&snapshot.context, &texts, &snapshot.facts)
-    }
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .decide(&snapshot.context, &texts, &snapshot.facts)
 }
 
 /// 25M 停顿重排:模型直接给出最终顺序,没有上下文也能用。

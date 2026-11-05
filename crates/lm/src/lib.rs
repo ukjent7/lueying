@@ -12,18 +12,14 @@
 //! reason, and the caller restricts the set it passes in.
 
 mod forward;
-pub mod joint_scorer;
 mod keystroke;
 mod math;
-pub mod memory;
 mod model;
 mod ort;
 mod reranker;
 pub mod ssm;
 mod weights;
 
-pub use joint_scorer::{JointKeystrokeScorer, JointScorerHead, MoERouter};
-pub use memory::{MemoryProjection, MemorySlot};
 pub use model::SentenceModel;
 pub use reranker::{Reranker, should_rerank};
 pub use ssm::{SsmBlock, SsmConfig, SsmEngine, SsmState};

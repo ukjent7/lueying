@@ -14,7 +14,6 @@ mod metrics_tests;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use lueying_lm::MemorySlot;
 pub use lueying_lm::ModelError;
 use lueying_lm::{CandidateFacts, Reranker, SentenceModel};
 
@@ -145,55 +144,6 @@ impl Rerank {
     ) -> Option<usize> {
         let started = Instant::now();
         let result = self.decide_inner_with_margin(context, texts, facts, min_margin);
-        self.metrics.record(started.elapsed());
-        result
-    }
-
-    /// 击键-上下文联合重排决策 (Keystroke Joint Scorer):
-    /// 同时考量输入按键串与候选文本的联合契合度,并接入端侧层次化记忆槽偏置
-    pub fn decide_joint(
-        &mut self,
-        context: &str,
-        keystrokes: &str,
-        texts: &[&str],
-        facts: &[Fact],
-        memory: Option<&MemorySlot>,
-    ) -> Option<usize> {
-        self.decide_joint_with_margin(
-            context,
-            keystrokes,
-            texts,
-            facts,
-            memory,
-            SYNC_PROMOTE_MARGIN,
-        )
-    }
-
-    /// 击键-上下文联合重排决策 (支持指定置信间隔 min_margin)
-    pub fn decide_joint_with_margin(
-        &mut self,
-        context: &str,
-        keystrokes: &str,
-        texts: &[&str],
-        facts: &[Fact],
-        memory: Option<&MemorySlot>,
-        min_margin: f32,
-    ) -> Option<usize> {
-        let started = Instant::now();
-        if texts.len() != facts.len() {
-            return None;
-        }
-        let result = self.inner.best_joint_margin(
-            context,
-            keystrokes,
-            texts,
-            |index| CandidateFacts {
-                answers_key: facts[index].answers_key,
-                trusted_dictionary_hit: facts[index].trusted_dictionary_hit,
-            },
-            memory,
-            min_margin,
-        );
         self.metrics.record(started.elapsed());
         result
     }

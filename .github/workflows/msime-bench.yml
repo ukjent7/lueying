@@ -34,6 +34,9 @@ jobs:
           python3 tools/bench_shared.py export --engine msime --corpus dicts/eval-v2-dev.tsv --out results/v2.tsv
           cd msime
           resources=$(cargo run --release -p msime-client-core --example install_resources -- "$RUNNER_TEMP/resources" | tail -1)
+          # convert_eval 默认关掉超级简拼和纠错;产品默认是开的,比较要用产品配置。
+          sed -i -E 's/options\.(local_super_jianpin|autocorrect_transposition|autocorrect_neighbor) = false/options.\1 = true/' \
+            crates/input-runtime/examples/convert_eval/main.rs
           cargo build --release -p msime-input-runtime --example convert_eval
           # 默认:词库 + 词格 n-gram,神经模型默认关闭。convert_eval 见到模型就挂,所以拿掉。
           cp -rL "$resources" "$RUNNER_TEMP/default"
