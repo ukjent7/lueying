@@ -168,7 +168,17 @@ fn main() {
             None => None,
         };
         let mut report = String::from("# 跨引擎共享语料基准(shared-v1)\n\n");
-        let failures = shared::run(Arc::new(dict), gram, models.as_ref(), &mut report);
+        let corpus = args
+            .iter()
+            .position(|a| a == "--corpus")
+            .and_then(|at| args.get(at + 1));
+        let failures = shared::run(
+            Arc::new(dict),
+            gram,
+            models.as_ref(),
+            corpus.map(String::as_str),
+            &mut report,
+        );
         finish(&report, failures);
     }
 
@@ -440,7 +450,7 @@ fn main() {
         if bench_shared {
             let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
             let started = Instant::now();
-            failures += shared::run(dict, gram, models.as_ref(), &mut report);
+            failures += shared::run(dict, gram, models.as_ref(), None, &mut report);
             report.push_str(&format!(
                 "\n> 共享语料基准耗时 {:.1}s\n",
                 started.elapsed().as_secs_f64()

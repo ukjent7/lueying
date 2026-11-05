@@ -80,8 +80,11 @@ jobs:
             # 门限不达标也要继续跑下一档,结论看整张表。
             ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/collocation.bin \
               --rerank-dir data/rerank --only-shared > "results/${tier}.log" 2>&1 || true
-            mkdir -p "results/${tier}"
+            mkdir -p "results/${tier}/extra"
             cp target/bench-shared.json target/bench-shared.tsv target/e2e-report.md "results/${tier}/" || true
+            ./target/release/lueying-e2e --dict "data/main-${tier}.pyd" --gram data/collocation.bin \
+              --rerank-dir data/rerank --only-shared --corpus dicts/eval-extra-v1.tsv >> "results/${tier}.log" 2>&1 || true
+            cp target/bench-shared.tsv target/e2e-report.md "results/${tier}/extra/" || true
             {
               echo "## ${tier}: $(stat -c %s "data/main-${tier}.pyd" | awk '{printf "%.2f MiB", $1/1048576}')"
               cat "results/${tier}/e2e-report.md" || true

@@ -104,10 +104,10 @@ impl Metric {
     }
 }
 
-fn cases() -> (Vec<Case<'static>>, usize) {
+fn cases(corpus: &'static str) -> (Vec<Case<'static>>, usize) {
     let mut rows = Vec::new();
     let mut malformed = 0;
-    for line in CORPUS.lines() {
+    for line in corpus.lines() {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -412,9 +412,23 @@ pub fn run(
     dict: Arc<Dictionary>,
     gram: Option<Arc<Gram>>,
     models: Option<&Models>,
+    corpus: Option<&str>,
     report: &mut String,
 ) -> usize {
-    let (cases, malformed) = cases();
+    // 换用的语料只活到进程结束,泄漏掉省得 Case 带生命周期穿过线程。
+    let extra = corpus.is_some();
+    let (body, corpus_name) = match corpus {
+        Some(path) => {
+            let body = std::fs::read_to_string(path).expect("读语料");
+            let name = std::path::Path::new(path)
+                .file_stem()
+                .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+            let body: &'static str = Box::leak(body.into_boxed_str());
+            (body, name)
+        }
+        None => (CORPUS, CORPUS_NAME.to_string()),
+    };
+    let (cases, malformed) = cases(body);
     let mut failures = (malformed > 0) as usize + cases.is_empty() as usize;
     let gram_on = gram.is_some();
     let mut by_category: BTreeMap<&str, Metric> = BTreeMap::new();
@@ -517,7 +531,7 @@ pub fn run(
         });
     }
 
-    let mut text = String::from("## 跨引擎共享语料基准(shared-v1)\n\n");
+    let mut text = format!("## 跨引擎共享语料基准({corpus_name})\n\n");
     let _ = writeln!(
         text,
         "固定 {} 条外部语料,同一套归一化;逐条结果写入 `target/bench-shared.tsv` / `.json`。\n",
@@ -646,7 +660,7 @@ pub fn run(
                     format!("top-1 ≥ {min_top1:.0}%, top-5 ≥ {min_top5:.0}%"),
                 )
             }
-            None => (false, "语料缺这一类".to_string()),
+            None => (extra, "语料缺这一类".to_string()),
         };
         if !ok && gram_on {
             failures += 1;
@@ -743,7 +757,7 @@ pub fn run(
     let payload = serde_json::json!({
         "schema": SCHEMA,
         "engine": format!("lueying {}", env!("CARGO_PKG_VERSION")),
-        "corpus": CORPUS_NAME,
+        "corpus": corpus_name,
         "kind": "items",
         "config": {
             "fuzzy": "auto",
@@ -767,7 +781,7 @@ pub fn run(
     let mut tsv = String::new();
     let _ = writeln!(tsv, "# schema={SCHEMA}");
     let _ = writeln!(tsv, "# engine=lueying {}", env!("CARGO_PKG_VERSION"));
-    let _ = writeln!(tsv, "# corpus={CORPUS_NAME}");
+    let _ = writeln!(tsv, "# corpus={corpus_name}");
     tsv.push_str("# kind=items\ncategory\tinput\texpected\trank\ttop1\tms\n");
     for item in &items {
         let _ = writeln!(

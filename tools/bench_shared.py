@@ -144,7 +144,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    rows = read_corpus()
+    rows = read_corpus(args.corpus)
     if args.category:
         rows = [row for row in rows if row["category"] == args.category]
     if getattr(args, "strip_context", False):
@@ -656,6 +656,7 @@ def main() -> int:
     export = sub.add_parser("export", help="导出青简/清风/水杉可读的输入文件")
     export.add_argument("--engine", choices=("qingjian", "windinput", "msime"), required=True)
     export.add_argument("--category", help="只导出某一类")
+    export.add_argument("--corpus", type=Path, default=CORPUS, help="默认冻结的 shared-v1")
     export.add_argument("--strip-context", action="store_true", help="强制剥离上文以作对照")
     export.add_argument("--out", required=True, help="输出路径,- 表示 stdout")
     export.set_defaults(func=cmd_export)
