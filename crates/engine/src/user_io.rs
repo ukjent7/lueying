@@ -2,6 +2,8 @@
 //!
 //! 与学习逻辑分开,避免迁移/序列化代码和评分公式互相淹没。
 
+use std::collections::HashMap;
+
 use super::*;
 
 impl UserDict {
@@ -133,14 +135,12 @@ impl UserDict {
     /// 组级/字级/词级/三词/应用/跳过学习用 `@group`、`@context`、`@transition`、
     /// `@trigram`、`@app`、`@reject` 行;按内容排序保证文件稳定。
     pub fn export(&self) -> String {
-        let mut keys: Vec<_> = self.map.iter().collect();
-        keys.sort_by(|a, b| a.0.cmp(b.0));
         let mut out = String::new();
-        for (k, v) in keys {
-            let mut words = v.iter().collect::<Vec<_>>();
-            words.sort_by(|a, b| a.word.cmp(&b.word));
-            for e in words {
-                out.push_str(&format!("{k}\t{}\t{}\t{}\n", e.word, e.freq, e.ts));
+        for (key, entries) in in_key_order(&self.map) {
+            let mut entries: Vec<&UserEntry> = entries.iter().collect();
+            entries.sort_by(|a, b| a.word.cmp(&b.word));
+            for e in entries {
+                out.push_str(&format!("{key}\t{}\t{}\t{}\n", e.word, e.freq, e.ts));
             }
         }
         for (name, stat) in FUZZY_GROUPS.iter().zip(self.groups.iter()) {
@@ -148,12 +148,7 @@ impl UserDict {
                 out.push_str(&format!("@group\t{name}\t{}:{}\n", stat.count, stat.ts));
             }
         }
-        let mut context: Vec<(char, char)> = self.context.keys().copied().collect();
-        context.sort();
-        for (left, right) in context {
-            let Some(stat) = self.context.get(&(left, right)) else {
-                continue;
-            };
+        for ((left, right), stat) in in_key_order(&self.context) {
             if stat.count > 0 {
                 out.push_str(&format!(
                     "@context\t{left}\t{right}\t{}\t{}\n",
@@ -161,18 +156,8 @@ impl UserDict {
                 ));
             }
         }
-        let mut previous: Vec<&String> = self.transitions.keys().collect();
-        previous.sort();
-        for left in previous {
-            let Some(next) = self.transitions.get(left) else {
-                continue;
-            };
-            let mut following: Vec<&String> = next.keys().collect();
-            following.sort();
-            for right in following {
-                let Some(stat) = next.get(right) else {
-                    continue;
-                };
+        for (left, next) in in_key_order(&self.transitions) {
+            for (right, stat) in in_key_order(next) {
                 if stat.count > 0 {
                     out.push_str(&format!(
                         "@transition\t{left}\t{right}\t{}\t{}\n",
@@ -181,24 +166,9 @@ impl UserDict {
                 }
             }
         }
-        let mut first: Vec<&String> = self.trigrams.keys().collect();
-        first.sort();
-        for left in first {
-            let Some(mids) = self.trigrams.get(left) else {
-                continue;
-            };
-            let mut second: Vec<&String> = mids.keys().collect();
-            second.sort();
-            for mid in second {
-                let Some(next) = mids.get(mid) else {
-                    continue;
-                };
-                let mut following: Vec<&String> = next.keys().collect();
-                following.sort();
-                for right in following {
-                    let Some(stat) = next.get(right) else {
-                        continue;
-                    };
+        for (left, mids) in in_key_order(&self.trigrams) {
+            for (mid, next) in in_key_order(mids) {
+                for (right, stat) in in_key_order(next) {
                     if stat.count > 0 {
                         out.push_str(&format!(
                             "@trigram\t{left}\t{mid}\t{right}\t{}\t{}\n",
@@ -208,49 +178,21 @@ impl UserDict {
                 }
             }
         }
-        let mut apps: Vec<&String> = self.apps.keys().collect();
-        apps.sort();
-        for host in apps {
-            let Some(words) = self.apps.get(host) else {
-                continue;
-            };
-            let mut used: Vec<&String> = words.keys().collect();
-            used.sort();
-            for word in used {
-                let Some(stat) = words.get(word) else {
-                    continue;
-                };
+        for (host, words) in in_key_order(&self.apps) {
+            for (word, stat) in in_key_order(words) {
                 if stat.count > 0 {
-                    out.push_str(&format!(
-                        "@app\t{host}\t{word}\t{}\t{}\n",
-                        stat.count, stat.ts
-                    ));
+                    out.push_str(&format!("@app\t{host}\t{word}\t{}\t{}\n", stat.count, stat.ts));
                 }
             }
         }
-        let mut rejected: Vec<&String> = self.rejects.keys().collect();
-        rejected.sort();
-        for key in rejected {
-            let Some(words) = self.rejects.get(key) else {
-                continue;
-            };
-            let mut keys: Vec<&String> = words.keys().collect();
-            keys.sort();
-            for word in keys {
-                let Some(stat) = words.get(word) else {
-                    continue;
-                };
+        for (key, words) in in_key_order(&self.rejects) {
+            for (word, stat) in in_key_order(words) {
                 if stat.count > 0 {
-                    out.push_str(&format!(
-                        "@reject\t{key}\t{word}\t{}\t{}\n",
-                        stat.count, stat.ts
-                    ));
+                    out.push_str(&format!("@reject\t{key}\t{word}\t{}\t{}\n", stat.count, stat.ts));
                 }
             }
         }
-        let mut pins: Vec<(&String, &String)> = self.pinned.iter().collect();
-        pins.sort();
-        for (key, word) in pins {
+        for (key, word) in in_key_order(&self.pinned) {
             out.push_str(&format!("@pin\t{key}\t{word}\n"));
         }
         out
@@ -460,6 +402,13 @@ impl UserDict {
         }
         true
     }
+}
+
+/// 按键排序后的一张表;导出的行顺序由此固定,与插入顺序无关。
+fn in_key_order<K: Ord, V>(map: &HashMap<K, V>) -> Vec<(&K, &V)> {
+    let mut items: Vec<(&K, &V)> = map.iter().collect();
+    items.sort_by(|a, b| a.0.cmp(b.0));
+    items
 }
 
 /// 同一条统计取较大的计数与较新的时间戳。
