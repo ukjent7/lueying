@@ -49,8 +49,8 @@ fn next_after(seen: u64) -> (u64, CandidateState) {
 /// 启动时调用:为每个已同意、订阅了候选窗状态的原生扩展开一条投递线程。
 pub(super) fn spawn_subscribers() {
     let (Some(root), Some(consent_path)) = (
-        crate::config::extensions_dir(),
-        crate::config::extensions_consent_path(),
+        lueying_server::config::extensions_dir(),
+        lueying_server::config::extensions_consent_path(),
     ) else {
         return;
     };

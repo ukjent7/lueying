@@ -40,6 +40,7 @@ mod pipe;
 
 #[cfg(windows)]
 mod candidate_events;
+#[cfg(windows)]
 mod settle;
 
 #[cfg(windows)]

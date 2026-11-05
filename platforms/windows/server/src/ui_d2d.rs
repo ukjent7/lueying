@@ -256,7 +256,6 @@ fn window_loop(state: Arc<State>) {
                 DispatchMessageW(&msg);
             }
         }
-        let now = Instant::now();
         // 脚本补丁到了就应用;这一轮有新内容时由 place 一起重绘。
         let patch = unsafe { &(*ctx).script }.take();
         if let Some((seq, patch)) = patch {
@@ -683,8 +682,6 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         metrics,
         menu_xy: menu,
     });
-    let width = panel::panel_width(&spec, &metrics, &ctx.text);
-    let height = panel::panel_height(&spec, &metrics, &ctx.text);
     let frame = Frame {
         spec: &spec,
         palette: &palette,
