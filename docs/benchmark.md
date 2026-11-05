@@ -67,6 +67,10 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 按文档切成两半，**调参只看开发集，测试集只在发版时跑**（`dict-bench` 勾选 `test`）。`summary.json` 的 `macro` 是各类同权的平均，`cost` 是逐段选词打出整句要选几次、翻几页。
 
+## 私有语料
+
+`dicts/eval-private.tar.gpg` 是手动收集的评论区文字，用 GnuPG 以 AES-256 对称加密，只用于测试，不参与训练或选词。密钥在仓库密钥 `EVAL_KEY` 里，没有密钥时 CI 跳过这份语料。公开的只有 `summary.json` 里的汇总数字，逐条结果加密后才上传。
+
 ## 跨引擎对比机制
 
 通过 `tools/bench_shared.py` 工具，可将同一份 `eval-shared-v1.tsv` 导出至其他输入引擎运行，并统一收敛结果以生成横向对比报告：

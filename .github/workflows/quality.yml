@@ -118,6 +118,7 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.run == 'true'
     uses: ./.github/workflows/dict-bench.yml
+    secrets: inherit
 
   windows:
     needs: preflight
