@@ -71,10 +71,7 @@ pub(crate) struct Shared {
     pub ui_snapshot: RefCell<crate::ui_element::Snapshot>,
 }
 
-#[path = "keysink.rs"]
 mod keysink;
-
-#[path = "providers.rs"]
 mod providers;
 
 impl Shared {
@@ -260,13 +257,29 @@ impl TextService {
         request_with(&self.client, &self.shared, req)
     }
 
+    /// 把应答里的中英与全半角同步到语言栏状态。
+    fn adopt_mode(&self, reply: &Reply) {
+        self.shared.set_chinese(reply.chinese);
+        self.shared.set_fullwidth(reply.fullwidth);
+    }
+
+    /// 记下这个键待应用的应答;OnKeyDown 按虚拟键取回后写进文档。
+    fn remember(&self, context: &ITfContext, reply: Reply, vk: u32, consume_only: bool) {
+        *self.shared.last_context.borrow_mut() = Some(context.clone());
+        *self.pending.borrow_mut() = Some(Pending {
+            context: context.clone(),
+            reply,
+            vk,
+            consume_only,
+        });
+    }
+
     /// 把应答写进文档(异步编辑会话,会话里量光标报给 Server 摆候选窗)。
     fn apply(&self, context: &ITfContext, reply: &Reply) {
         crate::ui_element::sync(&self.shared, &self.client, reply);
         // 新按键让任何在途的停顿写回失效。
         self.shared.touch();
-        self.shared.set_chinese(reply.chinese);
-        self.shared.set_fullwidth(reply.fullwidth);
+        self.adopt_mode(reply);
         // 没有文档改动且当前没有组句(例如纯模式切换):不要再排一个空编辑会话,
         // 它会与紧接着的组句写回竞争,延迟执行时把新组句结束掉。
         if reply.commits.is_empty() && reply.preedit.is_empty() && !self.shared.composing() {
@@ -292,8 +305,7 @@ impl TextService {
 
     /// 失焦落定:应答可能在新输入框的按键之后才执行,只上屏、不改新组句。
     fn apply_stale(&self, context: &ITfContext, reply: &Reply) {
-        self.shared.set_chinese(reply.chinese);
-        self.shared.set_fullwidth(reply.fullwidth);
+        self.adopt_mode(reply);
         let commit = reply.commits.concat();
         if commit.is_empty() {
             return;

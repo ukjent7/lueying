@@ -1,6 +1,6 @@
 //! 显示属性、函数提供与布局通知三个小提供者。
 //!
-//! `service` 的 `#[path]` 子模块(src 保持扁平)。
+//! `service` 的子模块。
 
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOINTERFACE};
 use windows::Win32::UI::TextServices::{

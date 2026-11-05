@@ -1,6 +1,6 @@
 //! 键事件汇:焦点切换、按键下传与停顿泵的 TSF 接入。
 //!
-//! `service` 的 `#[path]` 子模块(src 保持扁平);`TextService_Impl`
+//! `service` 的子模块;`TextService_Impl`
 //! 的私有字段经 `super::*` 取用,可见性与调用路径不变。
 
 use windows::Win32::Foundation::{LPARAM, WPARAM};
@@ -51,15 +51,8 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 }) else {
                     return Ok(FALSE);
                 };
-                self.shared.set_chinese(reply.chinese);
-                self.shared.set_fullwidth(reply.fullwidth);
-                *self.shared.last_context.borrow_mut() = Some(context.clone());
-                *self.pending.borrow_mut() = Some(Pending {
-                    context: context.clone(),
-                    reply,
-                    vk,
-                    consume_only: true,
-                });
+                self.adopt_mode(&reply);
+                self.remember(context, reply, vk, true);
                 return Ok(true.into());
             }
             let Some(key) = self.mapped_key(vk, scan) else {
@@ -94,18 +87,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
                 reply.passthrough, reply.chinese, reply.commits, reply.preedit
             ));
             // 英文模式下字母会直通,但语言栏仍要跟上全局模式。
-            self.shared.set_chinese(reply.chinese);
-            self.shared.set_fullwidth(reply.fullwidth);
+            self.adopt_mode(&reply);
             if reply.passthrough {
                 return Ok(FALSE);
             }
-            *self.shared.last_context.borrow_mut() = Some(context.clone());
-            *self.pending.borrow_mut() = Some(Pending {
-                context: context.clone(),
-                reply,
-                vk,
-                consume_only: false,
-            });
+            self.remember(context, reply, vk, false);
             crate::context_probe::request(
                 context,
                 self.client_id.get(),
