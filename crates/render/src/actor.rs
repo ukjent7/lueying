@@ -326,7 +326,11 @@ mod tests {
         actor.key(0);
         let views = run(&mut actor, 0, TYPING_MS - 50, (48.0, 48.0));
         assert!(views.iter().all(|view| view.state == State::Typing));
-        assert!(views.windows(2).all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y));
+        assert!(
+            views
+                .windows(2)
+                .all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y)
+        );
     }
 
     #[test]
