@@ -171,8 +171,8 @@ mod tests {
 
     #[test]
     fn manifest_lines_become_clips() {
-        let pack = parse_pack("# 小宠物\nidle 500 0 1\ntyping 100 2\n\nsleep 1000 3\n")
-            .expect("清单合法");
+        let pack =
+            parse_pack("# 小宠物\nidle 500 0 1\ntyping 100 2\n\nsleep 1000 3\n").expect("清单合法");
         assert_eq!(
             pack.clip(State::Typing),
             Some(&Clip {
@@ -180,7 +180,10 @@ mod tests {
                 frame_ms: 100
             })
         );
-        assert_eq!(pack.clip(State::Sleep).map(|clip| clip.frames.clone()), Some(vec![3]));
+        assert_eq!(
+            pack.clip(State::Sleep).map(|clip| clip.frames.clone()),
+            Some(vec![3])
+        );
     }
 
     #[test]
@@ -189,7 +192,11 @@ mod tests {
         assert!(parse_pack("idle 0 0").unwrap_err().contains("每帧毫秒"));
         assert!(parse_pack("idle 500").unwrap_err().contains("没有帧号"));
         assert!(parse_pack("idle 500 x").unwrap_err().contains("帧号"));
-        assert!(parse_pack("idle 500 0\nidle 300 1").unwrap_err().contains("重复"));
+        assert!(
+            parse_pack("idle 500 0\nidle 300 1")
+                .unwrap_err()
+                .contains("重复")
+        );
     }
 
     #[test]
