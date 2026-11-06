@@ -32,6 +32,14 @@ impl Pack {
     pub fn clip(&self, name: &str) -> Option<&Clip> {
         self.clips.get(name)
     }
+
+    /// 所有片段里最大的帧号;宿主据此知道要读多少张图。没有任何帧时返回 `None`。
+    pub fn max_frame(&self) -> Option<usize> {
+        self.clips
+            .values()
+            .flat_map(|clip| clip.frames.iter().copied())
+            .max()
+    }
 }
 
 /// 解析动画包清单。每行一个片段:`<名字> <每帧毫秒> <帧号>...`。
