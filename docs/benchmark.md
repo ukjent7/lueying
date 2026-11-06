@@ -43,10 +43,12 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 ## V2 开发集与测试集
 
-- `dicts/eval-v2-dev.tsv`：调参只看这一份。
-- `dicts/eval-v2-test.tsv`：只在发版前看，`dict-bench` 工作流勾选 `test` 时才运行。
+- `dicts/eval-dev-v4.tsv`：调参只看这一份(3600 条)。由 `tools/make_dev_v4.py` 从 V2 开发集和 V3 分段语料派生:词级每类最多 300 条,分段(1–3 字,带真实上文)全部保留,整句只留全拼与混打各 300 条做回归。去掉整句声母和整句手误/模糊音。
+- `dicts/eval-v2-test.tsv`：只在发版前看,`dict-bench` 工作流勾选 `test` 时才运行。
+- `dicts/eval-v2-dev.tsv`：派生 v4 的原始来源,不再直接用于调参。
 
-两份来自 chinese-ime-lm 的 `sentences-ctx-v1`，文本不在词典与重排模型的训练语料中。
+V2 来自 chinese-ime-lm 的 `sentences-ctx-v1`,文本不在词典与重排模型的训练语料中。
+开发集 v4 的选取以哈希决定,换开发集会让基线失效,必须用新开发集重跑基线后再比较。
 
 ## 压力语料 v3
 
