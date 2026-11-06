@@ -228,13 +228,19 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     match surface.begin(w as u32, h as u32) {
         Ok(canvas) => {
             canvas.fill_rrect(bar_local, RADIUS * scale, Color::opaque(palette.bg));
-            canvas.stroke_rrect(bar_local, RADIUS * scale, 1.0, Color::opaque(palette.border));
+            canvas.stroke_rrect(
+                bar_local,
+                RADIUS * scale,
+                1.0,
+                Color::opaque(palette.border),
+            );
             // 角色画在背景之上、按钮之下。
             if let Some(pack) = &ctx.pack {
                 for (actor, view) in ctx.stage.actors.iter().zip(views.iter()) {
                     if let Some(index) = frame_at(actor.clip(), now_ms, pack) {
                         let size = SPRITE * scale;
-                        canvas.draw_sprite(index, local(Rect::from_xywh(view.x, view.y, size, size)));
+                        canvas
+                            .draw_sprite(index, local(Rect::from_xywh(view.x, view.y, size, size)));
                     }
                 }
             }
@@ -457,7 +463,12 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
     result
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_LBUTTONDOWN => on_down(lparam),
         WM_MOUSEMOVE => on_move(wparam, lparam),
