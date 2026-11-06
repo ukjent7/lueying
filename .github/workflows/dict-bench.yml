@@ -251,9 +251,14 @@ jobs:
               if [ -f "$file" ]; then printf %s "$EVAL_KEY" | $GPG --decrypt -o "${file%.gpg}" "$file"; fi
             done
             # 门限只卡随包的档位,小档位用来看体积和准确率的取舍。
+            # main 档另外对照 dicts/bench-baseline.json:干净全拼首选不能低于基线(改基线要在提交里说明)。
             gate=""
-            case "$(basename "$tier")" in main|600k) gate=--gate ;; esac
-            python3 tools/bench_shared.py summarize "$tier" $gate || status=1
+            baseline=""
+            case "$(basename "$tier")" in
+              main) gate=--gate; baseline="--baseline dicts/bench-baseline.json" ;;
+              600k) gate=--gate ;;
+            esac
+            python3 tools/bench_shared.py summarize "$tier" $gate $baseline || status=1
             rm -f "$tier"/eval-private-*.tsv
             jq -r --arg t "$(basename "$tier")" 'to_entries[] | .key as $c | .value.categories | to_entries[]
               | "| \($t) | \($c) | \(.key) | \(.value.settled.n) | \(.value.engine.top1) | \(.value.settled.top1) | \(.value.settled.top5) |"' \

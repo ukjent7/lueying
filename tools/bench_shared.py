@@ -282,6 +282,8 @@ GATES = {"daily": (85.0, 90.0), "frost": (65.0, 80.0), "hard": (50.0, 75.0), "co
 CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", "clause-mixed-",
                  "chunk-", "fuzzy-", "typo-", "user-")
 EXCLUDED_FROM_CORE = ("clause-initials-",)
+# 延迟不在这里门限:共享语料分片在同一台机器上并行跑,逐条的 ms 互相干扰,只作诊断。
+# 产品延迟门限只看 E2E 单线程的数字(rerank.rs 的 8M/25M 决策 p95,main.rs 的按键 p95)。
 # 干净全拼用例:打得准的部分,首选准确率不能低于基线(见 --baseline)。
 CLEAN_PREFIXES = ("clause-full-", "word-full-", "chunk-full-")
 
