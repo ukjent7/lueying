@@ -30,9 +30,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use lueying_server::config;
 use crate::imp::{State, handle};
 use crate::ui::place;
+use lueying_server::config;
 
 /// 鼠标左键按住时的标志(`MK_LBUTTON`)。
 const MK_LBUTTON: usize = 0x0001;
