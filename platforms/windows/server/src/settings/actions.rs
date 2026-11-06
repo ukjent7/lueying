@@ -88,7 +88,6 @@ pub fn save(settings: &mut Settings) {
     }
 }
 
-
 /// 清空用户词库:要点两次,防误触。
 pub fn clear_user(settings: &mut Settings) {
     settings.confirm_clear = false;
