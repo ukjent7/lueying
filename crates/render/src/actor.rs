@@ -220,7 +220,10 @@ impl Actor {
         if std::mem::take(&mut self.key_pending) {
             self.pick(now_ms, |t| t.trigger == Trigger::Key);
         }
-        self.pick(now_ms, |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms));
+        self.pick(
+            now_ms,
+            |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms),
+        );
         if self.until_ms.is_some_and(|until| now_ms >= until) {
             self.pick(now_ms, |t| t.trigger == Trigger::Timeout);
         }
@@ -513,8 +516,16 @@ mod tests {
         let mut actor = spawn(3, (100.0, 100.0), strip_cat());
         actor.key(0);
         let views = run(&mut actor, 0, 1_150, (48.0, 48.0));
-        assert!(views.iter().all(|view| actor.behavior.states[view.state].clip == "typing"));
-        assert!(views.windows(2).all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y));
+        assert!(
+            views
+                .iter()
+                .all(|view| actor.behavior.states[view.state].clip == "typing")
+        );
+        assert!(
+            views
+                .windows(2)
+                .all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y)
+        );
     }
 
     #[test]
@@ -523,14 +534,22 @@ mod tests {
         cat.key(0);
         run(&mut cat, 0, 61_000, (48.0, 48.0));
         let asleep = run(&mut cat, 61_000, 30_000, (48.0, 48.0));
-        assert!(asleep.iter().all(|view| cat.behavior.states[view.state].clip == "sleep"));
+        assert!(
+            asleep
+                .iter()
+                .all(|view| cat.behavior.states[view.state].clip == "sleep")
+        );
         cat.key(91_000);
         let woke = cat.tick(91_050, area(), (48.0, 48.0));
         assert_eq!(cat.behavior.states[woke.state].clip, "typing");
 
         let mut spider = spawn(3, (0.0, 0.0), spider());
         let never = run(&mut spider, 0, 300_000, (48.0, 48.0));
-        assert!(never.iter().all(|view| spider.behavior.states[view.state].clip != "sleep"));
+        assert!(
+            never
+                .iter()
+                .all(|view| spider.behavior.states[view.state].clip != "sleep")
+        );
     }
 
     #[test]
