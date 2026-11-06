@@ -32,7 +32,7 @@ fn every_control_kind_survives_a_round_trip() {
         "@transition\t你\t好\t1\t10".to_string(),
         "@trigram\t我\t们\t好\t1\t10".to_string(),
         "@app\tnotepad.exe\t你\t1\t10".to_string(),
-        "@reject\tni\t你\t1\t10".to_string(),
+        "@reject\t_ni\t你\t1\t10".to_string(),
         "@pin\tni\t你".to_string(),
     ];
     let text = lines.join("\n") + "\n";
@@ -58,6 +58,14 @@ fn rejects_apply_only_after_the_same_left_character() {
     // 句首记下的跳过对所有上文都生效。
     user.reject(&reject_key(NO_LEFT, "dian"), "电");
     assert!(user.reject_penalty_in('在', "dian", "电") > 0.0);
+}
+
+#[test]
+fn legacy_reject_keys_become_sentence_start_rejects() {
+    assert_eq!(
+        round_trip("@reject\tni\t你\t1\t10\n"),
+        "@reject\t_ni\t你\t1\t10\n"
+    );
 }
 
 #[test]

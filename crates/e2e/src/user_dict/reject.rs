@@ -65,7 +65,7 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
     let skipped_export = skipped.export_user();
     let reject_line = skipped_export
         .lines()
-        .find(|l| l.starts_with("@reject\tjia'jia\t甲甲\t"))
+        .find(|l| l.starts_with("@reject\t_jia'jia\t甲甲\t"))
         .unwrap_or_default()
         .to_string();
     let mut restored =
@@ -76,7 +76,7 @@ pub(super) fn rejection_and_scale(shared: &Arc<Dictionary>, checks: &mut Checks,
         checks,
         "跳过记录导出导入往返",
         recorded
-            && reject_line.starts_with("@reject\tjia'jia\t甲甲\t1\t")
+            && reject_line.starts_with("@reject\t_jia'jia\t甲甲\t1\t")
             && restored_export.contains(&reject_line),
         reject_line,
     );

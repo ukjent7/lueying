@@ -375,9 +375,15 @@ impl UserDict {
         if key.is_empty() || word.is_empty() || count == 0 {
             return false;
         }
+        // 旧文件的键没有上文标记(以字母开头),按句首记录处理;新文件的键以标记开头。
+        let key = if key.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            reject_key(NO_LEFT, key)
+        } else {
+            key.to_string()
+        };
         let stat = self
             .rejects
-            .entry(key.to_string())
+            .entry(key)
             .or_default()
             .entry(word.to_string())
             .or_default();
