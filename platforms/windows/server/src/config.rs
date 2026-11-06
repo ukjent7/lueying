@@ -241,6 +241,10 @@ pub struct AppConfig {
     pub chinese_punct: bool,
     /// 停顿后 25M 重排是否允许换首选;关闭后首选只随按键变化。
     pub settled_promote: bool,
+    /// 工具栏大小倍率,限定在 0.75–1.5。
+    pub toolbar_scale: f32,
+    /// 工具栏上次拖到的位置(屏幕坐标);没有就停在右下角。
+    pub toolbar_pos: Option<(i32, i32)>,
     pub fuzzy: Fuzzy,
     pub shift_toggle: bool,
     pub traditional: bool,
@@ -296,6 +300,8 @@ impl Default for AppConfig {
             page_size: 5,
             chinese_punct: true,
             settled_promote: true,
+            toolbar_scale: 1.0,
+            toolbar_pos: None,
             // 零配置:模糊音默认自动召回,设置页不再逐项开关。
             fuzzy: Fuzzy::auto(),
             shift_toggle: true,

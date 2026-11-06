@@ -88,7 +88,7 @@ fn toolbar_loop(state: Arc<State>) {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
     let screen = to_rect(place::primary_work_area());
-    let bar = Toolbar::at_default(screen);
+    let bar = saved_bar(&state, screen);
     let hwnd = match create_window(&bar, screen) {
         Ok(hwnd) => hwnd,
         Err(e) => {
@@ -182,6 +182,35 @@ fn pack_dir() -> Option<PathBuf> {
         .ok()?
         .parent()
         .map(|dir| dir.join("toolbar-pack"))
+}
+
+/// 上次保存的大小与位置;没有就用默认的右下角。位置夹在屏幕内。
+fn saved_bar(state: &State, screen: Rect) -> Toolbar {
+    let (scale, pos) = {
+        let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
+        (cfg.toolbar_scale, cfg.toolbar_pos)
+    };
+    let mut bar = Toolbar::at_default(screen).with_scale(scale, screen);
+    if let Some((x, y)) = pos {
+        bar.x = x as f32;
+        bar.y = y as f32;
+        bar = bar.clamped(screen);
+    }
+    bar
+}
+
+/// 拖动结束后把位置写回配置并保存,下次启动回到同一个地方。
+fn save_position(state: &Arc<State>, x: i32, y: i32) {
+    let cfg = {
+        let mut cfg = state.config.write().unwrap_or_else(|p| p.into_inner());
+        cfg.toolbar_pos = Some((x, y));
+        cfg.clone()
+    };
+    if let Some(path) = &state.config_path {
+        if let Err(e) = config::save(path, &cfg) {
+            println!("保存工具栏位置 {} 失败: {e}", path.display());
+        }
+    }
 }
 
 fn pump_messages() {
@@ -326,6 +355,7 @@ fn on_move(wparam: WPARAM, lparam: LPARAM) {
 
 fn on_up(lparam: LPARAM) {
     let (cx, cy) = point(lparam);
+    let mut dragged = None;
     let action = CTX.with(|cell| {
         let mut guard = cell.borrow_mut();
         let ctx = guard.as_mut()?;
@@ -335,6 +365,7 @@ fn on_up(lparam: LPARAM) {
         let released_on = ctx.bar.hit(sx, sy);
         ctx.dirty = true;
         if ctx.moved {
+            dragged = Some((ctx.bar.x as i32, ctx.bar.y as i32, ctx.state.clone()));
             return None;
         }
         match (pressed, released_on) {
@@ -342,6 +373,9 @@ fn on_up(lparam: LPARAM) {
             _ => None,
         }
     });
+    if let Some((x, y, state)) = dragged {
+        save_position(&state, x, y);
+    }
     if let Some((action, state)) = action {
         run_action(&state, action);
     }

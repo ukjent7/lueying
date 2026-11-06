@@ -22,6 +22,9 @@ pub struct FileConfig {
     pub page_size: Option<usize>,
     pub chinese_punct: Option<bool>,
     pub settled_promote: Option<bool>,
+    pub toolbar_scale: Option<f32>,
+    pub toolbar_x: Option<i32>,
+    pub toolbar_y: Option<i32>,
     /// 模糊音已取消、始终开启;旧配置里的 `fuzzy` 只为不让整份配置解析失败而保留,值一律忽略。
     pub fuzzy: Option<serde::de::IgnoredAny>,
     pub shift_toggle: Option<bool>,
@@ -96,6 +99,12 @@ pub fn apply(
     }
     if let Some(on) = file.chinese_punct {
         cfg.chinese_punct = on;
+    }
+    if let Some(scale) = file.toolbar_scale {
+        cfg.toolbar_scale = lueying_render::toolbar::clamp_scale(scale);
+    }
+    if let (Some(x), Some(y)) = (file.toolbar_x, file.toolbar_y) {
+        cfg.toolbar_pos = Some((x, y));
     }
     if let Some(on) = file.settled_promote {
         cfg.settled_promote = on;
@@ -312,6 +321,9 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         page_size: cfg.page_size,
         chinese_punct: cfg.chinese_punct,
         settled_promote: cfg.settled_promote,
+        toolbar_scale: cfg.toolbar_scale,
+        toolbar_x: cfg.toolbar_pos.map(|pos| pos.0),
+        toolbar_y: cfg.toolbar_pos.map(|pos| pos.1),
         shift_toggle: cfg.shift_toggle,
         traditional: cfg.traditional,
         traditional_region: cfg.region.as_str(),
@@ -346,6 +358,11 @@ struct SaveFile<'a> {
     page_size: usize,
     chinese_punct: bool,
     settled_promote: bool,
+    toolbar_scale: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toolbar_x: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    toolbar_y: Option<i32>,
     shift_toggle: bool,
     traditional: bool,
     traditional_region: &'static str,
