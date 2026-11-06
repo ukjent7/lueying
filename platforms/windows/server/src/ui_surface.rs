@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::path::Path;
 use std::ptr;
 
 use lueying_render::paint::{Canvas, Color, Point};
@@ -15,11 +16,19 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
-    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory,
-    ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
+    D2D1_ROUNDED_RECT, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory,
+    ID2D1Bitmap, ID2D1DCRenderTarget, ID2D1Factory, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+};
+use windows::Win32::Graphics::Imaging::{
+    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICBitmapSource, IWICImagingFactory,
+    IWICPalette, WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom,
+    WICDecodeMetadataCacheOnDemand,
+};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -34,7 +43,10 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
-use windows::core::w;
+use windows::core::{HSTRING, Interface, w};
+
+/// `GENERIC_READ`:以只读方式打开图片文件。
+const GENERIC_READ_ACCESS: u32 = 0x8000_0000;
 
 /// 不限制宽度时给文字布局的可用宽度(物理像素);D2D 不接受无穷大。
 const TEXT_LIMIT: f32 = 4096.0;
@@ -60,6 +72,8 @@ pub struct Surface {
     size: (u32, u32),
     formats: HashMap<(u32, Align), IDWriteTextFormat>,
     drawing: bool,
+    /// 动画帧位图,下标即帧号。
+    sprites: Vec<ID2D1Bitmap>,
 }
 
 impl Surface {
@@ -106,6 +120,7 @@ impl Surface {
                 size: (0, 0),
                 formats: HashMap::new(),
                 drawing: false,
+                sprites: Vec::new(),
             })
         }
     }
@@ -162,6 +177,51 @@ impl Surface {
     }
 
     /// 借出绘制目标的克隆;COM 引用计数加一,调用方拿得住,也不挡住画刷的可变借用。
+    /// 换一组动画帧,下标即帧号。
+    pub fn set_sprites(&mut self, sprites: Vec<ID2D1Bitmap>) {
+        self.sprites = sprites;
+    }
+
+    /// 用 WIC 解码一张图片的第一帧,转成这块表面能画的位图。
+    pub fn load_sprite(&self, path: &Path) -> Result<ID2D1Bitmap, String> {
+        let target = self.target()?;
+        unsafe {
+            // 窗口线程已经初始化过 COM 时这里返回 RPC_E_CHANGED_MODE,无影响。
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let factory: IWICImagingFactory =
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| format!("WIC 工厂: {e}"))?;
+            let decoder = factory
+                .CreateDecoderFromFilename(
+                    &HSTRING::from(path.as_os_str()),
+                    None,
+                    GENERIC_READ_ACCESS,
+                    WICDecodeMetadataCacheOnDemand,
+                )
+                .map_err(|e| format!("打开 {}: {e}", path.display()))?;
+            let frame = decoder.GetFrame(0).map_err(|e| format!("读第一帧: {e}"))?;
+            let frame_source: IWICBitmapSource =
+                frame.cast().map_err(|e| format!("帧接口: {e}"))?;
+            let converter = factory
+                .CreateFormatConverter()
+                .map_err(|e| format!("格式转换器: {e}"))?;
+            converter
+                .Initialize(
+                    &frame_source,
+                    &GUID_WICPixelFormat32bppPBGRA,
+                    WICBitmapDitherTypeNone,
+                    None::<&IWICPalette>,
+                    0.0,
+                    WICBitmapPaletteTypeCustom,
+                )
+                .map_err(|e| format!("转 BGRA: {e}"))?;
+            let source: IWICBitmapSource = converter.cast().map_err(|e| format!("转接口: {e}"))?;
+            target
+                .CreateBitmapFromWicBitmap(&source, None)
+                .map_err(|e| format!("建位图: {e}"))
+        }
+    }
+
     fn target(&self) -> Result<ID2D1DCRenderTarget, String> {
         self.target
             .clone()
@@ -305,6 +365,24 @@ impl Canvas for Surface {
         unsafe {
             self.brush.SetColor(&d2d_color(color));
             target.FillRectangle(&self::rect(rect), &self.brush);
+        }
+    }
+
+    fn draw_sprite(&mut self, sprite: usize, rect: Rect) {
+        let Ok(target) = self.target() else {
+            return;
+        };
+        let Some(bitmap) = self.sprites.get(sprite) else {
+            return;
+        };
+        unsafe {
+            target.DrawBitmap(
+                bitmap,
+                Some(&self::rect(rect) as *const D2D_RECT_F),
+                1.0,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                None,
+            );
         }
     }
 
