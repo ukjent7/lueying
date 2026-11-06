@@ -13,6 +13,7 @@ pub mod paint;
 pub mod panel;
 pub mod picker;
 pub mod spring;
+pub mod toolbar;
 
 pub use paint::{Canvas, Color, Point};
 pub use panel::{
