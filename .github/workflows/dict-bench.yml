@@ -22,6 +22,10 @@ on:
         description: 构建前对 query.rs 与 rerank 执行的 sed -E 脚本,扫常量用
         required: false
         default: ""
+      diff:
+        description: 构建前应用的补丁(git diff | xz | base64),改动不进 main 也能跑基准
+        required: false
+        default: ""
       test:
         description: 同时跑 V2 测试集,只在发版时勾
         type: boolean
@@ -39,6 +43,9 @@ on:
         type: string
         default: collocation.bin
       patch:
+        type: string
+        default: ""
+      diff:
         type: string
         default: ""
       test:
@@ -70,6 +77,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: linux
+      - name: 应用补丁
+        if: inputs.diff != ''
+        env:
+          DIFF: ${{ inputs.diff }}
+        run: printf %s "$DIFF" | base64 -d | xz -d | git apply
       - name: 调整引擎常量
         if: inputs.patch != ''
         env:
@@ -89,6 +101,50 @@ jobs:
           name: e2e-bin
           path: target/release/lueying-e2e
           retention-days: 1
+
+  # 带补丁的基准同时跑静态检查、单元测试与场景 E2E,结果好再提交时不用再等一轮。
+  check:
+    if: inputs.diff != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ukjent7/lueying
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: linux
+      - name: 应用补丁
+        env:
+          DIFF: ${{ inputs.diff }}
+        run: printf %s "$DIFF" | base64 -d | xz -d | git apply
+      - name: Clippy
+        run: cargo clippy -p lueying-engine -p lueying-rerank -p lueying-session -p lueying-features -p lueying-e2e --all-targets --locked -- -D warnings
+      - name: 单元测试
+        run: cargo test -p lueying-engine -p lueying-rerank -p lueying-session -p lueying-features --lib --locked
+      - name: 下载词典与模型
+        run: |
+          bash tools/fetch_dict.sh data
+          bash tools/fetch_rerank.sh data/rerank
+      - name: 构建官方 guest
+        run: |
+          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
+          cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
+          cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
+          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
+          cp target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
+          cp target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
+      - name: 场景 E2E
+        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: check-report
+          path: |
+            target/e2e-report.md
+            target/bench-report.md
+            target/e2e-failures.txt
 
   run:
     needs: build
@@ -160,6 +216,7 @@ jobs:
           name: items-${{ matrix.tier }}-${{ matrix.shard }}
           path: |
             target/bench/*.tsv
+            target/bench/*.feat
             target/bench/*.gpg
           retention-days: 1
 
