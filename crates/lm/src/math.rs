@@ -444,7 +444,10 @@ mod dispatch_tests {
         let float = |seed: usize| ((seed * 37 % 101) as f32 - 50.0) / 7.0;
         let a: Vec<f32> = (0..WIDTH).map(float).collect();
         let b: Vec<f32> = (0..WIDTH).map(|i| float(i + 11)).collect();
-        let q: Vec<i8> = (0..WIDTH).map(|i| (i * 53 % 255) as i32 - 127).map(|v| v as i8).collect();
+        let q: Vec<i8> = (0..WIDTH)
+            .map(|i| (i * 53 % 255) as i32 - 127)
+            .map(|v| v as i8)
+            .collect();
         let block: Vec<f32> = (0..WIDTH * ROW_BLOCK).map(|i| float(i + 5)).collect();
 
         assert_eq!(dot(&a, &b).to_bits(), dot_kernel(&a, &b).to_bits());
