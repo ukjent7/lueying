@@ -1,0 +1,22 @@
+# 用户自己的空格(上屏间隔),与 eval-user-v3.tsv 一一对应。
+# id<TAB>expected<TAB>intervals
+41	我明天要去医院复查	w miant yaoqu yiyuan fucha
+42	这家店的饺子很好吃	zhejiandian de jiaozi henhaochi
+43	你看到我的钥匙了吗	ni kandoa wode yaoshi l ma
+44	他每天早上六点起床跑步	ta mentian zhaoshang lv dian qichuang paobu
+45	这件衣服洗完会缩水	zhejian yifu xiwan hui suosui
+46	下个月的房租要涨了	xiageyue de fangzu yao zhangle
+47	我们班的同学都很努力	wm ban d etongxue doui hennvli
+48	周末一起去看电影吧	zoumo yiqi qu kandianyi ba
+49	这部电视剧的剧情太拖了	zhebuf dianshiju de juq taiduole
+50	他的电脑坏了还没修好	tade diannnao h uail haimnei xiuhao
+51	请把这份合同发给法务部	qingba zhe fen tongtong fagei fwuba
+52	小区门口新开了一家奶茶店	xiaoqu menkou xiankaile yijia naichaidan
+53	你知道怎么取消这个订单吗	nizhidao zm quxiao zheg he diandanam
+54	我妈说晚饭做好了叫我们吃	wmsuo wanfan zuohaole jiao wm ci
+55	今天的股市大跌了一点五个百分点	niantiande wushidale yidian wu ge baidiandian
+56	那个人我见过但是想不起名字	nageren w jianguo danshi xiangbuqi mingzi
+57	南京大屠杀纪念馆在哪里	nanjingdatushajinianguan zianali
+58	这道题的答案我算了好几遍都不对	zheaotide danan w suanle haojianbain dou buhui
+59	孩子考试考得不好我很着急	haiz kaoshidaodebuhao w henzhaoji
+60	明天会下雨记得带伞	mianthuixiayu jidedaishnan

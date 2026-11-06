@@ -1,0 +1,23 @@
+# 用户自测语料 v3:第 41–60 句整句,键入串为用户原样打法(含缩写、模糊音、漏打、多打与手误,不做纠正)。
+# 列: category<TAB>source<TAB>pinyin<TAB>expected<TAB>context(无上文,留空)
+# category: user-sentence。来源: 用户自打(2026-11-06);目标句由维护者拟定,标点不计入。
+user-sentence	user	wmiantyaoquyiyuanfucha	我明天要去医院复查	
+user-sentence	user	zhejiandiandejiaozihenhaochi	这家店的饺子很好吃	
+user-sentence	user	nikandoawodeyaoshilma	你看到我的钥匙了吗	
+user-sentence	user	tamentianzhaoshanglvdianqichuangpaobu	他每天早上六点起床跑步	
+user-sentence	user	zhejianyifuxiwanhuisuosui	这件衣服洗完会缩水	
+user-sentence	user	xiageyuedefangzuyaozhangle	下个月的房租要涨了	
+user-sentence	user	wmbandetongxuedouihennvli	我们班的同学都很努力	
+user-sentence	user	zoumoyiqiqukandianyiba	周末一起去看电影吧	
+user-sentence	user	zhebufdianshijudejuqtaiduole	这部电视剧的剧情太拖了	
+user-sentence	user	tadediannnaohuailhaimneixiuhao	他的电脑坏了还没修好	
+user-sentence	user	qingbazhefentongtongfageifwuba	请把这份合同发给法务部	
+user-sentence	user	xiaoqumenkouxiankaileyijianaichaidan	小区门口新开了一家奶茶店	
+user-sentence	user	nizhidaozmquxiaozheghediandanam	你知道怎么取消这个订单吗	
+user-sentence	user	wmsuowanfanzuohaolejiaowmci	我妈说晚饭做好了叫我们吃	
+user-sentence	user	niantiandewushidaleyidianwugebaidiandian	今天的股市大跌了一点五个百分点	
+user-sentence	user	nagerenwjianguodanshixiangbuqimingzi	那个人我见过但是想不起名字	
+user-sentence	user	nanjingdatushajinianguanzianali	南京大屠杀纪念馆在哪里	
+user-sentence	user	zheaotidedananwsuanlehaojianbaindoubuhui	这道题的答案我算了好几遍都不对	
+user-sentence	user	haizkaoshidaodebuhaowhenzhaoji	孩子考试考得不好我很着急	
+user-sentence	user	mianthuixiayujidedaishnan	明天会下雨记得带伞	
