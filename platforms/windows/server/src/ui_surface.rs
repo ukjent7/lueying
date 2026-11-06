@@ -11,7 +11,7 @@ use std::ptr;
 
 use lueying_render::paint::{Canvas, Color, Point};
 use lueying_render::panel::{Metrics, Rect};
-use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
+use windows::Win32::Foundation::{COLORREF, GENERIC_READ, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
@@ -44,9 +44,6 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
 use windows::core::{HSTRING, Interface, w};
-
-/// `GENERIC_READ`:以只读方式打开图片文件。
-const GENERIC_READ_ACCESS: u32 = 0x8000_0000;
 
 /// 不限制宽度时给文字布局的可用宽度(物理像素);D2D 不接受无穷大。
 const TEXT_LIMIT: f32 = 4096.0;
@@ -195,7 +192,7 @@ impl Surface {
                 .CreateDecoderFromFilename(
                     &HSTRING::from(path.as_os_str()),
                     None,
-                    GENERIC_READ_ACCESS,
+                    GENERIC_READ,
                     WICDecodeMetadataCacheOnDemand,
                 )
                 .map_err(|e| format!("打开 {}: {e}", path.display()))?;
