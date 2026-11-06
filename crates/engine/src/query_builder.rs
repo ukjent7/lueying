@@ -283,7 +283,11 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
         let typed = spans_key(raw, &spans);
         // 纠正路径按纠正后的音节学习、查用户词库;显示时提示原拼音。
-        let key = if st.corrected { st.keys.clone() } else { typed.clone() };
+        let key = if st.corrected {
+            st.keys.clone()
+        } else {
+            typed.clone()
+        };
         let reject = user.reject_penalty(&key, &text);
         let matched = q.user_cache.get(&key).and_then(|users| users.get(&text));
         let user_freq = matched.map_or(0, |m| m.freq);

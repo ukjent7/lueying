@@ -124,7 +124,10 @@ pub(crate) fn variants(window: &str) -> Vec<(String, f64)> {
     for i in 0..len.saturating_sub(1) {
         if bytes[i] != bytes[i + 1] {
             let mut text = window.to_string();
-            text.replace_range(i..i + 2, &format!("{}{}", bytes[i + 1] as char, bytes[i] as char));
+            text.replace_range(
+                i..i + 2,
+                &format!("{}{}", bytes[i + 1] as char, bytes[i] as char),
+            );
             out.push((text, 0.40));
         }
     }
