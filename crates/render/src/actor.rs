@@ -288,7 +288,10 @@ impl Actor {
             Trigger::Near { range, tag } => near_someone(nearby, ox, oy, *range, tag),
             _ => false,
         });
-        self.pick(now_ms, |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms));
+        self.pick(
+            now_ms,
+            |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms),
+        );
         if self.until_ms.is_some_and(|until| now_ms >= until) {
             self.pick(now_ms, |t| t.trigger == Trigger::Timeout);
         }
@@ -433,7 +436,9 @@ impl Stage {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, actor)| px >= actor.x && px < actor.x + w && py >= actor.y && py < actor.y + h)
+            .find(|(_, actor)| {
+                px >= actor.x && px < actor.x + w && py >= actor.y && py < actor.y + h
+            })
             .map(|(index, _)| index)?;
         self.actors[hit].click();
         Some(hit)
@@ -532,12 +537,13 @@ pub fn spider() -> Behavior {
 /// 预设:打斗的战士。平时待机或来回走;附近有站着的敌人就出手(进入「攻击」);
 /// 附近有人在攻击、或者被点击,就进入「受击」,受击后缓一下再站起来。
 pub fn warrior() -> Behavior {
-    let state = |clip: &str, tag: &str, walk: Option<Walk>, duration: Option<(u64, u64)>| StateDef {
-        clip: clip.to_string(),
-        tag: Some(tag.to_string()),
-        walk,
-        duration,
-    };
+    let state =
+        |clip: &str, tag: &str, walk: Option<Walk>, duration: Option<(u64, u64)>| StateDef {
+            clip: clip.to_string(),
+            tag: Some(tag.to_string()),
+            walk,
+            duration,
+        };
     let tr = |from, to, trigger, weight| Transition {
         from,
         to,
@@ -724,8 +730,16 @@ mod tests {
         let mut actor = spawn(3, (100.0, 100.0), strip_cat());
         actor.key(0);
         let views = run(&mut actor, 0, 1_150, (48.0, 48.0));
-        assert!(views.iter().all(|view| clip_at(&behavior, view) == "typing"));
-        assert!(views.windows(2).all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y));
+        assert!(
+            views
+                .iter()
+                .all(|view| clip_at(&behavior, view) == "typing")
+        );
+        assert!(
+            views
+                .windows(2)
+                .all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y)
+        );
     }
 
     #[test]
@@ -735,7 +749,11 @@ mod tests {
         cat.key(0);
         run(&mut cat, 0, 61_000, (48.0, 48.0));
         let asleep = run(&mut cat, 61_000, 30_000, (48.0, 48.0));
-        assert!(asleep.iter().all(|view| clip_at(&behavior, view) == "sleep"));
+        assert!(
+            asleep
+                .iter()
+                .all(|view| clip_at(&behavior, view) == "sleep")
+        );
         cat.key(91_000);
         let woke = cat.tick(91_050, area(), (48.0, 48.0));
         assert_eq!(clip_at(&behavior, &woke), "typing");
@@ -743,7 +761,11 @@ mod tests {
         let spider_behavior = spider();
         let mut spider = spawn(3, (0.0, 0.0), spider());
         let never = run(&mut spider, 0, 300_000, (48.0, 48.0));
-        assert!(never.iter().all(|view| clip_at(&spider_behavior, view) != "sleep"));
+        assert!(
+            never
+                .iter()
+                .all(|view| clip_at(&spider_behavior, view) != "sleep")
+        );
     }
 
     #[test]
@@ -803,7 +825,11 @@ mod tests {
         stage.add(spawn(1, (100.0, 100.0), warrior()));
         stage.add(spawn(2, (120.0, 100.0), warrior()));
         let first = stage.tick(0);
-        assert!(first.iter().any(|view| clip_at(&behavior, view) == "attack"));
+        assert!(
+            first
+                .iter()
+                .any(|view| clip_at(&behavior, view) == "attack")
+        );
         let second = stage.tick(50);
         assert!(second.iter().any(|view| clip_at(&behavior, view) == "hurt"));
     }
@@ -815,6 +841,10 @@ mod tests {
         stage.add(spawn(1, (0.0, 0.0), warrior()));
         stage.add(spawn(2, (250.0, 150.0), warrior()));
         let first = stage.tick(0);
-        assert!(first.iter().all(|view| clip_at(&behavior, view) != "attack"));
+        assert!(
+            first
+                .iter()
+                .all(|view| clip_at(&behavior, view) != "attack")
+        );
     }
 }
