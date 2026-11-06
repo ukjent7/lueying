@@ -5,12 +5,12 @@
 //! [`panel::Estimate`])。徽标、命令面板与选择面板只产出绘制指令,
 //! 由平台侧的 Direct2D 画布执行。
 
+pub mod actor;
 pub mod animation;
 pub mod badge;
 pub mod command;
 pub mod paint;
 pub mod panel;
-pub mod pet;
 pub mod picker;
 pub mod spring;
 
