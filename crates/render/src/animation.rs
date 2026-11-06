@@ -49,6 +49,42 @@ impl Pack {
     }
 }
 
+/// 解析动画包清单。每行一个状态:`<状态> <每帧毫秒> <帧号>...`,
+/// 状态是 `idle`、`typing`、`sleep` 之一;`#` 开头的行与空行忽略。
+/// 帧号对应动画包目录里的图片文件名(`<帧号>.png`),由宿主去读。
+pub fn parse_pack(text: &str) -> Result<Pack, String> {
+    let mut clips = BTreeMap::new();
+    for (line_no, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let at = |message: &str| format!("清单第 {} 行{message}", line_no + 1);
+        let mut parts = line.split_whitespace();
+        let state = match parts.next() {
+            Some("idle") => State::Idle,
+            Some("typing") => State::Typing,
+            Some("sleep") => State::Sleep,
+            other => return Err(at(&format!(" 未知状态 {other:?}"))),
+        };
+        let frame_ms: u64 = parts
+            .next()
+            .and_then(|text| text.parse().ok())
+            .filter(|ms| *ms > 0)
+            .ok_or_else(|| at(" 每帧毫秒应为正整数"))?;
+        let frames = parts
+            .map(|text| text.parse::<usize>().map_err(|_| at(" 帧号应为整数")))
+            .collect::<Result<Vec<_>, _>>()?;
+        if frames.is_empty() {
+            return Err(at(" 没有帧号"));
+        }
+        if clips.insert(state, Clip { frames, frame_ms }).is_some() {
+            return Err(at(" 同一状态重复定义"));
+        }
+    }
+    Ok(Pack { clips })
+}
+
 /// 状态机:记住最后一次按键的时间,按空闲时长切换状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Machine {
@@ -131,6 +167,29 @@ mod tests {
         assert_eq!(machine.frame(TYPING_MS, &pack), Some(0));
         assert_eq!(machine.frame(TYPING_MS + 500, &pack), Some(1));
         assert_eq!(machine.frame(TYPING_MS + 1_000, &pack), Some(0));
+    }
+
+    #[test]
+    fn manifest_lines_become_clips() {
+        let pack = parse_pack("# 小宠物\nidle 500 0 1\ntyping 100 2\n\nsleep 1000 3\n")
+            .expect("清单合法");
+        assert_eq!(
+            pack.clip(State::Typing),
+            Some(&Clip {
+                frames: vec![2],
+                frame_ms: 100
+            })
+        );
+        assert_eq!(pack.clip(State::Sleep).map(|clip| clip.frames.clone()), Some(vec![3]));
+    }
+
+    #[test]
+    fn bad_manifest_lines_are_rejected_with_their_line_number() {
+        assert!(parse_pack("walk 500 0").unwrap_err().contains("第 1 行"));
+        assert!(parse_pack("idle 0 0").unwrap_err().contains("每帧毫秒"));
+        assert!(parse_pack("idle 500").unwrap_err().contains("没有帧号"));
+        assert!(parse_pack("idle 500 x").unwrap_err().contains("帧号"));
+        assert!(parse_pack("idle 500 0\nidle 300 1").unwrap_err().contains("重复"));
     }
 
     #[test]
