@@ -135,7 +135,6 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     let mut by_end: Vec<Vec<Node>> = vec![Vec::new(); raw.len() + 1];
     let safe_extend;
     let typing;
-    let mut work = 0usize;
     {
         let mut b = Builder {
             q: &mut q,
@@ -158,7 +157,6 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             b.spans.clear();
             b.visits = 0;
             b.run(i, i);
-            work += b.visits;
         }
         safe_extend = b.safe_extend;
         typing = b.typing;
@@ -395,7 +393,6 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         cands,
         safe_extend,
         typing_prefix: typing,
-        work,
     }
 }
 
