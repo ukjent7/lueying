@@ -156,6 +156,11 @@ impl UserDict {
                 ));
             }
         }
+        for (left, words) in in_key_order(&self.word_ctx) {
+            for (word, count) in in_key_order(words) {
+                out.push_str(&format!("@wordctx\t{left}\t{word}\t{count}\n"));
+            }
+        }
         for (left, next) in in_key_order(&self.transitions) {
             for (right, stat) in in_key_order(next) {
                 if stat.count > 0 {
@@ -239,6 +244,7 @@ impl UserDict {
         match *fields {
             ["@group", name, value] => self.import_group(name, value),
             ["@context", left, right, count, ts] => self.import_context(left, right, count, ts),
+            ["@wordctx", left, word, count] => self.import_word_context(left, word, count),
             ["@transition", left, right, count, ts] => {
                 self.import_transition(left, right, count, ts)
             }
@@ -280,6 +286,24 @@ impl UserDict {
         }
         let stat = self.context.entry((left, right)).or_default();
         absorb(&mut stat.count, &mut stat.ts, count, ts);
+        true
+    }
+
+    /// 导入按最大值合并,与其它计数一致:同一份文件导两次结果不变。
+    fn import_word_context(&mut self, left: &str, word: &str, count: &str) -> bool {
+        let Some(left) = single_char(left) else {
+            return false;
+        };
+        let Ok(count) = count.parse::<u32>() else {
+            return false;
+        };
+        let left_ok = left == NO_LEFT || is_hanzi(left);
+        if !left_ok || count == 0 || word.is_empty() || !word.chars().all(is_hanzi) {
+            return false;
+        }
+        let words = self.word_ctx.entry(left).or_default();
+        let stat = words.entry(word.to_string()).or_insert(0);
+        *stat = (*stat).max(count);
         true
     }
 

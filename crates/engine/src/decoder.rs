@@ -413,7 +413,8 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         quick_trigger,
     } = args;
     let total = dict.total_weight() as f64;
-    let mut lexicon = Lexicon::new(dict, user, total);
+    let left = (!context.is_empty()).then(|| crate::user::left_key(context));
+    let mut lexicon = Lexicon::new(dict, user, total, left);
     let typos = !quick_trigger && (2..=TYPO_MAX_LEN).contains(&raw.len());
     let edges = channel::lattice(raw, fuzzy, typos);
     let mut finish = vec![false; raw.len() + 1];

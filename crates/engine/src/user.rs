@@ -14,6 +14,8 @@ use lueying_dict::syllables::FUZZY_GROUPS;
 const MAX_ENTRIES: usize = 20_000;
 /// 字级上下文搭配上限。只保留最常见的前后字对,避免长期使用后文件无界增长。
 const MAX_CONTEXT: usize = 50_000;
+/// 左邻字与词的上限。超出后保留次数高的九成。
+const MAX_WORD_CONTEXT: usize = 50_000;
 /// 上下文搭配的衰减周期与加分权重。它只做同分附近的个人化，不能压过词典证据。
 const CONTEXT_DECAY_SECS: u64 = 7 * 24 * 3600;
 const CONTEXT_BONUS_STEP: f64 = 0.25;
@@ -106,6 +108,9 @@ pub struct UserDict {
     /// 已上屏汉字的前后搭配。用户在不同词之间形成的固定说法会随使用增强,
     /// 只用于候选整句重排,不单独产生候选。
     context: HashMap<(char, char), ContextStat>,
+    /// 左邻汉字 → 词 → 次数。有上文时词的频次只看这段上文之后选过它几次,
+    /// 同一个键在别的上文里的选择不会把它顶上来。不衰减,与键上的词条一样永久记住。
+    word_ctx: HashMap<char, HashMap<String, u32>>,
     /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
     transitions: HashMap<String, HashMap<String, ContextStat>>,
     /// 词 → 最完整的拼音学习键。下一词联想用它把已学词还原成可匹配的拼音;
@@ -147,8 +152,16 @@ fn is_hanzi(c: char) -> bool {
 
 /// 只把紧邻的汉字算作搭配:末尾是标点、空格、数字或英文时,后面的字
 /// 不与更早的汉字构成搭配。
-fn tail_hanzi(text: &str) -> Option<char> {
+pub(crate) fn tail_hanzi(text: &str) -> Option<char> {
     text.chars().next_back().filter(|c| is_hanzi(*c))
+}
+
+/// 没有中文上文时的左邻标记。它不是汉字,导出文本里只占一个字符。
+pub(crate) const NO_LEFT: char = '_';
+
+/// 上文的左邻标记:末尾是汉字用它,否则用 [`NO_LEFT`]。
+pub(crate) fn left_key(context: &str) -> char {
+    tail_hanzi(context).unwrap_or(NO_LEFT)
 }
 
 fn single_char(text: &str) -> Option<char> {

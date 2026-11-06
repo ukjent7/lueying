@@ -10,7 +10,7 @@ use std::rc::Rc;
 use lueying_dict::{Dictionary, Entry, signature};
 
 use crate::channel::Unit;
-use crate::user::UserDict;
+use crate::user::{NO_LEFT, UserDict};
 
 pub(crate) const CHAR_BONUS: f64 = 0.5;
 const USER_W: f64 = 3.0;
@@ -151,19 +151,42 @@ pub(crate) struct Lexicon<'a> {
     dict: &'a Dictionary,
     user: &'a UserDict,
     total: f64,
+    /// 上文的左邻标记;没有上文(句首)时为 `None`,用户词频按键上的总次数算。
+    left: Option<char>,
     hits: HashMap<String, Rc<Vec<Hit>>>,
     /// 同一签名被多串单元共用:模糊读法的声母不变时签名相同。
     signatures: HashMap<String, Rc<Vec<Entry<'a>>>>,
 }
 
 impl<'a> Lexicon<'a> {
-    pub(crate) fn new(dict: &'a Dictionary, user: &'a UserDict, total: f64) -> Self {
+    pub(crate) fn new(
+        dict: &'a Dictionary,
+        user: &'a UserDict,
+        total: f64,
+        left: Option<char>,
+    ) -> Self {
         Self {
             dict,
             user,
             total,
+            left,
             hits: HashMap::new(),
             signatures: HashMap::new(),
+        }
+    }
+
+    /// 用户对这个词的频次。有上文时只认这段上文之后的选择次数,加上没有中文上文时
+    /// 做的选择(那是通用习惯,任何上文都算);别的上文里的选择不把它顶上来。
+    /// 没有上文(句首)才用键上的总次数。
+    fn frequency(&self, key_freq: u32, word: &str) -> u32 {
+        let Some(left) = self.left else {
+            return key_freq;
+        };
+        let own = self.user.word_context_count(left, word);
+        if left == NO_LEFT {
+            own
+        } else {
+            own.saturating_add(self.user.word_context_count(NO_LEFT, word))
         }
     }
 
@@ -189,7 +212,7 @@ impl<'a> Lexicon<'a> {
             .iter()
             .map(|entry| {
                 let user = users.get(entry.word);
-                let user_freq = user.map_or(0, |found| found.freq);
+                let user_freq = self.frequency(user.map_or(0, |found| found.freq), entry.word);
                 Hit {
                     word: Rc::from(entry.word),
                     key: Rc::from(entry.key),
@@ -203,14 +226,15 @@ impl<'a> Lexicon<'a> {
             .collect();
         // 用户词并入:词典已有的词已带上提频,只补词典没有的。
         for (word, found) in &users {
+            let freq = self.frequency(found.freq, word);
             if !hits.iter().any(|hit| &*hit.word == word.as_str()) {
                 hits.push(Hit {
                     word: Rc::from(word.as_str()),
                     key: Rc::from(found.key.as_str()),
-                    prior: prior(word, user_base(found.freq), found.freq, self.total),
+                    prior: prior(word, user_base(freq), freq, self.total),
                     dictionary: false,
                     freq: 0,
-                    user_freq: found.freq,
+                    user_freq: freq,
                     learned: found.learned,
                 });
             }

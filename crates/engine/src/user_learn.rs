@@ -21,6 +21,7 @@ impl UserDict {
         self.word_keys.clear();
         self.count = 0;
         self.context.clear();
+        self.word_ctx.clear();
         self.transitions.clear();
         self.trigrams.clear();
         self.apps.clear();
@@ -119,6 +120,45 @@ impl UserDict {
             self.prune_context();
         }
         self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 左邻汉字 `left` 之后用户选过 `word` 的次数。
+    pub(crate) fn word_context_count(&self, left: char, word: &str) -> u32 {
+        let words = self.word_ctx.get(&left);
+        words.and_then(|map| map.get(word)).copied().unwrap_or(0)
+    }
+
+    /// 记录一次「在这段上文之后选了 word」。`known` 与 [`Self::learn`] 一致:
+    /// 词典里本来就有的词记两次,选一次即可回到这段上文下的首位。
+    pub fn learn_word_context(&mut self, context: &str, word: &str, known: bool) {
+        let left = left_key(context);
+        if word.is_empty() || !word.chars().all(is_hanzi) {
+            return;
+        }
+        let words = self.word_ctx.entry(left).or_default();
+        let count = words.entry(word.to_string()).or_insert(0);
+        *count = count.saturating_add(if known { 2 } else { 1 });
+        let total: usize = self.word_ctx.values().map(HashMap::len).sum();
+        if total > MAX_WORD_CONTEXT {
+            self.prune_word_context();
+        }
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 保留次数高的九成;一次性重建,与其它表的裁剪口径一致。
+    pub(crate) fn prune_word_context(&mut self) {
+        let keep = MAX_WORD_CONTEXT * 9 / 10;
+        let mut all: Vec<(char, String, u32)> = Vec::new();
+        for (left, words) in self.word_ctx.drain() {
+            for (word, count) in words {
+                all.push((left, word, count));
+            }
+        }
+        all.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
+        all.truncate(keep);
+        for (left, word, count) in all {
+            self.word_ctx.entry(left).or_default().insert(word, count);
+        }
     }
 
     /// 一个词在当前左邻上下文下的个人搭配加分。

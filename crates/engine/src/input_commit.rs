@@ -127,6 +127,7 @@ impl Engine {
             }
             user.forgive_word(&learn_text);
             user.learn(&learned, &learn_text, cand.freq > 0);
+            user.learn_word_context(&self.context, &learn_text, cand.freq > 0);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
             }

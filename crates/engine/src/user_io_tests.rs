@@ -26,6 +26,8 @@ fn every_control_kind_survives_a_round_trip() {
     let lines = [
         format!("@group\t{GROUP}\t3:100"),
         "@context\t你\t好\t2\t100".to_string(),
+        "@wordctx\t_\t好\t1".to_string(),
+        "@wordctx\t你\t好\t2".to_string(),
         "@transition\t你\t好\t1\t10".to_string(),
         "@trigram\t我\t们\t好\t1\t10".to_string(),
         "@app\tnotepad.exe\t你\t1\t10".to_string(),
@@ -34,6 +36,16 @@ fn every_control_kind_survives_a_round_trip() {
     ];
     let text = lines.join("\n") + "\n";
     assert_eq!(round_trip(&text), text);
+}
+
+#[test]
+fn word_context_counts_follow_the_left_character() {
+    let mut user = UserDict::new();
+    user.learn_word_context("去", "店", false);
+    user.learn_word_context("去", "店", false);
+    assert_eq!(user.word_context_count('去', "店"), 2);
+    assert_eq!(user.word_context_count('在', "店"), 0);
+    assert_eq!(user.export(), "@wordctx\t去\t店\t2\n");
 }
 
 #[test]
