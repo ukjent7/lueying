@@ -239,8 +239,6 @@ pub enum Request {
     FuzzyStats,
     /// 设置窗读取引擎资源状态(词典与模型的加载情况)。
     Status,
-    /// 设置窗只重置组级适应,保留词条。
-    ResetFuzzy,
     /// 安装器卸载前让常驻服务干净退出。
     Shutdown,
     /// 焦点变化(切窗口时 Server 收候选窗)。
@@ -326,7 +324,6 @@ impl Request {
             Self::ImportUser { .. } => "ImportUser",
             Self::FuzzyStats => "FuzzyStats",
             Self::Status => "Status",
-            Self::ResetFuzzy => "ResetFuzzy",
             Self::Shutdown => "Shutdown",
             Self::Focus { .. } => "Focus",
             Self::CompositionTerminated { .. } => "CompositionTerminated",
@@ -355,7 +352,6 @@ impl Request {
             | Request::ExportUser
             | Request::ImportUser { .. }
             | Request::FuzzyStats
-            | Request::ResetFuzzy
             | Request::Shutdown
             | Request::Ext { .. } => Privilege::Manage,
             _ => Privilege::Host,
@@ -377,7 +373,7 @@ pub struct Reply {
     pub fullwidth: bool,
     /// 键应直通给应用。
     pub passthrough: bool,
-    /// 模糊组统计(仅设置窗的 `FuzzyStats`/`ResetFuzzy` 应答使用)。
+    /// 模糊组统计(仅设置窗的 `FuzzyStats` 应答使用)。
     #[serde(default)]
     pub groups: Vec<(String, u32)>,
     /// 用户词库文本(仅 `ExportUser` 应答使用)。

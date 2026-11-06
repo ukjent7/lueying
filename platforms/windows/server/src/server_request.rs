@@ -750,23 +750,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 ..Reply::default()
             }
         }
-        Request::ResetFuzzy => {
-            state
-                .user
-                .write()
-                .unwrap_or_else(|p| p.into_inner())
-                .reset_groups();
-            if let Some(path) = crate::user_store::path() {
-                crate::user_store::flush(&state.user, &path);
-            }
-            let cfg = state
-                .config
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone();
-            apply_config(state, cfg);
-            group_reply(&state.user)
-        }
         Request::Shutdown => {
             // 先让管道把应答写完,再由本进程退出;退出前同步落盘。
             if let Some(path) = crate::user_store::path() {

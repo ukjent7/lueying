@@ -32,7 +32,7 @@ pub(crate) struct Client {
 
 /// 单次请求-应答的上限。Server 卡住时不能让宿主 UI 线程无限等;
 /// 超时按断线处理,下一次按键重新连接。
-const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(1500);
+const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// 校验管道对端是 lueying-server:抢占了管道名的进程连按键都拿不到。
 /// 查不到服务端 PID 或映像名不符一律视为假服务。
