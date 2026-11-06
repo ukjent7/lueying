@@ -1,9 +1,12 @@
 //! 分段用户语料基准:照用户自己的空格切段,逐段打字、逐段上屏,看整句写对没有。
 //!
-//! 语料 `dicts/eval-user-v3-intervals.tsv` 每行是 `id<TAB>整句<TAB>分段拼音`,
+//! 语料 `dicts/eval-user-v3-intervals.tsv` 每行是 `id<TAB>整句<TAB>分段拼音[<TAB>标注]`,
 //! 分段就是用户上屏的间隔。每段打完先跑与产品相同的重排决策,再按空格上屏,
-//! 直到这一段落定。整句的上屏文字与标准句比较。错句附带逐段的轨迹:
-//! 重排前的候选、重排后的首选、实际上屏的文字,用来看错在哪一段。
+//! 直到这一段落定。整句的上屏文字与标准句比较。
+//!
+//! 带标注的句子不计分:「误打」是打错了(至少两处手误或远键替换才能读回),
+//! 「字面」是打出的字母本身是合法音节,按字面优先。两类都照常输出,供看。
+//! 错句附带逐段轨迹:重排前的候选、重排后的首选、实际上屏的文字。
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -76,6 +79,7 @@ pub fn run(
     let mut sentences = 0usize;
     let mut exact = 0usize;
     let mut misses = Vec::new();
+    let mut excluded = Vec::new();
     for line in CORPUS
         .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -84,9 +88,14 @@ pub fn run(
         let (Some(sentence), Some(intervals)) = (fields.get(1), fields.get(2)) else {
             continue;
         };
+        let label = fields.get(3).copied().unwrap_or("");
         let segments: Vec<&str> = intervals.split_whitespace().collect();
         let expected = bench::normalize(sentence);
         let (written, trace) = write_sentence(dict, gram, &mut rerankers, &expected, &segments);
+        if !label.is_empty() {
+            excluded.push(format!("[{label}] {expected} → {written}"));
+            continue;
+        }
         sentences += 1;
         if bench::normalize(&written) == expected {
             exact += 1;
@@ -101,10 +110,14 @@ pub fn run(
     let percent = 100.0 * exact as f64 / sentences.max(1) as f64;
     let _ = writeln!(
         report,
-        "\n## 分段用户语料(照空格上屏)\n\n整句完全正确 {exact} / {sentences}({percent:.1}%)\n"
+        "\n## 分段用户语料(照空格上屏)\n\n计分句整句完全正确 {exact} / {sentences}({percent:.1}%);不计分 {} 句(误打、字面优先),列在下面。\n",
+        excluded.len()
     );
     for miss in misses.iter().take(MISSES_SHOWN) {
         let _ = writeln!(report, "- {miss}");
+    }
+    for line in &excluded {
+        let _ = writeln!(report, "- 不计分 {line}");
     }
     usize::from(sentences == 0)
 }
