@@ -43,7 +43,6 @@ impl Engine {
         }
         // 方案把击键展开成规范全拼;词图只认展开后的串,候选区间再映射回击键。
         let expansion = self.scheme.expand(&raw);
-        let base_len = expansion.aux_start.unwrap_or(raw.len());
         let user = self.user.read().unwrap_or_else(|p| p.into_inner());
         let mut built = query::build(query::BuildArgs {
             dict: &self.dict,
@@ -58,73 +57,11 @@ impl Engine {
             raw: &expansion.query,
             quick_trigger: self.modules.raw_trigger(&expansion.query),
         });
-        // 候选的 spans 目前指向查询串;先换回用户实际敲的击键。
-        for cand in &mut built.cands {
-            for span in &mut cand.spans {
-                *span = (
-                    expansion.raw_at.get(span.0).copied().unwrap_or(base_len),
-                    expansion.raw_at.get(span.1).copied().unwrap_or(base_len),
-                );
-            }
-        }
-        // 辅助码只对覆盖整个基础输入的候选生效:辅码段要随候选一起上屏。
-        // `full` 是核心对「吃完整串」的判定,比按区间末尾比较更稳:
-        // 末尾带隔音符或双拼末键不完整时,原始字节长度并不等于音节边界。
-        if let Some(filter) = &expansion.filter {
-            let mut fallback = built.cands.clone();
-            fallback.retain(|cand| cand.full);
-            built
-                .cands
-                .retain(|cand| cand.full && filter.matches(&cand.text));
-            if built.cands.is_empty() {
-                built.cands = fallback;
-            }
-            for cand in &mut built.cands {
-                if let Some(span) = cand.spans.last_mut() {
-                    span.1 = raw.len();
-                }
-            }
-        } else if expansion.aux_start.is_some() {
-            // 只敲了分隔符还没敲辅码:保留完整候选,别把 `` ` `` 留在组合里。
-            built.cands.retain(|cand| cand.full);
-            for cand in &mut built.cands {
-                if let Some(span) = cand.spans.last_mut() {
-                    span.1 = raw.len();
-                }
-            }
-        }
+        remap_to_keystrokes(&mut built.cands, &expansion, raw.len());
+        apply_aux(&mut built.cands, &expansion, raw.len());
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
-        // 邮箱/网址候选排在「可信的整词」之后,但越过未打完的前缀和简拼
-        // 硬拼出来的整句;日期/时间等快捷项由快捷模块在模块链里插入。
-        let address = address::candidates(&raw);
-        if !address.is_empty() {
-            built
-                .cands
-                .retain(|cand| !address.iter().any(|a| a.text == cand.text));
-            let keep_first = built
-                .cands
-                .first()
-                .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
-            let position = if keep_first { 1 } else { 0 };
-            for cand in address.into_iter().rev() {
-                built.cands.insert(position, cand);
-            }
-        }
-        // 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都
-        // 让位。置顶槽按去掉隔音符的字母串索引;旧版本按原始击键存键,再查
-        // 两次兼容。
-        let pin_key = expansion.key.replace('\'', "");
-        if let Some(word) = user
-            .pinned(&pin_key)
-            .or_else(|| user.pinned(&expansion.key))
-            .or_else(|| user.pinned(&raw))
-            .filter(|word| !word.starts_with('!'))
-        {
-            built.cands.retain(|cand| cand.text != word);
-            let mut cand = Candidate::whole(raw.len(), word.to_string(), 1.0e12);
-            cand.pinned = true;
-            built.cands.insert(0, cand);
-        }
+        insert_address(&mut built.cands, &raw);
+        apply_pin(&mut built.cands, &user, &expansion, &raw);
         // 内置与宿主模块在核心候选、地址与置顶之后运行:快捷输入、短语、
         // 联想、表情、英文混输、简繁转换按注册顺序增删改候选。默认空注册表
         // 不进这个分支。
@@ -163,6 +100,82 @@ impl Engine {
         // 旧页号可能已经越界,候选窗会空着并显示 3/1 这样的页码。
         self.hl = 0;
         self.page = 0;
+    }
+}
+
+/// 候选的 spans 目前指向查询串;换回用户实际敲的击键。
+fn remap_to_keystrokes(cands: &mut [Candidate], expansion: &scheme::Expansion, raw_len: usize) {
+    let base_len = expansion.aux_start.unwrap_or(raw_len);
+    for cand in cands {
+        for span in &mut cand.spans {
+            *span = (
+                expansion.raw_at.get(span.0).copied().unwrap_or(base_len),
+                expansion.raw_at.get(span.1).copied().unwrap_or(base_len),
+            );
+        }
+    }
+}
+
+/// 辅助码只对覆盖整个基础输入的候选生效:辅码段要随候选一起上屏。
+/// `full` 是核心对「吃完整串」的判定,比按区间末尾比较更稳:
+/// 末尾带隔音符或双拼末键不完整时,原始字节长度并不等于音节边界。
+/// 只敲了分隔符还没敲辅码时,保留完整候选,别把 `` ` `` 留在组合里。
+fn apply_aux(cands: &mut Vec<Candidate>, expansion: &scheme::Expansion, raw_len: usize) {
+    match &expansion.filter {
+        Some(filter) => {
+            let mut fallback = cands.clone();
+            fallback.retain(|cand| cand.full);
+            cands.retain(|cand| cand.full && filter.matches(&cand.text));
+            if cands.is_empty() {
+                *cands = fallback;
+            }
+        }
+        None if expansion.aux_start.is_some() => cands.retain(|cand| cand.full),
+        None => return,
+    }
+    for cand in cands.iter_mut() {
+        if let Some(span) = cand.spans.last_mut() {
+            span.1 = raw_len;
+        }
+    }
+}
+
+/// 邮箱/网址候选排在「可信的整词」之后,但越过未打完的前缀和简拼
+/// 硬拼出来的整句;日期/时间等快捷项由快捷模块在模块链里插入。
+fn insert_address(cands: &mut Vec<Candidate>, raw: &str) {
+    let address = address::candidates(raw);
+    if address.is_empty() {
+        return;
+    }
+    cands.retain(|cand| !address.iter().any(|a| a.text == cand.text));
+    let keep_first = cands
+        .first()
+        .is_some_and(|cand| cand.full && !cand.sentence && (cand.trusted || cand.learned));
+    let position = if keep_first { 1 } else { 0 };
+    for cand in address.into_iter().rev() {
+        cands.insert(position, cand);
+    }
+}
+
+/// 置顶词:整个组合键下右键置顶过的词,直接放首位;重排与快捷项都让位。
+/// 置顶槽按去掉隔音符的字母串索引;旧版本按原始击键存键,再查两次兼容。
+fn apply_pin(
+    cands: &mut Vec<Candidate>,
+    user: &UserDict,
+    expansion: &scheme::Expansion,
+    raw: &str,
+) {
+    let pin_key = expansion.key.replace('\'', "");
+    if let Some(word) = user
+        .pinned(&pin_key)
+        .or_else(|| user.pinned(&expansion.key))
+        .or_else(|| user.pinned(raw))
+        .filter(|word| !word.starts_with('!'))
+    {
+        cands.retain(|cand| cand.text != word);
+        let mut cand = Candidate::whole(raw.len(), word.to_string(), 1.0e12);
+        cand.pinned = true;
+        cands.insert(0, cand);
     }
 }
 
