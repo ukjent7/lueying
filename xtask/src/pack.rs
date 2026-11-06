@@ -59,9 +59,9 @@ const PACK_DATA: &[&str] = &[
     "rerank-25m.vocab.json",
 ];
 /// 发布体积门禁:25M 随包后发布目录约 183 MiB、安装包约 95 MiB。
-/// 上限留约 20% 余量,新增模型或依赖超过这里要显式改门限并评估下载/安装成本。
-const MAX_PAYLOAD_BYTES: u64 = 220 * 1024 * 1024;
-const MAX_SETUP_BYTES: u64 = 120 * 1024 * 1024;
+/// 产品上限是安装包 200 MB;发布目录按当前压缩比约一半折算,只防失控。
+const MAX_PAYLOAD_BYTES: u64 = 400 * 1024 * 1024;
+const MAX_SETUP_BYTES: u64 = 200 * 1000 * 1000;
 
 pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     // 只清理自己生成的目录(有 manifest),避免误删用户给的其他路径。

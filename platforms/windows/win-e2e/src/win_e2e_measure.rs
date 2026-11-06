@@ -51,9 +51,9 @@ pub(crate) fn edit_text(edit: HWND) -> String {
 const COMMIT_P95_LIMIT_MS: f64 = 60.0;
 /// 每键往返 p95 门限:同期实测 4.6–9.5 ms;60 ms 是用户能感知卡顿的量级。
 const KEY_P95_LIMIT_MS: f64 = 60.0;
-/// Server 峰值工作集门限:同期实测 35.9–36.1 MB;128 MB 覆盖模型与缓存增长,
+/// Server 峰值工作集门限:产品上限 160 MB,覆盖模型与缓存增长,
 /// 又能抓住泄漏或大对象常驻。
-const SERVER_MEMORY_LIMIT_MB: u64 = 128;
+const SERVER_MEMORY_LIMIT_MB: u64 = 160;
 
 pub(crate) fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<String, String> {
     const ROUNDS: usize = 5;
