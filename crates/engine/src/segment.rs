@@ -6,6 +6,8 @@
 
 use lueying_dict::syllables::{ABBREV_DIGRAPHS, ABBREV_LETTERS, canonical, is_syllable};
 
+use crate::typo;
+
 /// 音节图上的一个单元。`abbrev` 为真表示简拼。
 #[derive(Clone, Debug)]
 pub struct Syll {
@@ -13,6 +15,8 @@ pub struct Syll {
     pub abbrev: bool,
     /// 在原始串中的字节区间(不含两侧隔音符)。
     pub span: (usize, usize),
+    /// 手误纠正罚分:单元是把原文一处改动(交换、替换、多打、漏打)得到的合法音节时为正,否则为 0。
+    pub typo: f64,
 }
 
 const MAX_SYLL_LEN: usize = 6; // zhuang / chuang
@@ -39,6 +43,7 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
                     text: canonical(s).to_string(),
                     abbrev: false,
                     span: (pos, pos + len),
+                    typo: 0.0,
                 });
             }
         }
@@ -51,6 +56,7 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
                 text: s.to_string(),
                 abbrev: true,
                 span: (pos, pos + 1),
+                typo: 0.0,
             });
         }
         for d in ABBREV_DIGRAPHS {
@@ -59,11 +65,42 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
                     text: (*d).to_string(),
                     abbrev: true,
                     span: (pos, pos + 2),
+                    typo: 0.0,
                 });
             }
         }
     }
     out
+}
+
+/// 手误纠正单元:对每个 2 到 6 字母的窗口做一处改动(相邻字母交换、替换、多打、漏打),
+/// 结果仍是合法音节的,作为带罚分的单元加进音节图。与 `typo::corrections` 的罚分同源。
+/// 只在整串不能按全拼切完时调用,完整输入的音节图保持不变。
+pub fn add_typo_edges(raw: &str, out: &mut [Vec<Syll>]) {
+    let b = raw.as_bytes();
+    for pos in 0..b.len() {
+        if b[pos] == b'\'' {
+            continue;
+        }
+        for len in 2..=MAX_SYLL_LEN.min(b.len() - pos) {
+            let Ok(window) = std::str::from_utf8(&b[pos..pos + len]) else {
+                continue;
+            };
+            if !window.bytes().all(|c| c.is_ascii_lowercase()) {
+                continue;
+            }
+            for (text, cost) in typo::variants(window) {
+                if is_syllable(&text) {
+                    out[pos].push(Syll {
+                        text: canonical(&text).to_string(),
+                        abbrev: false,
+                        span: (pos, pos + len),
+                        typo: cost,
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// 整串能否只用全拼音节切完(不借助简拼)。用于判断用户是否完整打出了拼音:

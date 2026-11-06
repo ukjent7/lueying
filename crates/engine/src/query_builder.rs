@@ -37,20 +37,32 @@ impl Builder<'_, '_> {
                 0
             };
             let penalty = ABBREV_PENALTY * abbrev as f64;
+            // 手误纠正音节的罚分与次数:每处计一次编辑,整条路径不再算为精确命中。
+            let typo: f64 = self.units.iter().map(|s| s.typo).sum();
+            let typo_edits = self.units.iter().filter(|s| s.typo > 0.0).count();
+            let corrected = typo_edits > 0;
+            let keys = self
+                .units
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join("'");
             for h in hits.iter() {
                 self.by_end[pos].push(Node {
                     start: root,
                     word: h.word.clone(),
-                    score: h.score() - penalty,
+                    score: h.score() - penalty - typo,
                     spans: self.spans.clone(),
                     // 全拼串里靠简拼凑出的整词不是「精确命中」,
                     // 否则 `niha` 的「你好啊」会挡住补全/手误纠正。
-                    trusted: h.trusted && abbrev == 0,
-                    edits: h.edits,
+                    trusted: h.trusted && abbrev == 0 && !corrected,
+                    edits: h.edits + typo_edits,
                     freq: h.freq,
                     user_freq: h.user_freq,
                     groups: h.groups,
                     hint: h.hint.clone(),
+                    keys: keys.clone(),
+                    corrected,
                 });
             }
             self.visits += 1;
@@ -143,7 +155,11 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
         expanded_cache: HashMap::new(),
         long: raw.len() > LONG_INPUT_BYTES,
     };
-    let edges = segment::edges(raw);
+    let mut edges = segment::edges(raw);
+    // 整串能按全拼切完时不加纠正单元,完整输入的结果与行为保持不变。
+    if raw.len() <= TYPO_EDGE_MAX_LEN && !segment::complete_full(raw) {
+        segment::add_typo_edges(raw, &mut edges);
+    }
     // finish[p]:raw[p..] 能否被音节图切完。词尾落在切不动的位置时,剩下
     // 的字母永远上不了屏,这类词节点直接不要。
     let mut finish = vec![false; raw.len() + 1];
@@ -194,6 +210,8 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     best[0].push(State {
         score: 0.0,
         path: Vec::new(),
+        keys: String::new(),
+        corrected: false,
         trusted: true,
         sentence: false,
         edits: 0,
@@ -231,6 +249,12 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                         + node.score
                         + abbrev_adj
                         + gram.bonus(&tail, &node.word, j == raw.len()),
+                    keys: if st.path.is_empty() {
+                        node.keys.clone()
+                    } else {
+                        format!("{}'{}", st.keys, node.keys)
+                    },
+                    corrected: st.corrected || node.corrected,
                     path,
                     // 只有单节点整句算词典精确命中;多词拼出的句子没有这份依据。
                     trusted: st.path.is_empty() && node.trusted,
@@ -257,7 +281,9 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             continue;
         }
         let spans: Vec<(usize, usize)> = st.path.iter().flat_map(|p| p.1.iter().copied()).collect();
-        let key = spans_key(raw, &spans);
+        let typed = spans_key(raw, &spans);
+        // 纠正路径按纠正后的音节学习、查用户词库;显示时提示原拼音。
+        let key = if st.corrected { st.keys.clone() } else { typed.clone() };
         let reject = user.reject_penalty(&key, &text);
         let matched = q.user_cache.get(&key).and_then(|users| users.get(&text));
         let user_freq = matched.map_or(0, |m| m.freq);
@@ -276,9 +302,13 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             user_freq,
             learned,
             groups: st.groups,
-            hint: st.hint.clone(),
+            hint: if st.corrected {
+                Some(format!("纠自 {}", typed.replace('\'', " ")))
+            } else {
+                st.hint.clone()
+            },
             learn_key: Some(key),
-            correction: false,
+            correction: st.corrected,
             quick: false,
             pinned: false,
             rejected: reject > 0.0,
@@ -334,7 +364,12 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             if node.start != 0 {
                 continue;
             }
-            let key = spans_key(raw, &node.spans);
+            let typed = spans_key(raw, &node.spans);
+            let key = if node.corrected {
+                node.keys.clone()
+            } else {
+                typed.clone()
+            };
             let reject = user.reject_penalty(&key, &node.word);
             let matched = q
                 .user_cache
@@ -355,9 +390,13 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
                 user_freq: node.user_freq,
                 learned,
                 groups: node.groups,
-                hint: node.hint.clone(),
+                hint: if node.corrected {
+                    Some(format!("纠自 {}", typed.replace('\'', " ")))
+                } else {
+                    node.hint.clone()
+                },
                 learn_key: Some(key),
-                correction: false,
+                correction: node.corrected,
                 quick: false,
                 pinned: false,
                 rejected: reject > 0.0,
@@ -529,6 +568,8 @@ mod tests {
             freq: 0,
             groups: 0,
             hint: None,
+            keys: String::new(),
+            corrected: false,
         }
     }
 

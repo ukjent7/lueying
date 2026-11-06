@@ -145,6 +145,8 @@ const WORD_PENALTY: f64 = 2.2;
 /// 读成「和能量」,这类切分在用户打全拼时不是本意;每个简拼单元扣 8 分,
 /// 足以让完整音节读法胜出,同时不影响真正的简拼输入(整串无法按全拼切完)。
 const ABBREV_PENALTY: f64 = 8.0;
+/// 手误纠正单元只加在不长的输入上:窗口与改动数随长度平方增长,长句交给整串纠正。
+const TYPO_EDGE_MAX_LEN: usize = 12;
 /// 整句 Viterbi 每档保留几条不同文本的路径。太窄时模糊扩写会把正确切分挤出束;
 /// 从 7 放宽到 24,共享语料全量 top-5 高 2.9 点,平均耗时约多一成。
 const BEAM: usize = 24;
@@ -397,6 +399,10 @@ struct Node {
     user_freq: u32,
     groups: u8,
     hint: Option<String>,
+    /// 本节点各音节的文本(纠正后的),用 `'` 连接。
+    keys: String,
+    /// 本节点是否含手误纠正的音节。
+    corrected: bool,
 }
 
 /// 解码路径的一步:词文本 + 各音节原始字节区间。
@@ -484,6 +490,10 @@ struct State {
     groups: u8,
     /// 单节点路径的注音提示;多词拼句为空。
     hint: Option<String>,
+    /// 路径上各音节的文本(纠正后的),用 `'` 连接;学习与用户词库按它查。
+    keys: String,
+    /// 路径里是否含手误纠正的音节。
+    corrected: bool,
 }
 
 /// 错音纠正最多解码的条数。最长 24 键最多 400 条纠正,每条都要整图解码;
@@ -547,7 +557,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     let solid = built
         .cands
         .iter()
-        .any(|c| c.full && !c.sentence && c.words.len() == 1);
+        .any(|c| c.full && !c.sentence && c.words.len() == 1 && !c.correction);
     let full_pinyin = segment::complete_full(raw);
     let abbrev_has_full = segment::is_abbrev_sequence(raw) && built.cands.iter().any(|c| c.full);
     if solid

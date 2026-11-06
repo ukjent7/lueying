@@ -115,6 +115,51 @@ pub(super) fn corrections(raw: &str) -> Vec<Correction> {
     out
 }
 
+/// 一个窗口的单处手误变体及罚分,供音节图使用。罚分与 [`corrections`] 同源:
+/// 相邻字母交换 0.40,替换按音素与物理键表,多打或漏打一个字母 0.85(`n→ng`、`z/c/s→h` 为 0.25)。
+pub(crate) fn variants(window: &str) -> Vec<(String, f64)> {
+    let bytes = window.as_bytes();
+    let len = bytes.len();
+    let mut out = Vec::new();
+    for i in 0..len.saturating_sub(1) {
+        if bytes[i] != bytes[i + 1] {
+            let mut text = window.to_string();
+            text.replace_range(i..i + 2, &format!("{}{}", bytes[i + 1] as char, bytes[i] as char));
+            out.push((text, 0.40));
+        }
+    }
+    for (i, &byte) in bytes.iter().enumerate() {
+        for (replacement, penalty) in confused_replacements(byte as char) {
+            let mut text = window.to_string();
+            text.replace_range(i..i + 1, &replacement.to_string());
+            out.push((text, penalty));
+        }
+    }
+    for i in 0..=len {
+        let prev = (i > 0).then(|| bytes[i - 1] as char);
+        for inserted in 'a'..='z' {
+            let mut text = window.to_string();
+            text.insert(i, inserted);
+            out.push((text, extra_letter_penalty(prev, inserted)));
+        }
+    }
+    for i in 0..len {
+        let prev = (i > 0).then(|| bytes[i - 1] as char);
+        let mut text = window.to_string();
+        text.remove(i);
+        out.push((text, extra_letter_penalty(prev, bytes[i] as char)));
+    }
+    out
+}
+
+/// 多打或漏打一个字母的罚分:鼻音 `n`→`g`、平翘 `z/c/s`→`h` 较常见,罚得轻。
+fn extra_letter_penalty(prev: Option<char>, letter: char) -> f64 {
+    match (prev, letter) {
+        (Some('n'), 'g') | (Some('z' | 'c' | 's'), 'h') => 0.25,
+        _ => 0.85,
+    }
+}
+
 /// 某键的音素混淆与物理近邻替换候选及对应的软惩罚分。
 fn confused_replacements(c: char) -> Vec<(char, f64)> {
     let mut out = Vec::new();
