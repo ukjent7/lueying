@@ -277,6 +277,13 @@ STAGES = {"engine": "rank", "8m": "rank_8m", "settled": "rank_settled"}
 POOLS = (9, 32, 64, 128)
 # 每类的最低线:只防整条链路系统性退步,按引擎层算,数值与全量基准的外部下限一致。
 GATES = {"daily": (85.0, 90.0), "frost": (65.0, 80.0), "hard": (50.0, 75.0), "context": (60.0, 80.0)}
+# 核心场景(按产品真正面对的打法):全拼、词级简拼与混打、整句混打、usermix/fuzzy/typo 压力集。
+# 纯声母整句不计入:不是核心打法,只记录。
+CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", "clause-mixed-",
+                 "usermix-", "fuzzy-", "typo-")
+EXCLUDED_FROM_CORE = ("clause-initials-",)
+# 干净全拼用例:打得准的部分,首选准确率不能低于基线(见 --baseline)。
+CLEAN_PREFIXES = ("clause-full-", "word-full-")
 
 
 def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]:
@@ -339,6 +346,10 @@ def cost(rows: list[dict[str, str]]) -> dict[str, float] | None:
     }
 
 
+def is_core(category: str) -> bool:
+    return category.startswith(CORE_PREFIXES) and not category.startswith(EXCLUDED_FROM_CORE)
+
+
 def summarize_rows(rows: list[dict[str, str]]) -> dict[str, object]:
     categories = sorted({row["category"] for row in rows})
     by_category = {
@@ -361,6 +372,19 @@ def summarize_rows(rows: list[dict[str, str]]) -> dict[str, object]:
         "categories": by_category,
         "ms": {column: timing(rows, column) for column in ("ms", "ms_8m", "ms_25m")},
     }
+    core = [category for category in categories if is_core(category)]
+    if core:
+        # 核心宏平均:每个核心类别同权,不让条数多的一类决定总分。
+        out["core"] = {
+            "categories": core,
+            **{
+                stage: {
+                    key: round(statistics.fmean(by_category[c][stage][key] for c in core), 2)
+                    for key in ("top1", "top5")
+                }
+                for stage in STAGES
+            },
+        }
     pool = [int(row["pool_rank"]) for row in rows if row.get("pool_rank")]
     if pool:
         out["pool_hit"] = {
@@ -380,8 +404,29 @@ def gate_failures(summary: dict[str, object]) -> list[str]:
     return failed
 
 
+def clean_top1(section: dict[str, object]) -> tuple[float, int]:
+    """干净全拼类别在产品链路(settled)上的加权首选准确率与条数。"""
+    categories = section["categories"]
+    picked = [c for name, c in categories.items() if name.startswith(CLEAN_PREFIXES)]
+    total = sum(c["settled"]["n"] for c in picked)
+    hit = sum(c["settled"]["top1"] * c["settled"]["n"] for c in picked)
+    return (hit / total if total else 0.0), total
+
+
+def baseline_failures(section: dict[str, object], base: dict[str, object], tolerance: float) -> list[str]:
+    """打得准的用例首选准确率不能比基线低超过 tolerance(百分点)。"""
+    now, n_now = clean_top1(section)
+    before, n_before = clean_top1(base)
+    if n_now == 0 or n_before == 0:
+        return []
+    if now < before - tolerance:
+        return [f"干净全拼首选 {now:.2f} < 基线 {before:.2f} - {tolerance}(n={n_now})"]
+    return []
+
+
 def cmd_summarize(args: argparse.Namespace) -> int:
     """把一个目录下的分片合成 summary.json;每份语料一节。"""
+    baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8")) if args.baseline else None
     groups: dict[str, list[Path]] = {}
     for path in sorted(Path(args.dir).glob("*.tsv")):
         groups.setdefault(path.name.split(".")[0], []).append(path)
@@ -394,6 +439,9 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         section = summarize_rows(rows)
         section["engine_name"] = meta.get("engine", "")
         section["gate_failures"] = gate_failures(section)
+        if baseline and corpus in baseline:
+            section["baseline_failures"] = baseline_failures(section, baseline[corpus], args.tolerance)
+            section["gate_failures"] += section["baseline_failures"]
         failed += section["gate_failures"]
         summary[corpus] = section
     text = json.dumps(summary, ensure_ascii=False, indent=1)
@@ -582,6 +630,8 @@ def main() -> int:
     summarize.add_argument("dir")
     summarize.add_argument("--gate", action="store_true", help="门限不达标时退出码非零")
     summarize.add_argument("--print", action="store_true", help="同时打印到标准输出")
+    summarize.add_argument("--baseline", help="上一次的 summary.json;干净全拼首选准确率不能低于它")
+    summarize.add_argument("--tolerance", type=float, default=0.0, help="允许下降的百分点,默认 0")
     summarize.set_defaults(func=cmd_summarize)
 
     diff = sub.add_parser("diff", help="逐条对比两份结果,JSON 输出;路径后可跟 :engine/:8m/:settled")

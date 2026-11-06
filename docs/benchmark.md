@@ -48,6 +48,24 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 两份来自 chinese-ime-lm 的 `sentences-ctx-v1`，文本不在词典与重排模型的训练语料中。
 
+## 压力语料 v3
+
+`dicts/eval-v3-{dev,test}.tsv` 由 `tools/make_eval_v3.py` 从 V2 的全拼用例派生,每类最多 200 条:
+
+| 类别前缀 | 派生方式 |
+|---|---|
+| `usermix-` | 混打:音节的声母单打时,若它在该声母下的前两个高频字里有目标字,只打声母 |
+| `fuzzy-` | 模糊音:换 1–2 个音节为模糊音(zh/z、ch/c、sh/s、l/n、f/h、an/ang、en/eng、in/ing、ian/iang、uan/uang) |
+| `typo-` | 手误:整串 1–2 处相邻键替换、漏键、多键或相邻字母调换 |
+
+派生只改输入串,期望答案取自 V2 原句。开发集与测试集分别从 V2 两半派生。句子级两半零重叠;短词在两半都出现属于 V2 原有结构。
+
+## 核心指标与基线门限
+
+`summarize` 的 `core` 节是核心类别的宏平均:全拼、词级简拼与混打、整句混打、`usermix-`、`fuzzy-`、`typo-`。纯声母整句(`clause-initials-`)只记录,不计入。
+
+`summarize --baseline <上一次的 summary.json>` 检查干净全拼用例(`clause-full-`、`word-full-`)在产品链路 `settled` 上的加权首选准确率,不能低于基线超过 `--tolerance`(默认 0 个百分点)。
+
 ## 私有语料
 
 `dicts/eval-private.tar.gpg` 是加密的真实评论区文本，只用于评测，不参与训练。它用 GnuPG 以 AES-256 对称加密，密钥是仓库的 `EVAL_KEY`。没有密钥时 CI 跳过这份语料。公开产物只包含汇总数字。

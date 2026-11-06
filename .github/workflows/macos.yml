@@ -1,5 +1,6 @@
 # macOS 平台层单独验证:InputMethodKit 外壳与候选窗只在 macOS 编译,
 # 不拖慢 push 主门禁;改动相关文件时自动跑,也可手动触发。
+# 外壳直接依赖引擎、词典、重排与会话 crate,所以任何 crates 改动都要在 Mac 上编一遍。
 name: macos
 
 on:
@@ -7,12 +8,12 @@ on:
     branches: [main]
     paths:
       - "platforms/macos/**"
-      - "crates/render/**"
+      - "crates/**"
       - ".github/workflows/macos.yml"
   pull_request:
     paths:
       - "platforms/macos/**"
-      - "crates/render/**"
+      - "crates/**"
       - ".github/workflows/macos.yml"
   workflow_dispatch:
 
