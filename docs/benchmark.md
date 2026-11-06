@@ -65,7 +65,7 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 ## 用户自测语料
 
-`dicts/eval-user-v1.tsv` 是用户自己打的 20 句整句(`user-sentence`),键入串原样保留缩写、模糊音和手误。`dicts/eval-user-v1-intervals.tsv` 记录他自己的空格(上屏间隔),后续分段测试以它为准,不由维护者切段。这份语料只用于评测,不用于训练。句子少,单句结果噪声大,看趋势不看单句。
+`dicts/eval-user-v{1,2}.tsv` 是用户自己打的整句(`user-sentence`,共 40 句),键入串原样保留缩写、模糊音、漏打和手误。标点不计入键入串和目标句。`dicts/eval-user-v{1,2}-intervals.tsv` 记录他自己的空格(上屏间隔),后续分段测试以它为准,不由维护者切段。这份语料只用于评测,不用于训练。句子少,单句结果噪声大,看趋势不看单句。
 
 ## 核心指标与基线门限
 

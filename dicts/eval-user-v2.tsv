@@ -1,0 +1,23 @@
+# 用户自测语料 v2:第 21–40 句整句,键入串为用户原样打法(含缩写、模糊音、漏打与手误,不做纠正)。
+# 列: category<TAB>source<TAB>pinyin<TAB>expected<TAB>context(无上文,留空)
+# category: user-sentence。来源: 用户自打(2026-11-06);目标句由维护者拟定,标点不计入。
+user-sentence	user	wodeshoujihaosyisanbalinglinglingyiersansi	我的手机号是一三八零零零一二三四	
+user-sentence	user	zhecikaoshiyizhongyouwudaodari	这次考试一共有五道大题	
+user-sentence	user	tzuotianwanshengshiianciahuijai	他昨天晚上十点才回家	
+user-sentence	user	wmmintianquyunnanlvyou	我们明年去云南旅游	
+user-sentence	user	qingwenditizhanzmzou	请问地铁站怎么走	
+user-sentence	user	tasuotahenkeaidanstabuxih	她说它很可爱但是他不喜欢	
+user-sentence	user	zhebenshudezuozheshizui	这本书的作者是谁	
+user-sentence	user	niyinggzaodiansuijiaobieaoyie	你应该早点睡觉别熬夜了	
+user-sentence	user	zuotiandehuiyijiyaoyijfadequnlil	昨天的会议纪要已经发到群里了	
+user-sentence	user	beijingdetianqiyuelaiyueerl	北京的天气越来越热了	
+user-sentence	user	wgangnagkandaoyigehenyouyisideshipin	我刚刚看到一个很有意思的视频	
+user-sentence	user	mamazuodehonsghaortbhaoc	妈妈做的红烧肉特别好吃	
+user-sentence	user	zhegwentwmxiacizaitaolunba	这个问题我们下次再讨论吧	
+user-sentence	user	shngahaidaodangzhoudegaotdagaiyaoduojiu	上海到杭州的高铁大概要多久	
+user-sentence	user	tazaigongsifuzhecanpinshejigongzuo	他在公司负责产品设计工作	
+user-sentence	user	waimyjsongdaolouxialkauailaina	外卖已经送到楼下了快来拿	
+user-sentence	user	zhecihuodongbbaomingjiezhishijiansbenzhouwu	这次活动报名截止时间是本周五	
+user-sentence	user	nideyisyishiwmmtjiuchufma	你的意思是我们明天就出发吗	
+user-sentence	user	suzhoudeyuanlifeichoum	苏州的园林非常有名	
+user-sentence	user	nverjinnianshangxiaoxuesannianjil	女儿今年上小学三年级了	
