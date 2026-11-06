@@ -426,7 +426,10 @@ mod tests {
         let mixed = literal("nh");
         assert!(!reads_as_full("nh", &mixed));
         assert_eq!(reads("nh", 1, "h").map(|unit| unit.cost), Some(0.0));
-        assert_eq!(reads("hen", 2, "n").map(|unit| unit.cost), Some(ABBREV_COST));
+        assert_eq!(
+            reads("hen", 2, "n").map(|unit| unit.cost),
+            Some(ABBREV_COST)
+        );
     }
 
     #[test]

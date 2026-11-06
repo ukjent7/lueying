@@ -193,12 +193,7 @@ impl<'a> Lexicon<'a> {
                 Hit {
                     word: Rc::from(entry.word),
                     key: Rc::from(entry.key),
-                    prior: prior(
-                        entry.word,
-                        entry.freq.max(1) as f64,
-                        user_freq,
-                        self.total,
-                    ),
+                    prior: prior(entry.word, entry.freq.max(1) as f64, user_freq, self.total),
                     dictionary: true,
                     freq: entry.freq,
                     user_freq,

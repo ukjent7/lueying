@@ -145,7 +145,11 @@ pub fn run(
             rate(five, targets),
         );
     }
-    let _ = writeln!(report, "\n同键误伤 {broken} / {guarded}({:.1}%)", rate(broken, guarded));
+    let _ = writeln!(
+        report,
+        "\n同键误伤 {broken} / {guarded}({:.1}%)",
+        rate(broken, guarded)
+    );
     if !stuck.is_empty() {
         let _ = writeln!(report, "\n选满 {ROUNDS} 次仍不是首选 {} 条:\n", stuck.len());
         for line in stuck.iter().take(STUCK_SHOWN) {
