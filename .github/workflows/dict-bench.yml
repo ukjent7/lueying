@@ -94,12 +94,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # 语料增多后单片常超过 60 分钟(曾整片超时被取消),留足余量。
+    # 8 片并行:语料约 1.4 万条,4 片时单片近 60 分钟。
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         tier: ${{ fromJSON(needs.build.outputs.tiers) }}
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,7 +148,7 @@ jobs:
           fi
           for corpus in "${corpora[@]}"; do
             ./lueying-e2e --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank \
-              --only-shared --shard "$SHARD/4" $corpus
+              --only-shared --shard "$SHARD/8" $corpus
           done
           for file in target/bench/eval-private-*.tsv; do
             [ -f "$file" ] || continue
