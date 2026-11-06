@@ -71,4 +71,8 @@ pub trait Canvas {
 
     /// 在矩形内水平、垂直居中画一段文字。
     fn text_centered(&mut self, content: &str, rect: Rect, size: f32, color: Color);
+
+    /// 在矩形内画第 `sprite` 号图片(平台侧按序号持有解码后的图片,见动画包)。
+    /// 默认不画;平台实现后动画才会出现在候选窗上。
+    fn draw_sprite(&mut self, _sprite: usize, _rect: Rect) {}
 }
