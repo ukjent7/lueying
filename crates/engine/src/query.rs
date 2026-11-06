@@ -147,6 +147,10 @@ const WORD_PENALTY: f64 = 2.2;
 const ABBREV_PENALTY: f64 = 8.0;
 /// 手误纠正单元只加在不长的输入上:窗口与改动数随长度平方增长,长句交给整串纠正。
 const TYPO_EDGE_MAX_LEN: usize = 12;
+/// 手误纠正单元罚分的倍数。先验罚分偏低时,混打的合法缩写会被纠错压过(见 v4 基准)。
+const TYPO_EDGE_SCALE: f64 = 1.0;
+/// 手误纠正窗口的最短字母数。2 字母窗口最容易和混打缩写撞车。
+const TYPO_MIN_WINDOW: usize = 2;
 /// 整句 Viterbi 每档保留几条不同文本的路径。太窄时模糊扩写会把正确切分挤出束;
 /// 从 7 放宽到 24,共享语料全量 top-5 高 2.9 点,平均耗时约多一成。
 const BEAM: usize = 24;

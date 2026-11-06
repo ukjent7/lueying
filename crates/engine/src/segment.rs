@@ -76,13 +76,13 @@ pub fn edges(raw: &str) -> Vec<Vec<Syll>> {
 /// 手误纠正单元:对每个 2 到 6 字母的窗口做一处改动(相邻字母交换、替换、多打、漏打),
 /// 结果仍是合法音节的,作为带罚分的单元加进音节图。与 `typo::corrections` 的罚分同源。
 /// 只在整串不能按全拼切完时调用,完整输入的音节图保持不变。
-pub fn add_typo_edges(raw: &str, out: &mut [Vec<Syll>]) {
+pub fn add_typo_edges(raw: &str, out: &mut [Vec<Syll>], min_window: usize) {
     let b = raw.as_bytes();
     for pos in 0..b.len() {
         if b[pos] == b'\'' {
             continue;
         }
-        for len in 2..=MAX_SYLL_LEN.min(b.len() - pos) {
+        for len in min_window.max(2)..=MAX_SYLL_LEN.min(b.len() - pos) {
             let Ok(window) = std::str::from_utf8(&b[pos..pos + len]) else {
                 continue;
             };

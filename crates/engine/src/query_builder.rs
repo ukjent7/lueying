@@ -38,7 +38,7 @@ impl Builder<'_, '_> {
             };
             let penalty = ABBREV_PENALTY * abbrev as f64;
             // 手误纠正音节的罚分与次数:每处计一次编辑,整条路径不再算为精确命中。
-            let typo: f64 = self.units.iter().map(|s| s.typo).sum();
+            let typo: f64 = self.units.iter().map(|s| s.typo).sum::<f64>() * TYPO_EDGE_SCALE;
             let typo_edits = self.units.iter().filter(|s| s.typo > 0.0).count();
             let corrected = typo_edits > 0;
             let keys = self
@@ -158,7 +158,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     let mut edges = segment::edges(raw);
     // 整串能按全拼切完时不加纠正单元,完整输入的结果与行为保持不变。
     if raw.len() <= TYPO_EDGE_MAX_LEN && !segment::complete_full(raw) {
-        segment::add_typo_edges(raw, &mut edges);
+        segment::add_typo_edges(raw, &mut edges, TYPO_MIN_WINDOW);
     }
     // finish[p]:raw[p..] 能否被音节图切完。词尾落在切不动的位置时,剩下
     // 的字母永远上不了屏,这类词节点直接不要。
