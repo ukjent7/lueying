@@ -432,6 +432,11 @@ fn bounce(next: f32, velocity: f32, min: f32, max: f32) -> (f32, f32) {
         (min, velocity.abs())
     } else if next > max {
         (max, -velocity.abs())
+    } else if next >= max && velocity > 0.0 {
+        // 正好停在边上、速度还朝外:也要换向,不然下一步又出界。
+        (max, -velocity)
+    } else if next <= min && velocity < 0.0 {
+        (min, -velocity)
     } else {
         (next, velocity)
     }
