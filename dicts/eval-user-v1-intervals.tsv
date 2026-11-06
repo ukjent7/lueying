@@ -1,0 +1,22 @@
+# 用户自己的空格(上屏间隔),与 eval-user-v1.tsv 一一对应。后续分段测试以此为准。
+# id<TAB>expected<TAB>intervals
+1	我今天很累	w jiant henlei
+2	你吃饭了吗	ni chifan l ma
+3	这个东西多少钱	zheg dongxi duosaoq
+4	明天下午三点开会	mingt xiaw sandian kaih
+5	请把文件发给我	qingab wenjain fageiw
+6	我们要推进质量兴农	wom yaotuij zhiliangxingnong
+7	他是哪年出生的	tashi nanian chushengde
+8	没有能游玩那么长时间的	meiy nneg youwan nm changshijian de
+9	现在的年轻人都喜欢苏超	xianz de nianqingr douxih sucao
+10	新质生产力是发展的重点	xinzhi shengcanli shi fazhan de zhondgian
+11	推荐您去水立方嬉水	tuijian nin qu suilif xisui
+12	这篇论文的结论很难理解	zhepian lunwen de jielun henanlij
+13	长城在北京的北边	changchengzai beijing de beibian
+14	我想去故宫看看	wo xiangqu gugong kankan
+15	这个方案的成本太高了	zheg fangan de chengban tai gaole
+16	他们在讨论是否延期	tamen zai taolun shiffdou yanqi
+17	请帮我查一下天气	qing bawo chayx tianqi
+18	老师说下周要考试	laoshi suo xiahzou yao kaoshi
+19	她的生日是十二月三号	tade shengr s shiery sanhao
+20	大家一起去吃火锅吧	dajia yq qu chi huoguo ba

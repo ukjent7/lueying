@@ -63,9 +63,13 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 派生只改输入串,期望答案取自 V2 原句。句子级两半零重叠;短词在两半都出现属于 V2 原有结构。
 
+## 用户自测语料
+
+`dicts/eval-user-v1.tsv` 是用户自己打的 20 句整句(`user-sentence`),键入串原样保留缩写、模糊音和手误。`dicts/eval-user-v1-intervals.tsv` 记录他自己的空格(上屏间隔),后续分段测试以它为准,不由维护者切段。这份语料只用于评测,不用于训练。句子少,单句结果噪声大,看趋势不看单句。
+
 ## 核心指标与基线门限
 
-`summarize` 的 `core` 节是核心类别的宏平均:全拼、词级简拼与混打、整句混打、`chunk-`、`fuzzy-`、`typo-`。纯声母整句(`clause-initials-`)只记录,不计入。
+`summarize` 的 `core` 节是核心类别的宏平均:全拼、词级简拼与混打、整句混打、`chunk-`、`fuzzy-`、`typo-`、`user-`。纯声母整句(`clause-initials-`)只记录,不计入。
 
 `summarize --baseline <上一次的 summary.json>` 检查干净全拼用例(`clause-full-`、`word-full-`)在产品链路 `settled` 上的加权首选准确率,不能低于基线超过 `--tolerance`(默认 0 个百分点)。
 

@@ -280,7 +280,7 @@ GATES = {"daily": (85.0, 90.0), "frost": (65.0, 80.0), "hard": (50.0, 75.0), "co
 # 核心场景(按产品真正面对的打法):全拼、词级简拼与混打、整句混打、分段(chunk)与模糊音、手误压力集。
 # 纯声母整句不计入:不是核心打法,只记录。
 CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", "clause-mixed-",
-                 "chunk-", "fuzzy-", "typo-")
+                 "chunk-", "fuzzy-", "typo-", "user-")
 EXCLUDED_FROM_CORE = ("clause-initials-",)
 # 干净全拼用例:打得准的部分,首选准确率不能低于基线(见 --baseline)。
 CLEAN_PREFIXES = ("clause-full-", "word-full-", "chunk-full-")
