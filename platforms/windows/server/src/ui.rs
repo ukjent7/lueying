@@ -9,6 +9,7 @@ pub(crate) mod d2d;
 mod hud;
 pub(crate) mod panel;
 mod place;
+mod toolbar;
 
 use std::sync::Arc;
 
@@ -22,4 +23,6 @@ pub(super) fn run(state: Arc<State>) {
     crate::ui::d2d::spawn(Arc::clone(&state));
     // 模式徽标:独立线程,GPU 不可用时照样显示。
     crate::ui::hud::spawn(Arc::clone(&state));
+    // 工具栏:右下角可拖动的一排按钮,独立线程。
+    crate::ui::toolbar::spawn(Arc::clone(&state));
 }

@@ -821,7 +821,7 @@ fn load_skin() -> lueying_server::skin::Skin {
 }
 
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
-fn apply_config(state: &State, cfg: AppConfig) {
+pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
     // 皮肤文件跟配置一起重读:改完 skin.toml 一次 reload 生效。
     *state.skin.lock().unwrap_or_else(|p| p.into_inner()) = load_skin();
     let engine_cfg = cfg.engine();
