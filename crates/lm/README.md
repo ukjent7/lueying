@@ -12,3 +12,5 @@
 另外两个文件是本项目新增的：`src/ort.rs` 读取上游按键模型发布的 ORT 平面缓冲，
 `src/keystroke.rs` 把 `lm_step.ort` 的三个文件加载成同一套 `SentenceModel`。
 它们让 8M/25M 按键重排保持纯 Rust 推理，不引入 ONNX Runtime 原生依赖。
+
+`src/math.rs` 的 `dispatched!` 也是本地改动：内核按 CPU 运行时选 AVX2，结果与基线逐位相同。

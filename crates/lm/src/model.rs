@@ -114,7 +114,6 @@ impl SentenceModel {
                 "a dimension is larger than any real model".into(),
             ));
         }
-        // `%` rather than `is_multiple_of`, which needs a far newer compiler than anything else here.
         if config.n_head == 0 || config.n_embd == 0 || !config.n_embd.is_multiple_of(config.n_head)
         {
             return Err(ModelError::Geometry(format!(

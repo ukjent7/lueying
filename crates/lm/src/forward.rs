@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::math::{
     HALF_BLOCK, ROW_BLOCK, dot, dot_block, gelu, gelu_tanh, layer_norm_into, linear_into,
-    log_normalizer, row_blocks, split_qkv_with_suffix_into,
+    log_normalizer, row_blocks, split_qkv_with_suffix_into, widen,
 };
 use crate::model::{Block, FeedForwardScratch, SentenceModel};
 use crate::weights::Tensor;
@@ -522,8 +522,7 @@ impl SentenceModel {
                 let (weights, scale): (&[f32], Option<f32>) = match &self.token.inner {
                     Tensor::Float(values) => (&values[span], None),
                     Tensor::Quantized { values, scales } => {
-                        widened.clear();
-                        widened.extend(values[span].iter().map(|&value| f32::from(value)));
+                        widen(&values[span], &mut widened);
                         (&widened, Some(scales[index]))
                     }
                 };

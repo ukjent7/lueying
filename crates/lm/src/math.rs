@@ -4,6 +4,37 @@
 //! `linear_into` 等入口。块化内核的求和顺序与标量参考一致,由测试逐位钉住。
 
 use crate::weights::Tensor;
+
+/// 把内核编成基线与 AVX2 两份,运行时按 CPU 挑一份。
+///
+/// 发布目标是 x86-64 基线,只有 SSE2,而老机型的低端型号没有 AVX2,不能整包抬高目标。
+/// 这里只开 AVX2、不开 FMA:编译器不会改浮点运算顺序,两份结果逐位相同,
+/// 区别只是向量宽一倍,`i8` 也能一条指令扩宽。其他架构只有基线一份。
+macro_rules! dispatched {
+    (
+        $(#[$attr:meta])*
+        fn $name:ident $(<const $generic:ident: usize>)? = $kernel:ident
+        ($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;
+    ) => {
+        $(#[$attr])*
+        #[allow(unsafe_code)]
+        pub(crate) fn $name $(<const $generic: usize>)? ($($arg: $ty),*) $(-> $ret)? {
+            #[cfg(target_arch = "x86_64")]
+            {
+                #[target_feature(enable = "avx2")]
+                fn avx2 $(<const $generic: usize>)? ($($arg: $ty),*) $(-> $ret)? {
+                    $kernel $(::<$generic>)? ($($arg),*)
+                }
+                if std::arch::is_x86_feature_detected!("avx2") {
+                    // SAFETY: 上一行已确认当前 CPU 支持 AVX2。
+                    return unsafe { avx2 $(::<$generic>)? ($($arg),*) };
+                }
+            }
+            $kernel $(::<$generic>)? ($($arg),*)
+        }
+    };
+}
+
 /// A weight matrix, kept in whatever precision the file stored it in.
 ///
 /// Quantized matrices are not expanded on load. A per-output-row scale is a constant factor for the
@@ -48,6 +79,11 @@ impl Matrix {
     }
 }
 
+dispatched! {
+    /// `a · b`; see `dot_kernel`.
+    fn dot = dot_kernel(a: &[f32], b: &[f32]) -> f32;
+}
+
 /// Independent accumulators rather than one running sum.
 ///
 /// A single accumulator makes every multiply-add wait for the previous one, so the loop runs at the
@@ -55,7 +91,8 @@ impl Matrix {
 /// Eight partial sums give the pipeline eight independent chains to interleave. The summation order
 /// differs from a serial reduction, which is immaterial here: the result feeds a ranking, and the
 /// order was never guaranteed to match the trainer's anyway.
-pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
+#[inline(always)]
+fn dot_kernel(a: &[f32], b: &[f32]) -> f32 {
     const LANES: usize = 8;
     let mut partial = [0.0f32; LANES];
     let left = a.chunks_exact(LANES);
@@ -148,10 +185,7 @@ pub(crate) fn linear_into(
             let (weights, scale): (&[f32], Option<f32>) = match &w.inner {
                 Tensor::Float(values) => (&values[span], None),
                 Tensor::Quantized { values, scales } => {
-                    scratch.row.clear();
-                    scratch
-                        .row
-                        .extend(values[span].iter().map(|&value| f32::from(value)));
+                    widen(&values[span], &mut scratch.row);
                     (&scratch.row, Some(scales[index]))
                 }
             };
@@ -208,14 +242,20 @@ pub(crate) fn row_blocks(rows: usize) -> impl Iterator<Item = (usize, usize)> + 
         .chain((0..half).map(move |_| (full * ROW_BLOCK, HALF_BLOCK)))
 }
 
+dispatched! {
+    /// `R` dot products against rows stored input-major; see `dot_block_kernel`.
+    #[inline(never)]
+    fn dot_block<const R: usize> = dot_block_kernel(block: &[f32], weights: &[f32]) -> [f32; R];
+}
+
 /// `R` dot products of one weight row against `R` input rows stored input-major.
 ///
 /// Row `r` accumulates exactly as `dot` would on its own: lane `l` of eight sums the products at
 /// inputs `l, l + 8, l + 16, …` in that order, the lanes are summed first to last, and the inputs
 /// past the last multiple of eight are added after that, one at a time. Only the interleaving of
 /// independent sums differs, and that interleaving is what lets them run in parallel.
-#[inline(never)]
-pub(crate) fn dot_block<const R: usize>(block: &[f32], weights: &[f32]) -> [f32; R] {
+#[inline(always)]
+fn dot_block_kernel<const R: usize>(block: &[f32], weights: &[f32]) -> [f32; R] {
     const LANES: usize = 8;
     let mut partial = [[0.0f32; R]; LANES];
     for (inputs, weights) in block
@@ -242,10 +282,27 @@ pub(crate) fn dot_block<const R: usize>(block: &[f32], weights: &[f32]) -> [f32;
     dots
 }
 
+dispatched! {
+    /// `a · b` over quantized weights; see `dot_i8_kernel`.
+    fn dot_i8 = dot_i8_kernel(a: &[f32], b: &[i8]) -> f32;
+}
+
+#[inline(always)]
+fn widen_kernel(values: &[i8], out: &mut Vec<f32>) {
+    out.clear();
+    out.extend(values.iter().map(|&value| f32::from(value)));
+}
+
+dispatched! {
+    /// 把一行量化权重扩成 `f32`,写进 `out`。
+    fn widen = widen_kernel(values: &[i8], out: &mut Vec<f32>);
+}
+
 /// The quantized counterpart of `dot`, with the same eight independent accumulators and the same
 /// reason for them. The row's scale is applied by the caller, once, rather than to every value:
 /// that is the whole point of keeping the weights as `i8`.
-pub(crate) fn dot_i8(a: &[f32], b: &[i8]) -> f32 {
+#[inline(always)]
+fn dot_i8_kernel(a: &[f32], b: &[i8]) -> f32 {
     const LANES: usize = 8;
     let mut partial = [0.0f32; LANES];
     let left = a.chunks_exact(LANES);
@@ -375,4 +432,30 @@ pub(crate) fn erf(x: f32) -> f32 {
         * (0.254_829_6
             + t * (-0.284_496_74 + t * (1.421_413_7 + t * (-1.453_152 + t * 1.061_405_4))));
     sign * (1.0 - poly * (-x * x).exp())
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn dispatched_kernels_match_the_baseline_bit_for_bit() {
+        const WIDTH: usize = 133;
+        let float = |seed: usize| ((seed * 37 % 101) as f32 - 50.0) / 7.0;
+        let a: Vec<f32> = (0..WIDTH).map(float).collect();
+        let b: Vec<f32> = (0..WIDTH).map(|i| float(i + 11)).collect();
+        let q: Vec<i8> = (0..WIDTH).map(|i| (i * 53 % 255) as i32 - 127).map(|v| v as i8).collect();
+        let block: Vec<f32> = (0..WIDTH * ROW_BLOCK).map(|i| float(i + 5)).collect();
+
+        assert_eq!(dot(&a, &b).to_bits(), dot_kernel(&a, &b).to_bits());
+        assert_eq!(dot_i8(&a, &q).to_bits(), dot_i8_kernel(&a, &q).to_bits());
+        assert_eq!(
+            dot_block::<ROW_BLOCK>(&block, &b).map(f32::to_bits),
+            dot_block_kernel::<ROW_BLOCK>(&block, &b).map(f32::to_bits)
+        );
+        let (mut got, mut want) = (Vec::new(), Vec::new());
+        widen(&q, &mut got);
+        widen_kernel(&q, &mut want);
+        assert_eq!(got, want);
+    }
 }

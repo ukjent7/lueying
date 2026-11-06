@@ -11,7 +11,8 @@ serde_json = "1"
 thiserror = "2"
 
 [lints.rust]
-unsafe_code = "forbid"
+# 唯一的例外是 `math.rs` 按 CPU 分派内核的那次调用。
+unsafe_code = "deny"
 unknown_lints = "allow"
 
 [lints.clippy]
