@@ -77,17 +77,39 @@ impl Model {
 }
 
 /// 一条候选相对当前按键的事实。两者都只有引擎知道,不能从候选文本推断。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Fact {
     /// 候选覆盖整个组合输入,而不是前缀词或联想补全。
     pub answers_key: bool,
-    /// 词典对用户实际键入的整键给出的精确命中,值得让模型让位。
+    /// 词典对用户实际键入的整键给出的精确命中,没有上文时值得让模型让位。
     pub trusted_dictionary_hit: bool,
+    /// 引擎总分(语言分减读法代价,含个人上下文)。
+    pub score: f32,
+    /// 这种读法的代价(nat)。模型只看文字,看不到用户实际打的键。
+    pub channel: f32,
+    /// 引擎总分里来自用户学习的部分。
+    pub personal: f32,
+    /// 用户在这个键下稳定选过这个词,任何模型都不改。
+    pub locked: bool,
+    /// 经模糊音或手误改动过读音。
+    pub edited: bool,
 }
 
-/// 停顿重排越过精确首位的门槛(每字符平均对数概率)。
-/// 只让上下文明确的模糊候选小幅领先时才改首选,快速连打时仍保持稳定。
-pub const SETTLE_OVERRIDE_MARGIN: f32 = 0.02;
+/// 有上文时的决策目标:模型整段对数概率 + 引擎语言分 × [`ENGINE_WEIGHT`]
+/// − 读法代价 × [`CHANNEL_WEIGHT`] + 用户学习分 × [`PERSONAL_WEIGHT`],引擎首位再加
+/// [`LEADER_BONUS`]。前三个系数在 v4 开发集有上文的样本上拟合,两半交叉验证差异在 0.5 点内。
+/// 基准里学习是关着的,学习分恒为零,这些数字不受 [`PERSONAL_WEIGHT`] 影响。
+///
+/// 有上文时这个目标在所有打法上都胜过词频(词级全拼 79 → 83,分段全拼 48 → 76);
+/// 没有上文时模型只能比字频,孤立词上反而低十几点,仍走词频优先的旧门控。
+const CHANNEL_WEIGHT: f32 = 1.5;
+const ENGINE_WEIGHT: f32 = 0.1;
+const PERSONAL_WEIGHT: f32 = 1.0;
+const LEADER_BONUS: f32 = 0.5;
+/// 一次比较的候选数与总字数上限。短段的正确字常排在十几名开外,要看得足够深;
+/// 总字数上限等于整句时九条候选的工作量,不比原来贵。
+const COMPARED_MAX: usize = 32;
+const COMPARED_CHARS: usize = 144;
 /// 没有上文时,这么短的首位算短句,要领先 [`SHORT_MARGIN`] 才换。
 const SHORT_CHARS: usize = 4;
 const SHORT_MARGIN: f32 = 1.0;
@@ -149,7 +171,58 @@ impl Rerank {
     }
 
     fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
-        self.decide_inner_with_margin(context, texts, facts, SYNC_PROMOTE_MARGIN)
+        if !context.is_empty() {
+            return self.decide_in_context(context, texts, facts);
+        }
+        self.decide_inner_with_margin(context, texts, &same_reading(facts), SYNC_PROMOTE_MARGIN)
+    }
+
+    /// 有上文时的决策,见 [`CHANNEL_WEIGHT`]。
+    fn decide_in_context(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+    ) -> Option<usize> {
+        if texts.len() != facts.len() {
+            return None;
+        }
+        let leader = facts.first()?;
+        if leader.locked || !leader.answers_key {
+            return None;
+        }
+        let mut budget = COMPARED_CHARS;
+        let mut compared: Vec<usize> = Vec::with_capacity(COMPARED_MAX);
+        for (index, (text, fact)) in texts.iter().zip(facts).enumerate() {
+            if !fact.answers_key {
+                continue;
+            }
+            let chars = text.chars().count();
+            if compared.len() == COMPARED_MAX || (chars > budget && compared.len() >= 2) {
+                break;
+            }
+            budget = budget.saturating_sub(chars);
+            compared.push(index);
+        }
+        if compared.len() < 2 {
+            return None;
+        }
+        let batch: Vec<&str> = compared.iter().map(|&index| texts[index]).collect();
+        let means = self.inner.log_probabilities(context, &batch);
+        if means.len() != compared.len() {
+            return None;
+        }
+        let objective = |at: usize| {
+            let fact = &facts[compared[at]];
+            let total = means[at] * batch[at].chars().count() as f32;
+            let leading = if at == 0 { LEADER_BONUS } else { 0.0 };
+            total + ENGINE_WEIGHT * (fact.score + fact.channel - fact.personal)
+                - CHANNEL_WEIGHT * fact.channel
+                + PERSONAL_WEIGHT * fact.personal
+                + leading
+        };
+        let best = (0..compared.len()).max_by(|&a, &b| objective(a).total_cmp(&objective(b)))?;
+        (best != 0).then_some(compared[best])
     }
 
     fn decide_inner_with_margin(
@@ -173,20 +246,17 @@ impl Rerank {
         )
     }
 
-    /// 停顿重排:精确首位在上下文明确时给模糊候选让位。
-    ///
-    /// `decide` 在首条是可信精确命中时直接放弃;这里补一条受控通道:只有
-    /// 后置的模糊候选在 25M 模型下领先超过 [`SETTLE_OVERRIDE_MARGIN`] 才改。
-    /// 调用方只应在静默停顿、未翻页、未移动高亮且组合仍活跃时使用。
+    /// 停顿重排。有上文时与 8M 用同一个目标,只是模型更大;没有上文时模型只能比字频,
+    /// 精确首位不动,也不让给改动过的读法(开发呢 → 开发了),短句要明显领先
+    /// (市场吗 → 市场买)才换。调用方只应在静默停顿、未翻页、未移动高亮且组合仍活跃时使用。
     pub fn decide_settled(
         &mut self,
         context: &str,
         texts: &[&str],
         facts: &[Fact],
-        fuzzy: &[bool],
     ) -> Option<usize> {
         let started = Instant::now();
-        let result = self.decide_settled_inner(context, texts, facts, fuzzy);
+        let result = self.decide_settled_inner(context, texts, facts);
         self.metrics.record(started.elapsed());
         result
     }
@@ -196,54 +266,37 @@ impl Rerank {
         context: &str,
         texts: &[&str],
         facts: &[Fact],
-        fuzzy: &[bool],
     ) -> Option<usize> {
-        if texts.len() != facts.len() || texts.len() != fuzzy.len() {
-            return None;
+        if !context.is_empty() {
+            return self.decide_in_context(context, texts, facts);
         }
         let leader = facts.first()?;
-        if !leader.trusted_dictionary_hit || !leader.answers_key {
-            // 25M 比 8M 准,首位不是可信整键命中时保留它原有的完整决策,
-            // 不套用同步重排的门槛。没有上文时模型只能比字频:精确首位不让给模糊
-            // 候选(开发呢 → 开发了),短句也要明显领先(市场吗 → 市场买)才换。
-            if !context.is_empty() {
-                return self.decide_inner_with_margin(context, texts, facts, 0.0);
-            }
-            let mut exact = facts.to_vec();
-            if !fuzzy.first().copied().unwrap_or(false) {
-                for (fact, _) in exact.iter_mut().zip(fuzzy).filter(|(_, fuzzy)| **fuzzy) {
-                    fact.answers_key = false;
-                }
-            }
-            let short = texts
-                .first()
-                .is_some_and(|text| text.chars().count() <= SHORT_CHARS);
-            let margin = if short { SHORT_MARGIN } else { 0.0 };
-            return self.decide_inner_with_margin(context, texts, &exact, margin);
-        }
-        if context.is_empty() {
+        if leader.trusted_dictionary_hit || !leader.answers_key {
             return None;
         }
-        let scores = self.scores(context, texts);
-        if scores.len() != texts.len() {
-            return None;
-        }
-        let mut best = 0;
-        // 模糊候选要赢过所有整键候选才算:「第」后打 si,分最高的是精确的「四」,
-        // 不能因为「是」赢了首位的「死」就把它提上来。
-        for (index, &score) in scores.iter().enumerate().take(9) {
-            if facts[index].answers_key && score > scores[best] {
-                best = index;
-            }
-        }
-        (fuzzy[best] && best != 0 && scores[best] - scores[0] >= SETTLE_OVERRIDE_MARGIN)
-            .then_some(best)
+        let short = texts
+            .first()
+            .is_some_and(|text| text.chars().count() <= SHORT_CHARS);
+        let margin = if short { SHORT_MARGIN } else { 0.0 };
+        self.decide_inner_with_margin(context, texts, &same_reading(facts), margin)
     }
 
     /// 每条候选的每字符平均对数概率,按输入顺序返回。评测与诊断用。
     pub fn scores(&mut self, context: &str, texts: &[&str]) -> Vec<f32> {
         self.inner.log_probabilities(context, texts)
     }
+}
+
+/// 没有上文时模型只能比字频,不凭它把没改动过的首位换成改动过的读法。
+fn same_reading(facts: &[Fact]) -> Vec<Fact> {
+    let edited = facts.first().is_some_and(|fact| fact.edited);
+    facts
+        .iter()
+        .map(|fact| Fact {
+            answers_key: fact.answers_key && (edited || !fact.edited),
+            ..*fact
+        })
+        .collect()
 }
 
 pub mod settle {

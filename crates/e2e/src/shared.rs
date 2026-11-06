@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Engine, Fuzzy, Key};
+use lueying_engine::{Candidate, Engine, Fuzzy, Key};
 use lueying_rerank::Rerank;
 
 use crate::bench;
@@ -22,15 +22,19 @@ const COLUMNS: &str = "category\tinput\texpected\trank\ttop1\tms\t\
     rank_8m\trank_settled\ttop1_settled\tpool_rank\tpool_len\tms_8m\tms_25m\tpicks\tpages";
 /// 逐段选词的上限,足够覆盖语料里最长的句子。
 const MAX_PICKS: usize = 16;
+/// 特征导出的候选数:短输入看得更深,整句只看前面几条。
+const FEATURE_CANDS_SHORT: usize = 32;
+const FEATURE_CANDS_LONG: usize = 12;
+const FEATURE_SHORT_BYTES: usize = 12;
 
-struct Case<'a> {
-    category: &'a str,
-    input: &'a str,
-    expected: &'a str,
-    context: &'a str,
+pub(crate) struct Case<'a> {
+    pub(crate) category: &'a str,
+    pub(crate) input: &'a str,
+    pub(crate) expected: &'a str,
+    pub(crate) context: &'a str,
 }
 
-fn cases(corpus: &'static str) -> (Vec<Case<'static>>, usize) {
+pub(crate) fn cases(corpus: &'static str) -> (Vec<Case<'static>>, usize) {
     let mut rows = Vec::new();
     let mut malformed = 0;
     for line in corpus.lines() {
@@ -60,7 +64,7 @@ fn escape(text: &str) -> String {
 }
 
 /// 与 `bench::eval_texts` 同口径的候选排名:快捷项与固定项不占名额。
-fn rank_of(engine: &Engine, expected: &str) -> i64 {
+pub(crate) fn rank_of(engine: &Engine, expected: &str) -> i64 {
     bench::eval_texts(engine)
         .into_iter()
         .position(|text| bench::matches_normalized(text, expected))
@@ -126,11 +130,13 @@ struct Outcome {
     ms_25m: f64,
     picks: i64,
     pages: i64,
+    /// 重排前每条整键候选的特征行,离线拟合重排权重用。
+    features: Vec<String>,
 }
 
 /// 还原产品链路:8M 逐键同步、25M 停顿。快捷与置顶候选的位置由插入顺序决定,
 /// 产品直接跳过重排,这里也一样。返回 8M 名次与两个模型的耗时。
-fn apply_rerank(
+pub(crate) fn apply_rerank(
     engine: &mut Engine,
     four: &mut Rerank,
     five: &mut Rerank,
@@ -146,7 +152,7 @@ fn apply_rerank(
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    // 与 `lueying_session::decide_sync` 一致:没有上文就跳过。
+    // 与 `lueying_session::sync_worthwhile` 同一门控:没有上文就跳过。
     let promote = (!snap.context.is_empty())
         .then(|| four.decide(&snap.context, &texts, &snap.facts))
         .flatten();
@@ -159,7 +165,7 @@ fn apply_rerank(
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let promote = five.decide_settled(&snap.context, &texts, &snap.facts);
     let ms_25m = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {
         engine.promote(index);
@@ -173,6 +179,7 @@ fn run_chunk(
     dict: &Arc<Dictionary>,
     gram: &Option<Arc<Gram>>,
     models: Option<&Models>,
+    features: bool,
 ) -> Vec<Outcome> {
     let mut engine = bench::make_engine(dict, gram, Fuzzy::auto());
     // 成本模拟要真的选词,不关学习的话前面的用例会抬高后面的答案。
@@ -209,6 +216,20 @@ fn run_chunk(
             .position(|text| bench::matches_normalized(text, &expected))
             .map_or(-1, |at| at as i64);
         let pool_len = pool.len();
+        let limit = if case.input.len() <= FEATURE_SHORT_BYTES {
+            FEATURE_CANDS_SHORT
+        } else {
+            FEATURE_CANDS_LONG
+        };
+        let listed: Vec<(usize, Candidate)> = engine
+            .candidates_detailed()
+            .iter()
+            .enumerate()
+            .filter(|(_, cand)| !cand.no_learn && !cand.quick && cand.full)
+            .take(limit)
+            .map(|(at, cand)| (at, cand.clone()))
+            .collect();
+        let context = crate::rerank::snapshot(&engine).context;
         let (rank_8m, ms_8m, ms_25m) = match (four.as_mut(), five.as_mut()) {
             (Some(four), Some(five)) => apply_rerank(&mut engine, four, five, &expected),
             _ => (rank, 0.0, 0.0),
@@ -218,6 +239,12 @@ fn run_chunk(
             .map_or(String::new(), |text| (*text).to_string());
         let rank_settled = rank_of(&engine, &expected);
         let (picks, pages) = input_cost(&mut engine, &expected);
+        let features = match (four.as_mut(), five.as_mut()) {
+            (Some(four), Some(five)) if features => {
+                feature_rows(case, &expected, &context, &listed, four, five)
+            }
+            _ => Vec::new(),
+        };
         out.push(Outcome {
             rank,
             top1,
@@ -231,9 +258,49 @@ fn run_chunk(
             ms_25m,
             picks,
             pages,
+            features,
         });
     }
     out
+}
+
+/// 每条候选一行:引擎给的事实加两个模型的每字平均对数概率。
+fn feature_rows(
+    case: &Case,
+    expected: &str,
+    context: &str,
+    listed: &[(usize, Candidate)],
+    four: &mut Rerank,
+    five: &mut Rerank,
+) -> Vec<String> {
+    let texts: Vec<&str> = listed.iter().map(|(_, cand)| cand.text.as_str()).collect();
+    let (lm8, lm25) = (four.scores(context, &texts), five.scores(context, &texts));
+    listed
+        .iter()
+        .zip(lm8.iter().zip(&lm25))
+        .map(|((at, cand), (lm8, lm25))| {
+            format!(
+                "{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}",
+                case.category,
+                escape(case.input),
+                escape(expected),
+                at,
+                escape(&cand.text),
+                cand.score,
+                cand.channel,
+                cand.edits,
+                u8::from(cand.trusted),
+                u8::from(cand.sentence),
+                u8::from(cand.correction),
+                u8::from(cand.completion),
+                cand.freq,
+                cand.words.len(),
+                lm8,
+                lm25,
+                context.chars().count(),
+            )
+        })
+        .collect()
 }
 
 /// 跑一份语料的第 `shard.0` 片(共 `shard.1` 片),返回失败数。
@@ -265,12 +332,16 @@ pub fn run(
         .map_or(1, usize::from)
         .max(1);
     let chunk_size = picked.len().div_ceil(threads).max(1);
+    // 私有语料的文字不能离开加密文件,不导出特征。
+    let features = !name.starts_with("eval-private");
     let dict_ref = &dict;
     let gram_ref = &gram;
     let outcomes: Vec<Vec<Outcome>> = std::thread::scope(|scope| {
         let handles: Vec<_> = picked
             .chunks(chunk_size)
-            .map(|chunk| scope.spawn(move || run_chunk(chunk, dict_ref, gram_ref, models)))
+            .map(|chunk| {
+                scope.spawn(move || run_chunk(chunk, dict_ref, gram_ref, models, features))
+            })
             .collect();
         handles
             .into_iter()
@@ -279,11 +350,16 @@ pub fn run(
     });
 
     let mut tsv = String::new();
+    let mut feat = String::new();
     let _ = writeln!(tsv, "# schema={SCHEMA}");
     let _ = writeln!(tsv, "# engine=lueying {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(tsv, "# corpus={name}");
     let _ = writeln!(tsv, "# kind=items\n{COLUMNS}");
     for (case, item) in picked.iter().zip(outcomes.into_iter().flatten()) {
+        for row in &item.features {
+            feat.push_str(row);
+            feat.push('\n');
+        }
         let _ = writeln!(
             tsv,
             "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}",
@@ -309,6 +385,9 @@ pub fn run(
         .and_then(|()| std::fs::write(&path, tsv))
         .map_err(|error| eprintln!("写 {path} 失败: {error}"))
         .is_ok();
+    if features {
+        let _ = std::fs::write(format!("target/bench/{name}.{at}.feat"), feat);
+    }
     println!("{path}: {} 条", picked.len());
     usize::from(malformed > 0) + usize::from(picked.is_empty()) + usize::from(!written)
 }

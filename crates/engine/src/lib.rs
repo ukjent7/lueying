@@ -10,19 +10,20 @@
 //! 文件布局:`state` 放会话、配置与候选选择,`input` 放按键状态机与上屏。
 
 mod address;
+mod channel;
 mod code;
+mod decoder;
 mod input;
 mod input_commit;
 mod input_edit;
 mod input_recompute;
+mod lexicon;
 pub mod module;
 mod punct;
 mod query;
 pub mod scheme;
-mod segment;
 mod state;
 pub mod types;
-mod typo;
 mod user;
 
 use std::sync::{Arc, RwLock};
@@ -62,7 +63,7 @@ pub struct Engine {
     /// 可选的搭配表(LYCL);缺失或损坏时整句退化为纯词频。
     gram: Option<std::sync::Arc<Gram>>,
     /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
-    gram_cache: std::collections::HashMap<(String, String, bool), f64>,
+    gram_cache: std::collections::HashMap<u64, f64>,
     user: SharedUser,
     /// 私密输入范围里关闭学习;输入本身不受影响。
     learning: bool,

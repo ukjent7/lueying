@@ -13,8 +13,8 @@ pub fn fullwidth(c: char) -> Option<char> {
 
 /// 把 ASCII 标点映射为中文标点;不在表内的返回 `None`(按键直通)。
 /// `dq_open` / `sq_open` 分别是双引号、单引号的开合状态。
-/// `after_digit` 记录刚刚输入的是 ASCII 数字:此时 `.` 保持半角,
-/// 让 `3.14`、`192.168.1.1` 这类内容不必切英文。
+/// `after_digit` 记录刚刚输入的是 ASCII 数字:此时 `.` 与 `:` 保持半角,
+/// 让 `3.14`、`192.168.1.1`、`12:00` 这类内容不必切英文。
 pub fn map(
     c: char,
     dq_open: &mut bool,
@@ -26,6 +26,7 @@ pub fn map(
         ',' => "，",
         '.' if digit_before => return None,
         '.' => "。",
+        ':' if digit_before => return None,
         '!' => "！",
         '?' => "？",
         ';' => "；",
@@ -75,4 +76,21 @@ pub fn map_with(
         return Some(text.clone());
     }
     map(c, dq_open, sq_open, after_digit).map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map;
+
+    #[test]
+    fn digit_before_keeps_decimal_and_time_marks_halfwidth() {
+        let (mut dq, mut sq) = (false, false);
+        let mut after_digit = true;
+        assert_eq!(map('.', &mut dq, &mut sq, &mut after_digit), None);
+        after_digit = true;
+        assert_eq!(map(':', &mut dq, &mut sq, &mut after_digit), None);
+        assert_eq!(map(':', &mut dq, &mut sq, &mut after_digit), Some("："));
+        after_digit = true;
+        assert_eq!(map(',', &mut dq, &mut sq, &mut after_digit), Some("，"));
+    }
 }

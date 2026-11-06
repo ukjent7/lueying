@@ -269,7 +269,7 @@ pub(crate) fn eval_texts(engine: &Engine) -> Vec<&str> {
 }
 
 /// 翻到候选所在页并点选;用于模拟用户纠正。
-fn pick(engine: &mut Engine, word: &str) -> bool {
+pub(crate) fn pick(engine: &mut Engine, word: &str) -> bool {
     let Some(index) = engine.candidates().iter().position(|c| c.as_str() == word) else {
         return false;
     };

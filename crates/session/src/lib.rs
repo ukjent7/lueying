@@ -32,8 +32,6 @@ pub struct Snapshot {
     pub texts: Vec<String>,
     /// 与候选一一对应的事实。
     pub facts: Vec<Fact>,
-    /// 与候选一一对应:是不是纠错候选。
-    pub fuzzy: Vec<bool>,
 }
 
 /// 把引擎状态同步成候选视图。
@@ -108,9 +106,13 @@ pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
             .map(|c| Fact {
                 answers_key: c.full,
                 trusted_dictionary_hit: c.trusted,
+                score: c.score as f32,
+                channel: c.channel as f32,
+                personal: c.personal as f32,
+                locked: c.learned && c.user_freq >= 2,
+                edited: c.edits > 0,
             })
             .collect(),
-        fuzzy: candidates.iter().map(|c| c.edits > 0).collect(),
     })
 }
 
@@ -147,7 +149,7 @@ pub fn decide_settled(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usi
     rerank
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .decide_settled(&snapshot.context, &texts, &snapshot.facts, &snapshot.fuzzy)
+        .decide_settled(&snapshot.context, &texts, &snapshot.facts)
 }
 
 #[cfg(test)]
@@ -202,7 +204,6 @@ mod tests {
         let expected = engine.candidates_detailed().len();
         assert_eq!(snap.texts.len(), expected);
         assert_eq!(snap.facts.len(), expected);
-        assert_eq!(snap.fuzzy.len(), expected);
     }
 
     #[test]

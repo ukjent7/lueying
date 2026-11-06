@@ -69,23 +69,21 @@ pub(crate) struct Snap {
     pub(crate) context: String,
     pub(crate) texts: Vec<String>,
     pub(crate) facts: Vec<Fact>,
-    pub(crate) fuzzy: Vec<bool>,
 }
 
+/// 与产品同一份快照逻辑;没有组合时只带上文。
 pub(crate) fn snapshot(engine: &Engine) -> Snap {
-    let context = engine.context().to_string();
-    let cands = engine.candidates_detailed();
-    Snap {
-        context,
-        texts: cands.iter().map(|c| c.text.clone()).collect(),
-        facts: cands
-            .iter()
-            .map(|c| Fact {
-                answers_key: c.full,
-                trusted_dictionary_hit: c.trusted,
-            })
-            .collect(),
-        fuzzy: cands.iter().map(|c| c.edits > 0).collect(),
+    match lueying_session::snapshot(engine) {
+        Some(snap) => Snap {
+            context: snap.context,
+            texts: snap.texts,
+            facts: snap.facts,
+        },
+        None => Snap {
+            context: engine.context().to_string(),
+            texts: Vec::new(),
+            facts: Vec::new(),
+        },
     }
 }
 
@@ -202,10 +200,12 @@ pub fn run(
         Fact {
             answers_key: true,
             trusted_dictionary_hit: true,
+            ..Fact::default()
         },
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
     ];
     push(
@@ -218,10 +218,12 @@ pub fn run(
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
     ];
     let untrusted_pick = four.decide("", &pair, &untrusted);
@@ -236,14 +238,17 @@ pub fn run(
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
         Fact {
             answers_key: false,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
     ];
     let picked = four.decide("", &short, &mixed);
@@ -257,14 +262,17 @@ pub fn run(
         Fact {
             answers_key: true,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
         Fact {
             answers_key: false,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
         Fact {
             answers_key: false,
             trusted_dictionary_hit: false,
+            ..Fact::default()
         },
     ];
     push(
@@ -351,6 +359,7 @@ pub fn run(
             .map(|c| Fact {
                 answers_key: c["answers_key"].as_bool().unwrap_or(true),
                 trusted_dictionary_hit: c["trusted_dictionary_hit"].as_bool().unwrap_or(false),
+                ..Fact::default()
             })
             .collect();
 
@@ -414,7 +423,7 @@ pub fn run(
     }
     let snap = snapshot(&fuzzy_engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts);
     let shi = fuzzy_engine
         .candidates_detailed()
         .iter()
@@ -432,7 +441,7 @@ pub fn run(
     }
     let snap = snapshot(&ordinal);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+    let promoted = five.decide_settled(&snap.context, &texts, &snap.facts);
     let shi = ordinal
         .candidates_detailed()
         .iter()
@@ -634,7 +643,7 @@ pub fn run(
         let snap = snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
         let started = Instant::now();
-        let promote = five.decide_settled(&snap.context, &texts, &snap.facts, &snap.fuzzy);
+        let promote = five.decide_settled(&snap.context, &texts, &snap.facts);
         five_ms.push(started.elapsed().as_secs_f64() * 1000.0);
         if let Some(index) = promote {
             full_ok &= engine.candidates_detailed()[index].full;

@@ -9,6 +9,7 @@ mod extensions;
 mod extwasm;
 mod features;
 mod harness;
+mod learning;
 mod metrics;
 mod modules;
 mod quick;
@@ -420,9 +421,15 @@ fn main() {
                 Ok(models) => {
                     let (dict, gram) = rerank_inputs.clone().expect("主词典刚装载");
                     let started = Instant::now();
-                    failures += rerank::run(dict, gram, &models, &mut report);
+                    failures += rerank::run(dict.clone(), gram.clone(), &models, &mut report);
                     report.push_str(&format!(
                         "\n> 神经重排耗时 {:.1}s\n",
+                        started.elapsed().as_secs_f64()
+                    ));
+                    let started = Instant::now();
+                    failures += learning::run(&dict, &gram, &models, &mut report);
+                    report.push_str(&format!(
+                        "\n> 学习基准耗时 {:.1}s\n",
                         started.elapsed().as_secs_f64()
                     ));
                 }

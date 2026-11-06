@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use lueying_dict::syllables;
 
-use crate::segment;
+use crate::channel;
 
 /// 方案声明。宿主用它展示当前方案并做配置兼容。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl Expansion {
     /// 学习键不能直接用原始串——同一句话打不打隔音符会得到两个键,换到双拼
     /// 方案后也认不出来。按音节图切片再归一化,所有方案落到同一份用户词库。
     pub fn identity(raw: &str) -> Self {
-        let segments = segment::first_path(raw);
+        let segments = channel::first_path(raw);
         let key = segments
             .iter()
             .map(|&(start, end)| syllables::canonical(&raw[start..end]))
@@ -94,7 +94,7 @@ pub trait Scheme: Send + Sync {
 
     /// 原始击键上的音节区间。默认按全拼音节图切分。
     fn segments(&self, raw: &str) -> Vec<(usize, usize)> {
-        segment::first_path(raw)
+        channel::first_path(raw)
     }
 
     /// 组合中是否接受这个符号键(如微软双拼的 `;` 与辅助码的 `` ` ``)。

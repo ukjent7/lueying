@@ -18,9 +18,5 @@ pub(crate) fn build(codes: Vec<CodeCandidate>, raw_len: usize) -> Built {
             cand
         })
         .collect();
-    Built {
-        cands,
-        safe_extend: false,
-        typing_prefix: false,
-    }
+    Built { cands }
 }
