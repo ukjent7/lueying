@@ -11,6 +11,7 @@ mod features;
 mod harness;
 mod learning;
 mod metrics;
+mod segmented;
 mod modules;
 mod quick;
 mod render;
@@ -430,6 +431,12 @@ fn main() {
                     failures += learning::run(&dict, &gram, &models, &mut report);
                     report.push_str(&format!(
                         "\n> 学习基准耗时 {:.1}s\n",
+                        started.elapsed().as_secs_f64()
+                    ));
+                    let started = Instant::now();
+                    failures += segmented::run(&dict, &gram, &models, &mut report);
+                    report.push_str(&format!(
+                        "\n> 分段语料耗时 {:.1}s\n",
                         started.elapsed().as_secs_f64()
                     ));
                 }
