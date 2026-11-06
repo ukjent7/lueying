@@ -17,6 +17,10 @@ pub enum State {
     Idle,
     Typing,
     Sleep,
+    /// 在横带里走动。
+    Walk,
+    /// 玩耍(跳、扑等),由宠物行为决定何时出现。
+    Play,
 }
 
 /// 一个状态的帧表。
@@ -65,6 +69,8 @@ pub fn parse_pack(text: &str) -> Result<Pack, String> {
             Some("idle") => State::Idle,
             Some("typing") => State::Typing,
             Some("sleep") => State::Sleep,
+            Some("walk") => State::Walk,
+            Some("play") => State::Play,
             other => return Err(at(&format!(" 未知状态 {other:?}"))),
         };
         let frame_ms: u64 = parts
@@ -118,13 +124,18 @@ impl Machine {
 
     /// 此刻应该画的帧号;动画包里没有可用的帧时返回 `None`。
     pub fn frame(&self, now_ms: u64, pack: &Pack) -> Option<usize> {
-        let clip = pack.clip(self.state(now_ms))?;
-        if clip.frames.is_empty() || clip.frame_ms == 0 {
-            return None;
-        }
-        let at = (now_ms / clip.frame_ms) as usize % clip.frames.len();
-        clip.frames.get(at).copied()
+        frame_at(self.state(now_ms), now_ms, pack)
     }
+}
+
+/// 某个状态在某时刻应该画的帧号(宠物行为直接用它)。
+pub fn frame_at(state: State, now_ms: u64, pack: &Pack) -> Option<usize> {
+    let clip = pack.clip(state)?;
+    if clip.frames.is_empty() || clip.frame_ms == 0 {
+        return None;
+    }
+    let at = (now_ms / clip.frame_ms) as usize % clip.frames.len();
+    clip.frames.get(at).copied()
 }
 
 #[cfg(test)]
@@ -188,7 +199,7 @@ mod tests {
 
     #[test]
     fn bad_manifest_lines_are_rejected_with_their_line_number() {
-        assert!(parse_pack("walk 500 0").unwrap_err().contains("第 1 行"));
+        assert!(parse_pack("fly 500 0").unwrap_err().contains("第 1 行"));
         assert!(parse_pack("idle 0 0").unwrap_err().contains("每帧毫秒"));
         assert!(parse_pack("idle 500").unwrap_err().contains("没有帧号"));
         assert!(parse_pack("idle 500 x").unwrap_err().contains("帧号"));

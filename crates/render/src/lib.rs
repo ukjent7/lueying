@@ -10,6 +10,7 @@ pub mod badge;
 pub mod command;
 pub mod paint;
 pub mod panel;
+pub mod pet;
 pub mod picker;
 pub mod spring;
 
