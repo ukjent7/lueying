@@ -25,6 +25,8 @@ const TYPO_SWAP: f64 = 0.40;
 const TYPO_NEAR_KEY: f64 = 0.60;
 const TYPO_MISSED: f64 = 0.85;
 const TYPO_EXTRA: f64 = 0.85;
+/// 远键替换:打成键盘上不相邻的字母(如 `i` 打成 `n`、`v`)。比邻键少见,代价更高。
+const TYPO_FAR: f64 = 1.2;
 /// 窗口本身已是合法音节时的额外代价:打出来的字母能读通,多半不是打错。
 const TYPO_VALID_WINDOW: f64 = 1.5;
 /// 整串能按全拼读完时的额外代价:输入完全合法,纠错只作后备。
@@ -255,6 +257,13 @@ fn slips(syllable: &str) -> Vec<(String, f64)> {
             typed[i] = key as u8;
             out.push((letters(typed), cost));
         }
+        for key in b'a'..=b'z' {
+            if key != b[i] {
+                let mut typed = b.to_vec();
+                typed[i] = key;
+                out.push((letters(typed), TYPO_FAR));
+            }
+        }
         let mut typed = b.to_vec();
         typed.remove(i);
         out.push((letters(typed), TYPO_MISSED));
@@ -430,6 +439,14 @@ mod tests {
             reads("hen", 2, "n").map(|unit| unit.cost),
             Some(ABBREV_COST)
         );
+    }
+
+    #[test]
+    fn far_key_substitution_reads_as_the_intended_syllable() {
+        // 每天的 `ei` 打成 `en`:n 与 i 不相邻,仍能读回 mei。
+        let unit = reads("mentian", 0, "mei").expect("mentian 读作 mei");
+        assert!(unit.typo);
+        assert!(unit.cost > 0.0);
     }
 
     #[test]
