@@ -11,7 +11,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::{CONTEXT_CHARS, Gram};
@@ -128,6 +127,8 @@ pub struct Built {
     pub safe_extend: bool,
     /// 当前输入是某个词典键的逐字前缀(末音节可以没打完)。
     pub typing_prefix: bool,
+    /// 这次构建的词图搜索访问次数之和。错音纠正按它计算量预算。
+    pub work: usize,
 }
 
 const CHAR_BONUS: f64 = 0.5;
@@ -487,10 +488,10 @@ struct State {
     hint: Option<String>,
 }
 
-/// 错音纠正的总预算。最长 24 键最多 400 条纠正,每条都要整图解码;
-/// 慢机器上全部跑完会把首键拖到几百毫秒。按时间截断,常见手误在前几条
-/// 就能命中,正常输入完全不受影响。
-const TYPO_BUDGET: Duration = Duration::from_millis(6);
+/// 错音纠正的计算量预算:所有纠正解码的词图访问次数之和。
+/// 最长 24 键最多 400 条纠正,每条都要整图解码;全部跑完会把首键拖到几百毫秒。
+/// 按访问次数截断而不按墙钟时间,同一输入在任何机器上的结果都一致。
+const TYPO_WORK_BUDGET: usize = 20_000;
 
 /// 一次候选构建的全部输入。字段数超过 Clippy 阈值,打包成一个结构;
 /// 错音纠正只替换 `raw`,其余输入复用。
@@ -561,14 +562,14 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     {
         return built;
     }
-    let deadline = Instant::now() + TYPO_BUDGET;
+    let mut spent = 0usize;
     // 同一手误可能对应多条可切分纠正串;保留打分最高的一条,先到先得会把
     // `hoa` 补成「哦哈」而不是「好」。分数已含词频、每词罚分与搭配分,
     // 不同纠正串之间可以直接比较。
     let mut best: Option<Built> = None;
     let mut best_score = f64::NEG_INFINITY;
     for correction in typo::corrections(raw) {
-        if Instant::now() >= deadline {
+        if spent >= TYPO_WORK_BUDGET {
             break;
         }
         if !segment::complete(&correction.text) {
@@ -587,6 +588,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
             raw: &correction.text,
             quick_trigger,
         });
+        spent += fixed.work;
         let mut kept = Vec::new();
         for mut cand in fixed.cands.drain(..) {
             if !cand.full {
