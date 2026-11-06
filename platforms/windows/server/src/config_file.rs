@@ -22,7 +22,8 @@ pub struct FileConfig {
     pub page_size: Option<usize>,
     pub chinese_punct: Option<bool>,
     pub settled_promote: Option<bool>,
-    pub fuzzy: Option<FuzzyValue>,
+    /// 模糊音已取消、始终开启;旧配置里的 `fuzzy` 只为不让整份配置解析失败而保留,值一律忽略。
+    pub fuzzy: Option<serde::de::IgnoredAny>,
     pub shift_toggle: Option<bool>,
     pub traditional: Option<bool>,
     pub traditional_region: Option<String>,
@@ -48,14 +49,6 @@ pub struct FileConfig {
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
     /// 允许所有扩展自由联网。
     pub allow_all_extension_network: Option<bool>,
-}
-
-/// `fuzzy` 接受 `true`/`false` 或 `"auto"`/`"off"`。
-#[derive(Clone, Debug, Deserialize)]
-#[serde(untagged)]
-pub enum FuzzyValue {
-    Bool(bool),
-    Mode(String),
 }
 
 /// `ui_accent` 接受下标或颜色名。
@@ -107,17 +100,8 @@ pub fn apply(
     if let Some(on) = file.settled_promote {
         cfg.settled_promote = on;
     }
-    if let Some(fuzzy) = file.fuzzy {
-        match fuzzy {
-            FuzzyValue::Bool(true) => cfg.fuzzy = lueying_engine::Fuzzy::auto(),
-            FuzzyValue::Bool(false) => cfg.fuzzy = lueying_engine::Fuzzy::off(),
-            FuzzyValue::Mode(mode) => match mode.as_str() {
-                "auto" | "on" => cfg.fuzzy = lueying_engine::Fuzzy::auto(),
-                "off" => cfg.fuzzy = lueying_engine::Fuzzy::off(),
-                _ => note(format!("fuzzy={mode} 不合法,只接受 auto/off")),
-            },
-        }
-    }
+    // 模糊音已取消、始终开启;旧配置里的 fuzzy 键不再生效。
+    let _ = file.fuzzy;
     if let Some(on) = file.shift_toggle {
         cfg.shift_toggle = on;
     }
@@ -328,7 +312,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         page_size: cfg.page_size,
         chinese_punct: cfg.chinese_punct,
         settled_promote: cfg.settled_promote,
-        fuzzy: if cfg.fuzzy.is_off() { "off" } else { "auto" },
         shift_toggle: cfg.shift_toggle,
         traditional: cfg.traditional,
         traditional_region: cfg.region.as_str(),
@@ -363,7 +346,6 @@ struct SaveFile<'a> {
     page_size: usize,
     chinese_punct: bool,
     settled_promote: bool,
-    fuzzy: &'static str,
     shift_toggle: bool,
     traditional: bool,
     traditional_region: &'static str,

@@ -133,7 +133,6 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
             let _ = ui.hide();
         }
         Action::Save => with(core, actions::save),
-        Action::ResetFuzzy => with(core, actions::reset_fuzzy),
         Action::OpenScripts => with(core, actions::open_scripts),
         Action::ImportLuext => with(core, actions::import_luext),
         Action::ApproveExtension => with(core, actions::approve_extension),

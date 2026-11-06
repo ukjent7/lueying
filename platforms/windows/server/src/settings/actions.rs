@@ -88,16 +88,6 @@ pub fn save(settings: &mut Settings) {
     }
 }
 
-/// 重置模糊音统计。
-pub fn reset_fuzzy(settings: &mut Settings) {
-    match call(&Request::ResetFuzzy) {
-        Some(reply) => {
-            settings.groups = reply.groups;
-            settings.say(Notice::Success, "已重置模糊音组统计");
-        }
-        None => settings.say(Notice::Error, "输入法服务未运行,启动后再试"),
-    }
-}
 
 /// 清空用户词库:要点两次,防误触。
 pub fn clear_user(settings: &mut Settings) {

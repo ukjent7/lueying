@@ -212,23 +212,10 @@ impl Settings {
     fn setting_row(&self, def: &SettingDef, colors: &PageColors) -> Row {
         let ui = def.ui.as_ref().expect("setting_row 只接受有界面的设置");
         let control = match &ui.control {
-            ControlDef::Toggle { id, get, .. } => {
-                let control_id = Id::new(*id, 0);
-                let on = get(&self.cfg);
-                match def.key {
-                    "fuzzy" => Control::ButtonsToggle {
-                        items: vec![Button {
-                            id: Id::new(ids::RESET_FUZZY, 0),
-                            text: "重置".to_string(),
-                            kind: ButtonKind::Ghost,
-                            enabled: self.reset_enabled(),
-                        }],
-                        toggle: control_id,
-                        toggle_on: on,
-                    },
-                    _ => Control::Toggle { id: control_id, on },
-                }
-            }
+            ControlDef::Toggle { id, get, .. } => Control::Toggle {
+                id: Id::new(*id, 0),
+                on: get(&self.cfg),
+            },
             ControlDef::Segment {
                 id,
                 choices,
@@ -257,7 +244,6 @@ impl Settings {
         Row {
             label: def.title.to_string(),
             detail: match def.key {
-                "fuzzy" => self.fuzzy_detail(),
                 "ocr_engine" => self.ocr_detail(),
                 _ => def.detail.to_string(),
             },
@@ -599,22 +585,6 @@ impl Settings {
             Notice::Success => colors.notice_success,
             Notice::Error => colors.notice_error,
             Notice::None | Notice::Info => colors.notice_info,
-        }
-    }
-
-    /// 模糊音那行的说明:已经适应了哪几组就写哪几组。
-    fn fuzzy_detail(&self) -> String {
-        let adapted = self
-            .groups
-            .iter()
-            .filter(|(_, count)| *count > 0)
-            .map(|(name, count)| format!("{name} ×{count}"))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        if adapted.is_empty() {
-            "按输入习惯学习模糊音".to_string()
-        } else {
-            adapted
         }
     }
 

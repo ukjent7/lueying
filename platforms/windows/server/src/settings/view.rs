@@ -40,8 +40,6 @@ pub mod ids {
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
-    pub const RESET_FUZZY: &str = "reset-fuzzy";
-    pub const FUZZY: &str = "fuzzy";
     pub const PHRASES: &str = "phrases";
     pub const PUNCT: &str = "punct";
     pub const APPS: &str = "apps";
@@ -288,7 +286,6 @@ pub enum Action {
     ExportUser,
     ClearUser,
     Diagnostics,
-    ResetFuzzy,
 }
 
 /// 设置窗的状态:配置 + 服务端回来的东西 + 提示。
@@ -381,11 +378,6 @@ impl Settings {
             None => self.cfg.extensions.clear(),
         }
         self.clear_notice();
-    }
-
-    /// 模糊音统计有没有内容可重置。
-    pub fn reset_enabled(&self) -> bool {
-        self.groups.iter().any(|(_, count)| *count > 0)
     }
 
     /// 点一下控件:能改配置的直接改,改不了的交给平台侧。
@@ -503,7 +495,6 @@ impl Settings {
             ids::EXPORT_USER => Some(Action::ExportUser),
             ids::CLEAR_USER => Some(Action::ClearUser),
             ids::DIAGNOSTICS => Some(Action::Diagnostics),
-            ids::RESET_FUZZY => Some(Action::ResetFuzzy),
             ids::CLOSE => Some(Action::Close),
             ids::SAVE => Some(Action::Save),
             _ => None,

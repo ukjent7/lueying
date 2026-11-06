@@ -294,18 +294,6 @@ fn predict_set(cfg: &mut AppConfig, value: bool) {
     cfg.predict = value;
 }
 
-fn fuzzy_get(cfg: &AppConfig) -> bool {
-    !cfg.fuzzy.is_off()
-}
-
-fn fuzzy_set(cfg: &mut AppConfig, value: bool) {
-    cfg.fuzzy = if value {
-        lueying_engine::Fuzzy::auto()
-    } else {
-        lueying_engine::Fuzzy::off()
-    };
-}
-
 fn scheme_get(cfg: &AppConfig) -> usize {
     SchemeId::ALL
         .iter()
@@ -754,19 +742,6 @@ pub static SETTINGS: &[SettingDef] = &[
             page: PageId::Candidate,
             keywords: "联想 预测 下一词",
             control: toggle(ids::PREDICT, predict_get, predict_set),
-            visible: always,
-        }),
-    },
-    SettingDef {
-        key: "fuzzy",
-        title: "自动模糊音",
-        detail: "按输入习惯学习模糊音",
-        value: ValueType::Enum(&["auto", "off"]),
-        default: DefaultValue::Text("auto"),
-        ui: Some(UiDef {
-            page: PageId::Candidate,
-            keywords: "模糊音 容错 拼音",
-            control: toggle(ids::FUZZY, fuzzy_get, fuzzy_set),
             visible: always,
         }),
     },
