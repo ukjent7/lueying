@@ -3462,6 +3462,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-input-method-kit",
  "objc2-quartz-core 0.3.2",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]

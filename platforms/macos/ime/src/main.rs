@@ -6,6 +6,8 @@
 #[cfg(target_os = "macos")]
 mod app;
 #[cfg(target_os = "macos")]
+mod config;
+#[cfg(target_os = "macos")]
 mod candidate;
 #[cfg(target_os = "macos")]
 mod canvas;

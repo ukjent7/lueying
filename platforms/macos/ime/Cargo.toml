@@ -18,6 +18,8 @@ lueying-rerank.workspace = true
 # 会话内核:候选视图同步与重排快照,与 Windows 宿主共用同一份。
 lueying-session.workspace = true
 objc2 = "0.6.5"
+# 用户配置文件:只读引擎层的键,格式与 Windows 的 config.toml 相同。
+toml = "1.1"
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSArray",

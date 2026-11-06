@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
+use lueying_engine::{Engine, Event, Key, SharedUser, UserDict};
 use lueying_protocol::SessionView;
 use lueying_rerank::{Model, Rerank};
 use objc2::Message;
@@ -29,7 +29,7 @@ pub struct Session {
 impl Session {
     pub fn new() -> Self {
         let dictionary = shared_dictionary();
-        let mut engine = Engine::new(dictionary, Config::default());
+        let mut engine = Engine::new(dictionary, crate::config::load());
         if let Some(gram) = shared_gram() {
             engine = engine.with_gram(gram);
         }
