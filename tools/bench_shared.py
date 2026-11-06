@@ -277,13 +277,13 @@ STAGES = {"engine": "rank", "8m": "rank_8m", "settled": "rank_settled"}
 POOLS = (9, 32, 64, 128)
 # 每类的最低线:只防整条链路系统性退步,按引擎层算,数值与全量基准的外部下限一致。
 GATES = {"daily": (85.0, 90.0), "frost": (65.0, 80.0), "hard": (50.0, 75.0), "context": (60.0, 80.0)}
-# 核心场景(按产品真正面对的打法):全拼、词级简拼与混打、整句混打、usermix/fuzzy/typo 压力集。
+# 核心场景(按产品真正面对的打法):全拼、词级简拼与混打、整句混打、分段(chunk)与模糊音、手误压力集。
 # 纯声母整句不计入:不是核心打法,只记录。
 CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", "clause-mixed-",
-                 "usermix-", "fuzzy-", "typo-")
+                 "chunk-", "fuzzy-", "typo-")
 EXCLUDED_FROM_CORE = ("clause-initials-",)
 # 干净全拼用例:打得准的部分,首选准确率不能低于基线(见 --baseline)。
-CLEAN_PREFIXES = ("clause-full-", "word-full-")
+CLEAN_PREFIXES = ("clause-full-", "word-full-", "chunk-full-")
 
 
 def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]:
