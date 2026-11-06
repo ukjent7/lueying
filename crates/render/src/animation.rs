@@ -1,29 +1,12 @@
-//! 候选窗上的小动画:状态表与状态机,平台无关。
+//! 动画包:命名的帧序列,平台无关。
 //!
-//! 动画包由宿主解析成 [`Pack`]:每个状态是一串帧,帧号指向平台侧按序号持有的图片,
-//! 同一状态里每帧时长相同。[`Machine`] 只回答两件事:现在是什么状态、现在该画哪一帧。
-//! 按键与时间由宿主喂进来,这里不读时钟,便于测试。宠物只是一种动画包,不是特例。
+//! 动画包由宿主解析成 [`Pack`]:每个片段有一个名字(由皮肤或扩展自己起,如 `idle`、`walk`、
+//! `wiggle`),是一串帧;帧号指向平台侧按序号持有的图片;同一片段里每帧时长相同。
+//! 行为模型只引用片段的名字,不关心画的是什么。
 
 use std::collections::BTreeMap;
 
-/// 一次按键后这段时间内算「打字」。
-pub const TYPING_MS: u64 = 1_200;
-/// 超过这段时间没有按键就进入「休眠」。
-pub const SLEEP_MS: u64 = 60_000;
-
-/// 动画状态。输入法只区分这三种,宠物与其它皮肤共用。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum State {
-    Idle,
-    Typing,
-    Sleep,
-    /// 在横带里走动。
-    Walk,
-    /// 玩耍(跳、扑等),由宠物行为决定何时出现。
-    Play,
-}
-
-/// 一个状态的帧表。
+/// 一个片段的帧表。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Clip {
     /// 帧号,按播放顺序排列;平台侧用它查图片。
@@ -32,30 +15,27 @@ pub struct Clip {
     pub frame_ms: u64,
 }
 
-/// 动画包:各状态的帧表。缺少的状态回退到待机。
+/// 动画包:片段名字到帧表。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pack {
-    clips: BTreeMap<State, Clip>,
+    clips: BTreeMap<String, Clip>,
 }
 
 impl Pack {
-    pub fn new(clips: impl IntoIterator<Item = (State, Clip)>) -> Self {
+    pub fn new(clips: impl IntoIterator<Item = (String, Clip)>) -> Self {
         Self {
             clips: clips.into_iter().collect(),
         }
     }
 
-    /// 某个状态的帧表;该状态缺失时用待机的。
-    pub fn clip(&self, state: State) -> Option<&Clip> {
-        self.clips
-            .get(&state)
-            .or_else(|| self.clips.get(&State::Idle))
+    /// 按名字取片段;没有这个名字时返回 `None`。
+    pub fn clip(&self, name: &str) -> Option<&Clip> {
+        self.clips.get(name)
     }
 }
 
-/// 解析动画包清单。每行一个状态:`<状态> <每帧毫秒> <帧号>...`,
-/// 状态是 `idle`、`typing`、`sleep` 之一;`#` 开头的行与空行忽略。
-/// 帧号对应动画包目录里的图片文件名(`<帧号>.png`),由宿主去读。
+/// 解析动画包清单。每行一个片段:`<名字> <每帧毫秒> <帧号>...`。
+/// `#` 开头的行与空行忽略;帧号对应动画包目录里的图片文件名(`<帧号>.png`),由宿主去读。
 pub fn parse_pack(text: &str) -> Result<Pack, String> {
     let mut clips = BTreeMap::new();
     for (line_no, line) in text.lines().enumerate() {
@@ -65,14 +45,7 @@ pub fn parse_pack(text: &str) -> Result<Pack, String> {
         }
         let at = |message: &str| format!("清单第 {} 行{message}", line_no + 1);
         let mut parts = line.split_whitespace();
-        let state = match parts.next() {
-            Some("idle") => State::Idle,
-            Some("typing") => State::Typing,
-            Some("sleep") => State::Sleep,
-            Some("walk") => State::Walk,
-            Some("play") => State::Play,
-            other => return Err(at(&format!(" 未知状态 {other:?}"))),
-        };
+        let name = parts.next().ok_or_else(|| at(" 缺少片段名字"))?.to_string();
         let frame_ms: u64 = parts
             .next()
             .and_then(|text| text.parse().ok())
@@ -84,53 +57,16 @@ pub fn parse_pack(text: &str) -> Result<Pack, String> {
         if frames.is_empty() {
             return Err(at(" 没有帧号"));
         }
-        if clips.insert(state, Clip { frames, frame_ms }).is_some() {
-            return Err(at(" 同一状态重复定义"));
+        if clips.insert(name, Clip { frames, frame_ms }).is_some() {
+            return Err(at(" 同一片段重复定义"));
         }
     }
     Ok(Pack { clips })
 }
 
-/// 状态机:记住最后一次按键的时间,按空闲时长切换状态。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Machine {
-    last_key_ms: u64,
-}
-
-impl Machine {
-    /// 创建时视为刚刚有过输入,从待机开始。
-    pub fn new(now_ms: u64) -> Self {
-        Self {
-            last_key_ms: now_ms,
-        }
-    }
-
-    /// 有按键时调用。
-    pub fn key(&mut self, now_ms: u64) {
-        self.last_key_ms = now_ms;
-    }
-
-    /// 此刻的状态。
-    pub fn state(&self, now_ms: u64) -> State {
-        let idle = now_ms.saturating_sub(self.last_key_ms);
-        if idle < TYPING_MS {
-            State::Typing
-        } else if idle < SLEEP_MS {
-            State::Idle
-        } else {
-            State::Sleep
-        }
-    }
-
-    /// 此刻应该画的帧号;动画包里没有可用的帧时返回 `None`。
-    pub fn frame(&self, now_ms: u64, pack: &Pack) -> Option<usize> {
-        frame_at(self.state(now_ms), now_ms, pack)
-    }
-}
-
-/// 某个状态在某时刻应该画的帧号(宠物行为直接用它)。
-pub fn frame_at(state: State, now_ms: u64, pack: &Pack) -> Option<usize> {
-    let clip = pack.clip(state)?;
+/// 某个片段在某时刻应该画的帧号;片段缺失或没有可用的帧时返回 `None`。
+pub fn frame_at(name: &str, now_ms: u64, pack: &Pack) -> Option<usize> {
+    let clip = pack.clip(name)?;
     if clip.frames.is_empty() || clip.frame_ms == 0 {
         return None;
     }
@@ -145,16 +81,16 @@ mod tests {
     fn pack() -> Pack {
         Pack::new([
             (
-                State::Idle,
+                "idle".to_string(),
                 Clip {
                     frames: vec![0, 1],
                     frame_ms: 500,
                 },
             ),
             (
-                State::Typing,
+                "wiggle".to_string(),
                 Clip {
-                    frames: vec![2],
+                    frames: vec![2, 3, 4],
                     frame_ms: 100,
                 },
             ),
@@ -162,44 +98,21 @@ mod tests {
     }
 
     #[test]
-    fn keys_switch_to_typing_then_back_to_idle_then_sleep() {
-        let mut machine = Machine::new(0);
-        assert_eq!(machine.state(0), State::Typing);
-        machine.key(10_000);
-        assert_eq!(machine.state(10_000 + TYPING_MS - 1), State::Typing);
-        assert_eq!(machine.state(10_000 + TYPING_MS), State::Idle);
-        assert_eq!(machine.state(10_000 + SLEEP_MS), State::Sleep);
-    }
-
-    #[test]
-    fn frames_cycle_at_each_clip_rate() {
-        let machine = Machine::new(0);
-        let pack = pack();
-        assert_eq!(machine.frame(TYPING_MS, &pack), Some(0));
-        assert_eq!(machine.frame(TYPING_MS + 500, &pack), Some(1));
-        assert_eq!(machine.frame(TYPING_MS + 1_000, &pack), Some(0));
-    }
-
-    #[test]
-    fn manifest_lines_become_clips() {
-        let pack =
-            parse_pack("# 小宠物\nidle 500 0 1\ntyping 100 2\n\nsleep 1000 3\n").expect("清单合法");
+    fn manifest_lines_name_their_clips() {
+        let pack = parse_pack("# 小宠物\nidle 500 0 1\n\nmy-dance 100 2\n").expect("清单合法");
         assert_eq!(
-            pack.clip(State::Typing),
+            pack.clip("my-dance"),
             Some(&Clip {
                 frames: vec![2],
                 frame_ms: 100
             })
         );
-        assert_eq!(
-            pack.clip(State::Sleep).map(|clip| clip.frames.clone()),
-            Some(vec![3])
-        );
+        assert_eq!(pack.clip("walk"), None);
     }
 
     #[test]
     fn bad_manifest_lines_are_rejected_with_their_line_number() {
-        assert!(parse_pack("fly 500 0").unwrap_err().contains("第 1 行"));
+        assert!(parse_pack("idle").unwrap_err().contains("第 1 行"));
         assert!(parse_pack("idle 0 0").unwrap_err().contains("每帧毫秒"));
         assert!(parse_pack("idle 500").unwrap_err().contains("没有帧号"));
         assert!(parse_pack("idle 500 x").unwrap_err().contains("帧号"));
@@ -211,16 +124,25 @@ mod tests {
     }
 
     #[test]
-    fn missing_state_falls_back_to_idle_and_empty_clips_draw_nothing() {
+    fn frames_cycle_at_each_clip_rate() {
         let pack = pack();
-        assert_eq!(pack.clip(State::Sleep), pack.clip(State::Idle));
+        assert_eq!(frame_at("idle", 0, &pack), Some(0));
+        assert_eq!(frame_at("idle", 500, &pack), Some(1));
+        assert_eq!(frame_at("idle", 1_000, &pack), Some(0));
+        assert_eq!(frame_at("wiggle", 250, &pack), Some(4));
+    }
+
+    #[test]
+    fn missing_clips_and_empty_clips_draw_nothing() {
+        let pack = pack();
+        assert_eq!(frame_at("sleep", 0, &pack), None);
         let empty = Pack::new([(
-            State::Idle,
+            "idle".to_string(),
             Clip {
                 frames: Vec::new(),
                 frame_ms: 500,
             },
         )]);
-        assert_eq!(Machine::new(0).frame(0, &empty), None);
+        assert_eq!(frame_at("idle", 0, &empty), None);
     }
 }
