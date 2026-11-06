@@ -47,8 +47,7 @@ fn parse(text: &str) -> Config {
     if let Some(punct) = table.get("punct").and_then(Value::as_table) {
         for (key, value) in punct {
             let mut chars = key.chars();
-            if let (Some(c), None, Some(replacement)) =
-                (chars.next(), chars.next(), value.as_str())
+            if let (Some(c), None, Some(replacement)) = (chars.next(), chars.next(), value.as_str())
             {
                 cfg.punct.insert(c, replacement.to_string());
             }
