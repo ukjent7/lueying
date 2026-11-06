@@ -192,7 +192,9 @@ fn fuzzy_penalty(edits: usize, groups: u8) -> f64 {
         .iter()
         .enumerate()
         .filter(|(bit, _)| groups & (1 << *bit) != 0)
-        .fold((0.0, 0u32), |(sum, count), (_, cost)| (sum + cost, count + 1));
+        .fold((0.0, 0u32), |(sum, count), (_, cost)| {
+            (sum + cost, count + 1)
+        });
     if count == 0 {
         return FUZZY_PENALTY * edits as f64;
     }
