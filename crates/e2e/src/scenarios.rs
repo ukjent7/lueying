@@ -527,6 +527,20 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
+            "英文同键:bin 第二,选两次升到首位",
+            false,
+            vec![
+                stage(
+                    l("bin"),
+                    vec![Check::Top("斌".into()), Check::Contains("bin".into())],
+                ),
+                stage(vec![Key::Digit(2)], vec![commits(&["bin"])]),
+                stage(l("bin"), vec![Check::Top("斌".into())]),
+                stage(vec![Key::Digit(2)], vec![commits(&["bin"])]),
+                stage(l("bin"), vec![Check::Top("bin".into())]),
+            ],
+        ),
+        s(
             "简拼首字母模糊:lh→你好",
             false,
             vec![

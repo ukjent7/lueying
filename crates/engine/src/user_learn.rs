@@ -575,6 +575,14 @@ impl UserDict {
         self.rev = self.rev.wrapping_add(1);
     }
 
+    /// 同键下用户选过 `word` 的次数(不衰减)。英文候选据此决定是否升到首位。
+    pub fn picks(&self, key: &str, word: &str) -> u32 {
+        self.map
+            .get(key)
+            .and_then(|entries| entries.iter().find(|entry| entry.word == word))
+            .map_or(0, |entry| entry.freq)
+    }
+
     /// 同键下的跳过负分,按上文区分:只算这段上文里的跳过。句首(没有中文上文)
     /// 记下的跳过对所有上文都算,与词频的规则一致。
     pub(crate) fn reject_penalty_in(&self, left: char, key: &str, word: &str) -> f64 {

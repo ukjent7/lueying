@@ -1,7 +1,8 @@
 //! 中文态英文混输模块:非拼音串给出英文词候选,保留专名大小写。
 //!
-//! 只补一个候选,不改中文排序。英文不是用户词:不学习、不造词,也不参与
-//! 模型重排。半截拼音已有中文候选时不出原文,避免 `nih` 把内联显示顶成字母。
+//! 只补一个候选,不改中文的相对顺序。英文候选可学习:用户选过几次就升到首位,
+//! 与微信一致;不造词,也不参与模型重排。半截拼音已有中文候选时不出原文,
+//! 避免 `nih` 把内联显示顶成字母。
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -45,18 +46,27 @@ impl Module for EnglishModule {
             None if has_full || !cands.is_empty() => return,
             None => raw.to_string(),
         };
-        let mut cand = Candidate::whole(raw.len(), text, 0.0);
+        let mut cand = Candidate::whole(raw.len(), text.clone(), 0.0);
         cand.words.clear();
         cand.full = false;
         cand.hint = Some("英文".to_string());
-        cand.no_learn = true;
-        if trusted_full {
-            cands.push(cand);
+        cand.learn_key = Some(raw.to_string());
+        // 同形词若已由词库带入(学过的),这里只保留英文这一条。
+        cands.retain(|other| other.text != text);
+        // 与微信一致:中文首选可信时英文排第二;用户选过 PROMOTE_PICKS 次就升到首位。
+        let skip = cands.iter().take_while(|other| other.pinned).count();
+        let promoted = ctx.user.picks(raw, &text) >= PROMOTE_PICKS;
+        let at = if trusted_full && !promoted {
+            (skip + 1).min(cands.len())
         } else {
-            cands.insert(0, cand);
-        }
+            skip
+        };
+        cands.insert(at, cand);
     }
 }
+
+/// 英文候选被用户选中这么多次后升到首位。
+const PROMOTE_PICKS: u32 = 2;
 
 fn table() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();

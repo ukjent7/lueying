@@ -242,14 +242,15 @@ pub fn run(report: &mut String) -> usize {
     );
     let events = english.process(Key::Space);
     let exported = english.export_user();
+    // 英文选中后学在同键下,下次可以升到首位(与微信一致),但不造词进中文词条。
     push(
         &mut checks,
-        "英文上屏不学习",
+        "英文上屏学习到同键",
         events
             .iter()
             .any(|event| matches!(event, Event::Commit(text) if text == "hello"))
-            && exported.is_empty(),
-        format!("{events:?}"),
+            && exported.contains("hello\thello\t"),
+        format!("{events:?} {exported:?}"),
     );
 
     // 英文词与中文整词同形时,中文整词仍占首选:`he` 不能顶掉「和」。
