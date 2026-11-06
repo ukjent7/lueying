@@ -3518,7 +3518,6 @@ dependencies = [
  "lueying-render",
  "lueying-rerank",
  "lueying-session",
- "lueying-skinhost",
  "serde",
  "serde_json",
  "slint",
@@ -3537,10 +3536,6 @@ dependencies = [
  "lueying-protocol",
  "lueying-rerank",
 ]
-
-[[package]]
-name = "lueying-skinhost"
-version = "0.1.0"
 
 [[package]]
 name = "lueying-tsf"

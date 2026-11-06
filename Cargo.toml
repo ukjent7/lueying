@@ -23,8 +23,6 @@ members = [
     "crates/broker",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
     "crates/render",
-    # 皮肤进程守护:随输入法启动,崩溃只重启皮肤
-    "crates/skinhost",
     # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
     "platforms/windows/server",
     "platforms/windows/tsf",
@@ -67,7 +65,6 @@ lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-session = { path = "crates/session" }
-lueying-skinhost = { path = "crates/skinhost" }
 lueying-server = { path = "platforms/windows/server" }
 # Extism 运行期:插件格式、内核 ABI 与宿主函数都在这里。关掉默认特性,
 # 联网与文件注册留给宿主自己接,插件碰不到网络与磁盘。
