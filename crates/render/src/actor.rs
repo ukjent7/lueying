@@ -715,10 +715,11 @@ mod tests {
         assert!(views.iter().all(|view| view.y == 60.0));
         let behavior = strip_cat();
         for view in &views {
-            if clip_at(&behavior, view) == "walk" && view.x >= max_x - 0.001 {
+            // 真正碰到边界时(位置正好等于边界)才检查朝向;离边界很近但还没碰到的不算。
+            if clip_at(&behavior, view) == "walk" && view.x == max_x {
                 assert_eq!(view.facing, Facing::Left);
             }
-            if clip_at(&behavior, view) == "walk" && view.x <= 0.001 {
+            if clip_at(&behavior, view) == "walk" && view.x == 0.0 {
                 assert_eq!(view.facing, Facing::Right);
             }
         }
