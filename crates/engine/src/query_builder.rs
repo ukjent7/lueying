@@ -93,6 +93,30 @@ impl Builder<'_, '_> {
     }
 }
 
+/// 从按分数降序排好的路径里取前 `BEAM` 条不同文本。
+///
+/// 往后的搭配分只看文本尾部,同位置同文本的路径分差不会再变,低分的那条永远赢不了,
+/// 留着只是把别的读法挤出束。信任与词频取并集,和整句候选的去重口径一致。
+fn distinct_beam(sorted: Vec<State>) -> Vec<State> {
+    let mut at: HashMap<String, usize> = HashMap::with_capacity(BEAM);
+    let mut kept: Vec<State> = Vec::with_capacity(BEAM);
+    for state in sorted {
+        let text: String = state.path.iter().map(|step| step.0.as_str()).collect();
+        if let Some(&index) = at.get(&text) {
+            let first = &mut kept[index];
+            first.trusted |= state.trusted;
+            first.freq = first.freq.max(state.freq);
+            continue;
+        }
+        at.insert(text, kept.len());
+        kept.push(state);
+        if kept.len() == BEAM {
+            break;
+        }
+    }
+    kept
+}
+
 pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
     let BuildArgs {
         dict,
@@ -223,8 +247,7 @@ pub(crate) fn build_exact(args: BuildArgs<'_>) -> Built {
             }
         }
         cands.sort_by(|a, b| b.score.total_cmp(&a.score));
-        cands.truncate(BEAM);
-        best[j] = cands;
+        best[j] = distinct_beam(cands);
     }
 
     let mut full: Vec<Candidate> = Vec::new();
@@ -490,4 +513,53 @@ fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candid
     out.sort_by(|a, b| b.score.total_cmp(&a.score));
     out.truncate(MAX_CANDS);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(words: &[&str], score: f64) -> State {
+        State {
+            score,
+            path: words.iter().map(|w| (w.to_string(), Vec::new())).collect(),
+            trusted: false,
+            sentence: false,
+            edits: 0,
+            freq: 0,
+            groups: 0,
+            hint: None,
+        }
+    }
+
+    #[test]
+    fn distinct_beam_merges_segmentations_of_one_text() {
+        let mut whole = state(&["你好"], 1.0);
+        whole.trusted = true;
+        whole.freq = 9;
+        let kept = distinct_beam(vec![
+            state(&["你", "好"], 2.0),
+            whole,
+            state(&["拟", "好"], 0.5),
+        ]);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].path.len(), 2);
+        assert!(kept[0].trusted);
+        assert_eq!(kept[0].freq, 9);
+        assert_eq!(kept[1].path[0].0, "拟");
+    }
+
+    #[test]
+    fn distinct_beam_fills_the_beam_past_duplicates() {
+        let mut sorted = Vec::new();
+        for index in 0..BEAM + 3 {
+            let word = index.to_string();
+            let score = -(index as f64);
+            sorted.push(state(&[word.as_str()], score));
+            sorted.push(state(&[word.as_str(), ""], score - 0.5));
+        }
+        let kept = distinct_beam(sorted);
+        assert_eq!(kept.len(), BEAM);
+        assert_eq!(kept[BEAM - 1].path[0].0, (BEAM - 1).to_string());
+    }
 }
