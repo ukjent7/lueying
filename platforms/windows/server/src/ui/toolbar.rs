@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use crate::config;
+use lueying_server::config;
 use crate::imp::{State, handle};
 use crate::ui::place;
 

@@ -3,12 +3,12 @@
 //! 行为定义是数据,皮肤或扩展写出来即可,不需要代码(见 [`Behavior`])。每个状态可以带一个
 //! 标签(如「攻击」「受击」),引用动画片段的名字,可选的移动方式与停留时长。转移由触发条件
 //! 与权重决定,触发条件有六种:
-//! - [`Trigger::Timeout`]:停留时长到了;
-//! - [`Trigger::Key`]:有按键;
-//! - [`Trigger::Quiet`]:一段时间没有按键;
-//! - [`Trigger::Edge`]:行走时碰到区域边缘;
-//! - [`Trigger::Click`]:被点击;
-//! - [`Trigger::Near`]:附近有一个带某个标签的角色。
+//! - [`Trigger::Timeout`]：停留时长到了;
+//! - [`Trigger::Key`]：有按键;
+//! - [`Trigger::Quiet`]：一段时间没有按键;
+//! - [`Trigger::Edge`]：行走时碰到区域边缘;
+//! - [`Trigger::Click`]：被点击;
+//! - [`Trigger::Near`]：附近有一个带某个标签的角色。
 //!
 //! [`Stage`] 把一组角色放在同一块区域里:它把其它角色的位置与标签交给每个角色,
 //! 所以角色之间能互动;点击时找出被点中的角色。按键与时间由宿主喂进来,这里不读时钟;
@@ -343,7 +343,7 @@ impl Actor {
             .behavior
             .transitions
             .iter()
-            .filter(|t| t.from == from && matches(*t))
+            .filter(|t| t.from == from && matches(t))
             .map(|t| (t.to, t.weight))
             .collect();
         let total: u64 = candidates.iter().map(|&(_, w)| u64::from(w)).sum();
