@@ -28,6 +28,8 @@ lueying-rerank.workspace = true
 lueying-render.workspace = true
 # 会话内核:候选视图同步与重排快照,macOS 外壳共用同一份。
 lueying-session.workspace = true
+# 皮肤进程守护:随输入法启动;皮肤程序不存在时不起线程。
+lueying-skinhost.workspace = true
 lueying-protocol = { path = "../../../crates/protocol" }
 # 配置 schema:typed TOML,未知键在读取时拒绝。
 serde = { version = "1", features = ["derive"] }

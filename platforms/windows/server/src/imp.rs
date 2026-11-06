@@ -571,6 +571,13 @@ pub(super) fn real_main() {
         crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
     }
     crate::uia::spawn(Arc::clone(&state), uia_rx);
+    // 皮肤进程随输入法启动:皮肤程序与服务端同目录;找不到就什么也不做。
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    {
+        let _ = lueying_skinhost::spawn(dir.join("lueying-skin.exe"));
+    }
     let pipe = pipe_name();
     println!("lueying-server 监听 {pipe}");
     {
