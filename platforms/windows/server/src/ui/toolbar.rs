@@ -166,19 +166,19 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     match surface.begin(w as u32, h as u32) {
         Ok(canvas) => {
             canvas.fill_rrect(bar_local, RADIUS * scale, Color::opaque(palette.bg));
-            canvas.stroke_rrect(bar_local, RADIUS * scale, 1.0, Color::opaque(palette.border));
+            canvas.stroke_rrect(
+                bar_local,
+                RADIUS * scale,
+                1.0,
+                Color::opaque(palette.border),
+            );
             for (button, rect) in ctx.bar.buttons() {
                 let text = labels
                     .iter()
                     .find(|(b, _)| *b == button)
                     .map(|(_, text)| *text)
                     .unwrap_or("");
-                canvas.text_centered(
-                    text,
-                    local(rect),
-                    FONT * scale,
-                    Color::opaque(palette.text),
-                );
+                canvas.text_centered(text, local(rect), FONT * scale, Color::opaque(palette.text));
             }
         }
         Err(e) => println!("工具栏表面失败: {e}"),
@@ -392,7 +392,12 @@ fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
     result
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_LBUTTONDOWN => on_down(lparam),
         WM_MOUSEMOVE => on_move(wparam, lparam),
