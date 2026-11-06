@@ -1,12 +1,18 @@
-//! 候选窗上的角色:由一份行为定义驱动,在一块矩形区域里移动,可以有很多个。平台无关。
+//! 候选窗工具栏舞台上的角色:由一份行为定义驱动,可以和其它角色互动,也能被点击。平台无关。
 //!
-//! 行为定义是数据,皮肤或扩展写出来即可,不需要代码(见 [`Behavior`]):每个状态引用动画
-//! 片段的名字、可选的移动方式、停留时长;转移由触发条件与权重决定。触发条件有四种:
-//! 时间到了([`Trigger::Timeout`])、有按键([`Trigger::Key`])、一段时间没按键
-//! ([`Trigger::Quiet`])、碰到区域边缘([`Trigger::Edge`])。
+//! 行为定义是数据,皮肤或扩展写出来即可,不需要代码(见 [`Behavior`])。每个状态可以带一个
+//! 标签(如「攻击」「受击」),引用动画片段的名字,可选的移动方式与停留时长。转移由触发条件
+//! 与权重决定,触发条件有六种:
+//! - [`Trigger::Timeout`]:停留时长到了;
+//! - [`Trigger::Key`]:有按键;
+//! - [`Trigger::Quiet`]:一段时间没有按键;
+//! - [`Trigger::Edge`]:行走时碰到区域边缘;
+//! - [`Trigger::Click`]:被点击;
+//! - [`Trigger::Near`]:附近有一个带某个标签的角色。
 //!
-//! 按键与时间由宿主喂进来,这里不读时钟;随机数是固定种子的 xorshift,同一种子同样的轨迹。
-//! 角色画在文字上面还是下面,不在这里决定,由扩展的设置决定。
+//! [`Stage`] 把一组角色放在同一块区域里:它把其它角色的位置与标签交给每个角色,
+//! 所以角色之间能互动;点击时找出被点中的角色。按键与时间由宿主喂进来,这里不读时钟;
+//! 随机数是固定种子的 xorshift,同一种子同样的过程。角色画在文字上面还是下面,不在这里决定。
 
 use crate::panel::Rect;
 
@@ -45,7 +51,7 @@ pub struct Walk {
 }
 
 /// 转移的触发条件。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Trigger {
     /// 当前状态的停留时长到了。
     Timeout,
@@ -55,6 +61,10 @@ pub enum Trigger {
     Quiet(u64),
     /// 行走时碰到区域的边缘。
     Edge,
+    /// 被点击(宿主调用 [`Actor::click`] 或 [`Stage::click`])。
+    Click,
+    /// 附近(中心距离不超过 `range` 像素)有一个当前状态带 `tag` 标签的角色。
+    Near { range: f32, tag: String },
 }
 
 /// 一个状态。
@@ -62,6 +72,8 @@ pub enum Trigger {
 pub struct StateDef {
     /// 用哪个动画片段(名字见 `animation::Pack`)。
     pub clip: String,
+    /// 可选的标签,给别的角色的 [`Trigger::Near`] 用。
+    pub tag: Option<String>,
     /// 有行走参数时,进入状态后沿某个方向走。
     pub walk: Option<Walk>,
     /// 停留时长范围(毫秒,闭区间);`None` 表示不按时间离开。
@@ -69,7 +81,7 @@ pub struct StateDef {
 }
 
 /// 一条转移:从 `from` 到 `to`,由 `trigger` 触发,同类转移之间按 `weight` 随机选。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Transition {
     pub from: usize,
     pub to: usize,
@@ -86,7 +98,7 @@ pub struct Behavior {
 }
 
 impl Behavior {
-    /// 检查定义是否自洽:下标都存在、权重为正、时长范围不倒置。
+    /// 检查定义是否自洽:下标都存在、权重为正、时长范围不倒置、距离与标签合法。
     pub fn validate(&self) -> Result<(), String> {
         let count = self.states.len();
         if count == 0 {
@@ -115,6 +127,14 @@ impl Behavior {
             if transition.weight == 0 {
                 return Err("转移权重必须大于 0".into());
             }
+            if let Trigger::Near { range, tag } = &transition.trigger {
+                if !range.is_finite() || *range <= 0.0 {
+                    return Err("附近触发的距离必须是正数".into());
+                }
+                if tag.is_empty() {
+                    return Err("附近触发要指定一个标签".into());
+                }
+            }
         }
         Ok(())
     }
@@ -127,6 +147,14 @@ pub struct View {
     pub x: f32,
     pub y: f32,
     pub facing: Facing,
+}
+
+/// 其它角色的快照:位置与当前状态的标签。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Neighbor {
+    pub x: f32,
+    pub y: f32,
+    pub tag: Option<String>,
 }
 
 /// 固定种子的伪随机数(xorshift64),不引入依赖。
@@ -168,6 +196,7 @@ pub struct Actor {
     last_ms: u64,
     last_key_ms: u64,
     key_pending: bool,
+    click_pending: bool,
     rng: Rng,
 }
 
@@ -193,6 +222,7 @@ impl Actor {
             last_ms: now_ms,
             last_key_ms: now_ms,
             key_pending: false,
+            click_pending: false,
             rng: Rng::new(seed),
         };
         actor.enter(state, now_ms);
@@ -205,25 +235,60 @@ impl Actor {
         self.key_pending = true;
     }
 
+    /// 被点击时调用。
+    pub fn click(&mut self) {
+        self.click_pending = true;
+    }
+
     /// 当前状态用的动画片段名字。
     pub fn clip(&self) -> &str {
         &self.behavior.states[self.state].clip
     }
 
-    /// 推进到 `now_ms`。`area` 是角色可以活动的区域,`sprite` 是精灵的宽高(像素)。
-    /// 精灵整个都留在区域里;区域比精灵还小时,精灵贴着左上角。
+    /// 当前状态的标签。
+    pub fn tag(&self) -> Option<&str> {
+        self.behavior.states[self.state].tag.as_deref()
+    }
+
+    /// 给别的角色看的快照。
+    pub fn neighbor(&self) -> Neighbor {
+        Neighbor {
+            x: self.x,
+            y: self.y,
+            tag: self.tag().map(str::to_string),
+        }
+    }
+
+    /// 单独推进一个角色(周围没有别的角色)。
     pub fn tick(&mut self, now_ms: u64, area: Rect, sprite: (f32, f32)) -> View {
+        self.tick_in(now_ms, area, sprite, &[])
+    }
+
+    /// 推进到 `now_ms`。`area` 是角色可以活动的区域,`sprite` 是精灵的宽高(像素),
+    /// `nearby` 是其它角色的快照。精灵整个都留在区域里;区域比精灵还小时,精灵贴着左上角。
+    pub fn tick_in(
+        &mut self,
+        now_ms: u64,
+        area: Rect,
+        sprite: (f32, f32),
+        nearby: &[Neighbor],
+    ) -> View {
         let bounds = Bounds::of(area, sprite);
         let dt = now_ms.saturating_sub(self.last_ms) as f32 / 1000.0;
         self.last_ms = now_ms;
         let quiet = now_ms.saturating_sub(self.last_key_ms);
+        let (ox, oy) = (self.x, self.y);
         if std::mem::take(&mut self.key_pending) {
             self.pick(now_ms, |t| t.trigger == Trigger::Key);
         }
-        self.pick(
-            now_ms,
-            |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms),
-        );
+        if std::mem::take(&mut self.click_pending) {
+            self.pick(now_ms, |t| t.trigger == Trigger::Click);
+        }
+        self.pick(now_ms, |t| match &t.trigger {
+            Trigger::Near { range, tag } => near_someone(nearby, ox, oy, *range, tag),
+            _ => false,
+        });
+        self.pick(now_ms, |t| matches!(t.trigger, Trigger::Quiet(ms) if quiet >= ms));
         if self.until_ms.is_some_and(|until| now_ms >= until) {
             self.pick(now_ms, |t| t.trigger == Trigger::Timeout);
         }
@@ -275,7 +340,7 @@ impl Actor {
             .behavior
             .transitions
             .iter()
-            .filter(|&t| t.from == from && matches(t))
+            .filter(|t| t.from == from && matches(*t))
             .map(|t| (t.to, t.weight))
             .collect();
         let total: u64 = candidates.iter().map(|&(_, w)| u64::from(w)).sum();
@@ -319,10 +384,67 @@ impl Actor {
     }
 }
 
+/// 一群角色放在同一块区域里:它们能互相看见,也能被点击。
+#[derive(Clone, Debug)]
+pub struct Stage {
+    pub area: Rect,
+    pub sprite: (f32, f32),
+    pub actors: Vec<Actor>,
+}
+
+impl Stage {
+    pub fn new(area: Rect, sprite: (f32, f32)) -> Self {
+        Self {
+            area,
+            sprite,
+            actors: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, actor: Actor) {
+        self.actors.push(actor);
+    }
+
+    /// 推进所有角色。每个角色看到的是别人上一步结束时的位置与标签。
+    pub fn tick(&mut self, now_ms: u64) -> Vec<View> {
+        let snapshot: Vec<Neighbor> = self.actors.iter().map(Actor::neighbor).collect();
+        let (area, sprite) = (self.area, self.sprite);
+        self.actors
+            .iter_mut()
+            .enumerate()
+            .map(|(index, actor)| {
+                let nearby: Vec<Neighbor> = snapshot
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != index)
+                    .map(|(_, neighbor)| neighbor.clone())
+                    .collect();
+                actor.tick_in(now_ms, area, sprite, &nearby)
+            })
+            .collect()
+    }
+
+    /// 点击舞台上的一点:点中了哪个角色就让它收到点击,返回它的下标;点在空处返回 `None`。
+    /// 后加入的角色画在上面,所以先找它们。
+    pub fn click(&mut self, px: f32, py: f32) -> Option<usize> {
+        let (w, h) = self.sprite;
+        let hit = self
+            .actors
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, actor)| px >= actor.x && px < actor.x + w && py >= actor.y && py < actor.y + h)
+            .map(|(index, _)| index)?;
+        self.actors[hit].click();
+        Some(hit)
+    }
+}
+
 /// 预设:横带里的小猫。待机、走、玩;看着输入;一分钟没输入就睡,按键即醒。
 pub fn strip_cat() -> Behavior {
     let state = |clip: &str, walk: Option<Walk>, duration: Option<(u64, u64)>| StateDef {
         clip: clip.to_string(),
+        tag: None,
         walk,
         duration,
     };
@@ -371,6 +493,7 @@ pub fn strip_cat() -> Behavior {
 pub fn spider() -> Behavior {
     let state = |clip: &str, walk: Option<Walk>, duration: Option<(u64, u64)>| StateDef {
         clip: clip.to_string(),
+        tag: None,
         walk,
         duration,
     };
@@ -406,6 +529,58 @@ pub fn spider() -> Behavior {
     }
 }
 
+/// 预设:打斗的战士。平时待机或来回走;附近有站着的敌人就出手(进入「攻击」);
+/// 附近有人在攻击、或者被点击,就进入「受击」,受击后缓一下再站起来。
+pub fn warrior() -> Behavior {
+    let state = |clip: &str, tag: &str, walk: Option<Walk>, duration: Option<(u64, u64)>| StateDef {
+        clip: clip.to_string(),
+        tag: Some(tag.to_string()),
+        walk,
+        duration,
+    };
+    let tr = |from, to, trigger, weight| Transition {
+        from,
+        to,
+        trigger,
+        weight,
+    };
+    let near = |tag: &str, range: f32| Trigger::Near {
+        range,
+        tag: tag.to_string(),
+    };
+    Behavior {
+        states: vec![
+            state("idle", "idle", None, Some((800, 2_000))),
+            state(
+                "walk",
+                "walk",
+                Some(Walk {
+                    speed: 30.0,
+                    axes: Axes::Horizontal,
+                }),
+                Some((1_000, 2_500)),
+            ),
+            state("attack", "attack", None, Some((400, 500))),
+            state("hurt", "hurt", None, Some((300, 400))),
+        ],
+        transitions: vec![
+            tr(0, 1, Trigger::Timeout, 2),
+            tr(1, 0, Trigger::Timeout, 2),
+            tr(0, 2, near("idle", 40.0), 1),
+            tr(1, 2, near("idle", 40.0), 1),
+            tr(2, 0, Trigger::Timeout, 1),
+            tr(0, 3, near("attack", 40.0), 1),
+            tr(1, 3, near("attack", 40.0), 1),
+            tr(0, 3, Trigger::Click, 1),
+            tr(1, 3, Trigger::Click, 1),
+            tr(2, 3, Trigger::Click, 1),
+            tr(3, 0, Trigger::Timeout, 1),
+            tr(2, 3, near("attack", 40.0), 1),
+        ],
+        start: 0,
+    }
+}
+
 /// 精灵左上角可以到达的范围。
 #[derive(Clone, Copy, Debug)]
 struct Bounds {
@@ -426,14 +601,24 @@ impl Bounds {
     }
 }
 
-/// 一维的碰壁反弹:位置越界就停在边上,速度换向。
+/// 附近是否有一个带 `tag` 标签、离 `(ox, oy)` 不超过 `range` 的角色。
+fn near_someone(nearby: &[Neighbor], ox: f32, oy: f32, range: f32, tag: &str) -> bool {
+    nearby
+        .iter()
+        .any(|n| n.tag.as_deref() == Some(tag) && distance(ox, oy, n.x, n.y) <= range)
+}
+
+fn distance(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    ((ax - bx).powi(2) + (ay - by).powi(2)).sqrt()
+}
+
+/// 一维的碰壁反弹:位置越界就停在边上,速度换向;正好停在边上且速度朝外也换向。
 fn bounce(next: f32, velocity: f32, min: f32, max: f32) -> (f32, f32) {
     if next < min {
         (min, velocity.abs())
     } else if next > max {
         (max, -velocity.abs())
     } else if next >= max && velocity > 0.0 {
-        // 正好停在边上、速度还朝外:也要换向,不然下一步又出界。
         (max, -velocity)
     } else if next <= min && velocity < 0.0 {
         (min, -velocity)
@@ -462,10 +647,15 @@ mod tests {
         Actor::new(seed, 0, start, behavior).expect("预设行为合法")
     }
 
+    fn clip_at(behavior: &Behavior, view: &View) -> String {
+        behavior.states[view.state].clip.clone()
+    }
+
     #[test]
     fn presets_are_valid_behaviors() {
         assert!(strip_cat().validate().is_ok());
         assert!(spider().validate().is_ok());
+        assert!(warrior().validate().is_ok());
     }
 
     #[test]
@@ -484,6 +674,18 @@ mod tests {
         let mut backwards = spider();
         backwards.states[0].duration = Some((5, 1));
         assert!(backwards.validate().unwrap_err().contains("倒置"));
+        let mut no_range = warrior();
+        no_range.transitions[2].trigger = Trigger::Near {
+            range: 0.0,
+            tag: "idle".into(),
+        };
+        assert!(no_range.validate().unwrap_err().contains("距离"));
+        let mut no_tag = warrior();
+        no_tag.transitions[2].trigger = Trigger::Near {
+            range: 40.0,
+            tag: String::new(),
+        };
+        assert!(no_tag.validate().unwrap_err().contains("标签"));
     }
 
     #[test]
@@ -505,12 +707,12 @@ mod tests {
         let mut actor = spawn(7, (0.0, 60.0), strip_cat());
         let views = run(&mut actor, 0, 600_000, sprite);
         assert!(views.iter().all(|view| view.y == 60.0));
-        let walk = strip_cat();
+        let behavior = strip_cat();
         for view in &views {
-            if walk.states[view.state].clip == "walk" && view.x >= max_x - 0.001 {
+            if clip_at(&behavior, view) == "walk" && view.x >= max_x - 0.001 {
                 assert_eq!(view.facing, Facing::Left);
             }
-            if walk.states[view.state].clip == "walk" && view.x <= 0.001 {
+            if clip_at(&behavior, view) == "walk" && view.x <= 0.001 {
                 assert_eq!(view.facing, Facing::Right);
             }
         }
@@ -518,43 +720,30 @@ mod tests {
 
     #[test]
     fn watching_actor_stops_while_the_user_types() {
+        let behavior = strip_cat();
         let mut actor = spawn(3, (100.0, 100.0), strip_cat());
         actor.key(0);
         let views = run(&mut actor, 0, 1_150, (48.0, 48.0));
-        assert!(
-            views
-                .iter()
-                .all(|view| actor.behavior.states[view.state].clip == "typing")
-        );
-        assert!(
-            views
-                .windows(2)
-                .all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y)
-        );
+        assert!(views.iter().all(|view| clip_at(&behavior, view) == "typing"));
+        assert!(views.windows(2).all(|pair| pair[0].x == pair[1].x && pair[0].y == pair[1].y));
     }
 
     #[test]
     fn only_sleepers_fall_asleep_and_wake_on_a_key() {
+        let behavior = strip_cat();
         let mut cat = spawn(3, (0.0, 60.0), strip_cat());
         cat.key(0);
         run(&mut cat, 0, 61_000, (48.0, 48.0));
         let asleep = run(&mut cat, 61_000, 30_000, (48.0, 48.0));
-        assert!(
-            asleep
-                .iter()
-                .all(|view| cat.behavior.states[view.state].clip == "sleep")
-        );
+        assert!(asleep.iter().all(|view| clip_at(&behavior, view) == "sleep"));
         cat.key(91_000);
         let woke = cat.tick(91_050, area(), (48.0, 48.0));
-        assert_eq!(cat.behavior.states[woke.state].clip, "typing");
+        assert_eq!(clip_at(&behavior, &woke), "typing");
 
+        let spider_behavior = spider();
         let mut spider = spawn(3, (0.0, 0.0), spider());
         let never = run(&mut spider, 0, 300_000, (48.0, 48.0));
-        assert!(
-            never
-                .iter()
-                .all(|view| spider.behavior.states[view.state].clip != "sleep")
-        );
+        assert!(never.iter().all(|view| clip_at(&spider_behavior, view) != "sleep"));
     }
 
     #[test]
@@ -593,5 +782,39 @@ mod tests {
             let view = actor.tick(now, tiny, (48.0, 48.0));
             assert_eq!((view.x, view.y), (10.0, 10.0));
         }
+    }
+
+    #[test]
+    fn a_click_makes_the_warrior_flinch() {
+        let behavior = warrior();
+        let mut stage = Stage::new(area(), (32.0, 32.0));
+        stage.add(spawn(5, (100.0, 100.0), warrior()));
+        stage.tick(0);
+        assert_eq!(stage.click(110.0, 110.0), Some(0));
+        let views = stage.tick(50);
+        assert_eq!(clip_at(&behavior, &views[0]), "hurt");
+        assert_eq!(stage.click(0.0, 0.0), None, "点在空处不算点中角色");
+    }
+
+    #[test]
+    fn warriors_close_together_start_fighting_and_the_other_gets_hurt() {
+        let behavior = warrior();
+        let mut stage = Stage::new(area(), (32.0, 32.0));
+        stage.add(spawn(1, (100.0, 100.0), warrior()));
+        stage.add(spawn(2, (120.0, 100.0), warrior()));
+        let first = stage.tick(0);
+        assert!(first.iter().any(|view| clip_at(&behavior, view) == "attack"));
+        let second = stage.tick(50);
+        assert!(second.iter().any(|view| clip_at(&behavior, view) == "hurt"));
+    }
+
+    #[test]
+    fn warriors_far_apart_do_not_fight() {
+        let behavior = warrior();
+        let mut stage = Stage::new(area(), (32.0, 32.0));
+        stage.add(spawn(1, (0.0, 0.0), warrior()));
+        stage.add(spawn(2, (250.0, 150.0), warrior()));
+        let first = stage.tick(0);
+        assert!(first.iter().all(|view| clip_at(&behavior, view) != "attack"));
     }
 }
