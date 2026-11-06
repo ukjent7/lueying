@@ -123,10 +123,13 @@ impl Engine {
                     .learn_text
                     .as_deref()
                     .unwrap_or(skipped.text.as_str());
-                user.reject(&key, text);
+                let left = crate::user::left_key(&self.context);
+                user.reject(&crate::user::reject_key(left, &key), text);
             }
             user.forgive_word(&learn_text);
             user.learn(&learned, &learn_text, cand.freq > 0);
+            let left = crate::user::left_key(&self.context);
+            user.forgive(&crate::user::reject_key(left, &learned), &learn_text);
             user.learn_word_context(&self.context, &learn_text, cand.freq > 0);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);

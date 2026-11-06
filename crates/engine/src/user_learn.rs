@@ -31,12 +31,6 @@ impl UserDict {
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 清空组级适应统计,保留词条。
-    pub fn reset_groups(&mut self) {
-        self.groups = [GroupStat::default(); GROUP_COUNT];
-        self.rev = self.rev.wrapping_add(1);
-    }
-
     /// 记录一次模糊组命中;每组按周衰减后加一。
     pub fn learn_groups(&mut self, mask: u8) {
         if mask == 0 {
@@ -579,6 +573,17 @@ impl UserDict {
             self.prune_rejects();
         }
         self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 同键下的跳过负分,按上文区分:只算这段上文里的跳过。句首(没有中文上文)
+    /// 记下的跳过对所有上文都算,与词频的规则一致。
+    pub(crate) fn reject_penalty_in(&self, left: char, key: &str, word: &str) -> f64 {
+        let own = self.reject_penalty(&reject_key(left, key), word);
+        if left == NO_LEFT {
+            own
+        } else {
+            own.max(self.reject_penalty(&reject_key(NO_LEFT, key), word))
+        }
     }
 
     /// 同键下的负向加分;次数越多越接近上限,但不超过一个普通词罚分。

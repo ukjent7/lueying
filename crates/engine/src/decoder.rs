@@ -413,8 +413,8 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         quick_trigger,
     } = args;
     let total = dict.total_weight() as f64;
-    let left = (!context.is_empty()).then(|| crate::user::left_key(context));
-    let mut lexicon = Lexicon::new(dict, user, total, left);
+    let left = crate::user::left_key(context);
+    let mut lexicon = Lexicon::new(dict, user, total, (!context.is_empty()).then_some(left));
     let typos = !quick_trigger && (2..=TYPO_MAX_LEN).contains(&raw.len());
     let edges = channel::lattice(raw, fuzzy, typos);
     let mut finish = vec![false; raw.len() + 1];
@@ -521,7 +521,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             .map(|node| node.reading.keys.as_str())
             .collect::<Vec<_>>()
             .join("'");
-        let reject = user.reject_penalty(&key, &state.text);
+        let reject = user.reject_penalty_in(left, &key, &state.text);
         let fuzzy_hint = match nodes.as_slice() {
             [only] => only.accent.as_deref(),
             _ => None,
@@ -613,7 +613,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     for (end, nodes) in by_end.iter().enumerate() {
         for node in nodes.iter().filter(|node| node.start == 0) {
             let keys = node.reading.keys.as_str();
-            let reject = user.reject_penalty(keys, &node.word);
+            let reject = user.reject_penalty_in(left, keys, &node.word);
             let gain = grammar.bonus(&before, &node.word, end == raw.len());
             let mut cand =
                 Candidate::whole(raw.len(), node.word.to_string(), node.score + gain - reject);

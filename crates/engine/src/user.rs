@@ -164,6 +164,11 @@ pub(crate) fn left_key(context: &str) -> char {
     tail_hanzi(context).unwrap_or(NO_LEFT)
 }
 
+/// 跳过记录的键:左邻标记接在学习键前面。同一个键在不同上文里的跳过互不影响。
+pub(crate) fn reject_key(left: char, key: &str) -> String {
+    format!("{left}{key}")
+}
+
 fn single_char(text: &str) -> Option<char> {
     let mut chars = text.chars();
     let c = chars.next()?;

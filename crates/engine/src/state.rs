@@ -386,10 +386,11 @@ impl Engine {
             .clone()
             .unwrap_or_else(|| self.scheme.key_for_spans(&comp.raw, &cand.spans));
         let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
+        let left = crate::user::left_key(&self.context);
         self.user
             .write()
             .unwrap_or_else(|p| p.into_inner())
-            .reject(&key, &text);
+            .reject(&crate::user::reject_key(left, &key), &text);
         self.recompute();
         true
     }
@@ -542,13 +543,5 @@ impl Engine {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .group_stats()
-    }
-
-    /// 只清空组级适应,保留词条。
-    pub fn reset_groups(&mut self) {
-        self.user
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .reset_groups();
     }
 }

@@ -5,6 +5,7 @@
 use lueying_dict::syllables::FUZZY_GROUPS;
 
 use crate::UserDict;
+use crate::user::{NO_LEFT, reject_key};
 
 const GROUP: &str = FUZZY_GROUPS[0];
 
@@ -46,6 +47,17 @@ fn word_context_counts_follow_the_left_character() {
     assert_eq!(user.word_context_count('去', "店"), 2);
     assert_eq!(user.word_context_count('在', "店"), 0);
     assert_eq!(user.export(), "@wordctx\t去\t店\t2\n");
+}
+
+#[test]
+fn rejects_apply_only_after_the_same_left_character() {
+    let mut user = UserDict::new();
+    user.reject(&reject_key('去', "dian"), "店");
+    assert!(user.reject_penalty_in('去', "dian", "店") > 0.0);
+    assert_eq!(user.reject_penalty_in('在', "dian", "店"), 0.0);
+    // 句首记下的跳过对所有上文都生效。
+    user.reject(&reject_key(NO_LEFT, "dian"), "电");
+    assert!(user.reject_penalty_in('在', "dian", "电") > 0.0);
 }
 
 #[test]
