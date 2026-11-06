@@ -1,19 +1,34 @@
-//! 输入法工具栏:一排常用按钮的悬浮条,默认在屏幕右下角,可以拖动。平台无关。
+//! 输入法工具栏:一排常用按钮的悬浮条,默认在屏幕右下角,可以拖动,大小可以在设置里调。平台无关。
 //!
 //! 按钮与传统输入法的工具栏一致:中/英、全/半角、中英标点、简/繁、设置,另补「收起」。
-//! 位置记在 [`Toolbar::pos`] 里,拖动时夹在屏幕内;默认位置在右下角、任务栏上方。
-//! 外观可以由扩展自定义,但按钮的功能不能丢,所以这里只定义按钮与动作,不定义画法。
+//! 大小用倍率表示,按钮与间距一起缩放,倍率只能在 [`SCALE_MIN`, `SCALE_MAX`] 之间,
+//! 不会被设成无限大或无限小。舞台是工具栏外面一圈留白,角色可以在舞台里表演,
+//! 但按钮的点击始终优先。外观可以由扩展自定义,但按钮的功能不能丢。
 
 use crate::panel::Rect;
 
-/// 按钮的边长(逻辑像素)。
+/// 按钮的边长(倍率 1.0 时,逻辑像素)。
 pub const BUTTON: f32 = 28.0;
-/// 按钮之间与边缘的留白。
+/// 按钮之间与边缘的留白(倍率 1.0 时)。
 pub const GAP: f32 = 4.0;
-/// 默认离屏幕右边与底边的距离;底边要让开任务栏,这里取一个保守的值。
+/// 默认离屏幕右边与底边的距离。
 pub const MARGIN: f32 = 12.0;
 /// 任务栏高度的保守估计,默认位置要在它上方。
 pub const TASKBAR: f32 = 48.0;
+/// 工具栏大小倍率的下限与上限:用户只能在这个范围内调。
+pub const SCALE_MIN: f32 = 0.75;
+pub const SCALE_MAX: f32 = 1.5;
+/// 舞台比工具栏多出的留白(倍率 1.0 时):左右各一点,上方多留一截给角色跳起来。
+pub const STAGE_SIDE: f32 = 12.0;
+pub const STAGE_UP: f32 = 24.0;
+
+/// 把倍率夹到允许的范围内。设置页的输入、配置文件里的值都要过这一关。
+pub fn clamp_scale(scale: f32) -> f32 {
+    if scale.is_nan() {
+        return 1.0;
+    }
+    scale.clamp(SCALE_MIN, SCALE_MAX)
+}
 
 /// 工具栏上的按钮。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +82,11 @@ impl Button {
     }
 }
 
-/// 工具栏的状态:是否显示、左上角位置、拖动中的偏移。
+/// 工具栏的状态:是否显示、大小倍率、左上角位置、拖动中的偏移。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Toolbar {
     pub visible: bool,
+    pub scale: f32,
     pub x: f32,
     pub y: f32,
     /// 拖动中:指针相对左上角的偏移;没有拖动时为 `None`。
@@ -78,39 +94,61 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
-    /// 工具栏的总宽高(像素)。
-    pub fn size() -> (f32, f32) {
-        let width = BUTTONS.len() as f32 * BUTTON + (BUTTONS.len() as f32 + 1.0) * GAP;
-        (width, BUTTON + 2.0 * GAP)
+    /// 工具栏的总宽高(像素),按当前倍率。
+    pub fn size(&self) -> (f32, f32) {
+        let s = clamp_scale(self.scale);
+        let width = BUTTONS.len() as f32 * BUTTON * s + (BUTTONS.len() as f32 + 1.0) * GAP * s;
+        (width, (BUTTON + 2.0 * GAP) * s)
     }
 
-    /// 放在屏幕右下角、任务栏上方的默认位置。
+    /// 放在屏幕右下角、任务栏上方的默认位置(倍率 1.0)。
     pub fn at_default(screen: Rect) -> Self {
-        let (width, height) = Self::size();
-        Self {
+        let bar = Self {
             visible: true,
+            scale: 1.0,
+            x: 0.0,
+            y: 0.0,
+            grab: None,
+        };
+        let (width, height) = bar.size();
+        Self {
             x: screen.right - width - MARGIN,
             y: screen.bottom - height - TASKBAR,
-            grab: None,
+            ..bar
         }
         .clamped(screen)
     }
 
     /// 工具栏占的矩形。
     pub fn rect(&self) -> Rect {
-        let (width, height) = Self::size();
+        let (width, height) = self.size();
         Rect::from_xywh(self.x, self.y, width, height)
+    }
+
+    /// 舞台:工具栏外面稍大的一块区域,角色在这里表演。夹在屏幕内。
+    pub fn stage(&self, screen: Rect) -> Rect {
+        let s = clamp_scale(self.scale);
+        let bar = self.rect();
+        Rect {
+            left: (bar.left - STAGE_SIDE * s).max(screen.left),
+            top: (bar.top - STAGE_UP * s).max(screen.top),
+            right: (bar.right + STAGE_SIDE * s).min(screen.right),
+            bottom: bar.bottom.min(screen.bottom),
+        }
     }
 
     /// 每个按钮的矩形,从左到右。
     pub fn buttons(&self) -> Vec<(Button, Rect)> {
+        let s = clamp_scale(self.scale);
+        let size = BUTTON * s;
+        let gap = GAP * s;
         BUTTONS
             .iter()
             .enumerate()
             .map(|(index, &button)| {
-                let x = self.x + GAP + index as f32 * (BUTTON + GAP);
-                let y = self.y + GAP;
-                (button, Rect::from_xywh(x, y, BUTTON, BUTTON))
+                let x = self.x + gap + index as f32 * (size + gap);
+                let y = self.y + gap;
+                (button, Rect::from_xywh(x, y, size, size))
             })
             .collect()
     }
@@ -126,7 +164,7 @@ impl Toolbar {
             .map(|(button, _)| button)
     }
 
-    /// 在工具栏的任意非按钮处按下时开始拖动。按下在按钮上不拖动,由点击处理。
+    /// 在工具栏的非按钮处按下时开始拖动。按在按钮上不拖动,由点击处理。
     pub fn press(&mut self, px: f32, py: f32) {
         if self.visible && inside(self.rect(), px, py) && self.hit(px, py).is_none() {
             self.grab = Some((px - self.x, py - self.y));
@@ -147,15 +185,17 @@ impl Toolbar {
         self.grab = None;
     }
 
+    /// 设置页改大小:倍率先夹到允许范围,再把位置拉回屏幕内。
+    pub fn with_scale(mut self, scale: f32, screen: Rect) -> Self {
+        self.scale = clamp_scale(scale);
+        self.clamped(screen)
+    }
+
     /// 把位置夹在屏幕内(屏幕分辨率变了、或者拖出去了,都要拉回来)。
     pub fn clamped(mut self, screen: Rect) -> Self {
-        let (width, height) = Self::size();
-        self.x = self
-            .x
-            .clamp(screen.left, (screen.right - width).max(screen.left));
-        self.y = self
-            .y
-            .clamp(screen.top, (screen.bottom - height).max(screen.top));
+        let (width, height) = self.size();
+        self.x = self.x.clamp(screen.left, (screen.right - width).max(screen.left));
+        self.y = self.y.clamp(screen.top, (screen.bottom - height).max(screen.top));
         self
     }
 }
@@ -182,26 +222,53 @@ mod tests {
     }
 
     #[test]
-    fn each_button_hits_its_own_action() {
+    fn scale_is_clamped_so_the_bar_cannot_grow_or_shrink_without_limit() {
+        assert_eq!(clamp_scale(0.1), SCALE_MIN);
+        assert_eq!(clamp_scale(10.0), SCALE_MAX);
+        assert_eq!(clamp_scale(f32::NAN), 1.0);
+        let big = Toolbar::at_default(screen()).with_scale(99.0, screen());
+        assert_eq!(big.scale, SCALE_MAX);
+        let small = Toolbar::at_default(screen()).with_scale(0.0, screen());
+        assert_eq!(small.scale, SCALE_MIN);
+    }
+
+    #[test]
+    fn larger_scale_makes_the_bar_larger_proportionally() {
+        let normal = Toolbar::at_default(screen());
+        let large = normal.with_scale(1.5, screen());
+        let (w1, h1) = normal.size();
+        let (w2, h2) = large.size();
+        assert!((w2 - w1 * 1.5).abs() < 0.001);
+        assert!((h2 - h1 * 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn stage_is_slightly_larger_than_the_bar_and_stays_on_screen() {
         let bar = Toolbar::at_default(screen());
-        for (button, rect) in bar.buttons() {
-            let (cx, cy) = (
-                (rect.left + rect.right) / 2.0,
-                (rect.top + rect.bottom) / 2.0,
-            );
-            assert_eq!(bar.hit(cx, cy), Some(button));
-            assert_eq!(
-                button.action(),
-                match button {
-                    Button::Mode => Action::ToggleMode,
-                    Button::FullWidth => Action::ToggleFullWidth,
-                    Button::Punct => Action::TogglePunct,
-                    Button::Script => Action::ToggleScript,
-                    Button::Settings => Action::OpenSettings,
-                    Button::Hide => Action::Hide,
-                }
-            );
+        let stage = bar.stage(screen());
+        let rect = bar.rect();
+        assert!(stage.left < rect.left && stage.right > rect.right);
+        assert!(stage.top < rect.top);
+        assert!(stage.right <= 1920.0 && stage.bottom <= 1080.0);
+        let corner = Toolbar {
+            x: 0.0,
+            y: 0.0,
+            ..bar
+        };
+        assert!(corner.stage(screen()).left >= 0.0 && corner.stage(screen()).top >= 0.0);
+    }
+
+    #[test]
+    fn each_button_hits_its_own_action_at_every_scale() {
+        for scale in [SCALE_MIN, 1.0, SCALE_MAX] {
+            let bar = Toolbar::at_default(screen()).with_scale(scale, screen());
+            for (button, rect) in bar.buttons() {
+                let (cx, cy) = ((rect.left + rect.right) / 2.0, (rect.top + rect.bottom) / 2.0);
+                assert_eq!(bar.hit(cx, cy), Some(button));
+            }
         }
+        assert_eq!(Button::Hide.action(), Action::Hide);
+        assert_eq!(Button::Mode.action(), Action::ToggleMode);
     }
 
     #[test]
@@ -218,8 +285,8 @@ mod tests {
         let (cx, cy) = (bar.x + 1.0, bar.y + 1.0);
         bar.press(cx, cy);
         bar.drag(100.0, 200.0, screen());
-        assert!((bar.x - (100.0 - 1.0)).abs() < 0.001);
-        assert!((bar.y - (200.0 - 1.0)).abs() < 0.001);
+        assert!((bar.x - 99.0).abs() < 0.001);
+        assert!((bar.y - 199.0).abs() < 0.001);
         bar.drag(-500.0, -500.0, screen());
         assert_eq!((bar.x, bar.y), (0.0, 0.0));
         bar.release();
@@ -241,6 +308,7 @@ mod tests {
     fn a_screen_change_pulls_the_bar_back_inside() {
         let bar = Toolbar {
             visible: true,
+            scale: 1.5,
             x: 1800.0,
             y: 1000.0,
             grab: None,
