@@ -561,11 +561,13 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         return built;
     }
     let mut decoded = 0usize;
-    // 同一手误可能对应多条可切分纠正串;保留打分最高的一条,先到先得会把
-    // `hoa` 补成「哦哈」而不是「好」。分数已含词频、每词罚分与搭配分,
-    // 不同纠正串之间可以直接比较。
+    // 同一手误可能对应多条可切分纠正串。各串的候选放在一起按分数排:分数已含词频、
+    // 每词罚分、搭配分与纠正罚分,不同纠正串之间可以直接比较。只留最佳一串会丢掉
+    // 「别的纠正串里的正确字」(分段手误里 363/400 的目标字因此不在候选池)。
+    // `fixed` 仍取最佳一串的结构信息(安全延伸、连续输入等)。
     let mut best: Option<Built> = None;
     let mut best_score = f64::NEG_INFINITY;
+    let mut pool: Vec<Candidate> = Vec::new();
     for correction in typo::corrections(raw) {
         if decoded >= TYPO_DECODE_BUDGET {
             break;
@@ -615,6 +617,7 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
         let mut seen = HashSet::new();
         kept.retain(|c| seen.insert((c.text.clone(), c.consume)));
         kept.truncate(MAX_CANDS);
+        pool.extend(kept.iter().cloned());
         fixed.cands = kept;
         if score > best_score {
             best_score = score;
@@ -624,6 +627,11 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     let Some(mut fixed) = best else {
         return built;
     };
+    pool.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut pooled = HashSet::new();
+    pool.retain(|c| pooled.insert(c.text.clone()));
+    pool.truncate(MAX_CANDS);
+    fixed.cands = pool;
     // 精确输入本来能出整句/整词时,纠错只做后备;准确候选留在前面。
     // 精确结果为空或明显低分时,高置信纠错直接置顶,原候选紧随其后,
     // 用户按一下下方向键就能回到原拼音。
