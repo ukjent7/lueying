@@ -151,7 +151,12 @@ const BEAM: usize = 24;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
 /// 每处模糊改动扣的对数概率,等同词频减半;与青简、清风及 librime/libime 同轴。
+/// 组先验缺失时的回退值;有组信息时用 [`GROUP_PENALTY`]。
 const FUZZY_PENALTY: f64 = std::f64::consts::LN_2;
+/// 每个模糊组一处改动的罚分,下标与组位一致(bit0 = zcs … bit6 = in_ing)。
+/// 常见混淆罚得轻:z/zh、ch/c、sh/s 最多;少见的 r/l 与韵母组罚得重。
+/// 这是先验,不是测得的概率,由基准(含用户自测语料)校准。
+const GROUP_PENALTY: [f64; 7] = [0.35, 0.50, 0.50, 0.70, 0.60, 0.60, 0.60];
 /// 精确首位保护的最低词频。只要词库给出非零频次,就优先保住用户实际打出的
 /// 全拼整词;零频长尾仍按分数竞争,避免把无意义词条顶到首位。
 const EXACT_PROTECT_MIN_FREQ: u64 = 1;
@@ -177,6 +182,22 @@ const COMPLETION_OVERRIDE_RATIO: u64 = 16;
 /// 补全只面向词,不面向整句。四音节以上的输入按句子处理,避免长句每次
 /// 按键都去枚举末音节,把整句候选挤出首页。
 const COMPLETION_MAX_SYLLABLES: usize = 4;
+
+/// 模糊改动的总罚分:每处取它所命中各组先验罚分的平均。没有组信息时回退到统一值。
+fn fuzzy_penalty(edits: usize, groups: u8) -> f64 {
+    if edits == 0 {
+        return 0.0;
+    }
+    let (sum, count) = GROUP_PENALTY
+        .iter()
+        .enumerate()
+        .filter(|(bit, _)| groups & (1 << *bit) != 0)
+        .fold((0.0, 0u32), |(sum, count), (_, cost)| (sum + cost, count + 1));
+    if count == 0 {
+        return FUZZY_PENALTY * edits as f64;
+    }
+    sum / f64::from(count) * edits as f64
+}
 
 #[derive(Clone)]
 struct Hit {
@@ -210,10 +231,9 @@ impl Hit {
         groups: u8,
         hint: Option<String>,
     ) -> Self {
-        let mut hit = Self::raw(word, freq.max(1) as f64, user_freq, total, edits);
+        let mut hit = Self::raw(word, freq.max(1) as f64, user_freq, total, edits, groups);
         hit.trusted = trusted;
         hit.freq = freq;
-        hit.groups = groups;
         hit.hint = hint;
         hit
     }
@@ -228,25 +248,23 @@ impl Hit {
             2 => 30_000.0,
             _ => 1_000_000.0,
         };
-        let mut hit = Self::raw(word, base, user_freq, total, edits);
-        hit.groups = groups;
-        hit
+        Self::raw(word, base, user_freq, total, edits, groups)
     }
 
-    fn raw(word: String, base: f64, user_freq: u32, total: f64, edits: usize) -> Self {
+    fn raw(word: String, base: f64, user_freq: u32, total: f64, edits: usize, groups: u8) -> Self {
         let chars = word.chars().count().max(1) as f64;
         Self {
             score: (base / total).ln()
                 + CHAR_BONUS * chars
                 + USER_W * (1.0 + f64::from(user_freq)).ln()
                 - WORD_PENALTY
-                - FUZZY_PENALTY * edits as f64,
+                - fuzzy_penalty(edits, groups),
             word,
             trusted: false,
             edits,
             freq: 0,
             user_freq,
-            groups: 0,
+            groups,
             hint: None,
         }
     }
@@ -704,5 +722,29 @@ fn protect_exact(cands: &mut [Candidate]) {
         .map(|(i, _)| i)
     {
         cands[..=index].rotate_right(1);
+    }
+}
+
+#[cfg(test)]
+mod fuzzy_penalty_tests {
+    use super::*;
+
+    #[test]
+    fn exact_match_is_free() {
+        assert_eq!(fuzzy_penalty(0, 0), 0.0);
+    }
+
+    #[test]
+    fn common_confusions_cost_less_than_rare_ones() {
+        let zcs = fuzzy_penalty(1, syllables::GROUP_ZCS);
+        let rl = fuzzy_penalty(1, syllables::GROUP_RL);
+        assert!(zcs < rl, "z/zh 应比 r/l 便宜: {zcs} vs {rl}");
+    }
+
+    #[test]
+    fn two_edits_cost_twice_one_edit() {
+        let one = fuzzy_penalty(1, syllables::GROUP_LN);
+        let two = fuzzy_penalty(2, syllables::GROUP_LN);
+        assert!((two - 2.0 * one).abs() < 1e-12);
     }
 }
