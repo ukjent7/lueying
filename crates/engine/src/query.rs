@@ -486,6 +486,9 @@ struct State {
     hint: Option<String>,
 }
 
+/// 低置信度时最多展示几条纠正候选,插在精确首选之后。与一页候选数对齐:
+/// 分段手误的正确字常排在第 3 到 5 位,只展示 2 条时大多被截掉。
+const CORRECTION_SHOWN: usize = 5;
 /// 错音纠正最多解码的条数。最长 24 键最多 400 条纠正,每条都要整图解码;
 /// 全部跑完会把首键拖到几百毫秒。常见手误排在前几条,截断不影响它们。
 /// 按解码次数计量而不按墙钟时间,同一输入在任何机器上的结果都一致。
@@ -645,11 +648,11 @@ pub(crate) fn build(args: BuildArgs<'_>) -> Built {
     if confident {
         fixed.cands.extend(built.cands);
     } else {
-        // 低置信度只放前两条纠正候选,插在精确首选之后,作为第二/第三候选
-        // 提示;准确候选仍占首位,连续下方向键能回到其余原切分。
+        // 低置信度只放前几条纠正候选,插在精确首选之后作为提示;准确候选仍占首位,
+        // 连续下方向键能回到其余原切分。
         let mut merged = built.cands;
         let insert = usize::from(!merged.is_empty());
-        for (offset, candidate) in fixed.cands.drain(..).take(2).enumerate() {
+        for (offset, candidate) in fixed.cands.drain(..).take(CORRECTION_SHOWN).enumerate() {
             merged.insert((insert + offset).min(merged.len()), candidate);
         }
         fixed.cands = merged;
