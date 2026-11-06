@@ -150,8 +150,12 @@ impl Toolbar {
     /// 把位置夹在屏幕内(屏幕分辨率变了、或者拖出去了,都要拉回来)。
     pub fn clamped(mut self, screen: Rect) -> Self {
         let (width, height) = Self::size();
-        self.x = self.x.clamp(screen.left, (screen.right - width).max(screen.left));
-        self.y = self.y.clamp(screen.top, (screen.bottom - height).max(screen.top));
+        self.x = self
+            .x
+            .clamp(screen.left, (screen.right - width).max(screen.left));
+        self.y = self
+            .y
+            .clamp(screen.top, (screen.bottom - height).max(screen.top));
         self
     }
 }
@@ -181,16 +185,22 @@ mod tests {
     fn each_button_hits_its_own_action() {
         let bar = Toolbar::at_default(screen());
         for (button, rect) in bar.buttons() {
-            let (cx, cy) = ((rect.left + rect.right) / 2.0, (rect.top + rect.bottom) / 2.0);
+            let (cx, cy) = (
+                (rect.left + rect.right) / 2.0,
+                (rect.top + rect.bottom) / 2.0,
+            );
             assert_eq!(bar.hit(cx, cy), Some(button));
-            assert_eq!(button.action(), match button {
-                Button::Mode => Action::ToggleMode,
-                Button::FullWidth => Action::ToggleFullWidth,
-                Button::Punct => Action::TogglePunct,
-                Button::Script => Action::ToggleScript,
-                Button::Settings => Action::OpenSettings,
-                Button::Hide => Action::Hide,
-            });
+            assert_eq!(
+                button.action(),
+                match button {
+                    Button::Mode => Action::ToggleMode,
+                    Button::FullWidth => Action::ToggleFullWidth,
+                    Button::Punct => Action::TogglePunct,
+                    Button::Script => Action::ToggleScript,
+                    Button::Settings => Action::OpenSettings,
+                    Button::Hide => Action::Hide,
+                }
+            );
         }
     }
 
