@@ -5,8 +5,10 @@
 //! 不会被设成无限大或无限小。舞台是工具栏外面一圈留白,角色可以在舞台里表演,
 //! 但按钮的点击始终优先。外观可以由扩展自定义,但按钮的功能不能丢。
 
-use crate::actor::{Actor, Stage};
-use crate::panel::Rect;
+use crate::actor::{Actor, Stage, View};
+use crate::animation::{Pack, frame_at};
+use crate::paint::{Canvas, Color};
+use crate::panel::{Palette, Rect};
 use crate::skin_pack::{ActorSpec, Layer, SkinPack};
 
 /// 按钮的边长(倍率 1.0 时,逻辑像素)。
@@ -233,6 +235,67 @@ pub fn label(button: Button, status: Status) -> &'static str {
 
 /// 角色的边长(倍率 1.0 时,逻辑像素)。
 pub const SPRITE: f32 = 36.0;
+/// 圆角半径与字号(倍率 1.0 时)。
+const RADIUS: f32 = 9.0;
+const FONT: f32 = 14.0;
+
+/// 一层角色:舞台与它们这一刻推进到的位置。
+pub struct Cast<'a> {
+    pub stage: &'a Stage,
+    pub views: &'a [View],
+}
+
+/// 一帧工具栏的绘制输入。坐标都是屏幕坐标,`origin` 是窗口左上角,画的时候要减去它。
+pub struct Scene<'a> {
+    pub toolbar: &'a Toolbar,
+    pub origin: (f32, f32),
+    pub palette: &'a Palette,
+    pub status: Status,
+    /// 动画包的帧表;没有就不画角色。
+    pub pack: Option<&'a Pack>,
+    pub now_ms: u64,
+    /// 按钮下面的角色与按钮上面的角色。
+    pub below: Cast<'a>,
+    pub above: Cast<'a>,
+}
+
+/// 画一帧:背景,按钮下面的角色,按钮,按钮上面的角色。三个平台共用这一个顺序。
+pub fn paint(canvas: &mut dyn Canvas, scene: &Scene) {
+    let scale = scene.toolbar.scale;
+    let bar = local(scene.toolbar.rect(), scene.origin);
+    canvas.fill_rrect(bar, RADIUS * scale, Color::opaque(scene.palette.bg));
+    canvas.stroke_rrect(bar, RADIUS * scale, 1.0, Color::opaque(scene.palette.border));
+    paint_cast(canvas, scene, &scene.below);
+    for (button, rect) in scene.toolbar.buttons() {
+        let text = label(button, scene.status);
+        let color = Color::opaque(scene.palette.text);
+        canvas.text_centered(text, local(rect, scene.origin), FONT * scale, color);
+    }
+    paint_cast(canvas, scene, &scene.above);
+}
+
+fn paint_cast(canvas: &mut dyn Canvas, scene: &Scene, cast: &Cast) {
+    let Some(pack) = scene.pack else {
+        return;
+    };
+    let size = SPRITE * scene.toolbar.scale;
+    for (actor, view) in cast.stage.actors.iter().zip(cast.views) {
+        if let Some(index) = frame_at(actor.clip(), scene.now_ms, pack) {
+            let (x, y) = (view.x - scene.origin.0, view.y - scene.origin.1);
+            canvas.draw_sprite(index, Rect::from_xywh(x, y, size, size));
+        }
+    }
+}
+
+/// 屏幕坐标换成窗口内的局部坐标。
+fn local(rect: Rect, origin: (f32, f32)) -> Rect {
+    Rect {
+        left: rect.left - origin.0,
+        top: rect.top - origin.1,
+        right: rect.right - origin.0,
+        bottom: rect.bottom - origin.1,
+    }
+}
 
 /// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。
 /// 没有动画包时舞台是空的。包在解析时已经校验过行为,这里不会失败。

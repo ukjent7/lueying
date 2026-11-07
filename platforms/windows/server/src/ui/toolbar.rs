@@ -13,9 +13,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_protocol::Request;
-use lueying_render::actor::{Stage, View};
-use lueying_render::animation::{Pack, frame_at};
-use lueying_render::paint::{Canvas, Color};
+use lueying_render::actor::Stage;
 use lueying_render::panel::Rect;
 use lueying_render::skin_pack::{self, Layer, SkinPack};
 use lueying_render::toolbar::{self, Action, Button, SPRITE, Status, Toolbar};
@@ -40,10 +38,6 @@ use lueying_server::config;
 const MK_LBUTTON: usize = 0x0001;
 /// 每一帧的间隔;工具栏上有角色时逐帧重画,没有角色时只在需要时重画。
 const TICK: Duration = Duration::from_millis(33);
-/// 圆角半径(倍率 1.0)。
-const RADIUS: f32 = 9.0;
-/// 字号(倍率 1.0)。
-const FONT: f32 = 14.0;
 
 /// 窗口线程独占的状态:工具栏模型、两层舞台、动画包、窗口左上角的屏幕坐标、按钮交互。
 struct Ctx {
@@ -180,24 +174,6 @@ fn load_skin(surface: &mut Surface) -> Option<SkinPack> {
     Some(skin)
 }
 
-/// 画一层角色:每个角色按自己的片段与时刻取帧,画在窗口的局部坐标里。
-fn draw_actors(
-    canvas: &mut Surface,
-    stage: &Stage,
-    views: &[View],
-    pack: &Pack,
-    now_ms: u64,
-    origin: (f32, f32),
-    size: f32,
-) {
-    for (actor, view) in stage.actors.iter().zip(views) {
-        if let Some(index) = frame_at(actor.clip(), now_ms, pack) {
-            let rect = Rect::from_xywh(view.x - origin.0, view.y - origin.1, size, size);
-            canvas.draw_sprite(index, rect);
-        }
-    }
-}
-
 fn pack_dir() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()?
@@ -289,35 +265,24 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         theme::Appearance::of_system(),
         place::ui_options(&ctx.state).2,
     ));
-    let local = |r: Rect| Rect {
-        left: r.left - stage_rect.left,
-        top: r.top - stage_rect.top,
-        right: r.right - stage_rect.left,
-        bottom: r.bottom - stage_rect.top,
+    let scene = toolbar::Scene {
+        toolbar: &ctx.bar,
+        origin: (stage_rect.left, stage_rect.top),
+        palette: &palette,
+        status: status_of(&ctx.state),
+        pack: ctx.skin.as_ref().map(|skin| &skin.pack),
+        now_ms,
+        below: toolbar::Cast {
+            stage: &ctx.below,
+            views: &below,
+        },
+        above: toolbar::Cast {
+            stage: &ctx.above,
+            views: &above,
+        },
     };
-    let bar_local = local(ctx.bar.rect());
-    let status = status_of(&ctx.state);
     match surface.begin(w as u32, h as u32) {
-        Ok(canvas) => {
-            canvas.fill_rrect(bar_local, RADIUS * scale, Color::opaque(palette.bg));
-            canvas.stroke_rrect(
-                bar_local,
-                RADIUS * scale,
-                1.0,
-                Color::opaque(palette.border),
-            );
-            let origin = (stage_rect.left, stage_rect.top);
-            if let Some(skin) = &ctx.skin {
-                draw_actors(canvas, &ctx.below, &below, &skin.pack, now_ms, origin, size);
-            }
-            for (button, rect) in ctx.bar.buttons() {
-                let text = toolbar::label(button, status);
-                canvas.text_centered(text, local(rect), FONT * scale, Color::opaque(palette.text));
-            }
-            if let Some(skin) = &ctx.skin {
-                draw_actors(canvas, &ctx.above, &above, &skin.pack, now_ms, origin, size);
-            }
-        }
+        Ok(canvas) => toolbar::paint(canvas, &scene),
         Err(e) => println!("工具栏表面失败: {e}"),
     }
     if let Err(e) = surface.present(
