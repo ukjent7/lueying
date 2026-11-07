@@ -315,6 +315,46 @@ fn region_set(cfg: &mut AppConfig, index: usize) {
     cfg.region = Region::from_index(index);
 }
 
+/// 工具栏大小的可选倍率;配置里的值只能落在这几档之一(或夹到最近的一档)。
+const TOOLBAR_SCALE_VALUES: [f32; 4] = [0.75, 1.0, 1.25, 1.5];
+const TOOLBAR_SCALE_CHOICES: &[Choice] = &[
+    Choice {
+        value: "75",
+        label: "75%",
+    },
+    Choice {
+        value: "100",
+        label: "100%",
+    },
+    Choice {
+        value: "125",
+        label: "125%",
+    },
+    Choice {
+        value: "150",
+        label: "150%",
+    },
+];
+
+fn toolbar_scale_get(cfg: &AppConfig) -> usize {
+    TOOLBAR_SCALE_VALUES
+        .iter()
+        .enumerate()
+        .min_by(|a, b| {
+            (a.1 - cfg.toolbar_scale)
+                .abs()
+                .total_cmp(&(b.1 - cfg.toolbar_scale).abs())
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(1)
+}
+
+fn toolbar_scale_set(cfg: &mut AppConfig, index: usize) {
+    if let Some(scale) = TOOLBAR_SCALE_VALUES.get(index) {
+        cfg.toolbar_scale = lueying_render::toolbar::clamp_scale(*scale);
+    }
+}
+
 fn page_size_get(cfg: &AppConfig) -> usize {
     PAGE_SIZE_VALUES
         .iter()
@@ -645,6 +685,26 @@ pub static SETTINGS: &[SettingDef] = &[
                 false,
                 page_size_get,
                 page_size_set,
+            ),
+            visible: always,
+        }),
+    },
+    SettingDef {
+        key: "toolbar_scale",
+        title: "工具栏大小",
+        detail: "工具栏与它的舞台一起缩放,只在 75%–150% 之间调",
+        value: ValueType::Enum(&["75", "100", "125", "150"]),
+        default: DefaultValue::Text("100"),
+        ui: Some(UiDef {
+            page: PageId::Input,
+            keywords: "工具栏 大小 缩放 舞台",
+            control: segment(
+                ids::TOOLBAR_SCALE,
+                TOOLBAR_SCALE_CHOICES,
+                44.0,
+                false,
+                toolbar_scale_get,
+                toolbar_scale_set,
             ),
             visible: always,
         }),

@@ -234,6 +234,16 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         }
         return;
     }
+    // 设置页改了大小:跟着配置走,位置保持不变。
+    let configured = ctx
+        .state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .toolbar_scale;
+    if (configured - ctx.bar.scale).abs() > f32::EPSILON {
+        ctx.bar = ctx.bar.with_scale(configured, ctx.screen);
+    }
     let stage_rect = ctx.bar.stage(ctx.screen);
     ctx.origin = (stage_rect.left, stage_rect.top);
     let (w, h) = (

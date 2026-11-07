@@ -25,6 +25,7 @@ pub mod ids {
     pub const TRADITIONAL: &str = "traditional";
     pub const REGION: &str = "region";
     pub const PAGE_SIZE: &str = "page-size";
+    pub const TOOLBAR_SCALE: &str = "toolbar-scale";
     pub const LAYOUT: &str = "layout";
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
