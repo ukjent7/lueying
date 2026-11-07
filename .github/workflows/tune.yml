@@ -1,0 +1,152 @@
+# 解码常数自动调参:每个常数在邻域各取一点,整批并行跑开发集基准,
+# 「整句首选变好、干净全拼不退」的候选胜出,带证据提交后由 CI 与每周门禁复核。
+# 产物只有常数改动,工作区补丁切换,产品代码结构与运行时开销不变。
+name: tune
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_gain:
+        description: 采纳门槛(整句首选至少高出基线的百分点)
+        required: true
+        default: "0.2"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  plan:
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: plan
+        run: |
+          # baseline 也进矩阵:同一套打分,常数不动。
+          matrix=$(python3 tools/tune_decoder.py plan | jq -c '. + [{"name":"baseline","file":"crates/engine/src/decoder.rs","old":"","new":""}]')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: tune
+      - name: 应用候选
+        if: matrix.name != 'baseline'
+        run: python3 tools/tune_decoder.py patch --name "${{ matrix.name }}" --file "${{ matrix.file }}" --value "${{ matrix.new }}"
+      - name: 下载词典与模型
+        run: |
+          bash tools/fetch_dict.sh data
+          bash tools/fetch_rerank.sh data/rerank
+      - name: 构建
+        run: cargo build --release -p lueying-e2e --locked
+      - name: 基准
+        run: |
+          ./target/release/lueying-e2e --dict data/main.pyd --gram data/collocation.bin \
+            --rerank-dir data/rerank --only-shared --corpus dicts/eval-dev-v4.tsv
+      - name: 打分
+        run: python3 tools/tune_decoder.py score --items target/bench > score.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: score-${{ matrix.name }}-${{ matrix.new }}
+          path: score.json
+          retention-days: 1
+
+  decide:
+    needs: [plan, run]
+    outputs:
+      winners: ${{ steps.decide.outputs.winners }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MIN_GAIN: ${{ inputs.min_gain }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: score-*
+          merge-multiple: false
+          path: scores
+      - id: decide
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os
+
+          files = {entry["name"]: entry["file"]
+                   for entry in json.loads(os.environ["MATRIX"]) if entry["name"] != "baseline"}
+          scores = {}
+          for path in glob.glob("scores/*/score.json"):
+              name = os.path.basename(os.path.dirname(path)).removeprefix("score-")
+              if name.startswith("baseline"):
+                  scores["baseline"] = json.load(open(path))
+              else:
+                  const, value = name.rsplit("-", 1)
+                  scores.setdefault(const, {})[value] = json.load(open(path))
+
+          base = scores["baseline"]
+          winners = []
+          for const, by_value in scores.items():
+              if const == "baseline":
+                  continue
+              value, score = max(by_value.items(), key=lambda kv: kv[1]["objective"])
+              if score["objective"] >= base["objective"] + float(os.environ["MIN_GAIN"]) \
+                  and (score["clean"] is None or base["clean"] is None
+                       or score["clean"] >= base["clean"]):
+                  winners.append({"name": const, "file": files[const], "value": value,
+                                  "objective": score["objective"], "base": base["objective"]})
+          winners.sort(key=lambda w: w["objective"] - w["base"], reverse=True)
+          print(json.dumps({"baseline": base, "winners": winners}, ensure_ascii=False, indent=1))
+          open("winners.json", "w").write(json.dumps(winners))
+          EOF
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: winners
+          path: winners.json
+          retention-days: 1
+
+  apply:
+    needs: [plan, decide]
+    if: needs.decide.outputs.winners != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WINNERS: ${{ needs.decide.outputs.winners }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 应用胜者
+        run: |
+          echo "$WINNERS" | jq -c '.[]' | while read -r winner; do
+            python3 tools/tune_decoder.py patch --name "$(jq -r .name <<<"$winner")" \
+              --file "$(jq -r '.file // "crates/engine/src/decoder.rs"' <<<"$winner")" \
+              --value "$(jq -r .value <<<"$winner")"
+          done
+          git diff --stat
+      - name: 提交并触发复核
+        run: |
+          git config user.name "ukjent7"
+          git config user.email "ukjent7@users.noreply.github.com"
+          git add -A
+          git commit -m "调参(engine): 开发集坐标系搜索胜者
+
+          $WINNERS
+
+          基线与各候选的整句首选/干净全拼分数见 tune 工作流产物;
+          提交后由 CI 与每周门禁复核,干净全拼倒退即回滚。"
+          git push
+          gh workflow run ci
