@@ -28,6 +28,7 @@
 #![deny(missing_docs)]
 
 pub mod bindings;
+pub(crate) mod component;
 mod host;
 mod manifest;
 pub mod native;

@@ -165,6 +165,10 @@ jobs:
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
       # 官方 guest:win-e2e 装扩展与发布包都要它;产物拷进仓库路径供运行期读取。
+      - name: 安装 wasm-tools
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: wasm-tools
       - name: 构建官方 guest
         shell: pwsh
         run: |
@@ -172,7 +176,8 @@ jobs:
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
           Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          Copy-Item target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
+          # 剪贴板已迁到组件 ABI:核心模块包成组件再放扩展目录,宿主按魔数分流。
+          wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
           Copy-Item target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
       # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。

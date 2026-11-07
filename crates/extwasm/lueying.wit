@@ -1,11 +1,13 @@
-// 掠影扩展服务缝 v1(WIT 风格 IDL)。
+// 掠影扩展服务缝 v2(Component Model 真契约)。
 //
-// 这是接口的记录文件:Rust 侧 Registry/Provider 与 JS 侧 lueying.<service>.*
-// 都按这里的名字与方法实现;改接口先改这里,再改注册表里的方法白名单。
-// 每个方法都是「JSON 进、Promise 出」:参数是 record 的 JSON 形式,结果经
-// 完成队列异步送达,返回 result 的 Err 分支是给用户看的错误文本。
+// 这份文件就是扩展宿主的接口契约:宿主侧绑定由 wasmtime::component::bindgen!
+// 从这里生成,guest 侧绑定由 wit-bindgen 生成,服务注册表按它核对方法白名单。
+// 改接口先改这里,三处生成物随编译自动更新。
+//
+// 服务调用是阻塞的:扩展在自己的 worker 线程上等待,宿主服务失败直接以
+// result 的 Err 分支回给扩展,不会被静默吞掉。
 
-package lueying:ext@1.0.0;
+package lueying:ext@2.0.0;
 
 // 截取屏幕:返回临时位图文件路径,喂给 ocr.recognize 或外部命令。
 interface capture {
@@ -20,8 +22,8 @@ interface capture {
   }
   record shot-result {
     file: string,
-    width: u32,
-    height: u32,
+    width: s64,
+    height: s64,
   }
   shot: func(options: shot-options) -> result<shot-result, string>;
 }
@@ -199,6 +201,14 @@ interface asr {
   recognize: func(options: recognize-options) -> result<recognize-result, string>;
 }
 
+// 扩展的导出面:init 加载时调用一次;command 按清单声明的命令 id 分发;
+// appearance 只在清单 `appearance: true` 时被派发。
+interface entry {
+  init: func() -> result<_, string>;
+  command: func(id: string, args: string) -> result<string, string>;
+  appearance: func(scene-json: string) -> result<option<string>, string>;
+}
+
 world extension {
   import capture;
   import ocr;
@@ -212,4 +222,5 @@ world extension {
   import context;
   import audio;
   import asr;
+  export entry;
 }

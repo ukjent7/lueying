@@ -131,13 +131,18 @@ jobs:
         run: |
           bash tools/fetch_dict.sh data
           bash tools/fetch_rerank.sh data/rerank
+      - name: 安装 wasm-tools
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: wasm-tools
       - name: 构建官方 guest
         run: |
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
           cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          cp target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
+          # 剪贴板已迁到组件 ABI:包成组件,宿主按魔数分流。
+          wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
           cp target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
       - name: 场景 E2E
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast

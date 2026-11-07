@@ -7,6 +7,7 @@
 
 ### 新增
 
+- 扩展 ABI 迁移第一步：服务缝契约升格为 `lueying:ext@2.0.0`（十二个服务全部类型化 + 扩展导出面 `entry`），宿主按 wasm 魔数双路径分流——组件走 wasmtime::component 原生绑定，核心模块走 Extism（迁移桥）；剪贴板历史作为首个组件 ABI 官方扩展完成迁移（作者代码零改动，仅换宏）。shot-ocr 与 voice-asr 仍在 Extism 路径，四扩展迁完后 Extism 退场。
 - 扩展宿主迁移验证桩：Extism→Component Model 的核心假设（wit-bindgen guest 包组件、宿主类型化调用、燃料计数、阻塞宿主服务）以一条 CI 测试钉住，真实 world 按同样链路逐服务迁移。
 - 解码常数自动调参（`tools/tune_decoder.py` + `tune` 工作流）：坐标系搜索，每个常数在邻域各取一点并行跑开发集基准，「整句首选变好、干净全拼不退」的候选带证据提交。
 - 词典自动跟随：每天检查 lueying-dict 的正式 Release，新版本先过基准门禁再自动更新 `fetch_dict.sh` 的钉住标签与校验和；发版节奏旋钮在词典仓（周一定时，默认每周，两次间隔半年兜底）。

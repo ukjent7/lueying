@@ -194,7 +194,7 @@ impl Worker {
             .name(format!("ext-wasm-{caller}"))
             .stack_size(WORKER_STACK)
             .spawn(move || {
-                let mut guest = match Guest::new(
+                let mut guest = match GuestRuntime::load(
                     wasm,
                     manifest,
                     services,
@@ -376,6 +376,48 @@ struct Guest {
     failure: Arc<Mutex<Option<String>>>,
 }
 
+/// 双 ABI 的 guest 外观:迁移期内,组件魔数的模块走组件宿主,核心模块
+/// 走 Extism 宿主;四个官方扩展迁完后 Extism 分支连同本枚举一起退场。
+pub(crate) enum GuestRuntime {
+    Extism(Guest),
+    Component(crate::component::ComponentGuest),
+}
+
+impl GuestRuntime {
+    pub(crate) fn load(
+        wasm: Vec<u8>,
+        manifest: Arc<Manifest>,
+        services: Arc<Registry>,
+        limits: Limits,
+        cancelled: Arc<AtomicBool>,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self, String> {
+        if crate::component::is_component(&wasm) {
+            Ok(Self::Component(crate::component::ComponentGuest::new(
+                wasm, manifest, services, limits, cancelled,
+            )?))
+        } else {
+            Ok(Self::Extism(Guest::new(
+                wasm, manifest, services, limits, cancelled, metrics,
+            )?))
+        }
+    }
+
+    fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
+        match self {
+            Self::Extism(guest) => guest.command(id, args),
+            Self::Component(guest) => guest.command(id, args),
+        }
+    }
+
+    fn appearance(&mut self, scene: &str) -> Result<Option<String>, String> {
+        match self {
+            Self::Extism(guest) => guest.appearance(scene),
+            Self::Component(guest) => guest.appearance(scene),
+        }
+    }
+}
+
 impl Guest {
     fn new(
         wasm: Vec<u8>,
@@ -543,7 +585,7 @@ fn extism_manifest(wasm: &[u8], limits: Limits) -> ExtismManifest {
 }
 
 /// 每次调用的燃料预算;只有外观的包按帧算,带命令的包按命令算。
-fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
+pub(crate) fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
     if manifest.commands().is_empty() {
         limits.appearance_fuel
     } else {
@@ -552,7 +594,7 @@ fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
 }
 
 /// wasmtime 配置;栈上限按 [`Limits`] 配,其余用 extism 的默认。
-fn wasmtime_config(limits: Limits) -> wasmtime::Config {
+pub(crate) fn wasmtime_config(limits: Limits) -> wasmtime::Config {
     let mut config = wasmtime::Config::default();
     config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
     config
@@ -709,7 +751,7 @@ fn read_block(plugin: &mut CurrentPlugin, offset: u64) -> Result<Vec<u8>, extism
 }
 
 /// 服务的宿主等待时限。面板要等用户操作,识别要跑满传输时限,单独放宽。
-fn timeout_for(service: Service, method: &str) -> Duration {
+pub(crate) fn timeout_for(service: Service, method: &str) -> Duration {
     match (service, method) {
         (Service::Panel, "show") => Duration::from_secs(600),
         (Service::Ocr, "recognize") => Duration::from_secs(120),
