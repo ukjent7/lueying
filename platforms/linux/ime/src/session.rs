@@ -6,15 +6,20 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use lueying_engine::{Engine, Event, Key, SharedUser, UserDict};
+use lueying_engine::{Engine, Event, Key, Mode, Script, SharedUser, UserDict};
 use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 use lueying_protocol::SessionView;
+use lueying_render::toolbar::Status;
 use lueying_rerank::{Model, Rerank};
 use lueying_server::config::AppConfig;
 
 pub struct Session {
     pub engine: Engine,
     pub view: SessionView,
+    /// 简繁模块的句柄:工具栏的「简/繁」改它,下一次候选构建生效。
+    script: Arc<ScriptModule>,
+    /// 当前是否繁体输出。
+    traditional: bool,
     user: SharedUser,
     user_path: Option<PathBuf>,
     sync_rerank: Option<Mutex<Rerank>>,
@@ -38,7 +43,9 @@ impl Session {
         let script = Arc::new(ScriptModule::new(app.script()));
         engine = engine
             .with_modules(lueying_features::registry_with_script(
-                phrases, prediction, script,
+                phrases,
+                prediction,
+                Arc::clone(&script),
             ))
             .with_scheme(lueying_features::scheme(app.scheme, app.aux));
         engine.set_host("lueying-linux");
@@ -46,9 +53,12 @@ impl Session {
         let settle_model = model("rerank-25m").or_else(|| sync_model.clone());
         let sync_rerank = sync_model.map(|m| Mutex::new(Rerank::new(&m)));
         let settle_rerank = settle_model.map(|m| Mutex::new(Rerank::new(&m)));
+        let traditional = app.script() == Script::Traditional;
         Self {
             engine,
             view: SessionView::default(),
+            script,
+            traditional,
             user,
             user_path,
             sync_rerank,
@@ -119,6 +129,42 @@ impl Session {
     pub fn set_context(&mut self, text: &str, cursor: u32) {
         let end = floor_char_boundary(text, cursor as usize);
         self.engine.set_context(&text[..end]);
+    }
+
+    /// 工具栏按钮上的字要随的状态。
+    pub fn status(&self) -> Status {
+        Status {
+            chinese: self.engine.mode() == Mode::Chinese,
+            fullwidth: self.engine.fullwidth(),
+            punct: self.engine.config().chinese_punct,
+            traditional: self.traditional,
+        }
+    }
+
+    /// 工具栏的「全/半」:只改后续按键的输出。
+    pub fn toggle_fullwidth(&mut self) {
+        let on = !self.engine.fullwidth();
+        self.engine.set_fullwidth(on);
+    }
+
+    /// 工具栏的「，/,」:切换中文标点,立刻按新配置重算。
+    pub fn toggle_punct(&mut self) {
+        let mut cfg = self.engine.config().clone();
+        cfg.chinese_punct = !cfg.chinese_punct;
+        self.engine.set_config(cfg);
+        self.refresh();
+    }
+
+    /// 工具栏的「简/繁」。
+    pub fn toggle_script(&mut self) {
+        self.traditional = !self.traditional;
+        let script = if self.traditional {
+            Script::Traditional
+        } else {
+            Script::Simplified
+        };
+        self.script.set_script(script);
+        self.refresh();
     }
 
     pub fn set_learning(&mut self, enabled: bool) {

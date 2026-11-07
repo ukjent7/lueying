@@ -12,9 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use calloop::LoopSignal;
 use lueying_engine::{Event, Key};
+use lueying_render::panel::Rect;
+use lueying_render::toolbar::{Action, Status};
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface,
+    wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm,
+    wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use xkbcommon::xkb::{self, KeyDirection, Keycode, Keymap, Keysym, State};
@@ -22,6 +24,9 @@ use xkbcommon::xkb::{self, KeyDirection, Keycode, Keymap, Keysym, State};
 use crate::keymap::{self, Modifiers};
 use crate::session::Session;
 use crate::wayland::panel::Panel;
+use crate::wayland::protocol::layer_shell::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+use crate::wayland::protocol::layer_shell::zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1};
+use crate::wayland::toolbar::Toolbar;
 use crate::wayland::protocol::input_method::zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2;
 use crate::wayland::protocol::input_method::zwp_input_method_v2::ZwpInputMethodV2;
 use crate::wayland::protocol::input_method::zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2;
@@ -29,6 +34,21 @@ use crate::wayland::protocol::virtual_keyboard::zwp_virtual_keyboard_v1::ZwpVirt
 use crate::wayland::worker::{self, Command};
 
 const BTN_LEFT: u32 = 0x110;
+
+/// 缓冲归谁:候选窗与工具栏各自的缓冲释放时,走各自的分支。
+#[derive(Clone, Copy, Debug)]
+pub enum Owner {
+    Panel,
+    Toolbar,
+}
+
+/// 指针现在落在哪个窗口上。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Focus {
+    Nowhere,
+    Panel,
+    Toolbar,
+}
 
 struct Xkb {
     state: State,
@@ -62,6 +82,11 @@ pub struct App {
     repeat: Option<Repeat>,
     pointer: Option<wl_pointer::WlPointer>,
     pointer_pos: (f32, f32),
+    focus: Focus,
+    toolbar: Option<Toolbar>,
+    /// 输出的模式(物理像素)与缩放;工具栏用它算逻辑大小。
+    output_mode: Option<(i32, i32)>,
+    output_scale: i32,
 }
 
 impl App {
@@ -88,12 +113,17 @@ impl App {
             repeat: None,
             pointer: None,
             pointer_pos: (0.0, 0.0),
+            focus: Focus::Nowhere,
+            toolbar: None,
+            output_mode: None,
+            output_scale: 1,
         }
     }
 
     fn process(&mut self, key: Key) -> bool {
         self.session.set_now();
         let events = self.session.process_key(key);
+        self.after_key();
         if events
             .iter()
             .any(|event| matches!(event, Event::Passthrough(_)))
@@ -109,6 +139,14 @@ impl App {
         self.flush((!committed.is_empty()).then_some(committed.as_str()));
         let _ = self.worker.send(Command::Settle);
         true
+    }
+
+    /// 每个按键之后:角色看到一次按键,按钮上的字跟着状态走。
+    fn after_key(&mut self) {
+        if let Some(toolbar) = self.toolbar.as_mut() {
+            toolbar.key_pressed();
+        }
+        self.sync_toolbar();
     }
 
     /// 把提交串与当前预编辑一次性发给客户端,并重画候选窗。
@@ -299,6 +337,96 @@ impl App {
         }
     }
 
+    /// 建工具栏:输出的大小要先拿到(`output_mode`),合成器没有 layer-shell 时不建。
+    pub fn start_toolbar(
+        &mut self,
+        compositor: &wl_compositor::WlCompositor,
+        shell: &ZwlrLayerShellV1,
+        shm: &wl_shm::WlShm,
+    ) {
+        let Some((width, height)) = self.output_mode else {
+            eprintln!("lueying-linux: 没有拿到输出大小,工具栏不显示");
+            return;
+        };
+        let scale = self.output_scale.max(1) as f32;
+        let screen = Rect::from_xywh(0.0, 0.0, width as f32 / scale, height as f32 / scale);
+        self.toolbar = Some(Toolbar::new(
+            compositor,
+            shell,
+            shm.clone(),
+            screen,
+            &self.qh,
+        ));
+    }
+
+    pub fn has_toolbar(&self) -> bool {
+        self.toolbar.is_some()
+    }
+
+    /// 工具栏的逐帧回调:有角色在动就重画。
+    pub fn toolbar_frame(&mut self) {
+        let Some(toolbar) = self.toolbar.as_mut() else {
+            return;
+        };
+        if toolbar.tick() {
+            toolbar.redraw(&self.qh);
+        }
+    }
+
+    /// 按钮上的字跟着会话状态走。
+    fn sync_toolbar(&mut self) {
+        let status: Status = self.session.status();
+        if let Some(toolbar) = self.toolbar.as_mut() {
+            toolbar.set_status(status, &self.qh);
+        }
+    }
+
+    /// 工具栏按钮的动作。模式复用 Shift 的效果;简繁、标点、全半角改会话;设置打开配置文件。
+    fn run_toolbar_action(&mut self, action: Action) {
+        match action {
+            Action::ToggleMode => {
+                self.process(Key::Shift);
+            }
+            Action::ToggleFullWidth => self.session.toggle_fullwidth(),
+            Action::TogglePunct => self.session.toggle_punct(),
+            Action::ToggleScript => self.session.toggle_script(),
+            Action::OpenSettings => crate::config::open_for_editing(),
+            Action::Hide => {
+                if let Some(toolbar) = self.toolbar.as_mut() {
+                    toolbar.collapse();
+                }
+            }
+        }
+        self.sync_toolbar();
+        self.redraw();
+    }
+
+    fn toolbar_press(&mut self) {
+        let pos = self.pointer_pos;
+        if let Some(toolbar) = self.toolbar.as_mut() {
+            toolbar.press(pos);
+        }
+    }
+
+    fn toolbar_motion(&mut self) {
+        let pos = self.pointer_pos;
+        if let Some(toolbar) = self.toolbar.as_mut() {
+            toolbar.motion(pos);
+        }
+    }
+
+    fn toolbar_release(&mut self) {
+        let pos = self.pointer_pos;
+        let Some(button) = self
+            .toolbar
+            .as_mut()
+            .and_then(|toolbar| toolbar.release(pos))
+        else {
+            return;
+        };
+        self.run_toolbar_action(button.action());
+    }
+
     pub fn on_worker(&mut self, event: worker::Event) {
         match event {
             worker::Event::Settle => {
@@ -337,31 +465,53 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_y,
                 surface,
                 ..
-            } if surface.id() == state.panel.surface().id() => {
+            } => {
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
-                state.hover();
+                state.focus = if surface.id() == state.panel.surface().id() {
+                    Focus::Panel
+                } else if state.toolbar.as_ref().is_some_and(|t| t.is(&surface)) {
+                    Focus::Toolbar
+                } else {
+                    Focus::Nowhere
+                };
+                if state.focus == Focus::Panel {
+                    state.hover();
+                }
             }
             wl_pointer::Event::Motion {
                 surface_x,
                 surface_y,
                 ..
             } => {
-                if state.panel.hidden() {
-                    return;
-                }
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
-                state.hover();
+                match state.focus {
+                    Focus::Panel if !state.panel.hidden() => state.hover(),
+                    Focus::Toolbar => state.toolbar_motion(),
+                    _ => {}
+                }
             }
             wl_pointer::Event::Leave { .. } => {
-                if state.panel.set_hover(None) {
+                if state.focus == Focus::Panel && state.panel.set_hover(None) {
                     state.redraw();
                 }
+                state.focus = Focus::Nowhere;
             }
             wl_pointer::Event::Button {
                 button,
-                state: WEnum::Value(wl_pointer::ButtonState::Pressed),
+                state: button_state,
                 ..
-            } if button == BTN_LEFT => state.click(),
+            } if button == BTN_LEFT => {
+                let pressed = matches!(
+                    button_state,
+                    WEnum::Value(wl_pointer::ButtonState::Pressed)
+                );
+                match (state.focus, pressed) {
+                    (Focus::Panel, true) => state.click(),
+                    (Focus::Toolbar, true) => state.toolbar_press(),
+                    (Focus::Toolbar, false) => state.toolbar_release(),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -387,20 +537,90 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for App {
+impl Dispatch<wl_buffer::WlBuffer, Owner> for App {
     fn event(
         state: &mut Self,
         _proxy: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
-        _data: &(),
+        owner: &Owner,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            state.panel.release();
-            if state.panel.take_dirty() {
-                state.redraw();
+            match owner {
+                Owner::Panel => {
+                    state.panel.release();
+                    if state.panel.take_dirty() {
+                        state.redraw();
+                    }
+                }
+                Owner::Toolbar => {
+                    if let Some(toolbar) = state.toolbar.as_mut() {
+                        toolbar.buffer_released();
+                        if toolbar.take_dirty() {
+                            toolbar.redraw(&state.qh);
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for App {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_output::Event::Mode {
+                flags,
+                width,
+                height,
+                ..
+            } => {
+                if matches!(flags, WEnum::Value(mode) if mode.contains(wl_output::Mode::Current)) {
+                    state.output_mode = Some((width, height));
+                }
+            }
+            wl_output::Event::Scale { factor } => state.output_scale = factor,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwlrLayerShellV1, ()> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwlrLayerShellV1,
+        _event: crate::wayland::protocol::layer_shell::zwlr_layer_shell_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure { serial, .. } => {
+                if let Some(toolbar) = state.toolbar.as_mut() {
+                    toolbar.configure(serial, qh);
+                }
+            }
+            zwlr_layer_surface_v1::Event::Closed => state.toolbar = None,
         }
     }
 }
@@ -467,6 +687,9 @@ impl Dispatch<ZwpInputMethodV2, ()> for App {
                 state.active = true;
                 state.session.refresh();
                 state.redraw();
+                if let Some(toolbar) = state.toolbar.as_mut() {
+                    toolbar.expand();
+                }
             }
             Event::Deactivate => {
                 state.active = false;

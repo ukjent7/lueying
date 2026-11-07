@@ -20,6 +20,30 @@ pub fn path() -> Option<PathBuf> {
     lueying_server::config::path()
 }
 
+/// 工具栏动画包的目录:与配置文件同一个目录下的 `toolbar-pack`。
+pub fn toolbar_pack_dir() -> Option<PathBuf> {
+    Some(path()?.parent()?.join("toolbar-pack"))
+}
+
+/// 用默认程序打开配置文件;没有就先建一个空的。设置页还没有 Linux 版,工具栏的「设」走这里。
+pub fn open_for_editing() {
+    let Some(file) = path() else {
+        return;
+    };
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+    {
+        eprintln!("打开配置文件 {} 失败: {e}", file.display());
+        return;
+    }
+    let _ = std::process::Command::new("xdg-open").arg(&file).spawn();
+}
+
 /// 用户词库路径;`$XDG_DATA_HOME/lueying/user.tsv`。
 pub fn user_path() -> Option<PathBuf> {
     Some(data_dir()?.join("lueying").join("user.tsv"))

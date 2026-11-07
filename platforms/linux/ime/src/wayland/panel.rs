@@ -14,11 +14,13 @@ use lueying_render::panel::{
     self, Frame, Hit, Layout, Measure, Metrics, Palette, PanelSpec, Rect, Surface,
 };
 use memmap2::MmapMut;
-use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Rect as SkRect, Stroke, Transform};
+use tiny_skia::{
+    FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect as SkRect, Stroke, Transform,
+};
 use wayland_client::QueueHandle;
 use wayland_client::protocol::{wl_buffer, wl_shm, wl_surface};
 
-use crate::wayland::app::App;
+use crate::wayland::app::{App, Owner};
 use crate::wayland::protocol::input_method::zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2;
 
 struct Buffer {
@@ -98,6 +100,7 @@ impl Panel {
             let mut canvas = TinyCanvas {
                 pixmap: &mut pixmap,
                 font: self.font.as_ref(),
+                sprites: &[],
             };
             let frame = Frame {
                 spec: &spec,
@@ -190,7 +193,7 @@ impl Panel {
             width as i32 * 4,
             wl_shm::Format::Argb8888,
             qh,
-            (),
+            Owner::Panel,
         );
         drop(pool);
         self.surface.attach(Some(&buffer), 0, 0);
@@ -214,9 +217,11 @@ impl Measure for TextMeasure<'_> {
     }
 }
 
-struct TinyCanvas<'a> {
-    pixmap: &'a mut Pixmap,
-    font: Option<&'a FontArc>,
+/// tiny-skia 画布:候选窗与工具栏共用。`sprites` 是动画包的帧图,按帧号索引。
+pub(crate) struct TinyCanvas<'a> {
+    pub(crate) pixmap: &'a mut Pixmap,
+    pub(crate) font: Option<&'a FontArc>,
+    pub(crate) sprites: &'a [Pixmap],
 }
 
 impl Canvas for TinyCanvas<'_> {
@@ -330,6 +335,30 @@ impl Canvas for TinyCanvas<'_> {
         measure_text(self.font, content, size)
     }
 
+    fn draw_sprite(&mut self, sprite: usize, rect: Rect) {
+        let Some(image) = self.sprites.get(sprite) else {
+            return;
+        };
+        let (width, height) = (image.width() as f32, image.height() as f32);
+        // 帧图按矩形缩放到位;图本身是预乘的 RGBA,直接合成。
+        let transform = Transform::from_row(
+            rect.width() / width,
+            0.0,
+            0.0,
+            rect.height() / height,
+            rect.left,
+            rect.top,
+        );
+        self.pixmap.draw_pixmap(
+            0,
+            0,
+            image.as_ref(),
+            &PixmapPaint::default(),
+            transform,
+            None,
+        );
+    }
+
     fn text_centered(&mut self, content: &str, rect: Rect, size: f32, color: Color) {
         let width = measure_text(self.font, content, size);
         let origin = Point::new(
@@ -420,7 +449,7 @@ fn measure_text(font: Option<&FontArc>, text: &str, size: f32) -> f32 {
 }
 
 /// 按常见中文字体优先级挑选;找不到时退回系统默认无衬线。
-fn load_font() -> Option<FontArc> {
+pub(crate) fn load_font() -> Option<FontArc> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
     const FAMILIES: [&str; 6] = [
