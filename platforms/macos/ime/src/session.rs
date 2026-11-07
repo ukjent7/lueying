@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::{Engine, Event, Key, SharedUser, UserDict};
+use lueying_features::script::to_traditional;
 use lueying_protocol::SessionView;
 use lueying_rerank::{Model, Rerank};
 use objc2::Message;
@@ -20,6 +21,8 @@ pub struct Session {
     pub engine: Engine,
     pub view: SessionView,
     pub client: Option<Retained<AnyObject>>,
+    /// 繁体输出:候选与上屏文字都转成繁体。只在本次运行内有效,由工具栏的「简/繁」切换。
+    pub traditional: bool,
     user: SharedUser,
     user_path: Option<PathBuf>,
     sync_rerank: Option<Mutex<Rerank>>,
@@ -44,6 +47,7 @@ impl Session {
             engine,
             view: SessionView::default(),
             client: None,
+            traditional: false,
             user,
             user_path,
             sync_rerank,
@@ -53,6 +57,26 @@ impl Session {
 
     pub fn set_client(&mut self, client: Option<&AnyObject>) {
         self.client = client.map(|client| client.retain());
+    }
+
+    /// 工具栏的「全/半」:只改后续按键的输出。
+    pub fn toggle_fullwidth(&mut self) {
+        let on = !self.engine.fullwidth();
+        self.engine.set_fullwidth(on);
+    }
+
+    /// 工具栏的「，/,」:切换中文标点,立刻按新配置重算。
+    pub fn toggle_punct(&mut self) {
+        let mut cfg = self.engine.config().clone();
+        cfg.chinese_punct = !cfg.chinese_punct;
+        self.engine.set_config(cfg);
+        self.refresh();
+    }
+
+    /// 工具栏的「简/繁」。
+    pub fn toggle_script(&mut self) {
+        self.traditional = !self.traditional;
+        self.refresh();
     }
 
     /// 处理一个按键;返回 false 表示交还宿主。
@@ -106,6 +130,11 @@ impl Session {
 
     pub fn refresh(&mut self) {
         lueying_session::refresh(&self.engine, &mut self.view);
+        if self.traditional {
+            for text in &mut self.view.candidates {
+                *text = to_traditional(text);
+            }
+        }
     }
 
     /// 保存用户词库;会话关闭或进程退出时调用。
@@ -160,7 +189,11 @@ impl Session {
 
     fn insert(&self, text: &str) {
         if let Some(client) = &self.client {
-            crate::controller::insert_text(client, text);
+            if self.traditional {
+                crate::controller::insert_text(client, &to_traditional(text));
+            } else {
+                crate::controller::insert_text(client, text);
+            }
         }
     }
 

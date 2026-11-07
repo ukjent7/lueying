@@ -6,7 +6,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use lueying_engine::Key;
+use lueying_engine::{Key, Mode};
+use lueying_render::toolbar::{Action, BUTTONS, Status};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::AnyObject;
 use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
@@ -129,6 +130,15 @@ define_class!(
             self.schedule_settle();
         }
 
+        /// 工具栏按钮的动作;编号是按钮在 `BUTTONS` 里的位置。
+        #[unsafe(method(toolbarAction:))]
+        fn toolbar_action(&self, index: NSInteger) {
+            let button = usize::try_from(index).ok().and_then(|i| BUTTONS.get(i));
+            if let Some(button) = button {
+                self.run_toolbar_action(button.action());
+            }
+        }
+
         #[unsafe(method(settleTimer:))]
         fn settle_timer(&self, _timer: &NSTimer) {
             // 先取出计时器,借用结束后再释放它。
@@ -170,12 +180,14 @@ define_class!(
                 session.set_client(sender);
                 session.engine.clear_context();
             }
+            self.show_toolbar();
         }
 
         #[unsafe(method(deactivateServer:))]
         fn deactivate_server(&self, _sender: Option<&AnyObject>) {
             self.cancel_settle();
             self.hide_panel();
+            crate::toolbar::hide_for(self);
             if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
                 session.commit();
                 session.save();
@@ -215,6 +227,7 @@ impl LueyingInputController {
             };
             session.process_key(key)
         };
+        crate::toolbar::key_pressed();
         self.refresh_panel();
         self.schedule_settle();
         consumed
@@ -252,6 +265,7 @@ impl LueyingInputController {
     }
 
     fn refresh_panel(&self) {
+        self.refresh_toolbar();
         let view = {
             let sessions = self.ivars().session.borrow();
             let Some(session) = sessions.as_ref() else {
@@ -286,6 +300,56 @@ impl LueyingInputController {
         if let Some(panel) = panel {
             panel.hide();
         }
+    }
+
+    fn show_toolbar(&self) {
+        let target: Retained<AnyObject> = self.retain().into();
+        crate::toolbar::show(self.mtm(), &target, self.toolbar_status());
+    }
+
+    /// 工具栏按钮的状态,跟当前会话走;没有会话时用默认值。
+    fn toolbar_status(&self) -> Status {
+        let sessions = self.ivars().session.borrow();
+        match sessions.as_ref() {
+            Some(session) => Status {
+                chinese: session.engine.mode() == Mode::Chinese,
+                fullwidth: session.engine.fullwidth(),
+                punct: session.engine.config().chinese_punct,
+                traditional: session.traditional,
+            },
+            None => Status {
+                chinese: true,
+                fullwidth: false,
+                punct: true,
+                traditional: false,
+            },
+        }
+    }
+
+    fn refresh_toolbar(&self) {
+        crate::toolbar::update(self.toolbar_status());
+    }
+
+    fn run_toolbar_action(&self, action: Action) {
+        match action {
+            Action::ToggleMode => {
+                self.process_engine_key(Key::Shift);
+            }
+            Action::ToggleFullWidth => self.with_session(Session::toggle_fullwidth),
+            Action::TogglePunct => self.with_session(Session::toggle_punct),
+            Action::ToggleScript => self.with_session(Session::toggle_script),
+            Action::OpenSettings => crate::config::open_for_editing(),
+            Action::Hide => crate::toolbar::collapse(),
+        }
+        self.refresh_toolbar();
+    }
+
+    /// 对当前会话做一次改动,然后刷新候选窗。
+    fn with_session(&self, change: fn(&mut Session)) {
+        if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
+            change(session);
+        }
+        self.refresh_panel();
     }
 
     fn caret_rect(&self) -> Option<NSRect> {

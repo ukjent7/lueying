@@ -17,6 +17,8 @@ mod controller;
 mod session;
 #[cfg(target_os = "macos")]
 mod theme;
+#[cfg(target_os = "macos")]
+mod toolbar;
 
 fn main() {
     #[cfg(target_os = "macos")]

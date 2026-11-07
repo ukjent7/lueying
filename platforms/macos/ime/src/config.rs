@@ -13,13 +13,37 @@ use toml::{Table, Value};
 const PAGE_SIZE: std::ops::RangeInclusive<i64> = 3..=9;
 
 /// 配置文件路径;没有 HOME 时为 `None`,只用默认值。
-fn path() -> Option<PathBuf> {
+pub fn path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(
         PathBuf::from(home)
             .join("Library/Application Support/lueying")
             .join("config.toml"),
     )
+}
+
+/// 工具栏动画包的目录:与配置文件同一个目录下的 `toolbar-pack`。
+pub fn toolbar_pack_dir() -> Option<PathBuf> {
+    Some(path()?.parent()?.join("toolbar-pack"))
+}
+
+/// 用默认编辑器打开配置文件;没有就先建一个空的。设置页还没有 macOS 版,工具栏的「设」走这里。
+pub fn open_for_editing() {
+    let Some(file) = path() else {
+        return;
+    };
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+    {
+        eprintln!("打开配置文件 {} 失败: {e}", file.display());
+        return;
+    }
+    let _ = std::process::Command::new("open").arg(&file).spawn();
 }
 
 /// 读取配置文件;缺失或读不出来都回退到默认值。

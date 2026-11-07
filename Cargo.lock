@@ -3453,6 +3453,7 @@ version = "0.1.0"
 dependencies = [
  "lueying-dict",
  "lueying-engine",
+ "lueying-features",
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",

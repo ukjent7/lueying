@@ -8,12 +8,15 @@ use lueying_render::panel::Rect;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{
-    NSBezierPath, NSColor, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSGraphicsContext, NSShadow, NSStringDrawing,
+    NSBezierPath, NSColor, NSCompositingOperation, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSGraphicsContext, NSImage, NSShadow, NSStringDrawing,
 };
 use objc2_foundation::{NSAttributedStringKey, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
-pub struct AppKitCanvas;
+/// 画布。`sprites` 是动画包的帧图,按帧号索引;候选窗没有角色,传空即可。
+pub struct AppKitCanvas<'a> {
+    pub sprites: &'a [Retained<NSImage>],
+}
 
 /// 独立的测宽器:布局在画之前就要知道文字宽度。
 pub struct AppKitMeasure;
@@ -44,7 +47,7 @@ fn attributes(size: f32, color: Color) -> Retained<NSDictionary<NSAttributedStri
     NSDictionary::from_retained_objects(&keys, &[font, color])
 }
 
-impl Canvas for AppKitCanvas {
+impl Canvas for AppKitCanvas<'_> {
     fn fill_rect(&mut self, rect: Rect, color: Color) {
         ns_color(color).setFill();
         NSBezierPath::fillRect(ns_rect(rect));
@@ -129,6 +132,18 @@ impl Canvas for AppKitCanvas {
 
     fn measure(&mut self, content: &str, size: f32) -> f32 {
         measure_text(content, size)
+    }
+
+    fn draw_sprite(&mut self, sprite: usize, rect: Rect) {
+        let Some(image) = self.sprites.get(sprite) else {
+            return;
+        };
+        image.drawInRect_fromRect_operation_fraction(
+            ns_rect(rect),
+            NSRect::ZERO,
+            NSCompositingOperation::SourceOver,
+            1.0,
+        );
     }
 
     fn text_centered(&mut self, content: &str, rect: Rect, size: f32, color: Color) {

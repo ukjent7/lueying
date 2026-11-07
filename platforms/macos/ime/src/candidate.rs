@@ -88,7 +88,7 @@ define_class!(
             let Some(model) = model.as_ref() else {
                 return;
             };
-            let mut canvas = AppKitCanvas;
+            let mut canvas = AppKitCanvas { sprites: &[] };
             let frame = Frame {
                 spec: &model.spec,
                 palette: &model.palette,

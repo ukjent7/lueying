@@ -12,6 +12,8 @@ path = "src/main.rs"
 [target.'cfg(target_os = "macos")'.dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
+# 简繁转换:与 Linux 共用同一份字表。
+lueying-features.workspace = true
 lueying-protocol.workspace = true
 lueying-render.workspace = true
 lueying-rerank.workspace = true
@@ -49,6 +51,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSGlassEffectView",
     "NSGraphics",
     "NSGraphicsContext",
+    "NSImage",
     "NSMenu",
     "NSAccessibility",
     "NSPanel",
