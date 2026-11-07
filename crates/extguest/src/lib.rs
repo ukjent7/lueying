@@ -661,7 +661,7 @@ macro_rules! export_component {
         // 生成导入与导出;契约按相对路径取(第一方扩展与 extwasm 同仓)。
         #[cfg(target_arch = "wasm32")]
         ::wit_bindgen::generate!({
-            path: "../../extwasm/lueying.wit",
+            path: "../../crates/extwasm/lueying.wit",
             world: "extension",
         });
 
@@ -808,7 +808,7 @@ macro_rules! export_component {
         }
 
         #[cfg(target_arch = "wasm32")]
-        ::export!(__LueyingEntry);
+        export!(__LueyingEntry);
 
         // —— 作者面的服务外观:签名与 v1 相同,作者代码零改动 ——
         pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
