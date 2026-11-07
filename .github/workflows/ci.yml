@@ -91,6 +91,19 @@ jobs:
       - name: 安装 Linux 系统依赖
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
+      # 锁诊断(临时):metadata 过而 build 不过,目标化解析有缺口;重写后把
+      # 正确的锁存成产物,编译继续在正确锁上跑。
+      - name: 锁诊断
+        run: |
+          cargo metadata --format-version 1 >/dev/null
+          git diff --stat -- Cargo.lock
+          cp Cargo.lock /tmp/Cargo.lock.healed
+      - name: 上传诊断锁
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Cargo.lock.healed
+          path: /tmp/Cargo.lock.healed
+          retention-days: 1
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
       # nextest 按测试进程并行,多 crate 单测一次跑完;范围与逐 crate 时代相同,
