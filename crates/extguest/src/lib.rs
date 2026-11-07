@@ -672,40 +672,40 @@ macro_rules! export_component {
         // —— 生成 record ↔ extproto record,字段逐一对位 ——
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_shot(
-            v: ::lueying::ext::capture::ShotResult,
+            v: lueying::ext::capture::ShotResult,
         ) -> $crate::Shot {
             $crate::Shot { file: v.file, width: v.width, height: v.height }
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_ocr(v: ::lueying::ext::ocr::RecognizeResult) -> $crate::OcrText {
+        fn __lueying_conv_ocr(v: lueying::ext::ocr::RecognizeResult) -> $crate::OcrText {
             $crate::OcrText { text: v.text, lang: v.lang }
         }
 
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_deliver(
-            v: ::lueying::ext::output::DeliverResult,
+            v: lueying::ext::output::DeliverResult,
         ) -> $crate::Delivered {
             $crate::Delivered { delivered: v.delivered }
         }
 
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_panel(
-            v: ::lueying::ext::panel::ShowResult,
+            v: lueying::ext::panel::ShowResult,
         ) -> $crate::PanelResult {
             $crate::PanelResult { selected: v.selected }
         }
 
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_clipboard_text(
-            v: ::lueying::ext::clipboard::ReadResult,
+            v: lueying::ext::clipboard::ReadResult,
         ) -> $crate::ClipboardText {
             $crate::ClipboardText { text: v.text }
         }
 
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_clipboard_history(
-            v: ::lueying::ext::clipboard::HistoryResult,
+            v: lueying::ext::clipboard::HistoryResult,
         ) -> $crate::ClipboardHistory {
             $crate::ClipboardHistory {
                 items: v
@@ -721,33 +721,33 @@ macro_rules! export_component {
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_audio(v: ::lueying::ext::audio::RecordResult) -> $crate::AudioRecording {
+        fn __lueying_conv_audio(v: lueying::ext::audio::RecordResult) -> $crate::AudioRecording {
             $crate::AudioRecording { file: v.file, seconds: v.seconds }
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_asr(v: ::lueying::ext::asr::RecognizeResult) -> $crate::AsrText {
+        fn __lueying_conv_asr(v: lueying::ext::asr::RecognizeResult) -> $crate::AsrText {
             $crate::AsrText { text: v.text }
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_store_value(v: ::lueying::ext::store::GetResult) -> $crate::StoreValue {
+        fn __lueying_conv_store_value(v: lueying::ext::store::GetResult) -> $crate::StoreValue {
             $crate::StoreValue { value: v.value }
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_store_keys(v: ::lueying::ext::store::ListResult) -> $crate::StoreKeys {
+        fn __lueying_conv_store_keys(v: lueying::ext::store::ListResult) -> $crate::StoreKeys {
             $crate::StoreKeys { keys: v.keys }
         }
 
         #[cfg(target_arch = "wasm32")]
-        fn __lueying_conv_fetch(v: ::lueying::ext::network::FetchResult) -> $crate::FetchResult {
+        fn __lueying_conv_fetch(v: lueying::ext::network::FetchResult) -> $crate::FetchResult {
             $crate::FetchResult { status: v.status, body: v.body }
         }
 
         #[cfg(target_arch = "wasm32")]
         fn __lueying_conv_selected(
-            v: ::lueying::ext::context::SelectionResult,
+            v: lueying::ext::context::SelectionResult,
         ) -> $crate::SelectedText {
             $crate::SelectedText { text: v.text }
         }
@@ -757,7 +757,7 @@ macro_rules! export_component {
         struct __LueyingEntry;
 
         #[cfg(target_arch = "wasm32")]
-        impl exports::lueying::ext::entry::Guest for __LueyingEntry {
+        impl exportslueying::ext::entry::Guest for __LueyingEntry {
             fn init() -> ::std::result::Result<(), ::std::string::String> {
                 let mut slot = __LUEYING_EXTENSION.lock().unwrap();
                 if slot.is_some() {
@@ -814,7 +814,7 @@ macro_rules! export_component {
         pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_shot(::lueying::ext::capture::shot(None)?))
+                Ok(__lueying_conv_shot(lueying::ext::capture::shot(None)?))
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -828,8 +828,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::OcrText, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_ocr(::lueying::ext::ocr::recognize(
-                    &::lueying::ext::ocr::RecognizeOptions {
+                Ok(__lueying_conv_ocr(lueying::ext::ocr::recognize(
+                    &lueying::ext::ocr::RecognizeOptions {
                         file: file.to_string(),
                         lang: lang.map(str::to_string),
                         engine: None,
@@ -847,8 +847,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::Delivered, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_deliver(::lueying::ext::output::deliver(
-                    &::lueying::ext::output::DeliverOptions { text: text.to_string() },
+                Ok(__lueying_conv_deliver(lueying::ext::output::deliver(
+                    &lueying::ext::output::DeliverOptions { text: text.to_string() },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -863,8 +863,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_panel(::lueying::ext::panel::show(
-                    &::lueying::ext::panel::ShowOptions {
+                Ok(__lueying_conv_panel(lueying::ext::panel::show(
+                    &lueying::ext::panel::ShowOptions {
                         title: title.to_string(),
                         items: items.to_vec(),
                     },
@@ -879,7 +879,7 @@ macro_rules! export_component {
         pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_clipboard_text(::lueying::ext::clipboard::read()?))
+                Ok(__lueying_conv_clipboard_text(lueying::ext::clipboard::read()?))
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -890,7 +890,7 @@ macro_rules! export_component {
         pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::clipboard::write(&::lueying::ext::clipboard::WriteOptions {
+                lueying::ext::clipboard::write(&lueying::ext::clipboard::WriteOptions {
                     text: text.to_string(),
                 })?;
                 Ok(())
@@ -906,8 +906,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_clipboard_history(::lueying::ext::clipboard::history(
-                    &::lueying::ext::clipboard::HistoryOptions { limit: Some(limit as u32) },
+                Ok(__lueying_conv_clipboard_history(lueying::ext::clipboard::history(
+                    &lueying::ext::clipboard::HistoryOptions { limit: Some(limit as u32) },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -922,7 +922,7 @@ macro_rules! export_component {
         ) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::clipboard::remember(&::lueying::ext::clipboard::RememberOptions {
+                lueying::ext::clipboard::remember(&lueying::ext::clipboard::RememberOptions {
                     text: text.to_string(),
                     tag: Some(tag.to_string()),
                 })?;
@@ -937,7 +937,7 @@ macro_rules! export_component {
         pub fn clipboard_history_clear() -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::clipboard::clear()?;
+                lueying::ext::clipboard::clear()?;
                 Ok(())
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -951,8 +951,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::AudioRecording, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_audio(::lueying::ext::audio::record(
-                    &::lueying::ext::audio::RecordOptions { seconds: Some(seconds) },
+                Ok(__lueying_conv_audio(lueying::ext::audio::record(
+                    &lueying::ext::audio::RecordOptions { seconds: Some(seconds) },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -966,8 +966,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::AsrText, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_asr(::lueying::ext::asr::recognize(
-                    &::lueying::ext::asr::RecognizeOptions { file: file.to_string() },
+                Ok(__lueying_conv_asr(lueying::ext::asr::recognize(
+                    &lueying::ext::asr::RecognizeOptions { file: file.to_string() },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -981,8 +981,8 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_store_value(::lueying::ext::store::get(
-                    &::lueying::ext::store::GetOptions { key: key.to_string() },
+                Ok(__lueying_conv_store_value(lueying::ext::store::get(
+                    &lueying::ext::store::GetOptions { key: key.to_string() },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -994,7 +994,7 @@ macro_rules! export_component {
         pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::store::set(&::lueying::ext::store::SetOptions {
+                lueying::ext::store::set(&lueying::ext::store::SetOptions {
                     key: key.to_string(),
                     value: value.to_string(),
                 })?;
@@ -1009,7 +1009,7 @@ macro_rules! export_component {
         pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::store::remove(&::lueying::ext::store::RemoveOptions {
+                lueying::ext::store::remove(&lueying::ext::store::RemoveOptions {
                     key: key.to_string(),
                 })?;
                 Ok(())
@@ -1023,7 +1023,7 @@ macro_rules! export_component {
         pub fn store_list() -> ::std::result::Result<$crate::StoreKeys, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_store_keys(::lueying::ext::store::list()?))
+                Ok(__lueying_conv_store_keys(lueying::ext::store::list()?))
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -1036,7 +1036,7 @@ macro_rules! export_component {
         ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                let args = ::lueying::ext::network::FetchOptions {
+                let args = lueying::ext::network::FetchOptions {
                     url: options.url.clone(),
                     method: options.method.clone(),
                     headers: options.headers.clone(),
@@ -1044,7 +1044,7 @@ macro_rules! export_component {
                     limit: options.limit,
                     timeout_ms: options.timeout_ms,
                 };
-                Ok(__lueying_conv_fetch(::lueying::ext::network::fetch(&args)?))
+                Ok(__lueying_conv_fetch(lueying::ext::network::fetch(&args)?))
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -1055,7 +1055,7 @@ macro_rules! export_component {
         pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(__lueying_conv_selected(::lueying::ext::context::selection()?))
+                Ok(__lueying_conv_selected(lueying::ext::context::selection()?))
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -1066,7 +1066,7 @@ macro_rules! export_component {
         pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::notify::show(&::lueying::ext::notify::ShowOptions {
+                lueying::ext::notify::show(&lueying::ext::notify::ShowOptions {
                     title: title.to_string(),
                     body: body.to_string(),
                 })?;
@@ -1085,7 +1085,7 @@ macro_rules! export_component {
         ) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::hotkey::register(&::lueying::ext::hotkey::RegisterOptions {
+                lueying::ext::hotkey::register(&lueying::ext::hotkey::RegisterOptions {
                     id: id.to_string(),
                     modifiers: modifiers.iter().map(|m| m.to_string()).collect(),
                     key: key.to_string(),
@@ -1101,7 +1101,7 @@ macro_rules! export_component {
         pub fn hotkey_unregister(id: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::hotkey::unregister(&::lueying::ext::hotkey::UnregisterOptions {
+                lueying::ext::hotkey::unregister(&lueying::ext::hotkey::UnregisterOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
@@ -1115,7 +1115,7 @@ macro_rules! export_component {
         pub fn hotkey_press(id: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                ::lueying::ext::hotkey::press(&::lueying::ext::hotkey::PressOptions {
+                lueying::ext::hotkey::press(&lueying::ext::hotkey::PressOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
