@@ -12,7 +12,9 @@ use lueying_render::skin_pack::{self, SkinPack};
 use lueying_render::toolbar::{BUTTONS, Button, Players, Scene, Status, Toolbar, paint};
 use objc2::rc::{Allocated, Retained, Weak};
 use objc2::runtime::AnyObject;
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSImage, NSPanel, NSPopUpMenuWindowLevel, NSScreen,
     NSView, NSWindowCollectionBehavior, NSWindowStyleMask,

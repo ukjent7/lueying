@@ -261,10 +261,8 @@ impl Toolbar {
     /// 按模型摆窗口:锚在右下角,边距就是舞台离屏幕右下角的距离。
     fn place(&self) {
         let stage = self.bar.stage(self.screen);
-        self.layer.set_size(
-            stage.width().ceil() as u32,
-            stage.height().ceil() as u32,
-        );
+        self.layer
+            .set_size(stage.width().ceil() as u32, stage.height().ceil() as u32);
         self.layer.set_anchor(ANCHOR_BOTTOM_RIGHT);
         self.layer.set_margin(
             0,

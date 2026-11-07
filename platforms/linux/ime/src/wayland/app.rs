@@ -24,13 +24,13 @@ use xkbcommon::xkb::{self, KeyDirection, Keycode, Keymap, Keysym, State};
 use crate::keymap::{self, Modifiers};
 use crate::session::Session;
 use crate::wayland::panel::Panel;
-use crate::wayland::protocol::layer_shell::zwlr_layer_shell_v1::ZwlrLayerShellV1;
-use crate::wayland::protocol::layer_shell::zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1};
-use crate::wayland::toolbar::Toolbar;
 use crate::wayland::protocol::input_method::zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2;
 use crate::wayland::protocol::input_method::zwp_input_method_v2::ZwpInputMethodV2;
 use crate::wayland::protocol::input_method::zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2;
+use crate::wayland::protocol::layer_shell::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+use crate::wayland::protocol::layer_shell::zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1};
 use crate::wayland::protocol::virtual_keyboard::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
+use crate::wayland::toolbar::Toolbar;
 use crate::wayland::worker::{self, Command};
 
 const BTN_LEFT: u32 = 0x110;
@@ -501,10 +501,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 state: button_state,
                 ..
             } if button == BTN_LEFT => {
-                let pressed = matches!(
-                    button_state,
-                    WEnum::Value(wl_pointer::ButtonState::Pressed)
-                );
+                let pressed =
+                    matches!(button_state, WEnum::Value(wl_pointer::ButtonState::Pressed));
                 match (state.focus, pressed) {
                     (Focus::Panel, true) => state.click(),
                     (Focus::Toolbar, true) => state.toolbar_press(),

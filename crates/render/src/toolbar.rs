@@ -281,7 +281,12 @@ impl Players {
 
     /// 用户打了字:角色都收到一次按键,于是停下来看着输入。
     pub fn key(&mut self, now_ms: u64) {
-        for actor in self.below.actors.iter_mut().chain(self.above.actors.iter_mut()) {
+        for actor in self
+            .below
+            .actors
+            .iter_mut()
+            .chain(self.above.actors.iter_mut())
+        {
             actor.key(now_ms);
         }
     }
@@ -332,7 +337,12 @@ pub fn paint(canvas: &mut dyn Canvas, scene: &Scene) {
     let scale = scene.toolbar.scale;
     let bar = local(scene.toolbar.rect(), scene.origin);
     canvas.fill_rrect(bar, RADIUS * scale, Color::opaque(scene.palette.bg));
-    canvas.stroke_rrect(bar, RADIUS * scale, 1.0, Color::opaque(scene.palette.border));
+    canvas.stroke_rrect(
+        bar,
+        RADIUS * scale,
+        1.0,
+        Color::opaque(scene.palette.border),
+    );
     paint_cast(canvas, scene, &scene.below);
     for (button, rect) in scene.toolbar.buttons() {
         let text = label(button, scene.status);
@@ -372,7 +382,11 @@ fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage
     let Some(skin) = skin else {
         return stage;
     };
-    let specs: Vec<&ActorSpec> = skin.actors.iter().filter(|spec| spec.layer == layer).collect();
+    let specs: Vec<&ActorSpec> = skin
+        .actors
+        .iter()
+        .filter(|spec| spec.layer == layer)
+        .collect();
     let total: usize = specs.iter().map(|spec| spec.count).sum();
     let mut slot = 0usize;
     for spec in specs {
@@ -384,7 +398,8 @@ fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage
             let seed = (slot as u64)
                 .wrapping_mul(0x9E37_79B9_7F4A_7C15)
                 .wrapping_add(now_ms);
-            if let Ok(actor) = Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone())
+            if let Ok(actor) =
+                Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone())
             {
                 stage.add(actor);
             }

@@ -120,9 +120,9 @@ fn toolbar_loop(state: Arc<State>) {
     loop {
         pump_messages();
         let animated = CTX.with(|cell| {
-            cell.borrow().as_ref().is_some_and(|ctx| {
-                !ctx.players.is_empty()
-            })
+            cell.borrow()
+                .as_ref()
+                .is_some_and(|ctx| !ctx.players.is_empty())
         });
         let dirty = CTX.with(|cell| {
             cell.borrow_mut()
