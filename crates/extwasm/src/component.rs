@@ -407,7 +407,7 @@ impl ComponentGuest {
     }
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。
-    fn harvest_failure(&mut self, result: Result<String, String>) -> Result<String, String> {
+    fn harvest_failure<T>(&mut self, result: Result<T, String>) -> Result<T, String> {
         let failure = self.store.data().failure.lock().expect("失败槽锁").take();
         match result {
             Ok(_value) if failure.is_some() => Err(failure.unwrap()),
