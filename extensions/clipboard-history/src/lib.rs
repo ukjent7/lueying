@@ -56,4 +56,4 @@ fn preview(item: &ClipboardHistoryItem) -> String {
     }
 }
 
-lueying_extguest::export!(ClipboardHistoryExt, commands: [show]);
+lueying_extguest::export_component!(ClipboardHistoryExt, commands: [show]);
