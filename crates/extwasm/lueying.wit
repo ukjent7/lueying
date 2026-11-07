@@ -164,7 +164,7 @@ interface network {
     timeout-ms: option<u32>,
   }
   record fetch-result {
-    status: u32,
+    status: u16,
     body: string,
   }
   fetch: func(options: fetch-options) -> result<fetch-result, string>;
