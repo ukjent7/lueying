@@ -14,7 +14,7 @@ use objc2::rc::{Allocated, Retained, Weak};
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSFloatingWindowLevel, NSImage, NSPanel, NSScreen,
+    NSBackingStoreType, NSColor, NSEvent, NSImage, NSPanel, NSPopUpMenuWindowLevel, NSScreen,
     NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSInteger, NSPoint, NSRect, NSSize, NSString, NSTimer};
@@ -365,7 +365,7 @@ fn make_panel(mtm: MainThreadMarker, view: &Retained<ToolbarView>) -> Retained<N
     unsafe { panel.setReleasedWhenClosed(false) };
     panel.setOpaque(false);
     panel.setBackgroundColor(Some(&NSColor::clearColor()));
-    panel.setLevel(NSFloatingWindowLevel);
+    panel.setLevel(NSPopUpMenuWindowLevel);
     panel.setFloatingPanel(true);
     panel.setBecomesKeyOnlyIfNeeded(true);
     panel.setWorksWhenModal(true);
