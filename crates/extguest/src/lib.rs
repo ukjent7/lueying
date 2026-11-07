@@ -842,7 +842,7 @@ macro_rules! export_component {
             #[cfg(target_arch = "wasm32")]
             {
                 Ok(__lueying_conv_ocr(lueying::ext::ocr::recognize(
-                    lueying::ext::ocr::RecognizeOptions {
+                    &lueying::ext::ocr::RecognizeOptions {
                         file: file.to_string(),
                         lang: lang.map(str::to_string),
                         engine: None,
@@ -861,7 +861,7 @@ macro_rules! export_component {
             #[cfg(target_arch = "wasm32")]
             {
                 Ok(__lueying_conv_deliver(lueying::ext::output::deliver(
-                    lueying::ext::output::DeliverOptions { text: text.to_string() },
+                    &lueying::ext::output::DeliverOptions { text: text.to_string() },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -877,7 +877,7 @@ macro_rules! export_component {
             #[cfg(target_arch = "wasm32")]
             {
                 Ok(__lueying_conv_panel(lueying::ext::panel::show(
-                    lueying::ext::panel::ShowOptions {
+                    &lueying::ext::panel::ShowOptions {
                         title: title.to_string(),
                         items: items.to_vec(),
                     },
@@ -903,7 +903,7 @@ macro_rules! export_component {
         pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::clipboard::write(lueying::ext::clipboard::WriteOptions {
+                lueying::ext::clipboard::write(&lueying::ext::clipboard::WriteOptions {
                     text: text.to_string(),
                 })?;
                 Ok(())
@@ -935,7 +935,7 @@ macro_rules! export_component {
         ) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::clipboard::remember(lueying::ext::clipboard::RememberOptions {
+                lueying::ext::clipboard::remember(&lueying::ext::clipboard::RememberOptions {
                     text: text.to_string(),
                     tag: Some(tag.to_string()),
                 })?;
@@ -995,7 +995,7 @@ macro_rules! export_component {
             #[cfg(target_arch = "wasm32")]
             {
                 Ok(__lueying_conv_store_value(lueying::ext::store::get(
-                    lueying::ext::store::GetOptions { key: key.to_string() },
+                    &lueying::ext::store::GetOptions { key: key.to_string() },
                 )?))
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -1007,7 +1007,7 @@ macro_rules! export_component {
         pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::store::set(lueying::ext::store::SetOptions {
+                lueying::ext::store::set(&lueying::ext::store::SetOptions {
                     key: key.to_string(),
                     value: value.to_string(),
                 })?;
@@ -1022,7 +1022,7 @@ macro_rules! export_component {
         pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::store::remove(lueying::ext::store::RemoveOptions {
+                lueying::ext::store::remove(&lueying::ext::store::RemoveOptions {
                     key: key.to_string(),
                 })?;
                 Ok(())
@@ -1079,7 +1079,7 @@ macro_rules! export_component {
         pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::notify::show(lueying::ext::notify::ShowOptions {
+                lueying::ext::notify::show(&lueying::ext::notify::ShowOptions {
                     title: title.to_string(),
                     body: body.to_string(),
                 })?;
@@ -1098,7 +1098,7 @@ macro_rules! export_component {
         ) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::hotkey::register(lueying::ext::hotkey::RegisterOptions {
+                lueying::ext::hotkey::register(&lueying::ext::hotkey::RegisterOptions {
                     id: id.to_string(),
                     modifiers: modifiers.iter().map(|m| m.to_string()).collect(),
                     key: key.to_string(),
@@ -1114,7 +1114,7 @@ macro_rules! export_component {
         pub fn hotkey_unregister(id: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::hotkey::unregister(lueying::ext::hotkey::UnregisterOptions {
+                lueying::ext::hotkey::unregister(&lueying::ext::hotkey::UnregisterOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
@@ -1128,7 +1128,7 @@ macro_rules! export_component {
         pub fn hotkey_press(id: &str) -> ::std::result::Result<(), ::std::string::String> {
             #[cfg(target_arch = "wasm32")]
             {
-                lueying::ext::hotkey::press(lueying::ext::hotkey::PressOptions {
+                lueying::ext::hotkey::press(&lueying::ext::hotkey::PressOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
