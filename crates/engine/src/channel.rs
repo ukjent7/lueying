@@ -25,10 +25,6 @@ const TYPO_SWAP: f64 = 0.40;
 const TYPO_NEAR_KEY: f64 = 0.60;
 const TYPO_MISSED: f64 = 0.85;
 const TYPO_EXTRA: f64 = 0.85;
-/// 快打时的元音串位:节奏还在,字母记岔了,如 a↔e 这类非邻键敲错。
-const TYPO_VOWEL: f64 = 0.55;
-/// 同排隔一键、或同一手指负责的键之间的串位:比邻键远一格。
-const TYPO_STRAY: f64 = 0.70;
 /// 窗口本身已是合法音节时的额外代价:打出来的字母能读通,多半不是打错。
 const TYPO_VALID_WINDOW: f64 = 1.5;
 /// 整串能按全拼读完时的额外代价:输入完全合法,纠错只作后备。
@@ -40,9 +36,6 @@ const TYPO_MAX_WINDOW: usize = 7;
 const MAX_SYLL_LEN: usize = 6; // zhuang / chuang
 
 const KEY_ROWS: [&str; 3] = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
-/// 标准触摸指法里同一根手指负责的键串;串位沿指头发生,与物理距离无关。
-const FINGER_COLS: [&str; 6] = ["qaz", "wsx", "edc", "rfv", "tgb", "yuhjnm"];
-const VOWELS: &str = "aeiou";
 
 /// 音节图上的一个单元。
 #[derive(Clone, Debug)]
@@ -219,20 +212,6 @@ fn add_typos(raw: &str, complete: bool, out: &mut [Vec<Unit>]) {
     }
 }
 
-/// 整音节习惯串位:-in 类音节被打成 -ian 长形(jin→jian)。「打短想长」漏键
-/// 已覆盖;「打长想短」是元音习惯插入,滑键模型推不出来,按对枚举。合法
-/// 窗口的额外代价由 add_typos 的 is_syllable 检查自动补上。
-const LEGAL_EXTRA: &[(&str, &str)] = &[
-    ("jin", "jian"),
-    ("qin", "qian"),
-    ("xin", "xian"),
-    ("lin", "lian"),
-    ("bin", "bian"),
-    ("pin", "pian"),
-    ("min", "mian"),
-    ("nin", "nian"),
-];
-
 /// 手误表:打出来的字母串 → 想打的音节及基础代价。按「想打的 → 打出的」方向生成,
 /// 与真实信道同向;全部音节只枚举一次,查询时每个窗口一次哈希。
 fn misspellings() -> &'static HashMap<String, Vec<(&'static str, f64)>> {
@@ -250,18 +229,6 @@ fn misspellings() -> &'static HashMap<String, Vec<(&'static str, f64)>> {
                 match intended.iter_mut().find(|(known, _)| *known == syllable) {
                     Some(found) => found.1 = found.1.min(cost),
                     None => intended.push((syllable, cost)),
-                }
-            }
-            // 打长想短:合法窗口的额外代价由 add_typos 补。
-            if let Some(long) = LEGAL_EXTRA
-                .iter()
-                .find(|&&(_, intended)| intended == syllable)
-                .map(|&(typed, _)| typed)
-            {
-                let intended = table.entry(long.to_string()).or_default();
-                match intended.iter_mut().find(|(known, _)| *known == syllable) {
-                    Some(found) => found.1 = found.1.min(TYPO_EXTRA),
-                    None => intended.push((syllable, TYPO_EXTRA)),
                 }
             }
         }
@@ -329,19 +296,6 @@ fn confusable(c: char) -> Vec<(char, f64)> {
             out.push((key, TYPO_NEAR_KEY));
         }
     }
-    // 元音互相串:打对了节奏,记错了字母。
-    if VOWELS.contains(c) {
-        for key in VOWELS.chars() {
-            if key != c && !out.iter().any(|(known, _)| *known == key) {
-                out.push((key, TYPO_VOWEL));
-            }
-        }
-    }
-    for key in strays(c) {
-        if !out.iter().any(|(known, _)| *known == key) {
-            out.push((key, TYPO_STRAY));
-        }
-    }
     out
 }
 
@@ -363,28 +317,6 @@ fn neighbors(c: char) -> Vec<char> {
             }
         }
     }
-    out
-}
-
-/// 比邻键远一格的串位目标:同排隔一键,或同一手指负责的键。
-fn strays(c: char) -> Vec<char> {
-    let Some((row, col)) = position(c) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let keys = KEY_ROWS[row].as_bytes();
-    if col >= 2 {
-        out.push(char::from(keys[col - 2]));
-    }
-    if col + 2 < keys.len() {
-        out.push(char::from(keys[col + 2]));
-    }
-    for group in FINGER_COLS {
-        if group.contains(c) {
-            out.extend(group.chars());
-        }
-    }
-    out.retain(|key| *key != c);
     out
 }
 
