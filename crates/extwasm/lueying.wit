@@ -107,7 +107,8 @@ interface store {
   record list-result {
     keys: list<string>,
   }
-  list: func() -> result<list-result, string>;
+  // list 是 WIT 关键字,% 转义后生成名仍是 list。
+  %list: func() -> result<list-result, string>;
 }
 
 // 宿主绘制的声明式面板:列出候选项,等用户挑选后异步返回。
