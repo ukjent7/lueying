@@ -7,12 +7,9 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
-use lueying_render::actor::{Stage, View};
 use lueying_render::panel::Rect;
-use lueying_render::skin_pack::{self, Layer, SkinPack};
-use lueying_render::toolbar::{
-    BUTTONS, Button, Cast, SPRITE, Scene, Status, Toolbar, cast, paint,
-};
+use lueying_render::skin_pack::{self, SkinPack};
+use lueying_render::toolbar::{BUTTONS, Button, Players, Scene, Status, Toolbar, paint};
 use objc2::rc::{Allocated, Retained, Weak};
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
@@ -40,10 +37,7 @@ struct Model {
     status: Status,
     skin: Option<SkinPack>,
     sprites: Vec<Retained<NSImage>>,
-    below: Stage,
-    above: Stage,
-    below_views: Vec<View>,
-    above_views: Vec<View>,
+    players: Players,
     now_ms: u64,
     started: Instant,
 }
@@ -52,9 +46,7 @@ impl Model {
     fn new(screen: Rect, height: f32, status: Status) -> Self {
         let (skin, sprites) = load_pack();
         let bar = Toolbar::at_default(screen);
-        let area = bar.stage(screen);
-        let below = cast(skin.as_ref(), Layer::Below, area, 0);
-        let above = cast(skin.as_ref(), Layer::Above, area, 0);
+        let players = Players::new(skin.as_ref(), &bar, screen);
         Self {
             bar,
             screen,
@@ -62,10 +54,7 @@ impl Model {
             status,
             skin,
             sprites,
-            below,
-            above,
-            below_views: Vec::new(),
-            above_views: Vec::new(),
+            players,
             now_ms: 0,
             started: Instant::now(),
         }
@@ -80,18 +69,10 @@ impl Model {
         self.started.elapsed().as_millis() as u64
     }
 
-    /// 按时间推进两层角色并记下它们的位置;舞台上有角色时返回 true。
+    /// 按时间推进两层角色;舞台上有角色时返回 true。
     fn advance(&mut self) -> bool {
         self.now_ms = self.now();
-        let stage = self.stage();
-        let size = SPRITE * self.bar.scale;
-        for layer in [&mut self.below, &mut self.above] {
-            layer.area = stage;
-            layer.sprite = (size, size);
-        }
-        self.below_views = self.below.tick(self.now_ms);
-        self.above_views = self.above.tick(self.now_ms);
-        !self.below.actors.is_empty() || !self.above.actors.is_empty()
+        self.players.advance(&self.bar, self.screen, self.now_ms)
     }
 
     /// 窗口的 AppKit 矩形:原点是左下角。
@@ -222,14 +203,8 @@ define_class!(
                 status: model.status,
                 pack: model.skin.as_ref().map(|skin| &skin.pack),
                 now_ms: model.now_ms,
-                below: Cast {
-                    stage: &model.below,
-                    views: &model.below_views,
-                },
-                above: Cast {
-                    stage: &model.above,
-                    views: &model.above_views,
-                },
+                below: model.players.below_cast(),
+                above: model.players.above_cast(),
             };
             let mut canvas = AppKitCanvas {
                 sprites: &model.sprites,
@@ -354,9 +329,7 @@ impl ToolbarView {
             match model.bar.hit(sx, sy) {
                 Some(button) => Some(button),
                 None => {
-                    if model.above.click(sx, sy).is_none() {
-                        let _ = model.below.click(sx, sy);
-                    }
+                    model.players.click(sx, sy);
                     None
                 }
             }
@@ -505,8 +478,6 @@ pub fn key_pressed() {
     };
     if let Some(model) = view.ivars().model.borrow_mut().as_mut() {
         let now = model.now();
-        for actor in model.below.actors.iter_mut().chain(model.above.actors.iter_mut()) {
-            actor.key(now);
-        }
+        model.players.key(now);
     }
 }

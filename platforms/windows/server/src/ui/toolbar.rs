@@ -13,10 +13,9 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_protocol::Request;
-use lueying_render::actor::Stage;
 use lueying_render::panel::Rect;
-use lueying_render::skin_pack::{self, Layer, SkinPack};
-use lueying_render::toolbar::{self, Action, Button, SPRITE, Status, Toolbar};
+use lueying_render::skin_pack::{self, SkinPack};
+use lueying_render::toolbar::{self, Action, Button, Status, Toolbar};
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -45,10 +44,8 @@ struct Ctx {
     hwnd: HWND,
     bar: Toolbar,
     screen: Rect,
-    /// 按钮下面的角色。
-    below: Stage,
-    /// 按钮上面的角色。
-    above: Stage,
+    /// 舞台上的两层角色:按钮下面的与按钮上面的。
+    players: toolbar::Players,
     skin: Option<SkinPack>,
     started: Instant,
     /// 窗口左上角(屏幕坐标);鼠标坐标要加上它。
@@ -103,17 +100,14 @@ fn toolbar_loop(state: Arc<State>) {
         }
     };
     let skin = load_skin(&mut surface);
-    let area = bar.stage(screen);
-    let below = toolbar::cast(skin.as_ref(), Layer::Below, area, 0);
-    let above = toolbar::cast(skin.as_ref(), Layer::Above, area, 0);
+    let players = toolbar::Players::new(skin.as_ref(), &bar, screen);
     CTX.with(|cell| {
         *cell.borrow_mut() = Some(Ctx {
             state,
             hwnd,
             bar,
             screen,
-            below,
-            above,
+            players,
             skin,
             started: Instant::now(),
             origin: (0.0, 0.0),
@@ -127,7 +121,7 @@ fn toolbar_loop(state: Arc<State>) {
         pump_messages();
         let animated = CTX.with(|cell| {
             cell.borrow().as_ref().is_some_and(|ctx| {
-                !ctx.below.actors.is_empty() || !ctx.above.actors.is_empty()
+                !ctx.players.is_empty()
             })
         });
         let dirty = CTX.with(|cell| {
@@ -244,23 +238,14 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         (stage_rect.right - stage_rect.left).max(1.0),
         (stage_rect.bottom - stage_rect.top).max(1.0),
     );
-    let scale = ctx.bar.scale;
-    let size = SPRITE * scale;
     let now_ms = ctx.started.elapsed().as_millis() as u64;
-    for stage in [&mut ctx.below, &mut ctx.above] {
-        stage.area = stage_rect;
-        stage.sprite = (size, size);
-    }
     // 用户打了字:舞台上的角色都收到一次按键,于是停下来看着输入。
     let keys = ctx.state.key_serial.load(Ordering::Relaxed);
     if keys != ctx.seen_keys {
         ctx.seen_keys = keys;
-        for actor in ctx.below.actors.iter_mut().chain(ctx.above.actors.iter_mut()) {
-            actor.key(now_ms);
-        }
+        ctx.players.key(now_ms);
     }
-    let below = ctx.below.tick(now_ms);
-    let above = ctx.above.tick(now_ms);
+    ctx.players.advance(&ctx.bar, ctx.screen, now_ms);
     let palette = theme::palette(theme::colors_with(
         theme::Appearance::of_system(),
         place::ui_options(&ctx.state).2,
@@ -272,14 +257,8 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         status: status_of(&ctx.state),
         pack: ctx.skin.as_ref().map(|skin| &skin.pack),
         now_ms,
-        below: toolbar::Cast {
-            stage: &ctx.below,
-            views: &below,
-        },
-        above: toolbar::Cast {
-            stage: &ctx.above,
-            views: &above,
-        },
+        below: ctx.players.below_cast(),
+        above: ctx.players.above_cast(),
     };
     match surface.begin(w as u32, h as u32) {
         Ok(canvas) => toolbar::paint(canvas, &scene),
@@ -369,9 +348,7 @@ fn on_up(lparam: LPARAM) {
             (Some(p), Some(r)) if p == r => Some((p.action(), ctx.state.clone())),
             // 在按钮以外、没有拖动地点了一下:看看点中了哪个角色,上层的优先。
             (None, _) => {
-                if ctx.above.click(sx, sy).is_none() {
-                    let _ = ctx.below.click(sx, sy);
-                }
+                ctx.players.click(sx, sy);
                 None
             }
             _ => None,

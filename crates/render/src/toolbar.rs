@@ -245,6 +245,74 @@ pub struct Cast<'a> {
     pub views: &'a [View],
 }
 
+/// 舞台上的两层角色,以及它们这一刻的位置。平台每帧调用 [`Players::advance`],
+/// 再把 [`Players::below_cast`] 与 [`Players::above_cast`] 交给 [`paint`]。
+pub struct Players {
+    below: Stage,
+    above: Stage,
+    below_views: Vec<View>,
+    above_views: Vec<View>,
+}
+
+impl Players {
+    /// 按动画包建两层角色;角色的计时从 0 开始,由平台按自己的时钟推进。
+    pub fn new(skin: Option<&SkinPack>, bar: &Toolbar, screen: Rect) -> Self {
+        let area = bar.stage(screen);
+        Self {
+            below: cast(skin, Layer::Below, area, 0),
+            above: cast(skin, Layer::Above, area, 0),
+            below_views: Vec::new(),
+            above_views: Vec::new(),
+        }
+    }
+
+    /// 按时间推进两层角色;舞台的大小与角色的尺寸跟着工具栏的倍率走。舞台上有角色时返回 true。
+    pub fn advance(&mut self, bar: &Toolbar, screen: Rect, now_ms: u64) -> bool {
+        let area = bar.stage(screen);
+        let size = SPRITE * bar.scale;
+        for stage in [&mut self.below, &mut self.above] {
+            stage.area = area;
+            stage.sprite = (size, size);
+        }
+        self.below_views = self.below.tick(now_ms);
+        self.above_views = self.above.tick(now_ms);
+        !self.below.actors.is_empty() || !self.above.actors.is_empty()
+    }
+
+    /// 用户打了字:角色都收到一次按键,于是停下来看着输入。
+    pub fn key(&mut self, now_ms: u64) {
+        for actor in self.below.actors.iter_mut().chain(self.above.actors.iter_mut()) {
+            actor.key(now_ms);
+        }
+    }
+
+    /// 点击舞台上的角色;上层优先。点中了哪个角色由角色自己决定怎么反应。
+    pub fn click(&mut self, x: f32, y: f32) {
+        if self.above.click(x, y).is_none() {
+            let _ = self.below.click(x, y);
+        }
+    }
+
+    /// 舞台上一个角色都没有时返回 true;没有动画包时就是这样。
+    pub fn is_empty(&self) -> bool {
+        self.below.actors.is_empty() && self.above.actors.is_empty()
+    }
+
+    pub fn below_cast(&self) -> Cast<'_> {
+        Cast {
+            stage: &self.below,
+            views: &self.below_views,
+        }
+    }
+
+    pub fn above_cast(&self) -> Cast<'_> {
+        Cast {
+            stage: &self.above,
+            views: &self.above_views,
+        }
+    }
+}
+
 /// 一帧工具栏的绘制输入。坐标都是屏幕坐标,`origin` 是窗口左上角,画的时候要减去它。
 pub struct Scene<'a> {
     pub toolbar: &'a Toolbar,
@@ -299,7 +367,7 @@ fn local(rect: Rect, origin: (f32, f32)) -> Rect {
 
 /// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。
 /// 没有动画包时舞台是空的。包在解析时已经校验过行为,这里不会失败。
-pub fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
+fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
     let mut stage = Stage::new(area, (SPRITE, SPRITE));
     let Some(skin) = skin else {
         return stage;
