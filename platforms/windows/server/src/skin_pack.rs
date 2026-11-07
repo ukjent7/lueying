@@ -7,7 +7,7 @@
 //! 格式版本固定为 1。帧图的文件名是 `<帧号>.png`,放在 `frames` 指向的目录里(默认就是包目录)。
 
 use lueying_render::actor::{
-    Axes, Behavior, StateDef, Trigger, Transition, Walk, spider, strip_cat, warrior,
+    Axes, Behavior, StateDef, Transition, Trigger, Walk, spider, strip_cat, warrior,
 };
 use lueying_render::animation::{Clip, Pack};
 use serde::Deserialize;
@@ -170,9 +170,13 @@ struct NearFile {
 
 /// 解析并校验一份 `pack.json`。
 pub fn parse(text: &str) -> Result<SkinPack, String> {
-    let file: PackFile = serde_json::from_str(text).map_err(|e| format!("pack.json 解析失败: {e}"))?;
+    let file: PackFile =
+        serde_json::from_str(text).map_err(|e| format!("pack.json 解析失败: {e}"))?;
     if file.format != FORMAT {
-        return Err(format!("不支持的格式版本 {},当前只认 {FORMAT}", file.format));
+        return Err(format!(
+            "不支持的格式版本 {},当前只认 {FORMAT}",
+            file.format
+        ));
     }
     if file.name.trim().is_empty() {
         return Err("动画包要有名字".into());
@@ -197,7 +201,10 @@ pub fn parse(text: &str) -> Result<SkinPack, String> {
     let mut actors = Vec::with_capacity(file.actors.len());
     for (index, actor) in file.actors.into_iter().enumerate() {
         if actor.count == 0 || actor.count > MAX_ACTORS {
-            return Err(format!("第 {} 组角色数量要在 1–{MAX_ACTORS} 之间", index + 1));
+            return Err(format!(
+                "第 {} 组角色数量要在 1–{MAX_ACTORS} 之间",
+                index + 1
+            ));
         }
         let behavior = match actor.behavior {
             BehaviorRef::Preset(name) => preset(&name)
@@ -331,8 +338,14 @@ mod tests {
         assert_eq!(pack.actors[1].layer, Layer::Below);
         let inline = &pack.actors[1].behavior;
         assert_eq!(inline.states[2].tag.as_deref(), Some("hurt"));
-        assert!(matches!(inline.transitions[3].trigger, Trigger::Near { .. }));
-        assert!(matches!(inline.transitions[4].trigger, Trigger::Quiet(1200)));
+        assert!(matches!(
+            inline.transitions[3].trigger,
+            Trigger::Near { .. }
+        ));
+        assert!(matches!(
+            inline.transitions[4].trigger,
+            Trigger::Quiet(1200)
+        ));
     }
 
     #[test]
