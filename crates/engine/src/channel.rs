@@ -330,7 +330,7 @@ fn confusable(c: char) -> Vec<(char, f64)> {
         }
     }
     // 元音互相串:打对了节奏,记错了字母。
-    if VOWELS.contains(&c) {
+    if VOWELS.contains(c) {
         for key in VOWELS.chars() {
             if key != c && !out.iter().any(|(known, _)| *known == key) {
                 out.push((key, TYPO_VOWEL));
