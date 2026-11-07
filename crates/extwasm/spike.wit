@@ -1,0 +1,25 @@
+// 组件缝验证桩:迁移 Extism→Component Model 的最小 world。
+//
+// 目的只有一个:在真实 CI 里证明四件事同时成立——
+// 1. wit-bindgen 产出的 Rust guest 能被 wasm-tools 包成组件;
+// 2. 宿主 wasmtime::component 能实例化它并类型化调用导出;
+// 3. 燃料预算在组件路径上照常计数;
+// 4. 宿主服务调用(阻塞式)照常工作。
+// 验证桩通过后,真实 world(lueying:ext@2.0.0)按同样的链路逐服务迁移。
+//
+// 这个 world 是临时脚手架:全缝迁移完成后随 Extism 一起删除。
+
+package lueying:spike@2.0.0;
+
+// 宿主服务样例:guest 调它,宿主回一句固定的话,证明「guest→宿主」方向。
+interface host {
+  ping: func() -> string;
+}
+
+world spike {
+  import host;
+  export entry: interface {
+    // guest 导出:宿主调它,证明「宿主→guest」方向与燃料计数。
+    hello: func(name: string) -> result<string, string>;
+  }
+}
