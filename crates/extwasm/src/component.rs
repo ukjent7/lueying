@@ -18,7 +18,7 @@ use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Engine, Store};
 
 use lueying_extmeta::{Manifest, Service};
-use lueying_extproto::ScenePatch;
+use lueying_extproto::{SceneIn, ScenePatch};
 
 use crate::host::{Limits, call_fuel, timeout_for, wasmtime_config};
 use crate::services::Registry;
