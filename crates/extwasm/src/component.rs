@@ -20,7 +20,7 @@ use wasmtime::{Engine, Store};
 use lueying_extmeta::{Manifest, Service};
 use lueying_extproto::ScenePatch;
 
-use crate::host::{call_fuel, timeout_for, wasmtime_config, Limits};
+use crate::host::{Limits, call_fuel, timeout_for, wasmtime_config};
 use crate::services::Registry;
 
 wasmtime::component::bindgen!({
@@ -295,56 +295,68 @@ impl ComponentGuest {
                     lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    ).map_err(|error| format!("服务 capture 链接失败: {error}"))?
+                    )
+                    .map_err(|error| format!("服务 capture 链接失败: {error}"))?
                 }
                 "ocr" => lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 ocr 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 ocr 链接失败: {error}"))?,
                 "clipboard" => lueying::ext::clipboard::add_to_linker::<
                     GuestState,
                     HasSelf<GuestState>,
-                >(&mut linker, |state| state).map_err(|error| format!("服务 clipboard 链接失败: {error}"))?,
+                >(&mut linker, |state| state)
+                .map_err(|error| format!("服务 clipboard 链接失败: {error}"))?,
                 "store" => lueying::ext::store::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 store 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 store 链接失败: {error}"))?,
                 "output" => lueying::ext::output::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 output 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 output 链接失败: {error}"))?,
                 "panel" => lueying::ext::panel::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 panel 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 panel 链接失败: {error}"))?,
                 "hotkey" => lueying::ext::hotkey::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 hotkey 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 hotkey 链接失败: {error}"))?,
                 "notify" => lueying::ext::notify::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 notify 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 notify 链接失败: {error}"))?,
                 "network" => {
                     lueying::ext::network::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    ).map_err(|error| format!("服务 network 链接失败: {error}"))?
+                    )
+                    .map_err(|error| format!("服务 network 链接失败: {error}"))?
                 }
                 "context" => {
                     lueying::ext::context::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    ).map_err(|error| format!("服务 context 链接失败: {error}"))?
+                    )
+                    .map_err(|error| format!("服务 context 链接失败: {error}"))?
                 }
                 "audio" => lueying::ext::audio::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 audio 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 audio 链接失败: {error}"))?,
                 "asr" => lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                ).map_err(|error| format!("服务 asr 链接失败: {error}"))?,
+                )
+                .map_err(|error| format!("服务 asr 链接失败: {error}"))?,
                 other => return Err(format!("未知服务 {other:?}")),
             }
         }
