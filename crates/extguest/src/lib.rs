@@ -352,14 +352,14 @@ pub fn timeout_sleep(ms: u64) -> Result<(), String> {
 macro_rules! export {
     ($ty:ty, commands: [$($command:ident),* $(,)?]) => {
         const _: () = {
-            static EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
+        static __LUEYING_EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
                 ::std::sync::Mutex::new(::std::option::Option::None);
 
             $(
                 #[unsafe(no_mangle)]
                 pub extern "C" fn $command() -> i32 {
                     let mut guard =
-                        EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                        __LUEYING_EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
                     let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
                     $crate::__private::run_command(slot, stringify!($command))
                 }
@@ -367,14 +367,14 @@ macro_rules! export {
 
             #[unsafe(no_mangle)]
             pub extern "C" fn lueying_appearance() -> i32 {
-                let mut guard = EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                let mut guard = __LUEYING_EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
                 let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
                 $crate::__private::run_appearance(slot)
             }
 
             #[unsafe(no_mangle)]
             pub extern "C" fn lueying_init() -> i32 {
-                let mut guard = EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
+                let mut guard = __LUEYING_EXTENSION.lock().unwrap_or_else(|error| error.into_inner());
                 let slot = guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
                 $crate::__private::run_init(slot)
             }
@@ -546,27 +546,27 @@ pub mod __private {
 #[doc(hidden)]
 macro_rules! extguest_stub_services {
     () => {
-        pub fn capture_shot() -> ::std::result::Result<$crate::lueying_extproto::Shot, ::std::string::String> {
+        pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn ocr_recognize(
             file: &str,
             lang: Option<&str>,
-        ) -> ::std::result::Result<$crate::lueying_extproto::OcrText, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::OcrText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn output_deliver(
             text: &str,
-        ) -> ::std::result::Result<$crate::lueying_extproto::Delivered, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::Delivered, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn panel_show(
             title: &str,
             items: &[::std::string::String],
-        ) -> ::std::result::Result<$crate::lueying_extproto::PanelResult, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn clipboard_read() -> ::std::result::Result<$crate::lueying_extproto::ClipboardText, ::std::string::String> {
+        pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -574,7 +574,7 @@ macro_rules! extguest_stub_services {
         }
         pub fn clipboard_history(
             limit: usize,
-        ) -> ::std::result::Result<$crate::lueying_extproto::ClipboardHistory, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn clipboard_remember(text: &str, tag: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -585,17 +585,17 @@ macro_rules! extguest_stub_services {
         }
         pub fn audio_record(
             seconds: u32,
-        ) -> ::std::result::Result<$crate::lueying_extproto::AudioRecording, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::AudioRecording, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn asr_recognize(
             file: &str,
-        ) -> ::std::result::Result<$crate::lueying_extproto::AsrText, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::AsrText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn store_get(
             key: &str,
-        ) -> ::std::result::Result<$crate::lueying_extproto::StoreValue, ::std::string::String> {
+        ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -604,15 +604,15 @@ macro_rules! extguest_stub_services {
         pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn store_list() -> ::std::result::Result<$crate::lueying_extproto::StoreKeys, ::std::string::String> {
+        pub fn store_list() -> ::std::result::Result<$crate::StoreKeys, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn network_fetch(
-            options: &$crate::lueying_extproto::FetchArgs,
-        ) -> ::std::result::Result<$crate::lueying_extproto::FetchResult, ::std::string::String> {
+            options: &$crate::FetchArgs,
+        ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn context_selection() -> ::std::result::Result<$crate::lueying_extproto::SelectedText, ::std::string::String> {
+        pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -647,163 +647,177 @@ macro_rules! extguest_stub_services {
 #[macro_export]
 macro_rules! export_component {
     ($ty:ty $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
+        // 生成导入与导出;契约按相对路径取(第一方扩展与 extwasm 同仓)。
         #[cfg(target_arch = "wasm32")]
-        mod __lueying_component {
-            // 第一方扩展与 extwasm 同仓,契约按相对路径取;第三方迁移完成
-            // 后改由 SDK 包内嵌的契约文本提供。
-            ::wit_bindgen::generate!({
-                path: "../../extwasm/lueying.wit",
-                world: "extension",
-            });
+        ::wit_bindgen::generate!({
+            path: "../../extwasm/lueying.wit",
+            world: "extension",
+        });
 
-            // —— 生成 record ↔ extproto record,字段逐一对位 ——
-            fn conv_shot(
-                v: ::lueying::ext::capture::ShotResult,
-            ) -> $crate::Shot {
-                $crate::Shot {
-                    file: v.file,
-                    width: v.width,
-                    height: v.height,
+        #[cfg(target_arch = "wasm32")]
+        static __LUEYING_EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
+            ::std::sync::Mutex::new(::std::option::Option::None);
+
+        // —— 生成 record ↔ extproto record,字段逐一对位 ——
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_shot(
+            v: ::lueying::ext::capture::ShotResult,
+        ) -> $crate::Shot {
+            $crate::Shot { file: v.file, width: v.width, height: v.height }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_ocr(v: ::lueying::ext::ocr::RecognizeResult) -> $crate::OcrText {
+            $crate::OcrText { text: v.text, lang: v.lang }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_deliver(
+            v: ::lueying::ext::output::DeliverResult,
+        ) -> $crate::Delivered {
+            $crate::Delivered { delivered: v.delivered }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_panel(
+            v: ::lueying::ext::panel::ShowResult,
+        ) -> $crate::PanelResult {
+            $crate::PanelResult { selected: v.selected }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_clipboard_text(
+            v: ::lueying::ext::clipboard::ReadResult,
+        ) -> $crate::ClipboardText {
+            $crate::ClipboardText { text: v.text }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_clipboard_history(
+            v: ::lueying::ext::clipboard::HistoryResult,
+        ) -> $crate::ClipboardHistory {
+            $crate::ClipboardHistory {
+                items: v
+                    .items
+                    .into_iter()
+                    .map(|item| $crate::ClipboardHistoryItem {
+                        text: item.text,
+                        time: item.time,
+                        tag: item.tag,
+                    })
+                    .collect(),
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_audio(v: ::lueying::ext::audio::RecordResult) -> $crate::AudioRecording {
+            $crate::AudioRecording { file: v.file, seconds: v.seconds }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_asr(v: ::lueying::ext::asr::RecognizeResult) -> $crate::AsrText {
+            $crate::AsrText { text: v.text }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_store_value(v: ::lueying::ext::store::GetResult) -> $crate::StoreValue {
+            $crate::StoreValue { value: v.value }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_store_keys(v: ::lueying::ext::store::ListResult) -> $crate::StoreKeys {
+            $crate::StoreKeys { keys: v.keys }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_fetch(v: ::lueying::ext::network::FetchResult) -> $crate::FetchResult {
+            $crate::FetchResult { status: v.status, body: v.body }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        fn __lueying_conv_selected(
+            v: ::lueying::ext::context::SelectionResult,
+        ) -> $crate::SelectedText {
+            $crate::SelectedText { text: v.text }
+        }
+
+        // —— 导出面:init / command / appearance,委托给作者扩展 ——
+        #[cfg(target_arch = "wasm32")]
+        struct __LueyingEntry;
+
+        #[cfg(target_arch = "wasm32")]
+        impl exports::lueying::ext::entry::Guest for __LueyingEntry {
+            fn init() -> ::std::result::Result<(), ::std::string::String> {
+                let mut slot = __LUEYING_EXTENSION.lock().unwrap();
+                if slot.is_some() {
+                    return Ok(());
                 }
-            }
-
-            fn conv_ocr(v: ::lueying::ext::ocr::RecognizeResult) -> $crate::OcrText {
-                $crate::OcrText {
-                    text: v.text,
-                    lang: v.lang,
-                }
-            }
-
-            fn conv_deliver(v: ::lueying::ext::output::DeliverResult) -> $crate::Delivered {
-                $crate::Delivered {
-                    delivered: v.delivered,
-                }
-            }
-
-            fn conv_panel(v: ::lueying::ext::panel::ShowResult) -> $crate::PanelResult {
-                $crate::PanelResult {
-                    selected: v.selected,
-                }
-            }
-
-            fn conv_clipboard_text(v: ::lueying::ext::clipboard::ReadResult) -> $crate::ClipboardText {
-                $crate::ClipboardText { text: v.text }
-            }
-
-            fn conv_clipboard_history(
-                v: ::lueying::ext::clipboard::HistoryResult,
-            ) -> $crate::ClipboardHistory {
-                $crate::ClipboardHistory {
-                    items: v
-                        .items
-                        .into_iter()
-                        .map(|item| $crate::ClipboardHistoryItem {
-                            text: item.text,
-                            time: item.time,
-                            tag: item.tag,
-                        })
-                        .collect(),
-                }
-            }
-
-            fn conv_audio(v: ::lueying::ext::audio::RecordResult) -> $crate::AudioRecording {
-                $crate::AudioRecording {
-                    file: v.file,
-                    seconds: v.seconds,
-                }
-            }
-
-            fn conv_asr(v: ::lueying::ext::asr::RecognizeResult) -> $crate::AsrText {
-                $crate::AsrText { text: v.text }
-            }
-
-            fn conv_store_value(v: ::lueying::ext::store::GetResult) -> $crate::StoreValue {
-                $crate::StoreValue { value: v.value }
-            }
-
-            fn conv_store_keys(v: ::lueying::ext::store::ListResult) -> $crate::StoreKeys {
-                $crate::StoreKeys { keys: v.keys }
-            }
-
-            fn conv_fetch(v: ::lueying::ext::network::FetchResult) -> $crate::FetchResult {
-                $crate::FetchResult {
-                    status: v.status,
-                    body: v.body,
-                }
-            }
-
-            fn conv_selected(v: ::lueying::ext::context::SelectionResult) -> $crate::SelectedText {
-                $crate::SelectedText { text: v.text }
-            }
-
-            // —— 作者扩展的单例与入口实现 ——
-            static EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
-                ::std::sync::Mutex::new(::std::option::Option::None);
-
-            struct Entry;
-
-            impl exports::lueying::ext::entry::Guest for Entry {
-                fn init() -> ::std::result::Result<(), ::std::string::String> {
-                    let mut slot = EXTENSION.lock().unwrap();
-                    if slot.is_some() {
-                        return Ok(());
-                    }
-                    *slot = Some(<$ty as ::std::default::Default>::default());
-                    match slot.as_mut().unwrap().init() {
-                        Ok(()) => Ok(()),
-                        Err(error) => {
-                            *slot = ::std::option::Option::None;
-                            Err(error)
-                        }
-                    }
-                }
-
-                fn command(
-                    id: ::std::string::String,
-                    args: ::std::string::String,
-                ) -> ::std::result::Result<::std::string::String, ::std::string::String> {
-                    let mut slot = EXTENSION.lock().unwrap();
-                    let extension = slot
-                        .as_mut()
-                        .ok_or_else(|| ::std::string::String::from("扩展未初始化"))?;
-                    extension.command(&id, &args)
-                }
-
-                fn appearance(
-                    scene_json: ::std::string::String,
-                ) -> ::std::result::Result<
-                    ::std::option::Option<::std::string::String>,
-                    ::std::string::String,
-                > {
-                    let scene: $crate::SceneIn = ::serde_json::from_str(&scene_json)
-                        .map_err(|error| format!("场景解析失败: {error}"))?;
-                    let mut slot = EXTENSION.lock().unwrap();
-                    let extension = slot
-                        .as_mut()
-                        .ok_or_else(|| ::std::string::String::from("扩展未初始化"))?;
-                    match extension.appearance(&scene)? {
-                        Some(patch) => {
-                            let json = ::serde_json::to_string(&patch)
-                                .map_err(|error| format!("外观补丁序列化失败: {error}"))?;
-                            Ok(Some(json))
-                        }
-                        None => Ok(None),
+                *slot = Some(<$ty as ::std::default::Default>::default());
+                match slot.as_mut().unwrap().init() {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        *slot = ::std::option::Option::None;
+                        Err(error)
                     }
                 }
             }
 
-            export!(Entry);
-
-            // —— 作者面的服务外观:函数在扩展 crate 根,签名与 v1 相同 ——
-            pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
-                Ok(conv_shot(::lueying::ext::capture::shot(None)?))
+            fn command(
+                id: ::std::string::String,
+                args: ::std::string::String,
+            ) -> ::std::result::Result<::std::string::String, ::std::string::String> {
+                let mut slot = __LUEYING_EXTENSION.lock().unwrap();
+                let extension = slot
+                    .as_mut()
+                    .ok_or_else(|| ::std::string::String::from("扩展未初始化"))?;
+                extension.command(&id, &args)
             }
 
-            pub fn ocr_recognize(
-                file: &str,
-                lang: Option<&str>,
-            ) -> ::std::result::Result<$crate::OcrText, ::std::string::String> {
-                Ok(conv_ocr(::lueying::ext::ocr::recognize(
+            fn appearance(
+                scene_json: ::std::string::String,
+            ) -> ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            > {
+                let scene: $crate::SceneIn = ::serde_json::from_str(&scene_json)
+                    .map_err(|error| format!("场景解析失败: {error}"))?;
+                let mut slot = __LUEYING_EXTENSION.lock().unwrap();
+                let extension = slot
+                    .as_mut()
+                    .ok_or_else(|| ::std::string::String::from("扩展未初始化"))?;
+                match extension.appearance(&scene)? {
+                    Some(patch) => {
+                        let json = ::serde_json::to_string(&patch)
+                            .map_err(|error| format!("外观补丁序列化失败: {error}"))?;
+                        Ok(Some(json))
+                    }
+                    None => Ok(None),
+                }
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        ::export!(__LueyingEntry);
+
+        // —— 作者面的服务外观:签名与 v1 相同,作者代码零改动 ——
+        pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_shot(::lueying::ext::capture::shot(None)?))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
+
+        pub fn ocr_recognize(
+            file: &str,
+            lang: Option<&str>,
+        ) -> ::std::result::Result<$crate::OcrText, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_ocr(::lueying::ext::ocr::recognize(
                     &::lueying::ext::ocr::RecognizeOptions {
                         file: file.to_string(),
                         lang: lang.map(str::to_string),
@@ -811,114 +825,206 @@ macro_rules! export_component {
                     },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn output_deliver(
-                text: &str,
-            ) -> ::std::result::Result<$crate::Delivered, ::std::string::String> {
-                Ok(conv_deliver(::lueying::ext::output::deliver(
-                    &::lueying::ext::output::DeliverOptions {
-                        text: text.to_string(),
-                    },
+        pub fn output_deliver(
+            text: &str,
+        ) -> ::std::result::Result<$crate::Delivered, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_deliver(::lueying::ext::output::deliver(
+                    &::lueying::ext::output::DeliverOptions { text: text.to_string() },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn panel_show(
-                title: &str,
-                items: &[::std::string::String],
-            ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
-                Ok(conv_panel(::lueying::ext::panel::show(
+        pub fn panel_show(
+            title: &str,
+            items: &[::std::string::String],
+        ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_panel(::lueying::ext::panel::show(
                     &::lueying::ext::panel::ShowOptions {
                         title: title.to_string(),
                         items: items.to_vec(),
                     },
                 )?))
             }
-
-            pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
-                Ok(conv_clipboard_text(::lueying::ext::clipboard::read()?))
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
             }
+        }
 
-            pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_clipboard_text(::lueying::ext::clipboard::read()?))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
+
+        pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::clipboard::write(&::lueying::ext::clipboard::WriteOptions {
                     text: text.to_string(),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn clipboard_history(
-                limit: usize,
-            ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
-                Ok(conv_clipboard_history(::lueying::ext::clipboard::history(
-                    &::lueying::ext::clipboard::HistoryOptions {
-                        limit: Some(limit as u32),
-                    },
+        pub fn clipboard_history(
+            limit: usize,
+        ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_clipboard_history(::lueying::ext::clipboard::history(
+                    &::lueying::ext::clipboard::HistoryOptions { limit: Some(limit as u32) },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn clipboard_remember(
-                text: &str,
-                tag: &str,
-            ) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn clipboard_remember(
+            text: &str,
+            tag: &str,
+        ) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::clipboard::remember(&::lueying::ext::clipboard::RememberOptions {
                     text: text.to_string(),
                     tag: Some(tag.to_string()),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn clipboard_history_clear() -> ::std::result::Result<(), ::std::string::String> {
+        pub fn clipboard_history_clear() -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::clipboard::clear()?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn audio_record(
-                seconds: u32,
-            ) -> ::std::result::Result<$crate::AudioRecording, ::std::string::String> {
-                Ok(conv_audio(::lueying::ext::audio::record(
-                    &::lueying::ext::audio::RecordOptions {
-                        seconds: Some(seconds),
-                    },
+        pub fn audio_record(
+            seconds: u32,
+        ) -> ::std::result::Result<$crate::AudioRecording, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_audio(::lueying::ext::audio::record(
+                    &::lueying::ext::audio::RecordOptions { seconds: Some(seconds) },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn asr_recognize(
-                file: &str,
-            ) -> ::std::result::Result<$crate::AsrText, ::std::string::String> {
-                Ok(conv_asr(::lueying::ext::asr::recognize(
+        pub fn asr_recognize(
+            file: &str,
+        ) -> ::std::result::Result<$crate::AsrText, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_asr(::lueying::ext::asr::recognize(
                     &::lueying::ext::asr::RecognizeOptions { file: file.to_string() },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn store_get(
-                key: &str,
-            ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
-                Ok(conv_store_value(::lueying::ext::store::get(
+        pub fn store_get(
+            key: &str,
+        ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_store_value(::lueying::ext::store::get(
                     &::lueying::ext::store::GetOptions { key: key.to_string() },
                 )?))
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::store::set(&::lueying::ext::store::SetOptions {
                     key: key.to_string(),
                     value: value.to_string(),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::store::remove(&::lueying::ext::store::RemoveOptions {
                     key: key.to_string(),
                 })?;
                 Ok(())
             }
-
-            pub fn store_list() -> ::std::result::Result<$crate::StoreKeys, ::std::string::String> {
-                Ok(conv_store_keys(::lueying::ext::store::list()?))
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
             }
+        }
 
-            pub fn network_fetch(
-                options: &$crate::FetchArgs,
-            ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
+        pub fn store_list() -> ::std::result::Result<$crate::StoreKeys, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_store_keys(::lueying::ext::store::list()?))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
+
+        pub fn network_fetch(
+            options: &$crate::FetchArgs,
+        ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 let args = ::lueying::ext::network::FetchOptions {
                     url: options.url.clone(),
                     method: options.method.clone(),
@@ -927,26 +1033,47 @@ macro_rules! export_component {
                     limit: options.limit,
                     timeout_ms: options.timeout_ms,
                 };
-                Ok(conv_fetch(::lueying::ext::network::fetch(&args)?))
+                Ok(__lueying_conv_fetch(::lueying::ext::network::fetch(&args)?))
             }
-
-            pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
-                Ok(conv_selected(::lueying::ext::context::selection()?))
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
             }
+        }
 
-            pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Ok(__lueying_conv_selected(::lueying::ext::context::selection()?))
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
+
+        pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::notify::show(&::lueying::ext::notify::ShowOptions {
                     title: title.to_string(),
                     body: body.to_string(),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn hotkey_register(
-                id: &str,
-                modifiers: &[&str],
-                key: &str,
-            ) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn hotkey_register(
+            id: &str,
+            modifiers: &[&str],
+            key: &str,
+        ) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::hotkey::register(&::lueying::ext::hotkey::RegisterOptions {
                     id: id.to_string(),
                     modifiers: modifiers.iter().map(|m| m.to_string()).collect(),
@@ -954,38 +1081,38 @@ macro_rules! export_component {
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn hotkey_unregister(id: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn hotkey_unregister(id: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::hotkey::unregister(&::lueying::ext::hotkey::UnregisterOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
+        }
 
-            pub fn hotkey_press(id: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn hotkey_press(id: &str) -> ::std::result::Result<(), ::std::string::String> {
+            #[cfg(target_arch = "wasm32")]
+            {
                 ::lueying::ext::hotkey::press(&::lueying::ext::hotkey::PressOptions {
                     id: id.to_string(),
                 })?;
                 Ok(())
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
+            }
         }
-
-        // 服务外观提到扩展 crate 根,作者代码像 v1 一样直接调用。
-        #[cfg(target_arch = "wasm32")]
-        pub use __lueying_component::{
-            asr_recognize, audio_record, capture_shot, clipboard_history, clipboard_history_clear,
-            clipboard_read, clipboard_remember, clipboard_write, context_selection,
-            hotkey_press, hotkey_register, hotkey_unregister, network_fetch, notify_show,
-            ocr_recognize, output_deliver, panel_show, store_get, store_list, store_remove,
-            store_set,
-        };
-
-        // 非 wasm 目标(普通 cargo test 的宿主侧逻辑检查)没有宿主服务。
-        #[cfg(not(target_arch = "wasm32"))]
-        mod __lueying_stub {
-            $crate::extguest_stub_services!();
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        pub use __lueying_stub::*;
     };
 }
