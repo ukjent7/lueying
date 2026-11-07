@@ -393,8 +393,8 @@ impl ComponentGuest {
         self.store
             .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
             .map_err(|error| format!("外观燃料设置失败: {error}"))?;
-        let scene_json = serde_json::to_string(scene)
-            .map_err(|error| format!("场景序列化失败: {error}"))?;
+        let scene_json =
+            serde_json::to_string(scene).map_err(|error| format!("场景序列化失败: {error}"))?;
         let result = self
             .bindings
             .entry()
