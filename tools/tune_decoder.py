@@ -24,23 +24,24 @@ import re
 import sys
 
 # (文件, 常数名, 候选取值)。当前值从源码解析,候选里跳过;名单按杠杆挑,
-# 全集见 decoder.rs / channel.rs 顶部的 const 块。
+# 全集见 decoder.rs / channel.rs 顶部的 const 块。浮点值写成字符串:
+# GitHub matrix 会把 3.0 渲染成 3,字符串原样通过,patch 再按声明类型兜底。
 PLAN = [
-    ("crates/engine/src/decoder.rs", "BEAM", [18, 32]),
-    ("crates/engine/src/decoder.rs", "BEAM_LAST", [64, 128]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP", [8, 16]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP_SHORT", [16, 32]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP_WHOLE", [64, 128]),
-    ("crates/engine/src/decoder.rs", "EXACT_SENTENCE_MARGIN", [3.0, 7.0]),
-    ("crates/engine/src/decoder.rs", "COMPLETION_OVERRIDE_RATIO", [8, 32]),
-    ("crates/engine/src/decoder.rs", "MAX_WORD_TYPOS_LONG", [2]),
-    ("crates/engine/src/channel.rs", "TYPO_SWAP", [0.3, 0.5]),
-    ("crates/engine/src/channel.rs", "TYPO_NEAR_KEY", [0.5, 0.7]),
-    ("crates/engine/src/channel.rs", "TYPO_MISSED", [0.7, 1.0]),
-    ("crates/engine/src/channel.rs", "TYPO_EXTRA", [0.7, 1.0]),
-    ("crates/engine/src/channel.rs", "TYPO_VALID_WINDOW", [1.0, 2.0]),
-    ("crates/engine/src/channel.rs", "TYPO_COMPLETE_INPUT", [1.0, 2.0]),
-    ("crates/engine/src/channel.rs", "ABBREV_COST", [6.0, 10.0]),
+    ("crates/engine/src/decoder.rs", "BEAM", ["18", "32"]),
+    ("crates/engine/src/decoder.rs", "BEAM_LAST", ["64", "128"]),
+    ("crates/engine/src/decoder.rs", "NODE_CAP", ["8", "16"]),
+    ("crates/engine/src/decoder.rs", "NODE_CAP_SHORT", ["16", "32"]),
+    ("crates/engine/src/decoder.rs", "NODE_CAP_WHOLE", ["64", "128"]),
+    ("crates/engine/src/decoder.rs", "EXACT_SENTENCE_MARGIN", ["3.0", "7.0"]),
+    ("crates/engine/src/decoder.rs", "COMPLETION_OVERRIDE_RATIO", ["8", "32"]),
+    ("crates/engine/src/decoder.rs", "MAX_WORD_TYPOS_LONG", ["2"]),
+    ("crates/engine/src/channel.rs", "TYPO_SWAP", ["0.3", "0.5"]),
+    ("crates/engine/src/channel.rs", "TYPO_NEAR_KEY", ["0.5", "0.7"]),
+    ("crates/engine/src/channel.rs", "TYPO_MISSED", ["0.7", "1.0"]),
+    ("crates/engine/src/channel.rs", "TYPO_EXTRA", ["0.7", "1.0"]),
+    ("crates/engine/src/channel.rs", "TYPO_VALID_WINDOW", ["1.0", "2.0"]),
+    ("crates/engine/src/channel.rs", "TYPO_COMPLETE_INPUT", ["1.0", "2.0"]),
+    ("crates/engine/src/channel.rs", "ABBREV_COST", ["6.0", "10.0"]),
 ]
 
 # 干净全拼的类别:候选不得让它们倒退,这是准入线。
@@ -75,10 +76,16 @@ def cmd_patch(args: argparse.Namespace) -> None:
     old_decl = re.search(rf"^const {args.name}: (\w+) = {re.escape(current)};$", text, re.M)
     if not old_decl:
         sys.exit(f"{args.name}: 声明行不匹配")
-    line = f"const {args.name}: {old_decl.group(1)} = {args.value};"
+    value = args.value
+    # 类型兜底:f64 缺小数点补上,整数混进小数点剥掉——matrix 传参会剥 .0。
+    if old_decl.group(1) == "f64" and "." not in value and "e" not in value:
+        value += ".0"
+    if old_decl.group(1) != "f64" and "." in value:
+        value = value.split(".")[0] or value
+    line = f"const {args.name}: {old_decl.group(1)} = {value};"
     replaced = text[:old_decl.start()] + line + text[old_decl.end():]
     open(args.file, "w", encoding="utf-8").write(replaced)
-    print(f"{args.name}: {current} -> {args.value}")
+    print(f"{args.name}: {current} -> {value}")
 
 
 def cmd_score(args: argparse.Namespace) -> None:

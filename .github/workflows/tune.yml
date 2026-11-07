@@ -67,6 +67,8 @@ jobs:
 
   decide:
     needs: [plan, run]
+    # 个别候选编译失败不拖垮整轮:能到手的分数照常汇总择优。
+    if: always() && needs.plan.result == 'success'
     outputs:
       winners: ${{ steps.decide.outputs.winners }}
     runs-on: ubuntu-latest
@@ -98,20 +100,24 @@ jobs:
                   const, value = name.rsplit("-", 1)
                   scores.setdefault(const, {})[value] = json.load(open(path))
 
-          base = scores["baseline"]
-          winners = []
-          for const, by_value in scores.items():
-              if const == "baseline":
-                  continue
-              value, score = max(by_value.items(), key=lambda kv: kv[1]["objective"])
-              if score["objective"] >= base["objective"] + float(os.environ["MIN_GAIN"]) \
-                  and (score["clean"] is None or base["clean"] is None
-                       or score["clean"] >= base["clean"]):
-                  winners.append({"name": const, "file": files[const], "value": value,
-                                  "objective": score["objective"], "base": base["objective"]})
-          winners.sort(key=lambda w: w["objective"] - w["base"], reverse=True)
-          print(json.dumps({"baseline": base, "winners": winners}, ensure_ascii=False, indent=1))
-          open("winners.json", "w").write(json.dumps(winners))
+          if "baseline" not in scores:
+              print("基线缺失,本轮作废")
+              open("winners.json", "w").write("[]")
+          else:
+              base = scores["baseline"]
+              winners = []
+              for const, by_value in scores.items():
+                  if const == "baseline":
+                      continue
+                  value, score = max(by_value.items(), key=lambda kv: kv[1]["objective"])
+                  if score["objective"] >= base["objective"] + float(os.environ["MIN_GAIN"]) \
+                      and (score["clean"] is None or base["clean"] is None
+                           or score["clean"] >= base["clean"]):
+                      winners.append({"name": const, "file": files[const], "value": value,
+                                      "objective": score["objective"], "base": base["objective"]})
+              winners.sort(key=lambda w: w["objective"] - w["base"], reverse=True)
+              print(json.dumps({"baseline": base, "winners": winners}, ensure_ascii=False, indent=1))
+              open("winners.json", "w").write(json.dumps(winners))
           EOF
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -120,8 +126,8 @@ jobs:
           retention-days: 1
 
   apply:
-    needs: [plan, decide]
-    if: needs.decide.outputs.winners != '[]'
+    needs: decide
+    if: always() && needs.decide.outputs.winners != '[]' && needs.decide.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
