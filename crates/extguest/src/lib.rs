@@ -770,7 +770,7 @@ macro_rules! export_component {
         struct __LueyingEntry;
 
         #[cfg(target_arch = "wasm32")]
-        impl exports::lueying::ext::entry::Guest for __LueyingEntry {
+        impl crate::exports::entry::Guest for __LueyingEntry {
             fn init() -> ::std::result::Result<(), ::std::string::String> {
                 let mut slot = __LUEYING_EXTENSION.lock().unwrap();
                 if slot.is_some() {

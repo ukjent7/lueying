@@ -392,8 +392,6 @@ impl ComponentGuest {
             .transpose()
             .map_err(|error| format!("外观补丁解析失败: {error}"))?;
         Ok(patch)
-            Err(error) => Err(error),
-        }
     }
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。
