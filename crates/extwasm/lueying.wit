@@ -188,7 +188,8 @@ interface audio {
     file: string,
     seconds: u32,
   }
-  record: func(options: record-options) -> result<record-result, string>;
+  // record 是 WIT 关键字,% 转义后生成名仍是 record。
+  %record: func(options: record-options) -> result<record-result, string>;
 }
 
 // 离线语音识别:输入 WAV 文件路径,输出文字。
