@@ -399,7 +399,7 @@ impl GuestRuntime {
         } else {
             Ok(Self::Extism(Box::new(Guest::new(
                 wasm, manifest, services, limits, cancelled, metrics,
-            ))))
+            )?)))
         }
     }
 
