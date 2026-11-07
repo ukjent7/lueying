@@ -10,7 +10,6 @@
 wasmtime::component::bindgen!({
     path: "spike.wit",
     world: "spike",
-    async: false,
 });
 
 /// 宿主服务状态;验证桩里只有一份固定回话。
