@@ -21,7 +21,7 @@
 ### 变更
 
 - 整句纠错放开长度上限：手误通道此前只在 ≤24 字母的输入上生效，长句只靠模糊音兜底；用户实测 31 句带错里有 21 句的错误全部落在这条线上。现在全程开启，长句仍限每词一处手误，≤30 字母的输入放宽到一处词内两错。新增用户纠错专项语料 `eval-user-v4`（50 句，出题在前、采集在后，分词空格剥除），进 dict-bench 矩阵。
-- 工具链与依赖现代化：CI 单测换 `cargo-nextest`（文档测试单独保留）；每周审计换 `cargo-deny`，漏洞、依赖来源与重复版本一起管，替代 `cargo-audit` 与手写的锁来源检查脚本；常驻服务与设置窗的分配器换 `mimalloc`；删除无人引用的扩展缝 WIT 记录文件（接口以 `docs/extensions/` 为准）。
+- 工具链与依赖现代化：CI 单测换 `cargo-nextest`（文档测试单独保留）；每周审计换 `cargo-deny`，漏洞、依赖来源与重复版本一起管，替代 `cargo-audit` 与手写的锁来源检查脚本；常驻服务与设置窗的分配器换 `mimalloc`。
 - 词典换成自研的掠影词典（[lueying-dict](https://github.com/ukjent7/lueying-dict)）：词频来自开放语料，读音由 g2pW 在真实句子里定音，万象和白霜只提供新词候选的词形；二进制格式升级为 PYD2，同等词条体积减少约 42%。`xtask dict` 与 `tools/fetch_frost.sh`、`tools/fetch_gram.sh`、`tools/fetch_collocation.sh` 一并删除，词典与搭配表统一由 `tools/fetch_dict.sh` 下载。
 - 候选窗背板优先走 Windows 11 文档化系统背板（`DWMWA_SYSTEMBACKDROP_TYPE` 的 `DWMSBT_TRANSIENTWINDOW`，DWM 合成器托管毛玻璃、底色随系统深浅色），Win11 22H2 之前的系统回退未文档化的 accent 亚克力；macOS 侧液态材质（`NSGlassEffectView`/`NSVisualEffectView`）与三端共用的 `lueying-render` 无头几何不变。
 - 删除 `crates/scene` 声明式场景运行时及其解释器、粒子池、精灵与回放：候选窗动效统一由 `lueying-render` 的 Spring 阻尼弹簧驱动，设置页只保留「弹性动效」开关。
