@@ -18,7 +18,7 @@ extism.workspace = true
 # wasmtime:组件模型宿主(迁移目标)与 wasm 栈上限;版本跟 extism 依赖的
 # wasmtime 一致,升级 extism 时一起升,免得树里出现两份 wasmtime。
 # component-model 是 Extism→Component Model 迁移的验证桩与后续宿主所需。
-wasmtime = { version = "49", default-features = false, features = [
+wasmtime = { version = "50", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",

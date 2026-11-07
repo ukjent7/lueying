@@ -23,8 +23,8 @@ lueying-rerank.workspace = true
 lueying-server.workspace = true
 lueying-session.workspace = true
 ab_glyph = "0.2.32"
-calloop = "0.13"
-calloop-wayland-source = "0.3"
+calloop = "0.14"
+calloop-wayland-source = "0.4"
 fontdb = { version = "0.24", default-features = false, features = [
     "fs",
     "memmap",
