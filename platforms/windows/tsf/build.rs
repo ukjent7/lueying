@@ -12,13 +12,14 @@
 //! 一个依赖系统运行库、到线上才发现加载失败的 DLL。
 
 fn main() {
-    println!("cargo:rustc-cdylib-link-arg=/IGNORE:4104");
     println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     // 只有 Windows 产物会被装进宿主进程;Linux 上的编译(Clippy 门禁)不适用。
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
+    // MSVC 专用参数,不能发给其它目标的链接器(Linux 文档测试会真的链接 cdylib)。
+    println!("cargo:rustc-cdylib-link-arg=/IGNORE:4104");
     if has_static_crt() {
         return;
     }
