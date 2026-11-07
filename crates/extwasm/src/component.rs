@@ -18,8 +18,9 @@ use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Engine, Store};
 
 use lueying_extmeta::{Manifest, Service};
+use lueying_extproto::ScenePatch;
 
-use crate::host::{call_fuel, timeout_for, wasmtime_config};
+use crate::host::{call_fuel, timeout_for, wasmtime_config, Limits};
 use crate::services::Registry;
 
 wasmtime::component::bindgen!({
@@ -282,7 +283,7 @@ impl ComponentGuest {
             Component::new(&engine, &wasm).map_err(|error| format!("组件装载失败: {error}"))?;
         let mut store = Store::new(&engine, state);
         store
-            .set_fuel(limits.init_fuel as u128)
+            .set_fuel(limits.init_fuel)
             .map_err(|error| format!("初始化燃料设置失败: {error}"))?;
 
         // 只有清单 needs 里声明的服务才进 linker;guest 用到未声明的服务
@@ -294,56 +295,56 @@ impl ComponentGuest {
                     lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    )?
+                    ).map_err(|error| format!("服务 capture 链接失败: {error}"))?
                 }
                 "ocr" => lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 ocr 链接失败: {error}"))?,
                 "clipboard" => lueying::ext::clipboard::add_to_linker::<
                     GuestState,
                     HasSelf<GuestState>,
-                >(&mut linker, |state| state)?,
+                >(&mut linker, |state| state).map_err(|error| format!("服务 clipboard 链接失败: {error}"))?,
                 "store" => lueying::ext::store::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 store 链接失败: {error}"))?,
                 "output" => lueying::ext::output::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 output 链接失败: {error}"))?,
                 "panel" => lueying::ext::panel::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 panel 链接失败: {error}"))?,
                 "hotkey" => lueying::ext::hotkey::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 hotkey 链接失败: {error}"))?,
                 "notify" => lueying::ext::notify::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 notify 链接失败: {error}"))?,
                 "network" => {
                     lueying::ext::network::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    )?
+                    ).map_err(|error| format!("服务 network 链接失败: {error}"))?
                 }
                 "context" => {
                     lueying::ext::context::add_to_linker::<GuestState, HasSelf<GuestState>>(
                         &mut linker,
                         |state| state,
-                    )?
+                    ).map_err(|error| format!("服务 context 链接失败: {error}"))?
                 }
                 "audio" => lueying::ext::audio::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 audio 链接失败: {error}"))?,
                 "asr" => lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
-                )?,
+                ).map_err(|error| format!("服务 asr 链接失败: {error}"))?,
                 other => return Err(format!("未知服务 {other:?}")),
             }
         }
@@ -365,7 +366,7 @@ impl ComponentGuest {
     /// 跑一条命令;燃料按命令预算,服务失败经失败槽判死,不被吞掉。
     pub(crate) fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits.clone()) as u128)
+            .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
             .map_err(|error| format!("命令燃料设置失败: {error}"))?;
         let result = self
             .bindings
@@ -376,24 +377,21 @@ impl ComponentGuest {
     }
 
     /// 跑一帧外观;`None` 表示这一帧不改。
-    pub(crate) fn appearance(&mut self, scene: &str) -> Result<Option<String>, String> {
+    pub(crate) fn appearance(&mut self, scene: &str) -> Result<Option<ScenePatch>, String> {
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits.clone()) as u128)
+            .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
             .map_err(|error| format!("外观燃料设置失败: {error}"))?;
         let result = self
             .bindings
             .entry()
             .call_appearance(&mut self.store, scene)
             .map_err(|error| format!("扩展外观执行失败: {error}"));
-        match self.harvest_failure(result) {
-            Ok(()) => self
-                .store
-                .data()
-                .failure
-                .lock()
-                .expect("失败槽锁")
-                .take()
-                .map_or_else(Ok, |error| Err(error)),
+        let json = self.harvest_failure(result)?;
+        let patch = json
+            .map(|json| serde_json::from_str::<ScenePatch>(&json))
+            .transpose()
+            .map_err(|error| format!("外观补丁解析失败: {error}"))?;
+        Ok(patch)
             Err(error) => Err(error),
         }
     }
@@ -402,7 +400,7 @@ impl ComponentGuest {
     fn harvest_failure(&mut self, result: Result<String, String>) -> Result<String, String> {
         let failure = self.store.data().failure.lock().expect("失败槽锁").take();
         match result {
-            Ok(value) if failure.is_some() => Err(failure.unwrap()),
+            Ok(_value) if failure.is_some() => Err(failure.unwrap()),
             other => other,
         }
     }

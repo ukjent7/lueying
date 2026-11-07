@@ -203,14 +203,6 @@ interface asr {
   recognize: func(options: recognize-options) -> result<recognize-result, string>;
 }
 
-// 扩展的导出面:init 加载时调用一次;command 按清单声明的命令 id 分发;
-// appearance 只在清单 `appearance: true` 时被派发。
-interface entry {
-  init: func() -> result<_, string>;
-  command: func(id: string, args: string) -> result<string, string>;
-  appearance: func(scene-json: string) -> result<option<string>, string>;
-}
-
 world extension {
   import capture;
   import ocr;
@@ -224,5 +216,11 @@ world extension {
   import context;
   import audio;
   import asr;
-  export entry;
+  // 内联导出:bindgen! 对内联接口生成 `.entry()` 访问器(按引用导出的
+  // 访问器形状不同,验证桩已证明内联形态可用)。
+  export entry: interface {
+    init: func() -> result<_, string>;
+    command: func(id: string, args: string) -> result<string, string>;
+    appearance: func(scene-json: string) -> result<option<string>, string>;
+  }
 }
