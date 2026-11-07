@@ -541,7 +541,6 @@ pub mod __private {
     }
 }
 
-
 /// 非 wasm 目标的服务桩;宿主测试只用它确认作者逻辑不碰服务即不炸。
 #[macro_export]
 #[doc(hidden)]

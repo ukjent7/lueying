@@ -47,21 +47,17 @@ impl GuestState {
             .find(|s| s.key() == service)
             .ok_or_else(|| format!("未知服务 {service:?}"))?;
         if !self.manifest.needs.contains(&service_enum) {
-            return Err(format!(
-                "服务 {service} 不在清单 needs 里(声明了才可用)"
-            ));
+            return Err(format!("服务 {service} 不在清单 needs 里(声明了才可用)"));
         }
         let timeout = timeout_for(service_enum, method);
-        let result = self
-            .services
-            .call_cancellable(
-                &self.caller,
-                service,
-                method,
-                args,
-                timeout,
-                Some(&self.cancelled),
-            );
+        let result = self.services.call_cancellable(
+            &self.caller,
+            service,
+            method,
+            args,
+            timeout,
+            Some(&self.cancelled),
+        );
         if let Err(error) = &result {
             if let Ok(mut slot) = self.failure.lock() {
                 *slot = Some(error.clone());
@@ -201,10 +197,7 @@ impl lueying::ext::hotkey::Host for GuestState {
         self.call("hotkey", "unregister", &args)
     }
 
-    fn press(
-        &mut self,
-        options: lueying::ext::hotkey::PressOptions,
-    ) -> Result<String, String> {
+    fn press(&mut self, options: lueying::ext::hotkey::PressOptions) -> Result<String, String> {
         let args = Self::args(&options)?;
         self.call("hotkey", "press", &args)
     }
@@ -297,10 +290,12 @@ impl ComponentGuest {
         let mut linker = Linker::new(&engine);
         for service in &manifest.needs {
             match service.key() {
-                "capture" => lueying::ext::capture::add_to_linker::<
-                    GuestState,
-                    HasSelf<GuestState>,
-                >(&mut linker, |state| state)?,
+                "capture" => {
+                    lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
+                        &mut linker,
+                        |state| state,
+                    )?
+                }
                 "ocr" => lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
@@ -329,14 +324,18 @@ impl ComponentGuest {
                     &mut linker,
                     |state| state,
                 )?,
-                "network" => lueying::ext::network::add_to_linker::<
-                    GuestState,
-                    HasSelf<GuestState>,
-                >(&mut linker, |state| state)?,
-                "context" => lueying::ext::context::add_to_linker::<
-                    GuestState,
-                    HasSelf<GuestState>,
-                >(&mut linker, |state| state)?,
+                "network" => {
+                    lueying::ext::network::add_to_linker::<GuestState, HasSelf<GuestState>>(
+                        &mut linker,
+                        |state| state,
+                    )?
+                }
+                "context" => {
+                    lueying::ext::context::add_to_linker::<GuestState, HasSelf<GuestState>>(
+                        &mut linker,
+                        |state| state,
+                    )?
+                }
                 "audio" => lueying::ext::audio::add_to_linker::<GuestState, HasSelf<GuestState>>(
                     &mut linker,
                     |state| state,
@@ -348,9 +347,8 @@ impl ComponentGuest {
                 other => return Err(format!("未知服务 {other:?}")),
             }
         }
-        let bindings =
-            Extension::instantiate(&mut store, &component, &linker)
-                .map_err(|error| format!("组件实例化失败: {error}"))?;
+        let bindings = Extension::instantiate(&mut store, &component, &linker)
+            .map_err(|error| format!("组件实例化失败: {error}"))?;
         let init = bindings
             .entry()
             .call_init(&mut store)
@@ -402,13 +400,7 @@ impl ComponentGuest {
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。
     fn harvest_failure(&mut self, result: Result<String, String>) -> Result<String, String> {
-        let failure = self
-            .store
-            .data()
-            .failure
-            .lock()
-            .expect("失败槽锁")
-            .take();
+        let failure = self.store.data().failure.lock().expect("失败槽锁").take();
         match result {
             Ok(value) if failure.is_some() => Err(failure.unwrap()),
             other => other,
