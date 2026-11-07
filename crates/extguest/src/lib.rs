@@ -659,45 +659,45 @@ macro_rules! export_component {
             // —— 生成 record ↔ extproto record,字段逐一对位 ——
             fn conv_shot(
                 v: ::lueying::ext::capture::ShotResult,
-            ) -> $crate::lueying_extproto::Shot {
-                $crate::lueying_extproto::Shot {
+            ) -> $crate::Shot {
+                $crate::Shot {
                     file: v.file,
                     width: v.width,
                     height: v.height,
                 }
             }
 
-            fn conv_ocr(v: ::lueying::ext::ocr::RecognizeResult) -> $crate::lueying_extproto::OcrText {
-                $crate::lueying_extproto::OcrText {
+            fn conv_ocr(v: ::lueying::ext::ocr::RecognizeResult) -> $crate::OcrText {
+                $crate::OcrText {
                     text: v.text,
                     lang: v.lang,
                 }
             }
 
-            fn conv_deliver(v: ::lueying::ext::output::DeliverResult) -> $crate::lueying_extproto::Delivered {
-                $crate::lueying_extproto::Delivered {
+            fn conv_deliver(v: ::lueying::ext::output::DeliverResult) -> $crate::Delivered {
+                $crate::Delivered {
                     delivered: v.delivered,
                 }
             }
 
-            fn conv_panel(v: ::lueying::ext::panel::ShowResult) -> $crate::lueying_extproto::PanelResult {
-                $crate::lueying_extproto::PanelResult {
+            fn conv_panel(v: ::lueying::ext::panel::ShowResult) -> $crate::PanelResult {
+                $crate::PanelResult {
                     selected: v.selected,
                 }
             }
 
-            fn conv_clipboard_text(v: ::lueying::ext::clipboard::ReadResult) -> $crate::lueying_extproto::ClipboardText {
-                $crate::lueying_extproto::ClipboardText { text: v.text }
+            fn conv_clipboard_text(v: ::lueying::ext::clipboard::ReadResult) -> $crate::ClipboardText {
+                $crate::ClipboardText { text: v.text }
             }
 
             fn conv_clipboard_history(
                 v: ::lueying::ext::clipboard::HistoryResult,
-            ) -> $crate::lueying_extproto::ClipboardHistory {
-                $crate::lueying_extproto::ClipboardHistory {
+            ) -> $crate::ClipboardHistory {
+                $crate::ClipboardHistory {
                     items: v
                         .items
                         .into_iter()
-                        .map(|item| $crate::lueying_extproto::ClipboardHistoryItem {
+                        .map(|item| $crate::ClipboardHistoryItem {
                             text: item.text,
                             time: item.time,
                             tag: item.tag,
@@ -706,34 +706,34 @@ macro_rules! export_component {
                 }
             }
 
-            fn conv_audio(v: ::lueying::ext::audio::RecordResult) -> $crate::lueying_extproto::AudioRecording {
-                $crate::lueying_extproto::AudioRecording {
+            fn conv_audio(v: ::lueying::ext::audio::RecordResult) -> $crate::AudioRecording {
+                $crate::AudioRecording {
                     file: v.file,
                     seconds: v.seconds,
                 }
             }
 
-            fn conv_asr(v: ::lueying::ext::asr::RecognizeResult) -> $crate::lueying_extproto::AsrText {
-                $crate::lueying_extproto::AsrText { text: v.text }
+            fn conv_asr(v: ::lueying::ext::asr::RecognizeResult) -> $crate::AsrText {
+                $crate::AsrText { text: v.text }
             }
 
-            fn conv_store_value(v: ::lueying::ext::store::GetResult) -> $crate::lueying_extproto::StoreValue {
-                $crate::lueying_extproto::StoreValue { value: v.value }
+            fn conv_store_value(v: ::lueying::ext::store::GetResult) -> $crate::StoreValue {
+                $crate::StoreValue { value: v.value }
             }
 
-            fn conv_store_keys(v: ::lueying::ext::store::ListResult) -> $crate::lueying_extproto::StoreKeys {
-                $crate::lueying_extproto::StoreKeys { keys: v.keys }
+            fn conv_store_keys(v: ::lueying::ext::store::ListResult) -> $crate::StoreKeys {
+                $crate::StoreKeys { keys: v.keys }
             }
 
-            fn conv_fetch(v: ::lueying::ext::network::FetchResult) -> $crate::lueying_extproto::FetchResult {
-                $crate::lueying_extproto::FetchResult {
+            fn conv_fetch(v: ::lueying::ext::network::FetchResult) -> $crate::FetchResult {
+                $crate::FetchResult {
                     status: v.status,
                     body: v.body,
                 }
             }
 
-            fn conv_selected(v: ::lueying::ext::context::SelectionResult) -> $crate::lueying_extproto::SelectedText {
-                $crate::lueying_extproto::SelectedText { text: v.text }
+            fn conv_selected(v: ::lueying::ext::context::SelectionResult) -> $crate::SelectedText {
+                $crate::SelectedText { text: v.text }
             }
 
             // —— 作者扩展的单例与入口实现 ——
@@ -748,7 +748,7 @@ macro_rules! export_component {
                     if slot.is_some() {
                         return Ok(());
                     }
-                    *slot = Some(<$ty as $crate::Extension>::default());
+                    *slot = Some(<$ty as ::std::default::Default>::default());
                     match slot.as_mut().unwrap().init() {
                         Ok(()) => Ok(()),
                         Err(error) => {
@@ -775,7 +775,7 @@ macro_rules! export_component {
                     ::std::option::Option<::std::string::String>,
                     ::std::string::String,
                 > {
-                    let scene: $crate::lueying_extproto::SceneIn = ::serde_json::from_str(&scene_json)
+                    let scene: $crate::SceneIn = ::serde_json::from_str(&scene_json)
                         .map_err(|error| format!("场景解析失败: {error}"))?;
                     let mut slot = EXTENSION.lock().unwrap();
                     let extension = slot
@@ -792,17 +792,17 @@ macro_rules! export_component {
                 }
             }
 
-            ::wit_bindgen::export!(Entry);
+            export!(Entry);
 
             // —— 作者面的服务外观:函数在扩展 crate 根,签名与 v1 相同 ——
-            pub fn capture_shot() -> ::std::result::Result<$crate::lueying_extproto::Shot, ::std::string::String> {
+            pub fn capture_shot() -> ::std::result::Result<$crate::Shot, ::std::string::String> {
                 Ok(conv_shot(::lueying::ext::capture::shot(None)?))
             }
 
             pub fn ocr_recognize(
                 file: &str,
                 lang: Option<&str>,
-            ) -> ::std::result::Result<$crate::lueying_extproto::OcrText, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::OcrText, ::std::string::String> {
                 Ok(conv_ocr(::lueying::ext::ocr::recognize(
                     &::lueying::ext::ocr::RecognizeOptions {
                         file: file.to_string(),
@@ -814,7 +814,7 @@ macro_rules! export_component {
 
             pub fn output_deliver(
                 text: &str,
-            ) -> ::std::result::Result<$crate::lueying_extproto::Delivered, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::Delivered, ::std::string::String> {
                 Ok(conv_deliver(::lueying::ext::output::deliver(
                     &::lueying::ext::output::DeliverOptions {
                         text: text.to_string(),
@@ -825,7 +825,7 @@ macro_rules! export_component {
             pub fn panel_show(
                 title: &str,
                 items: &[::std::string::String],
-            ) -> ::std::result::Result<$crate::lueying_extproto::PanelResult, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
                 Ok(conv_panel(::lueying::ext::panel::show(
                     &::lueying::ext::panel::ShowOptions {
                         title: title.to_string(),
@@ -834,7 +834,7 @@ macro_rules! export_component {
                 )?))
             }
 
-            pub fn clipboard_read() -> ::std::result::Result<$crate::lueying_extproto::ClipboardText, ::std::string::String> {
+            pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
                 Ok(conv_clipboard_text(::lueying::ext::clipboard::read()?))
             }
 
@@ -847,7 +847,7 @@ macro_rules! export_component {
 
             pub fn clipboard_history(
                 limit: usize,
-            ) -> ::std::result::Result<$crate::lueying_extproto::ClipboardHistory, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
                 Ok(conv_clipboard_history(::lueying::ext::clipboard::history(
                     &::lueying::ext::clipboard::HistoryOptions {
                         limit: Some(limit as u32),
@@ -873,7 +873,7 @@ macro_rules! export_component {
 
             pub fn audio_record(
                 seconds: u32,
-            ) -> ::std::result::Result<$crate::lueying_extproto::AudioRecording, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::AudioRecording, ::std::string::String> {
                 Ok(conv_audio(::lueying::ext::audio::record(
                     &::lueying::ext::audio::RecordOptions {
                         seconds: Some(seconds),
@@ -883,7 +883,7 @@ macro_rules! export_component {
 
             pub fn asr_recognize(
                 file: &str,
-            ) -> ::std::result::Result<$crate::lueying_extproto::AsrText, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::AsrText, ::std::string::String> {
                 Ok(conv_asr(::lueying::ext::asr::recognize(
                     &::lueying::ext::asr::RecognizeOptions { file: file.to_string() },
                 )?))
@@ -891,7 +891,7 @@ macro_rules! export_component {
 
             pub fn store_get(
                 key: &str,
-            ) -> ::std::result::Result<$crate::lueying_extproto::StoreValue, ::std::string::String> {
+            ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
                 Ok(conv_store_value(::lueying::ext::store::get(
                     &::lueying::ext::store::GetOptions { key: key.to_string() },
                 )?))
@@ -912,13 +912,13 @@ macro_rules! export_component {
                 Ok(())
             }
 
-            pub fn store_list() -> ::std::result::Result<$crate::lueying_extproto::StoreKeys, ::std::string::String> {
+            pub fn store_list() -> ::std::result::Result<$crate::StoreKeys, ::std::string::String> {
                 Ok(conv_store_keys(::lueying::ext::store::list()?))
             }
 
             pub fn network_fetch(
-                options: &$crate::lueying_extproto::FetchArgs,
-            ) -> ::std::result::Result<$crate::lueying_extproto::FetchResult, ::std::string::String> {
+                options: &$crate::FetchArgs,
+            ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
                 let args = ::lueying::ext::network::FetchOptions {
                     url: options.url.clone(),
                     method: options.method.clone(),
@@ -930,7 +930,7 @@ macro_rules! export_component {
                 Ok(conv_fetch(::lueying::ext::network::fetch(&args)?))
             }
 
-            pub fn context_selection() -> ::std::result::Result<$crate::lueying_extproto::SelectedText, ::std::string::String> {
+            pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
                 Ok(conv_selected(::lueying::ext::context::selection()?))
             }
 
