@@ -634,7 +634,6 @@ macro_rules! extguest_stub_services {
         }
     };
 }
-}
 
 /// 组件 ABI 的扩展导出(WASI 0.3 Component Model)。
 ///
