@@ -11,7 +11,7 @@
 //! ([`Extension`])在根。生成的 record 带 serde 派生,桥接层走 JSON 值与
 //! [`Registry`] 互通,与 v1 的 JSON 契约逐字节兼容。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use wasmtime::component::{Component, HasSelf, Linker};
@@ -384,26 +384,26 @@ impl ComponentGuest {
             .bindings
             .entry()
             .call_command(&mut self.store, id, args)
-            .map_err(|error| format!("扩展命令执行失败: {error}"));
+            .map_err(|error| format!("扩展命令执行失败: {error}"))?;
         self.harvest_failure(result)
     }
 
     /// 跑一帧外观;`None` 表示这一帧不改。
-    pub(crate) fn appearance(&mut self, scene: &str) -> Result<Option<ScenePatch>, String> {
+    pub(crate) fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
         self.store
             .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
             .map_err(|error| format!("外观燃料设置失败: {error}"))?;
+        let scene_json = serde_json::to_string(scene)
+            .map_err(|error| format!("场景序列化失败: {error}"))?;
         let result = self
             .bindings
             .entry()
-            .call_appearance(&mut self.store, scene)
-            .map_err(|error| format!("扩展外观执行失败: {error}"));
+            .call_appearance(&mut self.store, &scene_json)
+            .map_err(|error| format!("扩展外观执行失败: {error}"))?;
         let json = self.harvest_failure(result)?;
-        let patch = json
-            .map(|json| serde_json::from_str::<ScenePatch>(&json))
+        json.map(|json| serde_json::from_str::<ScenePatch>(&json))
             .transpose()
-            .map_err(|error| format!("外观补丁解析失败: {error}"))?;
-        Ok(patch)
+            .map_err(|error| format!("外观补丁解析失败: {error}"))
     }
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。

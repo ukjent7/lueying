@@ -410,7 +410,7 @@ impl GuestRuntime {
         }
     }
 
-    fn appearance(&mut self, scene: &str) -> Result<Option<String>, String> {
+    fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
         match self {
             Self::Extism(guest) => guest.appearance(scene),
             Self::Component(guest) => guest.appearance(scene),
