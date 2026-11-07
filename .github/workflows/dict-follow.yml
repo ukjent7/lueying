@@ -1,0 +1,99 @@
+# 词典自动跟随:lueying-dict 出了新的正式 Release 就用同一标签跑基准,
+# 过了才更新 fetch_dict.sh 的钉住标签与校验和;预发布(rc)不跟。
+# pipeline(词典仓)发布时会自己调 dict-bench,这里再独立验一遍,
+# 双保险;GITHUB_TOKEN 的回推不触发 CI,钉住的只是数据文件,可接受。
+name: dict-follow
+
+on:
+  schedule:
+    # 每天 03:43 UTC;真正工作只在有新正式版时发生。
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 直接指定要跟的标签(留空取最新正式版)
+        required: false
+      dry:
+        description: 只检查不提交
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  pick:
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      adopt: ${{ steps.pick.outputs.adopt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY: ${{ inputs.dry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pick
+        run: |
+          set -euo pipefail
+          pinned=$(sed -n 's/^TAG="\([^"]*\)"/\1/p' tools/fetch_dict.sh)
+          target='${{ inputs.tag }}'
+          if [ -z "$target" ]; then
+            target=$(gh api "repos/ukjent7/lueying-dict/releases?per_page=20" \
+              --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // empty')
+          fi
+          if [ -z "$target" ]; then
+            echo "没有正式 Release,不跟"
+            echo "adopt=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$target" = "$pinned" ]; then
+            echo "已钉在最新正式版 $target"
+            echo "adopt=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "钉住 $pinned → 可更新到 $target$( [ "$DRY" = true ] && echo '(dry 只检查)' )"
+          echo "tag=$target" >> "$GITHUB_OUTPUT"
+          if [ "$DRY" = true ]; then
+            echo "adopt=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "adopt=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  bench:
+    needs: pick
+    if: needs.pick.outputs.adopt == 'true'
+    uses: ukjent7/lueying/.github/workflows/dict-bench.yml@main
+    with:
+      tag: ${{ needs.pick.outputs.tag }}
+      tiers: 600k
+
+  adopt:
+    needs: [pick, bench]
+    if: needs.pick.outputs.adopt == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 更新钉住的标签与校验和
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          base="https://github.com/ukjent7/lueying-dict/releases/download/${TAG}"
+          for name in main.pyd collocation.bin; do
+            curl -fsSL --retry 5 --retry-delay 15 -o "$tmp/$name" "${base}/${name}"
+          done
+          sha_main=$(sha256sum "$tmp/main.pyd" | cut -d' ' -f1)
+          sha_col=$(sha256sum "$tmp/collocation.bin" | cut -d' ' -f1)
+          sed -i "s/^TAG=\"[^\"]*\"/TAG=\"${TAG}\"/" tools/fetch_dict.sh
+          sed -i "s/^fetch [0-9a-f]\{64\} main.pyd$/fetch ${sha_main} main.pyd/" tools/fetch_dict.sh
+          sed -i "s/^fetch [0-9a-f]\{64\} collocation.bin$/fetch ${sha_col} collocation.bin/" tools/fetch_dict.sh
+          git diff --stat --exit-code
+          git config user.name "ukjent7"
+          git config user.email "ukjent7@users.noreply.github.com"
+          git add tools/fetch_dict.sh
+          git commit -m "词典: 跟进 ${TAG}"
+          git push

@@ -7,6 +7,9 @@
 
 ### 新增
 
+- 手误模型补齐实测缺口：元音串位（a↔e 一类非邻键敲错）、同排隔一键与同指串位（c↔z、y↔h 一类比邻键远一格）、`-in` 音节打成 `-ian` 长形（jin→jian）。
+- 词典自动跟随：每天检查 lueying-dict 的正式 Release，新版本先过基准门禁再自动更新 `fetch_dict.sh` 的钉住标签与校验和；发版节奏旋钮在词典仓（周一定时，默认每周，两次间隔半年兜底）。
+- 用户纠错专项语料 `eval-user-v4`（50 句，出题在前、采集在后，分词空格剥除），进 dict-bench 矩阵。
 - 剪贴板历史官方扩展：宿主后台维护最近 200 条纯文本复制记录，`Win+Shift+V` 唤出胶囊面板（显示最近 60 条），选中即写回剪贴板并注入当前焦点；OCR 与语音识别结果自动带 `OCR`/`语音` 标签沉淀进历史，不额外申请剪贴板权限。
 - 原生扩展可订阅候选窗状态（`events: ["candidate-state"]`）：宿主推送可见性、位置与组合内容，扩展可据此做贴着候选窗的伴随界面；文字需要 `candidate-text` 权限，私密字段不带文字。
 - 离线语音输入官方扩展：`Ctrl+Alt+V` 录制 8 秒 16 kHz WAV，交给原生 `sensevoice` 扩展做纯 CPU 识别后上屏；音频录制与 ASR 作为宿主服务开放。
@@ -20,7 +23,7 @@
 
 ### 变更
 
-- 整句纠错放开长度上限：手误通道此前只在 ≤24 字母的输入上生效，长句只靠模糊音兜底；用户实测 31 句带错里有 21 句的错误全部落在这条线上。现在全程开启，长句仍限每词一处手误，≤30 字母的输入放宽到一处词内两错。新增用户纠错专项语料 `eval-user-v4`（50 句，出题在前、采集在后，分词空格剥除），进 dict-bench 矩阵。
+- 整句纠错放开长度上限：手误通道此前只在 ≤24 字母的输入上生效，长句只靠模糊音兜底；用户实测 31 句带错里有 21 句的错误全部落在这条线上。现在全程开启，长句仍限每词一处手误，≤30 字母的输入放宽到一处词内两错。
 - 工具链与依赖现代化：CI 单测换 `cargo-nextest`（文档测试单独保留）；每周审计换 `cargo-deny`，漏洞、依赖来源与重复版本一起管，替代 `cargo-audit` 与手写的锁来源检查脚本；常驻服务与设置窗的分配器换 `mimalloc`。
 - 词典换成自研的掠影词典（[lueying-dict](https://github.com/ukjent7/lueying-dict)）：词频来自开放语料，读音由 g2pW 在真实句子里定音，万象和白霜只提供新词候选的词形；二进制格式升级为 PYD2，同等词条体积减少约 42%。`xtask dict` 与 `tools/fetch_frost.sh`、`tools/fetch_gram.sh`、`tools/fetch_collocation.sh` 一并删除，词典与搭配表统一由 `tools/fetch_dict.sh` 下载。
 - 候选窗背板优先走 Windows 11 文档化系统背板（`DWMWA_SYSTEMBACKDROP_TYPE` 的 `DWMSBT_TRANSIENTWINDOW`，DWM 合成器托管毛玻璃、底色随系统深浅色），Win11 22H2 之前的系统回退未文档化的 accent 亚克力；macOS 侧液态材质（`NSGlassEffectView`/`NSVisualEffectView`）与三端共用的 `lueying-render` 无头几何不变。
