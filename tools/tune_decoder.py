@@ -23,25 +23,25 @@ import json
 import re
 import sys
 
-# (文件, 常数名, 候选取值)。当前值从源码解析,候选里跳过;名单按杠杆挑,
-# 全集见 decoder.rs / channel.rs 顶部的 const 块。浮点值写成字符串:
-# GitHub matrix 会把 3.0 渲染成 3,字符串原样通过,patch 再按声明类型兜底。
+# (文件, 常数名, 类型, 步长)。候选=当前值±步长,沿上次采纳的位置继续爬;
+# 步长按杠杆定,浮点格式化到与原声明一致的位数。GitHub matrix 会把 3.0
+# 渲染成 3,候选一律以字符串输出,patch 再按声明类型兜底。
 PLAN = [
-    ("crates/engine/src/decoder.rs", "BEAM", ["18", "32"]),
-    ("crates/engine/src/decoder.rs", "BEAM_LAST", ["64", "128"]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP", ["8", "16"]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP_SHORT", ["16", "32"]),
-    ("crates/engine/src/decoder.rs", "NODE_CAP_WHOLE", ["64", "128"]),
-    ("crates/engine/src/decoder.rs", "EXACT_SENTENCE_MARGIN", ["3.0", "7.0"]),
-    ("crates/engine/src/decoder.rs", "COMPLETION_OVERRIDE_RATIO", ["8", "32"]),
-    ("crates/engine/src/decoder.rs", "MAX_WORD_TYPOS_LONG", ["2"]),
-    ("crates/engine/src/channel.rs", "TYPO_SWAP", ["0.3", "0.5"]),
-    ("crates/engine/src/channel.rs", "TYPO_NEAR_KEY", ["0.5", "0.7"]),
-    ("crates/engine/src/channel.rs", "TYPO_MISSED", ["0.7", "1.0"]),
-    ("crates/engine/src/channel.rs", "TYPO_EXTRA", ["0.7", "1.0"]),
-    ("crates/engine/src/channel.rs", "TYPO_VALID_WINDOW", ["1.0", "2.0"]),
-    ("crates/engine/src/channel.rs", "TYPO_COMPLETE_INPUT", ["1.0", "2.0"]),
-    ("crates/engine/src/channel.rs", "ABBREV_COST", ["6.0", "10.0"]),
+    ("crates/engine/src/decoder.rs", "BEAM", "int", 8),
+    ("crates/engine/src/decoder.rs", "BEAM_LAST", "int", 32),
+    ("crates/engine/src/decoder.rs", "NODE_CAP", "int", 4),
+    ("crates/engine/src/decoder.rs", "NODE_CAP_SHORT", "int", 8),
+    ("crates/engine/src/decoder.rs", "NODE_CAP_WHOLE", "int", 32),
+    ("crates/engine/src/decoder.rs", "EXACT_SENTENCE_MARGIN", "float2", 2.0),
+    ("crates/engine/src/decoder.rs", "COMPLETION_OVERRIDE_RATIO", "int", 8),
+    ("crates/engine/src/decoder.rs", "MAX_WORD_TYPOS_LONG", "int", 1),
+    ("crates/engine/src/channel.rs", "TYPO_SWAP", "float2", 0.1),
+    ("crates/engine/src/channel.rs", "TYPO_NEAR_KEY", "float2", 0.1),
+    ("crates/engine/src/channel.rs", "TYPO_MISSED", "float2", 0.15),
+    ("crates/engine/src/channel.rs", "TYPO_EXTRA", "float2", 0.15),
+    ("crates/engine/src/channel.rs", "TYPO_VALID_WINDOW", "float2", 0.5),
+    ("crates/engine/src/channel.rs", "TYPO_COMPLETE_INPUT", "float2", 0.5),
+    ("crates/engine/src/channel.rs", "ABBREV_COST", "float2", 2.0),
 ]
 
 # 干净全拼的类别:候选不得让它们倒退,这是准入线。
@@ -60,14 +60,25 @@ def const_line(path: str, name: str) -> tuple[str, str]:
     return found[0], text
 
 
+def fmt(kind: str, value: float) -> str:
+    if kind == "int":
+        return str(int(value))
+    return f"{value:.2f}"
+
+
 def cmd_plan(_args: argparse.Namespace) -> None:
     candidates = []
-    for path, name, values in PLAN:
+    for path, name, kind, step in PLAN:
         current, _ = const_line(path, name)
-        for value in values:
-            if str(value) == current:
+        base = float(current)
+        for delta in (-step, step):
+            value = base + delta
+            if kind == "int":
+                value = max(1, value)
+            text = fmt(kind, value)
+            if text == current or value <= 0:
                 continue
-            candidates.append({"name": name, "file": path, "old": current, "new": value})
+            candidates.append({"name": name, "file": path, "old": current, "new": text})
     print(json.dumps(candidates))
 
 

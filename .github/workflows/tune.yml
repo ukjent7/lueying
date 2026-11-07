@@ -118,6 +118,8 @@ jobs:
               winners.sort(key=lambda w: w["objective"] - w["base"], reverse=True)
               print(json.dumps({"baseline": base, "winners": winners}, ensure_ascii=False, indent=1))
               open("winners.json", "w").write(json.dumps(winners))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"winners={open('winners.json').read()}\n")
           EOF
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

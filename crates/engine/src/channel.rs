@@ -22,7 +22,9 @@ const ABBREV_COST: f64 = 8.0;
 const TYPO_SCALE: f64 = 4.0;
 /// 相邻字母调换、相邻键替换、漏键、多键的基础代价。
 const TYPO_SWAP: f64 = 0.40;
-const TYPO_NEAR_KEY: f64 = 0.60;
+/// 邻键代价从 0.60 抬到 0.70:tune 第一轮坐标系搜索的胜者,开发集整句首选
+/// +0.22 点、干净全拼零退步(2026-11-07,29 候选里唯一过线者)。
+const TYPO_NEAR_KEY: f64 = 0.70;
 const TYPO_MISSED: f64 = 0.85;
 const TYPO_EXTRA: f64 = 0.85;
 /// 窗口本身已是合法音节时的额外代价:打出来的字母能读通,多半不是打错。
