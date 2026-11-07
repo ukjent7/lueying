@@ -15,7 +15,7 @@ wasmtime::component::bindgen!({
 /// 宿主服务状态;验证桩里只有一份固定回话。
 pub struct HostState;
 
-impl spike::host::Host for HostState {
+impl host::Host for HostState {
     fn ping(&mut self) -> String {
         "pong".to_string()
     }
@@ -84,8 +84,8 @@ fn 组件桩_握手_燃料_宿主调用() {
     store.set_fuel(FUEL).unwrap();
 
     let mut linker = wasmtime::component::Linker::new(&engine);
-    spike::host::add_to_linker(&mut linker, |state: &mut HostState| state).unwrap();
-    let (bindings, _instance) = spike::Spike::instantiate(&mut store, &component, &linker).unwrap();
+    host::add_to_linker(&mut linker, |state: &mut HostState| state).unwrap();
+    let (bindings, _instance) = Spike::instantiate(&mut store, &component, &linker).unwrap();
 
     let text = bindings
         .entry()
