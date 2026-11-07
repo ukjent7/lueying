@@ -6,10 +6,10 @@
 //!
 //! 格式版本固定为 1。帧图的文件名是 `<帧号>.png`,放在 `frames` 指向的目录里(默认就是包目录)。
 
-use lueying_render::actor::{
+use crate::actor::{
     Axes, Behavior, StateDef, Transition, Trigger, Walk, spider, strip_cat, warrior,
 };
-use lueying_render::animation::{Clip, Pack};
+use crate::animation::{Clip, Pack};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 

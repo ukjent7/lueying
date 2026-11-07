@@ -21,9 +21,6 @@ pub mod settings;
 
 pub mod skin;
 
-/// 动画包的正式格式:pack.json 与帧图,解析并校验。
-pub mod skin_pack;
-
 /// 配置同步:载荷格式、摘要、冲突判定与 WebDAV 传输。
 pub mod sync;
 

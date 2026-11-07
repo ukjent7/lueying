@@ -3490,6 +3490,10 @@ dependencies = [
 [[package]]
 name = "lueying-render"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lueying-rerank"

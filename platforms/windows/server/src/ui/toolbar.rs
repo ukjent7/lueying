@@ -13,12 +13,12 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_protocol::Request;
-use lueying_render::actor::{Actor, Stage, View};
+use lueying_render::actor::{Stage, View};
 use lueying_render::animation::{Pack, frame_at};
 use lueying_render::paint::{Canvas, Color};
 use lueying_render::panel::Rect;
-use lueying_render::toolbar::{Action, Button, Toolbar};
-use lueying_server::skin_pack::{self, Layer, SkinPack};
+use lueying_render::skin_pack::{self, Layer, SkinPack};
+use lueying_render::toolbar::{self, Action, Button, SPRITE, Status, Toolbar};
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -44,8 +44,6 @@ const TICK: Duration = Duration::from_millis(33);
 const RADIUS: f32 = 9.0;
 /// 字号(倍率 1.0)。
 const FONT: f32 = 14.0;
-/// 角色精灵的边长(倍率 1.0)。
-const SPRITE: f32 = 36.0;
 
 /// 窗口线程独占的状态:工具栏模型、两层舞台、动画包、窗口左上角的屏幕坐标、按钮交互。
 struct Ctx {
@@ -112,8 +110,8 @@ fn toolbar_loop(state: Arc<State>) {
     };
     let skin = load_skin(&mut surface);
     let area = bar.stage(screen);
-    let below = cast(skin.as_ref(), Layer::Below, area, 0);
-    let above = cast(skin.as_ref(), Layer::Above, area, 0);
+    let below = toolbar::cast(skin.as_ref(), Layer::Below, area, 0);
+    let above = toolbar::cast(skin.as_ref(), Layer::Above, area, 0);
     CTX.with(|cell| {
         *cell.borrow_mut() = Some(Ctx {
             state,
@@ -180,32 +178,6 @@ fn load_skin(surface: &mut Surface) -> Option<SkinPack> {
     }
     surface.set_sprites(sprites);
     Some(skin)
-}
-
-/// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。没有动画包时舞台是空的。
-fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
-    let mut stage = Stage::new(area, (SPRITE, SPRITE));
-    let Some(skin) = skin else {
-        return stage;
-    };
-    let specs: Vec<_> = skin.actors.iter().filter(|spec| spec.layer == layer).collect();
-    let total: usize = specs.iter().map(|spec| spec.count).sum();
-    let mut slot = 0;
-    for spec in specs {
-        for _ in 0..spec.count {
-            slot += 1;
-            let x = area.left + (area.right - area.left) * slot as f32 / (total + 1) as f32;
-            let y = (area.top + area.bottom - SPRITE) / 2.0;
-            let seed = (slot as u64)
-                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                .wrapping_add(now_ms);
-            match Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone()) {
-                Ok(actor) => stage.add(actor),
-                Err(e) => println!("工具栏角色行为不合法: {e}"),
-            }
-        }
-    }
-    stage
 }
 
 /// 画一层角色:每个角色按自己的片段与时刻取帧,画在窗口的局部坐标里。
@@ -324,7 +296,7 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         bottom: r.bottom - stage_rect.top,
     };
     let bar_local = local(ctx.bar.rect());
-    let labels = button_labels(&ctx.state);
+    let status = status_of(&ctx.state);
     match surface.begin(w as u32, h as u32) {
         Ok(canvas) => {
             canvas.fill_rrect(bar_local, RADIUS * scale, Color::opaque(palette.bg));
@@ -339,11 +311,7 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
                 draw_actors(canvas, &ctx.below, &below, &skin.pack, now_ms, origin, size);
             }
             for (button, rect) in ctx.bar.buttons() {
-                let text = labels
-                    .iter()
-                    .find(|(b, _)| *b == button)
-                    .map(|(_, text)| *text)
-                    .unwrap_or("");
+                let text = toolbar::label(button, status);
                 canvas.text_centered(text, local(rect), FONT * scale, Color::opaque(palette.text));
             }
             if let Some(skin) = &ctx.skin {
@@ -367,22 +335,18 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     }
 }
 
-/// 每个按钮当前显示的字:随状态变,例如中/英、全/半。
-fn button_labels(state: &State) -> Vec<(Button, &'static str)> {
-    let chinese = state.chinese.load(Ordering::Relaxed);
-    let fullwidth = state.fullwidth.load(Ordering::Relaxed);
+/// 按钮上的字随的状态:来自服务端的全局状态与配置。
+fn status_of(state: &State) -> Status {
     let (punct, traditional) = {
         let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
         (cfg.chinese_punct, cfg.traditional)
     };
-    vec![
-        (Button::Mode, if chinese { "中" } else { "英" }),
-        (Button::FullWidth, if fullwidth { "全" } else { "半" }),
-        (Button::Punct, if punct { "，" } else { "," }),
-        (Button::Script, if traditional { "繁" } else { "简" }),
-        (Button::Settings, "设"),
-        (Button::Hide, "×"),
-    ]
+    Status {
+        chinese: state.chinese.load(Ordering::Relaxed),
+        fullwidth: state.fullwidth.load(Ordering::Relaxed),
+        punct,
+        traditional,
+    }
 }
 
 fn point(lparam: LPARAM) -> (f32, f32) {

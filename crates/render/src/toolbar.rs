@@ -5,7 +5,9 @@
 //! 不会被设成无限大或无限小。舞台是工具栏外面一圈留白,角色可以在舞台里表演,
 //! 但按钮的点击始终优先。外观可以由扩展自定义,但按钮的功能不能丢。
 
+use crate::actor::{Actor, Stage};
 use crate::panel::Rect;
+use crate::skin_pack::{ActorSpec, Layer, SkinPack};
 
 /// 按钮的边长(倍率 1.0 时,逻辑像素)。
 pub const BUTTON: f32 = 28.0;
@@ -204,6 +206,62 @@ impl Toolbar {
     }
 }
 
+/// 按钮上的字随的状态:中英、全半角、中英标点、简繁。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Status {
+    pub chinese: bool,
+    pub fullwidth: bool,
+    pub punct: bool,
+    pub traditional: bool,
+}
+
+/// 按钮当前显示的字:随状态变,例如中/英、全/半。
+pub fn label(button: Button, status: Status) -> &'static str {
+    match button {
+        Button::Mode if status.chinese => "中",
+        Button::Mode => "英",
+        Button::FullWidth if status.fullwidth => "全",
+        Button::FullWidth => "半",
+        Button::Punct if status.punct => "，",
+        Button::Punct => ",",
+        Button::Script if status.traditional => "繁",
+        Button::Script => "简",
+        Button::Settings => "设",
+        Button::Hide => "×",
+    }
+}
+
+/// 角色的边长(倍率 1.0 时,逻辑像素)。
+pub const SPRITE: f32 = 36.0;
+
+/// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。
+/// 没有动画包时舞台是空的。包在解析时已经校验过行为,这里不会失败。
+pub fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
+    let mut stage = Stage::new(area, (SPRITE, SPRITE));
+    let Some(skin) = skin else {
+        return stage;
+    };
+    let specs: Vec<&ActorSpec> = skin.actors.iter().filter(|spec| spec.layer == layer).collect();
+    let total: usize = specs.iter().map(|spec| spec.count).sum();
+    let mut slot = 0usize;
+    for spec in specs {
+        for _ in 0..spec.count {
+            slot += 1;
+            let x = area.left + (area.right - area.left) * slot as f32 / (total + 1) as f32;
+            let y = (area.top + area.bottom - SPRITE) / 2.0;
+            // 每个角色的随机种子不同,行为才不会同步。
+            let seed = (slot as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(now_ms);
+            if let Ok(actor) = Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone())
+            {
+                stage.add(actor);
+            }
+        }
+    }
+    stage
+}
+
 fn inside(rect: Rect, px: f32, py: f32) -> bool {
     px >= rect.left && px < rect.right && py >= rect.top && py < rect.bottom
 }
@@ -214,6 +272,36 @@ mod tests {
 
     fn screen() -> Rect {
         Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0)
+    }
+
+    #[test]
+    fn labels_follow_the_status() {
+        let status = Status {
+            chinese: false,
+            fullwidth: true,
+            punct: false,
+            traditional: true,
+        };
+        assert_eq!(label(Button::Mode, status), "英");
+        assert_eq!(label(Button::FullWidth, status), "全");
+        assert_eq!(label(Button::Punct, status), ",");
+        assert_eq!(label(Button::Script, status), "繁");
+    }
+
+    #[test]
+    fn each_layer_gets_its_own_actors() {
+        let skin = crate::skin_pack::parse(
+            r#"{"format": 1, "name": "t", "clips": {"idle": {"ms": 100, "frames": [0]}},
+                "actors": [
+                    {"count": 1, "layer": "below", "behavior": {"states": [{"clip": "idle"}]}},
+                    {"count": 2, "layer": "above", "behavior": {"states": [{"clip": "idle"}]}}
+                ]}"#,
+        )
+        .expect("合法的包");
+        let area = Rect::from_xywh(0.0, 0.0, 200.0, 100.0);
+        assert_eq!(cast(Some(&skin), Layer::Below, area, 0).actors.len(), 1);
+        assert_eq!(cast(Some(&skin), Layer::Above, area, 0).actors.len(), 2);
+        assert!(cast(None, Layer::Below, area, 0).actors.is_empty());
     }
 
     #[test]
