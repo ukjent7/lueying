@@ -61,6 +61,8 @@ struct Ctx {
     /// 按下后是否真的拖动过;拖动过就不算点击。
     moved: bool,
     dirty: bool,
+    /// 上一次看到的按键计数;变了就说明用户又打了字。
+    seen_keys: u64,
 }
 
 thread_local! {
@@ -125,6 +127,7 @@ fn toolbar_loop(state: Arc<State>) {
             pressed: None,
             moved: false,
             dirty: true,
+            seen_keys: 0,
         });
     });
     loop {
@@ -241,6 +244,14 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     let now_ms = ctx.started.elapsed().as_millis() as u64;
     ctx.stage.area = stage_rect;
     ctx.stage.sprite = (SPRITE * scale, SPRITE * scale);
+    // 用户打了字:舞台上的角色都收到一次按键,于是停下来看着输入。
+    let keys = ctx.state.key_serial.load(Ordering::Relaxed);
+    if keys != ctx.seen_keys {
+        ctx.seen_keys = keys;
+        for actor in ctx.stage.actors.iter_mut() {
+            actor.key(now_ms);
+        }
+    }
     let views = ctx.stage.tick(now_ms);
     let palette = theme::palette(theme::colors_with(
         theme::Appearance::of_system(),
@@ -370,6 +381,11 @@ fn on_up(lparam: LPARAM) {
         }
         match (pressed, released_on) {
             (Some(p), Some(r)) if p == r => Some((p.action(), ctx.state.clone())),
+            // 在按钮以外、没有拖动地点了一下:看看点中了哪个角色。
+            (None, _) => {
+                let _ = ctx.stage.click(sx, sy);
+                None
+            }
             _ => None,
         }
     });

@@ -100,6 +100,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             neutral(state)
         }
         Request::Key { session, key } => {
+            state.key_serial.fetch_add(1, Ordering::Relaxed);
             state.activate(session);
             let Some(handle) = state.session(session) else {
                 // 会话已经下线(Server 刚重启/宿主走了 Goodbye):让键直通,

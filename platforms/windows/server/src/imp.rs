@@ -219,6 +219,8 @@ pub(super) struct State {
     pub(super) version: AtomicU64,
     /// 每次中英切换自增,模式徽标据此决定是否重新显示。
     pub(super) hud_serial: AtomicU64,
+    /// 每处理一次按键自增;工具栏上的角色据此知道用户在打字。
+    pub(super) key_serial: AtomicU64,
     /// 候选窗的空闲等待;版本号变化时叫醒它。
     pub(super) wake_ui: Wake,
     /// 模式徽标的空闲等待;切换与淡入淡出期间叫醒它。
@@ -530,6 +532,7 @@ pub(super) fn real_main() {
         conns: Mutex::new(HashMap::new()),
         version: AtomicU64::new(0),
         hud_serial: AtomicU64::new(0),
+        key_serial: AtomicU64::new(0),
         wake_ui,
         wake_hud,
         mode_hud: Mutex::new(None),
