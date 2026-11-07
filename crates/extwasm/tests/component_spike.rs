@@ -91,7 +91,7 @@ fn 组件桩_握手_燃料_宿主调用() {
     store.set_fuel(FUEL).unwrap();
 
     let mut linker = wasmtime::component::Linker::new(&engine);
-    lueying::spike::host::add_to_linker::<HostState, HostState>(
+    lueying::spike::host::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
         &mut linker,
         |state: &mut HostState| state,
     )
