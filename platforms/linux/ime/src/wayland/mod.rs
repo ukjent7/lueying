@@ -42,7 +42,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let virtual_keyboard = virtual_keyboard_manager.create_virtual_keyboard(&seat, &qh, ());
     let surface = compositor.create_surface(&qh, ());
     let popup = input_method.get_input_popup_surface(&surface, &qh, ());
-    let panel = Panel::new(surface, popup, shm, crate::theme::current());
+    let panel = Panel::new(surface, popup, shm.clone(), crate::theme::current());
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let loop_signal = event_loop.get_signal();

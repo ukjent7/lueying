@@ -237,7 +237,7 @@ define_class!(
             };
             let before = window.frame().origin;
             // 拖动期间由 AppKit 移动窗口,这一句在松开鼠标后才返回。
-            let _ = window.performWindowDragWithEvent(event);
+            window.performWindowDragWithEvent(event);
             let after = window.frame().origin;
             if after.x != before.x || after.y != before.y {
                 self.moved();
