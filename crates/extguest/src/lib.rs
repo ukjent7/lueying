@@ -658,6 +658,19 @@ macro_rules! extguest_stub_services {
 #[macro_export]
 macro_rules! export_component {
     ($ty:ty $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
+        // 非 wasm 目标:保活作者扩展类型与其 Extension 实现,宿主侧单测可
+        // 直接驱动逻辑(与 v1 的 export! 同样的存活手段)。
+        #[cfg(not(target_arch = "wasm32"))]
+        const _: () = {
+            static __LUEYING_EXTENSION: ::std::sync::Mutex<::std::option::Option<$ty>> =
+                ::std::sync::Mutex::new(::std::option::Option::None);
+            #[allow(dead_code)]
+            fn __lueying_probe() {
+                let mut guard = __LUEYING_EXTENSION.lock().unwrap();
+                guard.get_or_insert_with(<$ty as ::std::default::Default>::default);
+            }
+        };
+
         // 生成导入与导出;契约按相对路径取(第一方扩展与 extwasm 同仓)。
         #[cfg(target_arch = "wasm32")]
         ::wit_bindgen::generate!({
