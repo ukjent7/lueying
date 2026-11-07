@@ -566,7 +566,8 @@ macro_rules! extguest_stub_services {
         ) -> ::std::result::Result<$crate::PanelResult, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn clipboard_read() -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
+        pub fn clipboard_read()
+        -> ::std::result::Result<$crate::ClipboardText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn clipboard_write(text: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -577,7 +578,10 @@ macro_rules! extguest_stub_services {
         ) -> ::std::result::Result<$crate::ClipboardHistory, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn clipboard_remember(text: &str, tag: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn clipboard_remember(
+            text: &str,
+            tag: &str,
+        ) -> ::std::result::Result<(), ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn clipboard_history_clear() -> ::std::result::Result<(), ::std::string::String> {
@@ -598,7 +602,10 @@ macro_rules! extguest_stub_services {
         ) -> ::std::result::Result<$crate::StoreValue, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn store_set(key: &str, value: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn store_set(
+            key: &str,
+            value: &str,
+        ) -> ::std::result::Result<(), ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn store_remove(key: &str) -> ::std::result::Result<(), ::std::string::String> {
@@ -612,10 +619,14 @@ macro_rules! extguest_stub_services {
         ) -> ::std::result::Result<$crate::FetchResult, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn context_selection() -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
+        pub fn context_selection()
+        -> ::std::result::Result<$crate::SelectedText, ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
-        pub fn notify_show(title: &str, body: &str) -> ::std::result::Result<(), ::std::string::String> {
+        pub fn notify_show(
+            title: &str,
+            body: &str,
+        ) -> ::std::result::Result<(), ::std::string::String> {
             Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
         }
         pub fn hotkey_register(
