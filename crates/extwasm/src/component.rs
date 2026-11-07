@@ -59,10 +59,10 @@ impl GuestState {
             timeout,
             Some(&self.cancelled),
         );
-        if let Err(error) = &result {
-            if let Ok(mut slot) = self.failure.lock() {
-                *slot = Some(error.clone());
-            }
+        if let Err(error) = &result
+            && let Ok(mut slot) = self.failure.lock()
+        {
+            *slot = Some(error.clone());
         }
         result
     }
@@ -275,7 +275,7 @@ impl ComponentGuest {
             cancelled,
             failure: Arc::new(Mutex::new(None)),
         };
-        let mut config = wasmtime_config(limits.clone());
+        let mut config = wasmtime_config(limits);
         config.wasm_component_model(true);
         config.consume_fuel(true);
         let engine = Engine::new(&config).map_err(|error| format!("组件引擎启动失败: {error}"))?;
@@ -378,7 +378,7 @@ impl ComponentGuest {
     /// 跑一条命令;燃料按命令预算,服务失败经失败槽判死,不被吞掉。
     pub(crate) fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
+            .set_fuel(call_fuel(&self.manifest, self.limits))
             .map_err(|error| format!("命令燃料设置失败: {error}"))?;
         let result = self
             .bindings
@@ -391,7 +391,7 @@ impl ComponentGuest {
     /// 跑一帧外观;`None` 表示这一帧不改。
     pub(crate) fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits.clone()))
+            .set_fuel(call_fuel(&self.manifest, self.limits))
             .map_err(|error| format!("外观燃料设置失败: {error}"))?;
         let scene_json =
             serde_json::to_string(scene).map_err(|error| format!("场景序列化失败: {error}"))?;

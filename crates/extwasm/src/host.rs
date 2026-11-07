@@ -110,7 +110,7 @@ pub struct HostMetrics {
 }
 
 #[derive(Default)]
-struct Metrics {
+pub(crate) struct Metrics {
     dispatches: AtomicU64,
     steps: AtomicU64,
     dispatch_peak_us: AtomicU64,
@@ -368,7 +368,7 @@ impl Drop for Worker {
 }
 
 /// 一个 extism 插件实例。
-struct Guest {
+pub(crate) struct Guest {
     plugin: Plugin,
     manifest: Arc<Manifest>,
     metrics: Arc<Metrics>,
@@ -379,7 +379,7 @@ struct Guest {
 /// 双 ABI 的 guest 外观:迁移期内,组件魔数的模块走组件宿主,核心模块
 /// 走 Extism 宿主;四个官方扩展迁完后 Extism 分支连同本枚举一起退场。
 pub(crate) enum GuestRuntime {
-    Extism(Guest),
+    Extism(Box<Guest>),
     Component(crate::component::ComponentGuest),
 }
 
@@ -397,9 +397,9 @@ impl GuestRuntime {
                 wasm, manifest, services, limits, cancelled,
             )?))
         } else {
-            Ok(Self::Extism(Guest::new(
+            Ok(Self::Extism(Box::new(Guest::new(
                 wasm, manifest, services, limits, cancelled, metrics,
-            )?))
+            ))))
         }
     }
 
