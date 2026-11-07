@@ -45,7 +45,7 @@ accesskit_windows = "0.35"
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
-windows-numerics = "0.3.1"
+windows-numerics = "0.100.0"
 # 运行期 Wasm 扩展:Extism 沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-extwasm.workspace = true
 # Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
