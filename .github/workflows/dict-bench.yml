@@ -121,8 +121,12 @@ jobs:
         run: printf %s "$DIFF" | base64 -d | xz -d | git apply
       - name: Clippy
         run: cargo clippy -p lueying-engine -p lueying-rerank -p lueying-session -p lueying-features -p lueying-e2e --all-targets --locked -- -D warnings
+      - name: 安装 cargo-nextest
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-nextest
       - name: 单元测试
-        run: cargo test -p lueying-engine -p lueying-rerank -p lueying-session -p lueying-features --lib --locked
+        run: cargo nextest run -p lueying-engine -p lueying-rerank -p lueying-session -p lueying-features --locked
       - name: 下载词典与模型
         run: |
           bash tools/fetch_dict.sh data

@@ -19,9 +19,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: 检查依赖来源
-        run: python3 .github/check_lock_sources.py
-      - name: 安装 cargo-audit
-        run: cargo install cargo-audit --locked
+      - name: 安装 cargo-deny
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-deny
+      # 漏洞(RustSec)、依赖来源与重复版本;配置见仓库根的 deny.toml。
       - name: 审计依赖
-        run: cargo audit
+        run: cargo deny check advisories sources bans

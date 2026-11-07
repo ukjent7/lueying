@@ -93,30 +93,25 @@ jobs:
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
-      # 引擎没有别处的测试入口;导入/导出的特征测试在这里跑。
-      - name: 引擎单元测试
-        run: cargo test -p lueying-engine --lib --locked
+      # nextest 按测试进程并行,多 crate 单测一次跑完;范围与逐 crate 时代相同,
+      # 只换执行器,不新增测试面。
+      - name: 安装 cargo-nextest
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-nextest
+      - name: 单元测试
+        run: |
+          cargo nextest run --locked \
+            -p lueying-engine -p lueying-protocol -p lueying-render \
+            -p lueying-lm -p lueying-rerank -p lueying-linux -p lueying-server
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --exclude ppocr --locked
-      # 版本比较/SHA 解析在 protocol crate,纯逻辑在 Linux 上测,
-      # 不必为此编译 Windows 原生链路。
-      - name: Protocol 单元测试
-        run: cargo test -p lueying-protocol --lib --locked
-      # 渲染核心(布局几何、弹簧)与平台无关,Linux 上测同一份代码。
-      - name: 渲染核心单元测试
-        run: cargo test -p lueying-render --lib --locked
-      # 语言模型的批式前向与逐候选参考实现逐位对照,必须在发布前真跑。
-      - name: 语言模型单元测试
-        run: cargo test -p lueying-lm -p lueying-rerank --lib --locked
-      # Linux 外壳的按键映射、候选分页与重复定时器参数。
-      - name: Linux 外壳单元测试
-        run: cargo test -p lueying-linux --lib --locked
-      # 服务端纯逻辑单测:E2E 覆盖不到的边界组合,debug 构建足够。
-      - name: 服务端单元测试
-        run: cargo test -p lueying-server --lib --locked
+      # nextest 不跑文档测试;ext 的「最小模块」示例是可编译用例,单独保留。
+      - name: 文档测试
+        run: cargo test --doc --workspace --exclude ppocr --locked
       # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
       - name: Wasm guest 构建
         run: |
@@ -138,15 +133,14 @@ jobs:
             -I crates/extguest/include \
             -Wl,--no-entry -Wl,--export-memory \
             -o target/c-guest/example.wasm crates/extguest/c/example.c
-      # 扩展层单元测试:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合。
-      # CLI 的子命令解析同样不进 E2E,在这里跑;联网 broker 的协议层同场。
+      # 扩展层单测:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合;
+      # CLI 的子命令解析与联网 broker 的协议层同场。放在 guest 构建之后:
+      # extwasm 的测试要真的加载 C 示例模块。
       - name: 扩展层单元测试
         run: |
-          cargo test -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extguest --lib --locked
-          cargo test -p lueying-broker --lib --locked
-          cargo test -p lueying-cli --lib --locked
-          # 联网层:Base64 与更新清单解析是平台无关的纯逻辑,Linux 上就能测。
-          cargo test -p lueying-net --lib --locked
+          cargo nextest run --locked \
+            -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extguest \
+            -p lueying-broker -p lueying-cli -p lueying-net
 
   windows:
     if: ${{ !cancelled() }}

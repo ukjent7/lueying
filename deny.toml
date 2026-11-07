@@ -1,0 +1,14 @@
+# cargo-deny:漏洞(RustSec)、依赖来源与重复版本一起管。许可证暂不做门禁:
+# GPL 项目的依赖许可口径还没定,先靠审计日志可见,红不拦。
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[bans]
+multiple-versions = "warn"
