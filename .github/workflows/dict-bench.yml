@@ -194,7 +194,7 @@ jobs:
           EVAL_KEY: ${{ secrets.EVAL_KEY }}
         run: |
           chmod +x lueying-e2e
-          corpora=("" "--corpus dicts/eval-extra-v1.tsv" "--corpus dicts/eval-dev-v4.tsv" "--corpus dicts/eval-user-v1.tsv" "--corpus dicts/eval-user-v2.tsv" "--corpus dicts/eval-user-v3.tsv")
+          corpora=("" "--corpus dicts/eval-extra-v1.tsv" "--corpus dicts/eval-dev-v4.tsv" "--corpus dicts/eval-user-v1.tsv" "--corpus dicts/eval-user-v2.tsv" "--corpus dicts/eval-user-v3.tsv" "--corpus dicts/eval-user-v4.tsv")
           if [ "$TEST" = true ]; then corpora+=("--corpus dicts/eval-v2-test.tsv" "--corpus dicts/eval-v3-test.tsv"); fi
           if [ -n "$EVAL_KEY" ]; then
             mkdir -p "$RUNNER_TEMP/private"

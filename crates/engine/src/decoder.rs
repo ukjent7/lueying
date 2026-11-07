@@ -41,10 +41,10 @@ const BEAM: usize = 24;
 const BEAM_LAST: usize = 96;
 /// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
 const NODE_BUDGET: usize = 4096;
-/// 手误单元只加在这个长度以内:窗口与词枚举随长度增长,更长的串多半是整句。
-const TYPO_MAX_LEN: usize = 24;
-/// 一个词里最多几处手误。
-const MAX_WORD_TYPOS: usize = 1;
+/// 一个词里最多几处手误。手误通道整句全程开放后,枚举量与误救风险都随词数放大,
+/// 长句仍限一处;短输入放宽到两处,真实手快常在一词里连犯两下。
+const MAX_WORD_TYPOS: usize = 2;
+const MAX_WORD_TYPOS_LONG: usize = 1;
 /// 一个词里最多几处模糊改动。超过这个字节数按长句处理,只留单点模糊,否则索引查询
 /// 随音节数放大,首键延迟会被拖到几十毫秒。
 const MAX_WORD_EDITS: usize = 3;
@@ -114,6 +114,7 @@ struct Walker<'a, 'd> {
     units: Vec<&'a Unit>,
     visits: usize,
     max_edits: usize,
+    max_typos: usize,
     /// 每串单元最多建几个节点。词表已按语言分排好,排在后面的进不了束。
     cap: usize,
 }
@@ -161,7 +162,7 @@ impl Walker<'_, '_> {
         if abbrev {
             typos == 0 && edits <= MAX_WORD_EDITS_LONG
         } else {
-            typos <= MAX_WORD_TYPOS && edits <= self.max_edits
+            typos <= self.max_typos && edits <= self.max_edits
         }
     }
 
@@ -415,7 +416,9 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     let total = dict.total_weight() as f64;
     let left = crate::user::left_key(context);
     let mut lexicon = Lexicon::new(dict, user, total, (!context.is_empty()).then_some(left));
-    let typos = !quick_trigger && (2..=TYPO_MAX_LEN).contains(&raw.len());
+    // 手误通道整句全程开放:整句里的漏键与敲反正是它要接的场景(用户实测 31 句带错,
+    // 其中 21 句的错全部落在这条旧长度线之外);长句的枚举量由每词手误上限与建图预算兜住。
+    let typos = !quick_trigger;
     let edges = channel::lattice(raw, fuzzy, typos);
     let mut finish = vec![false; raw.len() + 1];
     finish[raw.len()] = true;
@@ -448,6 +451,11 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
                 MAX_WORD_EDITS_LONG
             } else {
                 MAX_WORD_EDITS
+            },
+            max_typos: if raw.len() > LONG_INPUT_BYTES {
+                MAX_WORD_TYPOS_LONG
+            } else {
+                MAX_WORD_TYPOS
             },
             cap,
         };

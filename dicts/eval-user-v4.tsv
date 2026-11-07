@@ -1,0 +1,55 @@
+# 用户自测语料 v4:第 61–110 句,整句纠错专项。键入串为用户按 50 道出题自然打字的原样
+# 采集(2026-11-07),错误一律未修正:含漏打、邻键错、相邻对调、多打与非邻键错,缩写
+# (w/wm/sbs/mt/yx/l)照打保留;分词空格是用户的输入习惯,引擎收不到,已剥除。
+# 列: category<TAB>source<TAB>pinyin<TAB>expected<TAB>context(无上文,留空)
+# category: user-sentence。目标句由出题方拟定,标点不计入。句子少,看趋势不看单句。
+user-sentence	user	jiantianhaolei	今天好累
+user-sentence	user	mintianjian	明天见
+user-sentence	user	wozhidaole	我知道了
+user-sentence	user	shaodnegyx	稍等一下
+user-sentence	user	buhuiba	不会吧
+user-sentence	user	kuaidiangulai	快点过来
+user-sentence	user	wozaixiang	我在想
+user-sentence	user	meiyouwenti	没有问题
+user-sentence	user	lushangduche	路上堵车
+user-sentence	user	womashangdao	我马上到
+user-sentence	user	wdnegyixiajiuguolia	我等一下就过来
+user-sentence	user	wanshangyiqichidbanba	晚上一起吃饭吧
+user-sentence	user	banbwonayixiakuiadi	帮我拿一下快递
+user-sentence	user	huiyishiyijingdinghaole	会议室已经订好了
+user-sentence	user	zheggfnaganwojuedebutaixing	这个方案我觉得不太行
+user-sentence	user	nijintrianxiawuyoukonghma	你今天下午有空吗
+user-sentence	user	wobawenjianfageinile	我把文件发给你了
+user-sentence	user	huiyigaidaomintianshangwule	会议改到明天上午了
+user-sentence	user	waimeiyouduojiusongdao	外卖还有多久送到
+user-sentence	user	wodekaudiaidaoeam	我的快递到了吗
+user-sentence	user	najiadiandenaichahnehaohe	那家店的奶茶很好喝
+user-sentence	user	jidebakongtiaoguanle	记得把空调关了
+user-sentence	user	wmgaitianzaiyueshijianliao	我们改天再约时间聊
+user-sentence	user	wdengxiabalianjiefageini	我等下把链接发给你
+user-sentence	user	nisuodenabenshuwokanguole	你说的那本书我看过了
+user-sentence	user	nintianzaigongsikaielyidianhui	今天在公司开了一天会
+user-sentence	user	zuotiankandedianyhenlan	昨天看的电影很烂
+user-sentence	user	qingbangwoqueryixhangabn	请帮我确认一下航班
+user-sentence	user	woxiawusandianzailouxiadnenni	我下午三点在楼下等你
+user-sentence	user	zhegdiannaoyongqilaihnehao	这个电脑用起来很好
+user-sentence	user	zhoumowmqupahsanb	周末我们去爬山吧
+user-sentence	user	nisuodeyoudaoli	你说的有道理
+user-sentence	user	wojidehenqingchu	我记得很清楚
+user-sentence	user	dachehuijiaba	打车回家吧
+user-sentence	user	najiuzheydingle	那就这样定了
+user-sentence	user	womintianhsnagwuyaojiaobaohgao	我明天上午要交报告
+user-sentence	user	zhezouzuowxianghuiyitanglaojia	这周末我想回一趟老家
+user-sentence	user	buhaoyisiwgangkandeaoxiaoxi	不好意思我刚看到消息
+user-sentence	user	nijintianxiawuyoukongmawoxiangyuenidaqiu	你今天下午有空吗我想约你打球
+user-sentence	user	wandianwqingxniheyibeinaichaab	晚点我请你喝一杯奶茶吧
+user-sentence	user	wdekuaidisbsyijingdaole	我的快递是不是已经到了
+user-sentence	user	wdechongdianqiwangzaibangongshile	我把充电器忘在办公室了
+user-sentence	user	dengwomanwnzhezhenjiuhuikanni	等我忙完这阵就回去看你
+user-sentence	user	wjinaitrnazhendetaileilxiangzaodianxiuaqi	我今天真的太累了想早点休息
+user-sentence	user	wmjigewanshangqiququdayoxui	我们几个晚上一起去打游戏
+user-sentence	user	qiangbanwgqueryxmtdehangb	请帮我确认一下明天的航班
+user-sentence	user	zheggongnshangxianyihoudajueyongqilaihuigengfangb	这个功能上线以后大家用起来会更方便
+user-sentence	user	wobadizhifageininizhijieguolaijiuxingf	我把地址发给你你直接过来就行
+user-sentence	user	meiozuojiushizheyhewocaideyiyang	没错就是这样跟我猜的一样
+user-sentence	user	zhejianshijiubaituonnilexiexie	这件事就拜托你了谢谢
