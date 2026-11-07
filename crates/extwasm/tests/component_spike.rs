@@ -64,11 +64,15 @@ fn component() -> Option<PathBuf> {
         .arg(&component)
         .status()
         .ok()
-        .filter(|status| status.success())?;
-    ok.then_some(component).or_else(|| {
-        eprintln!("wasm-tools component new 失败");
-        None
-    })
+        .filter(|status| status.success());
+    let component = match ok {
+        Some(_) => component,
+        None => {
+            eprintln!("wasm-tools component new 失败");
+            return None;
+        }
+    };
+    Some(component)
 }
 
 #[test]
@@ -87,7 +91,11 @@ fn 组件桩_握手_燃料_宿主调用() {
     store.set_fuel(FUEL).unwrap();
 
     let mut linker = wasmtime::component::Linker::new(&engine);
-    lueying::spike::host::add_to_linker(&mut linker, |state: &mut HostState| state).unwrap();
+    lueying::spike::host::add_to_linker::<HostState, HostState>(
+        &mut linker,
+        |state: &mut HostState| state,
+    )
+    .unwrap();
     let bindings = Spike::instantiate(&mut store, &component, &linker).unwrap();
 
     let text = bindings
