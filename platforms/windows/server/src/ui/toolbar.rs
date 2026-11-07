@@ -3,7 +3,8 @@
 //! 画法与模式徽标一样:分层窗口 + Direct2D + UpdateLayeredWindow。窗口不带穿透样式,
 //! 所以能接收鼠标;按钮的动作复用服务端已有的请求处理。位置、大小与舞台的模型在
 //! `lueying_render::toolbar`,角色行为在 `lueying_render::actor`,动画帧由动画包提供。
-//! 动画包放在服务端程序同目录的 `toolbar-pack` 里,没有就不画角色。
+//! 动画包(`pack.json` 加帧图)放在服务端程序同目录的 `toolbar-pack` 里,没有就不画角色。
+//! 角色分两层:按钮下面的先画,按钮上面的最后画。
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -12,11 +13,12 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use lueying_protocol::Request;
-use lueying_render::actor::{Actor, Stage, strip_cat};
-use lueying_render::animation::{Pack, frame_at, parse_pack};
+use lueying_render::actor::{Actor, Stage, View};
+use lueying_render::animation::{Pack, frame_at};
 use lueying_render::paint::{Canvas, Color};
 use lueying_render::panel::Rect;
 use lueying_render::toolbar::{Action, Button, Toolbar};
+use lueying_server::skin_pack::{self, Layer, SkinPack};
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -45,14 +47,17 @@ const FONT: f32 = 14.0;
 /// 角色精灵的边长(倍率 1.0)。
 const SPRITE: f32 = 36.0;
 
-/// 窗口线程独占的状态:工具栏模型、舞台、动画包、窗口左上角的屏幕坐标、按钮交互。
+/// 窗口线程独占的状态:工具栏模型、两层舞台、动画包、窗口左上角的屏幕坐标、按钮交互。
 struct Ctx {
     state: Arc<State>,
     hwnd: HWND,
     bar: Toolbar,
     screen: Rect,
-    stage: Stage,
-    pack: Option<Pack>,
+    /// 按钮下面的角色。
+    below: Stage,
+    /// 按钮上面的角色。
+    above: Stage,
+    skin: Option<SkinPack>,
     started: Instant,
     /// 窗口左上角(屏幕坐标);鼠标坐标要加上它。
     origin: (f32, f32),
@@ -105,23 +110,19 @@ fn toolbar_loop(state: Arc<State>) {
             return;
         }
     };
-    let pack = load_pack(&mut surface);
-    let mut stage = Stage::new(bar.stage(screen), (SPRITE, SPRITE));
-    if pack.is_some() {
-        let (cx, cy) = (bar.x + bar.size().0 / 2.0, bar.y + bar.size().1 / 2.0);
-        match Actor::new(1, 0, (cx - SPRITE / 2.0, cy - SPRITE / 2.0), strip_cat()) {
-            Ok(actor) => stage.add(actor),
-            Err(e) => println!("工具栏角色行为不合法: {e}"),
-        }
-    }
+    let skin = load_skin(&mut surface);
+    let area = bar.stage(screen);
+    let below = cast(skin.as_ref(), Layer::Below, area, 0);
+    let above = cast(skin.as_ref(), Layer::Above, area, 0);
     CTX.with(|cell| {
         *cell.borrow_mut() = Some(Ctx {
             state,
             hwnd,
             bar,
             screen,
-            stage,
-            pack,
+            below,
+            above,
+            skin,
             started: Instant::now(),
             origin: (0.0, 0.0),
             pressed: None,
@@ -133,9 +134,9 @@ fn toolbar_loop(state: Arc<State>) {
     loop {
         pump_messages();
         let animated = CTX.with(|cell| {
-            cell.borrow()
-                .as_ref()
-                .is_some_and(|ctx| !ctx.stage.actors.is_empty())
+            cell.borrow().as_ref().is_some_and(|ctx| {
+                !ctx.below.actors.is_empty() || !ctx.above.actors.is_empty()
+            })
         });
         let dirty = CTX.with(|cell| {
             cell.borrow_mut()
@@ -154,21 +155,22 @@ fn toolbar_loop(state: Arc<State>) {
     }
 }
 
-/// 读动画包:清单与帧图都在 `toolbar-pack` 里。缺了或坏了就不画角色,按钮照常。
-fn load_pack(surface: &mut Surface) -> Option<Pack> {
+/// 读动画包:`pack.json` 与帧图都在 `toolbar-pack` 里。缺了或坏了就不画角色,按钮照常。
+fn load_skin(surface: &mut Surface) -> Option<SkinPack> {
     let dir = pack_dir()?;
-    let text = std::fs::read_to_string(dir.join("manifest.txt")).ok()?;
-    let pack = match parse_pack(&text) {
-        Ok(pack) => pack,
+    let text = std::fs::read_to_string(dir.join("pack.json")).ok()?;
+    let skin = match skin_pack::parse(&text) {
+        Ok(skin) => skin,
         Err(e) => {
-            println!("工具栏动画包清单错误: {e}");
+            println!("工具栏动画包错误: {e}");
             return None;
         }
     };
-    let last = pack.max_frame()?;
+    let frames = dir.join(&skin.frames);
+    let last = skin.pack.max_frame()?;
     let mut sprites = Vec::with_capacity(last + 1);
     for number in 0..=last {
-        match surface.load_sprite(&dir.join(format!("{number}.png"))) {
+        match surface.load_sprite(&frames.join(format!("{number}.png"))) {
             Ok(bitmap) => sprites.push(bitmap),
             Err(e) => {
                 println!("工具栏动画帧 {number} 读取失败: {e}");
@@ -177,7 +179,51 @@ fn load_pack(surface: &mut Surface) -> Option<Pack> {
         }
     }
     surface.set_sprites(sprites);
-    Some(pack)
+    Some(skin)
+}
+
+/// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。没有动画包时舞台是空的。
+fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
+    let mut stage = Stage::new(area, (SPRITE, SPRITE));
+    let Some(skin) = skin else {
+        return stage;
+    };
+    let specs: Vec<_> = skin.actors.iter().filter(|spec| spec.layer == layer).collect();
+    let total: usize = specs.iter().map(|spec| spec.count).sum();
+    let mut slot = 0;
+    for spec in specs {
+        for _ in 0..spec.count {
+            slot += 1;
+            let x = area.left + (area.right - area.left) * slot as f32 / (total + 1) as f32;
+            let y = (area.top + area.bottom - SPRITE) / 2.0;
+            let seed = (slot as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(now_ms);
+            match Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone()) {
+                Ok(actor) => stage.add(actor),
+                Err(e) => println!("工具栏角色行为不合法: {e}"),
+            }
+        }
+    }
+    stage
+}
+
+/// 画一层角色:每个角色按自己的片段与时刻取帧,画在窗口的局部坐标里。
+fn draw_actors(
+    canvas: &mut Surface,
+    stage: &Stage,
+    views: &[View],
+    pack: &Pack,
+    now_ms: u64,
+    origin: (f32, f32),
+    size: f32,
+) {
+    for (actor, view) in stage.actors.iter().zip(views) {
+        if let Some(index) = frame_at(actor.clip(), now_ms, pack) {
+            let rect = Rect::from_xywh(view.x - origin.0, view.y - origin.1, size, size);
+            canvas.draw_sprite(index, rect);
+        }
+    }
 }
 
 fn pack_dir() -> Option<PathBuf> {
@@ -251,18 +297,22 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
         (stage_rect.bottom - stage_rect.top).max(1.0),
     );
     let scale = ctx.bar.scale;
+    let size = SPRITE * scale;
     let now_ms = ctx.started.elapsed().as_millis() as u64;
-    ctx.stage.area = stage_rect;
-    ctx.stage.sprite = (SPRITE * scale, SPRITE * scale);
+    for stage in [&mut ctx.below, &mut ctx.above] {
+        stage.area = stage_rect;
+        stage.sprite = (size, size);
+    }
     // 用户打了字:舞台上的角色都收到一次按键,于是停下来看着输入。
     let keys = ctx.state.key_serial.load(Ordering::Relaxed);
     if keys != ctx.seen_keys {
         ctx.seen_keys = keys;
-        for actor in ctx.stage.actors.iter_mut() {
+        for actor in ctx.below.actors.iter_mut().chain(ctx.above.actors.iter_mut()) {
             actor.key(now_ms);
         }
     }
-    let views = ctx.stage.tick(now_ms);
+    let below = ctx.below.tick(now_ms);
+    let above = ctx.above.tick(now_ms);
     let palette = theme::palette(theme::colors_with(
         theme::Appearance::of_system(),
         place::ui_options(&ctx.state).2,
@@ -284,15 +334,9 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
                 1.0,
                 Color::opaque(palette.border),
             );
-            // 角色画在背景之上、按钮之下。
-            if let Some(pack) = &ctx.pack {
-                for (actor, view) in ctx.stage.actors.iter().zip(views.iter()) {
-                    if let Some(index) = frame_at(actor.clip(), now_ms, pack) {
-                        let size = SPRITE * scale;
-                        canvas
-                            .draw_sprite(index, local(Rect::from_xywh(view.x, view.y, size, size)));
-                    }
-                }
+            let origin = (stage_rect.left, stage_rect.top);
+            if let Some(skin) = &ctx.skin {
+                draw_actors(canvas, &ctx.below, &below, &skin.pack, now_ms, origin, size);
             }
             for (button, rect) in ctx.bar.buttons() {
                 let text = labels
@@ -301,6 +345,9 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
                     .map(|(_, text)| *text)
                     .unwrap_or("");
                 canvas.text_centered(text, local(rect), FONT * scale, Color::opaque(palette.text));
+            }
+            if let Some(skin) = &ctx.skin {
+                draw_actors(canvas, &ctx.above, &above, &skin.pack, now_ms, origin, size);
             }
         }
         Err(e) => println!("工具栏表面失败: {e}"),
@@ -391,9 +438,11 @@ fn on_up(lparam: LPARAM) {
         }
         match (pressed, released_on) {
             (Some(p), Some(r)) if p == r => Some((p.action(), ctx.state.clone())),
-            // 在按钮以外、没有拖动地点了一下:看看点中了哪个角色。
+            // 在按钮以外、没有拖动地点了一下:看看点中了哪个角色,上层的优先。
             (None, _) => {
-                let _ = ctx.stage.click(sx, sy);
+                if ctx.above.click(sx, sy).is_none() {
+                    let _ = ctx.below.click(sx, sy);
+                }
                 None
             }
             _ => None,

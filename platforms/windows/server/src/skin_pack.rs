@@ -304,7 +304,8 @@ mod tests {
         "clips": {
             "idle": {"ms": 200, "frames": [0, 1]},
             "walk": {"ms": 200, "frames": [2, 3]},
-            "hit": {"ms": 100, "frames": [4]}
+            "attack": {"ms": 120, "frames": [4, 5]},
+            "hurt": {"ms": 100, "frames": [6]}
         },
         "actors": [
             {"count": 2, "layer": "above", "behavior": "warrior"},
@@ -312,7 +313,7 @@ mod tests {
                 "states": [
                     {"clip": "idle", "duration": [1000, 2000]},
                     {"clip": "walk", "walk": {"speed": 30, "axes": "horizontal"}, "duration": [2000, 3000]},
-                    {"clip": "hit", "tag": "hurt", "duration": [300, 400]}
+                    {"clip": "hurt", "tag": "hurt", "duration": [300, 400]}
                 ],
                 "transitions": [
                     {"from": 0, "to": 1, "on": "timeout", "weight": 2},
@@ -330,7 +331,7 @@ mod tests {
         let pack = parse(PACK).expect("合法的包");
         assert_eq!(pack.name, "测试");
         assert_eq!(pack.frames, ".");
-        assert_eq!(pack.pack.max_frame(), Some(4));
+        assert_eq!(pack.pack.max_frame(), Some(6));
         assert_eq!(pack.actors.len(), 2);
         assert_eq!(pack.actors[0].count, 2);
         assert_eq!(pack.actors[0].layer, Layer::Above);
@@ -353,12 +354,15 @@ mod tests {
         assert!(parse("{").unwrap_err().contains("解析失败"));
         let wrong_format = PACK.replace("\"format\": 1", "\"format\": 2");
         assert!(parse(&wrong_format).unwrap_err().contains("格式版本"));
-        let no_frames = PACK.replace("[4]", "[]");
+        let no_frames = PACK.replace("[6]", "[]");
         assert!(parse(&no_frames).unwrap_err().contains("没有帧"));
         let no_preset = PACK.replace("\"warrior\"", "\"dragon\"");
         assert!(parse(&no_preset).unwrap_err().contains("预设 dragon"));
-        let missing_clip = PACK.replace("\"clip\": \"hit\"", "\"clip\": \"fly\"");
+        let missing_clip = PACK.replace("\"clip\": \"hurt\"", "\"clip\": \"fly\"");
         assert!(parse(&missing_clip).unwrap_err().contains("片段 fly"));
+        // 预设也要求包里有它用到的片段。
+        let no_attack = PACK.replace("\"attack\": {", "\"fight\": {");
+        assert!(parse(&no_attack).unwrap_err().contains("片段 attack"));
         let too_many = PACK.replace("\"count\": 2", "\"count\": 999");
         assert!(parse(&too_many).unwrap_err().contains("数量"));
         let unknown_field = PACK.replace("\"name\": \"测试\"", "\"name\": \"测试\", \"speed\": 3");
