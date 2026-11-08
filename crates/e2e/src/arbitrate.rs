@@ -96,13 +96,11 @@ struct Case {
 
 fn read_cases(path: &str) -> Vec<Case> {
     let file = fs::File::open(path).unwrap_or_else(|error| panic!("读语料 {path}: {error}"));
-    let text = String::from_utf8(
-        GzDecoder::new(file)
-            .bytes()
-            .collect::<Result<Vec<u8>, _>>()
-            .unwrap_or_else(|error| panic!("解压语料 {path}: {error}")),
-    )
-    .unwrap_or_else(|error| panic!("语料不是 UTF-8: {error}"));
+    let mut raw = Vec::new();
+    GzDecoder::new(file)
+        .read_to_end(&mut raw)
+        .unwrap_or_else(|error| panic!("解压语料 {path}: {error}"));
+    let text = String::from_utf8(raw).unwrap_or_else(|error| panic!("语料不是 UTF-8: {error}"));
     text.lines()
         .filter(|line| !line.trim().is_empty())
         .filter_map(|line| {
@@ -152,7 +150,7 @@ impl DictIndex {
             }
         }
         for keys in words.values_mut() {
-            keys.sort_by(|a, b| b.1.cmp(&a.1));
+            keys.sort_by_key(|(_, freq)| std::cmp::Reverse(*freq));
         }
         Self { forms, words }
     }
