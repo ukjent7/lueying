@@ -146,7 +146,7 @@ jobs:
         run: |
           cd crates/extwasm/tests/js-guest
           npm install --no-fund --no-audit --loglevel=error
-          npx jco componentize guest.js --wit ../../../extwasm/lueying.wit --world-name extension --disable=http,fetch-event --out "$GITHUB_WORKSPACE/target/js-fixture.wasm"
+          npx jco componentize guest.js --wit ../../../extwasm/lueying.wit --world-name extension --disable http fetch-event --out "$GITHUB_WORKSPACE/target/js-fixture.wasm"
           echo "LUEYING_JS_FIXTURE_WASM=$GITHUB_WORKSPACE/target/js-fixture.wasm" >> "$GITHUB_ENV"
       # 扩展层单测:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合;
       # CLI 的子命令解析与联网 broker 的协议层同场。
