@@ -23,11 +23,11 @@
 npm install -D @bytecodealliance/jco
 ```
 
-写一个 ES 模块,按 `entry` 接口导出对象;宿主服务按
-`local:<包名>/<接口>` 导入(`lueying:ext` → `local:lueying-ext`):
+写一个 ES 模块,按 `entry` 接口导出对象;宿主服务按 WIT 包路径导入
+(`命名空间:包/接口@版本`):
 
 ```js
-import { show } from "local:lueying-ext/notify";
+import { show } from "lueying:ext/notify@2.0.0";
 
 export const entry = {
   init() {},
@@ -55,7 +55,7 @@ export const entry = {
 npx jco componentize guest.js \
   --wit <掠影仓库>/crates/extwasm/lueying.wit \
   --world-name extension \
-  --disable=http,fetch-event \
+  --disable http fetch-event \
   --out extension.wasm
 ```
 

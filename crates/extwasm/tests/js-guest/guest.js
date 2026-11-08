@@ -3,10 +3,8 @@
 // 分发,见 crates/extwasm/src/test_guest.rs)。
 //
 // WIT 的 result 错误分支用抛异常表达:抛出的 Error 文本就是 Err 的载荷。
-// 服务导入按 `local:<包名>/<接口>` 取:import { show } from "local:lueying-ext/notify"。
-
-// 服务导入按 `local:<包名>@<版本>/<接口>` 取:import { show } from "local:lueying-ext@2.0.0/notify"。
-import { show } from "local:lueying-ext@2.0.0/notify";
+// 服务导入按 WIT 包路径取:`<命名空间>:<包>/<接口>@<版本>`。
+import { show } from "lueying:ext/notify@2.0.0";
 
 export const entry = {
   init() {},
