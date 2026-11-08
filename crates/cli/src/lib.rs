@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 
 use lueying_extmeta::metrics::ExtMetrics;
 
+pub mod extadd;
 pub mod extcmd;
 pub mod replay;
 
+pub use extadd::AddArgs;
 pub use extcmd::{InstallArgs, LogsArgs, NewArgs, PackArgs};
 pub use replay::ReplayArgs;
 
@@ -23,6 +25,7 @@ pub const USAGE: &str = "\
   new <id>          新建扩展骨架(Rust guest crate + manifest.json)
   pack <目录>       打包成 .luext 归档(清单/文本 + Wasm 模块)
   install <源>      安装目录或 .luext 到扩展目录
+  add <来源>        一条命令装社区扩展:github:作者/仓库#版本
   reload            让常驻服务重读配置与扩展
   logs              看服务日志末尾
   top               查看扩展运行指标(内存、峰值、超限)
@@ -38,6 +41,7 @@ pub const USAGE: &str = "\
   new     --name <名称> --dir <目录>
   pack    --out <路径>
   install --dir <目录> --force
+  add     --dir <目录> --force
   logs    --file <路径> --tail <行数>
   top     --file <路径> --json --watch
   replay  --config <路径> --trigger <词=命令>";
@@ -51,6 +55,8 @@ pub enum Invocation {
     Pack(PackArgs),
     /// 安装包或目录。
     Install(InstallArgs),
+    /// 从 GitHub 安装社区扩展。
+    Add(AddArgs),
     /// 重读配置。
     Reload,
     /// 看日志末尾。
@@ -84,11 +90,12 @@ where
     }
     let sub = args
         .next()
-        .ok_or("缺子命令;用 new/pack/install/reload/logs/top/replay/commit/run/commands")?;
+        .ok_or("缺子命令;用 new/pack/install/add/reload/logs/top/replay/commit/run/commands")?;
     match sub.as_str() {
         "new" => parse_new(args),
         "pack" => parse_pack(args),
         "install" => parse_install(args),
+        "add" => parse_add(args),
         "reload" => parse_reload(args),
         "logs" => parse_logs(args),
         "top" => parse_top(args),
@@ -98,7 +105,7 @@ where
         "commands" => parse_commands(args),
         "-h" | "--help" => Ok(Invocation::Help),
         other => Err(format!(
-            "未知子命令 {other:?};用 new/pack/install/reload/logs/top/replay/commit/run/commands"
+            "未知子命令 {other:?};用 new/pack/install/add/reload/logs/top/replay/commit/run/commands"
         )),
     }
 }
@@ -181,6 +188,33 @@ where
     let source =
         source.ok_or("用法: lueying ext install <目录或 .luext> [--dir 目录] [--force]")?;
     Ok(Invocation::Install(InstallArgs { source, dir, force }))
+}
+
+/// 解析 `ext add` 的参数:来源 + 与 install 一致的落盘选项。
+fn parse_add<I>(mut args: I) -> Result<Invocation, String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut source = None;
+    let mut dir: Option<PathBuf> = None;
+    let mut force = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--dir" => dir = Some(PathBuf::from(args.next().ok_or("--dir 后面缺目录")?)),
+            "--force" => force = true,
+            "-h" | "--help" => return Ok(Invocation::Help),
+            other if other.starts_with('-') => return Err(format!("未知参数 {other:?}")),
+            other => {
+                if source.is_some() {
+                    return Err(format!("多余的参数 {other:?};来源只接受一个"));
+                }
+                source = Some(other.to_string());
+            }
+        }
+    }
+    let source =
+        source.ok_or("用法: lueying ext add github:作者/仓库#版本 [--dir 目录] [--force]")?;
+    Ok(Invocation::Add(AddArgs { source, dir, force }))
 }
 
 /// 文本子命令:其余参数按空格合并成待上屏文本。本命令没有旗标,

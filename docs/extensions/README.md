@@ -64,8 +64,9 @@
 |---|---|
 | `lueying ext commands` | 列出已启用扩展的命令 id |
 | `lueying ext run <命令 id>` | 执行一个命令，如 `shot-ocr.run`；见[启动器集成](powertoys.md) |
+| `lueying ext add github:作者/仓库#版本` | 一条命令安装社区扩展，见[社区目录](catalog.md) |
 | `lueying ext reload` | 重新加载配置与皮肤，扩展即时生效 |
 | `lueying ext top` | 查看扩展运行指标 |
 | `lueying ext new`、`pack`、`install` | 创建、打包与安装扩展 |
 
-Wasm 扩展的开发方式见 [wasm.md](wasm.md)。
+Wasm 扩展的开发方式见 [wasm.md](wasm.md)；安装与发布社区扩展见 [catalog.md](catalog.md)。

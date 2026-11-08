@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use lueying_cli::{
-    Invocation, TopOptions, USAGE, default_metrics_path, extcmd, parse_args, read_metrics,
+    Invocation, TopOptions, USAGE, default_metrics_path, extadd, extcmd, parse_args, read_metrics,
     render_json, render_table, replay,
 };
 
@@ -41,6 +41,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
             let dir = extcmd::install(&args)?;
             println!("已安装 {};启用后 lueying ext reload 生效", dir.display());
         }
+        Invocation::Add(args) => println!("{}", extadd::add(&args)?),
         Invocation::Reload => {
             extcmd::reload()?;
             println!("已重载");

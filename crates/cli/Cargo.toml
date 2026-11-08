@@ -21,3 +21,7 @@ lueying-features.workspace = true
 lueying-protocol = { path = "../protocol" }
 serde_json = "1"
 toml = "1.1"
+# ext add 的 GitHub 拉取:Release 资产与源码包。
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
