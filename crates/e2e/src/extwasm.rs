@@ -185,7 +185,11 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("budget");
     let dir = temp.pack("spin");
-    write_pack(&dir, &command_manifest("spin", &["spin"], &["notify"]), &fixture);
+    write_pack(
+        &dir,
+        &command_manifest("spin", &["spin"], &["notify"]),
+        &fixture,
+    );
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
         command_fuel: 1_000_000,
@@ -210,7 +214,11 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let hog_dir = temp.pack("hog");
-    write_pack(&hog_dir, &command_manifest("hog", &["hog"], &["notify"]), &fixture);
+    write_pack(
+        &hog_dir,
+        &command_manifest("hog", &["hog"], &["notify"]),
+        &fixture,
+    );
     let mut hog = Pack::load(&hog_dir).expect("加载内存包");
     let _ = hog.invoke_wait("hog", "{}", Duration::from_secs(30));
     let stat = hog.stat();
@@ -328,9 +336,17 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture_b = fixture_or_skip!(fixture_b());
     let temp = Temp::new("runtime");
     let a = temp.pack("alpha");
-    write_pack(&a, &command_manifest("alpha", &["run"], &["notify"]), &fixture);
+    write_pack(
+        &a,
+        &command_manifest("alpha", &["run"], &["notify"]),
+        &fixture,
+    );
     let b = temp.pack("beta");
-    write_pack(&b, &command_manifest("beta", &["run"], &["notify"]), &fixture);
+    write_pack(
+        &b,
+        &command_manifest("beta", &["run"], &["notify"]),
+        &fixture,
+    );
 
     let order = vec!["alpha".to_string(), "beta".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());

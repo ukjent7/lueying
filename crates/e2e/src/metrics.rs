@@ -22,7 +22,11 @@ pub fn run(report: &mut String) -> usize {
     // 1. 未加载、加载、卸载三种状态与内存/耗时指标。
     let temp = Temp::new("stats");
     let dir = temp.pack("demo");
-    write_pack(&dir, &command_manifest("demo", &["run"], &["notify"]), &fixture);
+    write_pack(
+        &dir,
+        &command_manifest("demo", &["run"], &["notify"]),
+        &fixture,
+    );
     let order = vec!["demo".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
     checks.push(("指标包打开", errors.is_empty(), format!("{errors:?}")));
@@ -77,7 +81,11 @@ pub fn run(report: &mut String) -> usize {
     // 2. 死循环连续超限后停用;状态与超限次数都要能看见。
     let spin_temp = Temp::new("spin");
     let dir = spin_temp.pack("demo");
-    write_pack(&dir, &command_manifest("demo", &["spin"], &["notify"]), &fixture);
+    write_pack(
+        &dir,
+        &command_manifest("demo", &["spin"], &["notify"]),
+        &fixture,
+    );
     let limits = Limits {
         command_fuel: 1_000_000,
         ..Limits::default()
