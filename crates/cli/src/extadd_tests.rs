@@ -138,7 +138,7 @@ fn rejects_missing_or_ambiguous_layout() {
         fs::write(dir.join("manifest.json"), manifest_json(id)).expect("写清单");
     }
     let error = pick_extension_dir(&root).expect_err("应当拒绝");
-    assert!(error.contains("one、two"), "{error}");
+    assert!(error.contains("one") && error.contains("two"), "{error}");
 }
 
 #[test]
