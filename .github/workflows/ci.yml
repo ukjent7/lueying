@@ -203,7 +203,8 @@ jobs:
         shell: pwsh
         run: |
           $setup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
-          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $setup
+          # 上游资产偶发 504,带重试。
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $setup -MaximumRetryCount 5 -RetryIntervalSec 15
           Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup 安装失败" }
