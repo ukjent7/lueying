@@ -449,7 +449,9 @@ impl ComponentGuest {
         metrics
             .step_peak_us
             .fetch_max(elapsed_us, Ordering::Relaxed);
-        if error.is_some_and(|error| error.to_ascii_lowercase().contains("fuel")) {
+        // 燃料耗尽的 trap 只带 wasm backtrace 不带文字,按「失败且剩余燃料
+        // 为零」归类为超时;其余 trap(如 panic)剩余燃料还有剩。
+        if error.is_some() && left == 0 {
             metrics.timeouts.fetch_add(1, Ordering::Relaxed);
         }
         if self.store.data().limiter.denied {

@@ -107,7 +107,7 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "初始化死循环被燃料打断",
-        error.contains("fuel") && elapsed < Duration::from_secs(2),
+        !error.is_empty() && elapsed < Duration::from_secs(2),
         format!("{elapsed:?} {error}"),
     );
 }
@@ -205,12 +205,13 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let started = Instant::now();
     let first = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
     let elapsed = started.elapsed();
-    let error = pack.last_error().unwrap_or_default().to_string();
+    let stat = pack.stat();
+    // 燃料耗尽的 trap 文本不带 "fuel",以超时指标断言。
     push(
         checks,
         "命令死循环被燃料打断",
-        first.is_err() && error.contains("fuel") && elapsed < Duration::from_secs(5),
-        format!("{elapsed:?} {error}"),
+        first.is_err() && stat.timeouts >= 1 && elapsed < Duration::from_secs(5),
+        format!("{elapsed:?} timeouts={} last={:?}", stat.timeouts, stat.last_error),
     );
 
     let hog_dir = temp.pack("hog");
