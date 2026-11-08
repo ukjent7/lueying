@@ -405,7 +405,9 @@ impl ComponentGuest {
             .bindings
             .entry()
             .call_command(&mut self.store, id, args)
-            .map_err(|error| format!("扩展命令执行失败: {error}"));
+            .map_err(|error| format!("扩展命令执行失败: {error}"))
+            // 外层是 trap,内层是 WIT result;展平后统一按结果结算。
+            .flatten();
         self.note(started, budget, outcome.as_ref().err());
         self.harvest_failure(outcome)
     }
@@ -423,7 +425,8 @@ impl ComponentGuest {
             .bindings
             .entry()
             .call_appearance(&mut self.store, &scene_json)
-            .map_err(|error| format!("扩展外观执行失败: {error}"));
+            .map_err(|error| format!("扩展外观执行失败: {error}"))
+            .flatten();
         self.note(started, budget, outcome.as_ref().err());
         let json = self.harvest_failure(outcome)?;
         json.map(|json| ScenePatch::parse(&json))
@@ -504,9 +507,9 @@ impl ResourceLimiter for GuestLimiter {
 
     fn table_growing(
         &mut self,
-        _current: u32,
-        _desired: u32,
-        _maximum: Option<u32>,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
     ) -> Result<bool, wasmtime::Error> {
         Ok(true)
     }

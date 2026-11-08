@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-lueying-extguest = { path = "../../extguest" }
+lueying-extguest = { path = "../../../extguest" }
 serde_json = "1"
 wit-bindgen = "0.63"
 

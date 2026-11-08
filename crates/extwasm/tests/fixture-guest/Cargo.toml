@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 variant-b = []
 
 [dependencies]
-lueying-extguest = { path = "../../extguest" }
+lueying-extguest = { path = "../../../extguest" }
 serde_json = "1"
 wit-bindgen = "0.63"
 
