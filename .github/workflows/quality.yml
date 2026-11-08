@@ -1,15 +1,18 @@
-# 真实词典与安装链路的定时检查。每次 push/PR 的快速门禁在 ci.yml;
-# 这里每小时看一次默认分支:场景、抽样候选基准、共享语料基准并行跑。
-# 同一提交成功跑过就跳过;需要立刻验证时手动 workflow_dispatch,勾 full 跑全量候选基准。
+# 真实词典与安装链路的门禁:场景 E2E、抽样候选基准、共享语料基准与 Windows 安装冒烟并行跑。
+# 核心路径改动在 push 到 main 时由 ci.yml 通过 workflow_call 调用;也可手动 workflow_dispatch,勾 full 跑全量候选基准。
+# 同一提交成功跑过就跳过。
 name: quality
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       full:
         description: 跑全量候选基准(约 30 分钟)
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      full:
         type: boolean
         default: false
 
@@ -25,7 +28,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 没有新提交就不重复跑全量基准;上次失败则同一提交也会重跑。
+  # 同一提交成功跑过就不重复跑全量基准;上次失败则同一提交会重跑。
   preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -145,7 +148,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # 定时跑不区分 PR,恢复并保存缓存。
+      # 不区分 PR,恢复并保存缓存。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # 官方 guest:win-e2e 装扩展与安装冒烟的发布包都要它;产物拷进仓库路径供运行期读取。
       - name: 安装 wasm-tools

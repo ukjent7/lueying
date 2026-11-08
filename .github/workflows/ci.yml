@@ -1,5 +1,5 @@
-# push/PR:构建、静态检查与 Windows 构建体积门禁;
-# E2E、候选基准与安装冒烟成本高,全部在 quality.yml 定时与发版前跑。
+# push/PR:格式、构建、静态检查、单测与 Windows 构建体积门禁;主分支每次推送出测试安装包。
+# 场景 E2E、候选基准与安装冒烟在 quality.yml:核心路径改动在 push 到 main 时由本工作流调用,手动触发也跑。
 name: ci
 
 on:
@@ -26,60 +26,68 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 格式化 + 维护 Cargo.lock,有变化就回推(仅 push 到 main;GITHUB_TOKEN 推送不触发新 run)。
-  # 锁文件必须入库:不锁则每次 run 重新解析版本,天然抖动。
-  # 锁只在清单或锁本身变了、或锁已经跟清单失配时才更新;已有锁原样保留——
-  # rust-cache 的键含锁哈希,锁稳定缓存才不会每次全量重存挤爆配额。
+  # 只校验格式,不改代码:不合格直接红,由作者本地 cargo fmt 后再推。
+  # Cargo.lock 入库;清单与锁失配由各 job 的 --locked 挡住。
   fmt:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # 判断本次提交是否动了清单需要父提交;浅克隆里 HEAD^ 不存在。
-          fetch-depth: 2
-      # 只有这次 push 动了清单/锁或锁已经跟清单失配时才重新解析;其余情况直接跳过,
-      # 避免把 fmt 这个本该几秒的 job 拖成门禁。锁失配的另一种来路是上一次回推失败
-      # (格式化先红、锁没落地),那种情况 git diff 看不出来,所以离线比对清单与锁
-      # (.github/lock_in_sync.py)。
-      - name: 维护 Cargo.lock
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          base="${{ github.event.before }}"
-          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-            base=$(git rev-parse HEAD^ 2>/dev/null || true)
-          fi
-          if [ -n "$base" ] && ! git diff --name-only "$base" HEAD | grep -Eq '(^|/)Cargo\.(toml|lock)$' && python3 .github/lock_in_sync.py; then
-            echo "清单与锁未变化,跳过依赖解析"
-            exit 0
-          fi
-          # 锁跟不上清单时做一次最小更新:只补变动的那几个依赖,不动其它包的版本。
-          cargo metadata --locked --format-version 1 >/dev/null 2>&1 || cargo metadata --format-version 1 >/dev/null
-      - name: 格式化
-        run: cargo fmt --all
-      - name: 回推(如有变化)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git add -A
-          if ! git diff --cached --quiet; then
-            git config user.name "fmt-bot"
-            git config user.email "bot@users.noreply.github.com"
-            git commit -m "style: cargo fmt + Cargo.lock"
-            (git pull --rebase && git push) || echo "推送被拒(并发提交撞车),下一轮 run 处理"
-          fi
+          persist-credentials: false
       - name: Format 校验
         run: cargo fmt --all --check
 
+  # 改动分级:核心路径(引擎、词典、会话、特征、输入方案与词典数据)动了,才在 push 到 main 时
+  # 调用 quality.yml。手动触发一律跑全量;PR 与其余改动只跑上面的基本检查。
+  changes:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      core: ${{ steps.check.outputs.core }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 比对 before..sha 需要完整历史;浅克隆里父提交不存在。
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 判定核心路径改动
+        id: check
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          core_re='^(crates/(dict|engine|lm|rerank|session|features)/|extensions/input-schemes/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py)$)'
+          # 手动触发跑全量;新分支首推(before 全零)或历史缺失时保守地当作核心改动。
+          if [ "$EVENT" = workflow_dispatch ] || [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            core=true
+          elif git diff --name-only "$BEFORE" "$SHA" | grep -Eq "$core_re"; then
+            core=true
+          else
+            core=false
+          fi
+          echo "核心路径改动: $core"
+          echo "core=$core" >> "$GITHUB_OUTPUT"
+
+  # 核心路径改动:场景 E2E、准确率与延迟红线、共享语料基准、Windows E2E 与安装冒烟,整套复用 quality.yml。
+  quality:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/quality.yml
+    secrets: inherit
+
   engine:
-    # 不等 fmt:格式化/lock 回推只影响下一轮,构建与测试没必要空等几分钟。
+    # 与 fmt 并行跑:格式检查不挡构建与测试。
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # 按事件 SHA 检出,不与同一轮 fmt-bot 的回推抢 main;push 的 SHA 已包含上一轮的回推。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -193,10 +201,10 @@ jobs:
           cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
           "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
+      # 测试安装包(push 到 main)与发版打包共用同一份 Inno 脚本;PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。
       - name: 安装 Inno Setup
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           $setup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
@@ -220,7 +228,7 @@ jobs:
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
       # 官方原生扩展 ppocr:由 extensions.yml 单独发 Release;主 CI 只下载成品。
       - name: 下载已发布的 ppocr 扩展
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,8 +238,9 @@ jobs:
           New-Item -ItemType Directory -Force target/release | Out-Null
           gh release download $tag --pattern lueying-ppocr.exe --dir target/release
           Move-Item target/release/lueying-ppocr.exe target/release/ppocr.exe -Force
+      # 目录在编译期嵌入 server,测试安装包也要带真实哈希,否则官方扩展装不上。
       - name: 补官方目录的 ppocr.exe
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
@@ -240,8 +249,8 @@ jobs:
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build
-        # 只编发版真正用到的包;64 位 E2E 宿主每次 push/PR 都编。
-        # 安装冒烟成本更高,留在 quality.yml 定时跑。
+        # 只编发版真正用到的包;E2E 宿主只在手动触发、打 tag 与 quality.yml 里编。
+        # 安装冒烟成本更高,留在 quality.yml 跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
         run: cargo build --release --locked -p lueying-server -p lueying-broker -p lueying-net -p lueying-installer
       # 常驻进程不联网的可证明约束:按键与词库都在 lueying-server 手里,它的
@@ -257,7 +266,7 @@ jobs:
           }
       # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
       # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
-      # 平台无关的服务端单测已在 Linux quality 跑过;Windows 这份只留平台特有
+      # 平台无关的服务端单测已在 Linux 的 engine job 跑过;Windows 这份只留平台特有
       # 路径,挂到发版构建,push 门禁省下三分多钟的测试编译。
       - name: 服务端单元测试(Windows)
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success'
@@ -348,15 +357,15 @@ jobs:
             target/install-e2e-trace.log
             # 子进程输出走文件,超时/非零退出时看最后一段。
             target/install-e2e-logs/
-      # 发布目录只在手动触发或打 tag 时生成:每次 push 打包会重复下载模型并传 artifact,
-      # 早期迭代只需要构建与 E2E 信号。tag 构建同时上传 setup.exe/sha256 并创建 Release;
+      # 发布目录在手动触发、push 到 main 与打 tag 时生成;push 到 main 只出测试安装包(见校验步骤后的 artifact),
+      # 不签名、不发 Release。tag 构建同时上传 setup.exe/sha256 并创建 Release;
       # 代码签名是脚手架:配了 secret 才签,没配就维持未签名发布。
       - name: 下载词典与搭配表(发布包)
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: bash
         run: bash tools/fetch_dict.sh data
       - name: 下载神经重排模型(发布包)
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: bash
         run: bash tools/fetch_rerank.sh data/rerank
       - name: 下载 PP-OCRv6 模型(发布包)
@@ -375,7 +384,7 @@ jobs:
           python .github/changelog_section.py "$version" --check
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: 打包发布目录
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: bash
         run: |
           version_args=()
@@ -404,7 +413,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "signtool 失败" }
           Remove-Item $pfx
       - name: 校验发布目录
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         shell: bash
         run: |
           test -f dist/lueying/LICENSE
@@ -420,6 +429,19 @@ jobs:
           fi
           du -sh dist/lueying
           ls -lh dist/lueying-*-setup.exe
+      # 主分支每次推送的测试安装包;artifact 名带短提交号,重跑同一提交时覆盖旧包。
+      - name: 取短提交号
+        id: short
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: lueying-setup-${{ steps.short.outputs.sha }}
+          path: dist/lueying-*-setup.exe
+          if-no-files-found: error
+          overwrite: true
       # ppocr.exe 由 extensions.yml 单独发 Release,主发布不带这份资产。
       - name: 生成安装包校验文件
         if: startsWith(github.ref, 'refs/tags/')
