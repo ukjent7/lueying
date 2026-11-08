@@ -136,8 +136,8 @@ fn js_guest_runs_commands() {
 fn js_guest_reports_errors() {
     let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人报错");
     let limits = Limits::default();
-    let worker = worker(&wasm, manifest("js", false, &[("fail", "失败")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("js", false, &[("fail", "失败")]), limits).expect("启动 worker");
     let error = worker.command_wait("fail", "boom", WAIT).unwrap_err();
     assert!(error.contains("boom"), "{error}");
 }
@@ -147,8 +147,8 @@ fn js_guest_reports_errors() {
 fn js_guest_calls_host_services() {
     let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人通知");
     let limits = Limits::default();
-    let worker = worker(&wasm, manifest("js", false, &[("notify", "通知")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("js", false, &[("notify", "通知")]), limits).expect("启动 worker");
     // 没装提供者:错误是宿主的服务结算,证明调用真的进了服务缝。
     let error = worker.command_wait("notify", "{}", WAIT).unwrap_err();
     assert!(error.contains("没有提供者"), "{error}");
