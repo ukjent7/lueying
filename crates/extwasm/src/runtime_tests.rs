@@ -29,11 +29,7 @@ fn write_command_pack(temp: &Temp, id: &str, wasm: &[u8]) {
 }
 
 fn write_appearance_pack(temp: &Temp, id: &str, wasm: &[u8]) {
-    test_guest::write_pack(
-        &temp.pack(id),
-        &test_guest::appearance_manifest(id),
-        wasm,
-    );
+    test_guest::write_pack(&temp.pack(id), &test_guest::appearance_manifest(id), wasm);
 }
 
 #[test]

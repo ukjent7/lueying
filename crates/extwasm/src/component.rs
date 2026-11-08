@@ -274,9 +274,7 @@ impl ComponentGuest {
         metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
         if !is_component(&wasm) {
-            return Err(
-                "不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into(),
-            );
+            return Err("不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into());
         }
         if manifest.commands().is_empty() && !manifest.is_appearance() {
             return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
@@ -378,8 +376,10 @@ impl ComponentGuest {
                 other => return Err(format!("未知服务 {other:?}")),
             }
         }
-        let bindings = Extension::instantiate(&mut store, &component, &linker)
-            .map_err(|error| format!("组件实例化失败: {}", explain_link_error(&error.to_string())))?;
+        let bindings =
+            Extension::instantiate(&mut store, &component, &linker).map_err(|error| {
+                format!("组件实例化失败: {}", explain_link_error(&error.to_string()))
+            })?;
         let init = bindings
             .entry()
             .call_init(&mut store)
@@ -443,7 +443,9 @@ impl ComponentGuest {
         metrics
             .dispatch_peak_us
             .fetch_max(elapsed_us, Ordering::Relaxed);
-        metrics.step_peak_us.fetch_max(elapsed_us, Ordering::Relaxed);
+        metrics
+            .step_peak_us
+            .fetch_max(elapsed_us, Ordering::Relaxed);
         if error.is_some_and(|error| error.to_ascii_lowercase().contains("fuel")) {
             metrics.timeouts.fetch_add(1, Ordering::Relaxed);
         }

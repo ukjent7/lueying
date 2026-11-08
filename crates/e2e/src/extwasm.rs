@@ -222,7 +222,11 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let trap_dir = temp.pack("trap");
-    write_pack(&trap_dir, &command_manifest("trap", &["trap"], &[]), &fixture);
+    write_pack(
+        &trap_dir,
+        &command_manifest("trap", &["trap"], &[]),
+        &fixture,
+    );
     let mut trap = Pack::load(&trap_dir).expect("加载 trap 包");
     for _ in 0..3 {
         let _ = trap.invoke_wait("trap", "{}", Duration::from_secs(30));
@@ -310,7 +314,10 @@ fn reload(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "清单删除后卸载",
-        removed == Poll::Removed && pack.invoke_wait("run", "x", Duration::from_secs(30)).is_err(),
+        removed == Poll::Removed
+            && pack
+                .invoke_wait("run", "x", Duration::from_secs(30))
+                .is_err(),
         format!("{removed:?}"),
     );
 }
@@ -464,7 +471,11 @@ fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("cancel");
     let dir = temp.pack("sleep");
-    write_pack(&dir, &command_manifest("sleep", &["notify"], &["notify"]), fixture);
+    write_pack(
+        &dir,
+        &command_manifest("sleep", &["notify"], &["notify"]),
+        fixture,
+    );
 
     /// 永不回话的提供者:完成句柄保活在静态表里,等待只能靠取消标志打断。
     struct Stuck;
@@ -486,8 +497,12 @@ fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
 
     let registry = std::sync::Arc::new(lueying_extwasm::Registry::new());
     registry.set(Service::Notify, std::sync::Arc::new(Stuck));
-    let (mut runtime, errors) =
-        Runtime::open_with(&temp.root, &["sleep".to_string()], Limits::default(), registry);
+    let (mut runtime, errors) = Runtime::open_with(
+        &temp.root,
+        &["sleep".to_string()],
+        Limits::default(),
+        registry,
+    );
     if !errors.is_empty() {
         push(checks, "睡眠包打开", false, format!("{errors:?}"));
         return;

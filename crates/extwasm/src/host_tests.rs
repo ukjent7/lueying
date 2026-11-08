@@ -25,8 +25,8 @@ fn worker(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker
 fn runs_a_command() {
     let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令回显");
     let limits = Limits::default();
-    let worker = worker(&wasm, manifest("demo", false, &[("run", "运行")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("demo", false, &[("run", "运行")]), limits).expect("启动 worker");
     assert_eq!(worker.command_wait("run", "ping", WAIT), Ok("ping".into()));
 }
 
@@ -34,8 +34,8 @@ fn runs_a_command() {
 fn reports_guest_error() {
     let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令报错");
     let limits = Limits::default();
-    let worker = worker(&wasm, manifest("demo", false, &[("fail", "失败")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("demo", false, &[("fail", "失败")]), limits).expect("启动 worker");
     let error = worker.command_wait("fail", "boom", WAIT).unwrap_err();
     assert!(error.contains("boom"), "{error}");
 }
@@ -44,8 +44,8 @@ fn reports_guest_error() {
 fn traps_and_rebuilds() {
     let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "trap 恢复");
     let limits = Limits::default();
-    let worker = worker(&wasm, manifest("demo", false, &[("trap", "陷阱")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("demo", false, &[("trap", "陷阱")]), limits).expect("启动 worker");
     let first = worker.command_wait("trap", "{}", WAIT);
     assert!(first.is_err(), "{first:?}");
     // trap 之后实例照旧可用:第二次调用照常执行并再次 trap。
@@ -60,8 +60,8 @@ fn fuel_stops_a_loop() {
         command_fuel: 10_000,
         ..Limits::default()
     };
-    let worker = worker(&wasm, manifest("demo", false, &[("spin", "空转")]), limits)
-        .expect("启动 worker");
+    let worker =
+        worker(&wasm, manifest("demo", false, &[("spin", "空转")]), limits).expect("启动 worker");
     let error = worker.command_wait("spin", "{}", WAIT).unwrap_err();
     let metrics = worker.metrics();
     assert!(error.contains("fuel"), "{error}");
