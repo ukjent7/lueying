@@ -147,7 +147,7 @@ fn download(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, Strin
     let mut bytes = Vec::new();
     response
         .body_mut()
-        .by_ref()
+        .as_reader()
         .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("读 {url}: {e}"))?;
@@ -175,7 +175,7 @@ fn release_json(
             let mut bytes = Vec::new();
             response
                 .body_mut()
-                .by_ref()
+                .as_reader()
                 .take(JSON_LIMIT + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|e| format!("读 {url}: {e}"))?;
