@@ -542,9 +542,10 @@ macro_rules! __lueying_export_component {
 #[macro_export]
 macro_rules! export_component {
     ($ty:ty, wit: $wit:literal $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
-        $crate::__lueying_export_component!($ty, $wit)
+        // 展开体是另一层宏调用,末尾的分号让它成为合法的 item。
+        $crate::__lueying_export_component!($ty, $wit);
     };
     ($ty:ty $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
-        $crate::__lueying_export_component!($ty, "../../crates/extwasm/lueying.wit")
+        $crate::__lueying_export_component!($ty, "../../crates/extwasm/lueying.wit");
     };
 }
