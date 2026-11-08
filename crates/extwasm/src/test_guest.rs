@@ -116,6 +116,11 @@ pub(crate) fn fixture_b() -> Option<Vec<u8>> {
     component_bytes("LUEYING_FIXTURE_B_WASM")
 }
 
+/// JS 工具链(componentize-js)编出的组件客人,验证非 Rust 路径。
+pub(crate) fn js_fixture() -> Option<Vec<u8>> {
+    component_bytes("LUEYING_JS_FIXTURE_WASM")
+}
+
 /// 需要测试客人的测试:拿到产物或跳过。
 /// `None` 分支返回 `Default::default()`:测试函数是 `()`,e2e 的 run 是失败数 0。
 macro_rules! fixture_or_skip {

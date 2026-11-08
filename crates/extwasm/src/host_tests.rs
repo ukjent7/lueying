@@ -115,3 +115,55 @@ fn rejects_core_module() {
     let error = worker(&wasm, manifest, limits).err().expect("应当拒绝");
     assert!(error.contains("组件"), "{error}");
 }
+
+/// JS 工具链(componentize-js)编出的组件:命令回显走通,证明非 Rust
+/// 客人的整条链路(载入、类型化调用、WASI 导入并存)。
+#[test]
+fn js_guest_runs_commands() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人");
+    let limits = Limits::default();
+    let worker = worker(
+        &wasm,
+        manifest("js", false, &[("run", "运行"), ("notify", "通知")]),
+        limits,
+    )
+    .expect("启动 worker");
+    assert_eq!(worker.command_wait("run", "ping", WAIT), Ok("ping".into()));
+}
+
+/// JS 客人的错误分支:抛出的异常文本就是命令的 Err 载荷。
+#[test]
+fn js_guest_reports_errors() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人报错");
+    let limits = Limits::default();
+    let worker = worker(&wasm, manifest("js", false, &[("fail", "失败")]), limits)
+        .expect("启动 worker");
+    let error = worker.command_wait("fail", "boom", WAIT).unwrap_err();
+    assert!(error.contains("boom"), "{error}");
+}
+
+/// JS 客人调宿主服务:WIT 导入按类型化桥接,结果与 Rust 客人一致。
+#[test]
+fn js_guest_calls_host_services() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人通知");
+    let limits = Limits::default();
+    let worker = worker(&wasm, manifest("js", false, &[("notify", "通知")]), limits)
+        .expect("启动 worker");
+    // 没装提供者:错误是宿主的服务结算,证明调用真的进了服务缝。
+    let error = worker.command_wait("notify", "{}", WAIT).unwrap_err();
+    assert!(error.contains("没有提供者"), "{error}");
+    assert!(error.contains("notify"), "{error}");
+}
+
+/// JS 客人的外观:返回 null 即不改。
+#[test]
+fn js_guest_appearance_is_empty() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人外观");
+    let limits = Limits::default();
+    let worker = worker(&wasm, manifest("js", true, &[]), limits).expect("启动 worker");
+    let patch = worker
+        .appearance(&SceneIn::default())
+        .expect("没有被跳过")
+        .expect("派发成功");
+    assert!(patch.is_none());
+}

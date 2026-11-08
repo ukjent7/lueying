@@ -69,4 +69,5 @@
 | `lueying ext top` | 查看扩展运行指标 |
 | `lueying ext new`、`pack`、`install` | 创建、打包与安装扩展 |
 
-Wasm 扩展的开发方式见 [wasm.md](wasm.md)；安装与发布社区扩展见 [catalog.md](catalog.md)。
+Wasm 扩展的开发方式见 [wasm.md](wasm.md)；Rust 之外的语言（JS/Python/C/Go）见
+[languages.md](languages.md)；安装与发布社区扩展见 [catalog.md](catalog.md)。

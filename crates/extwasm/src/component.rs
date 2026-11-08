@@ -10,13 +10,17 @@
 //! (`lueying:ext/clipboard` → [`lueying::ext::clipboard`]),世界级导出
 //! ([`Extension`])在根。生成的 record 带 serde 派生,桥接层走 JSON 值与
 //! [`Registry`] 互通,与 v1 的 JSON 契约逐字节兼容。
+//!
+//! WASI 0.2 也挂在 linker 上,给非 Rust 工具链的组件用;能力全关(无文件、
+//! 无网络、无环境变量、无标准流),只有时钟与随机。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use wasmtime::component::{Component, HasSelf, Linker};
+use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
 use wasmtime::{Engine, ResourceLimiter, Store};
+use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use lueying_extmeta::{Manifest, Service};
 use lueying_extproto::{SceneIn, ScenePatch};
@@ -40,6 +44,18 @@ pub struct GuestState {
     failure: Arc<Mutex<Option<String>>>,
     /// 线性内存限额;拒绝增长时记一笔,指标据此把 OOM 与普通 trap 分开。
     limiter: GuestLimiter,
+    /// WASI 0.2 状态:非 Rust 工具链的组件会导入;能力全关,只有时钟与随机。
+    table: ResourceTable,
+    wasi: WasiCtx,
+}
+
+impl WasiView for GuestState {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
 }
 
 impl GuestState {
@@ -289,6 +305,8 @@ impl ComponentGuest {
                 memory_bytes: limits.memory_bytes,
                 denied: false,
             },
+            table: ResourceTable::new(),
+            wasi: WasiCtx::builder().build(),
         };
         let mut config = wasmtime_config(limits);
         config.wasm_component_model(true);
@@ -376,6 +394,12 @@ impl ComponentGuest {
                 other => return Err(format!("未知服务 {other:?}")),
             }
         }
+        // 非 Rust 工具链(componentize-py、带 stdio 的 JS 等)编出的组件会
+        // 导入 WASI 0.2。WASI 不进清单 needs 门控:导入即可用,但能力全关——
+        // 无参数、无环境变量、无文件、无网络、无标准流,只有时钟与随机;
+        // 联网仍只能走宿主的 network 服务(经清单白名单逐请求强制)。
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
+            .map_err(|error| format!("WASI 链接失败: {error}"))?;
         let bindings =
             Extension::instantiate(&mut store, &component, &linker).map_err(|error| {
                 format!("组件实例化失败: {}", explain_link_error(&error.to_string()))
