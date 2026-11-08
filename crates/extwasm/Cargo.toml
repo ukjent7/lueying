@@ -13,7 +13,7 @@ lueying-extproto.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # wasmtime:组件模型宿主与 wasm 栈上限。
-wasmtime = { version = "49", default-features = false, features = [
+wasmtime = { version = "50", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",
