@@ -5,7 +5,8 @@
 // WIT 的 result 错误分支用抛异常表达:抛出的 Error 文本就是 Err 的载荷。
 // 服务导入按 `local:<包名>/<接口>` 取:import { show } from "local:lueying-ext/notify"。
 
-import { show } from "local:lueying-ext/notify";
+// 服务导入按 `local:<包名>@<版本>/<接口>` 取:import { show } from "local:lueying-ext@2.0.0/notify"。
+import { show } from "local:lueying-ext@2.0.0/notify";
 
 export const entry = {
   init() {},
