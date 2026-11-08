@@ -12,10 +12,10 @@ use lueying_extmeta::metrics::{ExtStat, ExtState};
 
 use crate::ConsentGate;
 use crate::MAX_FAULTS;
-use crate::{MAX_WASM_BYTES, MAX_WASM_BYTES_ENGINE};
 use crate::Registry;
 use crate::host::{Finished, Limits, Worker};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
+use crate::{MAX_WASM_BYTES, MAX_WASM_BYTES_ENGINE};
 use crate::{SceneIn, ScenePatch};
 
 const MANIFEST: &str = "manifest.json";

@@ -324,10 +324,9 @@ impl ComponentGuest {
             |state| state,
         )
         .map_err(|error| format!("服务 capture 链接失败: {error}"))?;
-        lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
-            &mut linker,
-            |state| state,
-        )
+        lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(&mut linker, |state| {
+            state
+        })
         .map_err(|error| format!("服务 ocr 链接失败: {error}"))?;
         lueying::ext::clipboard::add_to_linker::<GuestState, HasSelf<GuestState>>(
             &mut linker,
@@ -374,10 +373,9 @@ impl ComponentGuest {
             |state| state,
         )
         .map_err(|error| format!("服务 audio 链接失败: {error}"))?;
-        lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(
-            &mut linker,
-            |state| state,
-        )
+        lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(&mut linker, |state| {
+            state
+        })
         .map_err(|error| format!("服务 asr 链接失败: {error}"))?;
         // 非 Rust 工具链(componentize-py、带 stdio 的 JS 等)编出的组件会
         // 导入 WASI 0.2。WASI 不进清单 needs 门控:导入即可用,但能力全关——
@@ -385,8 +383,10 @@ impl ComponentGuest {
         // 联网仍只能走宿主的 network 服务(经清单白名单逐请求强制)。
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| format!("WASI 链接失败: {error}"))?;
-        let bindings = Extension::instantiate(&mut store, &component, &linker)
-            .map_err(|error| format!("组件实例化失败: {}", explain_link_error(&error.to_string())))?;
+        let bindings =
+            Extension::instantiate(&mut store, &component, &linker).map_err(|error| {
+                format!("组件实例化失败: {}", explain_link_error(&error.to_string()))
+            })?;
         let init = match bindings.entry().call_init(&mut store) {
             Ok(init) => init,
             Err(error) => return Err(init_error(&mut store, error, limits.init_fuel)),
