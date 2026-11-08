@@ -16,9 +16,9 @@ use std::sync::Arc;
 use flate2::read::GzDecoder;
 use serde_json::json;
 
-use lueying_dict::syllables::is_syllable;
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
+use lueying_dict::syllables::is_syllable;
 use lueying_engine::{Engine, Fuzzy, Key};
 use lueying_rerank::Rerank;
 
@@ -200,7 +200,10 @@ fn run_chunk(
             let Some(keys) = index.words.get(&word) else {
                 continue;
             };
-            let start_byte = text.char_indices().nth(start).map_or(text.len(), |(at, _)| at);
+            let start_byte = text
+                .char_indices()
+                .nth(start)
+                .map_or(text.len(), |(at, _)| at);
             let prefix = &text[..start_byte];
             let gold_key = case.readings[start..start + width].join("'");
             let mut candidates: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();
@@ -211,9 +214,7 @@ fn run_chunk(
                 // 打给引擎的是连续小写字母;音节不合法的读音没法真实输入,跳过。
                 let syls: Vec<&str> = key.split('\'').collect();
                 if syls.len() != width
-                    || !key
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c == '\'')
+                    || !key.chars().all(|c| c.is_ascii_lowercase() || c == '\'')
                     || !syls.iter().all(|syl| is_syllable(syl))
                 {
                     continue;
@@ -230,7 +231,10 @@ fn run_chunk(
                 if top.as_deref() != Some(word.as_str()) && !samples.contains_key(&word) {
                     samples.insert(
                         word.clone(),
-                        format!("{prefix}□{word} 打 {typed} 得 {:?}", top.unwrap_or_default()),
+                        format!(
+                            "{prefix}□{word} 打 {typed} 得 {:?}",
+                            top.unwrap_or_default()
+                        ),
                     );
                 }
             }
@@ -251,7 +255,15 @@ pub(crate) fn run(
     let mut stats: HashMap<String, HashMap<String, KeyStat>> = HashMap::new();
     let mut samples: HashMap<String, String> = HashMap::new();
     for chunk in cases.chunks(CHUNK) {
-        run_chunk(chunk, &index, &dict, &gram, models, &mut stats, &mut samples);
+        run_chunk(
+            chunk,
+            &index,
+            &dict,
+            &gram,
+            models,
+            &mut stats,
+            &mut samples,
+        );
     }
 
     // 裁决:出现足够的读音里,首选率最高的那个;并列时词典主读音优先。
@@ -330,6 +342,9 @@ pub(crate) fn run(
             item["arbiter"].as_str().unwrap_or_default(),
         ));
     }
-    let _ = fs::write(out_path, serde_json::to_string_pretty(&report).unwrap_or_default());
+    let _ = fs::write(
+        out_path,
+        serde_json::to_string_pretty(&report).unwrap_or_default(),
+    );
     summary
 }
