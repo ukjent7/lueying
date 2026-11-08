@@ -14,9 +14,7 @@ fn temp_root(tag: &str) -> PathBuf {
 }
 
 fn manifest_json(id: &str) -> String {
-    format!(
-        r#"{{"id":"{id}","name":"{id}","version":"1.0.0","api":4,"wasm":"extension.wasm"}}"#
-    )
+    format!(r#"{{"id":"{id}","name":"{id}","version":"1.0.0","api":4,"wasm":"extension.wasm"}}"#)
 }
 
 #[test]
@@ -33,7 +31,10 @@ fn parses_github_sources() {
         parse_source("github:alice/repo#9c1f8e2d"),
         Ok(("alice", "repo", "9c1f8e2d"))
     );
-    assert_eq!(parse_source("github:alice/repo # v1 "), Ok(("alice", "repo", "v1")));
+    assert_eq!(
+        parse_source("github:alice/repo # v1 "),
+        Ok(("alice", "repo", "v1"))
+    );
 }
 
 #[test]
@@ -74,14 +75,18 @@ fn release_with(names: &[&str]) -> serde_json::Value {
 #[test]
 fn picks_single_luext_asset() {
     let release = release_with(&["readme.txt", "repo.luext"]);
-    let asset = pick_asset("repo", &release).expect("应挑中").expect("应有资产");
+    let asset = pick_asset("repo", &release)
+        .expect("应挑中")
+        .expect("应有资产");
     assert_eq!(asset.0, "https://example.com/1");
 }
 
 #[test]
 fn prefers_repo_named_asset_when_many() {
     let release = release_with(&["other.luext", "Repo.LUEXT"]);
-    let asset = pick_asset("repo", &release).expect("应挑中").expect("应有资产");
+    let asset = pick_asset("repo", &release)
+        .expect("应挑中")
+        .expect("应有资产");
     assert_eq!(asset.0, "https://example.com/1");
 }
 
@@ -89,7 +94,10 @@ fn prefers_repo_named_asset_when_many() {
 fn rejects_ambiguous_assets() {
     let release = release_with(&["one.luext", "two.luext"]);
     let error = pick_asset("repo", &release).err().expect("应当拒绝");
-    assert!(error.contains("one.luext") && error.contains("two.luext"), "{error}");
+    assert!(
+        error.contains("one.luext") && error.contains("two.luext"),
+        "{error}"
+    );
 }
 
 #[test]

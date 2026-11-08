@@ -206,14 +206,20 @@ pub fn pick_asset(
     };
     let mut found = Vec::new();
     for asset in assets {
-        let name = asset.get("name").and_then(|value| value.as_str()).unwrap_or("");
+        let name = asset
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
         if name.to_ascii_lowercase().ends_with(".luext") {
             let url = asset
                 .get("browser_download_url")
                 .and_then(|value| value.as_str())
                 .unwrap_or("")
                 .to_string();
-            let size = asset.get("size").and_then(|value| value.as_u64()).unwrap_or(0);
+            let size = asset
+                .get("size")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0);
             found.push((name.to_string(), url, size));
         }
     }
@@ -250,7 +256,11 @@ fn source_tarball(
     repo: &str,
     rev: &str,
 ) -> Result<Vec<u8>, String> {
-    download(agent, &format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{rev}"), TARBALL_LIMIT)
+    download(
+        agent,
+        &format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{rev}"),
+        TARBALL_LIMIT,
+    )
 }
 
 /// 解包 tar.gz 到临时目录;只收普通文件与目录,路径越界一律拒绝。
@@ -333,8 +343,9 @@ pub fn pick_extension_dir(root: &Path) -> Result<PathBuf, String> {
         for entry in
             fs::read_dir(&extensions).map_err(|e| format!("读 {}: {e}", extensions.display()))?
         {
-            let path =
-                entry.map_err(|e| format!("读 {}: {e}", extensions.display()))?.path();
+            let path = entry
+                .map_err(|e| format!("读 {}: {e}", extensions.display()))?
+                .path();
             if path.join("manifest.json").is_file() {
                 found.push(path);
             }
@@ -434,10 +445,8 @@ impl TempDir {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!(
-            "lueying-ext-{tag}-{}-{unique}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("lueying-ext-{tag}-{}-{unique}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).map_err(|e| format!("建临时目录: {e}"))?;
         Ok(Self(path))
