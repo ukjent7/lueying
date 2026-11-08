@@ -535,7 +535,6 @@ macro_rules! __lueying_export_component {
     };
 }
 
-
 /// 组件 ABI 的扩展导出:分发到内部实现。
 ///
 /// 第一方扩展(在 `extensions/<id>/` 下)直接用默认契约路径;仓外或深层
