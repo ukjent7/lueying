@@ -87,8 +87,7 @@ fn appearance_returns_patch() {
 fn service_failure_fails_the_command() {
     let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "服务失败结算");
     let limits = Limits::default();
-    let text = test_guest::command_manifest_with_needs("demo", &[("notify", "通知")], &["notify"]);
-    let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
+    let manifest = manifest("demo", false, &[("notify", "通知")]);
     let worker = worker(&wasm, manifest, limits).expect("启动 worker");
     let error = worker.command_wait("notify", "{}", WAIT).unwrap_err();
     assert!(error.contains("没有提供者"), "{error}");

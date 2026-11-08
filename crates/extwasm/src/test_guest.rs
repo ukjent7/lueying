@@ -55,7 +55,7 @@ pub(crate) fn write_pack(dir: &Path, manifest: &str, wasm: impl AsRef<[u8]>) {
     std::fs::write(dir.join("extension.wasm"), wasm.as_ref()).expect("写 Wasm");
 }
 
-/// 一份带命令的清单。
+/// 一份带命令的清单;测试客人可用 notify,清单相应声明。
 pub(crate) fn command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
     json!({
         "id": id,
@@ -63,6 +63,7 @@ pub(crate) fn command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
         "version": "1.0.0",
         "api": 4,
         "wasm": "extension.wasm",
+        "needs": ["notify"],
         "activate": {
             "commands": commands
                 .iter()
@@ -81,30 +82,8 @@ pub(crate) fn appearance_manifest(id: &str) -> String {
         "version": "1.0.0",
         "api": 4,
         "wasm": "extension.wasm",
+        "needs": ["notify"],
         "appearance": true
-    })
-    .to_string()
-}
-
-/// 一份带命令与宿主服务声明的清单。
-pub(crate) fn command_manifest_with_needs(
-    id: &str,
-    commands: &[(&str, &str)],
-    needs: &[&str],
-) -> String {
-    json!({
-        "id": id,
-        "name": "演示",
-        "version": "1.0.0",
-        "api": 4,
-        "wasm": "extension.wasm",
-        "activate": {
-            "commands": commands
-                .iter()
-                .map(|(id, title)| json!({ "id": id, "title": title }))
-                .collect::<Vec<_>>()
-        },
-        "needs": needs
     })
     .to_string()
 }

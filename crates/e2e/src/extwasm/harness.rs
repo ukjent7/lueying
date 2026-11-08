@@ -17,7 +17,7 @@ pub(crate) const ACCENT_B: u32 = 0x20_40_60;
 /// 外观包清单。
 pub(crate) fn appearance_manifest(id: &str) -> String {
     format!(
-        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm","appearance":true}}"#
+        r#"{{"id":"{id}","name":"测试","version":"1.0.0","api":4,"wasm":"extension.wasm","needs":["notify"],"appearance":true}}"#
     )
 }
 

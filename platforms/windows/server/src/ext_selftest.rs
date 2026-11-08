@@ -15,7 +15,7 @@ const ACCENT: u32 = 0x10_20_30;
 /// 清单;id 用进程号,避免和用户自己的扩展撞名。
 fn manifest(id: &str) -> String {
     format!(
-        r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api": 4,"wasm":"extension.wasm","appearance":true}}"#
+        r#"{{"id":"{id}","name":"自检扩展","version":"1.0.0","api": 4,"wasm":"extension.wasm","needs":["notify"],"appearance":true}}"#
     )
 }
 

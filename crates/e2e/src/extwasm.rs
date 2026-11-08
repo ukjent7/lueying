@@ -185,7 +185,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("budget");
     let dir = temp.pack("spin");
-    write_pack(&dir, &command_manifest("spin", &["spin"], &[]), &fixture);
+    write_pack(&dir, &command_manifest("spin", &["spin"], &["notify"]), &fixture);
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
         command_fuel: 1_000_000,
@@ -210,7 +210,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let hog_dir = temp.pack("hog");
-    write_pack(&hog_dir, &command_manifest("hog", &["hog"], &[]), &fixture);
+    write_pack(&hog_dir, &command_manifest("hog", &["hog"], &["notify"]), &fixture);
     let mut hog = Pack::load(&hog_dir).expect("加载内存包");
     let _ = hog.invoke_wait("hog", "{}", Duration::from_secs(30));
     let stat = hog.stat();
@@ -224,7 +224,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     let trap_dir = temp.pack("trap");
     write_pack(
         &trap_dir,
-        &command_manifest("trap", &["trap"], &[]),
+        &command_manifest("trap", &["trap"], &["notify"]),
         &fixture,
     );
     let mut trap = Pack::load(&trap_dir).expect("加载 trap 包");
@@ -283,7 +283,7 @@ fn reload(checks: &mut Vec<(&'static str, bool, String)>) {
     let v2 = fixture_or_skip!(fixture_b());
     let temp = Temp::new("reload");
     let dir = temp.pack("hot");
-    write_pack(&dir, &command_manifest("hot", &["run"], &[]), &v1);
+    write_pack(&dir, &command_manifest("hot", &["run"], &["notify"]), &v1);
     let Some(mut pack) = load_or_fail(checks, "热重载包加载", &dir) else {
         return;
     };
@@ -328,9 +328,9 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture_b = fixture_or_skip!(fixture_b());
     let temp = Temp::new("runtime");
     let a = temp.pack("alpha");
-    write_pack(&a, &command_manifest("alpha", &["run"], &[]), &fixture);
+    write_pack(&a, &command_manifest("alpha", &["run"], &["notify"]), &fixture);
     let b = temp.pack("beta");
-    write_pack(&b, &command_manifest("beta", &["run"], &[]), &fixture);
+    write_pack(&b, &command_manifest("beta", &["run"], &["notify"]), &fixture);
 
     let order = vec!["alpha".to_string(), "beta".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
