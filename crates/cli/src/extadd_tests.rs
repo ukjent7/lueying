@@ -93,7 +93,7 @@ fn prefers_repo_named_asset_when_many() {
 #[test]
 fn rejects_ambiguous_assets() {
     let release = release_with(&["one.luext", "two.luext"]);
-    let error = pick_asset("repo", &release).err().expect("应当拒绝");
+    let error = pick_asset("repo", &release).expect_err("应当拒绝");
     assert!(
         error.contains("one.luext") && error.contains("two.luext"),
         "{error}"
@@ -128,7 +128,7 @@ fn picks_single_extensions_layout() {
 #[test]
 fn rejects_missing_or_ambiguous_layout() {
     let root = temp_root("missing");
-    let error = pick_extension_dir(&root).err().expect("应当拒绝");
+    let error = pick_extension_dir(&root).expect_err("应当拒绝");
     assert!(error.contains("manifest.json"), "{error}");
 
     let root = temp_root("ambiguous");
@@ -137,7 +137,7 @@ fn rejects_missing_or_ambiguous_layout() {
         fs::create_dir_all(&dir).expect("建目录");
         fs::write(dir.join("manifest.json"), manifest_json(id)).expect("写清单");
     }
-    let error = pick_extension_dir(&root).err().expect("应当拒绝");
+    let error = pick_extension_dir(&root).expect_err("应当拒绝");
     assert!(error.contains("one、two"), "{error}");
 }
 
