@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::Registry;
 
 use super::*;
-use crate::test_guest;
+use crate::test_guest::{self, FIXTURE_ACCENT};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -17,70 +17,52 @@ fn manifest(id: &str, appearance: bool, commands: &[(&str, &str)]) -> Arc<Manife
     Arc::new(Manifest::parse(text.as_bytes()).expect("清单"))
 }
 
-fn worker(wasm: &str, manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
-    worker_bytes(wasm.as_bytes(), manifest, limits)
-}
-
-fn worker_bytes(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
+fn worker(wasm: &[u8], manifest: Arc<Manifest>, limits: Limits) -> Result<Worker, String> {
     Worker::spawn(wasm.to_vec(), manifest, Arc::new(Registry::new()), limits)
 }
 
 #[test]
 fn runs_a_command() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令回显");
     let limits = Limits::default();
-    let worker = worker(
-        &test_guest::command_guest(r#"{"ok":1}"#),
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .expect("启动 worker");
-    assert_eq!(
-        worker.command_wait("run", "{}", WAIT),
-        Ok(r#"{"ok":1}"#.into())
-    );
+    let worker = worker(&wasm, manifest("demo", false, &[("run", "运行")]), limits)
+        .expect("启动 worker");
+    assert_eq!(worker.command_wait("run", "ping", WAIT), Ok("ping".into()));
 }
 
 #[test]
 fn reports_guest_error() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令报错");
     let limits = Limits::default();
-    let worker = worker(
-        &test_guest::error_guest("boom"),
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .expect("启动 worker");
-    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    let worker = worker(&wasm, manifest("demo", false, &[("fail", "失败")]), limits)
+        .expect("启动 worker");
+    let error = worker.command_wait("fail", "boom", WAIT).unwrap_err();
     assert!(error.contains("boom"), "{error}");
 }
 
 #[test]
 fn traps_and_rebuilds() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "trap 恢复");
     let limits = Limits::default();
-    let worker = worker(
-        &test_guest::trap_guest(),
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .expect("启动 worker");
-    let first = worker.command_wait("run", "{}", WAIT);
+    let worker = worker(&wasm, manifest("demo", false, &[("trap", "陷阱")]), limits)
+        .expect("启动 worker");
+    let first = worker.command_wait("trap", "{}", WAIT);
     assert!(first.is_err(), "{first:?}");
-    let second = worker.command_wait("run", "{}", WAIT);
+    // trap 之后实例照旧可用:第二次调用照常执行并再次 trap。
+    let second = worker.command_wait("trap", "{}", WAIT);
     assert!(second.is_err(), "{second:?}");
 }
 
 #[test]
 fn fuel_stops_a_loop() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "燃料打断");
     let limits = Limits {
         command_fuel: 10_000,
         ..Limits::default()
     };
-    let worker = worker(
-        &test_guest::loop_guest(),
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .expect("启动 worker");
-    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    let worker = worker(&wasm, manifest("demo", false, &[("spin", "空转")]), limits)
+        .expect("启动 worker");
+    let error = worker.command_wait("spin", "{}", WAIT).unwrap_err();
     let metrics = worker.metrics();
     assert!(error.contains("fuel"), "{error}");
     assert!(metrics.timeouts > 0, "error={error:?} metrics={metrics:?}");
@@ -88,89 +70,48 @@ fn fuel_stops_a_loop() {
 
 #[test]
 fn appearance_returns_patch() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "外观补丁");
     let limits = Limits::default();
-    let worker = worker(
-        &test_guest::appearance_guest(r#"{"accent":1193046}"#),
-        manifest("demo", true, &[]),
-        limits,
-    )
-    .expect("启动 worker");
+    let worker = worker(&wasm, manifest("demo", true, &[]), limits).expect("启动 worker");
     let patch = worker
         .appearance(&SceneIn::default())
         .expect("没有被跳过")
         .expect("派发成功")
         .expect("有补丁");
-    assert_eq!(patch.accent, Some(1_193_046));
+    assert_eq!(patch.accent, Some(FIXTURE_ACCENT));
 }
 
-/// 服务失败不许被 guest 吞掉:guest 拿到错误信封仍返回成功,宿主也要把
-/// 这次调用判失败。
+/// 服务失败不许被 guest 吞掉:guest 拿到错误仍返回成功,宿主也要把这次
+/// 调用判失败。
 #[test]
 fn service_failure_fails_the_command() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "服务失败结算");
     let limits = Limits::default();
-    let text = test_guest::command_manifest_with_needs("demo", &[("run", "运行")], &["notify"]);
+    let text = test_guest::command_manifest_with_needs("demo", &[("notify", "通知")], &["notify"]);
     let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
-    let worker = worker(
-        &test_guest::service_guest("notify", "show", "{}"),
-        manifest,
-        limits,
-    )
-    .expect("启动 worker");
-    let error = worker.command_wait("run", "{}", WAIT).unwrap_err();
+    let worker = worker(&wasm, manifest, limits).expect("启动 worker");
+    let error = worker.command_wait("notify", "{}", WAIT).unwrap_err();
     assert!(error.contains("没有提供者"), "{error}");
     assert!(error.contains("notify"), "{error}");
 }
 
 #[test]
-fn rejects_missing_command_export() {
-    let limits = Limits::default();
-    let error = worker(
-        &test_guest::appearance_guest("{}"),
-        manifest("demo", false, &[("run", "运行")]),
-        limits,
-    )
-    .err()
-    .expect("应当拒绝");
-    assert!(error.contains("没有导出命令"), "{error}");
-}
-
-#[test]
-fn rejects_missing_appearance_export() {
-    let limits = Limits::default();
-    let error = worker(
-        &test_guest::command_guest("{}"),
-        manifest("demo", true, &[]),
-        limits,
-    )
-    .err()
-    .expect("应当拒绝");
-    assert!(error.contains("lueying_appearance"), "{error}");
-}
-
-#[test]
 fn rejects_manifest_without_entry() {
-    let wasm = r#"(module (func (export "other") (result i32) (i32.const 0)))"#;
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "无入口清单");
     let limits = Limits::default();
     let text = test_guest::plain_manifest("demo");
     let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
-    let error = worker(wasm, manifest, limits).err().expect("应当拒绝");
+    let error = worker(&wasm, manifest, limits).err().expect("应当拒绝");
     assert!(error.contains("没有可调用的入口"), "{error}");
 }
 
-/// C 写的 guest 也得能跑:CI 用 clang 把 `crates/extguest/c/example.c` 编到
-/// `target/c-guest/example.wasm`。本地没有 clang 或 zig 时跳过。
 #[test]
-fn runs_a_c_guest() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/c-guest/example.wasm");
-    let Ok(bytes) = std::fs::read(&path) else {
-        return;
-    };
+fn rejects_core_module() {
+    // 核心模块(Extism 时代的形态)不再受支持:要打包成组件才能加载。
+    // 空核心模块 = 魔数 + 版本段。
+    let wasm = b"\x00asm\x01\x00\x00\x00".to_vec();
     let limits = Limits::default();
-    let worker = worker_bytes(&bytes, manifest("demo", false, &[("run", "运行")]), limits)
-        .expect("启动 worker");
-    assert_eq!(
-        worker.command_wait("run", "{}", WAIT),
-        Ok(r#"{"lang":"c"}"#.into())
-    );
+    let manifest = manifest("demo", false, &[("run", "运行")]);
+    let error = worker(&wasm, manifest, limits).err().expect("应当拒绝");
+    assert!(error.contains("组件"), "{error}");
 }

@@ -1,12 +1,19 @@
-//! 测试用的最小 Wasm guest 与临时包目录。
+//! 测试用的临时包目录、清单与组件测试客人加载。
 //!
-//! guest 走标准 Extism ABI:从 `extism:host/env` 导入内核函数,导出按
-//! 命令 id 命名的入口。这样测的路径与第三方插件完全一致。
+//! 行为客人是一个真实 SDK 编出的组件(`tests/fixture-guest`,CI 打包),
+//! 命令与外观覆盖错误、trap、燃料与宿主服务路径。环境变量
+//! `LUEYING_FIXTURE_WASM` / `LUEYING_FIXTURE_B_WASM` 指向打包好的组件;
+//! 本机没有产物时行为测试跳过(CI 是门禁)。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::json;
+
+/// 测试客人外观补丁的固定主题色(fixture A)。
+pub(crate) const FIXTURE_ACCENT: u32 = 0x10_20_30;
+/// 变体 B 外观补丁的主题色;热重载与合并顺序用它与 A 区分。
+pub(crate) const FIXTURE_B_ACCENT: u32 = 0x20_40_60;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -42,10 +49,10 @@ impl Drop for Temp {
 }
 
 /// 写一个包目录:清单 + `extension.wasm`。
-pub(crate) fn write_pack(dir: &Path, manifest: &str, wasm: &str) {
+pub(crate) fn write_pack(dir: &Path, manifest: &str, wasm: impl AsRef<[u8]>) {
     std::fs::create_dir_all(dir).expect("建包目录");
     std::fs::write(dir.join("manifest.json"), manifest).expect("写清单");
-    std::fs::write(dir.join("extension.wasm"), wasm).expect("写 Wasm");
+    std::fs::write(dir.join("extension.wasm"), wasm.as_ref()).expect("写 Wasm");
 }
 
 /// 一份带命令的清单。
@@ -114,124 +121,34 @@ pub(crate) fn plain_manifest(id: &str) -> String {
     .to_string()
 }
 
-/// 公共骨架:extism 内核函数的导入。
-fn preamble() -> &'static str {
-    r#"(module
-  (import "extism:host/env" "alloc" (func $alloc (param i64) (result i64)))
-  (import "extism:host/env" "free" (func $free (param i64)))
-  (import "extism:host/env" "length" (func $length (param i64) (result i64)))
-  (import "extism:host/env" "load_u8" (func $load_u8 (param i64) (result i32)))
-  (import "extism:host/env" "store_u8" (func $store_u8 (param i64 i32)))
-  (import "extism:host/env" "output_set" (func $output_set (param i64 i64)))
-  (import "extism:host/env" "error_set" (func $error_set (param i64)))
-"#
+/// 读环境变量指向的组件产物;缺失或读不到就返回 `None`(跳过)。
+fn component_bytes(var: &str) -> Option<Vec<u8>> {
+    let path = std::env::var(var).ok()?;
+    std::fs::read(path).ok()
 }
 
-/// 把字节逐个写进 extism 内存;偏移从 `local` 里的块首地址开始。
-fn store_bytes(local: &str, bytes: &[u8]) -> String {
-    let mut out = String::new();
-    for (index, byte) in bytes.iter().enumerate() {
-        out.push_str(&format!(
-            "    (call $store_u8 (i64.add (local.get {local}) (i64.const {index})) (i32.const {byte}))\n"
-        ));
-    }
-    out
+/// 测试客人(变体 A):命令 `run`/`echo` 回显参数。
+pub(crate) fn fixture() -> Option<Vec<u8>> {
+    component_bytes("LUEYING_FIXTURE_WASM")
 }
 
-/// 命令返回一段固定文本。
-pub(crate) fn command_guest(result: &str) -> String {
-    format!(
-        "{}(func (export \"run\") (result i32)
-    (local $ptr i64)
-    (local.set $ptr (call $alloc (i64.const {len})))
-{stores}    (call $output_set (local.get $ptr) (i64.const {len}))
-    (i32.const 0)))",
-        preamble(),
-        len = result.len(),
-        stores = store_bytes("$ptr", result.as_bytes()),
-    )
+/// 测试客人变体 B:回显带 `[b]` 前缀,热重载与合并顺序用。
+pub(crate) fn fixture_b() -> Option<Vec<u8>> {
+    component_bytes("LUEYING_FIXTURE_B_WASM")
 }
 
-/// 命令回传错误文本。
-pub(crate) fn error_guest(error: &str) -> String {
-    format!(
-        "{}(func (export \"run\") (result i32)
-    (local $ptr i64)
-    (local.set $ptr (call $alloc (i64.const {len})))
-{stores}    (call $error_set (local.get $ptr))
-    (i32.const -1)))",
-        preamble(),
-        len = error.len(),
-        stores = store_bytes("$ptr", error.as_bytes()),
-    )
+/// 需要测试客人的测试:拿到产物或跳过。
+/// `None` 分支返回 `Default::default()`:测试函数是 `()`,e2e 的 run 是失败数 0。
+macro_rules! fixture_or_skip {
+    ($loader:expr, $what:literal) => {
+        match $loader {
+            Some(bytes) => bytes,
+            None => {
+                eprintln!("跳过:{}(没有组件测试客人产物)", $what);
+                return ::std::default::Default::default();
+            }
+        }
+    };
 }
 
-/// 命令直接 trap。
-pub(crate) fn trap_guest() -> String {
-    format!(
-        "{}(func (export \"run\") (result i32)
-    (unreachable)
-    (i32.const 0)))",
-        preamble(),
-    )
-}
-
-/// 命令死循环;燃料烧完才停。
-pub(crate) fn loop_guest() -> String {
-    format!(
-        "{}(func (export \"run\") (result i32)
-    (local $x i32)
-    (loop $forever
-      ;; 循环体放一条真实指令,保证烧燃料。
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (br $forever))
-    (i32.const 0)))",
-        preamble(),
-    )
-}
-
-/// 外观返回一段固定补丁。
-pub(crate) fn appearance_guest(patch: &str) -> String {
-    format!(
-        "{}(func (export \"lueying_appearance\") (result i32)
-    (local $ptr i64)
-    (local.set $ptr (call $alloc (i64.const {len})))
-{stores}    (call $output_set (local.get $ptr) (i64.const {len}))
-    (i32.const 0)))",
-        preamble(),
-        len = patch.len(),
-        stores = store_bytes("$ptr", patch.as_bytes()),
-    )
-}
-
-/// 调一次宿主服务,把响应原样交回;服务失败也照样返回信封。
-pub(crate) fn service_guest(service: &str, method: &str, args: &str) -> String {
-    let request = format!(r#"{{"method":"{method}","args":{args}}}"#);
-    format!(
-        "{}(import \"extism:host/user\" \"lueying_{service}\" (func $svc (param i64) (result i64)))
-  (func (export \"run\") (result i32)
-    (local $req i64)
-    (local $resp i64)
-    (local $len i64)
-    (local $i i64)
-    (local $out i64)
-    (local.set $req (call $alloc (i64.const {len})))
-{stores}    (local.set $resp (call $svc (local.get $req)))
-    (local.set $len (call $length (local.get $resp)))
-    (local.set $out (call $alloc (local.get $len)))
-    (local.set $i (i64.const 0))
-    (block $done
-      (loop $copy
-        (br_if $done (i64.ge_u (local.get $i) (local.get $len)))
-        (call $store_u8
-          (i64.add (local.get $out) (local.get $i))
-          (call $load_u8 (i64.add (local.get $resp) (local.get $i))))
-        (local.set $i (i64.add (local.get $i) (i64.const 1)))
-        (br $copy)))
-    (call $output_set (local.get $out) (local.get $len))
-    (i32.const 0)))",
-        preamble(),
-        len = request.len(),
-        stores = store_bytes("$req", request.as_bytes()),
-    )
-}
+pub(crate) use fixture_or_skip;

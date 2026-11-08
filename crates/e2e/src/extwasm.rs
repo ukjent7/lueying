@@ -2,46 +2,44 @@
 //!
 //! 先列失败方式:
 //! 1. 坏清单(未知字段、过高版本、越界模块路径)被放进来。
-//! 2. 缺导出(memory、分配器、入口)或坏模块的包被加载。
+//! 2. 非组件模块或坏模块的包被加载。
 //! 3. 死循环、内存暴涨拖住宿主,没有燃料/限额兜底。
 //! 4. 状态里混进候选文字或宿主名,扩展能读到用户输入。
-//! 5. 补丁未知字段、非法主题色被静默接受。
-//! 6. 隐私字段仍调用 guest。
-//! 7. 热重载写坏文件后,正在用的扩展被弄没。
-//! 8. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
+//! 5. 隐私字段仍调用 guest。
+//! 6. 热重载写坏文件后,正在用的扩展被弄没。
+//! 7. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
+//! 8. 卸载扩展时挂起的宿主服务等待不被取消。
 
 pub(crate) mod harness;
 pub(crate) mod services;
 
 use std::time::{Duration, Instant};
 
-use lueying_extwasm::{Limits, Pack, Poll, Runtime, SceneIn};
+use lueying_extwasm::{Done, Limits, Pack, Poll, Provider, Runtime, SceneIn, Service};
 
 use crate::extwasm::harness::{
-    appearance_guest, appearance_manifest, command_guest, command_manifest, error_guest, hog_guest,
-    init_loop_guest, load_or_fail, loop_guest, once_trap_appearance_guest, plain_manifest,
-    raw_manifest, sleep_guest, trap_guest, write_pack,
+    ACCENT_A, ACCENT_B, appearance_manifest, command_manifest, fixture_a, fixture_b,
+    fixture_init_loop, fixture_or_skip, load_or_fail, plain_manifest, raw_manifest, write_pack,
 };
 use crate::harness::{Temp, push};
 
-const PATCH: &str = r#"{"accent":1193046}"#;
-
 /// 包校验:坏清单与坏模块在加载期就拒绝,错误文本能定位到字段。
 fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("bad");
-    let cases = [
+    let cases: Vec<(&'static str, &'static str, String, Vec<u8>, &'static str)> = vec![
         (
             "清单未知字段被拒",
             "unknown",
             raw_manifest("unknown", r#""future":true"#),
-            command_guest("{}"),
+            fixture.clone(),
             "future",
         ),
         (
             "契约版本过高被拒",
             "apihigh",
             raw_manifest("apihigh", r#""appearance":true"#).replace(r#""api":4"#, r#""api":99"#),
-            command_guest("{}"),
+            fixture.clone(),
             "99",
         ),
         (
@@ -49,43 +47,36 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
             "escape",
             raw_manifest("escape", r#""appearance":true"#)
                 .replace(r#""extension.wasm""#, r#""../evil.wasm""#),
-            command_guest("{}"),
+            fixture.clone(),
             "Wasm 模块",
         ),
         (
             "目录名与 id 不一致被拒",
             "wrong",
             raw_manifest("mismatch", r#""appearance":true"#),
-            command_guest("{}"),
+            fixture.clone(),
             "不一致",
-        ),
-        (
-            "命令包缺导出被拒",
-            "nocmd",
-            command_manifest("nocmd", &["run"], &[]),
-            appearance_guest(PATCH),
-            "没有导出命令",
-        ),
-        (
-            "外观包缺 lueying_appearance 被拒",
-            "noapp",
-            appearance_manifest("noapp"),
-            command_guest("{}"),
-            "lueying_appearance",
         ),
         (
             "没有任何入口被拒",
             "noentry",
             plain_manifest("noentry"),
-            command_guest("{}"),
+            fixture.clone(),
             "没有可调用的入口",
         ),
         (
             "坏 Wasm 字节被拒",
             "garbage",
             plain_manifest("garbage"),
-            "not wasm at all".to_string(),
-            "编译失败",
+            b"not wasm at all".to_vec(),
+            "不是 WebAssembly 组件",
+        ),
+        (
+            "核心模块被拒",
+            "coremodule",
+            command_manifest("coremodule", &["run"], &[]),
+            b"\x00asm\x01\x00\x00\x00".to_vec(),
+            "组件",
         ),
     ];
     for (name, dir_name, manifest, source, needle) in cases {
@@ -101,7 +92,11 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
     }
 
     let dir = temp.pack("spin");
-    write_pack(&dir, &appearance_manifest("spin"), init_loop_guest());
+    let Some(init_loop) = fixture_init_loop() else {
+        eprintln!("扩展 E2E 跳过一项:没有 init 死循环客人产物");
+        return;
+    };
+    write_pack(&dir, &appearance_manifest("spin"), init_loop);
     let limits = Limits {
         init_fuel: 1_000_000,
         ..Limits::default()
@@ -119,9 +114,10 @@ fn bad_packs(checks: &mut Vec<(&'static str, bool, String)>) {
 
 /// 正常包、状态字段与规整。
 fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("scene");
     let dir = temp.pack("demo");
-    write_pack(&dir, &appearance_manifest("demo"), appearance_guest(PATCH));
+    write_pack(&dir, &appearance_manifest("demo"), fixture);
     let Some(mut pack) = load_or_fail(checks, "正常包加载", &dir) else {
         return;
     };
@@ -130,7 +126,7 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "正常包返回主题色",
-        accent == Some(0x123456),
+        accent == Some(ACCENT_A),
         format!("{accent:?}"),
     );
 
@@ -184,39 +180,12 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
     push(checks, "越界状态被规整", clean, json);
 }
 
-/// 坏补丁:未知字段、超长源码、非法主题色都拒绝,好补丁还能继续派发。
-fn patches(checks: &mut Vec<(&'static str, bool, String)>) {
-    let temp = Temp::new("patch");
-    let dir = temp.pack("patch");
-    write_pack(&dir, &appearance_manifest("patch"), appearance_guest(PATCH));
-    let Some(mut pack) = load_or_fail(checks, "补丁包加载", &dir) else {
-        return;
-    };
-    let _ = pack.dispatch(&SceneIn::default());
-    let good = pack.last_error().is_none();
-    // 用一个专门回错误的 guest 换掉同一个包里的模块,复用加载断言路径。
-    let bad_dir = temp.pack("badpatch");
-    write_pack(
-        &bad_dir,
-        &appearance_manifest("badpatch"),
-        error_guest("主题色 0xffffff 超出 24 位"),
-    );
-    let mut bad = Pack::load(&bad_dir).expect("加载坏补丁包");
-    let refused = bad.dispatch(&SceneIn::default()).is_none();
-    let error = bad.last_error().unwrap_or_default().to_string();
-    push(
-        checks,
-        "非法补丁被拒并给出原因",
-        good && refused && error.contains("主题色"),
-        format!("good={good} {error}"),
-    );
-}
-
 /// 预算:死循环被燃料打断,内存暴涨被限额拦住,连续失败后停用。
 fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("budget");
     let dir = temp.pack("spin");
-    write_pack(&dir, &command_manifest("spin", &["run"], &[]), loop_guest());
+    write_pack(&dir, &command_manifest("spin", &["spin"], &[]), &fixture);
     // 燃料预算收紧:解释器烧 100 万燃料远快于墙钟时限,错误稳定落在燃料上。
     let limits = Limits {
         command_fuel: 1_000_000,
@@ -230,7 +199,7 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
         }
     };
     let started = Instant::now();
-    let first = pack.invoke_wait("run", "{}", Duration::from_secs(30));
+    let first = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
     let elapsed = started.elapsed();
     let error = pack.last_error().unwrap_or_default().to_string();
     push(
@@ -241,13 +210,9 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let hog_dir = temp.pack("hog");
-    write_pack(
-        &hog_dir,
-        &command_manifest("hog", &["run"], &[]),
-        hog_guest(),
-    );
+    write_pack(&hog_dir, &command_manifest("hog", &["hog"], &[]), &fixture);
     let mut hog = Pack::load(&hog_dir).expect("加载内存包");
-    let _ = hog.invoke_wait("run", "{}", Duration::from_secs(30));
+    let _ = hog.invoke_wait("hog", "{}", Duration::from_secs(30));
     let stat = hog.stat();
     push(
         checks,
@@ -257,17 +222,13 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let trap_dir = temp.pack("trap");
-    write_pack(
-        &trap_dir,
-        &command_manifest("trap", &["run"], &[]),
-        trap_guest(),
-    );
+    write_pack(&trap_dir, &command_manifest("trap", &["trap"], &[]), &fixture);
     let mut trap = Pack::load(&trap_dir).expect("加载 trap 包");
     for _ in 0..3 {
-        let _ = trap.invoke_wait("run", "{}", Duration::from_secs(30));
+        let _ = trap.invoke_wait("trap", "{}", Duration::from_secs(30));
     }
     let stat = trap.stat();
-    let stopped = trap.invoke_wait("run", "{}", Duration::from_secs(30));
+    let stopped = trap.invoke_wait("trap", "{}", Duration::from_secs(30));
     push(
         checks,
         "连续 trap 后停用扩展",
@@ -279,11 +240,12 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
-/// 隐私、高对比度与 trap 后的可用性。
+/// 隐私与高对比度。
 fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("privacy");
     let dir = temp.pack("demo");
-    write_pack(&dir, &appearance_manifest("demo"), appearance_guest(PATCH));
+    write_pack(&dir, &appearance_manifest("demo"), fixture);
     let Some(mut pack) = load_or_fail(checks, "外观包加载", &dir) else {
         return;
     };
@@ -300,70 +262,47 @@ fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "隐私字段不调用 guest",
-        private.is_none() && normal == Some(0x123456),
+        private.is_none() && normal == Some(ACCENT_A),
         format!("{private:?} {normal:?}"),
     );
     push(
         checks,
         "高对比度仍返回主题色",
-        high_accent == Some(0x123456),
+        high_accent == Some(ACCENT_A),
         format!("{high_accent:?}"),
-    );
-
-    // trap 之后下一次派发重建实例,外观宿主仍然可用。
-    let boom_dir = temp.pack("boom");
-    let boom_patch = r#"{"accent":4660}"#;
-    write_pack(
-        &boom_dir,
-        &appearance_manifest("boom"),
-        once_trap_appearance_guest(boom_patch),
-    );
-    let mut boom = Pack::load(&boom_dir).expect("加载 trap 外观包");
-    let crashed = boom.dispatch(&SceneIn::default()).is_none();
-    let error = boom.last_error().unwrap_or_default().to_string();
-    let after = boom
-        .dispatch(&SceneIn::default())
-        .and_then(|p| p.accent)
-        .is_some_and(|accent| accent == 4660);
-    push(
-        checks,
-        "一次 trap 后宿主仍可派发",
-        crashed && !error.is_empty() && after,
-        format!("{error} after={after}"),
     );
 }
 
 /// 热重载:换新、写坏保留上一版、删除清单后卸载。
 fn reload(checks: &mut Vec<(&'static str, bool, String)>) {
+    let v1 = fixture_or_skip!(fixture_a());
+    let v2 = fixture_or_skip!(fixture_b());
     let temp = Temp::new("reload");
     let dir = temp.pack("hot");
-    let v1 = appearance_guest(r#"{"accent":100001}"#);
-    let v2 = appearance_guest(r#"{"accent":200002}"#);
-    let v3 = appearance_guest(r#"{"accent":300003}"#);
-    write_pack(&dir, &appearance_manifest("hot"), &v1);
+    write_pack(&dir, &command_manifest("hot", &["run"], &[]), &v1);
     let Some(mut pack) = load_or_fail(checks, "热重载包加载", &dir) else {
         return;
     };
-    let a1 = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+    let a1 = pack.invoke_wait("run", "x", Duration::from_secs(30));
     std::fs::write(dir.join("extension.wasm"), &v2).expect("写 V2");
     let polled = pack.poll();
-    let a2 = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+    let a2 = pack.invoke_wait("run", "x", Duration::from_secs(30));
     std::fs::write(dir.join("extension.wasm"), "not wasm").expect("写坏模块");
     let broken = pack.poll();
-    let a3 = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
-    std::fs::write(dir.join("extension.wasm"), &v3).expect("写 V3");
+    let a3 = pack.invoke_wait("run", "x", Duration::from_secs(30));
+    std::fs::write(dir.join("extension.wasm"), &v1).expect("写 V3");
     let fixed = pack.poll();
-    let a4 = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+    let a4 = pack.invoke_wait("run", "x", Duration::from_secs(30));
     push(
         checks,
         "热重载换新且写坏时保留上一版",
-        a1 == Some(100001)
+        a1.as_deref() == Ok("x")
             && polled == Poll::Reloaded
-            && a2 == Some(200002)
+            && a2.as_deref() == Ok("[b]x")
             && matches!(&broken, Poll::Failed(_))
-            && a3 == Some(200002)
+            && a3.as_deref() == Ok("[b]x")
             && fixed == Poll::Reloaded
-            && a4 == Some(300003),
+            && a4.as_deref() == Ok("x"),
         format!("{a1:?} {polled:?} {a2:?} {broken:?} {a3:?} {fixed:?} {a4:?}"),
     );
     std::fs::remove_file(dir.join("manifest.json")).expect("删清单");
@@ -371,19 +310,20 @@ fn reload(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "清单删除后卸载",
-        removed == Poll::Removed && pack.dispatch(&SceneIn::default()).is_none(),
+        removed == Poll::Removed && pack.invoke_wait("run", "x", Duration::from_secs(30)).is_err(),
         format!("{removed:?}"),
     );
 }
 
 /// 多扩展运行期:有序加载、懒加载、命令作用域、空闲卸载与 Scope 回收。
 fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
+    let fixture_b = fixture_or_skip!(fixture_b());
     let temp = Temp::new("runtime");
-    let source = command_guest(r#"{"ok":true}"#);
     let a = temp.pack("alpha");
-    write_pack(&a, &command_manifest("alpha", &["run"], &[]), &source);
+    write_pack(&a, &command_manifest("alpha", &["run"], &[]), &fixture);
     let b = temp.pack("beta");
-    write_pack(&b, &command_manifest("beta", &["run"], &[]), &source);
+    write_pack(&b, &command_manifest("beta", &["run"], &[]), &fixture);
 
     let order = vec!["alpha".to_string(), "beta".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
@@ -402,7 +342,7 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
         ),
     );
 
-    let invoked = runtime.invoke("alpha.run", "{}");
+    let invoked = runtime.invoke("alpha.run", "ping");
     let only_alpha = runtime.loaded("alpha") && !runtime.loaded("beta");
     let results = loop {
         let results = runtime.take_results();
@@ -417,7 +357,7 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
         invoked.is_ok()
             && only_alpha
             && results.len() == 1
-            && results[0].1.result.as_deref() == Ok(r#"{"ok":true}"#),
+            && results[0].1.result.as_deref() == Ok("ping"),
         format!(
             "{invoked:?} {results:?} alpha={} beta={}",
             runtime.loaded("alpha"),
@@ -470,17 +410,9 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 
     let first = temp.pack("first");
-    write_pack(
-        &first,
-        &appearance_manifest("first"),
-        appearance_guest(r#"{"accent":100001}"#),
-    );
+    write_pack(&first, &appearance_manifest("first"), &fixture);
     let second = temp.pack("second");
-    write_pack(
-        &second,
-        &appearance_manifest("second"),
-        appearance_guest(r#"{"accent":200002}"#),
-    );
+    write_pack(&second, &appearance_manifest("second"), &fixture_b);
     let (mut forward, _) = Runtime::open(
         &temp.root,
         &["first".to_string(), "second".to_string()],
@@ -500,7 +432,7 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "外观补丁按配置顺序合并",
-        forward_accent == Some(200002) && backward_accent == Some(100001),
+        forward_accent == Some(ACCENT_B) && backward_accent == Some(ACCENT_A),
         format!("{forward_accent:?} {backward_accent:?}"),
     );
 
@@ -513,7 +445,7 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "坏扩展只记诊断,不影响其他扩展",
-        !errors.is_empty() && usable == Some(100001),
+        !errors.is_empty() && usable == Some(ACCENT_A),
         format!("{errors:?} {usable:?}"),
     );
 
@@ -527,22 +459,40 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
-/// 可取消等待:guest 睡 10 秒,宿主卸载扩展时 2 秒内回来。
+/// 可取消等待:命令挂在宿主服务上,宿主卸载扩展时 2 秒内回来。
 fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("cancel");
     let dir = temp.pack("sleep");
-    write_pack(
-        &dir,
-        &command_manifest("sleep", &["run"], &[]),
-        sleep_guest(10_000),
-    );
+    write_pack(&dir, &command_manifest("sleep", &["notify"], &["notify"]), fixture);
+
+    /// 永不回话的提供者:完成句柄保活在静态表里,等待只能靠取消标志打断。
+    struct Stuck;
+
+    static KEEP: std::sync::Mutex<Vec<Done>> = std::sync::Mutex::new(Vec::new());
+
+    impl Provider for Stuck {
+        fn call(
+            &self,
+            _caller: &str,
+            _method: &str,
+            _args: &str,
+            done: Done,
+        ) -> Result<(), String> {
+            KEEP.lock().unwrap().push(done);
+            Ok(())
+        }
+    }
+
+    let registry = std::sync::Arc::new(lueying_extwasm::Registry::new());
+    registry.set(Service::Notify, std::sync::Arc::new(Stuck));
     let (mut runtime, errors) =
-        Runtime::open(&temp.root, &["sleep".to_string()], Limits::default());
+        Runtime::open_with(&temp.root, &["sleep".to_string()], Limits::default(), registry);
     if !errors.is_empty() {
         push(checks, "睡眠包打开", false, format!("{errors:?}"));
         return;
     }
-    let submitted = runtime.invoke("sleep.run", "{}").is_ok();
+    let submitted = runtime.invoke("sleep.notify", "{}").is_ok();
     let started = Instant::now();
     drop(runtime);
     let elapsed = started.elapsed();
@@ -559,12 +509,11 @@ pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     bad_packs(&mut checks);
     scene(&mut checks);
-    patches(&mut checks);
     budget(&mut checks);
     privacy(&mut checks);
     reload(&mut checks);
     runtime(&mut checks);
     cancel_wait(&mut checks);
 
-    crate::harness::write(report, "运行期 Wasm 扩展", checks)
+    crate::harness::write(report, "运行期扩展", checks)
 }

@@ -7,8 +7,9 @@
 
 ### 新增
 
-- 扩展 ABI 迁移第一步：服务缝契约升格为 `lueying:ext@2.0.0`（十二个服务全部类型化 + 扩展导出面 `entry`），宿主按 wasm 魔数双路径分流——组件走 wasmtime::component 原生绑定，核心模块走 Extism（迁移桥）；剪贴板历史作为首个组件 ABI 官方扩展完成迁移（作者代码零改动，仅换宏）。shot-ocr 与 voice-asr 仍在 Extism 路径，四扩展迁完后 Extism 退场。
-- 扩展宿主迁移验证桩：Extism→Component Model 的核心假设（wit-bindgen guest 包组件、宿主类型化调用、燃料计数、阻塞宿主服务）以一条 CI 测试钉住，真实 world 按同样链路逐服务迁移。
+- 扩展宿主补齐组件路径的沙箱账:线性内存 16 MiB 限额(增长越限记 OOM 指标)、派发次数/燃料步数/耗时峰值/超时计数进扩展指标;未声明服务与空入口在加载期的报错文案与旧路径对齐。
+- 扩展测试客人重建:一个真实 SDK 编出的行为测试组件(回显、报错、trap、空转、内存暴涨、通知,另有 init 死循环变体),单元测试、Linux E2E 与 Windows 自检统一由它驱动;迁移期的验证桩与 Extism 手写 WAT 客人全部删除。
+- 扩展 ABI 迁移第一步:服务缝契约升格为 `lueying:ext@2.0.0`(十二个服务全部类型化 + 扩展导出面 `entry`),剪贴板历史作为首个组件 ABI 官方扩展完成迁移(作者代码零改动,仅换宏)。
 - 解码常数自动调参（`tools/tune_decoder.py` + `tune` 工作流）：坐标系搜索，每个常数在邻域各取一点并行跑开发集基准，「整句首选变好、干净全拼不退」的候选带证据提交。
 - 词典自动跟随：每天检查 lueying-dict 的正式 Release，新版本先过基准门禁再自动更新 `fetch_dict.sh` 的钉住标签与校验和；发版节奏旋钮在词典仓（周一定时，默认每周，两次间隔半年兜底）。
 - 用户纠错专项语料 `eval-user-v4`（50 句，出题在前、采集在后，分词空格剥除），进 dict-bench 矩阵。
@@ -25,6 +26,7 @@
 
 ### 变更
 
+- 扩展 ABI 收官:shot-ocr 与 voice-asr 迁到组件 ABI,Extism 整体退场——宿主、SDK、文档与依赖里的 Extism 路径全部删除,所有 Wasm 扩展都是标准组件(`wasm-tools component new` 打包),服务走 WIT 类型化接口。C 语言示例 SDK 随 Extism ABI 一并移除,多语言支持等组件工具链文档在后续里程碑补上。
 - 整句纠错放开长度上限：手误通道此前只在 ≤24 字母的输入上生效，长句只靠模糊音兜底；用户实测 31 句带错里有 21 句的错误全部落在这条线上。现在全程开启，长句仍限每词一处手误，≤30 字母的输入放宽到一处词内两错。
 - 工具链与依赖现代化：CI 单测换 `cargo-nextest`（文档测试单独保留）；每周审计换 `cargo-deny`，漏洞、依赖来源与重复版本一起管，替代 `cargo-audit` 与手写的锁来源检查脚本；常驻服务与设置窗的分配器换 `mimalloc`。
 - 词典换成自研的掠影词典（[lueying-dict](https://github.com/ukjent7/lueying-dict)）：词频来自开放语料，读音由 g2pW 在真实句子里定音，万象和白霜只提供新词候选的词形；二进制格式升级为 PYD2，同等词条体积减少约 42%。`xtask dict` 与 `tools/fetch_frost.sh`、`tools/fetch_gram.sh`、`tools/fetch_collocation.sh` 一并删除，词典与搭配表统一由 `tools/fetch_dict.sh` 下载。

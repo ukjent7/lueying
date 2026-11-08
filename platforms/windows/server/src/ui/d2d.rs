@@ -174,7 +174,7 @@ pub(super) struct WinCtx {
     pub(super) text: Text,
     pub(super) cursor_arrow: Option<HCURSOR>,
     pub(super) cursor_hand: Option<HCURSOR>,
-    /// 运行期扩展:后台 worker 跑 Extism 插件,这里只收主题色补丁。
+    /// 运行期扩展:后台 worker 跑 Wasm 组件,这里只收主题色补丁。
     script: crate::ext_host::Script,
     script_accent: Option<u32>,
     /// 隐私字段(密码框):外观扩展开关与补丁停用。

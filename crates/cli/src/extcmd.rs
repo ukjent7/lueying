@@ -91,14 +91,15 @@ crate-type = ["cdylib"]
 [dependencies]
 lueying-extguest = {{ git = "https://github.com/ukjent7/lueying" }}
 serde_json = "1"
+wit-bindgen = "0.63"
 "#,
         id = args.id
     );
-    let lib_rs = r#"//! 掠影扩展入口:实现 [`Extension`] 并用 `export!` 导出。
+    let lib_rs = r#"//! 掠影扩展入口:实现 [`Extension`] 并用 `export_component!` 导出。
 //!
 //! 构建:cargo build --target wasm32-unknown-unknown --release
-//! 然后 `target/wasm32-unknown-unknown/release/<id>.wasm` 拷成包目录里的
-//! `extension.wasm`,再 `lueying ext pack`。
+//! 然后 `wasm-tools component new target/wasm32-unknown-unknown/release/<id>.wasm
+//! -o extension.wasm` 包成组件,放进包目录,再 `lueying ext pack`。
 
 use lueying_extguest::Extension;
 use serde_json::json;
@@ -115,7 +116,7 @@ impl Extension for Hello {
     }
 }
 
-lueying_extguest::export!(Hello, commands: [hello]);
+lueying_extguest::export_component!(Hello, commands: [hello]);
 "#;
     fs::create_dir_all(dir.join("src")).map_err(|e| format!("建 {}: {e}", dir.display()))?;
     write_file(&dir.join("manifest.json"), &manifest_text(&manifest)?)?;

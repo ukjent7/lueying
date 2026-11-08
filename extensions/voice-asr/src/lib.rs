@@ -3,7 +3,7 @@
 //! 录音由宿主 `audio` 服务完成（16 kHz 单声道 WAV），识别交给原生
 //! `sensevoice` 扩展；模型与可执行文件缺失时给用户明确提示。
 
-use lueying_extguest::{Extension, asr_recognize, audio_record, notify_show, output_deliver};
+use lueying_extguest::Extension;
 use serde_json::json;
 
 /// 一次录音的固定时长;短句足够,也避免误触长期占用麦克风。
@@ -40,4 +40,4 @@ impl Extension for VoiceAsr {
     }
 }
 
-lueying_extguest::export!(VoiceAsr, commands: [dictate]);
+lueying_extguest::export_component!(VoiceAsr, commands: [dictate]);

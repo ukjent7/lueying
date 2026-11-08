@@ -12,22 +12,17 @@ use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json,
 use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat};
 use lueying_extwasm::{ExtState, Limits, MAX_FAULTS, Pack, Runtime};
 
-use crate::extwasm::harness::{command_guest, command_manifest, loop_guest, write_pack};
+use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::Temp;
 
-const GOOD: &str = r#"{"ok":true}"#;
-
 pub fn run(report: &mut String) -> usize {
+    let fixture = fixture_or_skip!(fixture_a());
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
 
     // 1. 未加载、加载、卸载三种状态与内存/耗时指标。
     let temp = Temp::new("stats");
     let dir = temp.pack("demo");
-    write_pack(
-        &dir,
-        &command_manifest("demo", &["run"], &[]),
-        command_guest(GOOD),
-    );
+    write_pack(&dir, &command_manifest("demo", &["run"], &[]), &fixture);
     let order = vec!["demo".to_string()];
     let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
     checks.push(("指标包打开", errors.is_empty(), format!("{errors:?}")));
@@ -82,7 +77,7 @@ pub fn run(report: &mut String) -> usize {
     // 2. 死循环连续超限后停用;状态与超限次数都要能看见。
     let spin_temp = Temp::new("spin");
     let dir = spin_temp.pack("demo");
-    write_pack(&dir, &command_manifest("demo", &["run"], &[]), loop_guest());
+    write_pack(&dir, &command_manifest("demo", &["spin"], &[]), &fixture);
     let limits = Limits {
         command_fuel: 1_000_000,
         ..Limits::default()
@@ -95,10 +90,10 @@ pub fn run(report: &mut String) -> usize {
         }
     };
     for _ in 0..MAX_FAULTS {
-        let _ = pack.invoke_wait("run", "{}", Duration::from_secs(30));
+        let _ = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
     }
     let stat = pack.stat();
-    let stopped = pack.invoke_wait("run", "{}", Duration::from_secs(30));
+    let stopped = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
     checks.push((
         "连续超限停用",
         stat.state == ExtState::Disabled

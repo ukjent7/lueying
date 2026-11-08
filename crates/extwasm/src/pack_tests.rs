@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::Registry;
 
 use super::*;
-use crate::test_guest::{self, Temp};
+use crate::test_guest::{self, FIXTURE_ACCENT, FIXTURE_B_ACCENT, Temp};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -14,25 +14,23 @@ fn load(dir: &Path) -> Pack {
     Pack::load(dir).expect("加载扩展")
 }
 
-fn write_command(dir: &Path, result: &str) {
+fn write_command(dir: &Path, wasm: &[u8]) {
     test_guest::write_pack(
         dir,
         &test_guest::command_manifest("demo", &[("run", "运行")]),
-        &test_guest::command_guest(result),
+        wasm,
     );
 }
 
 #[test]
 fn loads_and_runs() {
     let temp = Temp::new("run");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令包");
     let dir = temp.pack("demo");
-    write_command(&dir, r#"{"ok":1}"#);
+    write_command(&dir, &wasm);
     let mut pack = load(&dir);
     assert_eq!(pack.manifest().id, "demo");
-    assert_eq!(
-        pack.invoke_wait("run", "{}", WAIT),
-        Ok(r#"{"ok":1}"#.into())
-    );
+    assert_eq!(pack.invoke_wait("run", "ping", WAIT), Ok("ping".into()));
     assert_eq!(pack.pending(), 0);
     assert!(pack.last_error().is_none());
 }
@@ -40,8 +38,9 @@ fn loads_and_runs() {
 #[test]
 fn rejects_undeclared_command() {
     let temp = Temp::new("undeclared");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "未声明命令");
     let dir = temp.pack("demo");
-    write_command(&dir, "{}");
+    write_command(&dir, &wasm);
     let mut pack = load(&dir);
     let error = pack.invoke_wait("other", "{}", WAIT).unwrap_err();
     assert!(error.contains("没有声明"), "{error}");
@@ -54,11 +53,11 @@ fn dispatches_appearance() {
     test_guest::write_pack(
         &dir,
         &test_guest::appearance_manifest("demo"),
-        &test_guest::appearance_guest(r#"{"accent":1193046}"#),
+        test_guest::fixture_or_skip!(test_guest::fixture(), "外观包"),
     );
     let mut pack = load(&dir);
     let patch = pack.dispatch(&SceneIn::default()).expect("有补丁");
-    assert_eq!(patch.accent, Some(1_193_046));
+    assert_eq!(patch.accent, Some(FIXTURE_ACCENT));
 }
 
 #[test]
@@ -68,7 +67,7 @@ fn private_scene_is_skipped() {
     test_guest::write_pack(
         &dir,
         &test_guest::appearance_manifest("demo"),
-        &test_guest::appearance_guest("{}"),
+        test_guest::fixture_or_skip!(test_guest::fixture(), "隐私场景"),
     );
     let mut pack = load(&dir);
     let scene = SceneIn {
@@ -85,35 +84,41 @@ fn three_traps_disable_pack() {
     let dir = temp.pack("demo");
     test_guest::write_pack(
         &dir,
-        &test_guest::command_manifest("demo", &[("run", "运行")]),
-        &test_guest::trap_guest(),
+        &test_guest::command_manifest("demo", &[("trap", "陷阱")]),
+        test_guest::fixture_or_skip!(test_guest::fixture(), "trap 停用"),
     );
     let mut pack = load(&dir);
     for _ in 0..3 {
-        assert!(pack.invoke_wait("run", "{}", WAIT).is_err());
+        assert!(pack.invoke_wait("trap", "{}", WAIT).is_err());
     }
     assert!(pack.disabled_reason().is_some());
-    let error = pack.invoke_wait("run", "{}", WAIT).unwrap_err();
+    let error = pack.invoke_wait("trap", "{}", WAIT).unwrap_err();
     assert!(error.contains("已停用"), "{error}");
 }
 
 #[test]
 fn hot_reload_swaps_wasm() {
     let temp = Temp::new("reload");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "热重载");
     let dir = temp.pack("demo");
-    write_command(&dir, "{}");
+    write_command(&dir, &wasm);
     let mut pack = load(&dir);
     assert_eq!(pack.poll(), Poll::Unchanged);
-    std::fs::write(dir.join("extension.wasm"), test_guest::command_guest("v2")).expect("写新模块");
+    std::fs::write(
+        dir.join("extension.wasm"),
+        test_guest::fixture_or_skip!(test_guest::fixture_b(), "热重载变体"),
+    )
+    .expect("写新模块");
     assert_eq!(pack.poll(), Poll::Reloaded);
-    assert_eq!(pack.invoke_wait("run", "{}", WAIT), Ok("v2".into()));
+    assert_eq!(pack.invoke_wait("run", "ping", WAIT), Ok("[b]ping".into()));
 }
 
 #[test]
 fn gate_denial_blocks_load() {
     let temp = Temp::new("gate-load");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "同意门禁");
     let dir = temp.pack("demo");
-    write_command(&dir, "{}");
+    write_command(&dir, &wasm);
     let gate: ConsentGate = Arc::new(|_, _| Err("未同意".into()));
     let error = Pack::load_with_gate(
         &dir,
@@ -129,8 +134,9 @@ fn gate_denial_blocks_load() {
 #[test]
 fn gate_denial_keeps_previous_version() {
     let temp = Temp::new("gate-reload");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "拒绝更新保留旧版");
     let dir = temp.pack("demo");
-    write_command(&dir, "v1");
+    write_command(&dir, &wasm);
     let allowed = Arc::new(AtomicBool::new(true));
     let gate: ConsentGate = {
         let allowed = Arc::clone(&allowed);
@@ -150,16 +156,17 @@ fn gate_denial_keeps_previous_version() {
     )
     .expect("首次加载");
     allowed.store(false, Ordering::Relaxed);
-    std::fs::write(dir.join("extension.wasm"), test_guest::command_guest("v2")).expect("写新模块");
+    std::fs::write(dir.join("extension.wasm"), b"not wasm at all").expect("写新模块");
     assert!(matches!(pack.poll(), Poll::Failed(_)));
-    assert_eq!(pack.invoke_wait("run", "{}", WAIT), Ok("v1".into()));
+    assert_eq!(pack.invoke_wait("run", "ping", WAIT), Ok("ping".into()));
 }
 
 #[test]
 fn removed_manifest_reports_removed() {
     let temp = Temp::new("removed");
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "清单删除");
     let dir = temp.pack("demo");
-    write_command(&dir, "{}");
+    write_command(&dir, &wasm);
     let mut pack = load(&dir);
     std::fs::remove_file(dir.join("manifest.json")).expect("删清单");
     assert_eq!(pack.poll(), Poll::Removed);
@@ -176,4 +183,19 @@ fn rejects_missing_wasm() {
     )
     .expect("写清单");
     assert!(Pack::load(&dir).is_err());
+}
+
+/// 合并顺序的另一半:变体 B 的主题色与 A 不同,后到者覆盖。
+#[test]
+fn variant_b_appearance_differs() {
+    let temp = Temp::new("variant-b");
+    let dir = temp.pack("demo");
+    test_guest::write_pack(
+        &dir,
+        &test_guest::appearance_manifest("demo"),
+        test_guest::fixture_or_skip!(test_guest::fixture_b(), "外观变体"),
+    );
+    let mut pack = load(&dir);
+    let patch = pack.dispatch(&SceneIn::default()).expect("有补丁");
+    assert_eq!(patch.accent, Some(FIXTURE_B_ACCENT));
 }

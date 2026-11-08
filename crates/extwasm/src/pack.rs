@@ -155,7 +155,7 @@ impl Pack {
             } else {
                 ExtState::Loaded
             },
-            // extism 运行期不提供当前占用,只报上限。
+            // 组件内存按页由 wasmtime 托管,当前占用不外露,只报上限。
             memory_used: 0,
             memory_limit: self.limits.memory_bytes as u64,
             dispatches: host.dispatches,

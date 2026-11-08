@@ -5,7 +5,7 @@
 | 类型 | 形态 | 适合 |
 |---|---|---|
 | 编译期扩展 | Rust 模块，随内核编译 | 输入方案、候选模块（如快捷输入、联想） |
-| Wasm 扩展 | `.wasm` 模块，由 Extism 宿主加载 | 候选外观、命令、声明式设置 |
+| Wasm 扩展 | Wasm 组件，由 wasmtime 加载 | 候选外观、命令、声明式设置 |
 | 原生扩展 | 独立可执行文件 | 较重的系统能力，如 OCR、语音识别；也可订阅候选窗状态 |
 
 官方扩展随发布提供：`shot-ocr`（截图识别）、`clipboard-history`（剪贴板历史）、`voice-asr`（语音输入）、`input-schemes`（输入方案），以及原生的 `ppocr` 与 `sensevoice`。下载地址与哈希见 `Catalog/official-extensions.json`。
@@ -43,7 +43,7 @@
 | `capabilities` | 申请的权限，用于授权页与同意记录 |
 | `events` | 订阅的宿主事件。目前只有 `candidate-state`，且仅原生扩展可用 |
 | `network` | `allow` 域名白名单。`needs` 含 `network` 时必填 |
-| `appearance` | 是否提供候选窗外观；为 `true` 时 Wasm 模块需导出 `lueying_appearance` |
+| `appearance` | 是否提供候选窗外观；为 `true` 时组件的 `appearance` 导出会被派发 |
 | `settings` | 声明式设置，值保存在 `config.toml` 的 `[ext.<id>]` 下 |
 
 ## 服务（needs）

@@ -1,26 +1,27 @@
 //! 组件宿主:WASI 0.3 组件模型的原生绑定(wasm ABI v2)。
 //!
-//! 载入判定不看清单:wasm 字节带组件魔数(版本段 0x0d)的走这里,核心模块
-//! 魔数的走 Extism 宿主(四个官方扩展迁移期内的桥)。安全语义与 v1 一致:
-//! 清单 needs 里没声明的服务不进 linker,扩展用到就在实例化时失败;燃料按
-//! 初始化/命令两段预算,耗尽即 trap;宿主服务阻塞在扩展自己的 worker 线程
-//! 上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错保护)。
+//! 扩展必须是标准 WebAssembly 组件(核心模块用 `wasm-tools component new`
+//! 打包);安全语义:清单 needs 里没声明的服务不进 linker,扩展用到就在
+//! 实例化时失败;燃料按初始化/命令两段预算,耗尽即 trap;线性内存有上限。
+//! 宿主服务阻塞在扩展自己的 worker 线程上,失败以 result 的 Err 分支回给
+//! 扩展并记入失败槽(吞错保护)。
 //!
 //! 绑定全部由 [`bindgen!`] 从 `lueying.wit` 生成:导入接口按包路径镜像
 //! (`lueying:ext/clipboard` → [`lueying::ext::clipboard`]),世界级导出
 //! ([`Extension`])在根。生成的 record 带 serde 派生,桥接层走 JSON 值与
 //! [`Registry`] 互通,与 v1 的 JSON 契约逐字节兼容。
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use wasmtime::component::{Component, HasSelf, Linker};
-use wasmtime::{Engine, Store};
+use wasmtime::{Engine, ResourceLimiter, Store};
 
 use lueying_extmeta::{Manifest, Service};
 use lueying_extproto::{SceneIn, ScenePatch};
 
-use crate::host::{Limits, call_fuel, timeout_for, wasmtime_config};
+use crate::host::{Limits, Metrics, call_fuel, timeout_for, wasmtime_config};
 use crate::services::Registry;
 
 wasmtime::component::bindgen!({
@@ -37,6 +38,8 @@ pub struct GuestState {
     cancelled: Arc<AtomicBool>,
     /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
     failure: Arc<Mutex<Option<String>>>,
+    /// 线性内存限额;拒绝增长时记一笔,指标据此把 OOM 与普通 trap 分开。
+    limiter: GuestLimiter,
 }
 
 impl GuestState {
@@ -257,6 +260,7 @@ pub(crate) struct ComponentGuest {
     bindings: Extension,
     manifest: Arc<Manifest>,
     limits: Limits,
+    metrics: Arc<Metrics>,
 }
 
 impl ComponentGuest {
@@ -267,13 +271,26 @@ impl ComponentGuest {
         services: Arc<Registry>,
         limits: Limits,
         cancelled: Arc<AtomicBool>,
+        metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
+        if !is_component(&wasm) {
+            return Err(
+                "不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into(),
+            );
+        }
+        if manifest.commands().is_empty() && !manifest.is_appearance() {
+            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
+        }
         let state = GuestState {
             caller: manifest.id.clone(),
             manifest: Arc::clone(&manifest),
             services,
             cancelled,
             failure: Arc::new(Mutex::new(None)),
+            limiter: GuestLimiter {
+                memory_bytes: limits.memory_bytes,
+                denied: false,
+            },
         };
         let mut config = wasmtime_config(limits);
         config.wasm_component_model(true);
@@ -282,6 +299,7 @@ impl ComponentGuest {
         let component =
             Component::new(&engine, &wasm).map_err(|error| format!("组件装载失败: {error}"))?;
         let mut store = Store::new(&engine, state);
+        store.limiter(|state| &mut state.limiter);
         store
             .set_fuel(limits.init_fuel)
             .map_err(|error| format!("初始化燃料设置失败: {error}"))?;
@@ -361,7 +379,7 @@ impl ComponentGuest {
             }
         }
         let bindings = Extension::instantiate(&mut store, &component, &linker)
-            .map_err(|error| format!("组件实例化失败: {error}"))?;
+            .map_err(|error| format!("组件实例化失败: {}", explain_link_error(&error.to_string())))?;
         let init = bindings
             .entry()
             .call_init(&mut store)
@@ -372,38 +390,67 @@ impl ComponentGuest {
             bindings,
             manifest,
             limits,
+            metrics,
         })
     }
 
     /// 跑一条命令;燃料按命令预算,服务失败经失败槽判死,不被吞掉。
     pub(crate) fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
+        let budget = call_fuel(&self.manifest, self.limits);
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits))
+            .set_fuel(budget)
             .map_err(|error| format!("命令燃料设置失败: {error}"))?;
-        let result = self
+        let started = Instant::now();
+        let outcome = self
             .bindings
             .entry()
             .call_command(&mut self.store, id, args)
-            .map_err(|error| format!("扩展命令执行失败: {error}"))?;
-        self.harvest_failure(result)
+            .map_err(|error| format!("扩展命令执行失败: {error}"));
+        self.note(started, budget, outcome.as_ref().err());
+        self.harvest_failure(outcome)
     }
 
     /// 跑一帧外观;`None` 表示这一帧不改。
     pub(crate) fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
+        let budget = call_fuel(&self.manifest, self.limits);
         self.store
-            .set_fuel(call_fuel(&self.manifest, self.limits))
+            .set_fuel(budget)
             .map_err(|error| format!("外观燃料设置失败: {error}"))?;
         let scene_json =
             serde_json::to_string(scene).map_err(|error| format!("场景序列化失败: {error}"))?;
-        let result = self
+        let started = Instant::now();
+        let outcome = self
             .bindings
             .entry()
             .call_appearance(&mut self.store, &scene_json)
-            .map_err(|error| format!("扩展外观执行失败: {error}"))?;
-        let json = self.harvest_failure(result)?;
-        json.map(|json| serde_json::from_str::<ScenePatch>(&json))
+            .map_err(|error| format!("扩展外观执行失败: {error}"));
+        self.note(started, budget, outcome.as_ref().err());
+        let json = self.harvest_failure(outcome)?;
+        json.map(|json| ScenePatch::parse(&json))
             .transpose()
             .map_err(|error| format!("外观补丁解析失败: {error}"))
+    }
+
+    /// 记一次派发的指标:次数、燃料步数、耗时峰值;燃料 trap 记超时,
+    /// 内存限额拒绝记 OOM。
+    fn note(&mut self, started: Instant, budget: u64, error: Option<&String>) {
+        let left = self.store.get_fuel().unwrap_or(budget);
+        let used = budget.saturating_sub(left);
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let metrics = Arc::clone(&self.metrics);
+        metrics.dispatches.fetch_add(1, Ordering::Relaxed);
+        metrics.steps.fetch_add(used, Ordering::Relaxed);
+        metrics
+            .dispatch_peak_us
+            .fetch_max(elapsed_us, Ordering::Relaxed);
+        metrics.step_peak_us.fetch_max(elapsed_us, Ordering::Relaxed);
+        if error.is_some_and(|error| error.to_ascii_lowercase().contains("fuel")) {
+            metrics.timeouts.fetch_add(1, Ordering::Relaxed);
+        }
+        if self.store.data().limiter.denied {
+            self.store.data_mut().limiter.denied = false;
+            metrics.ooms.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。
@@ -419,4 +466,46 @@ impl ComponentGuest {
 /// 载入判定:组件魔数(版本段 0x0d)为真。
 pub(crate) fn is_component(wasm: &[u8]) -> bool {
     wasm.len() >= 8 && wasm[4..8] == [0x0d, 0x00, 0x01, 0x00]
+}
+
+/// 把实例化错误翻译成人话:扩展用了清单没声明的宿主服务。
+fn explain_link_error(text: &str) -> String {
+    for service in Service::ALL {
+        if text.contains(&format!("lueying:ext/{}", service.key())) {
+            return format!(
+                "用到了没声明的宿主服务 {}(清单 needs 里补上)",
+                service.key()
+            );
+        }
+    }
+    text.to_string()
+}
+
+/// 线性内存限额:只管内存,增长越过上限就拒绝并记一笔。
+struct GuestLimiter {
+    memory_bytes: usize,
+    /// 上次派发里是否有被拒绝的增长;[`ComponentGuest::note`] 取走清零。
+    denied: bool,
+}
+
+impl ResourceLimiter for GuestLimiter {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> Result<bool, wasmtime::Error> {
+        let ok = desired <= self.memory_bytes;
+        self.denied |= !ok;
+        Ok(ok)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: u32,
+        _desired: u32,
+        _maximum: Option<u32>,
+    ) -> Result<bool, wasmtime::Error> {
+        Ok(true)
+    }
 }

@@ -140,10 +140,21 @@ jobs:
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          # 剪贴板已迁到组件 ABI:包成组件,宿主按魔数分流。
+          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
           wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
-          cp target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
+      # 组件测试客人:场景 E2E 的扩展行为检查由它驱动。
+      - name: 组件测试客人构建
+        run: |
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-init-loop/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_init_loop.wasm -o target/fixture-init-loop.wasm
+          echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_INIT_LOOP_WASM=$PWD/target/fixture-init-loop.wasm" >> "$GITHUB_ENV"
       - name: 场景 E2E
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -1,11 +1,12 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::Registry;
 
 use super::*;
 use crate::Limits;
-use crate::test_guest::{self, Temp};
+use crate::test_guest::{self, FIXTURE_ACCENT, FIXTURE_B_ACCENT, Temp};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -19,27 +20,27 @@ fn runtime(temp: &Temp, order: &[&str]) -> (Runtime, Vec<String>) {
     )
 }
 
-fn write_command_pack(temp: &Temp, id: &str, result: &str) {
+fn write_command_pack(temp: &Temp, id: &str, wasm: &[u8]) {
     test_guest::write_pack(
         &temp.pack(id),
         &test_guest::command_manifest(id, &[("run", "运行")]),
-        &test_guest::command_guest(result),
+        wasm,
     );
 }
 
-fn write_appearance_pack(temp: &Temp, id: &str, accent: u32) {
-    let patch = format!(r#"{{"accent":{accent}}}"#);
+fn write_appearance_pack(temp: &Temp, id: &str, wasm: &[u8]) {
     test_guest::write_pack(
         &temp.pack(id),
         &test_guest::appearance_manifest(id),
-        &test_guest::appearance_guest(&patch),
+        wasm,
     );
 }
 
 #[test]
 fn lists_commands_without_loading() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "命令列表");
     let temp = Temp::new("runtime-list");
-    write_command_pack(&temp, "demo", "{}");
+    write_command_pack(&temp, "demo", &wasm);
     let (runtime, errors) = runtime(&temp, &["demo"]);
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(runtime.loaded_count(), 0);
@@ -52,18 +53,23 @@ fn lists_commands_without_loading() {
 
 #[test]
 fn invoke_loads_and_runs() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "按需加载");
     let temp = Temp::new("runtime-invoke");
-    write_command_pack(&temp, "demo", "v1");
+    write_command_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
-    assert_eq!(runtime.invoke_wait("demo.run", "{}", WAIT), Ok("v1".into()));
+    assert_eq!(
+        runtime.invoke_wait("demo.run", "ping", WAIT),
+        Ok("ping".into())
+    );
     assert!(runtime.loaded("demo"));
     assert_eq!(runtime.loaded_count(), 1);
 }
 
 #[test]
 fn unknown_command_is_rejected() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "未知命令");
     let temp = Temp::new("runtime-unknown");
-    write_command_pack(&temp, "demo", "{}");
+    write_command_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
     assert!(runtime.invoke_wait("demo.other", "{}", WAIT).is_err());
     assert!(runtime.invoke_wait("missing.run", "{}", WAIT).is_err());
@@ -72,8 +78,9 @@ fn unknown_command_is_rejected() {
 
 #[test]
 fn idle_unload_drops_command_pack() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "空闲卸载");
     let temp = Temp::new("runtime-idle");
-    write_command_pack(&temp, "demo", "{}");
+    write_command_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
     runtime.activate("demo").expect("激活");
     assert!(runtime.loaded("demo"));
@@ -85,11 +92,12 @@ fn idle_unload_drops_command_pack() {
 
 #[test]
 fn appearance_pack_is_resident() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "外观常驻");
     let temp = Temp::new("runtime-resident");
-    write_appearance_pack(&temp, "demo", 1_193_046);
+    write_appearance_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
     let patch = runtime.dispatch(&SceneIn::default()).expect("有补丁");
-    assert_eq!(patch.accent, Some(1_193_046));
+    assert_eq!(patch.accent, Some(FIXTURE_ACCENT));
     assert!(runtime.loaded("demo"));
     runtime.set_idle(Duration::ZERO);
     runtime.idle_unload_at(Instant::now() + Duration::from_secs(1));
@@ -98,18 +106,21 @@ fn appearance_pack_is_resident() {
 
 #[test]
 fn dispatch_merges_in_order() {
+    let wasm_a = test_guest::fixture_or_skip!(test_guest::fixture(), "合并顺序 A");
+    let wasm_b = test_guest::fixture_or_skip!(test_guest::fixture_b(), "合并顺序 B");
     let temp = Temp::new("runtime-merge");
-    write_appearance_pack(&temp, "first", 0x11_2233);
-    write_appearance_pack(&temp, "second", 0x44_5566);
+    write_appearance_pack(&temp, "first", &wasm_a);
+    write_appearance_pack(&temp, "second", &wasm_b);
     let (mut runtime, _) = runtime(&temp, &["first", "second"]);
     let patch = runtime.dispatch(&SceneIn::default()).expect("有补丁");
-    assert_eq!(patch.accent, Some(0x44_5566));
+    assert_eq!(patch.accent, Some(FIXTURE_B_ACCENT));
 }
 
 #[test]
 fn private_scene_is_skipped() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "隐私跳过");
     let temp = Temp::new("runtime-private");
-    write_appearance_pack(&temp, "demo", 1);
+    write_appearance_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
     let scene = SceneIn {
         private: true,
@@ -121,8 +132,9 @@ fn private_scene_is_skipped() {
 
 #[test]
 fn poll_removes_deleted_manifest() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "清单删除卸载");
     let temp = Temp::new("runtime-poll");
-    write_command_pack(&temp, "demo", "{}");
+    write_command_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
     runtime.activate("demo").expect("激活");
     std::fs::remove_file(temp.pack("demo").join("manifest.json")).expect("删清单");
@@ -132,8 +144,9 @@ fn poll_removes_deleted_manifest() {
 
 #[test]
 fn duplicate_ids_keep_one_slot() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "重名去重");
     let temp = Temp::new("runtime-duplicate");
-    write_command_pack(&temp, "demo", "{}");
+    write_command_pack(&temp, "demo", &wasm);
     let (runtime, _) = runtime(&temp, &["demo", "demo"]);
     assert_eq!(runtime.commands().len(), 1);
 }

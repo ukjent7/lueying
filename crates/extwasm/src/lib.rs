@@ -1,20 +1,21 @@
-//! 运行期 Wasm 扩展:用户写标准 Extism 插件,宿主用 Extism 运行期执行。
+//! 运行期 Wasm 扩展:用户写标准 Wasm 组件(WASI 0.3 组件模型),宿主用
+//! wasmtime 的组件绑定执行。
 //!
 //! 扩展是一个目录(`%APPDATA%\lueying\extensions\<id>\`),里面一份
-//! `manifest.json` 与一个 `.wasm`。运行期不加载 DLL:Cranelift 编译、
-//! 线性内存隔离、燃料计量、表与内存上限都在 Extism 运行期的沙箱里生效。
+//! `manifest.json` 与一个 `extension.wasm` 组件。运行期不加载 DLL:
+//! Cranelift 编译、线性内存隔离、燃料计量、内存与栈上限都在 wasmtime
+//! 的沙箱里生效。
 //!
-//! 每个已加载扩展占一个 worker 线程,线程内持有插件与实例。命令在
-//! worker 上串行执行,截图/识别/面板这类宿主服务是阻塞调用:宿主把调用
-//! 交给服务缝的提供者,等它经 [`Done`] 回传,期间不碰引擎
-//! 线程。外观派发同样在 worker 上跑,候选窗线程只拿合并后的补丁。
+//! 每个已加载扩展占一个 worker 线程,线程内持有引擎、存储与类型化绑定。
+//! 命令在 worker 上串行执行,截图/识别/面板这类宿主服务是阻塞调用:宿主
+//! 把调用交给服务缝的提供者,等它经 [`Done`] 回传,期间不碰引擎线程。
+//! 外观派发同样在 worker 上跑,候选窗线程只拿合并后的补丁。
 //!
 //! # ABI
 //!
-//! 扩展就是标准 Extism 插件:wasm 模块从 `extism:host/env` 导入内核
-//! 函数(分配、输入输出、错误),需要宿主服务时再从 `extism:host/user`
-//! 导入 `lueying_<服务>`。命令按清单里的命令 id 调用同名导出,外观调用
-//! `lueying_appearance` 导出。完整记录见 `docs/extensions/wasm.md`。
+//! 组件按 `lueying.wit` 契约(`lueying:ext@2.0.0`)导出 `entry` 接口:
+//! `init`/`command`/`appearance`;宿主服务是 WIT 导入接口,按包路径镜像。
+//! 作者侧 SDK 见 `crates/extguest`。完整记录见 `docs/extensions/wasm.md`。
 //!
 //! # 边界
 //!

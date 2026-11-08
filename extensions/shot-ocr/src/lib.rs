@@ -2,7 +2,7 @@
 //!
 //! 编成 `wasm32-unknown-unknown` 后放进包目录,清单见同目录 `manifest.json`。
 
-use lueying_extguest::{Extension, capture_shot, notify_show, ocr_recognize, output_deliver};
+use lueying_extguest::Extension;
 use serde_json::json;
 
 #[derive(Default)]
@@ -36,4 +36,4 @@ impl Extension for ShotOcr {
     }
 }
 
-lueying_extguest::export!(ShotOcr, commands: [run]);
+lueying_extguest::export_component!(ShotOcr, commands: [run]);

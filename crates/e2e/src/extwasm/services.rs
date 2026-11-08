@@ -12,19 +12,20 @@ use std::time::Duration;
 use lueying_extwasm::bindings::{BindingTable, Input};
 use lueying_extwasm::{Done, Limits, Provider, Registry, Runtime, Service, When};
 
-use crate::extwasm::harness::{command_manifest, service_guest, write_pack};
+use crate::extwasm::harness::{command_manifest, fixture_or_skip, fixture_a, write_pack};
 use crate::harness::{Temp, push};
 
 /// 服务缝:needs 门控与缺提供者的错误回传。
 fn services(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("services");
 
-    // guest 导入了 ocr 但清单没有声明:实例化直接失败。
+    // guest 用了 notify 但清单没有声明:实例化直接失败。
     let gate_dir = temp.pack("gate");
     write_pack(
         &gate_dir,
         &command_manifest("gate", &["run"], &[]),
-        service_guest("ocr", "recognize", r#"{"file":"x"}"#),
+        &fixture,
     );
     let error = lueying_extwasm::Pack::load(&gate_dir)
         .err()
@@ -32,7 +33,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     push(
         checks,
         "未声明的服务在加载期被拒",
-        error.contains("没声明的宿主服务") && error.contains("ocr"),
+        error.contains("没声明的宿主服务") && error.contains("notify"),
         error,
     );
 
@@ -40,8 +41,8 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     let svc_dir = temp.pack("svc");
     write_pack(
         &svc_dir,
-        &command_manifest("svc", &["run"], &["notify"]),
-        service_guest("notify", "show", "{}"),
+        &command_manifest("svc", &["notify"], &["notify"]),
+        fixture,
     );
     let registry = Arc::new(Registry::new());
     let (mut runtime, errors) = Runtime::open_with(
@@ -54,7 +55,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
         push(checks, "服务包打开", false, format!("{errors:?}"));
         return;
     }
-    let _ = runtime.invoke("svc.run", "");
+    let _ = runtime.invoke("svc.notify", "{}");
     let settled = loop {
         let results = runtime.take_results();
         if !results.is_empty() {

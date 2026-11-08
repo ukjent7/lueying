@@ -91,19 +91,6 @@ jobs:
       - name: 安装 Linux 系统依赖
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
-      # 锁诊断(临时):metadata 过而 build 不过,目标化解析有缺口;重写后把
-      # 正确的锁存成产物,编译继续在正确锁上跑。
-      - name: 锁诊断
-        run: |
-          cargo metadata --format-version 1 >/dev/null
-          git diff --stat -- Cargo.lock
-          cp Cargo.lock /tmp/Cargo.lock.healed
-      - name: 上传诊断锁
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: Cargo.lock.healed
-          path: /tmp/Cargo.lock.healed
-          retention-days: 1
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
       # nextest 按测试进程并行,多 crate 单测一次跑完;范围与逐 crate 时代相同,
@@ -130,30 +117,31 @@ jobs:
       # nextest 不跑文档测试;ext 的「最小模块」示例是可编译用例,单独保留。
       - name: 文档测试
         run: cargo test --doc --workspace --exclude ppocr --locked
-      # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或 shot-ocr 编不过在这里红。
+      # 运行期 Wasm 官方 guest 用 wasm32 工具链编一遍:SDK 或扩展编不过在这里红。
+      # 产物包成组件放进扩展目录,扩展层单测与 Linux E2E 都用仓库路径读取。
       - name: Wasm guest 构建
         run: |
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-      # 非 Rust 语言也能写扩展:C 头文件与示例 guest 用 clang 编成 wasm,
-      # 扩展层单元测试会把这个模块真的跑一遍。本地没有 clang 就跳过。
-      - name: C 示例 guest 编译
+          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
+      # 组件测试客人:扩展宿主行为测试的真实组件(SDK 编出 + wasm-tools 打包)。
+      # 独立 crate,自带锁文件生成,不加 --locked。
+      - name: 组件测试客人构建
         run: |
-          command -v clang >/dev/null || { echo "没有 clang,跳过"; exit 0; }
-          linker=$(clang --target=wasm32-unknown-unknown -print-prog-name=wasm-ld 2>/dev/null || echo wasm-ld)
-          if ! command -v "$linker" >/dev/null && [ ! -x "$linker" ]; then
-            echo "没有 wasm-ld,跳过"
-            exit 0
-          fi
-          mkdir -p target/c-guest
-          clang --target=wasm32-unknown-unknown -nostdlib -O2 \
-            -I crates/extguest/include \
-            -Wl,--no-entry -Wl,--export-memory \
-            -o target/c-guest/example.wasm crates/extguest/c/example.c
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-init-loop/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_init_loop.wasm -o target/fixture-init-loop.wasm
+          echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_INIT_LOOP_WASM=$PWD/target/fixture-init-loop.wasm" >> "$GITHUB_ENV"
       # 扩展层单测:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合;
-      # CLI 的子命令解析与联网 broker 的协议层同场。放在 guest 构建之后:
-      # extwasm 的测试要真的加载 C 示例模块。
+      # CLI 的子命令解析与联网 broker 的协议层同场。
       - name: 扩展层单元测试
         run: |
           cargo nextest run --locked \
@@ -188,10 +176,17 @@ jobs:
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-          Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          # 剪贴板已迁到组件 ABI:核心模块包成组件再放扩展目录,宿主按魔数分流。
+          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
           wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
-          Copy-Item target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
+      # 扩展自检的外观客人:fixture-guest 编出的组件(固定主题色)。
+      - name: 组件测试客人构建
+        shell: pwsh
+        run: |
+          $env:CARGO_TARGET_DIR = "target"
+          cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
+          "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # 安装冒烟与发版打包共用同一份 Inno 脚本;push/PR 不需要安装器。
       # 直接下载固定版本,避免 choco 包版本漂移。
       - name: 安装 Inno Setup

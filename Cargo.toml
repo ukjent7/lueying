@@ -13,7 +13,7 @@ members = [
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
-    # 运行期扩展:Extism 插件宿主与每扩展 worker,平台无关
+    # 运行期扩展:组件宿主与每扩展 worker,平台无关
     "crates/extwasm",
     # 输入会话内核:候选视图同步与重排决策,Windows 与 macOS 共用
     "crates/session",
@@ -66,9 +66,14 @@ lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
-# Extism 运行期:插件格式、内核 ABI 与宿主函数都在这里。关掉默认特性,
-# 联网与文件注册留给宿主自己接,插件碰不到网络与磁盘。
-extism = { version = "1.41", default-features = false }
+# 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
+wasmtime = { version = "49", default-features = false, features = [
+    "std",
+    "runtime",
+    "cranelift",
+    "wat",
+    "component-model",
+] }
 slint = { version = "1.18.1", default-features = false, features = [
     "std",
     "compat-1-2",

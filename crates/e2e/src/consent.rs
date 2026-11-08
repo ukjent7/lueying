@@ -13,18 +13,19 @@ use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
 use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
 
-use crate::extwasm::harness::command_guest;
+use crate::extwasm::harness::{fixture_a, fixture_b, fixture_or_skip};
 use crate::harness::Temp;
 
 const MANIFEST: &str = r#"{
   "id":"demo","name":"演示","version":"1.0.0","api": 4,"wasm":"extension.wasm",
   "activate":{"commands":[{"id":"run","title":"运行"}]},
-  "needs":["capture"],
+  "needs":["notify"],
   "capabilities":["screen-capture"]
 }"#;
 
-const GUEST_V1: &str = r#"{"v":1}"#;
-const GUEST_V2: &str = r#"{"v":2}"#;
+/// 变体 A/B 的回显参数;两个产物都要能跑同一份清单。
+const ARGS: &str = "v1";
+const ARGS_B: &str = "[b]v1";
 
 fn gate(path: &Path) -> ConsentGate {
     let path = path.to_path_buf();
@@ -40,9 +41,9 @@ fn gate(path: &Path) -> ConsentGate {
     })
 }
 
-fn write_pack(dir: &Path, guest: &str) {
+fn write_pack(dir: &Path, wasm: &[u8]) {
     std::fs::write(dir.join("manifest.json"), MANIFEST).expect("写清单");
-    std::fs::write(dir.join("extension.wasm"), command_guest(guest)).expect("写 Wasm");
+    std::fs::write(dir.join("extension.wasm"), wasm).expect("写 Wasm");
 }
 
 fn approve(dir: &Path, consent: &Path) {
@@ -53,16 +54,18 @@ fn approve(dir: &Path, consent: &Path) {
 }
 
 fn run_command(pack: &mut Pack) -> String {
-    pack.invoke_wait("run", "{}", std::time::Duration::from_secs(30))
+    pack.invoke_wait("run", ARGS, std::time::Duration::from_secs(30))
         .unwrap_or_else(|error| format!("{error:?}"))
 }
 
 pub fn run(report: &mut String) -> usize {
+    let v1 = fixture_or_skip!(fixture_a());
+    let v2 = fixture_or_skip!(fixture_b());
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
     let temp = Temp::new("consent");
     let dir = temp.pack("demo");
     let consent = temp.root.join("consent.json");
-    write_pack(&dir, GUEST_V1);
+    write_pack(&dir, &v1);
     let registry = Arc::new(Registry::new());
 
     let denied = Pack::load_with_gate(
@@ -94,11 +97,11 @@ pub fn run(report: &mut String) -> usize {
         }
     };
     let loaded = run_command(&mut pack);
-    checks.push(("同意后加载", loaded == GUEST_V1, loaded));
+    checks.push(("同意后加载", loaded == ARGS, loaded));
 
     // 撤销同意并更新模块:热重载必须拒绝,旧版本继续可用。
     ConsentBook::default().save(&consent).expect("清空同意");
-    write_pack(&dir, GUEST_V2);
+    write_pack(&dir, &v2);
     let polled = pack.poll();
     checks.push((
         "更新需重新同意",
@@ -106,13 +109,13 @@ pub fn run(report: &mut String) -> usize {
         format!("{polled:?}"),
     ));
     let old = run_command(&mut pack);
-    checks.push(("拒绝更新保留旧版本", old == GUEST_V1, old));
+    checks.push(("拒绝更新保留旧版本", old == ARGS, old));
 
     approve(&dir, &consent);
     match Pack::load_with_gate(&dir, Limits::default(), registry, Some(gate(&consent))) {
         Ok(mut updated) => {
             let version = run_command(&mut updated);
-            checks.push(("重新同意后换新版本", version == GUEST_V2, version));
+            checks.push(("重新同意后换新版本", version == ARGS_B, version));
         }
         Err(error) => checks.push(("重新同意后换新版本", false, error)),
     }

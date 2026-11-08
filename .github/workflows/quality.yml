@@ -95,10 +95,21 @@ jobs:
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-          cp target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          # 剪贴板已迁到组件 ABI:包成组件,宿主按魔数分流。
+          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
           wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
-          cp target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
+      # 组件测试客人:场景 E2E 的扩展行为检查由它驱动。
+      - name: 组件测试客人构建
+        run: |
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-init-loop/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_init_loop.wasm -o target/fixture-init-loop.wasm
+          echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
+          echo "LUEYING_FIXTURE_INIT_LOOP_WASM=$PWD/target/fixture-init-loop.wasm" >> "$GITHUB_ENV"
       - name: 主词典 E2E + 候选准确率基准
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--bench' || '--bench-fast' }}
       - name: 报告摘要
@@ -137,15 +148,27 @@ jobs:
       # 定时跑不区分 PR,恢复并保存缓存。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # 官方 guest:win-e2e 装扩展与安装冒烟的发布包都要它;产物拷进仓库路径供运行期读取。
+      - name: 安装 wasm-tools
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: wasm-tools
       - name: 构建官方 guest
         shell: pwsh
         run: |
           cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
           cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
           cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-          Copy-Item target/wasm32-unknown-unknown/release/shot_ocr.wasm extensions/shot-ocr/extension.wasm
-          Copy-Item target/wasm32-unknown-unknown/release/clipboard_history.wasm extensions/clipboard-history/extension.wasm
-          Copy-Item target/wasm32-unknown-unknown/release/voice_asr.wasm extensions/voice-asr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
+          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
+      # 扩展自检的外观客人:fixture-guest 编出的组件(固定主题色)。
+      - name: 组件测试客人构建
+        shell: pwsh
+        run: |
+          $env:CARGO_TARGET_DIR = "target"
+          cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
+          "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # 安装冒烟每次都编译真实安装包,复用与发版相同的 Inno 脚本。
       - name: 安装 Inno Setup
         shell: pwsh

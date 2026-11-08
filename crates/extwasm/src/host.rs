@@ -1,22 +1,17 @@
-//! Extism 运行期扩展宿主:每个扩展一个 worker,线程内跑 Extism 插件。
+//! 运行期扩展宿主:每个扩展一个 worker,线程内跑 Wasm 组件。
 //!
-//! 扩展就是标准 Extism 插件:wasm 模块从 `extism:host/env` 导入内核函数
-//! (分配、输入输出、错误),需要宿主服务时再从 `extism:host/user` 导入
-//! `lueying_<服务>`。宿主用 extism 的运行期执行插件,别的 Extism 宿主写的
-//! 插件也能直接放进扩展目录。
+//! 扩展是标准 WebAssembly 组件(WASI 0.3 组件模型):宿主按 `lueying.wit`
+//! 契约类型化调用 `init`/`command`/`appearance`,宿主服务以 WIT 导入提供。
 //!
 //! 命令与外观都在 worker 上串行执行;宿主服务是阻塞调用:宿主把调用交给
 //! 服务缝的提供者,等它经 [`Done`] 回传,期间不碰引擎线程。
 //!
 //! # ABI
 //!
-//! - 命令:宿主按清单里的命令 id 调用同名导出,输入是参数 JSON,输出是
-//!   结果 JSON;导出返回非 0 或设了 extism 错误就是失败。
-//! - 外观:宿主调用 `lueying_appearance` 导出,输入是场景 JSON。
-//! - 服务:`extism:host/user` 里的 `lueying_<服务>` 收一段 JSON
-//!   `{"method":…,"args":…}`,回一段 JSON `{"ok":true,"value":…}`。
-//!   服务失败不静默:错误信封交给 guest,guest 自己失败时用它的错误文本;
-//!   guest 收到信封仍返回成功,宿主按这条服务错误把这次调用判失败。
+//! - 命令:`entry.command(id, args)` 收参数 JSON,回结果 JSON。
+//! - 外观:`entry.appearance(scene)` 收场景 JSON,回补丁 JSON 或空。
+//! - 服务:WIT 导入接口按包路径镜像;清单 `needs` 里没声明的服务不进
+//!   linker,guest 用到就在实例化时失败。
 //!
 //! # 边界
 //!
@@ -24,44 +19,29 @@
 //! - 初始化与每次调用都有燃料预算;燃料烧完即 trap,连续 [`MAX_FAULTS`]
 //!   次失败停用该包。
 //! - 隐私字段([`SceneIn::private`])直接跳过,guest 不会收到那次状态。
-//! - 清单 `needs` 里没声明的服务不链接,guest 用到就在实例化时失败。
+//! - 清单没有任何命令且不提供外观的包,加载期就拒绝。
+//!
+//! 打包与作者侧 SDK 见 `crates/extguest`;完整记录见 `docs/extensions/wasm.md`。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use extism::{
-    CompiledPlugin, CurrentPlugin, Manifest as ExtismManifest, Plugin, PluginBuilder, UserData,
-    Val, ValType, Wasm,
-};
-use lueying_extproto::{MAX_RESULT_BYTES, SceneIn, ScenePatch};
+use lueying_extproto::{SceneIn, ScenePatch};
 
 use crate::Manifest;
 use crate::Registry;
 use crate::manifest::Service;
 
-/// worker 线程的宿主栈;extism 内核、wasm 帧(wasmtime 把
-/// [`Limits::stack_bytes`] 当真实线程栈约束)与宿主函数的 serde 解析都要
-/// 装下,固定 2 MiB。
+/// worker 线程的宿主栈;wasm 帧(wasmtime 把 [`Limits::stack_bytes`] 当真实
+/// 线程栈约束)与宿主函数的 serde 解析都要装下,固定 2 MiB。
 const WORKER_STACK: usize = 2 << 20;
-
-/// extism 内核的一页;内存上限按页算。
-const PAGE: usize = 65536;
-
-/// 宿主函数的命名空间;extism 内核在 `extism:host/env`,宿主服务在用户区。
-const USER_NS: &str = "extism:host/user";
-
-/// 外观导出名;清单 `appearance` 为 true 时必须存在。
-const APPEARANCE_EXPORT: &str = "lueying_appearance";
-
-/// 初始化导出名;存在就调一次,失败即加载失败。
-const INIT_EXPORT: &str = "lueying_init";
 
 /// 运行期上限。
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// 线性内存上限(字节);换算成 extism 的页数上限。
+    /// 线性内存上限(字节)。
     pub memory_bytes: usize,
     /// Wasm 值栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
     /// 必须明显小于 worker 线程栈(WORKER_STACK)。
@@ -111,12 +91,12 @@ pub struct HostMetrics {
 
 #[derive(Default)]
 pub(crate) struct Metrics {
-    dispatches: AtomicU64,
-    steps: AtomicU64,
-    dispatch_peak_us: AtomicU64,
-    step_peak_us: AtomicU64,
-    timeouts: AtomicU64,
-    ooms: AtomicU64,
+    pub(crate) dispatches: AtomicU64,
+    pub(crate) steps: AtomicU64,
+    pub(crate) dispatch_peak_us: AtomicU64,
+    pub(crate) step_peak_us: AtomicU64,
+    pub(crate) timeouts: AtomicU64,
+    pub(crate) ooms: AtomicU64,
 }
 
 impl Metrics {
@@ -194,13 +174,13 @@ impl Worker {
             .name(format!("ext-wasm-{caller}"))
             .stack_size(WORKER_STACK)
             .spawn(move || {
-                let mut guest = match GuestRuntime::load(
+                let mut guest = match crate::component::ComponentGuest::new(
                     wasm,
                     manifest,
                     services,
                     limits,
                     Arc::clone(&worker_cancelled),
-                    Arc::clone(&worker_metrics),
+                    worker_metrics,
                 ) {
                     Ok(guest) => {
                         let _ = ready_tx.send(Ok(()));
@@ -367,223 +347,6 @@ impl Drop for Worker {
     }
 }
 
-/// 一个 extism 插件实例。
-pub(crate) struct Guest {
-    plugin: Plugin,
-    manifest: Arc<Manifest>,
-    metrics: Arc<Metrics>,
-    /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
-    failure: Arc<Mutex<Option<String>>>,
-}
-
-/// 双 ABI 的 guest 外观:迁移期内,组件魔数的模块走组件宿主,核心模块
-/// 走 Extism 宿主;四个官方扩展迁完后 Extism 分支连同本枚举一起退场。
-pub(crate) enum GuestRuntime {
-    Extism(Box<Guest>),
-    Component(crate::component::ComponentGuest),
-}
-
-impl GuestRuntime {
-    pub(crate) fn load(
-        wasm: Vec<u8>,
-        manifest: Arc<Manifest>,
-        services: Arc<Registry>,
-        limits: Limits,
-        cancelled: Arc<AtomicBool>,
-        metrics: Arc<Metrics>,
-    ) -> Result<Self, String> {
-        if crate::component::is_component(&wasm) {
-            Ok(Self::Component(crate::component::ComponentGuest::new(
-                wasm, manifest, services, limits, cancelled,
-            )?))
-        } else {
-            Ok(Self::Extism(Box::new(Guest::new(
-                wasm, manifest, services, limits, cancelled, metrics,
-            )?)))
-        }
-    }
-
-    fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
-        match self {
-            Self::Extism(guest) => guest.command(id, args),
-            Self::Component(guest) => guest.command(id, args),
-        }
-    }
-
-    fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
-        match self {
-            Self::Extism(guest) => guest.appearance(scene),
-            Self::Component(guest) => guest.appearance(scene),
-        }
-    }
-}
-
-impl Guest {
-    fn new(
-        wasm: Vec<u8>,
-        manifest: Arc<Manifest>,
-        services: Arc<Registry>,
-        limits: Limits,
-        cancelled: Arc<AtomicBool>,
-        metrics: Arc<Metrics>,
-    ) -> Result<Self, String> {
-        let mut builder = PluginBuilder::new(extism_manifest(&wasm, limits))
-            .with_wasi(true)
-            .with_cache_disabled()
-            .with_fuel_limit(call_fuel(&manifest, limits))
-            .with_initialization_fuel_limit(limits.init_fuel)
-            .with_wasmtime_config(wasmtime_config(limits));
-        let failure = Arc::new(Mutex::new(None));
-        for service in &manifest.needs {
-            builder = builder.with_function_in_namespace(
-                USER_NS,
-                service_function_name(*service),
-                [ValType::I64],
-                [ValType::I64],
-                UserData::new(ServiceCtx {
-                    caller: manifest.id.clone(),
-                    service: *service,
-                    services: Arc::clone(&services),
-                    cancelled: Arc::clone(&cancelled),
-                    failure: Arc::clone(&failure),
-                }),
-                service_call,
-            );
-        }
-        builder = builder.with_function_in_namespace(
-            USER_NS,
-            "lueying_timeout",
-            [ValType::I64],
-            [ValType::I32],
-            UserData::new(TimeoutCtx {
-                cancelled: Arc::clone(&cancelled),
-            }),
-            timeout_call,
-        );
-        let compiled = CompiledPlugin::new(builder)
-            .map_err(|error| format!("扩展 {} 编译失败: {error}", manifest.id))?;
-        let plugin = Plugin::new_from_compiled(&compiled)
-            .map_err(|error| format!("扩展 {} 加载失败: {error}", explain_link_error(&error)))?;
-        for command in manifest.commands() {
-            if !plugin.function_exists(&command.id) {
-                return Err(format!("扩展 {} 没有导出命令 {}", manifest.id, command.id));
-            }
-        }
-        if manifest.is_appearance() && !plugin.function_exists(APPEARANCE_EXPORT) {
-            return Err(format!("扩展 {} 没有导出 {APPEARANCE_EXPORT}", manifest.id));
-        }
-        if manifest.commands().is_empty() && !manifest.is_appearance() {
-            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
-        }
-        let mut guest = Self {
-            plugin,
-            manifest,
-            metrics,
-            failure,
-        };
-        guest.init()?;
-        Ok(guest)
-    }
-
-    /// 插件导出了初始化入口就调一次;失败即加载失败。
-    fn init(&mut self) -> Result<(), String> {
-        if !self.plugin.function_exists(INIT_EXPORT) {
-            return Ok(());
-        }
-        let outcome = self.call(INIT_EXPORT, "");
-        match outcome {
-            Ok(_) => match self.take_failure() {
-                Some(error) => Err(format!("扩展 {} 初始化失败: {error}", self.manifest.id)),
-                None => Ok(()),
-            },
-            Err(error) => Err(format!("扩展 {} 初始化失败: {error}", self.manifest.id)),
-        }
-    }
-
-    fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
-        let started = Instant::now();
-        let outcome = self.call(id, args);
-        self.note(started);
-        match outcome {
-            Ok(bytes) => {
-                // 服务失败过的调用不算成功:guest 自己失败时用它的错误文本,
-                // guest 仍返回成功就按服务错误顶回去,失败不会被静默吞掉。
-                if let Some(error) = self.take_failure() {
-                    return Err(format!("命令 {id} 执行失败: {error}"));
-                }
-                String::from_utf8(bytes).map_err(|_| format!("命令 {id} 的结果不是 UTF-8"))
-            }
-            Err(error) => Err(format!("命令 {id} 执行失败: {error}")),
-        }
-    }
-
-    fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
-        let json = scene.to_json()?;
-        let started = Instant::now();
-        let outcome = self.call(APPEARANCE_EXPORT, &json);
-        self.note(started);
-        let bytes = outcome.map_err(|error| format!("外观派发失败: {error}"))?;
-        if let Some(error) = self.take_failure() {
-            return Err(format!("外观派发失败: {error}"));
-        }
-        let text = String::from_utf8(bytes).map_err(|_| "外观补丁不是 UTF-8".to_string())?;
-        if text.trim().is_empty() {
-            return Ok(None);
-        }
-        ScenePatch::parse(&text).map(Some)
-    }
-
-    /// 调一个导出;trap 之后实例照旧能用,extism 每次调用都重置内核状态。
-    fn call(&mut self, export: &str, input: &str) -> Result<Vec<u8>, extism::Error> {
-        // 上一轮的服务失败不带进这一轮。
-        let _ = self.take_failure();
-        let outcome = self.plugin.call::<&[u8], Vec<u8>>(export, input.as_bytes());
-        if let Err(error) = &outcome {
-            self.classify(error);
-        }
-        outcome
-    }
-
-    /// 把错误归类:燃料耗尽算超时,内存限额算超限。
-    fn classify(&self, error: &extism::Error) {
-        let text = error.to_string().to_ascii_lowercase();
-        if text.contains("fuel") {
-            self.metrics.timeouts.fetch_add(1, Ordering::Relaxed);
-        }
-        if text.contains("oom") || text.contains("memory") || text.contains("grow") {
-            self.metrics.ooms.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    /// 取走本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
-    fn take_failure(&self) -> Option<String> {
-        self.failure.lock().ok().and_then(|mut slot| slot.take())
-    }
-
-    fn note(&mut self, started: Instant) {
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let used = self.plugin.fuel_consumed().unwrap_or(0);
-        self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
-        self.metrics.steps.fetch_add(used, Ordering::Relaxed);
-        self.metrics
-            .dispatch_peak_us
-            .fetch_max(elapsed_us, Ordering::Relaxed);
-        self.metrics
-            .step_peak_us
-            .fetch_max(elapsed_us, Ordering::Relaxed);
-    }
-}
-
-/// 造一份 extism 清单:模块、内存页上限与联网策略。
-///
-/// 联网一律走宿主 broker:extism 自己不放行任何域名,清单里的
-/// `network.allow` 由宿主的服务提供者逐请求强制。
-fn extism_manifest(wasm: &[u8], limits: Limits) -> ExtismManifest {
-    let mut out = ExtismManifest::new([Wasm::data(wasm.to_vec())]).disallow_all_hosts();
-    out.memory.max_pages = Some((limits.memory_bytes / PAGE).max(1) as u32);
-    out
-}
-
 /// 每次调用的燃料预算;只有外观的包按帧算,带命令的包按命令算。
 pub(crate) fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
     if manifest.commands().is_empty() {
@@ -593,161 +356,12 @@ pub(crate) fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
     }
 }
 
-/// wasmtime 配置;栈上限按 [`Limits`] 配,其余用 extism 的默认。
+/// wasmtime 配置;栈上限按 [`Limits`] 配,其余默认(燃料、组件模型由
+/// [`crate::component::ComponentGuest`] 自己开)。
 pub(crate) fn wasmtime_config(limits: Limits) -> wasmtime::Config {
     let mut config = wasmtime::Config::default();
     config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
     config
-}
-
-/// 服务在 extism 用户区的函数名。
-fn service_function_name(service: Service) -> String {
-    format!("lueying_{}", service.key())
-}
-
-/// 把链接错误翻译成人话:扩展用了清单没声明的宿主服务。
-fn explain_link_error(error: &extism::Error) -> String {
-    let text = error.to_string();
-    for service in Service::ALL {
-        if text.contains(&service_function_name(service)) {
-            return format!(
-                "用到了没声明的宿主服务 {}(清单 needs 里补上)",
-                service.key()
-            );
-        }
-    }
-    text
-}
-
-/// 服务宿主函数的上下文。
-struct ServiceCtx {
-    /// 调用方扩展 id;审计与按扩展隔离的存储用。
-    caller: String,
-    /// 服务。
-    service: Service,
-    /// 服务提供者表。
-    services: Arc<Registry>,
-    /// 取消标志;扩展卸载时置位。
-    cancelled: Arc<AtomicBool>,
-    /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
-    failure: Arc<Mutex<Option<String>>>,
-}
-
-/// 一次服务调用的请求;guest 发来的 JSON。
-#[derive(serde::Deserialize)]
-struct ServiceRequest {
-    /// 方法名;宿主按服务白名单核。
-    method: String,
-    /// 参数;原样转给提供者。
-    #[serde(default)]
-    args: serde_json::Value,
-}
-
-/// 可取消等待的上下文。
-struct TimeoutCtx {
-    /// 取消标志;扩展卸载时置位。
-    cancelled: Arc<AtomicBool>,
-}
-
-/// 宿主服务:收一段 JSON 请求,回一段 JSON 响应。
-///
-/// 请求是 `{"method":…,"args":…}`;响应是 `{"ok":true,"value":…}` 或
-/// `{"ok":false,"error":…}`。返回值是 extism 内存里那块响应的偏移。
-fn service_call(
-    plugin: &mut CurrentPlugin,
-    inputs: &[Val],
-    outputs: &mut [Val],
-    user_data: UserData<ServiceCtx>,
-) -> Result<(), extism::Error> {
-    let ctx = user_data.get()?;
-    let ctx = ctx
-        .lock()
-        .map_err(|_| extism::Error::msg("服务上下文锁坏了"))?;
-    let offset = inputs.first().and_then(Val::i64).unwrap_or(0).max(0) as u64;
-    let raw = read_block(plugin, offset)?;
-    let request: ServiceRequest = serde_json::from_slice(&raw)
-        .map_err(|error| extism::Error::msg(format!("服务请求解析失败: {error}")))?;
-    let timeout = timeout_for(ctx.service, &request.method);
-    let args = match &request.args {
-        serde_json::Value::Null => "{}".to_string(),
-        serde_json::Value::String(text) => text.clone(),
-        other => other.to_string(),
-    };
-    let result = ctx.services.call_cancellable(
-        &ctx.caller,
-        ctx.service.key(),
-        &request.method,
-        &args,
-        timeout,
-        Some(&ctx.cancelled),
-    );
-    let envelope = match result {
-        Ok(value) => {
-            let value = serde_json::from_str::<serde_json::Value>(&value)
-                .unwrap_or(serde_json::Value::String(value));
-            serde_json::json!({ "ok": true, "value": value })
-        }
-        Err(error) => {
-            // 失败同时记一笔:guest 收到信封后仍返回成功,宿主按这条把它判失败。
-            if let Ok(mut slot) = ctx.failure.lock() {
-                *slot = Some(error.clone());
-            }
-            serde_json::json!({ "ok": false, "error": error })
-        }
-    };
-    let bytes = serde_json::to_vec(&envelope)
-        .map_err(|error| extism::Error::msg(format!("服务响应序列化失败: {error}")))?;
-    let handle = plugin.memory_alloc(bytes.len() as u64)?;
-    plugin.memory_bytes_mut(handle)?.copy_from_slice(&bytes);
-    outputs[0] = plugin.memory_to_val(handle);
-    Ok(())
-}
-
-/// 宿主侧 `lueying_timeout(ms)`:可取消的等待,卸载时 50 ms 内返回。
-fn timeout_call(
-    _plugin: &mut CurrentPlugin,
-    inputs: &[Val],
-    outputs: &mut [Val],
-    user_data: UserData<TimeoutCtx>,
-) -> Result<(), extism::Error> {
-    let ctx = user_data.get()?;
-    let ctx = ctx
-        .lock()
-        .map_err(|_| extism::Error::msg("等待上下文锁坏了"))?;
-    let mut left = inputs
-        .first()
-        .and_then(Val::i64)
-        .unwrap_or(0)
-        .clamp(0, 600_000) as u64;
-    while left > 0 {
-        if ctx.cancelled.load(Ordering::Relaxed) {
-            outputs[0] = Val::I32(-1);
-            return Ok(());
-        }
-        let step = left.min(50);
-        std::thread::sleep(Duration::from_millis(step));
-        left -= step;
-    }
-    let cancelled = ctx.cancelled.load(Ordering::Relaxed);
-    outputs[0] = Val::I32(if cancelled { -1 } else { 0 });
-    Ok(())
-}
-
-/// 从 extism 内存读一块数据。
-fn read_block(plugin: &mut CurrentPlugin, offset: u64) -> Result<Vec<u8>, extism::Error> {
-    if offset == 0 {
-        return Ok(Vec::new());
-    }
-    let handle = plugin
-        .memory_handle(offset)
-        .ok_or_else(|| extism::Error::msg("宿主服务收到无效的内存偏移"))?;
-    let bytes = plugin.memory_bytes(handle)?;
-    if bytes.len() > MAX_RESULT_BYTES {
-        return Err(extism::Error::msg(format!(
-            "服务请求超过 {MAX_RESULT_BYTES} 字节"
-        )));
-    }
-    Ok(bytes.to_vec())
 }
 
 /// 服务的宿主等待时限。面板要等用户操作,识别要跑满传输时限,单独放宽。

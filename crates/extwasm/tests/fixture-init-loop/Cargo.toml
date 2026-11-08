@@ -1,0 +1,21 @@
+[package]
+name = "fixture-init-loop"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "扩展宿主测试客人:init 死循环,初始化燃料打断用"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lueying-extguest = { path = "../../extguest" }
+serde_json = "1"
+wit-bindgen = "0.63"
+
+[profile.release]
+lto = true
+codegen-units = 1

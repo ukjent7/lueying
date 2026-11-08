@@ -3,10 +3,8 @@ name = "lueying-extguest"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "掠影 Wasm 扩展的同步 Rust SDK:导出宏、宿主服务封装与结果缓冲区"
+description = "掠影 Wasm 扩展的同步 Rust SDK:组件导出宏与宿主服务外观"
 
 [dependencies]
 # 场景协议与服务结果类型,与宿主共用。
 lueying-extproto.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
