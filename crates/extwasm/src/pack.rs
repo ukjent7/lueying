@@ -12,7 +12,7 @@ use lueying_extmeta::metrics::{ExtStat, ExtState};
 
 use crate::ConsentGate;
 use crate::MAX_FAULTS;
-use crate::MAX_WASM_BYTES;
+use crate::{MAX_WASM_BYTES, MAX_WASM_BYTES_ENGINE};
 use crate::Registry;
 use crate::host::{Finished, Limits, Worker};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
@@ -69,8 +69,8 @@ impl Pack {
 
     /// 用指定上限、服务注册表与同意检查加载一个包目录。
     ///
-    /// 清单 `needs` 决定宿主要链接哪些导入;没声明的服务在实例化时直接
-    /// 失败,不会留到运行期再拒绝。
+    /// 清单 `needs` 是调用期门控:没声明的服务一调即拒,不会等到出错
+    /// 结果落地。
     pub fn load_with_gate(
         dir: &Path,
         limits: Limits,
@@ -84,7 +84,12 @@ impl Pack {
         if let Some(gate) = &gate {
             gate(&manifest, dir)?;
         }
-        let wasm = read_capped(&dir.join(manifest.wasm_main()), MAX_WASM_BYTES)
+        let wasm_cap = if manifest.engine {
+            MAX_WASM_BYTES_ENGINE
+        } else {
+            MAX_WASM_BYTES
+        };
+        let wasm = read_capped(&dir.join(manifest.wasm_main()), wasm_cap)
             .map_err(|error| format!("读 Wasm 模块 {} 失败: {error}", manifest.wasm_main()))?;
         let wasm_hash = hash(&wasm);
         let worker = Worker::spawn(
@@ -274,7 +279,12 @@ impl Pack {
         if let Err(error) = check_dir(&self.dir, &manifest) {
             return self.stale(manifest_hash, 0, error);
         }
-        let wasm = match read_capped(&self.dir.join(manifest.wasm_main()), MAX_WASM_BYTES) {
+        let wasm_cap = if manifest.engine {
+            MAX_WASM_BYTES_ENGINE
+        } else {
+            MAX_WASM_BYTES
+        };
+        let wasm = match read_capped(&self.dir.join(manifest.wasm_main()), wasm_cap) {
             Ok(bytes) => bytes,
             Err(error) => {
                 let error = format!("读 Wasm 模块 {} 失败: {error}", manifest.wasm_main());

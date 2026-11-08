@@ -383,6 +383,24 @@ fn rejects_oversized_manifest() {
 }
 
 #[test]
+fn parses_engine_flag() {
+    let mut value = base();
+    value["engine"] = json!(true);
+    let manifest = parse(value).expect("引擎声明应通过");
+    assert!(manifest.engine);
+}
+
+#[test]
+fn native_manifest_cannot_declare_engine() {
+    let mut value = shot_ocr();
+    value["kind"] = json!("native");
+    value["exe"] = json!("ppocr.exe");
+    value.as_object_mut().unwrap().remove("wasm");
+    value["engine"] = json!(true);
+    assert!(parse(value).is_err());
+}
+
+#[test]
 fn parses_declarative_settings() {
     let mut value = shot_ocr();
     value["settings"] = json!([

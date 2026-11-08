@@ -74,6 +74,26 @@ pub(crate) fn command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
     .to_string()
 }
 
+/// 一份声明引擎级预算的命令清单;engine 标志的载入路径用。
+pub(crate) fn engine_command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
+    json!({
+        "id": id,
+        "name": "演示",
+        "version": "1.0.0",
+        "api": 4,
+        "wasm": "extension.wasm",
+        "engine": true,
+        "needs": ["notify"],
+        "activate": {
+            "commands": commands
+                .iter()
+                .map(|(id, title)| json!({ "id": id, "title": title }))
+                .collect::<Vec<_>>()
+        }
+    })
+    .to_string()
+}
+
 /// 一份只提供外观的清单。
 pub(crate) fn appearance_manifest(id: &str) -> String {
     json!({
@@ -116,7 +136,7 @@ pub(crate) fn fixture_b() -> Option<Vec<u8>> {
     component_bytes("LUEYING_FIXTURE_B_WASM")
 }
 
-/// JS 工具链(componentize-js)编出的组件客人,验证非 Rust 路径。
+/// JS 工具链(componentize-qjs)编出的组件客人,验证非 Rust 路径。
 pub(crate) fn js_fixture() -> Option<Vec<u8>> {
     component_bytes("LUEYING_JS_FIXTURE_WASM")
 }

@@ -1,10 +1,11 @@
 //! 组件宿主:WASI 0.3 组件模型的原生绑定(wasm ABI v2)。
 //!
 //! 扩展必须是标准 WebAssembly 组件(核心模块用 `wasm-tools component new`
-//! 打包);安全语义:清单 needs 里没声明的服务不进 linker,扩展用到就在
-//! 实例化时失败;燃料按初始化/命令两段预算,耗尽即 trap;线性内存有上限。
-//! 宿主服务阻塞在扩展自己的 worker 线程上,失败以 result 的 Err 分支回给
-//! 扩展并记入失败槽(吞错保护)。
+//! 打包);安全语义:12 个服务接口全量链接(非 Rust 工具链不裁剪导入),
+//! 是否放行按调用逐次核清单 needs,没声明的服务一调即拒;燃料按初始化/
+//! 命令两段预算,耗尽即 trap;线性内存有上限。宿主服务阻塞在扩展自己的
+//! worker 线程上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错
+//! 保护)。
 //!
 //! 绑定全部由 [`bindgen!`] 从 `lueying.wit` 生成:导入接口按包路径镜像
 //! (`lueying:ext/clipboard` → [`lueying::ext::clipboard`]),世界级导出
@@ -281,20 +282,19 @@ pub(crate) struct ComponentGuest {
 
 impl ComponentGuest {
     /// 装载组件并跑 init;燃料按初始化预算。
+    ///
+    /// 引擎与组件由调用方先行编译(见 [`build_engine`]/[`build_component`]),
+    /// 这里只做实例化与 init,受 30 秒就绪窗口约束;init 的 CPU 有燃料
+    /// 封顶,不会无限等。
     pub(crate) fn new(
-        wasm: Vec<u8>,
+        engine: Engine,
+        component: Component,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
         limits: Limits,
         cancelled: Arc<AtomicBool>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
-        if !is_component(&wasm) {
-            return Err("不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into());
-        }
-        if manifest.commands().is_empty() && !manifest.is_appearance() {
-            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
-        }
         let state = GuestState {
             caller: manifest.id.clone(),
             manifest: Arc::clone(&manifest),
@@ -308,106 +308,89 @@ impl ComponentGuest {
             table: ResourceTable::new(),
             wasi: WasiCtx::builder().build(),
         };
-        let mut config = wasmtime_config(limits);
-        config.wasm_component_model(true);
-        config.consume_fuel(true);
-        let engine = Engine::new(&config).map_err(|error| format!("组件引擎启动失败: {error}"))?;
-        let component =
-            Component::new(&engine, &wasm).map_err(|error| format!("组件装载失败: {error}"))?;
         let mut store = Store::new(&engine, state);
         store.limiter(|state| &mut state.limiter);
         store
             .set_fuel(limits.init_fuel)
             .map_err(|error| format!("初始化燃料设置失败: {error}"))?;
 
-        // 只有清单 needs 里声明的服务才进 linker;guest 用到未声明的服务
-        // 就在实例化时报错,与 v1 的链接期语义一致。
+        // 12 个服务接口全部进 linker:非 Rust 工具链(componentize-qjs、
+        // componentize-py)按整个世界生成导入,不做裁剪。是否放行不看
+        // 链接看调用——GuestState::call 按清单 needs 逐次门控,没声明的
+        // 服务一调即拒,安全语义不变。
         let mut linker = Linker::new(&engine);
-        for service in &manifest.needs {
-            match service.key() {
-                "capture" => {
-                    lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                        &mut linker,
-                        |state| state,
-                    )
-                    .map_err(|error| format!("服务 capture 链接失败: {error}"))?
-                }
-                "ocr" => lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 ocr 链接失败: {error}"))?,
-                "clipboard" => lueying::ext::clipboard::add_to_linker::<
-                    GuestState,
-                    HasSelf<GuestState>,
-                >(&mut linker, |state| state)
-                .map_err(|error| format!("服务 clipboard 链接失败: {error}"))?,
-                "store" => lueying::ext::store::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 store 链接失败: {error}"))?,
-                "output" => lueying::ext::output::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 output 链接失败: {error}"))?,
-                "panel" => lueying::ext::panel::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 panel 链接失败: {error}"))?,
-                "hotkey" => lueying::ext::hotkey::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 hotkey 链接失败: {error}"))?,
-                "notify" => lueying::ext::notify::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 notify 链接失败: {error}"))?,
-                "network" => {
-                    lueying::ext::network::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                        &mut linker,
-                        |state| state,
-                    )
-                    .map_err(|error| format!("服务 network 链接失败: {error}"))?
-                }
-                "context" => {
-                    lueying::ext::context::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                        &mut linker,
-                        |state| state,
-                    )
-                    .map_err(|error| format!("服务 context 链接失败: {error}"))?
-                }
-                "audio" => lueying::ext::audio::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 audio 链接失败: {error}"))?,
-                "asr" => lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(
-                    &mut linker,
-                    |state| state,
-                )
-                .map_err(|error| format!("服务 asr 链接失败: {error}"))?,
-                other => return Err(format!("未知服务 {other:?}")),
-            }
-        }
+        lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 capture 链接失败: {error}"))?;
+        lueying::ext::ocr::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 ocr 链接失败: {error}"))?;
+        lueying::ext::clipboard::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 clipboard 链接失败: {error}"))?;
+        lueying::ext::store::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 store 链接失败: {error}"))?;
+        lueying::ext::output::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 output 链接失败: {error}"))?;
+        lueying::ext::panel::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 panel 链接失败: {error}"))?;
+        lueying::ext::hotkey::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 hotkey 链接失败: {error}"))?;
+        lueying::ext::notify::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 notify 链接失败: {error}"))?;
+        lueying::ext::network::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 network 链接失败: {error}"))?;
+        lueying::ext::context::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 context 链接失败: {error}"))?;
+        lueying::ext::audio::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 audio 链接失败: {error}"))?;
+        lueying::ext::asr::add_to_linker::<GuestState, HasSelf<GuestState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| format!("服务 asr 链接失败: {error}"))?;
         // 非 Rust 工具链(componentize-py、带 stdio 的 JS 等)编出的组件会
         // 导入 WASI 0.2。WASI 不进清单 needs 门控:导入即可用,但能力全关——
         // 无参数、无环境变量、无文件、无网络、无标准流,只有时钟与随机;
         // 联网仍只能走宿主的 network 服务(经清单白名单逐请求强制)。
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| format!("WASI 链接失败: {error}"))?;
-        let bindings =
-            Extension::instantiate(&mut store, &component, &linker).map_err(|error| {
-                format!("组件实例化失败: {}", explain_link_error(&error.to_string()))
-            })?;
-        let init = bindings
-            .entry()
-            .call_init(&mut store)
-            .map_err(|error| format!("扩展 init 失败: {error}"))?;
+        let bindings = Extension::instantiate(&mut store, &component, &linker)
+            .map_err(|error| format!("组件实例化失败: {}", explain_link_error(&error.to_string())))?;
+        let init = match bindings.entry().call_init(&mut store) {
+            Ok(init) => init,
+            Err(error) => return Err(init_error(&mut store, error, limits.init_fuel)),
+        };
         init.map_err(|error| format!("扩展 init 返回错误: {error}"))?;
         Ok(Self {
             store,
@@ -499,12 +482,40 @@ pub(crate) fn is_component(wasm: &[u8]) -> bool {
     wasm.len() >= 8 && wasm[4..8] == [0x0d, 0x00, 0x01, 0x00]
 }
 
-/// 把实例化错误翻译成人话:扩展用了清单没声明的宿主服务。
+/// 按预算建 wasm 引擎;编译前的调用方步骤,失败即加载失败。
+pub(crate) fn build_engine(limits: Limits) -> Result<Engine, String> {
+    let mut config = wasmtime_config(limits);
+    config.wasm_component_model(true);
+    config.consume_fuel(true);
+    Engine::new(&config).map_err(|error| format!("组件引擎启动失败: {error}"))
+}
+
+/// 编译组件;大组件(JS 引擎、CPython)可能耗时数分钟,放调用线程做,
+/// 不占 worker 的就绪窗口。
+pub(crate) fn build_component(engine: &Engine, wasm: &[u8]) -> Result<Component, String> {
+    if !is_component(wasm) {
+        return Err("不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into());
+    }
+    Component::new(engine, wasm).map_err(|error| format!("组件装载失败: {error}"))
+}
+
+/// init 失败的人话:燃料烧尽单独点名,其余带上剩余燃料方便调预算。
+fn init_error(store: &mut Store<GuestState>, error: wasmtime::Error, budget: u64) -> String {
+    match store.get_fuel() {
+        Ok(0) => format!("扩展 init 失败:init 燃料耗尽(预算 {budget})"),
+        Ok(left) => format!("扩展 init 失败(剩余燃料 {left}): {error}"),
+        Err(_) => format!("扩展 init 失败: {error}"),
+    }
+}
+
+/// 把实例化错误翻译成人话:契约不符(版本不对、缺导出)给指路。
+/// 服务接口已全量链接,再出现 `lueying:ext/<服务>` 的链接错误只会是
+/// 契约版本不匹配。
 fn explain_link_error(text: &str) -> String {
     for service in Service::ALL {
         if text.contains(&format!("lueying:ext/{}", service.key())) {
             return format!(
-                "用到了没声明的宿主服务 {}(清单 needs 里补上)",
+                "扩展契约与宿主不符(服务 {}):组件要用 lueying:ext@2.0.0 编译",
                 service.key()
             );
         }

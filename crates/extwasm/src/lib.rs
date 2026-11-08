@@ -69,6 +69,10 @@ pub const MAX_FAULTS: u32 = 3;
 /// Wasm 模块文件的上限。官方 shot-ocr 编出来约几十 KB,16 MiB 足够大。
 pub const MAX_WASM_BYTES: usize = 16 * 1024 * 1024;
 
+/// 声明 `engine` 的扩展(内嵌 JS 引擎、CPython 等)的模块上限;这类
+/// 工具链的产物自带整个运行时,几十 MiB 起步。
+pub const MAX_WASM_BYTES_ENGINE: usize = 64 * 1024 * 1024;
+
 /// 完整命令 id。
 pub fn full_id(extension: &str, command: &str) -> String {
     format!("{extension}.{command}")

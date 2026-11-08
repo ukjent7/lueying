@@ -10,8 +10,8 @@
 //!
 //! - 命令:`entry.command(id, args)` 收参数 JSON,回结果 JSON。
 //! - 外观:`entry.appearance(scene)` 收场景 JSON,回补丁 JSON 或空。
-//! - 服务:WIT 导入接口按包路径镜像;清单 `needs` 里没声明的服务不进
-//!   linker,guest 用到就在实例化时失败。
+//! - 服务:WIT 导入接口按包路径镜像;服务接口全量链接,放行按调用逐次
+//!   核清单 `needs`,没声明的服务一调即拒。
 //!
 //! # 边界
 //!
@@ -34,8 +34,9 @@ use crate::Manifest;
 use crate::Registry;
 use crate::manifest::Service;
 
-/// worker 线程的宿主栈;wasm 帧(wasmtime 把 [`Limits::stack_bytes`] 当真实
-/// 线程栈约束)与宿主函数的 serde 解析都要装下,固定 2 MiB。
+/// worker 线程的宿主栈下限;wasm 帧(wasmtime 把 [`Limits::stack_bytes`]
+/// 当真实线程栈约束)与宿主函数的 serde 解析都要装下。引擎级扩展按
+/// 栈预算放大,见 [`Worker::spawn`]。
 const WORKER_STACK: usize = 2 << 20;
 
 /// 运行期上限。
@@ -68,6 +69,22 @@ impl Default for Limits {
             init_fuel: 50_000_000,
             command_fuel: 200_000_000,
             appearance_fuel: 20_000_000,
+        }
+    }
+}
+
+impl Limits {
+    /// 引擎级预算:清单声明 `engine` 的扩展(内嵌 JS 引擎、CPython 等
+    /// 重运行时)按这份跑。数值给足余量,首个真实引擎扩展落地时校准。
+    pub fn engine() -> Self {
+        Self {
+            memory_bytes: 256 << 20,
+            stack_bytes: 2 << 20,
+            init_ms: 5000,
+            dispatch_ms: 1000,
+            init_fuel: 8_000_000_000,
+            command_fuel: 2_000_000_000,
+            appearance_fuel: 200_000_000,
         }
     }
 }
@@ -153,12 +170,28 @@ pub struct Worker {
 
 impl Worker {
     /// 一个扩展的模块起一个 worker;加载失败时返回错误,线程已回收。
+    ///
+    /// 引擎与组件在调用线程上编译:编译大组件(JS 引擎、CPython 之类)
+    /// 要几分钟,不该占 30 秒的就绪窗口;就绪窗口只罩实例化加 init,
+    /// 其 CPU 有燃料封顶,不会无限等。清单声明 `engine` 的扩展改用
+    /// [`Limits::engine`] 预算。
     pub(crate) fn spawn(
         wasm: Vec<u8>,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
         limits: Limits,
     ) -> Result<Self, String> {
+        let limits = if manifest.engine {
+            Limits::engine()
+        } else {
+            limits
+        };
+        // 空入口在编译前拒绝:编译大组件要几分钟,没必要等它跑完才发现。
+        if manifest.commands().is_empty() && !manifest.is_appearance() {
+            return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
+        }
+        let engine = crate::component::build_engine(limits)?;
+        let component = crate::component::build_component(&engine, &wasm)?;
         let (jobs_tx, jobs_rx) = mpsc::channel();
         let (results_tx, results) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -172,10 +205,12 @@ impl Worker {
         let has_appearance = manifest.is_appearance();
         let handle = std::thread::Builder::new()
             .name(format!("ext-wasm-{caller}"))
-            .stack_size(WORKER_STACK)
+            // wasm 帧栈预算(引擎级 2 MiB)要装得下:栈按预算的四倍给。
+            .stack_size(WORKER_STACK.max(limits.stack_bytes.saturating_mul(4)))
             .spawn(move || {
                 let mut guest = match crate::component::ComponentGuest::new(
-                    wasm,
+                    engine,
+                    component,
                     manifest,
                     services,
                     limits,

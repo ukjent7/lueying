@@ -60,10 +60,16 @@ pub struct Manifest {
     /// 是否提供候选窗外观;为 true 时模块必须导出 `lueying_appearance`。
     #[serde(default)]
     pub appearance: bool,
+    /// 内嵌语言引擎(JS 引擎、CPython 等重运行时)的组件声明此项,
+    /// 宿主按引擎级资源预算载入(见 extwasm 的 `Limits::engine`)。
+    #[serde(default)]
+    pub engine: bool,
     /// 激活方式:触发词、建议热键与命令。
     #[serde(default)]
     pub activate: Option<Activate>,
-    /// 需要的宿主服务;宿主只链接这里声明过的导入。
+    /// 需要的宿主服务。宿主把全部服务接口链接进组件(非 Rust 工具链不
+    /// 裁剪导入),是否放行按调用逐次门控:没声明的服务一调即拒。
+    /// 用户授权页也按这里声明展示。
     #[serde(default)]
     pub needs: Vec<Service>,
     /// 订阅的宿主事件;只有原生扩展能订阅,宿主只推送,不接收回调。
@@ -475,6 +481,9 @@ impl Manifest {
             Kind::Native => {
                 if !self.wasm.is_empty() {
                     return Err("kind=native 清单不能声明 wasm 模块".into());
+                }
+                if self.engine {
+                    return Err("kind=native 清单不能声明 engine".into());
                 }
                 if !self.needs.is_empty() {
                     return Err("原生扩展暂不接宿主服务,清单不能声明 needs".into());

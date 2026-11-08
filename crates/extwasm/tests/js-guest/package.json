@@ -2,8 +2,7 @@
   "name": "lueying-js-guest",
   "private": true,
   "type": "module",
-  "description": "扩展宿主行为测试客人(JS/componentize-js 工具链)",
-  "dependencies": {
-    "@bytecodealliance/jco": "*"
+  "devDependencies": {
+    "componentize-qjs": "^0.6.0"
   }
 }

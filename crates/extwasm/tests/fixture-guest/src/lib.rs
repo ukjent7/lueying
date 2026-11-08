@@ -4,8 +4,8 @@
 //! 单元测试与 E2E 通过环境变量加载它,验证命令、报错、trap、燃料、内存
 //! 限额、宿主服务与外观的真实组件路径(见 `crates/extwasm/src/test_guest.rs`)。
 //!
-//! 服务面只用 `notify`:宿主按清单 `needs` 链接,没声明的服务在实例化期
-//! 被拒,正好覆盖 needs 门控;组件里其余服务的导入会被裁掉。
+//! 服务面只用 `notify`:清单声明 `needs`,宿主按调用逐次门控,正好覆盖
+//! needs 语义;组件里其余服务的导入会被裁掉。
 
 use lueying_extguest::{Extension, SceneIn, ScenePatch};
 use serde_json::json;

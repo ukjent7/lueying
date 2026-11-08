@@ -2,14 +2,17 @@
 
 掠影扩展的契约是 [`lueying.wit`](../../crates/extwasm/lueying.wit) 里的 `lueying:ext@2.0.0`
 世界:组件导出 `entry` 接口(`init`/`command`/`appearance`),按清单 `needs`
-导入十二个宿主服务接口。契约是标准 WebAssembly 组件,任何能产出组件的
+声明要调用的宿主服务。契约是标准 WebAssembly 组件,任何能产出组件的
 语言都能写扩展;这里列当前验证过的工具链与最小路径。
 
-无论哪种语言,共同约束见[分层与沙箱](layers.md):组件 ≤ 16 MiB、内存
-16 MiB、栈 256 KiB、燃料按初始化/命令/外观分段计量、连错三次熔断。宿主
-给组件提供的 WASI 0.2 能力是全关的——没有文件、没有网络、没有环境变量、
-没有标准流,只有时钟与随机;联网只能走 `network` 服务(清单白名单逐请求
-强制)。组件不要导入 `wasi:http`,宿主不提供。
+无论哪种语言,共同约束见[分层与沙箱](layers.md):内存、栈、燃料按清单
+是否声明 `engine` 分两档预算(轻量组件用默认档;内嵌 JS 引擎、CPython
+等重运行时的组件在清单加 `"engine": true`,用引擎档),连错三次熔断。
+宿主把全部服务接口链接进组件,是否放行按调用逐次核对清单 `needs`——
+没声明的服务一调即拒。宿主给组件提供的 WASI 0.2 能力是全关的——没有
+文件、没有网络、没有环境变量、没有标准流,只有时钟与随机;联网只能走
+`network` 服务(清单白名单逐请求强制)。组件不要导入 `wasi:http`,
+宿主不提供。
 
 ## Rust
 
@@ -17,10 +20,11 @@
 
 ## JavaScript(TypeScript)
 
-工具链:`jco`(内嵌 componentize-js 的 SpiderMonkey 引擎)。
+工具链:[`componentize-qjs`](https://github.com/andreiltd/componentize-qjs)
+(QuickJS 引擎,组件约 1 MiB,默认限额内运行)。
 
 ```sh
-npm install -D @bytecodealliance/jco
+npm install -D componentize-qjs
 ```
 
 写一个 ES 模块,按 `entry` 接口导出对象;宿主服务按 WIT 包路径导入
@@ -37,7 +41,7 @@ export const entry = {
       case "run":
         return JSON.stringify({ echo: args });
       default:
-        throw new Error(`没有命令 ${id}`);
+        throw `没有命令 ${id}`;
     }
   },
 
@@ -47,21 +51,25 @@ export const entry = {
 };
 ```
 
-`result` 的错误分支用抛异常表达:抛出的 `Error` 文本就是 Err 载荷;
-`option` 用 `null` 表示 none。构建(禁用 `http` 与 `fetch-event`,宿主
-不提供 `wasi:http`):
+`result` 的错误分支用抛值表达:抛出的字符串就是 Err 载荷;`option`
+用 `null` 表示 none。构建:
 
 ```sh
-npx jco componentize guest.js \
-  --wit <掠影仓库>/crates/extwasm/lueying.wit \
-  --world-name extension \
-  --disable http fetch-event \
-  --out extension.wasm
+npx componentize-qjs --wit <掠影仓库>/crates/extwasm/lueying.wit \
+  --js guest.js --world extension --sync --opt-size -o extension.wasm
 ```
+
+注:该工具链按整个世界生成导入,清单 `needs` 写实际调用的服务即可,
+放行由宿主按调用门控。带完整 JS 引擎(SpiderMonkey)的
+[`jco`](https://github.com/bytecodealliance/jco) 也能编(`jco
+componentize guest.js --wit <lueying.wit> --world-name extension --disable
+http fetch-event --out extension.wasm`),但组件有十几 MiB、启动内存
+远超默认档,清单要声明 `"engine": true`。
 
 ## Python
 
 工具链:[`componentize-py`](https://github.com/bytecodealliance/componentize-py)。
+CPython 引擎的组件超出默认资源档,清单要声明 `"engine": true`。
 
 ```sh
 pip install componentize-py
@@ -100,7 +108,7 @@ componentize-py --wit-path wit --world extension componentize app -o extension.w
 
 工具链:[`wit-bindgen`](https://github.com/bytecodealliance/wit-bindgen) C
 绑定 + [WASI SDK](https://github.com/webassembly/wasi-sdk)(wasm32-wasip2
-直出组件,不用适配器)。
+直出组件,不用适配器)。产物轻量,默认资源档内运行。
 
 ```sh
 wit-bindgen c crates/extwasm/lueying.wit

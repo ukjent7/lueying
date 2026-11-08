@@ -116,7 +116,7 @@ fn rejects_core_module() {
     assert!(error.contains("组件"), "{error}");
 }
 
-/// JS 工具链(componentize-js)编出的组件:命令回显走通,证明非 Rust
+/// JS 工具链(componentize-qjs)编出的组件:命令回显走通,证明非 Rust
 /// 客人的整条链路(载入、类型化调用、WASI 导入并存)。
 #[test]
 fn js_guest_runs_commands() {
@@ -131,7 +131,7 @@ fn js_guest_runs_commands() {
     assert_eq!(worker.command_wait("run", "ping", WAIT), Ok("ping".into()));
 }
 
-/// JS 客人的错误分支:抛出的异常文本就是命令的 Err 载荷。
+/// JS 客人的错误分支:抛出的字符串就是命令的 Err 载荷。
 #[test]
 fn js_guest_reports_errors() {
     let wasm = test_guest::fixture_or_skip!(test_guest::js_fixture(), "JS 客人报错");
@@ -166,4 +166,17 @@ fn js_guest_appearance_is_empty() {
         .expect("没有被跳过")
         .expect("派发成功");
     assert!(patch.is_none());
+}
+
+/// 清单声明 `engine` 的扩展按引擎级预算载入:走通 spawn 的预算切换与
+/// 编译外提路径(值为宿主预设,这里只验证声明被接受且能跑命令)。
+#[test]
+fn engine_manifest_loads_with_engine_budget() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "引擎级清单");
+    let limits = Limits::default();
+    let text = test_guest::engine_command_manifest("demo", &[("run", "运行")]);
+    let manifest = Arc::new(Manifest::parse(text.as_bytes()).expect("清单"));
+    assert!(manifest.engine, "engine 声明要解析出来");
+    let worker = worker(&wasm, manifest, limits).expect("启动 worker");
+    assert_eq!(worker.command_wait("run", "ping", WAIT), Ok("ping".into()));
 }

@@ -18,7 +18,7 @@ Wasm 扩展是打包成 WebAssembly 组件的插件，由 wasmtime 加载，运�
 
 ## 宿主服务
 
-宿主只向组件链接清单 `needs` 中声明的服务接口；用到没声明的服务在实例化期就被拒绝。服务与 Rust 侧的封装都在 `crates/extguest` 中（`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`、`network`、`context`、`audio`、`asr`）。
+宿主把全部服务接口链接进组件，是否放行按调用逐次核对清单 `needs`：用到没声明的服务，一调即拒。服务与 Rust 侧的封装都在 `crates/extguest` 中（`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`、`network`、`context`、`audio`、`asr`）。
 
 ## 打包
 

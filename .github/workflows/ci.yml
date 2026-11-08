@@ -140,13 +140,14 @@ jobs:
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_INIT_LOOP_WASM=$PWD/target/fixture-init-loop.wasm" >> "$GITHUB_ENV"
-      # JS 组件客人:非 Rust 工具链(componentize-js)的端到端验证。禁用
-      # http/fetch-event——宿主不提供 wasi:http,联网只能走扩展的 network 服务。
+      # JS 组件客人:非 Rust 工具链(componentize-qjs)的端到端验证。
+      # --sync 出非 async 组件,宿主按同步组件实例化;QuickJS 产物不到
+      # 1 MiB,默认限额内即可运行。
       - name: JS 组件客人构建
         run: |
           cd crates/extwasm/tests/js-guest
           npm install --no-fund --no-audit --loglevel=error
-          npx jco componentize guest.js --wit ../../../extwasm/lueying.wit --world-name extension --disable http fetch-event --out "$GITHUB_WORKSPACE/target/js-fixture.wasm"
+          npx componentize-qjs --wit ../../../extwasm/lueying.wit --js guest.js --world extension --sync --opt-size --minify -o "$GITHUB_WORKSPACE/target/js-fixture.wasm"
           echo "LUEYING_JS_FIXTURE_WASM=$GITHUB_WORKSPACE/target/js-fixture.wasm" >> "$GITHUB_ENV"
       # 扩展层单测:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合;
       # CLI 的子命令解析与联网 broker 的协议层同场。
