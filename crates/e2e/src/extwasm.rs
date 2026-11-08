@@ -211,7 +211,10 @@ fn budget(checks: &mut Vec<(&'static str, bool, String)>) {
         checks,
         "命令死循环被燃料打断",
         first.is_err() && stat.timeouts >= 1 && elapsed < Duration::from_secs(5),
-        format!("{elapsed:?} timeouts={} last={:?}", stat.timeouts, stat.last_error),
+        format!(
+            "{elapsed:?} timeouts={} last={:?}",
+            stat.timeouts, stat.last_error
+        ),
     );
 
     let hog_dir = temp.pack("hog");
