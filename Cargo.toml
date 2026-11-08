@@ -63,7 +63,7 @@ lueying-rerank = { path = "crates/rerank" }
 lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
-wasmtime = { version = "49", default-features = false, features = [
+wasmtime = { version = "50", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",
