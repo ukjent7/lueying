@@ -65,4 +65,4 @@ impl Extension for Fixture {
     }
 }
 
-lueying_extguest::export_component!(Fixture, commands: [run, echo, fail, trap, spin, hog, notify]);
+lueying_extguest::export_component!(Fixture, wit: "../../../extwasm/lueying.wit", commands: [run, echo, fail, trap, spin, hog, notify]);

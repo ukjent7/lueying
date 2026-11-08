@@ -16,4 +16,4 @@ impl Extension for LoopInit {
     }
 }
 
-lueying_extguest::export_component!(LoopInit);
+lueying_extguest::export_component!(LoopInit, wit: "../../../extwasm/lueying.wit");

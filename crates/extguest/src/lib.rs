@@ -49,8 +49,9 @@ pub trait Extension: Send + Default {
 /// 服务失败直接是 `Err`。作者 crate 需要依赖 `wit-bindgen` 与
 /// `serde_json`(生成的绑定与外观引用它们)。
 #[macro_export]
-macro_rules! export_component {
-    ($ty:ty $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
+#[doc(hidden)]
+macro_rules! __lueying_export_component {
+    ($ty:ty, $wit:literal) => {
         // 非 wasm 目标:保活作者扩展类型与其 Extension 实现,宿主侧单测可
         // 直接驱动逻辑(静态 Mutex 探针保活)。
         #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +68,7 @@ macro_rules! export_component {
         // 生成导入与导出;契约按相对路径取(第一方扩展与 extwasm 同仓)。
         #[cfg(target_arch = "wasm32")]
         ::wit_bindgen::generate!({
-            path: "../../crates/extwasm/lueying.wit",
+            path: $wit,
             world: "extension",
         });
 
@@ -531,5 +532,20 @@ macro_rules! export_component {
                 Err(::std::string::String::from("非 wasm 目标没有宿主服务"))
             }
         }
+    };
+}
+
+
+/// 组件 ABI 的扩展导出:分发到内部实现。
+///
+/// 第一方扩展(在 `extensions/<id>/` 下)直接用默认契约路径;仓外或深层
+/// 目录的 crate 用 `wit:` 给出相对本 crate 的 `lueying.wit` 路径。
+#[macro_export]
+macro_rules! export_component {
+    ($ty:ty, wit: $wit:literal $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
+        $crate::__lueying_export_component!($ty, $wit)
+    };
+    ($ty:ty $(, commands: [$($command:ident),* $(,)?])? $(,)?) => {
+        $crate::__lueying_export_component!($ty, "../../crates/extwasm/lueying.wit")
     };
 }
