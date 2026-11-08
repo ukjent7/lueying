@@ -24,3 +24,5 @@ lueying-server.workspace = true
 # 产品的候选快照与同步门控:基准直接走这条路径,不另写一份。
 lueying-session.workspace = true
 serde_json = "1"
+# 读音仲裁读 gz 压缩的金标语料。
+flate2 = "1"
