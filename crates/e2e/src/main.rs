@@ -3,7 +3,6 @@
 
 mod actions;
 mod address;
-mod arbitrate;
 mod bench;
 mod consent;
 mod extensions;
@@ -178,53 +177,6 @@ fn main() {
         let corpus = value("--corpus").map(String::as_str);
         let failures = shared::run(Arc::new(dict), gram, models.as_ref(), corpus, shard);
         std::process::exit(i32::from(failures > 0));
-    }
-
-    // `--arbitrate <语料>`:读音仲裁(影子)。金标读音上模拟真实打字,产出
-    // 逐词裁决表;只记录分歧,不改词典,退出码恒 0(测量不是门禁)。
-    if let Some(corpus) = args
-        .iter()
-        .position(|a| a == "--arbitrate")
-        .and_then(|i| args.get(i + 1))
-    {
-        let Some(path) = &dict_path else {
-            eprintln!("--arbitrate 需要同时提供 --dict 主词典");
-            std::process::exit(2);
-        };
-        let Some(rerank_dir) = &rerank_dir else {
-            eprintln!("--arbitrate 需要同时提供 --rerank-dir 模型目录");
-            std::process::exit(2);
-        };
-        let (dict, _) = match Dictionary::from_path(path) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("词典加载失败 {path:?}: {e}");
-                std::process::exit(2);
-            }
-        };
-        let gram = gram_path.as_deref().and_then(|p| match Gram::open(p) {
-            Ok(g) => Some(Arc::new(g)),
-            Err(e) => {
-                eprintln!("语法模型不可用 {p:?}: {e}");
-                None
-            }
-        });
-        let models = match rerank::load(rerank_dir) {
-            Ok(models) => models,
-            Err(e) => {
-                eprintln!("模型加载失败: {e}");
-                std::process::exit(2);
-            }
-        };
-        let out = args
-            .iter()
-            .position(|a| a == "--arbitrate-out")
-            .and_then(|i| args.get(i + 1))
-            .map(String::as_str)
-            .unwrap_or("target/arbitrate.json");
-        let summary = arbitrate::run(Arc::new(dict), gram, &models, corpus, out);
-        println!("{summary}");
-        std::process::exit(0);
     }
 
     let mut report = String::from("# 拼音引擎 E2E 报告\n\n");

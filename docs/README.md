@@ -1,6 +1,6 @@
 # 掠影文档
 
-掠影是 Windows 原生的中文拼音输入法。Linux（Wayland）外壳见 [linux.md](linux.md)。
+掠影是 Windows 原生的中文拼音输入法。
 
 | 文档 | 内容 |
 |---|---|

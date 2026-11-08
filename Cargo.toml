@@ -15,7 +15,7 @@ members = [
     "crates/protocol",
     # 运行期扩展:组件宿主与每扩展 worker,平台无关
     "crates/extwasm",
-    # 输入会话内核:候选视图同步与重排决策,Windows 与 macOS 共用
+    # 输入会话内核:候选视图同步与重排决策
     "crates/session",
     # 联网边界:更新与下载,常驻 Server 不依赖
     "crates/net",
@@ -27,10 +27,6 @@ members = [
     "platforms/windows/server",
     "platforms/windows/tsf",
     "platforms/windows/installer",
-    # macOS 平台薄层:InputMethodKit 外壳与候选窗画布(仅 macOS 目标编译)
-    "platforms/macos/ime",
-    # Linux 平台薄层:Wayland 输入法协议外壳与软件渲染候选窗(仅 Linux 目标编译)
-    "platforms/linux/ime",
     # 验证与工具
     "crates/e2e",
     "platforms/windows/win-e2e",

@@ -55,6 +55,7 @@
 - 工程分层:TSF、常驻服务、安装器与 Windows E2E 挪进 `platforms/windows/`,平台无关的引擎、语言模型与扩展宿主留在 `crates/`。
 - 设置窗 Slint 换 femtovg GPU 渲染(winit 后端,无头与 VM 环境自动回退软件渲染);补全 Cargo.lock 缺失的 slint 闭包。
 - 树内语言模型副本更名 `lueying-lm`(v0.3.0);重排上文剥掉词表外字符,25M 模型整句有上文 top-1 从 87.0% 抬到 89.9%(上游 chinese-ime-lm #91)。
+- 移除 macOS 与 Linux 外壳、自动调参、读音仲裁与词典自动跟随工作流，为重写让路。
 
 ### 修复
 

@@ -87,9 +87,6 @@ jobs:
         with:
           lookup-only: ${{ github.event_name == 'pull_request' }}
           prefix-key: linux
-      # Linux 外壳的 xkbcommon 绑定要在编译期链接系统库。
-      - name: 安装 Linux 系统依赖
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       # 工具链固定,警告即失败;偶发的新 lint 先修再合。
       - name: Clippy
         run: cargo clippy --workspace --exclude ppocr --all-targets --locked -- -D warnings
@@ -108,7 +105,7 @@ jobs:
         run: |
           cargo nextest run --locked \
             -p lueying-engine -p lueying-protocol -p lueying-render \
-            -p lueying-lm -p lueying-rerank -p lueying-linux -p lueying-server
+            -p lueying-lm -p lueying-rerank -p lueying-server
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:

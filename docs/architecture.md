@@ -24,12 +24,12 @@ lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 | 引擎 | `crates/engine` | 音节切分、词图解码（束宽 24）、纠错、用户词库学习 |
 | 模型 | `crates/lm`、`crates/rerank` | 8M 与 25M 模型推理及重排决策；`lm` 的来源见其 README |
 | 功能 | `crates/features` | 快捷输入、符号、表情、联想、简繁 |
-| 会话 | `crates/session` | 候选视图同步与重排决策，Windows 与 macOS 共用 |
+| 会话 | `crates/session` | 候选视图同步与重排决策 |
 | 渲染 | `crates/render` | 候选窗与面板的布局、命中测试与绘制指令 |
 | 协议 | `crates/protocol` | 管道帧、`SessionView`、按键 |
 | 扩展 | `crates/ext*`、`crates/extwasm` | 清单、协议、宿主与服务，见[扩展](extensions/README.md) |
 | 联网 | `crates/net`、`crates/broker` | 更新与下载、扩展联网代理 |
-| 平台 | `platforms/windows/*`、`platforms/macos/ime`、`platforms/linux/ime` | 各平台外壳 |
+| 平台 | `platforms/windows/*` | Windows 外壳 |
 
 核心 crate 不依赖任何平台目录；平台目录依赖核心 crate。
 

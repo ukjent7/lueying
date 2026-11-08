@@ -26,7 +26,7 @@ lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:候选窗/徽标/命令面板的布局与命中;设置窗 UI 已由 Slint 承担。
 lueying-render.workspace = true
-# 会话内核:候选视图同步与重排快照,macOS 外壳共用同一份。
+# 会话内核:候选视图同步与重排快照。
 lueying-session.workspace = true
 lueying-protocol = { path = "../../../crates/protocol" }
 # 配置 schema:typed TOML,未知键在读取时拒绝。

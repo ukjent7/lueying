@@ -26,7 +26,7 @@
 
 ## 平台
 
-Windows 是主要平台。Linux（Wayland）外壳见 [docs/linux.md](docs/linux.md)。
+Windows 是主要平台。
 
 ## 文档
 

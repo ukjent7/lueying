@@ -5,7 +5,7 @@
 ## 发版前
 
 1. 在 `CHANGELOG.md` 写 `## [x.y.z] - YYYY-MM-DD` 段落。CI 用它作为 Release 说明，缺失时打包失败。
-2. `main` 的 CI 全部通过，包括 Windows E2E 与安装卸载冒烟。
+2. `main` 的 CI 与 `quality` 全部通过，包括 Windows E2E 与安装卸载冒烟（`quality` 只在核心路径改动时自动跑，发版前可手动触发）。
 3. `tools/fetch_*.sh` 中固定的词典、模型与官方扩展哈希仍有效。
 
 ## 打标签

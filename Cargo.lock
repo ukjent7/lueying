@@ -1755,7 +1755,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2660c5e9157bf76d2db1294e4a9feba604ef610819a3b591088d0d8392a3290f"
 dependencies = [
  "log",
- "memmap2",
  "slotmap",
  "tinyvec",
 ]
@@ -3234,7 +3233,6 @@ dependencies = [
 name = "lueying-e2e"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "lueying-cli",
  "lueying-dict",
  "lueying-engine",
@@ -3332,57 +3330,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-linux"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "calloop 0.13.0",
- "calloop-wayland-source",
- "fontdb",
- "libc",
- "lueying-dict",
- "lueying-engine",
- "lueying-features",
- "lueying-protocol",
- "lueying-render",
- "lueying-rerank",
- "lueying-server",
- "lueying-session",
- "memfd",
- "memmap2",
- "tiny-skia 0.12.0",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
- "xkbcommon",
-]
-
-[[package]]
 name = "lueying-lm"
 version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "lueying-macos"
-version = "0.1.0"
-dependencies = [
- "lueying-dict",
- "lueying-engine",
- "lueying-features",
- "lueying-protocol",
- "lueying-render",
- "lueying-rerank",
- "lueying-session",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "objc2-input-method-kit",
- "objc2-quartz-core 0.3.2",
- "toml",
 ]
 
 [[package]]
@@ -4081,17 +4034,6 @@ dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-core-foundation",
-]
-
-[[package]]
-name = "objc2-input-method-kit"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b00217e13b5d51d9b814707fe429fbdd836cd1b74a61514679085c7a017c6b"
-dependencies = [
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
 ]
 
 [[package]]
