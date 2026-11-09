@@ -590,7 +590,7 @@ fn real_run() -> Result<(String, String), String> {
         // 官方 shot-ocr:热键 → 截图 → 识别 → 上屏。识别是固定文本,
         // 截图与上屏走真实现;放最后,它会清空编辑框并再抢一次焦点。
         let shot_note = check_shot_ocr(edit, hwnd)?;
-        // 运行指标:shot-ocr 已加载,快照里要有它的内存与预算。
+        // 运行指标:shot-ocr 已加载,快照里要有它的派发计数。
         let metrics_note = crate::ext_metrics::check(&data)?;
         let memory = server_memory(server.as_ref().map_or(0, std::process::Child::id))?;
         // 扩展平台验证放最后:它会抢焦点建自己的窗口,后面的检查都已完成。

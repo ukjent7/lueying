@@ -130,7 +130,7 @@ pub fn run(report: &mut String) -> usize {
         id: "demo-pack".to_string(),
         name: "演示包".to_string(),
         state: ExtState::Loaded,
-        step_peak_us: 1500,
+        dispatch_peak_us: 1500,
         ..ExtStat::default()
     };
     settings.ext_metrics = Some(ExtMetrics {
@@ -166,7 +166,7 @@ pub fn run(report: &mut String) -> usize {
                 .is_some_and(|text| text.contains("截图"))
             && metrics_row
                 .as_deref()
-                .is_some_and(|text| text.contains("运行 1") && text.contains("步进峰值 1.5 ms"))
+                .is_some_and(|text| text.contains("运行 1") && text.contains("派发峰值 1.5 ms"))
             && switched
             && settings.cfg.extensions.is_empty()
             && missing

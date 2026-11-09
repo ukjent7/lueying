@@ -85,7 +85,7 @@ fn ext_metrics_detail_summarizes_runtime() {
         id: "shot".to_string(),
         name: "截图".to_string(),
         state: ExtState::Loaded,
-        step_peak_us: 1500,
+        dispatch_peak_us: 1500,
         ..ExtStat::default()
     };
     settings.ext_metrics = Some(ExtMetrics {
@@ -94,7 +94,7 @@ fn ext_metrics_detail_summarizes_runtime() {
     });
     let detail = settings.ext_metrics_detail();
     assert!(detail.contains("运行 1"));
-    assert!(detail.contains("步进峰值 1.5 ms"));
+    assert!(detail.contains("派发峰值 1.5 ms"));
 }
 
 #[test]

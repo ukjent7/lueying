@@ -5,9 +5,9 @@
 声明要调用的宿主服务。契约是标准 WebAssembly 组件,任何能产出组件的
 语言都能写扩展;这里列当前验证过的工具链与最小路径。
 
-无论哪种语言,共同约束见[分层与沙箱](layers.md):内存、栈、燃料按清单
-是否声明 `engine` 分两档预算(轻量组件用默认档;内嵌 JS 引擎、CPython
-等重运行时的组件在清单加 `"engine": true`,用引擎档),连错三次熔断。
+无论哪种语言,共同约束见[分层与沙箱](layers.md):宿主不设资源预算;
+Wasm 模块大小上限按清单是否声明 `engine` 分两档(轻量组件用默认的 16 MiB;
+内嵌 JS 引擎、CPython 等重运行时的组件在清单加 `"engine": true`,上限 64 MiB)。
 宿主把全部服务接口链接进组件,是否放行按调用逐次核对清单 `needs`——
 没声明的服务一调即拒。宿主给组件提供的 WASI 0.2 能力是全关的——没有
 文件、没有网络、没有环境变量、没有标准流,只有时钟与随机;联网只能走
@@ -21,7 +21,7 @@
 ## JavaScript(TypeScript)
 
 工具链:[`componentize-qjs`](https://github.com/andreiltd/componentize-qjs)
-(QuickJS 引擎,组件约 1 MiB,默认限额内运行)。
+(QuickJS 引擎,组件约 1 MiB)。
 
 ```sh
 npm install -D componentize-qjs
@@ -63,8 +63,8 @@ npx componentize-qjs --wit <掠影仓库>/crates/extwasm/lueying.wit \
 放行由宿主按调用门控。带完整 JS 引擎(SpiderMonkey)的
 [`jco`](https://github.com/bytecodealliance/jco) 也能编(`jco
 componentize guest.js --wit <lueying.wit> --world-name extension --disable
-http fetch-event --out extension.wasm`),但组件有十几 MiB、启动内存
-远超默认档,清单要声明 `"engine": true`。
+http fetch-event --out extension.wasm`),但组件有十几 MiB,清单要声明
+`"engine": true` 才能放宽模块大小上限。
 
 ## Python
 

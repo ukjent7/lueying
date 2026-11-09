@@ -1,7 +1,7 @@
 //! 测试用的临时包目录、清单与组件测试客人加载。
 //!
 //! 行为客人是一个真实 SDK 编出的组件(`tests/fixture-guest`,CI 打包),
-//! 命令与外观覆盖错误、trap、燃料与宿主服务路径。环境变量
+//! 命令与外观覆盖错误、trap 与宿主服务路径。环境变量
 //! `LUEYING_FIXTURE_WASM` / `LUEYING_FIXTURE_B_WASM` 指向打包好的组件;
 //! 本机没有产物时行为测试跳过(CI 是门禁)。
 
@@ -74,7 +74,7 @@ pub(crate) fn command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
     .to_string()
 }
 
-/// 一份声明引擎级预算的命令清单;engine 标志的载入路径用。
+/// 一份声明 `engine` 的命令清单;engine 标志的载入路径用。
 pub(crate) fn engine_command_manifest(id: &str, commands: &[(&str, &str)]) -> String {
     json!({
         "id": id,

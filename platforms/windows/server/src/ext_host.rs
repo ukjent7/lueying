@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use lueying_extwasm::bindings::BindingTable;
 use lueying_extwasm::{
-    Budgets, ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, Limits, METRICS_VERSION,
-    PrivacyCheck, Registry, Runtime, SceneIn, ScenePatch, Service,
+    ConsentBook, ConsentGate, ExtMetrics, ExtStat, ExtState, METRICS_VERSION, PrivacyCheck,
+    Registry, Runtime, SceneIn, ScenePatch, Service,
 };
 use lueying_server::command_panel::CommandItem;
 use lueying_server::config;
@@ -465,7 +465,6 @@ fn load(
     panel: &Arc<services::PanelProvider>,
     allow_all_network: bool,
 ) -> Loaded {
-    let limits = Limits::default();
     let mut skipped = Vec::new();
     if order.is_empty() {
         return Loaded {
@@ -494,7 +493,7 @@ fn load(
             Ok(manifest) => manifest,
             Err(error) => {
                 println!("扩展 {id} 未加载: {error}");
-                skipped.push(error_stat(id, error, limits));
+                skipped.push(error_stat(id, error));
                 continue;
             }
         };
@@ -515,11 +514,11 @@ fn load(
             }
             Ok(check) => {
                 println!("扩展 {id} 待同意({})", check.items.join("、"));
-                skipped.push(base_stat(&manifest, ExtState::Unapproved, limits, None));
+                skipped.push(base_stat(&manifest, ExtState::Unapproved, None));
             }
             Err(error) => {
                 println!("扩展 {id} 同意检查失败: {error}");
-                skipped.push(base_stat(&manifest, ExtState::Error, limits, Some(error)));
+                skipped.push(base_stat(&manifest, ExtState::Error, Some(error)));
             }
         }
     }
@@ -579,7 +578,7 @@ fn load(
             Ok(())
         })
     };
-    let (runtime, errors) = Runtime::open_with_gate(&root, &approved, limits, registry, Some(gate));
+    let (runtime, errors) = Runtime::open_with_gate(&root, &approved, registry, Some(gate));
     for error in errors {
         println!("{error}");
     }
@@ -590,11 +589,10 @@ fn load(
     }
 }
 
-/// 清单已知但没进运行期的包:状态与预算可展示,指标都从零开始。
+/// 清单已知但没进运行期的包:状态可展示,指标都从零开始。
 fn base_stat(
     manifest: &lueying_extwasm::Manifest,
     state: ExtState,
-    limits: Limits,
     last_error: Option<String>,
 ) -> ExtStat {
     ExtStat {
@@ -602,18 +600,16 @@ fn base_stat(
         name: manifest.name.clone(),
         version: manifest.version.clone(),
         state,
-        memory_limit: limits.memory_bytes as u64,
         last_error,
         ..ExtStat::default()
     }
 }
 
 /// 清单都读不出来的包只留 id 与错误。
-fn error_stat(id: &str, error: String, limits: Limits) -> ExtStat {
+fn error_stat(id: &str, error: String) -> ExtStat {
     ExtStat {
         id: id.to_string(),
         state: ExtState::Error,
-        memory_limit: limits.memory_bytes as u64,
         last_error: Some(error),
         ..ExtStat::default()
     }
@@ -638,17 +634,9 @@ fn publish_metrics(
     let Some(path) = config::ext_metrics_path() else {
         return;
     };
-    let limits = Limits::default();
     let metrics = ExtMetrics {
         version: METRICS_VERSION,
         updated_ms: unix_ms(),
-        budgets: Budgets {
-            memory_bytes: limits.memory_bytes as u64,
-            stack_bytes: limits.stack_bytes as u64,
-            init_ms: limits.init_ms,
-            dispatch_ms: limits.dispatch_ms,
-            max_faults: lueying_extwasm::MAX_FAULTS,
-        },
         extensions,
     };
     match metrics.save(&path) {

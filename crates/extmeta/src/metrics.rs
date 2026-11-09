@@ -8,25 +8,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 /// 快照格式版本。
-pub const METRICS_VERSION: u32 = 1;
+pub const METRICS_VERSION: u32 = 2;
 /// 指标文件的最大读取量;它只该几 KB。
 const MAX_METRICS_BYTES: usize = 1024 * 1024;
-
-/// 宿主给每个扩展的预算;展示用,不是新的配置项。
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Budgets {
-    /// Wasm 线性内存上限(字节)。
-    pub memory_bytes: u64,
-    /// Wasm 值栈上限(字节)。
-    pub stack_bytes: u64,
-    /// 模块初始化时限(毫秒)。
-    pub init_ms: u64,
-    /// 单次调用时限(毫秒)。
-    pub dispatch_ms: u64,
-    /// 连续失败多少次停用。
-    pub max_faults: u32,
-}
 
 /// 一个扩展当前的运行状态。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -37,8 +21,6 @@ pub enum ExtState {
     Idle,
     /// Wasm 宿主已加载。
     Loaded,
-    /// 连续失败或超限,已停用。
-    Disabled,
     /// 清单/脚本/同意检查读失败。
     Error,
     /// 配置里启用了,但用户还没同意。
@@ -51,7 +33,6 @@ impl ExtState {
         match self {
             Self::Idle => "空闲",
             Self::Loaded => "运行",
-            Self::Disabled => "已停用",
             Self::Error => "加载失败",
             Self::Unapproved => "待同意",
         }
@@ -70,24 +51,10 @@ pub struct ExtStat {
     pub version: String,
     /// 当前状态。
     pub state: ExtState,
-    /// Wasm 线性内存当前占用(字节);组件运行期不外露当前占用,恒为 0。
-    pub memory_used: u64,
-    /// 内存上限(字节)。
-    pub memory_limit: u64,
     /// 命令/外观派发次数。
     pub dispatches: u64,
-    /// 燃料消耗计数。
-    pub steps: u64,
     /// 单次调用最慢耗时(微秒)。
     pub dispatch_peak_us: u64,
-    /// 单次调用内的最慢分段耗时(微秒)。
-    pub step_peak_us: u64,
-    /// 调用/燃料超限次数。
-    pub timeouts: u64,
-    /// 内存超限次数。
-    pub ooms: u64,
-    /// 连续失败计数。
-    pub faults: u32,
     /// 尚未完成的异步命令数。
     pub pending: u64,
     /// 停用或最近一次失败的原因。
@@ -100,19 +67,6 @@ impl ExtStat {
     pub fn dispatch_peak_ms(&self) -> String {
         millis(self.dispatch_peak_us)
     }
-
-    /// 分段峰值换算成毫秒文本。
-    pub fn step_peak_ms(&self) -> String {
-        millis(self.step_peak_us)
-    }
-
-    /// 当前占用换算成 MiB 文本。
-    pub fn memory_text(&self) -> String {
-        if self.memory_used == 0 {
-            return "-".to_string();
-        }
-        format!("{:.1} MiB", self.memory_used as f64 / (1024.0 * 1024.0))
-    }
 }
 
 /// 一份完整快照。
@@ -124,8 +78,6 @@ pub struct ExtMetrics {
     pub version: u32,
     /// 写入时间,Unix 毫秒。
     pub updated_ms: u64,
-    /// 当前预算。
-    pub budgets: Budgets,
     /// 配置里启用的扩展;未同意与坏包也在列表里。
     #[serde(default)]
     pub extensions: Vec<ExtStat>,
@@ -155,21 +107,13 @@ impl ExtMetrics {
         std::fs::rename(&tmp, path).map_err(|e| format!("替换指标失败: {e}"))
     }
 
-    /// 所有扩展里最大的分段耗时(微秒)。
-    pub fn peak_step_us(&self) -> u64 {
+    /// 所有扩展里最大的派发耗时(微秒)。
+    pub fn peak_dispatch_us(&self) -> u64 {
         self.extensions
             .iter()
-            .map(|stat| stat.step_peak_us)
+            .map(|stat| stat.dispatch_peak_us)
             .max()
             .unwrap_or(0)
-    }
-
-    /// 超时与内存超限的总次数。
-    pub fn violations(&self) -> u64 {
-        self.extensions
-            .iter()
-            .map(|stat| stat.timeouts.saturating_add(stat.ooms))
-            .fold(0, u64::saturating_add)
     }
 
     /// 设置页与 `top` 首行的一句话摘要。
@@ -178,20 +122,12 @@ impl ExtMetrics {
             return "没有启用的扩展".to_string();
         }
         let loaded = self.count(ExtState::Loaded);
-        let disabled = self.count(ExtState::Disabled);
         let pending = self.count(ExtState::Unapproved);
         let mut text = format!("{} 个 · 运行 {loaded}", self.extensions.len());
-        if disabled > 0 {
-            text.push_str(&format!(" · 停用 {disabled}"));
-        }
         if pending > 0 {
             text.push_str(&format!(" · 待同意 {pending}"));
         }
-        text.push_str(&format!(" · 步进峰值 {}", millis(self.peak_step_us())));
-        let violations = self.violations();
-        if violations > 0 {
-            text.push_str(&format!(" · 超限 {violations}"));
-        }
+        text.push_str(&format!(" · 派发峰值 {}", millis(self.peak_dispatch_us())));
         text
     }
 

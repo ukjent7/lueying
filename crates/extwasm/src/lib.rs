@@ -3,8 +3,8 @@
 //!
 //! 扩展是一个目录(`%APPDATA%\lueying\extensions\<id>\`),里面一份
 //! `manifest.json` 与一个 `extension.wasm` 组件。运行期不加载 DLL:
-//! Cranelift 编译、线性内存隔离、燃料计量、内存与栈上限都在 wasmtime
-//! 的沙箱里生效。
+//! Cranelift 编译与线性内存隔离由 wasmtime 提供。宿主不设资源预算,扩展
+//! 跑多久、占多少内存由扩展自己决定。
 //!
 //! 每个已加载扩展占一个 worker 线程,线程内持有引擎、存储与类型化绑定。
 //! 命令在 worker 上串行执行,截图/识别/面板这类宿主服务是阻塞调用:宿主
@@ -19,9 +19,6 @@
 //!
 //! # 边界
 //!
-//! - 线性内存上限 [`Limits::memory_bytes`],值栈上限 [`Limits::stack_bytes`]。
-//! - 初始化与每次调用都有燃料预算;燃料烧完即 trap,连续 [`MAX_FAULTS`]
-//!   次失败停用该包。
 //! - 隐私字段([`SceneIn::private`])直接跳过,guest 不会收到那次状态。
 //! - 高对比度下补丁里的效果被摘掉,只留主题色。
 //! - 命令包空闲 [`IDLE_UNLOAD`] 后卸载;外观包常驻。
@@ -44,9 +41,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use bindings::{Binding, BindingTable, Hotkey, Input, Modifier};
-pub use host::{Finished, Limits};
+pub use host::Finished;
 pub use lueying_extmeta::consent::{ConsentBook, ConsentCheck, ConsentEntry};
-pub use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
+pub use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
 pub use lueying_extmeta::{
     Activate, Command, EXT_API, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, Permission, Service,
     Setting, SettingValue, When,
@@ -62,9 +59,6 @@ pub use services::{AuditOutcome, AuditSink, Done, PrivacyCheck, Provider, Regist
 
 /// 热加载前的同意检查;返回 `Err` 时新内容不生效,旧版本继续跑。
 pub type ConsentGate = Arc<dyn Fn(&Manifest, &Path) -> Result<(), String> + Send + Sync>;
-
-/// 连续失败多少次停用扩展包;重载成功后计数清零。
-pub const MAX_FAULTS: u32 = 3;
 
 /// Wasm 模块文件的上限。官方 shot-ocr 编出来约几十 KB,16 MiB 足够大。
 pub const MAX_WASM_BYTES: usize = 16 * 1024 * 1024;

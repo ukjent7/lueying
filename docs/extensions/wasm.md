@@ -27,16 +27,6 @@ cargo build --release -p my-extension --target wasm32-unknown-unknown
 wasm-tools component new target/wasm32-unknown-unknown/release/my_extension.wasm -o extension.wasm
 ```
 
-## 资源限制
-
-| 资源 | 限额 |
-|---|---|
-| 线性内存 | 16 MiB |
-| 值栈 | 256 KiB |
-| 初始化 / 命令 / 外观燃料 | 5000 万 / 2 亿 / 2000 万 |
-
-超限的调用被中断。连续 3 次故障后扩展停用。完整说明见[分层与沙箱](layers.md)。
-
 ## 参考
 
 `extensions/clipboard-history` 是一个完整的 Wasm 扩展示例，包含清单、热键与面板。

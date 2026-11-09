@@ -1,7 +1,7 @@
 //! 扩展服务缝与官方扩展 E2E:needs 门控、缺提供者报错、绑定表与 shot-ocr。
 //!
 //! 先列失败方式:
-//! 1. 未声明 needs 的服务在加载期就该被拒;声明了但没装提供者的服务静默成功。
+//! 1. 未声明 needs 的服务调用期一调即拒,不触达提供者;声明了但没装提供者的服务报错,不静默成功。
 //! 2. 绑定表解析、保留组合拒绝、when 过滤与表内冲突语义漂移。
 //! 3. 官方 shot-ocr 清单或 guest 与仓库脱节,截图→识别→上屏链路断掉。
 
@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use lueying_extwasm::bindings::{BindingTable, Input};
-use lueying_extwasm::{Done, Limits, Provider, Registry, Runtime, Service, When};
+use lueying_extwasm::{Done, Pack, Provider, Registry, Runtime, Service, When};
 
 use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::{Temp, push};
@@ -20,20 +20,24 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("services");
 
-    // guest 用了 notify 但清单没有声明:实例化直接失败。
+    // guest 用了 notify 但清单没有声明:服务全量链接,加载照常,调用时一调即拒。
     let gate_dir = temp.pack("gate");
     write_pack(
         &gate_dir,
-        &command_manifest("gate", &["run"], &[]),
+        &command_manifest("gate", &["notify"], &[]),
         &fixture,
     );
-    let error = lueying_extwasm::Pack::load(&gate_dir)
-        .err()
-        .unwrap_or_default();
+    let error = match Pack::load(&gate_dir) {
+        Ok(mut pack) => pack
+            .invoke_wait("notify", "{}", Duration::from_secs(30))
+            .err()
+            .unwrap_or_default(),
+        Err(error) => error,
+    };
     push(
         checks,
-        "未声明的服务在加载期被拒",
-        error.contains("没声明的宿主服务") && error.contains("notify"),
+        "未声明的服务调用期被拒",
+        error.contains("不在清单 needs 里") && error.contains("notify"),
         error,
     );
 
@@ -45,12 +49,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
         fixture,
     );
     let registry = Arc::new(Registry::new());
-    let (mut runtime, errors) = Runtime::open_with(
-        &temp.root,
-        &["svc".to_string()],
-        Limits::default(),
-        registry,
-    );
+    let (mut runtime, errors) = Runtime::open_with(&temp.root, &["svc".to_string()], registry);
     if !errors.is_empty() {
         push(checks, "服务包打开", false, format!("{errors:?}"));
         return;
@@ -262,7 +261,7 @@ fn official_shot_ocr(checks: &mut Vec<(&'static str, bool, String)>) {
     registry.set(Service::Output, chain.clone());
     registry.set(Service::Notify, Arc::new(NotifyStub));
     let order = vec!["shot-ocr".to_string()];
-    let (mut runtime, errors) = Runtime::open_with(&temp.root, &order, Limits::default(), registry);
+    let (mut runtime, errors) = Runtime::open_with(&temp.root, &order, registry);
     push(
         checks,
         "官方 shot-ocr 清单与 guest 加载",

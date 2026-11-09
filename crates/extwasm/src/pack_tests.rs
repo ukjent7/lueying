@@ -79,24 +79,6 @@ fn private_scene_is_skipped() {
 }
 
 #[test]
-fn three_traps_disable_pack() {
-    let temp = Temp::new("traps");
-    let dir = temp.pack("demo");
-    test_guest::write_pack(
-        &dir,
-        &test_guest::command_manifest("demo", &[("trap", "陷阱")]),
-        test_guest::fixture_or_skip!(test_guest::fixture(), "trap 停用"),
-    );
-    let mut pack = load(&dir);
-    for _ in 0..3 {
-        assert!(pack.invoke_wait("trap", "{}", WAIT).is_err());
-    }
-    assert!(pack.disabled_reason().is_some());
-    let error = pack.invoke_wait("trap", "{}", WAIT).unwrap_err();
-    assert!(error.contains("已停用"), "{error}");
-}
-
-#[test]
 fn hot_reload_swaps_wasm() {
     let temp = Temp::new("reload");
     let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "热重载");
@@ -120,14 +102,9 @@ fn gate_denial_blocks_load() {
     let dir = temp.pack("demo");
     write_command(&dir, &wasm);
     let gate: ConsentGate = Arc::new(|_, _| Err("未同意".into()));
-    let error = Pack::load_with_gate(
-        &dir,
-        Limits::default(),
-        Arc::new(Registry::new()),
-        Some(gate),
-    )
-    .err()
-    .expect("应当拒绝");
+    let error = Pack::load_with_gate(&dir, Arc::new(Registry::new()), Some(gate))
+        .err()
+        .expect("应当拒绝");
     assert!(error.contains("未同意"), "{error}");
 }
 
@@ -148,13 +125,8 @@ fn gate_denial_keeps_previous_version() {
             }
         })
     };
-    let mut pack = Pack::load_with_gate(
-        &dir,
-        Limits::default(),
-        Arc::new(Registry::new()),
-        Some(gate),
-    )
-    .expect("首次加载");
+    let mut pack =
+        Pack::load_with_gate(&dir, Arc::new(Registry::new()), Some(gate)).expect("首次加载");
     allowed.store(false, Ordering::Relaxed);
     std::fs::write(dir.join("extension.wasm"), b"not wasm at all").expect("写新模块");
     assert!(matches!(pack.poll(), Poll::Failed(_)));

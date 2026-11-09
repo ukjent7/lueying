@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use lueying_extmeta::Manifest;
 use lueying_extmeta::consent::ConsentBook;
-use lueying_extwasm::{ConsentGate, Limits, Pack, Poll, Registry};
+use lueying_extwasm::{ConsentGate, Pack, Poll, Registry};
 
 use crate::extwasm::harness::{fixture_a, fixture_b, fixture_or_skip};
 use crate::harness::Temp;
@@ -68,12 +68,7 @@ pub fn run(report: &mut String) -> usize {
     write_pack(&dir, &v1);
     let registry = Arc::new(Registry::new());
 
-    let denied = Pack::load_with_gate(
-        &dir,
-        Limits::default(),
-        registry.clone(),
-        Some(gate(&consent)),
-    );
+    let denied = Pack::load_with_gate(&dir, registry.clone(), Some(gate(&consent)));
     checks.push((
         "未同意不加载",
         denied
@@ -84,12 +79,7 @@ pub fn run(report: &mut String) -> usize {
     ));
 
     approve(&dir, &consent);
-    let mut pack = match Pack::load_with_gate(
-        &dir,
-        Limits::default(),
-        registry.clone(),
-        Some(gate(&consent)),
-    ) {
+    let mut pack = match Pack::load_with_gate(&dir, registry.clone(), Some(gate(&consent))) {
         Ok(pack) => pack,
         Err(error) => {
             checks.push(("同意后加载", false, error));
@@ -112,7 +102,7 @@ pub fn run(report: &mut String) -> usize {
     checks.push(("拒绝更新保留旧版本", old == ARGS, old));
 
     approve(&dir, &consent);
-    match Pack::load_with_gate(&dir, Limits::default(), registry, Some(gate(&consent))) {
+    match Pack::load_with_gate(&dir, registry, Some(gate(&consent))) {
         Ok(mut updated) => {
             let version = run_command(&mut updated);
             checks.push(("重新同意后换新版本", version == ARGS_B, version));

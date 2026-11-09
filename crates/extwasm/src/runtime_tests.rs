@@ -5,19 +5,13 @@ use std::time::Instant;
 use crate::Registry;
 
 use super::*;
-use crate::Limits;
 use crate::test_guest::{self, FIXTURE_ACCENT, FIXTURE_B_ACCENT, Temp};
 
 const WAIT: Duration = Duration::from_secs(5);
 
 fn runtime(temp: &Temp, order: &[&str]) -> (Runtime, Vec<String>) {
     let ids: Vec<String> = order.iter().map(|id| (*id).to_string()).collect();
-    Runtime::open_with(
-        temp.root(),
-        &ids,
-        Limits::default(),
-        Arc::new(Registry::new()),
-    )
+    Runtime::open_with(temp.root(), &ids, Arc::new(Registry::new()))
 }
 
 fn write_command_pack(temp: &Temp, id: &str, wasm: &[u8]) {

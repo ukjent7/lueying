@@ -613,7 +613,7 @@ impl Settings {
         }
     }
 
-    /// 扩展运行那行的说明:状态计数、步进峰值与超限次数。
+    /// 扩展运行那行的说明:状态计数与派发峰值。
     pub(crate) fn ext_metrics_detail(&self) -> String {
         match &self.ext_metrics {
             Some(metrics) => metrics.summary(),

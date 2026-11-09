@@ -15,9 +15,7 @@
 //!
 //! # 边界
 //!
-//! - 线性内存上限 [`Limits::memory_bytes`],值栈上限 [`Limits::stack_bytes`]。
-//! - 初始化与每次调用都有燃料预算;燃料烧完即 trap,连续 [`MAX_FAULTS`]
-//!   次失败停用该包。
+//! - 不设燃料、内存或时间预算:扩展跑多久、占多少内存由扩展自己决定。
 //! - 隐私字段([`SceneIn::private`])直接跳过,guest 不会收到那次状态。
 //! - 清单没有任何命令且不提供外观的包,加载期就拒绝。
 //!
@@ -34,97 +32,30 @@ use crate::Manifest;
 use crate::Registry;
 use crate::manifest::Service;
 
-/// worker 线程的宿主栈下限;wasm 帧(wasmtime 把 [`Limits::stack_bytes`]
-/// 当真实线程栈约束)与宿主函数的 serde 解析都要装下。引擎级扩展按
-/// 栈预算放大,见 [`Worker::spawn`]。
+/// worker 线程栈:wasmtime 的 wasm 值栈(默认 512 KiB)与宿主函数的 serde
+/// 解析都装在它里面。
 const WORKER_STACK: usize = 2 << 20;
-
-/// 运行期上限。
-#[derive(Clone, Copy, Debug)]
-pub struct Limits {
-    /// 线性内存上限(字节)。
-    pub memory_bytes: usize,
-    /// Wasm 值栈上限(字节);wasmtime 用它约束真实线程栈上的 wasm 帧,
-    /// 必须明显小于 worker 线程栈(WORKER_STACK)。
-    pub stack_bytes: usize,
-    /// 初始化时限(毫秒);指标展示用。
-    pub init_ms: u64,
-    /// 单次调用时限(毫秒);指标展示用。
-    pub dispatch_ms: u64,
-    /// 初始化燃料。
-    pub init_fuel: u64,
-    /// 命令燃料;纯计算烧完即 trap。
-    pub command_fuel: u64,
-    /// 外观燃料;候选窗每帧都要跑,预算更紧。
-    pub appearance_fuel: u64,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            memory_bytes: 16 << 20,
-            stack_bytes: 256 << 10,
-            init_ms: 100,
-            dispatch_ms: 100,
-            init_fuel: 50_000_000,
-            command_fuel: 200_000_000,
-            appearance_fuel: 20_000_000,
-        }
-    }
-}
-
-impl Limits {
-    /// 引擎级预算:清单声明 `engine` 的扩展(内嵌 JS 引擎、CPython 等
-    /// 重运行时)按这份跑。数值给足余量,首个真实引擎扩展落地时校准。
-    pub fn engine() -> Self {
-        Self {
-            memory_bytes: 256 << 20,
-            stack_bytes: 2 << 20,
-            init_ms: 5000,
-            dispatch_ms: 1000,
-            init_fuel: 8_000_000_000,
-            command_fuel: 2_000_000_000,
-            appearance_fuel: 200_000_000,
-        }
-    }
-}
 
 /// 一个 worker 的运行指标快照。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostMetrics {
     /// 命令/外观调用次数。
     pub dispatches: u64,
-    /// 燃料消耗累计。
-    pub steps: u64,
     /// 单次调用最慢耗时(微秒)。
     pub dispatch_peak_us: u64,
-    /// 分段峰值(微秒);当前与派发峰值相同。
-    pub step_peak_us: u64,
-    /// 燃料或宿主调用超限次数。
-    pub timeouts: u64,
-    /// 内存增长失败次数。
-    pub ooms: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct Metrics {
     pub(crate) dispatches: AtomicU64,
-    pub(crate) steps: AtomicU64,
     pub(crate) dispatch_peak_us: AtomicU64,
-    pub(crate) step_peak_us: AtomicU64,
-    pub(crate) timeouts: AtomicU64,
-    pub(crate) ooms: AtomicU64,
 }
 
 impl Metrics {
     fn snapshot(&self) -> HostMetrics {
         HostMetrics {
             dispatches: self.dispatches.load(Ordering::Relaxed),
-            steps: self.steps.load(Ordering::Relaxed),
             dispatch_peak_us: self.dispatch_peak_us.load(Ordering::Relaxed),
-            step_peak_us: self.step_peak_us.load(Ordering::Relaxed),
-            timeouts: self.timeouts.load(Ordering::Relaxed),
-            ooms: self.ooms.load(Ordering::Relaxed),
         }
     }
 }
@@ -164,33 +95,27 @@ pub struct Worker {
     metrics: Arc<Metrics>,
     busy: Arc<AtomicBool>,
     has_appearance: bool,
-    limits: Limits,
     seq: AtomicU64,
 }
 
 impl Worker {
     /// 一个扩展的模块起一个 worker;加载失败时返回错误,线程已回收。
     ///
-    /// 引擎与组件在调用线程上编译:编译大组件(JS 引擎、CPython 之类)
-    /// 要几分钟,不该占 30 秒的就绪窗口;就绪窗口只罩实例化加 init,
-    /// 其 CPU 有燃料封顶,不会无限等。清单声明 `engine` 的扩展改用
-    /// [`Limits::engine`] 预算。
+    /// 格式与入口在编译前检查:都是常数时间的判断,坏模块报模块的错,
+    /// 空入口不必等大组件编完才发现。引擎与组件在调用线程上编译,编译大
+    /// 组件(JS 引擎、CPython 之类)要几分钟,不占 worker 线程。
     pub(crate) fn spawn(
         wasm: Vec<u8>,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
-        limits: Limits,
     ) -> Result<Self, String> {
-        let limits = if manifest.engine {
-            Limits::engine()
-        } else {
-            limits
-        };
-        // 空入口在编译前拒绝:编译大组件要几分钟,没必要等它跑完才发现。
+        if !crate::component::is_component(&wasm) {
+            return Err("不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into());
+        }
         if manifest.commands().is_empty() && !manifest.is_appearance() {
             return Err(format!("扩展 {} 没有可调用的入口", manifest.id));
         }
-        let engine = crate::component::build_engine(limits)?;
+        let engine = crate::component::build_engine()?;
         let component = crate::component::build_component(&engine, &wasm)?;
         let (jobs_tx, jobs_rx) = mpsc::channel();
         let (results_tx, results) = mpsc::channel();
@@ -205,15 +130,13 @@ impl Worker {
         let has_appearance = manifest.is_appearance();
         let handle = std::thread::Builder::new()
             .name(format!("ext-wasm-{caller}"))
-            // wasm 帧栈预算(引擎级 2 MiB)要装得下:栈按预算的四倍给。
-            .stack_size(WORKER_STACK.max(limits.stack_bytes.saturating_mul(4)))
+            .stack_size(WORKER_STACK)
             .spawn(move || {
                 let mut guest = match crate::component::ComponentGuest::new(
                     engine,
                     component,
                     manifest,
                     services,
-                    limits,
                     Arc::clone(&worker_cancelled),
                     worker_metrics,
                 ) {
@@ -258,7 +181,7 @@ impl Worker {
                 }
             })
             .map_err(|error| format!("扩展 {caller} worker 启动失败: {error}"))?;
-        match ready_rx.recv_timeout(Duration::from_secs(30)) {
+        match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
                 jobs: jobs_tx,
                 results,
@@ -267,16 +190,14 @@ impl Worker {
                 metrics,
                 busy,
                 has_appearance,
-                limits,
                 seq: AtomicU64::new(0),
             }),
             Ok(Err(error)) => {
                 let _ = handle.join();
                 Err(error)
             }
+            // 线程在就绪前退出只可能是 panic:发送端随之丢弃。
             Err(_) => {
-                cancelled.store(true, Ordering::Relaxed);
-                let _ = jobs_tx.send(Job::Shutdown);
                 let _ = handle.join();
                 Err(format!("扩展 {caller} worker 没有就绪"))
             }
@@ -339,11 +260,10 @@ impl Worker {
         {
             return Some(Err("扩展 worker 已退出".into()));
         }
-        let wait = Duration::from_millis(self.limits.dispatch_ms.max(50) + 50);
         Some(
             answer
-                .recv_timeout(wait)
-                .unwrap_or_else(|_| Err("外观派发超时".into())),
+                .recv()
+                .unwrap_or_else(|_| Err("扩展 worker 已退出".into())),
         )
     }
 
@@ -380,23 +300,6 @@ impl Drop for Worker {
             let _ = handle.join();
         }
     }
-}
-
-/// 每次调用的燃料预算;只有外观的包按帧算,带命令的包按命令算。
-pub(crate) fn call_fuel(manifest: &Manifest, limits: Limits) -> u64 {
-    if manifest.commands().is_empty() {
-        limits.appearance_fuel
-    } else {
-        limits.command_fuel
-    }
-}
-
-/// wasmtime 配置;栈上限按 [`Limits`] 配,其余默认(燃料、组件模型由
-/// [`crate::component::ComponentGuest`] 自己开)。
-pub(crate) fn wasmtime_config(limits: Limits) -> wasmtime::Config {
-    let mut config = wasmtime::Config::default();
-    config.max_wasm_stack(limits.stack_bytes.max(64 << 10));
-    config
 }
 
 /// 服务的宿主等待时限。面板要等用户操作,识别要跑满传输时限,单独放宽。

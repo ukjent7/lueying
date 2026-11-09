@@ -16,7 +16,7 @@ use lueying_extmeta::metrics::{ExtStat, ExtState};
 
 use crate::ConsentGate;
 use crate::Registry;
-use crate::host::{Finished, Limits};
+use crate::host::Finished;
 use crate::manifest::{Manifest, When};
 use crate::pack::{self, Pack, Poll};
 use crate::{SceneIn, ScenePatch};
@@ -83,7 +83,6 @@ impl Slot {
 
 /// 多扩展运行期。
 pub struct Runtime {
-    limits: Limits,
     /// 服务缝注册表;所有槽位共享,提供者由宿主进程装填。
     services: Arc<Registry>,
     /// 同意检查;装到每个包的加载与热重载路径上。
@@ -97,25 +96,23 @@ impl Runtime {
     ///
     /// 坏清单与缺失目录只记一条诊断,不影响其他扩展;返回的诊断由调用方
     /// 写进日志与设置页。重复 id 只保留第一次出现的位置。
-    pub fn open(root: &Path, order: &[String], limits: Limits) -> (Self, Vec<String>) {
-        Self::open_with(root, order, limits, Arc::new(Registry::new()))
+    pub fn open(root: &Path, order: &[String]) -> (Self, Vec<String>) {
+        Self::open_with(root, order, Arc::new(Registry::new()))
     }
 
     /// 同上,另带服务注册表;注册表被全部槽位共享。
     pub fn open_with(
         root: &Path,
         order: &[String],
-        limits: Limits,
         services: Arc<Registry>,
     ) -> (Self, Vec<String>) {
-        Self::open_with_gate(root, order, limits, services, None)
+        Self::open_with_gate(root, order, services, None)
     }
 
     /// 同上,另带同意检查;热重载前也要先过同一道门。
     pub fn open_with_gate(
         root: &Path,
         order: &[String],
-        limits: Limits,
         services: Arc<Registry>,
         gate: Option<ConsentGate>,
     ) -> (Self, Vec<String>) {
@@ -144,7 +141,6 @@ impl Runtime {
         }
         (
             Self {
-                limits,
                 services,
                 gate,
                 slots,
@@ -191,7 +187,6 @@ impl Runtime {
                     } else {
                         ExtState::Idle
                     },
-                    memory_limit: self.limits.memory_bytes as u64,
                     last_error: slot.error.clone(),
                     ..ExtStat::default()
                 },
@@ -285,12 +280,8 @@ impl Runtime {
                 if !slot.resident || slot.error.is_some() {
                     continue;
                 }
-                match Pack::load_with_gate(
-                    &slot.dir,
-                    self.limits,
-                    Arc::clone(&self.services),
-                    self.gate.clone(),
-                ) {
+                match Pack::load_with_gate(&slot.dir, Arc::clone(&self.services), self.gate.clone())
+                {
                     Ok(pack) => {
                         slot.pack = Some(pack);
                         slot.error = None;
@@ -452,11 +443,10 @@ impl Runtime {
             self.slots[index].last_used = Instant::now();
             return Ok(());
         }
-        let limits = self.limits;
         let services = Arc::clone(&self.services);
         let gate = self.gate.clone();
         let slot = &mut self.slots[index];
-        match Pack::load_with_gate(&slot.dir, limits, services, gate) {
+        match Pack::load_with_gate(&slot.dir, services, gate) {
             Ok(pack) => {
                 slot.pack = Some(pack);
                 slot.error = None;

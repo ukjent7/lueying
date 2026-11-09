@@ -61,7 +61,7 @@ pub struct Manifest {
     #[serde(default)]
     pub appearance: bool,
     /// 内嵌语言引擎(JS 引擎、CPython 等重运行时)的组件声明此项,
-    /// 宿主按引擎级资源预算载入(见 extwasm 的 `Limits::engine`)。
+    /// 宿主放宽模块大小上限(见 extwasm 的 `MAX_WASM_BYTES_ENGINE`)。
     #[serde(default)]
     pub engine: bool,
     /// 激活方式:触发词、建议热键与命令。

@@ -28,7 +28,7 @@ pub const USAGE: &str = "\
   add <来源>        一条命令装社区扩展:github:作者/仓库#版本
   reload            让常驻服务重读配置与扩展
   logs              看服务日志末尾
-  top               查看扩展运行指标(内存、峰值、超限)
+  top               查看扩展运行指标(派发次数、峰值、失败原因)
   replay [脚本]     无头回放:按键序列进,候选列表出(缺省读标准输入)
   commit <文本>     借用输入法把文本上屏到当前输入框(需开启 commit_channel)
   run <命令 id>     触发扩展命令;PowerToys 命令面板等启动器走这里
@@ -403,24 +403,15 @@ pub fn read_metrics(path: &Path) -> Result<ExtMetrics, String> {
     Ok(ExtMetrics::load(path))
 }
 
-/// 表格输出;首行是摘要,第二行是预算。
+/// 表格输出;首行是摘要,第二行是更新时间。
 pub fn render_table(metrics: &ExtMetrics) -> String {
-    let budgets = &metrics.budgets;
     let mut out = String::new();
     out.push_str(&metrics.summary());
     out.push('\n');
-    out.push_str(&format!(
-        "预算: 内存 {} MiB · 栈 {} KiB · 初始化 {} ms · 单步 {} ms · 连续 {} 次失败停用\n",
-        budgets.memory_bytes >> 20,
-        budgets.stack_bytes >> 10,
-        budgets.init_ms,
-        budgets.dispatch_ms,
-        budgets.max_faults
-    ));
     out.push_str(&format!("更新: {}\n\n", updated_ago(metrics.updated_ms)));
     out.push_str(&format!(
-        "{:<18}{:<9}{:<10}{:<12}{:<12}{:<7}{:<7}{}\n",
-        "扩展", "状态", "内存", "派发峰值", "步进峰值", "超时", "失败", "说明"
+        "{:<18}{:<9}{:<10}{:<12}{}\n",
+        "扩展", "状态", "派发", "派发峰值", "说明"
     ));
     for stat in &metrics.extensions {
         let note = stat
@@ -429,14 +420,11 @@ pub fn render_table(metrics: &ExtMetrics) -> String {
             .map(|note| note.replace(['\r', '\n'], " "))
             .unwrap_or_default();
         out.push_str(&format!(
-            "{:<18}{:<9}{:<10}{:<12}{:<12}{:<7}{:<7}{}\n",
+            "{:<18}{:<9}{:<10}{:<12}{}\n",
             stat.id,
             stat.state.title(),
-            stat.memory_text(),
+            stat.dispatches,
             stat.dispatch_peak_ms(),
-            stat.step_peak_ms(),
-            stat.timeouts,
-            stat.faults,
             note
         ));
     }

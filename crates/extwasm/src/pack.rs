@@ -11,9 +11,8 @@ use std::time::Duration;
 use lueying_extmeta::metrics::{ExtStat, ExtState};
 
 use crate::ConsentGate;
-use crate::MAX_FAULTS;
 use crate::Registry;
-use crate::host::{Finished, Limits, Worker};
+use crate::host::{Finished, Worker};
 use crate::manifest::{Command, MAX_MANIFEST_BYTES, Manifest};
 use crate::{MAX_WASM_BYTES, MAX_WASM_BYTES_ENGINE};
 use crate::{SceneIn, ScenePatch};
@@ -45,35 +44,26 @@ pub struct Pack {
     dir: PathBuf,
     manifest: Manifest,
     worker: Worker,
-    limits: Limits,
     services: Arc<Registry>,
     gate: Option<ConsentGate>,
     stamp: Stamp,
-    faults: u32,
-    disabled: Option<String>,
     last_error: Option<String>,
     removed: bool,
     pending: u64,
 }
 
 impl Pack {
-    /// 用默认上限加载一个包目录。
+    /// 加载一个包目录。
     pub fn load(dir: &Path) -> Result<Self, String> {
-        Self::load_with(dir, Limits::default())
+        Self::load_with_gate(dir, Arc::new(Registry::new()), None)
     }
 
-    /// 用指定上限加载一个包目录。
-    pub fn load_with(dir: &Path, limits: Limits) -> Result<Self, String> {
-        Self::load_with_gate(dir, limits, Arc::new(Registry::new()), None)
-    }
-
-    /// 用指定上限、服务注册表与同意检查加载一个包目录。
+    /// 用服务注册表与同意检查加载一个包目录。
     ///
     /// 清单 `needs` 是调用期门控:没声明的服务一调即拒,不会等到出错
     /// 结果落地。
     pub fn load_with_gate(
         dir: &Path,
-        limits: Limits,
         services: Arc<Registry>,
         gate: Option<ConsentGate>,
     ) -> Result<Self, String> {
@@ -92,13 +82,8 @@ impl Pack {
         let wasm = read_capped(&dir.join(manifest.wasm_main()), wasm_cap)
             .map_err(|error| format!("读 Wasm 模块 {} 失败: {error}", manifest.wasm_main()))?;
         let wasm_hash = hash(&wasm);
-        let worker = Worker::spawn(
-            wasm,
-            Arc::new(manifest.clone()),
-            Arc::clone(&services),
-            limits,
-        )
-        .map_err(|error| format!("扩展 {} 加载失败: {error}", manifest.id))?;
+        let worker = Worker::spawn(wasm, Arc::new(manifest.clone()), Arc::clone(&services))
+            .map_err(|error| format!("扩展 {} 加载失败: {error}", manifest.id))?;
         Ok(Self {
             dir: dir.to_path_buf(),
             stamp: Stamp {
@@ -107,11 +92,8 @@ impl Pack {
             },
             manifest,
             worker,
-            limits,
             services,
             gate,
-            faults: 0,
-            disabled: None,
             last_error: None,
             removed: false,
             pending: 0,
@@ -126,11 +108,6 @@ impl Pack {
     /// 最近一次失败的原因;成功后清空。
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
-    }
-
-    /// 连续失败被停用的原因;重载成功后清空。
-    pub fn disabled_reason(&self) -> Option<&str> {
-        self.disabled.as_deref()
     }
 
     /// 清单里声明的命令。
@@ -155,23 +132,11 @@ impl Pack {
             id: self.manifest.id.clone(),
             name: self.manifest.name.clone(),
             version: self.manifest.version.clone(),
-            state: if self.disabled.is_some() {
-                ExtState::Disabled
-            } else {
-                ExtState::Loaded
-            },
-            // 组件内存按页由 wasmtime 托管,当前占用不外露,只报上限。
-            memory_used: 0,
-            memory_limit: self.limits.memory_bytes as u64,
+            state: ExtState::Loaded,
             dispatches: host.dispatches,
-            steps: host.steps,
             dispatch_peak_us: host.dispatch_peak_us,
-            step_peak_us: host.step_peak_us,
-            timeouts: host.timeouts,
-            ooms: host.ooms,
-            faults: self.faults,
             pending: self.pending,
-            last_error: self.disabled.clone().or_else(|| self.last_error.clone()),
+            last_error: self.last_error.clone(),
         }
     }
 
@@ -232,7 +197,7 @@ impl Pack {
     /// 隐私字段直接返回 `None`,guest 不会被调用。worker 忙时跳过这一帧,
     /// 不把长命令算成外观超时。
     pub fn dispatch(&mut self, state: &SceneIn) -> Option<ScenePatch> {
-        if state.private || self.removed || self.disabled.is_some() {
+        if state.private || self.removed {
             return None;
         }
         if !self.worker.has_appearance() {
@@ -308,23 +273,17 @@ impl Pack {
             self.last_error = Some(error.clone());
             return Poll::Failed(error);
         }
-        let worker = match Worker::spawn(
-            wasm,
-            Arc::new(manifest.clone()),
-            Arc::clone(&self.services),
-            self.limits,
-        ) {
-            Ok(worker) => worker,
-            Err(error) => {
-                let error = format!("扩展 {} 重载失败: {error}", manifest.id);
-                self.last_error = Some(error.clone());
-                return Poll::Failed(error);
-            }
-        };
+        let worker =
+            match Worker::spawn(wasm, Arc::new(manifest.clone()), Arc::clone(&self.services)) {
+                Ok(worker) => worker,
+                Err(error) => {
+                    let error = format!("扩展 {} 重载失败: {error}", manifest.id);
+                    self.last_error = Some(error.clone());
+                    return Poll::Failed(error);
+                }
+            };
         self.worker = worker;
         self.manifest = manifest;
-        self.faults = 0;
-        self.disabled = None;
         self.last_error = None;
         self.pending = 0;
         Poll::Reloaded
@@ -333,9 +292,6 @@ impl Pack {
     fn check_invokable(&self, command: &str) -> Result<(), String> {
         if self.removed {
             return Err(format!("扩展 {} 已卸载", self.manifest.id));
-        }
-        if let Some(reason) = &self.disabled {
-            return Err(format!("扩展 {} 已停用: {reason}", self.manifest.id));
         }
         if !self
             .manifest
@@ -349,16 +305,11 @@ impl Pack {
     }
 
     fn succeed(&mut self) {
-        self.faults = 0;
         self.last_error = None;
     }
 
     fn fault(&mut self, error: String) {
-        self.faults = self.faults.saturating_add(1);
-        self.last_error = Some(error.clone());
-        if self.faults >= MAX_FAULTS && self.disabled.is_none() {
-            self.disabled = Some(format!("连续 {MAX_FAULTS} 次失败,已停用: {error}"));
-        }
+        self.last_error = Some(error);
     }
 
     /// 文件没变时返回 `Unchanged`,变了才报同一条错,避免每秒刷日志。

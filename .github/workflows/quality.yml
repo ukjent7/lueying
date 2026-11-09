@@ -108,11 +108,8 @@ jobs:
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
           CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-init-loop/Cargo.toml --target wasm32-unknown-unknown
-          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_init_loop.wasm -o target/fixture-init-loop.wasm
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
-          echo "LUEYING_FIXTURE_INIT_LOOP_WASM=$PWD/target/fixture-init-loop.wasm" >> "$GITHUB_ENV"
       - name: 主词典 E2E + 候选准确率基准
         run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--bench' || '--bench-fast' }}
       - name: 报告摘要

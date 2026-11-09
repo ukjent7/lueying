@@ -1,8 +1,8 @@
 //! 扩展宿主行为测试客人。
 //!
 //! CI 用 wasm32 目标编出来再 `wasm-tools component new` 打包,扩展宿主的
-//! 单元测试与 E2E 通过环境变量加载它,验证命令、报错、trap、燃料、内存
-//! 限额、宿主服务与外观的真实组件路径(见 `crates/extwasm/src/test_guest.rs`)。
+//! 单元测试与 E2E 通过环境变量加载它,验证命令、报错、trap、宿主服务与
+//! 外观的真实组件路径(见 `crates/extwasm/src/test_guest.rs`)。
 //!
 //! 服务面只用 `notify`:清单声明 `needs`,宿主按调用逐次门控,正好覆盖
 //! needs 语义;组件里其余服务的导入会被裁掉。
@@ -34,20 +34,8 @@ impl Extension for Fixture {
             "run" | "echo" => Ok(format!("{MARK}{args}")),
             // 带着参数文本报错,错误回传断言用。
             "fail" => Err(format!("{MARK}{args}")),
-            // 直接 trap;连续失败停用与 trap 恢复断言用。
+            // 直接 trap;trap 之后实例仍可用的断言用。
             "trap" => unreachable!("测试用 trap"),
-            // 死循环;燃料预算打断断言用。
-            "spin" => {
-                loop {
-                    std::hint::black_box(1u64.wrapping_add(1));
-                }
-            }
-            // 一次申请远超上限的内存;内存限额断言用。
-            "hog" => {
-                let huge = Vec::<u8>::with_capacity(64 << 20);
-                std::hint::black_box(huge.len());
-                Ok("{}".into())
-            }
             // 调一次宿主通知服务;needs 门控与缺提供者断言用。
             "notify" => {
                 notify_show("测试客人", args)?;
@@ -65,4 +53,4 @@ impl Extension for Fixture {
     }
 }
 
-lueying_extguest::export_component!(Fixture, wit: "../../../extwasm/lueying.wit", commands: [run, echo, fail, trap, spin, hog, notify]);
+lueying_extguest::export_component!(Fixture, wit: "../../../extwasm/lueying.wit", commands: [run, echo, fail, trap, notify]);

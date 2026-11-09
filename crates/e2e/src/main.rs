@@ -231,7 +231,7 @@ fn main() {
     // 动作候选:触发词整串匹配、空格/数字/点选、负反馈与置顶。
     failures += actions::run(&mut report);
 
-    // 运行期 Wasm 扩展:包校验、场景协议、预算、隐私与热重载。
+    // 运行期 Wasm 扩展:包校验、场景协议、隐私与热重载。
     failures += extwasm::run(&mut report);
 
     // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
@@ -240,7 +240,7 @@ fn main() {
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);
 
-    // 预算与可见性:运行指标、超限停用、快照与 CLI。
+    // 运行可见性:运行指标、快照与 CLI。
     failures += metrics::run(&mut report);
 
     // 渲染核心:面板布局数学与设置窗光栅绘制。

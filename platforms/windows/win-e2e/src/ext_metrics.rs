@@ -14,7 +14,6 @@ pub fn check(data: &std::path::Path) -> Result<String, String> {
             match metrics.extensions.iter().find(|stat| stat.id == "shot-ocr") {
                 Some(stat)
                     if stat.state == lueying_extmeta::metrics::ExtState::Loaded
-                        && stat.memory_limit > 0
                         && stat.dispatches > 0 =>
                 {
                     return Ok(format!(

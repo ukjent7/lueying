@@ -1,8 +1,8 @@
 //! 扩展 E2E 公共件:临时扩展包与组件测试客人。
 //!
-//! guest 是真实 SDK 编出的组件(fixture-guest / fixture-init-loop,CI 打包),
-//! 通过环境变量 `LUEYING_FIXTURE_WASM` / `LUEYING_FIXTURE_B_WASM` /
-//! `LUEYING_FIXTURE_INIT_LOOP_WASM` 提供;本机没有产物时相关检查跳过。
+//! guest 是真实 SDK 编出的组件(fixture-guest,CI 打包),通过环境变量
+//! `LUEYING_FIXTURE_WASM` / `LUEYING_FIXTURE_B_WASM` 提供;本机没有产物时
+//! 相关检查跳过。
 
 use std::path::Path;
 
@@ -75,7 +75,7 @@ fn component_bytes(var: &str) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
-/// 测试客人 A:命令 `run`/`echo` 回显参数,`trap`/`spin`/`hog`/`notify` 各司其职。
+/// 测试客人 A:命令 `run`/`echo` 回显参数,`trap` 与 `notify` 各司其职。
 pub(crate) fn fixture_a() -> Option<Vec<u8>> {
     component_bytes("LUEYING_FIXTURE_WASM")
 }
@@ -83,11 +83,6 @@ pub(crate) fn fixture_a() -> Option<Vec<u8>> {
 /// 测试客人 B(变体):回显带 `[b]` 前缀,主题色不同。
 pub(crate) fn fixture_b() -> Option<Vec<u8>> {
     component_bytes("LUEYING_FIXTURE_B_WASM")
-}
-
-/// init 死循环客人:初始化燃料打断测试用。
-pub(crate) fn fixture_init_loop() -> Option<Vec<u8>> {
-    component_bytes("LUEYING_FIXTURE_INIT_LOOP_WASM")
 }
 
 /// 需要测试客人的检查:拿到产物或跳过(说明打到 stderr,e2e 手动跑时可见)。

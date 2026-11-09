@@ -1,16 +1,15 @@
-//! 预算与可见性 E2E:运行指标、超限停用、快照往返与 `lueying ext top`。
+//! 指标 E2E:运行指标、快照往返与 `lueying ext top`。
 //!
 //! 失败方式:
-//! 1. 指标不记录或峰值算错,`top` 看不到超限。
-//! 2. 超预算的扩展没有停用,坏扩展继续拖慢宿主。
-//! 3. 快照写读不成,设置页与 CLI 看到旧值或空值。
-//! 4. 表格丢掉扩展、状态或超限次数。
+//! 1. 指标不记录或峰值算错,`top` 看不到派发。
+//! 2. 快照写读不成,设置页与 CLI 看到旧值或空值。
+//! 3. 表格丢掉扩展、状态或失败原因。
 
 use std::time::Duration;
 
 use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json, render_table};
-use lueying_extmeta::metrics::{Budgets, ExtMetrics, ExtStat};
-use lueying_extwasm::{ExtState, Limits, MAX_FAULTS, Pack, Runtime};
+use lueying_extmeta::metrics::{ExtMetrics, ExtStat};
+use lueying_extwasm::{ExtState, Runtime};
 
 use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::Temp;
@@ -19,7 +18,7 @@ pub fn run(report: &mut String) -> usize {
     let fixture = fixture_or_skip!(fixture_a());
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
 
-    // 1. 未加载、加载、卸载三种状态与内存/耗时指标。
+    // 1. 未加载、加载、卸载三种状态与派发指标。
     let temp = Temp::new("stats");
     let dir = temp.pack("demo");
     write_pack(
@@ -28,15 +27,12 @@ pub fn run(report: &mut String) -> usize {
         &fixture,
     );
     let order = vec!["demo".to_string()];
-    let (mut runtime, errors) = Runtime::open(&temp.root, &order, Limits::default());
+    let (mut runtime, errors) = Runtime::open(&temp.root, &order);
     checks.push(("指标包打开", errors.is_empty(), format!("{errors:?}")));
     let idle = runtime.stats();
     checks.push((
-        "未加载时显示空闲与预算",
-        idle.len() == 1
-            && idle[0].state == ExtState::Idle
-            && idle[0].memory_used == 0
-            && idle[0].memory_limit == Limits::default().memory_bytes as u64,
+        "未加载时显示空闲",
+        idle.len() == 1 && idle[0].state == ExtState::Idle,
         format!("{idle:?}"),
     ));
     let ran = runtime.invoke("demo.run", "{}");
@@ -48,27 +44,16 @@ pub fn run(report: &mut String) -> usize {
     }
     let loaded = runtime.stats();
     checks.push((
-        "加载后有内存上限与派发计数",
-        ran.is_ok()
-            && loaded[0].state == ExtState::Loaded
-            && loaded[0].dispatches >= 1
-            && loaded[0].memory_limit > 0,
+        "加载后有派发计数",
+        ran.is_ok() && loaded[0].state == ExtState::Loaded && loaded[0].dispatches >= 1,
         format!("run={ran:?} stat={:?}", loaded.first()),
-    ));
-    let peak = loaded[0].dispatch_peak_us;
-    let budget_us = Limits::default().dispatch_ms * 1000;
-    // CI 延迟门禁:一次普通命令的峰值必须落在派发预算内。
-    checks.push((
-        "CI 延迟门禁",
-        peak <= budget_us,
-        format!("派发峰值 {peak} us / 预算 {budget_us} us"),
     ));
     runtime.deactivate("demo");
     let idle = runtime.stats();
     checks.push((
         "卸载后回到空闲",
         idle.first()
-            .is_some_and(|stat| stat.state == ExtState::Idle && stat.memory_used == 0),
+            .is_some_and(|stat| stat.state == ExtState::Idle),
         format!("stat={:?}", idle.first()),
     ));
     let gone = runtime.unload("demo") && runtime.stats().is_empty();
@@ -78,60 +63,15 @@ pub fn run(report: &mut String) -> usize {
         "unload 移除槽位,指标里不应留下旧行".to_string(),
     ));
 
-    // 2. 死循环连续超限后停用;状态与超限次数都要能看见。
-    let spin_temp = Temp::new("spin");
-    let dir = spin_temp.pack("demo");
-    write_pack(
-        &dir,
-        &command_manifest("demo", &["spin"], &["notify"]),
-        &fixture,
-    );
-    let limits = Limits {
-        command_fuel: 1_000_000,
-        ..Limits::default()
-    };
-    let mut pack = match Pack::load_with(&dir, limits) {
-        Ok(pack) => pack,
-        Err(error) => {
-            checks.push(("加载死循环包", false, error));
-            return write(report, &checks);
-        }
-    };
-    for _ in 0..MAX_FAULTS {
-        let _ = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
-    }
-    let stat = pack.stat();
-    let stopped = pack.invoke_wait("spin", "{}", Duration::from_secs(30));
-    checks.push((
-        "连续超限停用",
-        stat.state == ExtState::Disabled
-            && stat.faults >= MAX_FAULTS
-            && stat.timeouts >= u64::from(MAX_FAULTS)
-            && stopped
-                .as_ref()
-                .is_err_and(|error| error.contains("已停用")),
-        format!(
-            "state={:?} faults={} timeouts={} stopped={stopped:?}",
-            stat.state, stat.faults, stat.timeouts
-        ),
-    ));
-
-    // 3. 快照往返、设置页摘要与 CLI 表格/JSON。
+    // 2. 快照往返、设置页摘要与 CLI 表格/JSON。
     let path = temp.root.join("ext-metrics.json");
     let loaded_stat = ExtStat {
         id: "demo".to_string(),
         name: "演示".to_string(),
         version: "1.0.0".to_string(),
         state: ExtState::Loaded,
-        memory_used: 1 << 20,
-        memory_limit: 16 << 20,
         dispatches: 5,
-        steps: 2,
-        dispatch_peak_us: 700,
-        step_peak_us: 1500,
-        timeouts: 0,
-        ooms: 0,
-        faults: 0,
+        dispatch_peak_us: 1500,
         pending: 1,
         last_error: None,
     };
@@ -141,13 +81,6 @@ pub fn run(report: &mut String) -> usize {
     let metrics = ExtMetrics {
         version: lueying_extwasm::METRICS_VERSION,
         updated_ms: 42,
-        budgets: Budgets {
-            memory_bytes: 16 << 20,
-            stack_bytes: 256 << 10,
-            init_ms: 100,
-            dispatch_ms: 100,
-            max_faults: MAX_FAULTS,
-        },
         extensions: vec![loaded_stat, pending_stat],
     };
     metrics.save(&path).expect("保存快照");
@@ -182,7 +115,7 @@ pub fn run(report: &mut String) -> usize {
         "缺快照应给出可操作错误".to_string(),
     ));
 
-    // 4. 参数解析:正式入口是 `lueying ext top`。
+    // 3. 参数解析:正式入口是 `lueying ext top`。
     let file = temp.root.join("custom.json");
     let parsed = parse_args([
         "ext".to_string(),
@@ -207,5 +140,5 @@ pub fn run(report: &mut String) -> usize {
 }
 
 fn write(report: &mut String, checks: &[(&'static str, bool, String)]) -> usize {
-    crate::harness::write(report, "预算与运行可见性", checks.to_vec())
+    crate::harness::write(report, "运行可见性", checks.to_vec())
 }

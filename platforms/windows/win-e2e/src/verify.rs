@@ -477,7 +477,7 @@ fn deferred(rows: &mut Vec<Row>) {
         "V6",
         "扩展运行期执行模型",
         Verdict::Note,
-        "QuickJS 运行期已被 Wasm 组件运行期(wasmtime JIT)替换:命令在扩展自己的 worker 上同步执行,长计算由燃料上限打断,阻塞服务调用在扩展卸载时取消。原 Promise 步进模型不再适用。"
+        "QuickJS 运行期已被 Wasm 组件运行期(wasmtime JIT)替换:命令在扩展自己的 worker 上同步执行,长计算不设预算,阻塞服务调用在扩展卸载时取消。原 Promise 步进模型不再适用。"
             .to_string(),
     ));
     rows.push((

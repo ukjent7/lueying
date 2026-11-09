@@ -2,8 +2,8 @@
 //!
 //! 扩展必须是标准 WebAssembly 组件(核心模块用 `wasm-tools component new`
 //! 打包);安全语义:12 个服务接口全量链接(非 Rust 工具链不裁剪导入),
-//! 是否放行按调用逐次核清单 needs,没声明的服务一调即拒;燃料按初始化/
-//! 命令两段预算,耗尽即 trap;线性内存有上限。宿主服务阻塞在扩展自己的
+//! 是否放行按调用逐次核清单 needs,没声明的服务一调即拒。不设燃料、内存
+//! 或时间预算,扩展的资源用量由扩展自己决定。宿主服务阻塞在扩展自己的
 //! worker 线程上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错
 //! 保护)。
 //!
@@ -20,13 +20,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
-use wasmtime::{Engine, ResourceLimiter, Store};
+use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use lueying_extmeta::{Manifest, Service};
 use lueying_extproto::{SceneIn, ScenePatch};
 
-use crate::host::{Limits, Metrics, call_fuel, timeout_for, wasmtime_config};
+use crate::host::{Metrics, timeout_for};
 use crate::services::Registry;
 
 wasmtime::component::bindgen!({
@@ -43,8 +43,6 @@ pub struct GuestState {
     cancelled: Arc<AtomicBool>,
     /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
     failure: Arc<Mutex<Option<String>>>,
-    /// 线性内存限额;拒绝增长时记一笔,指标据此把 OOM 与普通 trap 分开。
-    limiter: GuestLimiter,
     /// WASI 0.2 状态:非 Rust 工具链的组件会导入;能力全关,只有时钟与随机。
     table: ResourceTable,
     wasi: WasiCtx,
@@ -275,44 +273,31 @@ impl lueying::ext::asr::Host for GuestState {
 pub(crate) struct ComponentGuest {
     store: Store<GuestState>,
     bindings: Extension,
-    manifest: Arc<Manifest>,
-    limits: Limits,
     metrics: Arc<Metrics>,
 }
 
 impl ComponentGuest {
-    /// 装载组件并跑 init;燃料按初始化预算。
+    /// 装载组件并跑 init。
     ///
-    /// 引擎与组件由调用方先行编译(见 [`build_engine`]/[`build_component`]),
-    /// 这里只做实例化与 init,受 30 秒就绪窗口约束;init 的 CPU 有燃料
-    /// 封顶,不会无限等。
+    /// 引擎与组件由调用方先行编译(见 [`build_engine`]/[`build_component`])。
     pub(crate) fn new(
         engine: Engine,
         component: Component,
         manifest: Arc<Manifest>,
         services: Arc<Registry>,
-        limits: Limits,
         cancelled: Arc<AtomicBool>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, String> {
         let state = GuestState {
             caller: manifest.id.clone(),
-            manifest: Arc::clone(&manifest),
+            manifest,
             services,
             cancelled,
             failure: Arc::new(Mutex::new(None)),
-            limiter: GuestLimiter {
-                memory_bytes: limits.memory_bytes,
-                denied: false,
-            },
             table: ResourceTable::new(),
             wasi: WasiCtx::builder().build(),
         };
         let mut store = Store::new(&engine, state);
-        store.limiter(|state| &mut state.limiter);
-        store
-            .set_fuel(limits.init_fuel)
-            .map_err(|error| format!("初始化燃料设置失败: {error}"))?;
 
         // 12 个服务接口全部进 linker:非 Rust 工具链(componentize-qjs、
         // componentize-py)按整个世界生成导入,不做裁剪。是否放行不看
@@ -387,26 +372,20 @@ impl ComponentGuest {
             Extension::instantiate(&mut store, &component, &linker).map_err(|error| {
                 format!("组件实例化失败: {}", explain_link_error(&error.to_string()))
             })?;
-        let init = match bindings.entry().call_init(&mut store) {
-            Ok(init) => init,
-            Err(error) => return Err(init_error(&mut store, error, limits.init_fuel)),
-        };
+        let init = bindings
+            .entry()
+            .call_init(&mut store)
+            .map_err(|error| format!("扩展 init 失败: {error}"))?;
         init.map_err(|error| format!("扩展 init 返回错误: {error}"))?;
         Ok(Self {
             store,
             bindings,
-            manifest,
-            limits,
             metrics,
         })
     }
 
-    /// 跑一条命令;燃料按命令预算,服务失败经失败槽判死,不被吞掉。
+    /// 跑一条命令;服务失败经失败槽判死,不被吞掉。
     pub(crate) fn command(&mut self, id: &str, args: &str) -> Result<String, String> {
-        let budget = call_fuel(&self.manifest, self.limits);
-        self.store
-            .set_fuel(budget)
-            .map_err(|error| format!("命令燃料设置失败: {error}"))?;
         let started = Instant::now();
         let outcome = self
             .bindings
@@ -415,16 +394,12 @@ impl ComponentGuest {
             .map_err(|error| format!("扩展命令执行失败: {error}"))
             // 外层是 trap,内层是 WIT result;展平后统一按结果结算。
             .flatten();
-        self.note(started, budget, outcome.as_ref().err());
+        self.note(started);
         self.harvest_failure(outcome)
     }
 
     /// 跑一帧外观;`None` 表示这一帧不改。
     pub(crate) fn appearance(&mut self, scene: &SceneIn) -> Result<Option<ScenePatch>, String> {
-        let budget = call_fuel(&self.manifest, self.limits);
-        self.store
-            .set_fuel(budget)
-            .map_err(|error| format!("外观燃料设置失败: {error}"))?;
         let scene_json =
             serde_json::to_string(scene).map_err(|error| format!("场景序列化失败: {error}"))?;
         let started = Instant::now();
@@ -434,37 +409,20 @@ impl ComponentGuest {
             .call_appearance(&mut self.store, &scene_json)
             .map_err(|error| format!("扩展外观执行失败: {error}"))
             .flatten();
-        self.note(started, budget, outcome.as_ref().err());
+        self.note(started);
         let json = self.harvest_failure(outcome)?;
         json.map(|json| ScenePatch::parse(&json))
             .transpose()
             .map_err(|error| format!("外观补丁解析失败: {error}"))
     }
 
-    /// 记一次派发的指标:次数、燃料步数、耗时峰值;燃料 trap 记超时,
-    /// 内存限额拒绝记 OOM。
-    fn note(&mut self, started: Instant, budget: u64, error: Option<&String>) {
-        let left = self.store.get_fuel().unwrap_or(budget);
-        let used = budget.saturating_sub(left);
+    /// 记一次派发的指标:次数与耗时峰值。
+    fn note(&self, started: Instant) {
         let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let metrics = Arc::clone(&self.metrics);
-        metrics.dispatches.fetch_add(1, Ordering::Relaxed);
-        metrics.steps.fetch_add(used, Ordering::Relaxed);
-        metrics
+        self.metrics.dispatches.fetch_add(1, Ordering::Relaxed);
+        self.metrics
             .dispatch_peak_us
             .fetch_max(elapsed_us, Ordering::Relaxed);
-        metrics
-            .step_peak_us
-            .fetch_max(elapsed_us, Ordering::Relaxed);
-        // 燃料耗尽的 trap 只带 wasm backtrace 不带文字,按「失败且剩余燃料
-        // 为零」归类为超时;其余 trap(如 panic)剩余燃料还有剩。
-        if error.is_some() && left == 0 {
-            metrics.timeouts.fetch_add(1, Ordering::Relaxed);
-        }
-        if self.store.data().limiter.denied {
-            self.store.data_mut().limiter.denied = false;
-            metrics.ooms.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
     /// 命令成功且失败槽有值 → 判失败;命令本身 Err → 原样透传。
@@ -482,30 +440,16 @@ pub(crate) fn is_component(wasm: &[u8]) -> bool {
     wasm.len() >= 8 && wasm[4..8] == [0x0d, 0x00, 0x01, 0x00]
 }
 
-/// 按预算建 wasm 引擎;编译前的调用方步骤,失败即加载失败。
-pub(crate) fn build_engine(limits: Limits) -> Result<Engine, String> {
-    let mut config = wasmtime_config(limits);
+/// 建 wasm 引擎;编译前的调用方步骤,失败即加载失败。
+pub(crate) fn build_engine() -> Result<Engine, String> {
+    let mut config = wasmtime::Config::default();
     config.wasm_component_model(true);
-    config.consume_fuel(true);
     Engine::new(&config).map_err(|error| format!("组件引擎启动失败: {error}"))
 }
 
-/// 编译组件;大组件(JS 引擎、CPython)可能耗时数分钟,放调用线程做,
-/// 不占 worker 的就绪窗口。
+/// 编译组件;大组件(JS 引擎、CPython)可能耗时数分钟,放调用线程做。
 pub(crate) fn build_component(engine: &Engine, wasm: &[u8]) -> Result<Component, String> {
-    if !is_component(wasm) {
-        return Err("不是 WebAssembly 组件:核心模块要用 wasm-tools component new 打包".into());
-    }
     Component::new(engine, wasm).map_err(|error| format!("组件装载失败: {error}"))
-}
-
-/// init 失败的人话:燃料烧尽单独点名,其余带上剩余燃料方便调预算。
-fn init_error(store: &mut Store<GuestState>, error: wasmtime::Error, budget: u64) -> String {
-    match store.get_fuel() {
-        Ok(0) => format!("扩展 init 失败:init 燃料耗尽(预算 {budget})"),
-        Ok(left) => format!("扩展 init 失败(剩余燃料 {left}): {error}"),
-        Err(_) => format!("扩展 init 失败: {error}"),
-    }
 }
 
 /// 把实例化错误翻译成人话:契约不符(版本不对、缺导出)给指路。
@@ -521,33 +465,4 @@ fn explain_link_error(text: &str) -> String {
         }
     }
     text.to_string()
-}
-
-/// 线性内存限额:只管内存,增长越过上限就拒绝并记一笔。
-struct GuestLimiter {
-    memory_bytes: usize,
-    /// 上次派发里是否有被拒绝的增长;[`ComponentGuest::note`] 取走清零。
-    denied: bool,
-}
-
-impl ResourceLimiter for GuestLimiter {
-    fn memory_growing(
-        &mut self,
-        _current: usize,
-        desired: usize,
-        _maximum: Option<usize>,
-    ) -> Result<bool, wasmtime::Error> {
-        let ok = desired <= self.memory_bytes;
-        self.denied |= !ok;
-        Ok(ok)
-    }
-
-    fn table_growing(
-        &mut self,
-        _current: usize,
-        _desired: usize,
-        _maximum: Option<usize>,
-    ) -> Result<bool, wasmtime::Error> {
-        Ok(true)
-    }
 }
