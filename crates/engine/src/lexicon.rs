@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use lueying_dict::{Dictionary, Entry, signature};
 
@@ -22,9 +23,9 @@ const SCAN_VISIT_CAP: usize = 8000;
 
 /// 一条词命中。`prior` 只含语言分,读法代价由解码器加上。
 pub(crate) struct Hit {
-    pub word: Rc<str>,
+    pub word: Arc<str>,
     /// 词条的音节键。
-    pub key: Rc<str>,
+    pub key: Arc<str>,
     pub prior: f64,
     /// 词典命中;用户独有词为假。
     pub dictionary: bool,
@@ -153,7 +154,8 @@ pub(crate) struct Lexicon<'a> {
     total: f64,
     /// 上文的左邻标记;没有上文(句首)时为 `None`,用户词频按键上的总次数算。
     left: Option<char>,
-    hits: HashMap<String, Rc<Vec<Hit>>>,
+    /// 单元串 → 命中。跨按键保留,由调用方在上文或用户词库修订变化时清空。
+    hits: HashMap<String, Arc<Vec<Hit>>>,
     /// 同一签名被多串单元共用:模糊读法的声母不变时签名相同。
     signatures: HashMap<String, Rc<Vec<Entry<'a>>>>,
 }
@@ -164,15 +166,21 @@ impl<'a> Lexicon<'a> {
         user: &'a UserDict,
         total: f64,
         left: Option<char>,
+        hits: HashMap<String, Arc<Vec<Hit>>>,
     ) -> Self {
         Self {
             dict,
             user,
             total,
             left,
-            hits: HashMap::new(),
+            hits,
             signatures: HashMap::new(),
         }
+    }
+
+    /// 交还命中缓存,供下一次按键复用。
+    pub(crate) fn into_hits(self) -> HashMap<String, Arc<Vec<Hit>>> {
+        self.hits
     }
 
     /// 用户对这个词的频次。有上文时只认这段上文之后的选择次数,加上没有中文上文时
@@ -190,10 +198,10 @@ impl<'a> Lexicon<'a> {
         }
     }
 
-    pub(crate) fn lookup(&mut self, units: &[&Unit]) -> Rc<Vec<Hit>> {
+    pub(crate) fn lookup(&mut self, units: &[&Unit]) -> Arc<Vec<Hit>> {
         let id = identity(units);
         if let Some(hits) = self.hits.get(&id) {
-            return Rc::clone(hits);
+            return Arc::clone(hits);
         }
         let users = self.user_matches(units);
         let key = joined(units);
@@ -214,8 +222,8 @@ impl<'a> Lexicon<'a> {
                 let user = users.get(entry.word);
                 let user_freq = self.frequency(user.map_or(0, |found| found.freq), entry.word);
                 Hit {
-                    word: Rc::from(entry.word),
-                    key: Rc::from(entry.key),
+                    word: Arc::from(entry.word),
+                    key: Arc::from(entry.key),
                     prior: prior(entry.word, entry.freq.max(1) as f64, user_freq, self.total),
                     dictionary: true,
                     freq: entry.freq,
@@ -229,8 +237,8 @@ impl<'a> Lexicon<'a> {
             let freq = self.frequency(found.freq, word);
             if !hits.iter().any(|hit| &*hit.word == word.as_str()) {
                 hits.push(Hit {
-                    word: Rc::from(word.as_str()),
-                    key: Rc::from(found.key.as_str()),
+                    word: Arc::from(word.as_str()),
+                    key: Arc::from(found.key.as_str()),
                     prior: prior(word, user_base(freq), freq, self.total),
                     dictionary: false,
                     freq: 0,
@@ -241,8 +249,8 @@ impl<'a> Lexicon<'a> {
         }
         // 解码只取前面几条,按语言分排好就不用为其余的词建节点。
         hits.sort_by(|a, b| b.prior.total_cmp(&a.prior));
-        let hits = Rc::new(hits);
-        self.hits.insert(id, Rc::clone(&hits));
+        let hits = Arc::new(hits);
+        self.hits.insert(id, Arc::clone(&hits));
         hits
     }
 

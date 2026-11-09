@@ -8,8 +8,6 @@ use super::*;
 /// 同一触发词下用户选了这么多次字面原文后,不再注入动作候选。
 /// 计数借用户词库的同键负分,按周衰减,用户改选动作候选即可回落。
 const ACTION_SUPPRESS: u32 = 2;
-/// 搭配分缓存上限,够一次按键的解码用满;每条 16 字节。
-const GRAM_CACHE_MAX: usize = 1 << 16;
 
 impl Engine {
     /// 重算候选与内联显示。任何组合变化后必须调用。
@@ -21,10 +19,6 @@ impl Engine {
             self.cands.clear();
             return;
         };
-        // 缓存只增不减会随输入历史膨胀;超过上限就整体丢弃,后续按键会重新填充。
-        if self.gram_cache.len() > GRAM_CACHE_MAX {
-            self.gram_cache.clear();
-        }
         let context = self.context.clone();
         let raw = comp.raw.clone();
         // 形码方案:候选直接来自码表,不进词图、模块链与动作候选。
@@ -51,7 +45,7 @@ impl Engine {
             user: &user,
             fuzzy: &self.cfg.fuzzy,
             gram: self.gram.as_deref(),
-            cache: &mut self.gram_cache,
+            charts: &mut self.charts,
             context: &context,
             host: &self.host,
             previous2: self.second_last_word.as_deref(),

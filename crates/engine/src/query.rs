@@ -1,12 +1,10 @@
 //! 候选类型与生成入口。解码见 [`crate::decoder`],读法见 [`crate::channel`]。
 
-use std::collections::HashMap;
-
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_dict::syllables::Fuzzy;
 
-use crate::decoder;
+use crate::decoder::{self, Charts};
 use crate::user::UserDict;
 
 /// 展示给上层的候选。
@@ -119,7 +117,8 @@ pub(crate) struct BuildArgs<'a> {
     pub user: &'a UserDict,
     pub fuzzy: &'a Fuzzy,
     pub gram: Option<&'a Gram>,
-    pub cache: &'a mut HashMap<u64, f64>,
+    /// 上一次解码的前缀图,按键之间复用。
+    pub charts: &'a mut Charts,
     pub context: &'a str,
     pub host: &'a str,
     pub previous2: Option<&'a str>,

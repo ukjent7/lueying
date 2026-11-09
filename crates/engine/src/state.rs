@@ -10,7 +10,7 @@ impl Engine {
         Self {
             dict,
             gram: None,
-            gram_cache: std::collections::HashMap::new(),
+            charts: Default::default(),
             user: Arc::new(RwLock::new(UserDict::new())),
             learning: true,
             cfg,

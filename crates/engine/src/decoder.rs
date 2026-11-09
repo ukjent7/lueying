@@ -4,42 +4,40 @@
 //! 语言分 + Σ 搭配分 − Σ 读法代价;第一个词的搭配分取已上屏的文字,所以 1–3 字一段地打
 //! 时,每段都接着上文解码。
 //!
+//! 按键是增量的:组合通常只在末尾增删一个字母,前缀位置上的束与词节点不变。[`Charts`]
+//! 保留上一次解码的各位置列,只重算变化的尾部。复用的条件是前缀字节、末尾可完成性与
+//! 整串级标志([`Variant`])都相同,此时结果与整串从头算逐位相等。
+//!
 //! 词的语言分把词频归一成对数概率,再减每词固定罚:拆成更多高频碎片的路径要额外付出
 //! 每词一份的归一化代价。读法代价来自 [`crate::channel`],全拼、简拼、模糊音、手误同轴。
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use lueying_dict::gram::{CONTEXT_CHARS, Gram};
-use lueying_dict::{Dictionary, syllables};
+use lueying_dict::{Dictionary, Fuzzy, syllables};
 
 use crate::channel::{self, Unit};
-use crate::lexicon::{CHAR_BONUS, Lexicon, WORD_PENALTY, user_gain};
+use crate::lexicon::{CHAR_BONUS, Hit, Lexicon, WORD_PENALTY, user_gain};
 use crate::query::{BuildArgs, Built, Candidate};
 use crate::user::UserDict;
 
 /// 首页留给整句的名额。
 const FIRST_PAGE: usize = 5;
-/// 候选上限:整句占满 [`BEAM_LAST`] 后还要给逐段上屏的前缀词留位置。
+/// 中间位置每个终点保留的不同文本路径数。
+const BEAM: usize = 200;
+/// 末位束宽:整句候选的上限。候选上限还要给逐段上屏的前缀词留位置。
+const BEAM_LAST: usize = 300;
 const MAX_CANDS: usize = BEAM_LAST + 32;
-/// 每个 (起点, 终点) 保留的最高分节点数。短输入多留:1–3 字的段里,正确的字常是
-/// 同音字里排不进前十的那个,要靠上文和重排才能认出来。
-const NODE_CAP: usize = 12;
-const NODE_CAP_SHORT: usize = 24;
+/// 每个 (起点, 终点) 保留的最高分节点数。同音字里正确的字常排在前十之外,要靠束与
+/// 重排才能认出来;节点限额与束宽同时放大才有效(见 design.txt)。
+const NODE_CAP: usize = 48;
 /// 一个词吃掉整串输入时不需要再和别的词拼接,多留几条也不增加解码量。
 const NODE_CAP_WHOLE: usize = 96;
-/// 按短输入对待的字节数:约三个音节。
-const SHORT_INPUT_BYTES: usize = 12;
 /// 一个词最多几个音节(与词库最长词组一致)。
 const MAX_WORD_SYL: usize = 8;
-/// 整句 Viterbi 每档保留几条不同文本的路径。太窄时模糊扩写会把正确切分挤出束;
-/// 从 7 放宽到 24,共享语料全量 top-5 高 2.9 点,平均耗时约多一成。
-const BEAM: usize = 24;
-/// 末档不再往后接词,放宽只多排一次序。
-const BEAM_LAST: usize = 96;
-/// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。
+/// 建图访问预算:简拼混合输入的组合可能很多,超出后停止扩词。超出时结果依赖整串,
+/// 这一轮不复用前缀列。
 const NODE_BUDGET: usize = 4096;
 /// 一个词里最多几处手误。手误通道整句全程开放后,枚举量与误救风险都随词数放大,
 /// 长句仍限一处;短输入放宽到两处,真实手快常在一词里连犯两下。
@@ -70,18 +68,20 @@ const COMPLETION_OVERRIDE_RATIO: u64 = 16;
 /// 补全只面向词,不面向整句。四音节以上的输入按句子处理,避免长句每次
 /// 按键都去枚举末音节,把整句候选挤出首页。
 const COMPLETION_MAX_SYLLABLES: usize = 4;
+/// 上下文前缀图最多保留几种整串级变体(见 [`Variant`])。
+const CHARTS_KEPT: usize = 4;
 
 /// 词图节点:一个词覆盖 `[start, end)` 这段原始输入。
 struct Node {
     start: usize,
-    word: Rc<str>,
+    word: Arc<str>,
     /// 语言分减读法代价。
     score: f64,
     /// 读法代价(已扣模糊组学习的减免)。
     channel: f64,
     /// `score` 里来自用户选词次数的部分。
     personal: f64,
-    reading: Rc<Reading>,
+    reading: Arc<Reading>,
     /// 零代价读法的词典命中;简拼也算,全拼串里混入的简拼有代价,不算。
     trusted: bool,
     edits: usize,
@@ -91,7 +91,7 @@ struct Node {
     learned: bool,
     groups: u8,
     /// 模糊候选的词条键,展示时做注音提示。
-    accent: Option<Rc<str>>,
+    accent: Option<Arc<str>>,
     corrected: bool,
 }
 
@@ -110,9 +110,13 @@ struct Walker<'a, 'd> {
     edges: &'a [Vec<Unit>],
     raw: &'a str,
     finish: &'a [bool],
-    by_end: &'a mut [Vec<Node>],
+    /// 只保留终点不小于它的词;更靠前的列已经在前缀图里。
+    first_end: usize,
+    found: &'a mut [Vec<Node>],
     units: Vec<&'a Unit>,
     visits: usize,
+    /// 访问预算耗尽过:结果依赖整串,不能复用前缀列。
+    truncated: bool,
     max_edits: usize,
     max_typos: usize,
     /// 每串单元最多建几个节点。词表已按语言分排好,排在后面的进不了束。
@@ -120,7 +124,7 @@ struct Walker<'a, 'd> {
 }
 
 impl Walker<'_, '_> {
-    /// 从 `pos` 起深度优先枚举词,写到 `by_end[词尾]`。
+    /// 从 `pos` 起深度优先枚举词,写到 `found[词尾]`。
     fn run(&mut self, root: usize, pos: usize) {
         if !self.units.is_empty() {
             if !self.finish[pos] {
@@ -128,10 +132,11 @@ impl Walker<'_, '_> {
             }
             self.emit(root, pos);
             self.visits += 1;
-            if self.units.len() >= MAX_WORD_SYL
-                || self.visits > NODE_BUDGET
-                || !self.lexicon.may_extend(&self.units)
-            {
+            if self.units.len() >= MAX_WORD_SYL || !self.lexicon.may_extend(&self.units) {
+                return;
+            }
+            if self.visits > NODE_BUDGET {
+                self.truncated = true;
                 return;
             }
         }
@@ -167,6 +172,9 @@ impl Walker<'_, '_> {
     }
 
     fn emit(&mut self, root: usize, end: usize) {
+        if end < self.first_end {
+            return;
+        }
         let hits = self.lexicon.lookup(&self.units);
         if hits.is_empty() {
             return;
@@ -193,7 +201,7 @@ impl Walker<'_, '_> {
             })
             .collect::<Vec<_>>()
             .join("'");
-        let reading = Rc::new(Reading {
+        let reading = Arc::new(Reading {
             spans: self.units.iter().map(|unit| unit.span).collect(),
             keys,
         });
@@ -203,34 +211,82 @@ impl Walker<'_, '_> {
             self.cap
         };
         for hit in hits.iter().take(limit) {
-            self.by_end[end].push(Node {
+            self.found[end].push(Node {
                 start: root,
-                word: Rc::clone(&hit.word),
+                word: Arc::clone(&hit.word),
                 score: hit.prior - cost + relief,
                 channel: (cost - relief).max(0.0),
                 personal: user_gain(hit.user_freq),
-                reading: Rc::clone(&reading),
+                reading: Arc::clone(&reading),
                 trusted: hit.dictionary && cost == 0.0,
                 edits: edits + typos,
                 freq: hit.freq,
                 user_freq: hit.user_freq,
                 learned: hit.learned && typos == 0,
                 groups,
-                accent: (edits > 0).then(|| Rc::clone(&hit.key)),
+                accent: (edits > 0).then(|| Arc::clone(&hit.key)),
                 corrected: typos > 0,
             });
         }
     }
 }
 
+/// 枚举 `first_end` 及之后终点的全部词节点。返回按终点分组的节点,以及访问预算是否耗尽过。
+fn enumerate<'d>(
+    lexicon: &mut Lexicon<'d>,
+    user: &'d UserDict,
+    edges: &[Vec<Unit>],
+    raw: &str,
+    finish: &[bool],
+    variant: Variant,
+    first_end: usize,
+) -> (Vec<Vec<Node>>, bool) {
+    let mut found: Vec<Vec<Node>> = std::iter::repeat_with(Vec::new)
+        .take(raw.len() + 1)
+        .collect();
+    let mut walker = Walker {
+        lexicon,
+        user,
+        edges,
+        raw,
+        finish,
+        first_end,
+        found: &mut found,
+        units: Vec::new(),
+        visits: 0,
+        truncated: false,
+        max_edits: if variant.long {
+            MAX_WORD_EDITS_LONG
+        } else {
+            MAX_WORD_EDITS
+        },
+        max_typos: if variant.long {
+            MAX_WORD_TYPOS_LONG
+        } else {
+            MAX_WORD_TYPOS
+        },
+        cap: NODE_CAP,
+    };
+    for (start, &ok) in finish.iter().take(raw.len()).enumerate() {
+        if raw.as_bytes()[start] == b'\'' || !ok {
+            continue;
+        }
+        walker.units.clear();
+        walker.visits = 0;
+        walker.run(start, start);
+    }
+    let truncated = walker.truncated;
+    (found, truncated)
+}
+
 /// 每个终点上按起点分组,去重后保留每组最高分的若干节点。
-fn cap_nodes(mut list: Vec<Node>, whole_end: bool, cap: usize) -> Vec<Rc<Node>> {
+fn cap_nodes(mut list: Vec<Node>, whole_end: bool, cap: usize) -> Vec<Arc<Node>> {
     list.sort_by(|a, b| a.start.cmp(&b.start).then(b.score.total_cmp(&a.score)));
-    let mut at: HashMap<(usize, Rc<str>), usize> = HashMap::new();
+    let mut at: HashMap<(usize, Arc<str>), usize> = HashMap::new();
     let mut counts: HashMap<usize, usize> = HashMap::new();
     let mut kept: Vec<Node> = Vec::new();
     for node in list {
-        let id = (node.start, Rc::clone(&node.word));
+        let id = (node.start, Arc::clone(&node.word));
         if let Some(&index) = at.get(&id) {
             // 用户词盖过了同一个词的模糊读法:选中它仍算这个模糊组的一次使用。
             if kept[index].freq == 0 {
@@ -250,13 +306,13 @@ fn cap_nodes(mut list: Vec<Node>, whole_end: bool, cap: usize) -> Vec<Rc<Node>> 
             kept.push(node);
         }
     }
-    kept.into_iter().map(Rc::new).collect()
+    kept.into_iter().map(Arc::new).collect()
 }
 
 /// 解码路径,共享前缀。
 struct Link {
-    node: Rc<Node>,
-    prev: Option<Rc<Link>>,
+    node: Arc<Node>,
+    prev: Option<Arc<Link>>,
 }
 
 #[derive(Clone)]
@@ -265,7 +321,7 @@ struct State {
     channel: f64,
     personal: f64,
     text: String,
-    link: Option<Rc<Link>>,
+    link: Option<Arc<Link>>,
     /// 整条路径由单个精确词典词构成时,才允许让模型让位。
     trusted: bool,
     /// 单节点路径的词典词频;多词拼句为 0。
@@ -297,7 +353,7 @@ impl State {
         }
     }
 
-    fn extend(&self, node: &Rc<Node>, gain: f64) -> Self {
+    fn extend(&self, node: &Arc<Node>, gain: f64) -> Self {
         let first = self.link.is_none();
         let mut text = String::with_capacity(self.text.len() + node.word.len());
         text.push_str(&self.text);
@@ -307,8 +363,8 @@ impl State {
             channel: self.channel + node.channel,
             personal: self.personal + node.personal,
             text,
-            link: Some(Rc::new(Link {
-                node: Rc::clone(node),
+            link: Some(Arc::new(Link {
+                node: Arc::clone(node),
                 prev: self.link.clone(),
             })),
             trusted: first && node.trusted,
@@ -322,11 +378,11 @@ impl State {
     }
 
     /// 路径上的节点,从左到右。
-    fn nodes(&self) -> Vec<Rc<Node>> {
+    fn nodes(&self) -> Vec<Arc<Node>> {
         let mut out = Vec::new();
         let mut at = self.link.as_ref();
         while let Some(link) = at {
-            out.push(Rc::clone(&link.node));
+            out.push(Arc::clone(&link.node));
             at = link.prev.as_ref();
         }
         out.reverse();
@@ -359,30 +415,6 @@ fn distinct_beam(sorted: impl Iterator<Item = State>, width: usize) -> Vec<State
     kept
 }
 
-/// 搭配分:前文尾 → 当前词的搭配表打分。查询结果按 (前文,词,句末) 的哈希缓存。
-struct Grammar<'a> {
-    gram: Option<&'a Gram>,
-    cache: &'a mut HashMap<u64, f64>,
-}
-
-impl Grammar<'_> {
-    fn bonus(&mut self, context: &str, word: &str, is_rear: bool) -> f64 {
-        let Some(gram) = self.gram else {
-            return 0.0;
-        };
-        if context.is_empty() {
-            return 0.0;
-        }
-        // 这里每次按键要走上万次,键用哈希值,命中时不分配。
-        let mut hasher = DefaultHasher::new();
-        (context, word, is_rear).hash(&mut hasher);
-        *self
-            .cache
-            .entry(hasher.finish())
-            .or_insert_with(|| gram.score(context, word, is_rear))
-    }
-}
-
 /// 上屏文字接解码文本的尾部,最多 `CONTEXT_CHARS` 个字。
 fn tail(context: &str, text: &str) -> String {
     let mut chars: Vec<char> = text.chars().rev().take(CONTEXT_CHARS).collect();
@@ -399,27 +431,241 @@ fn hint_of(corrected: bool, key: &str, accent: Option<&str>) -> Option<String> {
     }
 }
 
-pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
-    let BuildArgs {
-        dict,
-        user,
-        fuzzy,
-        gram,
-        cache,
-        context,
-        host,
-        previous2,
-        previous,
-        raw,
-        quick_trigger,
-    } = args;
-    let total = dict.total_weight() as f64;
-    let left = crate::user::left_key(context);
-    let mut lexicon = Lexicon::new(dict, user, total, (!context.is_empty()).then_some(left));
-    // 手误通道整句全程开放:整句里的漏键与敲反正是它要接的场景(用户实测 31 句带错,
-    // 其中 21 句的错全部落在这条旧长度线之外);长句的枚举量由每词手误上限与建图预算兜住。
-    let typos = !quick_trigger;
-    let edges = channel::lattice(raw, fuzzy, typos);
+/// 会改变前缀列数值的整串级标志。标志变了,同一组列就不能再复用。
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Variant {
+    /// 整串能全拼读完:简拼单元的代价与手误单元的额外代价随之变化。
+    complete: bool,
+    /// 手误通道开着(快捷触发键时关闭)。
+    typos: bool,
+    /// 整串是纯声母缩写序列:相邻词多给一份连接分。
+    abbrev_sequence: bool,
+    /// 长输入:每词的模糊与手误上限不同。
+    long: bool,
+}
+
+impl Variant {
+    fn of(raw: &str, quick_trigger: bool) -> Self {
+        Self {
+            complete: channel::is_complete(raw),
+            typos: !quick_trigger,
+            abbrev_sequence: channel::is_abbrev_sequence(raw),
+            long: raw.len() > LONG_INPUT_BYTES,
+        }
+    }
+}
+
+/// 一个终点位置的列:以它为终点的词节点,以及接上这些节点的束。
+struct Column {
+    nodes: Vec<Arc<Node>>,
+    beam: Vec<State>,
+    /// `beam` 中出现过的搭配上文(尾部 `CONTEXT_CHARS` 字),各只一条。搭配分只看上文,
+    /// 同上文的路径共享一次查询。
+    tails: Vec<String>,
+    /// 每条路径的上文在 `tails` 中的下标。
+    tail_of: Vec<usize>,
+}
+
+impl Column {
+    fn new(nodes: Vec<Arc<Node>>, beam: Vec<State>, context: &str) -> Self {
+        let mut tails: Vec<String> = Vec::new();
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut tail_of = Vec::with_capacity(beam.len());
+        for state in &beam {
+            let text = tail(context, &state.text);
+            let at = *index.entry(text.clone()).or_insert_with(|| {
+                tails.push(text);
+                tails.len() - 1
+            });
+            tail_of.push(at);
+        }
+        Self {
+            nodes,
+            beam,
+            tails,
+            tail_of,
+        }
+    }
+
+    /// 位置 0:只有一条空路径。
+    fn start(context: &str) -> Self {
+        Self::new(Vec::new(), vec![State::start()], context)
+    }
+}
+
+/// 一次解码内不变的输入:整串、上文与缩写序列标志。
+struct Input<'a> {
+    raw: &'a str,
+    context: &'a str,
+    abbrev_sequence: bool,
+}
+
+/// 候选对:路径分、路径,以及可选的接续(词节点与搭配分)。
+type Pair<'a> = (f64, &'a State, Option<(&'a Arc<Node>, f64)>);
+
+/// 以 `end` 为终点的一列:由以前各列的束接上以 `end` 结束的词节点。
+fn build_column(
+    end: usize,
+    nodes: Vec<Arc<Node>>,
+    columns: &[Column],
+    input: &Input<'_>,
+    width: usize,
+    rear: bool,
+    gram: Option<&Gram>,
+) -> Column {
+    let (raw, context) = (input.raw, input.context);
+    if end == 0 {
+        return Column::start(context);
+    }
+    // 隔音符不占音节:让上一位置的状态直接越过它,词与词才能在 `'` 两侧相接。
+    let mut next: Vec<Pair<'_>> = Vec::new();
+    if raw.as_bytes()[end - 1] == b'\'' {
+        next.extend(
+            columns[end - 1]
+                .beam
+                .iter()
+                .map(|state| (state.score, state, None)),
+        );
+    }
+    for node in &nodes {
+        let prev = &columns[node.start];
+        let bonus: Vec<f64> = prev
+            .tails
+            .iter()
+            .map(|before| gram.map_or(0.0, |gram| gram.score(before, &node.word, rear)))
+            .collect();
+        for (state, &at) in prev.beam.iter().zip(&prev.tail_of) {
+            let sequence = if input.abbrev_sequence && state.link.is_some() {
+                ABBREV_SEQUENCE_BONUS
+            } else {
+                0.0
+            };
+            let gain = sequence + bonus[at];
+            next.push((state.score + node.score + gain, state, Some((node, gain))));
+        }
+    }
+    let beam = top_beam(next, width);
+    Column::new(nodes, beam, context)
+}
+
+/// 按分数取前 `width` 条不同文本的束。只把分数最高的一截排序:截断不够时加倍再取。
+fn top_beam(mut next: Vec<Pair<'_>>, width: usize) -> Vec<State> {
+    let by_score =
+        |a: &(f64, &State, Option<(&Arc<Node>, f64)>),
+         b: &(f64, &State, Option<(&Arc<Node>, f64)>)| { b.0.total_cmp(&a.0) };
+    let mut k = (2 * width).min(next.len());
+    loop {
+        let head = if k < next.len() {
+            next.select_nth_unstable_by(k, by_score);
+            &mut next[..k]
+        } else {
+            &mut next[..]
+        };
+        head.sort_by(by_score);
+        let beam = distinct_beam(
+            head.iter().map(|(_, state, step)| match step {
+                Some((node, gain)) => state.extend(node, *gain),
+                None => (*state).clone(),
+            }),
+            width,
+        );
+        if beam.len() == width || k == next.len() {
+            return beam;
+        }
+        k = (2 * k).min(next.len());
+    }
+}
+
+/// 上一次解码的前缀图:一组变体下每个内部位置的列,连同它所对应的整串。
+pub(crate) struct Chart {
+    variant: Variant,
+    raw: String,
+    /// `raw` 各位置的可完成性。
+    finish: Vec<bool>,
+    /// 上一次解码的访问预算是否耗尽过;耗尽时整串的列都不可复用。
+    truncated: bool,
+    /// 位置 `0..raw.len()` 的列(末位不在其中,它每次都要重算)。
+    columns: Vec<Column>,
+}
+
+impl Chart {
+    fn new(variant: Variant) -> Self {
+        Self {
+            variant,
+            raw: String::new(),
+            finish: Vec::new(),
+            truncated: false,
+            columns: Vec::new(),
+        }
+    }
+
+    /// 新整串能复用本图的前几列:前缀字节相同、末尾可完成性相同,且列是内部列。
+    fn reusable(&self, raw: &str, finish: &[bool]) -> usize {
+        if self.truncated {
+            return 0;
+        }
+        let shared = raw
+            .bytes()
+            .zip(self.raw.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let mut reuse = 0;
+        while reuse < self.columns.len()
+            && reuse < raw.len()
+            && reuse <= shared
+            && self.finish[reuse] == finish[reuse]
+        {
+            reuse += 1;
+        }
+        reuse
+    }
+}
+
+/// 解码之间保留的前缀图。上下文、用户词库修订或模糊配置变了,整体作废。
+#[derive(Default)]
+pub(crate) struct Charts {
+    context: String,
+    user: u64,
+    fuzzy: Option<Fuzzy>,
+    charts: Vec<Chart>,
+    /// 词命中缓存,与前缀图同一失效条件(见 [`Lexicon`])。
+    hits: HashMap<String, Arc<Vec<Hit>>>,
+}
+
+impl Charts {
+    /// 上文、用户词库修订或模糊配置变了,前缀图与词命中缓存整体作废。
+    fn sync(&mut self, context: &str, user: u64, fuzzy: Fuzzy) {
+        if self.user != user || self.fuzzy != Some(fuzzy) || self.context != context {
+            self.charts.clear();
+            self.hits.clear();
+            self.context.clear();
+            self.context.push_str(context);
+            self.user = user;
+            self.fuzzy = Some(fuzzy);
+        }
+    }
+
+    fn chart(&mut self, variant: Variant) -> &mut Chart {
+        let index = match self
+            .charts
+            .iter()
+            .position(|chart| chart.variant == variant)
+        {
+            Some(index) => index,
+            None => {
+                if self.charts.len() == CHARTS_KEPT {
+                    self.charts.remove(0);
+                }
+                self.charts.push(Chart::new(variant));
+                self.charts.len() - 1
+            }
+        };
+        &mut self.charts[index]
+    }
+}
+
+/// 整串各位置的可完成性:`raw[p..]` 能否被音节图读完。隔音符位置与其后相同。
+fn finishable(raw: &str, edges: &[Vec<Unit>]) -> Vec<bool> {
     let mut finish = vec![false; raw.len() + 1];
     finish[raw.len()] = true;
     for i in (0..raw.len()).rev() {
@@ -429,93 +675,69 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             edges[i].iter().any(|unit| finish[unit.span.1])
         };
     }
-    let cap = if raw.len() <= SHORT_INPUT_BYTES {
-        NODE_CAP_SHORT
-    } else {
-        NODE_CAP
-    };
-    let mut found: Vec<Vec<Node>> = std::iter::repeat_with(Vec::new)
-        .take(raw.len() + 1)
-        .collect();
-    {
-        let mut walker = Walker {
-            lexicon: &mut lexicon,
-            user,
-            edges: &edges,
-            raw,
-            finish: &finish,
-            by_end: &mut found,
-            units: Vec::new(),
-            visits: 0,
-            max_edits: if raw.len() > LONG_INPUT_BYTES {
-                MAX_WORD_EDITS_LONG
-            } else {
-                MAX_WORD_EDITS
-            },
-            max_typos: if raw.len() > LONG_INPUT_BYTES {
-                MAX_WORD_TYPOS_LONG
-            } else {
-                MAX_WORD_TYPOS
-            },
-            cap,
-        };
-        for (start, &ok) in finish.iter().take(raw.len()).enumerate() {
-            if raw.as_bytes()[start] == b'\'' || !ok {
-                continue;
-            }
-            walker.units.clear();
-            walker.visits = 0;
-            walker.run(start, start);
-        }
-    }
-    let by_end: Vec<Vec<Rc<Node>>> = found
-        .into_iter()
-        .enumerate()
-        .map(|(end, list)| cap_nodes(list, end == raw.len(), cap))
-        .collect();
+    finish
+}
 
-    let mut grammar = Grammar { gram, cache };
-    let abbrev_sequence = channel::is_abbrev_sequence(raw);
-    let mut best: Vec<Vec<State>> = vec![Vec::new(); raw.len() + 1];
-    let mut tails: Vec<Vec<String>> = vec![Vec::new(); raw.len() + 1];
-    best[0].push(State::start());
-    tails[0].push(tail(context, ""));
-    for j in 1..=raw.len() {
-        // 先只算分:排完序后束宽以外的路径不用建文本。
-        let mut next = Vec::new();
-        // 隔音符不占音节:让上一位置的状态直接越过它,词与词才能在 `'` 两侧相接。
-        if raw.as_bytes()[j - 1] == b'\'' {
-            next.extend(best[j - 1].iter().map(|state| (state.score, state, None)));
-        }
-        for node in &by_end[j] {
-            for (state, before) in best[node.start].iter().zip(&tails[node.start]) {
-                let sequence = if abbrev_sequence && state.link.is_some() {
-                    ABBREV_SEQUENCE_BONUS
-                } else {
-                    0.0
-                };
-                let gain = sequence + grammar.bonus(before, &node.word, j == raw.len());
-                next.push((state.score + node.score + gain, state, Some((node, gain))));
-            }
-        }
-        next.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let width = if j == raw.len() { BEAM_LAST } else { BEAM };
-        let beam = distinct_beam(
-            next.into_iter().map(|(_, state, step)| match step {
-                Some((node, gain)) => state.extend(node, gain),
-                None => state.clone(),
-            }),
-            width,
-        );
-        best[j] = beam;
-        tails[j] = best[j]
-            .iter()
-            .map(|state| tail(context, &state.text))
-            .collect();
+pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
+    let BuildArgs {
+        dict,
+        user,
+        fuzzy,
+        gram,
+        context,
+        host,
+        previous2,
+        previous,
+        raw,
+        quick_trigger,
+        charts,
+    } = args;
+    let total = dict.total_weight() as f64;
+    let left = crate::user::left_key(context);
+    charts.sync(context, user.revision(), *fuzzy);
+    let mut lexicon = Lexicon::new(
+        dict,
+        user,
+        total,
+        (!context.is_empty()).then_some(left),
+        std::mem::take(&mut charts.hits),
+    );
+    let edges = channel::lattice(raw, fuzzy, !quick_trigger);
+    let finish = finishable(raw, &edges);
+    let variant = Variant::of(raw, quick_trigger);
+    let mut reuse = charts.chart(variant).reusable(raw, &finish);
+    let (mut found, mut truncated) =
+        enumerate(&mut lexicon, user, &edges, raw, &finish, variant, reuse);
+    if truncated && reuse > 0 {
+        // 预算耗尽时整串结果依赖全部词节点:整串重算,与不复用前缀的结果一致。
+        reuse = 0;
+        (found, truncated) = enumerate(&mut lexicon, user, &edges, raw, &finish, variant, 0);
     }
+    charts.hits = lexicon.into_hits();
+    let chart = charts.chart(variant);
+
+    let n = raw.len();
+    let abbrev_sequence = variant.abbrev_sequence;
+    let mut columns = std::mem::take(&mut chart.columns);
+    columns.truncate(reuse);
+    if columns.is_empty() {
+        columns.push(Column::start(context));
+    }
+    let input = Input {
+        raw,
+        context,
+        abbrev_sequence,
+    };
+    for (end, slot) in found.iter_mut().enumerate().take(n).skip(columns.len()) {
+        let nodes = cap_nodes(std::mem::take(slot), false, NODE_CAP);
+        let column = build_column(end, nodes, &columns, &input, BEAM, false, gram);
+        columns.push(column);
+    }
+    let last_nodes = cap_nodes(std::mem::take(&mut found[n]), true, NODE_CAP);
+    let last = build_column(n, last_nodes, &columns, &input, BEAM_LAST, true, gram);
 
     let mut full: Vec<Candidate> = Vec::new();
-    for state in &best[raw.len()] {
+    for state in &last.beam {
         if state.text.is_empty() {
             continue;
         }
@@ -618,11 +840,13 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     // 单词候选:只取从输入开头起的词(选中后剩余输入继续组合)。
     let mut words: Vec<Candidate> = Vec::new();
     let before = tail(context, "");
-    for (end, nodes) in by_end.iter().enumerate() {
-        for node in nodes.iter().filter(|node| node.start == 0) {
+    for (end, column) in columns.iter().chain(std::iter::once(&last)).enumerate() {
+        for node in column.nodes.iter().filter(|node| node.start == 0) {
             let keys = node.reading.keys.as_str();
             let reject = user.reject_penalty_in(left, keys, &node.word);
-            let gain = grammar.bonus(&before, &node.word, end == raw.len());
+            let gain = gram.map_or(0.0, |gram| {
+                gram.score(&before, &node.word, end == raw.len())
+            });
             let mut cand =
                 Candidate::whole(raw.len(), node.word.to_string(), node.score + gain - reject);
             cand.consume = node.reading.spans.len();
@@ -682,6 +906,11 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     });
     protect_exact(&mut cands);
     cands.truncate(MAX_CANDS);
+
+    chart.raw = raw.to_string();
+    chart.finish = finish;
+    chart.truncated = truncated;
+    chart.columns = columns;
     Built { cands }
 }
 

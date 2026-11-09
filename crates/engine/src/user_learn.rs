@@ -641,6 +641,7 @@ impl UserDict {
 
     /// 清掉某个学习键下的跳过记录;排名依据已经变了,旧负分不该继续生效。
     pub(crate) fn forgive(&mut self, key: &str, word: &str) {
+        self.rev = self.rev.wrapping_add(1);
         let empty = if let Some(words) = self.rejects.get_mut(key) {
             let _ = words.remove(word);
             words.is_empty()

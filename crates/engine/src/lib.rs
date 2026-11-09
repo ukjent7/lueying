@@ -22,6 +22,8 @@ pub mod module;
 mod punct;
 mod query;
 pub mod scheme;
+#[cfg(test)]
+mod search_tests;
 mod state;
 pub mod types;
 mod user;
@@ -63,7 +65,8 @@ pub struct Engine {
     /// 可选的搭配表(LYCL);缺失或损坏时整句退化为纯词频。
     gram: Option<std::sync::Arc<Gram>>,
     /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
-    gram_cache: std::collections::HashMap<u64, f64>,
+    /// 上一次解码的前缀图;按键之间只重算变化的尾部。
+    charts: decoder::Charts,
     user: SharedUser,
     /// 私密输入范围里关闭学习;输入本身不受影响。
     learning: bool,

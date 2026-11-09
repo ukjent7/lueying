@@ -22,6 +22,11 @@ const VERSION: u32 = 2;
 const HEADER_LEN: usize = 16;
 /// 每条记录 5 字节:u32 指纹加 u8 分值。
 const RECORD_LEN: usize = 5;
+/// 指纹高 16 位分桶:桶表把二分限制在同一桶内,结果与全表二分逐位相同。
+const BUCKET_BITS: u32 = 16;
+/// 指纹存在位图的位数(2^23 位,1 MB)。指纹本身已是哈希,取低位即可;绝大多数查询落在空位上,
+/// 直接返回,不必进入分桶二分。命中位图的查询仍走精确二分,结果不变。
+const PRESENT_BITS: u32 = 23;
 /// 分值量化尺度:0~6 映射到 0~255。
 const SCORE_SCALE: f64 = 255.0 / 6.0;
 /// 调用方取的前文尾长(字数)。构建端只收左词不超过 3 字的词对(`MAX_LEFT`),
@@ -32,6 +37,10 @@ pub const CONTEXT_CHARS: usize = 3;
 pub struct Gram {
     mmap: Mmap,
     count: usize,
+    /// `buckets[b]` 是指纹高位不小于 `b` 的第一条记录的下标(末项为 `count`)。
+    buckets: Vec<u32>,
+    /// 指纹低 [`PRESENT_BITS`] 位的存在位图。
+    present: Vec<u64>,
 }
 
 impl Gram {
@@ -61,7 +70,40 @@ impl Gram {
                 bytes.len()
             )));
         }
-        Ok(Self { mmap, count })
+        let mut gram = Self {
+            mmap,
+            count,
+            buckets: Vec::new(),
+            present: Vec::new(),
+        };
+        gram.buckets = gram.bucket_table();
+        gram.present = gram.present_bits();
+        Ok(gram)
+    }
+
+    fn present_bits(&self) -> Vec<u64> {
+        let mut bits = vec![0u64; (1usize << PRESENT_BITS) / 64];
+        for at in 0..self.count {
+            let slot = (self.fingerprint_at(at) as usize) & ((1 << PRESENT_BITS) - 1);
+            bits[slot / 64] |= 1 << (slot % 64);
+        }
+        bits
+    }
+
+    /// 指纹升序,按高位分桶建表:每桶的下标区间即全表二分的一段前缀。
+    fn bucket_table(&self) -> Vec<u32> {
+        let size = 1usize << BUCKET_BITS;
+        let mut table = Vec::with_capacity(size + 1);
+        let mut at = 0;
+        for bucket in 0..=size {
+            while at < self.count
+                && ((self.fingerprint_at(at) >> (32 - BUCKET_BITS)) as usize) < bucket
+            {
+                at += 1;
+            }
+            table.push(at as u32);
+        }
+        table
     }
 
     /// 第 `idx` 条的指纹。
@@ -78,8 +120,16 @@ impl Gram {
     /// 二分查找词对 `(left, right)` 的分值;未收录返回 `None`。
     fn find(&self, left: &str, right: &str) -> Option<f64> {
         let target = fingerprint(left, right);
-        // 下界二分:第一个指纹不小于目标的位置。
-        let (mut lo, mut hi) = (0, self.count);
+        let slot = (target as usize) & ((1 << PRESENT_BITS) - 1);
+        if self.present[slot / 64] & (1 << (slot % 64)) == 0 {
+            return None;
+        }
+        // 下界二分:第一个指纹不小于目标的位置。只在目标所在的桶内找。
+        let bucket = (target >> (32 - BUCKET_BITS)) as usize;
+        let (mut lo, mut hi) = (
+            self.buckets[bucket] as usize,
+            self.buckets[bucket + 1] as usize,
+        );
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             if self.fingerprint_at(mid) < target {

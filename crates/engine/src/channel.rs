@@ -107,7 +107,7 @@ fn literal(raw: &str) -> Vec<Vec<Unit>> {
         if let Ok(s) = std::str::from_utf8(&b[pos..pos + 1])
             && let Some(c) = s.chars().next()
             && c.is_ascii_lowercase()
-            && ABBREV_LETTERS.contains(c)
+            && abbrev_letter(c)
         {
             out[pos].push(Unit::plain(s.to_string(), true, (pos, pos + 1)));
         }
@@ -118,6 +118,12 @@ fn literal(raw: &str) -> Vec<Vec<Unit>> {
         }
     }
     out
+}
+
+/// 能单独作简拼的字母:声母字母,加上零声母音节的首字母 e/o(`eqh` 读作「而且还」)。
+/// 只决定建单元;整串是否算声母缩写序列仍只看 [`ABBREV_LETTERS`]。
+fn abbrev_letter(c: char) -> bool {
+    ABBREV_LETTERS.contains(c) || matches!(c, 'e' | 'o')
 }
 
 /// 只用全拼音节能否读完整串。
@@ -437,6 +443,15 @@ mod tests {
             reads("hen", 2, "n").map(|unit| unit.cost),
             Some(ABBREV_COST)
         );
+    }
+
+    #[test]
+    fn vowel_initials_read_as_abbreviations() {
+        let edges = lattice("eqh", &Fuzzy::auto(), true);
+        assert!(edges[0].iter().any(|unit| unit.abbrev && unit.text == "e"));
+        let edges = lattice("oq", &Fuzzy::auto(), true);
+        assert!(edges[0].iter().any(|unit| unit.abbrev && unit.text == "o"));
+        assert!(!is_abbrev_sequence("eqh"));
     }
 
     #[test]
