@@ -70,6 +70,8 @@ const COMPLETION_OVERRIDE_RATIO: u64 = 16;
 const COMPLETION_MAX_SYLLABLES: usize = 4;
 /// 上下文前缀图最多保留几种整串级变体(见 [`Variant`])。
 const CHARTS_KEPT: usize = 4;
+/// 词命中缓存的条目上限;一次输入用到的单元串远少于此。
+const HITS_KEPT: usize = 1 << 14;
 
 /// 词图节点:一个词覆盖 `[start, end)` 这段原始输入。
 struct Node {
@@ -635,6 +637,10 @@ pub(crate) struct Charts {
 impl Charts {
     /// 上文、用户词库修订或模糊配置变了,前缀图与词命中缓存整体作废。
     fn sync(&mut self, context: &str, user: u64, fuzzy: Fuzzy) {
+        // 上文一直不变时(私密输入、宿主不给上文)命中缓存只增不减,超过上限就丢掉重填。
+        if self.hits.len() > HITS_KEPT {
+            self.hits.clear();
+        }
         if self.user != user || self.fuzzy != Some(fuzzy) || self.context != context {
             self.charts.clear();
             self.hits.clear();

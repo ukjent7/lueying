@@ -64,7 +64,6 @@ pub struct Engine {
     dict: std::sync::Arc<Dictionary>,
     /// 可选的搭配表(LYCL);缺失或损坏时整句退化为纯词频。
     gram: Option<std::sync::Arc<Gram>>,
-    /// 跨按键复用的搭配分缓存;键是 (前文,词,句末)。
     /// 上一次解码的前缀图;按键之间只重算变化的尾部。
     charts: decoder::Charts,
     user: SharedUser,
