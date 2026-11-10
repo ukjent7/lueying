@@ -49,6 +49,7 @@ ureq = { version = "3", default-features = false, features = [
     "rustls",
     "platform-verifier",
     "gzip",
+    "socks-proxy",
 ] }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
 wasmtime = { version = "49", default-features = false, features = [

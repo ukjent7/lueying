@@ -1,4 +1,4 @@
-//! 联网提供者:传输在本进程里经 ureq 完成。扩展的域名清单在安装时亮给用户同意;
+//! 联网提供者:传输在本进程里经 ureq 完成,代理按系统设置(见 `lueying_ext::proxy`)。扩展的域名清单在安装时亮给用户同意;
 //! 同意之后宿主不再逐域名拦截,这里只做 URL 合法性检查。
 //!
 //! 外部地址只许 HTTPS,明文只留给回环;响应体与时限有上限,结果必须是 UTF-8 文本。
@@ -114,6 +114,12 @@ fn fetch(args: FetchArgs) -> Result<FetchResult, String> {
     if scheme == "http" && !loopback {
         return Err("明文 HTTP 只允许本机回环地址".into());
     }
+    let proxy = match lueying_ext::proxy::proxy_for(&args.url) {
+        Some(proxy) => Some(
+            ureq::Proxy::new(&proxy).map_err(|error| format!("代理设置不可用 {proxy}: {error}"))?,
+        ),
+        None => None,
+    };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_millis(u64::from(
             args.timeout_ms.unwrap_or(FETCH_DEFAULT_TIMEOUT_MS),
@@ -121,6 +127,7 @@ fn fetch(args: FetchArgs) -> Result<FetchResult, String> {
         .http_status_as_error(false)
         // 外部地址的重定向也不许降到明文;回环地址本就是明文。
         .https_only(scheme == "https")
+        .proxy(proxy)
         .tls_config(
             TlsConfig::builder()
                 .root_certs(RootCerts::PlatformVerifier)

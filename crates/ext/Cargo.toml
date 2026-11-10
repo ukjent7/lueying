@@ -18,3 +18,7 @@ wasmtime = { workspace = true, optional = true }
 # WASI 0.2:非 Rust 工具链编出的组件会导入 WASI 接口。能力按最紧配置给:
 # 无文件、无网络、无环境变量,只有时钟与随机;联网只能走宿主的 network 服务。
 wasmtime-wasi = { version = "49", optional = true }
+
+# 系统代理(注册表 Internet Settings)只在 Windows 上读。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Registry"] }

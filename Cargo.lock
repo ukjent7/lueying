@@ -3226,6 +3226,7 @@ dependencies = [
  "serde_json",
  "wasmtime",
  "wasmtime-wasi",
+ "windows",
 ]
 
 [[package]]

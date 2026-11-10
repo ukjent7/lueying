@@ -34,16 +34,17 @@ const TARBALL_LIMIT: u64 = 96 << 20;
 const UNPACKED_LIMIT: u64 = 256 << 20;
 /// 源码包允许的条目数上限。
 const ENTRY_LIMIT: usize = 8192;
+/// 单次请求的整体时限(含下载)。
+const API_TIMEOUT: Duration = Duration::from_secs(300);
 /// GitHub 对无 UA 的请求直接 403。
 const USER_AGENT: &str = "lueying-settings (ext add)";
 
 /// 解析并安装一个社区扩展;返回给人看的汇报。
 pub fn add(source: &str) -> Result<String, String> {
     let (owner, repo, rev) = parse_source(source)?;
-    let agent = net::agent(Duration::from_secs(300));
 
     // 路径一:该版本的 GitHub Release 里有没有 `.luext` 资产。
-    let release = release_json(&agent, owner, repo, rev)?;
+    let release = release_json(owner, repo, rev)?;
     let asset = match &release {
         Some(value) => pick_asset(repo, value)?,
         None => None,
@@ -51,13 +52,13 @@ pub fn add(source: &str) -> Result<String, String> {
     let temp = TempDir::new("add")?;
     let (origin, packed, files) = match asset {
         Some((url, _size)) => {
-            let bytes = download(&agent, &url, ASSET_LIMIT)?;
+            let bytes = download(&url, ASSET_LIMIT)?;
             let files = container::decode(&bytes)?;
             ("GitHub Release 资产", bytes, files)
         }
         None => {
             // 路径二:源码包;两条路都断时把修法一并说清。
-            let bytes = source_tarball(&agent, owner, repo, rev).map_err(|error| {
+            let bytes = source_tarball(owner, repo, rev).map_err(|error| {
                 format!(
                     "Release 里没有 .luext 资产,源码包路径也失败:{error}\n\
                      作者侧修法:发布时附上 .luext 资产,或在仓库里提交构建好的组件 \
@@ -113,7 +114,8 @@ fn safe_token(token: &str) -> bool {
 }
 
 /// 一个 GET;2xx 的响应体按上限读回,超限即错。
-fn download(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+fn download(url: &str, limit: u64) -> Result<Vec<u8>, String> {
+    let agent = net::agent(url, API_TIMEOUT)?;
     let mut response = agent
         .get(url)
         .header("User-Agent", USER_AGENT)
@@ -136,13 +138,9 @@ fn download(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>, Strin
 }
 
 /// 查该版本的 Release;没有 Release(404)返回 `None`,限流单独点出来。
-fn release_json(
-    agent: &ureq::Agent,
-    owner: &str,
-    repo: &str,
-    rev: &str,
-) -> Result<Option<serde_json::Value>, String> {
+fn release_json(owner: &str, repo: &str, rev: &str) -> Result<Option<serde_json::Value>, String> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{rev}");
+    let agent = net::agent(&url, API_TIMEOUT)?;
     let bytes = match agent
         .get(&url)
         .header("User-Agent", USER_AGENT)
@@ -228,14 +226,8 @@ pub fn pick_asset(
 }
 
 /// 拉该版本的源码包(codeload 的 tar.gz)。
-fn source_tarball(
-    agent: &ureq::Agent,
-    owner: &str,
-    repo: &str,
-    rev: &str,
-) -> Result<Vec<u8>, String> {
+fn source_tarball(owner: &str, repo: &str, rev: &str) -> Result<Vec<u8>, String> {
     download(
-        agent,
         &format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{rev}"),
         TARBALL_LIMIT,
     )

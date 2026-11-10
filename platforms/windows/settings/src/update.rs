@@ -296,7 +296,8 @@ pub fn download_installer(release: &Release) -> Result<PathBuf, String> {
 }
 
 pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
-    let response = match net::agent(Duration::from_secs(60)).get(url).call() {
+    let agent = net::agent(url, Duration::from_secs(60))?;
+    let response = match agent.get(url).call() {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(code)) => {
             return Err(format!("下载更新包返回 HTTP {code}"));
@@ -369,7 +370,7 @@ fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
 
 fn fetch_with(url: &str, limit: u64, download: bool) -> Result<(u16, Vec<u8>), String> {
     let timeout = Duration::from_secs(if download { 60 } else { 15 });
-    let result = net::agent(timeout)
+    let result = net::agent(url, timeout)?
         .get(url)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
