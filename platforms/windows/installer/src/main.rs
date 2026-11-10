@@ -250,14 +250,17 @@ mod imp {
         } else {
             trace("stop_server: no server");
         }
-        trace("stop_server: taskkill");
-        let mut command = Command::new(system32("taskkill.exe"));
-        command
-            .args(["/F", "/IM", "lueying-server.exe"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW);
-        let _ = command.status();
+        // 扩展宿主是服务端的子进程,升级替换文件前一并停掉;没有在跑时 taskkill 报错即可忽略。
+        for image in ["lueying-server.exe", "lueying-ext-host.exe"] {
+            trace("stop_server: taskkill");
+            let mut command = Command::new(system32("taskkill.exe"));
+            command
+                .args(["/F", "/IM", image])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW);
+            let _ = command.status();
+        }
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
 
