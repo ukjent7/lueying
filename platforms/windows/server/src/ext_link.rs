@@ -131,7 +131,7 @@ impl ExtLink {
             .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(callback));
     }
 
-    /// 设置生效配置。`private_to` 是私密场景的收件人(见 [`Shared::private_to`])。
+    /// 设置生效配置。`private_to` 是私密场景的收件人(见 `Shared` 的同名字段)。
     /// 宿主重拉后会自动重发。
     pub fn set_config(
         &self,
