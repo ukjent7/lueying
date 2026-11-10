@@ -51,7 +51,7 @@
 
 `capture`、`ocr`、`clipboard`、`panel`、`output`、`hotkey`、`store`、`notify`、`network`、`context`、`audio`、`asr`。
 
-网络服务只经独立的扩展宿主 `lueying-ext-host.exe` 访问。扩展的域名清单安装时亮给用户同意，同意之后宿主不再逐域名拦截；风险由用户承担。
+网络服务只经独立的扩展宿主 `lueying-ext-host.exe` 访问。扩展的域名清单安装时亮给用户同意；宿主对每次 `network.fetch` 逐条核对：主机与其子域名、端口都要落在清单里，名单外的网址直接拒绝并回传原因，重定向不跟随。名单变了要重新同意。原生扩展是独立进程，不受白名单约束，安装提示会如实写明。
 
 ## 权限（capabilities）
 

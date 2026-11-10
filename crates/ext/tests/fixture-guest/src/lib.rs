@@ -4,10 +4,10 @@
 //! 单元测试与 E2E 通过环境变量加载它,验证命令、报错、trap、宿主服务与
 //! 外观的真实组件路径(见 `crates/ext/src/host/test_guest.rs`)。
 //!
-//! 服务面只用 `notify`:清单声明 `needs`,宿主按调用逐次门控,正好覆盖
-//! needs 语义;组件里其余服务的导入会被裁掉。
+//! 服务面用 `notify` 与 `network`:清单声明 `needs`,宿主按调用逐次门控,
+//! 联网再按清单白名单核对;组件里其余服务的导入会被裁掉。
 
-use lueying_ext::guest::{Extension, SceneIn, ScenePatch};
+use lueying_ext::guest::{Extension, FetchArgs, SceneIn, ScenePatch};
 use serde_json::json;
 
 /// 回显前缀;变体 B 加 `[b]`,与变体 A 区分热重载前后的产物。
@@ -45,6 +45,19 @@ impl Extension for Fixture {
                 notify_show("测试客人", args)?;
                 Ok(json!({ "notified": true }).to_string())
             }
+            // 取回参数里的网址;白名单之外的网址由宿主拒绝,错误原样回传。
+            "fetch" => {
+                let options = FetchArgs {
+                    url: args.to_string(),
+                    method: None,
+                    headers: Vec::new(),
+                    body: None,
+                    limit: None,
+                    timeout_ms: None,
+                };
+                let result = network_fetch(&options)?;
+                Ok(json!({ "status": result.status }).to_string())
+            }
             other => Err(format!("没有命令 {other}")),
         }
     }
@@ -57,4 +70,4 @@ impl Extension for Fixture {
     }
 }
 
-lueying_ext::export_component!(Fixture, wit: "../../lueying.wit", commands: [run, echo, fail, trap, notify, spin]);
+lueying_ext::export_component!(Fixture, wit: "../../lueying.wit", commands: [run, echo, fail, trap, notify, spin, fetch]);

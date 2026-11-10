@@ -1,46 +1,6 @@
-//! 联网 URL 解析与规范化的回归网。
+//! 联网参数规范化的回归网(URL 解析的回归网在 `lueying_ext::manifest::network`)。
 
 use super::*;
-
-#[test]
-fn url_authority_parses_host_and_port() {
-    assert_eq!(
-        url_authority("https://api.example.com/v1/chat").unwrap(),
-        ("api.example.com".into(), 443, 443)
-    );
-    assert_eq!(
-        url_authority("http://api.example.com").unwrap(),
-        ("api.example.com".into(), 80, 80)
-    );
-    assert_eq!(
-        url_authority("https://api.example.com:8443/x?y=1#z").unwrap(),
-        ("api.example.com".into(), 8443, 443)
-    );
-    // userinfo 不参与匹配。
-    assert_eq!(
-        url_authority("https://user:pw@api.example.com/x").unwrap(),
-        ("api.example.com".into(), 443, 443)
-    );
-    // IPv6 保持方括号形式。
-    assert_eq!(
-        url_authority("http://[::1]:8080/x").unwrap(),
-        ("[::1]".into(), 8080, 80)
-    );
-    assert_eq!(
-        url_authority("HTTPS://API.Example.COM").unwrap(),
-        ("api.example.com".into(), 443, 443)
-    );
-}
-
-#[test]
-fn url_authority_rejects_the_rest() {
-    assert!(url_authority("ftp://h").is_err());
-    assert!(url_authority("api.example.com").is_err());
-    assert!(url_authority("https://").is_err());
-    assert!(url_authority("https://h:0").is_err());
-    assert!(url_authority("https://h:port").is_err());
-    assert!(url_authority("http://[::1/x").is_err());
-}
 
 #[test]
 fn normalize_caps_and_defaults() {

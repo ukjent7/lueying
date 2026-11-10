@@ -4,10 +4,11 @@
 //! 1. 坏清单(未知字段、过高版本、越界模块路径)被放进来。
 //! 2. 非组件模块或坏模块的包被加载。
 //! 3. 状态里混进候选文字或宿主名,扩展能读到用户输入。
-//! 4. 隐私字段仍调用 guest。
-//! 5. 热重载写坏文件后,正在用的扩展被弄没。
-//! 6. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
-//! 7. 卸载扩展时挂起的宿主服务等待不被取消。
+//! 4. 私密场景派发给了名单外的扩展;联网扩展在未确认私密使用时收到私密输入。
+//! 5. 联网扩展访问清单之外的网址没被拒,或拒绝时没有说明原因。
+//! 6. 热重载写坏文件后,正在用的扩展被弄没。
+//! 7. 未声明命令的扩展能被调到;多扩展补丁合并顺序乱掉。
+//! 8. 卸载扩展时挂起的宿主服务等待不被取消。
 
 pub(crate) mod harness;
 pub(crate) mod process;
@@ -160,30 +161,38 @@ fn scene(checks: &mut Vec<(&'static str, bool, String)>) {
     push(checks, "越界状态被规整", clean, json);
 }
 
-/// 隐私与高对比度。
+/// 隐私与高对比度。私密场景只派发给收件人,没有收件人就什么都不派发。
 fn privacy(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("privacy");
     let dir = temp.pack("demo");
     write_pack(&dir, &appearance_manifest("demo"), fixture);
-    let Some(mut pack) = load_or_fail(checks, "外观包加载", &dir) else {
-        return;
-    };
-    let private = pack.dispatch(&SceneIn {
+    let (mut runtime, _) = Runtime::open(&temp.root, &["demo".to_string()]);
+    let private_scene = SceneIn {
         private: true,
         ..SceneIn::default()
-    });
-    let normal = pack.dispatch(&SceneIn::default()).and_then(|p| p.accent);
-    let high = pack.dispatch(&SceneIn {
-        high_contrast: true,
-        ..SceneIn::default()
-    });
+    };
+    let nobody = runtime.dispatch(&private_scene, None);
+    let listed = ["demo".to_string()];
+    let recipient = runtime
+        .dispatch(&private_scene, Some(&listed))
+        .and_then(|p| p.accent);
+    let normal = runtime
+        .dispatch(&SceneIn::default(), None)
+        .and_then(|p| p.accent);
+    let high = runtime.dispatch(
+        &SceneIn {
+            high_contrast: true,
+            ..SceneIn::default()
+        },
+        None,
+    );
     let high_accent = high.as_ref().and_then(|p| p.accent);
     push(
         checks,
-        "隐私字段不调用 guest",
-        private.is_none() && normal == Some(ACCENT_A),
-        format!("{private:?} {normal:?}"),
+        "私密场景只派发给收件人",
+        nobody.is_none() && recipient == Some(ACCENT_A) && normal == Some(ACCENT_A),
+        format!("{nobody:?} {recipient:?} {normal:?}"),
     );
     push(
         checks,
@@ -346,11 +355,11 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
     write_pack(&second, &appearance_manifest("second"), &fixture_b);
     let (mut forward, _) = Runtime::open(&temp.root, &["first".to_string(), "second".to_string()]);
     let forward_accent = forward
-        .dispatch(&SceneIn::default())
+        .dispatch(&SceneIn::default(), None)
         .and_then(|patch| patch.accent);
     let (mut backward, _) = Runtime::open(&temp.root, &["second".to_string(), "first".to_string()]);
     let backward_accent = backward
-        .dispatch(&SceneIn::default())
+        .dispatch(&SceneIn::default(), None)
         .and_then(|patch| patch.accent);
     push(
         checks,
@@ -361,7 +370,9 @@ fn runtime(checks: &mut Vec<(&'static str, bool, String)>) {
 
     let (mut missing, errors) =
         Runtime::open(&temp.root, &["ghost".to_string(), "first".to_string()]);
-    let usable = missing.dispatch(&SceneIn::default()).and_then(|p| p.accent);
+    let usable = missing
+        .dispatch(&SceneIn::default(), None)
+        .and_then(|p| p.accent);
     push(
         checks,
         "坏扩展只记诊断,不影响其他扩展",
@@ -427,6 +438,57 @@ fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
     );
 }
 
+/// 联网白名单:清单之外的网址在宿主侧被拒,错误写明原因;名单内的网址通过核对
+/// (本检查的注册表没有网络提供者,所以名单内的调用落在「没有提供者」上,说明它过了核对)。
+fn network(checks: &mut Vec<(&'static str, bool, String)>) {
+    let fixture = fixture_or_skip!(fixture_a());
+    let temp = Temp::new("network");
+    let dir = temp.pack("fetcher");
+    write_pack(
+        &dir,
+        &raw_manifest(
+            "fetcher",
+            r#""needs":["network"],"network":{"allow":["api.example.com"]},"activate":{"commands":[{"id":"fetch","title":"取回"}]}"#,
+        ),
+        &fixture,
+    );
+    let (mut runtime, errors) = Runtime::open(&temp.root, &["fetcher".to_string()]);
+    if !errors.is_empty() {
+        push(checks, "联网包打开", false, format!("{errors:?}"));
+        return;
+    }
+    let outside = runtime.invoke_wait(
+        "fetcher.fetch",
+        "https://evil.example/x",
+        Duration::from_secs(30),
+    );
+    let inside = runtime.invoke_wait(
+        "fetcher.fetch",
+        "https://api.example.com/x",
+        Duration::from_secs(30),
+    );
+    let refused = outside
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.contains("白名单") && error.contains("evil.example"));
+    push(
+        checks,
+        "白名单外的域名被拒并说明原因",
+        refused,
+        format!("{outside:?}"),
+    );
+    let passed = inside
+        .as_ref()
+        .err()
+        .is_some_and(|error| !error.contains("白名单"));
+    push(
+        checks,
+        "白名单内的域名通过核对",
+        passed,
+        format!("{inside:?}"),
+    );
+}
+
 /// 运行 Wasm 扩展检查,把结果写进报告并返回失败数。
 pub fn run(report: &mut String) -> usize {
     let mut checks: Vec<(&'static str, bool, String)> = Vec::new();
@@ -436,6 +498,7 @@ pub fn run(report: &mut String) -> usize {
     reload(&mut checks);
     runtime(&mut checks);
     cancel_wait(&mut checks);
+    network(&mut checks);
 
     crate::harness::write(report, "运行期扩展", checks)
 }

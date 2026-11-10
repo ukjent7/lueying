@@ -86,7 +86,7 @@ fn appearance_pack_is_resident() {
     let temp = Temp::new("runtime-resident");
     write_appearance_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
-    let patch = runtime.dispatch(&SceneIn::default()).expect("有补丁");
+    let patch = runtime.dispatch(&SceneIn::default(), None).expect("有补丁");
     assert_eq!(patch.accent, Some(FIXTURE_ACCENT));
     assert!(runtime.loaded("demo"));
     runtime.set_idle(Duration::ZERO);
@@ -102,13 +102,13 @@ fn dispatch_merges_in_order() {
     write_appearance_pack(&temp, "first", &wasm_a);
     write_appearance_pack(&temp, "second", &wasm_b);
     let (mut runtime, _) = runtime(&temp, &["first", "second"]);
-    let patch = runtime.dispatch(&SceneIn::default()).expect("有补丁");
+    let patch = runtime.dispatch(&SceneIn::default(), None).expect("有补丁");
     assert_eq!(patch.accent, Some(FIXTURE_B_ACCENT));
 }
 
 #[test]
-fn private_scene_is_skipped() {
-    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "隐私跳过");
+fn private_scene_reaches_only_listed_recipients() {
+    let wasm = test_guest::fixture_or_skip!(test_guest::fixture(), "隐私收件人");
     let temp = Temp::new("runtime-private");
     write_appearance_pack(&temp, "demo", &wasm);
     let (mut runtime, _) = runtime(&temp, &["demo"]);
@@ -116,8 +116,52 @@ fn private_scene_is_skipped() {
         private: true,
         ..SceneIn::default()
     };
-    assert!(runtime.dispatch(&scene).is_none());
+    assert!(runtime.dispatch(&scene, None).is_none(), "没有收件人不派发");
+    assert!(runtime.dispatch(&scene, Some(&[])).is_none());
     assert!(!runtime.loaded("demo"));
+    let listed = ["demo".to_string()];
+    let patch = runtime.dispatch(&scene, Some(&listed)).expect("收件人收到");
+    assert_eq!(patch.accent, Some(FIXTURE_ACCENT));
+}
+
+#[test]
+fn private_recipients_skip_unapproved_network_packs() {
+    let temp = Temp::new("runtime-recipients");
+    let root = temp.root();
+    let plain = temp.pack("plain");
+    std::fs::create_dir_all(&plain).expect("建包目录");
+    std::fs::write(
+        plain.join("manifest.json"),
+        r#"{"id":"plain","name":"外观","version":"1.0.0","api":4,"wasm":"extension.wasm","appearance":true}"#,
+    )
+    .expect("写清单");
+    let net = temp.pack("net");
+    std::fs::create_dir_all(&net).expect("建包目录");
+    std::fs::write(
+        net.join("manifest.json"),
+        r#"{"id":"net","name":"联网","version":"1.0.0","api":4,"wasm":"extension.wasm","needs":["network"],"network":{"allow":["api.example.com"]}}"#,
+    )
+    .expect("写清单");
+    std::fs::write(plain.join("extension.wasm"), b"x").expect("写模块");
+    std::fs::write(net.join("extension.wasm"), b"x").expect("写模块");
+    let order = ["net".to_string(), "plain".to_string(), "ghost".to_string()];
+    let mut book = ConsentBook::default();
+    assert_eq!(
+        private_recipients(root, &book, &order),
+        vec!["plain".to_string()],
+        "未同意的联网扩展与缺失的包都不是收件人"
+    );
+    let manifest = manifest_at(&net).expect("清单");
+    book.approve(&net, &manifest, 1).expect("同意");
+    assert_eq!(
+        private_recipients(root, &book, &order),
+        vec!["plain".to_string()]
+    );
+    book.set_private(&net, &manifest, true).expect("允许私密");
+    assert_eq!(
+        private_recipients(root, &book, &order),
+        vec!["net".to_string(), "plain".to_string()]
+    );
 }
 
 #[test]

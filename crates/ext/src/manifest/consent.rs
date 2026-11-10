@@ -38,6 +38,10 @@ pub struct ConsentEntry {
     pub needs: Vec<String>,
     /// 同意时间,Unix 毫秒。
     pub approved_ms: u64,
+    /// 允许在私密字段使用的确认记录:确认时的包内容哈希。与当前哈希一致才算数,
+    /// 内容一变就要重新确认。只对联网扩展有意义。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private: Option<String>,
 }
 
 /// `consent.json` 的内容。
@@ -105,6 +109,36 @@ impl ConsentBook {
         std::fs::rename(&tmp, path).map_err(|e| format!("替换同意记录失败: {e}"))
     }
 
+    /// 联网扩展是否已允许在私密字段使用:确认记录与当前包内容一致才算数。
+    pub fn private_ok(&self, dir: &Path, manifest: &Manifest) -> bool {
+        let Some(entry) = self.extensions.get(&manifest.id) else {
+            return false;
+        };
+        let Ok(hash) = package_hash(dir, manifest) else {
+            return false;
+        };
+        entry.hash == hash && entry.private.as_deref() == Some(hash.as_str())
+    }
+
+    /// 记下或撤销私密字段许可。允许时要求扩展当前内容已同意;撤销总是成功。
+    /// 调用方负责 [`Self::save`]。
+    pub fn set_private(&mut self, dir: &Path, manifest: &Manifest, on: bool) -> Result<(), String> {
+        let entry = self
+            .extensions
+            .get_mut(&manifest.id)
+            .ok_or("扩展尚未同意,不能允许私密字段使用")?;
+        if !on {
+            entry.private = None;
+            return Ok(());
+        }
+        let hash = package_hash(dir, manifest)?;
+        if entry.hash != hash {
+            return Err("扩展内容已变,需先重新同意".into());
+        }
+        entry.private = Some(hash);
+        Ok(())
+    }
+
     /// 核对一个包;哈希读不出来时返回错误,调用方按「未同意」处理。
     pub fn check(&self, dir: &Path, manifest: &Manifest) -> Result<ConsentCheck, String> {
         let required = !manifest.capabilities.is_empty() || !manifest.needs.is_empty();
@@ -157,6 +191,7 @@ impl ConsentBook {
                 .map(|service| service.key().to_string())
                 .collect(),
             approved_ms: now_ms,
+            private: None,
         };
         self.extensions.insert(manifest.id.clone(), entry.clone());
         Ok(entry)
@@ -191,6 +226,12 @@ pub fn consent_items(manifest: &Manifest) -> Vec<String> {
             push_unique(&mut items, permission.title().to_string());
         }
     }
+    if manifest.is_native() {
+        push_unique(
+            &mut items,
+            "原生扩展不受白名单约束(独立进程,可自行联网)".to_string(),
+        );
+    }
     for service in &manifest.needs {
         if let Some(permission) = service.permission()
             && manifest
@@ -205,7 +246,10 @@ pub fn consent_items(manifest: &Manifest) -> Vec<String> {
             if let Some(grant) = &manifest.network {
                 push_unique(
                     &mut items,
-                    format!("访问外部网络(仅限 {})", grant.allow.join("、")),
+                    format!(
+                        "访问外部网络(仅限 {} 及其子域名;原生扩展不受白名单约束)",
+                        grant.allow.join("、")
+                    ),
                 );
                 continue;
             }

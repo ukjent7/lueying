@@ -61,6 +61,8 @@ pub struct ExtLink {
 /// 线程之间共享的状态。
 struct Shared {
     queue: Mutex<Queue>,
+    /// 私密场景的收件人:不联网的扩展与已确认私密使用的联网扩展。私密场景只送给它们。
+    private_to: Mutex<Vec<String>>,
     /// 最近一次采纳的补丁:序号与内容。
     patch: Mutex<Option<(u64, Option<ScenePatch>)>>,
     /// 最近一次提交的外观序号与提交时刻,用来判断补丁是否超时。
@@ -98,6 +100,7 @@ impl ExtLink {
     pub fn spawn(exe: PathBuf, args: Vec<String>, log: Option<PathBuf>, handler: Handler) -> Self {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
+            private_to: Mutex::new(Vec::new()),
             patch: Mutex::new(None),
             submitted: Mutex::new((0, Instant::now())),
             titles: Mutex::new(Vec::new()),
@@ -128,13 +131,20 @@ impl ExtLink {
             .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(callback));
     }
 
-    /// 设置生效配置。宿主重拉后会自动重发。
+    /// 设置生效配置。`private_to` 是私密场景的收件人(见 [`Shared::private_to`])。
+    /// 宿主重拉后会自动重发。
     pub fn set_config(
         &self,
         extensions: Vec<String>,
         bindings: Vec<(String, String)>,
         ppocr: bool,
+        private_to: Vec<String>,
     ) {
+        *self
+            .shared
+            .private_to
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = private_to;
         {
             let mut queue = self.shared.queue.lock().unwrap_or_else(|p| p.into_inner());
             queue.config_gen += 1;
@@ -172,7 +182,15 @@ impl ExtLink {
     }
 
     /// 提交一帧外观状态,返回它的序号;宿主忙时只保留最后一帧。
+    /// 私密场景在这里就按收件人过滤:宿主只会派发给名单里的扩展,名单外的扩展收不到。
     pub fn submit_scene(&self, scene: SceneIn) -> u64 {
+        let to = scene.private.then(|| {
+            self.shared
+                .private_to
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        });
         let seq = {
             let mut submitted = self
                 .shared
@@ -187,7 +205,7 @@ impl ExtLink {
             .queue
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .scene = Some(ToHost::Scene { seq, scene });
+            .scene = Some(ToHost::Scene { seq, scene, to });
         self.kick();
         seq
     }

@@ -58,21 +58,6 @@ fn check_pack(dir: &Path) -> Result<(), String> {
     if first.accent != Some(ACCENT) {
         return Err(format!("首次派发主题色 {:?}", first.accent));
     }
-    if pack
-        .dispatch(&SceneIn {
-            private: true,
-            ..SceneIn::default()
-        })
-        .is_some()
-    {
-        return Err("隐私场景仍然派发".into());
-    }
-    let patch = pack
-        .dispatch(&SceneIn::default())
-        .ok_or("隐私场景后没有补丁")?;
-    if patch.accent != Some(ACCENT) {
-        return Err(format!("隐私场景后主题色 {:?}", patch.accent));
-    }
     let patch = pack
         .dispatch(&SceneIn {
             high_contrast: true,

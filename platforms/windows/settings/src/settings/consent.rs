@@ -78,7 +78,7 @@ pub fn detail(extensions: &[String], scripts: &[ScriptEntry]) -> String {
     };
     let items = script.items.join("、");
     let kind = if script.native {
-        "原生扩展(独立进程,受沙箱限制);"
+        "原生扩展(独立进程,不受白名单约束);"
     } else {
         ""
     };
@@ -111,7 +111,7 @@ pub fn approve_enabled(extensions: &[String], scripts: &[ScriptEntry]) -> bool {
 pub fn prompt(script: &ScriptEntry) -> String {
     let mut text = format!("允许「{}」使用以下能力？\n\n", script.name);
     if script.native {
-        text.push_str("此扩展包含原生可执行文件,以独立进程运行,受系统沙箱与资源限额约束。\n\n");
+        text.push_str("此扩展包含原生可执行文件,以独立进程运行。原生扩展不受白名单约束,宿主无法限制它的联网范围。\n\n");
     }
     for item in &script.items {
         text.push_str("· ");

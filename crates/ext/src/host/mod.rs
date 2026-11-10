@@ -19,7 +19,7 @@
 //!
 //! # 边界
 //!
-//! - 隐私字段([`SceneIn::private`])直接跳过,guest 不会收到那次状态。
+//! - 隐私场景([`SceneIn::private`])只派发给服务端列出的收件人:不联网的扩展,以及已确认私密使用的联网扩展。
 //! - 高对比度下补丁里的效果被摘掉,只留主题色。
 //! - 命令包空闲 [`IDLE_UNLOAD`] 后卸载;外观包常驻。
 
@@ -52,7 +52,7 @@ pub use crate::proto::{
 };
 pub use bindings::{Binding, BindingTable, Hotkey, Input, Modifier};
 pub use pack::{Pack, Poll};
-pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope, manifest_at};
+pub use runtime::{CommandInfo, IDLE_UNLOAD, Runtime, Scope, manifest_at, private_recipients};
 pub use services::{Done, PrivacyCheck, Provider, Registry};
 pub use worker::Finished;
 

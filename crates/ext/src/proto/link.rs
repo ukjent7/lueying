@@ -39,6 +39,9 @@ pub enum ToHost {
         seq: u64,
         /// 场景状态。
         scene: SceneIn,
+        /// 收件人;只有私密场景带它,由服务端按联网与私密许可算出。`None` 表示全部外观扩展。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<Vec<String>>,
     },
     /// 输入上下文变化。
     Context(Context),
@@ -113,6 +116,7 @@ mod tests {
         let message = ToHost::Scene {
             seq: 7,
             scene: SceneIn::default(),
+            to: None,
         };
         let line = encode(&message).unwrap();
         assert!(line.starts_with(r#"{"type":"scene","seq":7"#), "{line}");

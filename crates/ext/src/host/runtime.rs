@@ -19,7 +19,8 @@ use crate::host::Finished;
 use crate::host::Registry;
 use crate::host::pack::{self, Pack, Poll};
 use crate::host::{SceneIn, ScenePatch};
-use crate::manifest::{Manifest, When};
+use crate::manifest::consent::ConsentBook;
+use crate::manifest::{Manifest, Service, When};
 
 /// 命令包空闲多久卸载 Wasm worker。
 pub const IDLE_UNLOAD: Duration = Duration::from_secs(30);
@@ -268,13 +269,18 @@ impl Runtime {
 
     /// 把场景派发给已加载的扩展,按配置顺序合并补丁。
     ///
-    /// 常驻外观包在第一次派发时加载;命令包不因为候选窗刷新而被拉起。
-    pub fn dispatch(&mut self, scene: &SceneIn) -> Option<ScenePatch> {
-        if scene.private {
+    /// `to` 给出时只派发给其中的扩展:服务端对私密场景按收件人过滤后才传它。
+    /// 私密场景没有 `to` 就什么也不派发。常驻外观包在第一次派发时加载;命令包
+    /// 不因为候选窗刷新而被拉起。
+    pub fn dispatch(&mut self, scene: &SceneIn, to: Option<&[String]>) -> Option<ScenePatch> {
+        if scene.private && to.is_none() {
             return None;
         }
         let mut merged: Option<ScenePatch> = None;
         for slot in &mut self.slots {
+            if to.is_some_and(|ids| !ids.contains(&slot.id)) {
+                continue;
+            }
             if slot.pack.is_none() {
                 // 常驻包加载失败后不再每帧重试:修好文件或改配置才再试。
                 if !slot.resident || slot.error.is_some() {
@@ -464,6 +470,22 @@ impl Runtime {
 /// 只读一个包目录的清单并核对目录名;设置页与同意检查用,不建 Wasm 引擎。
 pub fn manifest_at(dir: &Path) -> Result<Manifest, String> {
     pack::read_manifest(dir)
+}
+
+/// 私密字段下可收到输入的扩展,按启用顺序:不联网的,以及用户确认过私密使用的
+/// 联网扩展。服务端送出私密场景前按它过滤;清单读不出来的包不在名单里。
+pub fn private_recipients(root: &Path, book: &ConsentBook, order: &[String]) -> Vec<String> {
+    order
+        .iter()
+        .filter(|id| {
+            let dir = root.join(id);
+            let Ok(manifest) = manifest_at(&dir) else {
+                return false;
+            };
+            !manifest.needs(Service::Network) || book.private_ok(&dir, &manifest)
+        })
+        .cloned()
+        .collect()
 }
 
 /// 完整命令 id。

@@ -148,8 +148,8 @@ struct Host {
     reported: Option<String>,
     consent_stamp: Option<u64>,
     next_request: Arc<AtomicU64>,
-    /// 最新外观状态;宿主忙时只保留最后一帧。
-    scene: Option<(u64, SceneIn)>,
+    /// 最新外观状态与私密收件人;宿主忙时只保留最后一帧。
+    scene: Option<(u64, SceneIn, Option<Vec<String>>)>,
     last_seq: u64,
     last_metrics: Option<String>,
     last_metrics_write: Instant,
@@ -176,7 +176,7 @@ impl Host {
                     self.rebind();
                 }
             }
-            ToHost::Scene { seq, scene } => self.scene = Some((seq, scene)),
+            ToHost::Scene { seq, scene, to } => self.scene = Some((seq, scene, to)),
             ToHost::Context(context) => self.shared.set(context),
             ToHost::Candidates { state } => candidates::publish(state),
             ToHost::Invoke { command, source } => self.run_command(&command, &source),
@@ -295,14 +295,14 @@ impl Host {
 
     /// 派发最新外观状态,补丁带序号回传。
     fn dispatch_scene(&mut self) {
-        let Some((seq, scene)) = self.scene.take() else {
+        let Some((seq, scene, to)) = self.scene.take() else {
             return;
         };
         self.last_seq = seq;
         let patch: Option<ScenePatch> = self
             .runtime
             .as_mut()
-            .and_then(|runtime| runtime.dispatch(&scene));
+            .and_then(|runtime| runtime.dispatch(&scene, to.as_deref()));
         self.out.send(&ToServer::Patch { seq, patch });
     }
 

@@ -496,6 +496,7 @@ pub(super) fn real_main() {
         app_config.extensions.clone(),
         app_config.bindings.clone(),
         app_config.ocr_backend == config::OcrBackend::Ppocr,
+        private_recipients(&app_config.extensions),
     );
     let state = Arc::new(State {
         dict: Arc::new(dict),
@@ -784,6 +785,17 @@ fn group_reply(user: &SharedUser) -> Reply {
     }
 }
 
+/// 私密字段下可收到输入的扩展(见 [`lueying_ext::host::private_recipients`])。
+/// 同意记录与清单在服务端读取:联网扩展未确认私密使用时不在名单里。
+fn private_recipients(order: &[String]) -> Vec<String> {
+    let (Some(root), Some(path)) = (config::extensions_dir(), config::extensions_consent_path())
+    else {
+        return Vec::new();
+    };
+    let book = lueying_ext::host::ConsentBook::load(&path);
+    lueying_ext::host::private_recipients(&root, &book, order)
+}
+
 /// 拉起扩展宿主进程(`lueying-ext-host`,与服务端同目录)。
 /// 宿主请求的服务只有输出、选择面板与上下文,它们要碰服务端的窗口与会话,留在这里完成。
 fn spawn_ext_host(panel: Arc<PanelProvider>, context: Arc<ContextProvider>) -> ExtLink {
@@ -837,6 +849,7 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
         cfg.extensions.clone(),
         cfg.bindings.clone(),
         cfg.ocr_backend == config::OcrBackend::Ppocr,
+        private_recipients(&cfg.extensions),
     );
     let old = state
         .config

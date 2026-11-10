@@ -381,6 +381,8 @@ pub fn approve_package(id: &str) -> Result<ConsentCheck, String> {
     if check.required && !check.approved {
         book.approve(&dir, &manifest, now_ms())?;
         book.save(&path)?;
+        // 服务端在重载时按同意记录重算私密收件人,同意变了就要让它重算。
+        reload();
     }
     Ok(check)
 }

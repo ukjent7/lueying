@@ -61,7 +61,7 @@ fn dispatches_appearance() {
 }
 
 #[test]
-fn private_scene_is_skipped() {
+fn private_scene_is_delivered_when_routed() {
     let temp = Temp::new("private");
     let dir = temp.pack("demo");
     test_guest::write_pack(
@@ -74,7 +74,10 @@ fn private_scene_is_skipped() {
         private: true,
         ..SceneIn::default()
     };
-    assert!(pack.dispatch(&scene).is_none());
+    assert!(
+        pack.dispatch(&scene).is_some(),
+        "私密场景由服务端过滤后送达"
+    );
     assert!(pack.last_error().is_none());
 }
 

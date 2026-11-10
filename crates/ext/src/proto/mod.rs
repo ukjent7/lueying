@@ -92,7 +92,7 @@ pub struct SceneIn {
     pub time: f32,
     /// 入场/翻页进度 0..1,静止为 1。
     pub anim: f32,
-    /// 是否密码/隐私字段。为 true 时 guest 不会被调用。
+    /// 是否密码/隐私字段。为 true 时只派发给服务端列出的收件人(不联网的扩展与已确认私密使用的联网扩展)。
     pub private: bool,
 }
 

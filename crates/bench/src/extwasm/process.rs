@@ -11,7 +11,11 @@ use lueying_ext::proto::candidate::CandidateState;
 use lueying_ext::proto::link::Context;
 use lueying_server::ext_link::{ExtLink, Handler, Replier, Request};
 
-use crate::extwasm::harness::{command_manifest, fixture_a, write_pack};
+use lueying_ext::host::ConsentBook;
+
+use crate::extwasm::harness::{
+    ACCENT_A, ACCENT_B, command_manifest, fixture_a, fixture_b, raw_manifest, write_pack,
+};
 use crate::harness::{Temp, push};
 
 /// 测试包的 id。
@@ -51,7 +55,7 @@ pub fn run(report: &mut String) -> usize {
         local.display().to_string(),
     ];
     let link = ExtLink::spawn(exe, args, None, handler);
-    link.set_config(vec![PACK.to_string()], Vec::new(), false);
+    link.set_config(vec![PACK.to_string()], Vec::new(), false, Vec::new());
 
     // 1. 宿主起来、加载包并上报标题。
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -115,7 +119,120 @@ pub fn run(report: &mut String) -> usize {
         accent.is_none(),
         format!("seq={seq} patch={stuck:?}"),
     );
+    private_routing(&mut checks);
     crate::harness::write(report, "扩展宿主进程", checks)
+}
+
+/// 私密场景的路由(服务端过滤、宿主派发):不联网的扩展一直收到;联网扩展在用户确认
+/// 私密使用之前收不到,确认之后才收到。外观主题色区分两个包:A 只有不联网的包、B 是联网包。
+fn private_routing(checks: &mut Vec<(&'static str, bool, String)>) {
+    let (Some(plain_wasm), Some(net_wasm)) = (fixture_a(), fixture_b()) else {
+        push(
+            checks,
+            "私密路由有两个组件测试客人",
+            true,
+            "缺 LUEYING_FIXTURE_WASM / LUEYING_FIXTURE_B_WASM,跳过".into(),
+        );
+        return;
+    };
+    let temp = Temp::new("ext-private");
+    let data = temp.root.join("data");
+    let local = temp.root.join("local");
+    let root = data.join("extensions");
+    let plain = root.join("plain");
+    let net = root.join("net");
+    let _ = std::fs::create_dir_all(&plain);
+    let _ = std::fs::create_dir_all(&net);
+    write_pack(
+        &plain,
+        &raw_manifest("plain", r#""appearance":true"#),
+        plain_wasm,
+    );
+    write_pack(
+        &net,
+        &raw_manifest(
+            "net",
+            r#""appearance":true,"needs":["network"],"network":{"allow":["api.example.com"]}"#,
+        ),
+        net_wasm,
+    );
+    let order = vec!["plain".to_string(), "net".to_string()];
+    let Ok(net_manifest) = lueying_ext::host::manifest_at(&net) else {
+        push(checks, "私密路由的联网包清单可读", false, String::new());
+        return;
+    };
+    let mut book = ConsentBook::default();
+    if book.approve(&net, &net_manifest, 1).is_err()
+        || book.save(&root.join("consent.json")).is_err()
+    {
+        push(checks, "私密路由的同意记录写入", false, String::new());
+        return;
+    }
+    let exe = std::env::current_exe().unwrap_or_default();
+    let args = vec![
+        "--ext-host".to_string(),
+        data.display().to_string(),
+        local.display().to_string(),
+    ];
+    let handler: Handler = Arc::new(|_id, _request: Request, replier: Replier| {
+        replier.send(Err("e2e 不处理服务请求".into()));
+    });
+    let link = ExtLink::spawn(exe, args, None, handler);
+    let recipients =
+        |book: &ConsentBook| lueying_ext::host::private_recipients(&root, book, &order);
+    link.set_config(order.clone(), Vec::new(), false, recipients(&book));
+    let private_scene = SceneIn {
+        private: true,
+        ..SceneIn::default()
+    };
+    let normal = scene_accent(&link, SceneIn::default());
+    let private = scene_accent(&link, private_scene.clone());
+
+    if book.set_private(&net, &net_manifest, true).is_err()
+        || book.save(&root.join("consent.json")).is_err()
+    {
+        push(checks, "私密确认写入", false, String::new());
+        return;
+    }
+    link.set_config(order.clone(), Vec::new(), false, recipients(&book));
+    let confirmed = scene_accent(&link, private_scene);
+
+    push(
+        checks,
+        "普通场景两个外观都收到",
+        normal == Some(ACCENT_B),
+        format!("{normal:?}"),
+    );
+    push(
+        checks,
+        "私密场景到达不联网扩展",
+        private == Some(ACCENT_A),
+        format!("{private:?}"),
+    );
+    push(
+        checks,
+        "私密场景不到达未确认私密使用的联网扩展",
+        private != Some(ACCENT_B),
+        format!("{private:?}"),
+    );
+    push(
+        checks,
+        "确认私密使用后私密场景到达联网扩展",
+        confirmed == Some(ACCENT_B),
+        format!("{confirmed:?}"),
+    );
+}
+
+/// 提交一帧场景并等它的补丁,返回主题色;补丁超过新鲜期会被丢弃,所以超时后重交。
+fn scene_accent(link: &ExtLink, scene: SceneIn) -> Option<u32> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        let seq = link.submit_scene(scene.clone());
+        if let Some((_, patch)) = wait_patch(link, Duration::from_millis(900), Some(seq)) {
+            return patch.and_then(|patch| patch.accent);
+        }
+    }
+    None
 }
 
 /// 等待宿主的补丁,超时返回 `None`;`want` 给出时只接受该序号的补丁。

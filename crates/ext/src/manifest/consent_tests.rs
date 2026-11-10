@@ -181,3 +181,73 @@ fn native_hash_covers_exe_bytes() {
     let check = book.check(&dir, &manifest).expect("检查");
     assert!(check.changed && !check.approved, "exe 变了要重新同意");
 }
+
+const NETWORK: &str = r#"{
+  "id":"net","name":"联网","version":"1.0.0","api": 4,"wasm":"extension.wasm",
+  "needs":["network"],"network":{"allow":["api.example.com","dev.local:8080"]}
+}"#;
+
+#[test]
+fn private_approval_follows_package_content() {
+    let temp = Temp::new("private");
+    let dir = temp.pack("net");
+    write_pack(&dir, NETWORK, b"v1");
+    let manifest = parse(NETWORK);
+    let mut book = ConsentBook::default();
+    assert!(!book.private_ok(&dir, &manifest), "未同意时不许私密");
+    book.approve(&dir, &manifest, 1).expect("同意");
+    assert!(!book.private_ok(&dir, &manifest), "同意本身不等于私密许可");
+
+    book.set_private(&dir, &manifest, true).expect("允许私密");
+    assert!(book.private_ok(&dir, &manifest));
+
+    std::fs::write(dir.join("extension.wasm"), b"v2").expect("换模块");
+    assert!(!book.private_ok(&dir, &manifest), "内容变了要重新确认");
+    assert!(book.set_private(&dir, &manifest, true).is_err());
+
+    book.set_private(&dir, &manifest, false).expect("撤销");
+    assert!(!book.private_ok(&dir, &manifest));
+}
+
+#[test]
+fn private_approval_needs_a_consented_entry() {
+    let temp = Temp::new("private-none");
+    let dir = temp.pack("net");
+    write_pack(&dir, NETWORK, b"v1");
+    let manifest = parse(NETWORK);
+    let mut book = ConsentBook::default();
+    assert!(book.set_private(&dir, &manifest, true).is_err());
+    assert!(book.set_private(&dir, &manifest, false).is_err());
+}
+
+#[test]
+fn private_record_survives_save_and_load() {
+    let temp = Temp::new("private-save");
+    let dir = temp.pack("net");
+    write_pack(&dir, NETWORK, b"v1");
+    let manifest = parse(NETWORK);
+    let path = temp.root.join("consent.json");
+    let mut book = ConsentBook::default();
+    book.approve(&dir, &manifest, 1).expect("同意");
+    book.set_private(&dir, &manifest, true).expect("允许私密");
+    book.save(&path).expect("保存");
+    assert!(ConsentBook::load(&path).private_ok(&dir, &manifest));
+}
+
+#[test]
+fn network_items_name_domains_and_state_native_limits() {
+    let items = consent_items(&parse(NETWORK));
+    assert_eq!(
+        items,
+        vec![
+            "访问外部网络(仅限 api.example.com、dev.local:8080 及其子域名;原生扩展不受白名单约束)"
+        ]
+    );
+    let native = consent_items(&parse(NATIVE));
+    assert!(
+        native
+            .iter()
+            .any(|item| item.contains("原生扩展不受白名单约束")),
+        "{native:?}"
+    );
+}

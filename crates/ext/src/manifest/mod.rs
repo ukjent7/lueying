@@ -13,6 +13,7 @@ use serde::Deserialize;
 pub mod consent;
 pub mod container;
 pub mod metrics;
+pub mod network;
 pub mod sha256;
 
 /// 清单文件的大小上限。清单只放元数据,超过这个数说明放错了东西。
@@ -101,13 +102,13 @@ pub struct Manifest {
     pub settings: Vec<Setting>,
 }
 
-/// 联网白名单:扩展声明它要访问的域名,安装时亮给用户同意;同意之后宿主不再
-/// 逐请求拦截。条目是 `host` 或 `host:port`,没有 scheme 与路径;不带端口的
-/// 条目只放行该 scheme 的默认端口(https 443、http 80)。
+/// 联网白名单:扩展声明它要访问的域名,安装时亮给用户同意;宿主对每次联网请求
+/// 逐条核对(见 [`network`])。条目是 `host` 或 `host:port`,没有 scheme 与路径;
+/// `host` 放行该主机及其子域名的默认端口(https 443、http 80),`host:port` 只放行该端口。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkGrant {
-    /// 允许访问的域名,1 到 32 条,精确匹配。
+    /// 允许访问的主机,1 到 32 条。
     pub allow: Vec<String>,
 }
 

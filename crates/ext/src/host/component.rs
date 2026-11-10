@@ -2,7 +2,7 @@
 //!
 //! 扩展必须是标准 WebAssembly 组件(核心模块用 `wasm-tools component new`
 //! 打包);12 个服务接口全量链接(非 Rust 工具链不裁剪导入),调用一律放行:
-//! 授权在安装时由用户一次性同意,同意之后宿主不再逐次拦截,风险由用户承担。
+//! 授权在安装时由用户一次性同意;同意之后服务调用按清单放行,唯独联网逐请求核对白名单。
 //! 不设燃料、内存或时间预算,扩展的资源用量由扩展自己决定。宿主服务阻塞在扩展
 //! 自己的 worker 线程上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错
 //! 保护)。
@@ -23,7 +23,7 @@ use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
-use crate::manifest::{Manifest, Service};
+use crate::manifest::{Manifest, NetworkGrant, Service};
 use crate::proto::{SceneIn, ScenePatch};
 
 use crate::host::services::Registry;
@@ -38,6 +38,8 @@ wasmtime::component::bindgen!({
 /// 组件 guest 的宿主状态:每个扩展一份,12 个服务接口的实现都挂在它上面。
 pub struct GuestState {
     caller: String,
+    /// 清单的联网白名单;没声明 `network` 的扩展是 `None`,一次联网都不许。
+    network: Option<NetworkGrant>,
     services: Arc<Registry>,
     cancelled: Arc<AtomicBool>,
     /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
@@ -230,6 +232,17 @@ impl lueying::ext::network::Host for GuestState {
         &mut self,
         options: lueying::ext::network::FetchOptions,
     ) -> Result<lueying::ext::network::FetchResult, String> {
+        // 白名单在宿主侧逐请求核对:不在清单名单里的网址直接拒绝,不碰网络。
+        if !self
+            .network
+            .as_ref()
+            .is_some_and(|grant| grant.allows(&options.url))
+        {
+            return Err(format!(
+                "联网被拒:{} 不在清单的 network.allow 白名单内",
+                options.url
+            ));
+        }
         let args = Self::args(&options)?;
         let value = self.call("network", "fetch", &args)?;
         Self::parse(&value, "联网结果")
@@ -286,6 +299,7 @@ impl ComponentGuest {
     ) -> Result<Self, String> {
         let state = GuestState {
             caller: manifest.id.clone(),
+            network: manifest.network.clone(),
             services,
             cancelled,
             failure: Arc::new(Mutex::new(None)),

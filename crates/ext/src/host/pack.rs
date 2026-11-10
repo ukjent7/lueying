@@ -194,10 +194,10 @@ impl Pack {
 
     /// 派发一次场景状态。
     ///
-    /// 隐私字段直接返回 `None`,guest 不会被调用。worker 忙时跳过这一帧,
-    /// 不把长命令算成外观超时。
+    /// 私密场景由服务端按收件人过滤后才送到这里(见 [`super::runtime::private_recipients`]),
+    /// 本函数不再二次判断。worker 忙时跳过这一帧,不把长命令算成外观超时。
     pub fn dispatch(&mut self, state: &SceneIn) -> Option<ScenePatch> {
-        if state.private || self.removed {
+        if self.removed {
             return None;
         }
         if !self.worker.has_appearance() {
