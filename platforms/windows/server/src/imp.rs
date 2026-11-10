@@ -565,15 +565,23 @@ pub(super) fn real_main() {
             std::thread::park();
         }
     }
+    // 界面循环单独一条线程(栈与原先各窗口线程相同);主线程只等着。
     let ui_state = Arc::clone(&state);
-    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::ui::run(ui_state);
-    }))
-    .is_err()
-    {
-        println!("候选窗不可用,继续无界面服务");
+    let ui = std::thread::Builder::new()
+        .name("lueying-ui".into())
+        .spawn(move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::ui::run(ui_state);
+            }))
+            .is_err()
+            {
+                println!("界面线程崩溃,继续无界面服务");
+            }
+        });
+    if let Err(error) = ui {
+        println!("界面线程启动失败,继续无界面服务: {error}");
     }
-    // 窗口循环意外结束时进程也要留着,否则整个输入法跟着退出。
+    // 界面循环意外结束时进程也要留着,否则整个输入法跟着退出。
     loop {
         std::thread::park();
     }
