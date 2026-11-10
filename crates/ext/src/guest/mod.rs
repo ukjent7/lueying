@@ -1,6 +1,6 @@
 //! 掠影 Wasm 扩展的 Rust SDK(WASI 0.3 组件 ABI)。
 //!
-//! 扩展作者实现 [`Extension`],用 [`export_component!`] 声明命令;产物是
+//! 扩展作者实现 [`Extension`],用 `export_component!` 声明命令;产物是
 //! 标准 WebAssembly 组件,宿主按 WIT 契约 `lueying:ext@2.0.0` 类型化调用:
 //! 命令收参数 JSON 回结果 JSON,外观收场景 JSON 回补丁 JSON。命令与服务
 //! 都是同步调用,宿主在扩展自己的 worker 上阻塞等待。
