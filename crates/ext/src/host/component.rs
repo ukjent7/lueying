@@ -1,10 +1,10 @@
 //! 组件宿主:WASI 0.3 组件模型的原生绑定(wasm ABI v2)。
 //!
 //! 扩展必须是标准 WebAssembly 组件(核心模块用 `wasm-tools component new`
-//! 打包);安全语义:12 个服务接口全量链接(非 Rust 工具链不裁剪导入),
-//! 是否放行按调用逐次核清单 needs,没声明的服务一调即拒。不设燃料、内存
-//! 或时间预算,扩展的资源用量由扩展自己决定。宿主服务阻塞在扩展自己的
-//! worker 线程上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错
+//! 打包);12 个服务接口全量链接(非 Rust 工具链不裁剪导入),调用一律放行:
+//! 授权在安装时由用户一次性同意,同意之后宿主不再逐次拦截,风险由用户承担。
+//! 不设燃料、内存或时间预算,扩展的资源用量由扩展自己决定。宿主服务阻塞在扩展
+//! 自己的 worker 线程上,失败以 result 的 Err 分支回给扩展并记入失败槽(吞错
 //! 保护)。
 //!
 //! 绑定全部由 [`bindgen!`] 从 `lueying.wit` 生成:导入接口按包路径镜像
@@ -38,7 +38,6 @@ wasmtime::component::bindgen!({
 /// 组件 guest 的宿主状态:每个扩展一份,12 个服务接口的实现都挂在它上面。
 pub struct GuestState {
     caller: String,
-    manifest: Arc<Manifest>,
     services: Arc<Registry>,
     cancelled: Arc<AtomicBool>,
     /// 本次调用里失败的服务;guest 仍返回成功时用它把这次调用判失败。
@@ -58,16 +57,13 @@ impl WasiView for GuestState {
 }
 
 impl GuestState {
-    /// 服务调用的公共路径:核清单声明、按服务与方法取时限、失败记槽。
+    /// 服务调用的公共路径:按服务与方法取时限、失败记槽。
     fn call(&mut self, service: &str, method: &str, args: &str) -> Result<String, String> {
         let service_enum = Service::ALL
             .iter()
             .copied()
             .find(|s| s.key() == service)
             .ok_or_else(|| format!("未知服务 {service:?}"))?;
-        if !self.manifest.needs.contains(&service_enum) {
-            return Err(format!("服务 {service} 不在清单 needs 里(声明了才可用)"));
-        }
         let timeout = timeout_for(service_enum, method);
         let result = self.services.call_cancellable(
             &self.caller,
@@ -290,7 +286,6 @@ impl ComponentGuest {
     ) -> Result<Self, String> {
         let state = GuestState {
             caller: manifest.id.clone(),
-            manifest,
             services,
             cancelled,
             failure: Arc::new(Mutex::new(None)),
@@ -300,9 +295,7 @@ impl ComponentGuest {
         let mut store = Store::new(&engine, state);
 
         // 12 个服务接口全部进 linker:非 Rust 工具链(componentize-qjs、
-        // componentize-py)按整个世界生成导入,不做裁剪。是否放行不看
-        // 链接看调用——GuestState::call 按清单 needs 逐次门控,没声明的
-        // 服务一调即拒,安全语义不变。
+        // componentize-py)按整个世界生成导入,不做裁剪。同意之后调用直接放行。
         let mut linker = Linker::new(&engine);
         lueying::ext::capture::add_to_linker::<GuestState, HasSelf<GuestState>>(
             &mut linker,
@@ -363,9 +356,9 @@ impl ComponentGuest {
         })
         .map_err(|error| format!("服务 asr 链接失败: {error}"))?;
         // 非 Rust 工具链(componentize-py、带 stdio 的 JS 等)编出的组件会
-        // 导入 WASI 0.2。WASI 不进清单 needs 门控:导入即可用,但能力全关——
+        // 导入 WASI 0.2。导入即可用,但能力全关——
         // 无参数、无环境变量、无文件、无网络、无标准流,只有时钟与随机;
-        // 联网仍只能走宿主的 network 服务(经清单白名单逐请求强制)。
+        // 联网仍只能走宿主的 network 服务。
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|error| format!("WASI 链接失败: {error}"))?;
         let bindings =

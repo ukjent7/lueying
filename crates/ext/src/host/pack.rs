@@ -61,8 +61,7 @@ impl Pack {
 
     /// 用服务注册表与同意检查加载一个包目录。
     ///
-    /// 清单 `needs` 是调用期门控:没声明的服务一调即拒,不会等到出错
-    /// 结果落地。
+    /// 清单 `needs` 只决定同意书里亮出什么,调用期不再门控。
     pub fn load_with_gate(
         dir: &Path,
         services: Arc<Registry>,

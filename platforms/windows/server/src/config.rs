@@ -279,9 +279,6 @@ pub struct AppConfig {
     pub apps: BTreeMap<String, AppOverride>,
     /// 扩展命名空间 `[ext.<id>]`,声明式设置与 `Request::Ext` 共用。
     pub ext_settings: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
-    /// 允许所有扩展自由联网:开启后不再逐域名校验清单白名单,
-    /// 但仍要求扩展在清单里声明 network 并经用户同意安装。
-    pub allow_all_extension_network: bool,
     /// 读取时收集的问题;保存成功后清空。
     pub config_issues: Vec<ConfigIssue>,
 }
@@ -314,7 +311,6 @@ impl Default for AppConfig {
             punct: BTreeMap::new(),
             apps: BTreeMap::new(),
             ext_settings: BTreeMap::new(),
-            allow_all_extension_network: false,
             config_issues: Vec::new(),
         }
     }

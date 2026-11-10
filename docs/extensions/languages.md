@@ -8,10 +8,10 @@
 无论哪种语言,共同约束见[分层与沙箱](layers.md):宿主不设资源预算;
 Wasm 模块大小上限按清单是否声明 `engine` 分两档(轻量组件用默认的 16 MiB;
 内嵌 JS 引擎、CPython 等重运行时的组件在清单加 `"engine": true`,上限 64 MiB)。
-宿主把全部服务接口链接进组件,是否放行按调用逐次核对清单 `needs`——
-没声明的服务一调即拒。宿主给组件提供的 WASI 0.2 能力是全关的——没有
+宿主把全部服务接口链接进组件,清单 `needs` 与权限安装时同意,同意之后
+调用一律放行。宿主给组件提供的 WASI 0.2 能力是全关的——没有
 文件、没有网络、没有环境变量、没有标准流,只有时钟与随机;联网只能走
-`network` 服务(清单白名单逐请求强制)。组件不要导入 `wasi:http`,
+`network` 服务。组件不要导入 `wasi:http`,
 宿主不提供。
 
 ## Rust
@@ -60,7 +60,7 @@ npx componentize-qjs --wit <掠影仓库>/crates/ext/lueying.wit \
 ```
 
 注:该工具链按整个世界生成导入,清单 `needs` 写实际调用的服务即可,
-放行由宿主按调用门控。带完整 JS 引擎(SpiderMonkey)的
+它决定同意书里亮出什么。带完整 JS 引擎(SpiderMonkey)的
 [`jco`](https://github.com/bytecodealliance/jco) 也能编(`jco
 componentize guest.js --wit <lueying.wit> --world-name extension --disable
 http fetch-event --out extension.wasm`),但组件有十几 MiB,清单要声明

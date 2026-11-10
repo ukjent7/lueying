@@ -1,7 +1,7 @@
 use super::*;
-use std::collections::BTreeMap;
 use lueying_ext::manifest::SettingValue;
 use lueying_server::ext_settings::values;
+use std::collections::BTreeMap;
 
 fn toggle() -> Setting {
     Setting {

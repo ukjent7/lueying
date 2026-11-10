@@ -44,8 +44,9 @@ pub struct FileConfig {
     pub update_channel: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
-    /// 允许所有扩展自由联网。
-    pub allow_all_extension_network: Option<bool>,
+    /// 旧键(已取消):扩展同意之后不再逐域名拦截,读到即忽略,不报未知键。
+    #[serde(default, skip_serializing)]
+    pub allow_all_extension_network: Option<serde::de::IgnoredAny>,
 }
 
 /// `ui_accent` 接受下标或颜色名。
@@ -105,6 +106,8 @@ pub fn apply(
     }
     // 模糊音已取消、始终开启;旧配置里的 fuzzy 键不再生效。
     let _ = file.fuzzy;
+    // 「允许扩展自由联网」已取消:同意之后本就不再逐域名拦截,旧键读到即忽略。
+    let _ = file.allow_all_extension_network;
     if let Some(on) = file.shift_toggle {
         cfg.shift_toggle = on;
     }
@@ -209,9 +212,6 @@ pub fn apply(
             None => note(format!("ocr_engine={value} 不合法")),
         }
     }
-    if let Some(on) = file.allow_all_extension_network {
-        cfg.allow_all_extension_network = on;
-    }
     if let Some(value) = file.update_channel {
         match Channel::parse(&value) {
             Some(channel) => cfg.update_channel = channel,
@@ -314,7 +314,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         update_channel: cfg.update_channel.as_str(),
         bindings,
         triggers,
-        allow_all_extension_network: cfg.allow_all_extension_network,
         ext: &cfg.ext_settings,
     };
     let body = toml::to_string_pretty(&file).map_err(|error| format!("配置序列化失败: {error}"))?;
@@ -349,7 +348,6 @@ struct SaveFile<'a> {
     update_channel: &'static str,
     bindings: BTreeMap<&'a str, &'a str>,
     triggers: BTreeMap<&'a str, &'a str>,
-    allow_all_extension_network: bool,
     ext: &'a BTreeMap<String, BTreeMap<String, Value>>,
 }
 

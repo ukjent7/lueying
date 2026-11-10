@@ -84,8 +84,7 @@ pub struct Manifest {
     #[serde(default)]
     pub activate: Option<Activate>,
     /// 需要的宿主服务。宿主把全部服务接口链接进组件(非 Rust 工具链不
-    /// 裁剪导入),是否放行按调用逐次门控:没声明的服务一调即拒。
-    /// 用户授权页也按这里声明展示。
+    /// 裁剪导入);同意之后调用一律放行。用户授权页也按这里声明展示。
     #[serde(default)]
     pub needs: Vec<Service>,
     /// 订阅的宿主事件;只有原生扩展能订阅,宿主只推送,不接收回调。
@@ -102,8 +101,8 @@ pub struct Manifest {
     pub settings: Vec<Setting>,
 }
 
-/// 联网白名单:扩展声明它能访问的域名,用户同意后由宿主提供者逐请求
-/// 强制。条目是 `host` 或 `host:port`,没有 scheme 与路径;不带端口的
+/// 联网白名单:扩展声明它要访问的域名,安装时亮给用户同意;同意之后宿主不再
+/// 逐请求拦截。条目是 `host` 或 `host:port`,没有 scheme 与路径;不带端口的
 /// 条目只放行该 scheme 的默认端口(https 443、http 80)。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -310,7 +309,7 @@ pub enum Service {
     Store,
     /// 系统通知。
     Notify,
-    /// 经扩展宿主访问清单白名单里的域名;服务端保持离线。
+    /// 经扩展宿主访问网络(清单声明、安装时同意);服务端保持离线。
     Network,
     /// 读当前窗口的选中文字与上下文;每级单独同意。
     Context,

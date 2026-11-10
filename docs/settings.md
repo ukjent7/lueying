@@ -32,8 +32,7 @@
 | `bindings` | 表：组合键 = 完整命令 id | 扩展命令的全局热键 |
 | `triggers` | 表：触发词 = 完整命令 id | 候选中的动作触发词，整串匹配才出现 |
 | `ocr_engine` | 字符串 | 截图识别引擎；模型缺失时明确报错 |
-| `extensions` | 扩展 id 数组 | 启用的运行期扩展，按顺序组合 |
-| `allow_all_extension_network` | 布尔 | 跳过扩展的域名白名单，不推荐 |
+| `extensions` | 扩展 id 数组 | 启用的运行期扩展，按顺序组合；同一 `category` 的扩展只启用一个 |
 | `update_channel` | `stable`、`beta` | 更新渠道 |
 
 扩展自己的设置写在 `[ext.<扩展 id>]` 下，由该扩展的清单声明。

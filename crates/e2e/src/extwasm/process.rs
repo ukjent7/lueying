@@ -51,7 +51,7 @@ pub fn run(report: &mut String) -> usize {
         local.display().to_string(),
     ];
     let link = ExtLink::spawn(exe, args, None, handler);
-    link.set_config(vec![PACK.to_string()], false, Vec::new(), false);
+    link.set_config(vec![PACK.to_string()], Vec::new(), false);
 
     // 1. 宿主起来、加载包并上报标题。
     let deadline = Instant::now() + Duration::from_secs(20);

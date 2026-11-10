@@ -278,14 +278,6 @@ fn settled_promote_set(cfg: &mut AppConfig, value: bool) {
     cfg.settled_promote = value;
 }
 
-fn allow_all_network_get(cfg: &AppConfig) -> bool {
-    cfg.allow_all_extension_network
-}
-
-fn allow_all_network_set(cfg: &mut AppConfig, value: bool) {
-    cfg.allow_all_extension_network = value;
-}
-
 fn predict_get(cfg: &AppConfig) -> bool {
     cfg.predict
 }
@@ -815,23 +807,6 @@ pub static SETTINGS: &[SettingDef] = &[
             page: PageId::Extensions,
             keywords: "OCR 截图 识别 模型",
             control: segment(ids::OCR, OCR_CHOICES, 60.0, false, ocr_get, ocr_set),
-            visible: always,
-        }),
-    },
-    SettingDef {
-        key: "allow_all_extension_network",
-        title: "允许扩展自由联网",
-        detail: "开启后不再逐个域名确认;扩展仍需在清单里声明网络用途",
-        value: ValueType::Bool,
-        default: DefaultValue::Bool(false),
-        ui: Some(UiDef {
-            page: PageId::Extensions,
-            keywords: "网络 联网 域名 白名单 扩展",
-            control: toggle(
-                ids::ALLOW_ALL_NETWORK,
-                allow_all_network_get,
-                allow_all_network_set,
-            ),
             visible: always,
         }),
     },

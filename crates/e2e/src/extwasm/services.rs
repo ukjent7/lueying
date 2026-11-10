@@ -1,7 +1,7 @@
-//! 扩展服务缝与官方扩展 E2E:needs 门控、缺提供者报错、绑定表与 shot-ocr。
+//! 扩展服务缝与官方扩展 E2E:调用放行、缺提供者报错、绑定表与 shot-ocr。
 //!
 //! 先列失败方式:
-//! 1. 未声明 needs 的服务调用期一调即拒,不触达提供者;声明了但没装提供者的服务报错,不静默成功。
+//! 1. 同意之后未声明 needs 的服务也照常抵达提供者位(不再拦截);没装提供者的服务报错,不静默成功。
 //! 2. 绑定表解析、保留组合拒绝、when 过滤与表内冲突语义漂移。
 //! 3. 官方 shot-ocr 清单或 guest 与仓库脱节,截图→识别→上屏链路断掉。
 
@@ -15,12 +15,12 @@ use lueying_ext::host::{Done, Pack, Provider, Registry, Runtime, Service, When};
 use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::{Temp, push};
 
-/// 服务缝:needs 门控与缺提供者的错误回传。
+/// 服务缝:调用放行与缺提供者的错误回传。
 fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     let fixture = fixture_or_skip!(fixture_a());
     let temp = Temp::new("services");
 
-    // guest 用了 notify 但清单没有声明:服务全量链接,加载照常,调用时一调即拒。
+    // guest 用了 notify 但清单没有声明:服务全量链接,加载照常;同意之后调用不再拦截,直接抵达提供者位。
     let gate_dir = temp.pack("gate");
     write_pack(
         &gate_dir,
@@ -36,8 +36,8 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
     };
     push(
         checks,
-        "未声明的服务调用期被拒",
-        error.contains("不在清单 needs 里") && error.contains("notify"),
+        "未声明的服务调用不再拦截",
+        error.contains("没有提供者") && !error.contains("needs"),
         error,
     );
 

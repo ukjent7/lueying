@@ -36,7 +36,7 @@ pub const FETCH_MAX_TIMEOUT_MS: u32 = 120_000;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FetchArgs {
-    /// 完整 URL;域名必须在清单 network.allow 白名单里。
+    /// 完整 URL;只许 http/https。
     pub url: String,
     /// HTTP 方法;缺省 GET。
     #[serde(default)]

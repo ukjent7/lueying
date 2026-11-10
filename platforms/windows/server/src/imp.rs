@@ -518,7 +518,6 @@ pub(super) fn real_main() {
     ));
     ext.set_config(
         app_config.extensions.clone(),
-        app_config.allow_all_extension_network,
         app_config.bindings.clone(),
         app_config.ocr_backend == config::OcrBackend::Ppocr,
     );
@@ -858,7 +857,6 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
     let engine_cfg = cfg.engine();
     state.ext.set_config(
         cfg.extensions.clone(),
-        cfg.allow_all_extension_network,
         cfg.bindings.clone(),
         cfg.ocr_backend == config::OcrBackend::Ppocr,
     );

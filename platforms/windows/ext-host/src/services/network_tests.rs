@@ -1,10 +1,6 @@
-//! 联网白名单与规范化的回归网。
+//! 联网 URL 解析与规范化的回归网。
 
 use super::*;
-
-fn allow(entries: &[&str]) -> Vec<String> {
-    entries.iter().map(|entry| entry.to_string()).collect()
-}
 
 #[test]
 fn url_authority_parses_host_and_port() {
@@ -44,22 +40,6 @@ fn url_authority_rejects_the_rest() {
     assert!(url_authority("https://h:0").is_err());
     assert!(url_authority("https://h:port").is_err());
     assert!(url_authority("http://[::1/x").is_err());
-}
-
-#[test]
-fn host_matches_default_and_explicit_ports() {
-    let entries = allow(&["api.example.com", "dev.local:8080", "[::1]:8080"]);
-    // 裸条目只放行 scheme 默认端口。
-    assert!(host_allowed(&entries, "https://api.example.com/v1").unwrap());
-    assert!(host_allowed(&entries, "https://API.example.COM:443/v1").unwrap());
-    assert!(!host_allowed(&entries, "https://api.example.com:8443/v1").unwrap());
-    // 带端口条目精确匹配端口。
-    assert!(host_allowed(&entries, "http://dev.local:8080/x").unwrap());
-    assert!(!host_allowed(&entries, "http://dev.local/x").unwrap());
-    assert!(!host_allowed(&entries, "http://other.local:8080/x").unwrap());
-    assert!(host_allowed(&entries, "http://[::1]:8080/x").unwrap());
-    // 白名单外的 host 一律不放行。
-    assert!(!host_allowed(&entries, "https://evil.example.com").unwrap());
 }
 
 #[test]

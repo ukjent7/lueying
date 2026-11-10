@@ -24,12 +24,10 @@ pub struct Context {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToHost {
-    /// 生效配置:扩展顺序、网络总开关、绑定行与 OCR 后端。
+    /// 生效配置:扩展顺序、绑定行与 OCR 后端。
     Config {
         /// 启用的扩展 id,按组合顺序。
         extensions: Vec<String>,
-        /// 允许所有扩展联网(设置里的总开关)。
-        allow_all_network: bool,
         /// 全局热键绑定行:(组合串, 完整命令 id)。
         bindings: Vec<(String, String)>,
         /// OCR 后端是否为 PP-OCR(否则用系统引擎)。

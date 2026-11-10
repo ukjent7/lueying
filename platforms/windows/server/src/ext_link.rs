@@ -132,7 +132,6 @@ impl ExtLink {
     pub fn set_config(
         &self,
         extensions: Vec<String>,
-        allow_all_network: bool,
         bindings: Vec<(String, String)>,
         ppocr: bool,
     ) {
@@ -144,7 +143,6 @@ impl ExtLink {
                 generation,
                 ToHost::Config {
                     extensions,
-                    allow_all_network,
                     bindings,
                     ppocr,
                 },

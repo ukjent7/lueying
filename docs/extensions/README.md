@@ -39,10 +39,11 @@
 | `kind` | `wasm`（默认）或 `native` |
 | `wasm` / `exe` | 包内的模块文件（wasm）或可执行文件（native） |
 | `activate` | `triggers` 触发词、`hotkeys` 建议热键、`commands` 命令（含 id、标题与出现时机） |
-| `needs` | 需要的服务。宿主只链接这里声明的导入 |
+| `needs` | 需要的服务。宿主链接这里声明的导入，安装时亮给用户同意 |
 | `capabilities` | 申请的权限，用于授权页与同意记录 |
 | `events` | 订阅的宿主事件。目前只有 `candidate-state`，且仅原生扩展可用 |
-| `network` | `allow` 域名白名单。`needs` 含 `network` 时必填 |
+| `network` | `allow` 域名清单，安装时亮给用户同意；`needs` 含 `network` 时必填 |
+| `category` | 类别：`input-scheme`、`candidate-source`、`skin` 之一；同一类别同时只启用一个，启用新的会自动停用旧的。缺省不互斥 |
 | `appearance` | 是否提供候选窗外观；为 `true` 时组件的 `appearance` 导出会被派发 |
 | `settings` | 声明式设置，值保存在 `config.toml` 的 `[ext.<id>]` 下 |
 
@@ -50,7 +51,7 @@
 
 `capture`、`ocr`、`clipboard`、`panel`、`output`、`hotkey`、`store`、`notify`、`network`、`context`、`audio`、`asr`。
 
-网络服务只经独立的扩展宿主 `lueying-ext-host.exe` 访问，且只能到清单白名单内的域名。
+网络服务只经独立的扩展宿主 `lueying-ext-host.exe` 访问。扩展的域名清单安装时亮给用户同意，同意之后宿主不再逐域名拦截；风险由用户承担。
 
 ## 权限（capabilities）
 

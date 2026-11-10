@@ -8,7 +8,7 @@ lueying_tsf.dll        TSF 薄壳，载入宿主进程，只依赖 lueying-proto
     ▼
 lueying-server.exe     常驻服务：引擎会话、候选窗、后台重排；不联网
 lueying-settings.exe   设置窗（Slint）：配置、扩展、更新检查与安装
-lueying-ext-host.exe   扩展宿主：运行全部扩展，联网按清单白名单逐请求检查
+lueying-ext-host.exe   扩展宿主：运行全部扩展，联网（安装时同意后不再逐请求拦截）
 lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 ```
 

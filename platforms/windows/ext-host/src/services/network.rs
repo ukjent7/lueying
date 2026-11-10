@@ -1,11 +1,8 @@
-//! 联网提供者:白名单按扩展强制,传输在本进程里经 WinHTTP 完成。
+//! 联网提供者:传输在本进程里经 WinHTTP 完成。扩展的域名清单在安装时亮给用户同意;
+//! 同意之后宿主不再逐域名拦截,这里只做 URL 合法性检查。
 //!
 //! 外部地址只许 HTTPS,明文只留给回环;响应体与时限有上限,结果必须是 UTF-8 文本。
 //! 扩展卸载或停用时等待侧立刻取消,已在途的请求跑完后结果静默丢弃。
-
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use lueying_ext::host::{Done, Provider};
 use lueying_ext::proto::{
@@ -70,79 +67,24 @@ pub fn url_authority(url: &str) -> Result<(String, u16, u16), String> {
     Ok((host.to_ascii_lowercase(), port, default))
 }
 
-/// 白名单是否放行该 URL。条目 `host` 只放行 scheme 默认端口;带端口的
-/// 条目精确匹配实际端口。比较大小写不敏感。
-pub fn host_allowed(allow: &[String], url: &str) -> Result<bool, String> {
-    let (host, port, default) = url_authority(url)?;
-    Ok(allow.iter().any(|entry| {
-        entry.eq_ignore_ascii_case(&host) && port == default
-            || entry.eq_ignore_ascii_case(&format!("{host}:{port}"))
-    }))
-}
-
-/// 联网提供者:白名单按扩展强制(域名清单来自扩展清单并经用户同意)。
-pub struct NetworkProvider {
-    /// 扩展 id → 白名单;每次扩展重载时整体重建,没登记的扩展一律拒绝。
-    allow: Mutex<HashMap<String, Arc<[String]>>>,
-    /// 全局免密直通:跳过逐域名白名单,只保留 URL 合法性检查。
-    open_all: AtomicBool,
-}
+/// 联网提供者。同意之后不再逐域名拦截。
+#[derive(Default)]
+pub struct NetworkProvider;
 
 impl NetworkProvider {
-    /// 空提供者:没有任何扩展有白名单,也没有免密直通。
+    /// 联网提供者没有状态:扩展的域名清单只在安装时同意一次。
     pub fn new() -> Self {
-        Self {
-            allow: Mutex::new(HashMap::new()),
-            open_all: AtomicBool::new(false),
-        }
-    }
-
-    /// 灌入本次扩展重载的白名单;整体替换。
-    pub fn set_allow(&self, grants: Vec<(String, Vec<String>)>) {
-        let map = grants
-            .into_iter()
-            .map(|(id, allow)| (id, Arc::from(allow.into_boxed_slice())))
-            .collect();
-        *self.allow.lock().expect("联网白名单锁") = map;
-    }
-
-    /// 设置全局免密直通;配置变化后由扩展宿主重建时调用。
-    pub fn set_open_all(&self, open: bool) {
-        self.open_all.store(open, Ordering::Relaxed);
+        Self
     }
 }
 
 impl Provider for NetworkProvider {
-    fn call(&self, caller: &str, _method: &str, args: &str, done: Done) -> Result<(), String> {
-        let allow = self
-            .allow
-            .lock()
-            .expect("联网白名单锁")
-            .get(caller)
-            .map(|allow| allow.to_vec())
-            .unwrap_or_default();
+    fn call(&self, _caller: &str, _method: &str, args: &str, done: Done) -> Result<(), String> {
         let args: FetchArgs =
             serde_json::from_str(args).map_err(|_| "联网参数不是合法 JSON".to_string())?;
-        if self.open_all.load(Ordering::Relaxed) {
-            if let Err(error) = url_authority(&args.url) {
-                done.complete(Err(error));
-                return Ok(());
-            }
-        } else {
-            match host_allowed(&allow, &args.url) {
-                Ok(true) => {}
-                Ok(false) => {
-                    let host = url_authority(&args.url)
-                        .map(|(host, _, _)| host)
-                        .unwrap_or_else(|_| args.url.clone());
-                    done.complete(Err(format!("域名 {host} 不在扩展声明的白名单里")));
-                    return Ok(());
-                }
-                Err(error) => {
-                    done.complete(Err(error));
-                    return Ok(());
-                }
-            }
+        if let Err(error) = url_authority(&args.url) {
+            done.complete(Err(error));
+            return Ok(());
         }
         std::thread::Builder::new()
             .name("ext-network".into())

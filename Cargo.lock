@@ -3201,6 +3201,7 @@ dependencies = [
  "lueying-rerank",
  "lueying-server",
  "lueying-session",
+ "lueying-settings",
  "serde_json",
 ]
 
@@ -3311,13 +3312,11 @@ dependencies = [
 name = "lueying-server"
 version = "0.1.0"
 dependencies = [
- "encoding_rs",
  "getrandom 0.4.3",
  "lueying-dict",
  "lueying-engine",
  "lueying-ext",
  "lueying-features",
- "lueying-net",
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
@@ -3325,8 +3324,6 @@ dependencies = [
  "mimalloc",
  "serde",
  "serde_json",
- "slint",
- "slint-build",
  "toml",
  "windows",
  "windows-numerics",
@@ -3340,6 +3337,25 @@ dependencies = [
  "lueying-engine",
  "lueying-protocol",
  "lueying-rerank",
+]
+
+[[package]]
+name = "lueying-settings"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "lueying-dict",
+ "lueying-ext",
+ "lueying-features",
+ "lueying-net",
+ "lueying-protocol",
+ "lueying-render",
+ "lueying-server",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "toml",
+ "windows",
 ]
 
 [[package]]

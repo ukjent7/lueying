@@ -3,10 +3,9 @@
 //! 只有这一个线程碰 [`Runtime`];每个扩展自己的 worker 线程跑 Wasm。服务端从不等这里:
 //! 外观补丁带序号回传,服务端只采用当前序号的补丁,超时或晚到的一律丢弃。
 
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use lueying_ext::host::bindings::BindingTable;
@@ -20,7 +19,7 @@ use lueying_ext::proto::link::{Context, ToHost, ToServer};
 
 use crate::candidates;
 use crate::channel::Outbound;
-use crate::remote::{Grants, Pending, Remote};
+use crate::remote::{Pending, Remote};
 #[cfg(windows)]
 use crate::services::{self, HotkeyProvider};
 use crate::state::{self, Paths};
@@ -62,14 +61,12 @@ impl Shared {
 #[derive(Default)]
 struct Config {
     order: Vec<String>,
-    allow_all_network: bool,
     bindings: Vec<(String, String)>,
 }
 
 /// 运行一个扩展宿主直到输入关闭。返回进程退出码。
 pub fn run(inbox: Receiver<ToHost>, out: Outbound, pending: Pending) -> i32 {
     let shared = Arc::new(Shared::default());
-    let grants: Grants = Arc::new(Mutex::new(HashMap::new()));
     let privacy: PrivacyCheck = {
         let shared = Arc::clone(&shared);
         Arc::new(move || shared.private.load(Ordering::Relaxed))
@@ -80,7 +77,6 @@ pub fn run(inbox: Receiver<ToHost>, out: Outbound, pending: Pending) -> i32 {
         shared,
         #[cfg(windows)]
         hotkey: Arc::new(HotkeyProvider::default()),
-        grants,
         privacy,
         config: Config::default(),
         runtime: None,
@@ -139,7 +135,6 @@ struct Host {
     /// 全局热键只在 Windows 上有;注册与 WM_HOTKEY 收取都在本线程。
     #[cfg(windows)]
     hotkey: Arc<HotkeyProvider>,
-    grants: Grants,
     privacy: PrivacyCheck,
     config: Config,
     runtime: Option<Runtime>,
@@ -166,16 +161,13 @@ impl Host {
         match message {
             ToHost::Config {
                 extensions,
-                allow_all_network,
                 bindings,
                 ppocr,
             } => {
                 state::set_ppocr(ppocr);
-                let changed = extensions != self.config.order
-                    || allow_all_network != self.config.allow_all_network;
+                let changed = extensions != self.config.order;
                 self.config = Config {
                     order: extensions,
-                    allow_all_network,
                     bindings,
                 };
                 if changed {
@@ -376,8 +368,6 @@ impl Host {
         let consent_path = paths.consent();
         let book = ConsentBook::load(&consent_path);
         let mut approved = Vec::new();
-        let mut network_grants: Vec<(String, Vec<String>)> = Vec::new();
-        let mut capability_grants: Vec<(String, Vec<String>)> = Vec::new();
         for id in &order {
             let dir = root.join(id);
             let manifest = match lueying_ext::host::manifest_at(&dir) {
@@ -395,12 +385,6 @@ impl Host {
             }
             match book.check(&dir, &manifest) {
                 Ok(check) if !check.required || check.approved => {
-                    if let Some(grant) = &manifest.network {
-                        network_grants.push((id.clone(), grant.allow.clone()));
-                    }
-                    if !manifest.capabilities.is_empty() {
-                        capability_grants.push((id.clone(), manifest.capabilities.clone()));
-                    }
                     approved.push(id.clone());
                 }
                 Ok(check) => {
@@ -413,15 +397,13 @@ impl Host {
                 }
             }
         }
-        *self.grants.lock().unwrap_or_else(|p| p.into_inner()) =
-            capability_grants.into_iter().collect();
         if approved.is_empty() {
             eprintln!("运行期扩展:没有已同意的包");
             return (None, skipped);
         }
         let registry = Arc::new(Registry::new());
         registry.set_privacy(Arc::clone(&self.privacy));
-        self.install_services(&registry, network_grants);
+        self.install_services(&registry);
         let gate: ConsentGate = {
             let path = consent_path;
             Arc::new(move |manifest, dir| {
@@ -444,11 +426,11 @@ impl Host {
     }
 
     /// 装服务缝:本进程的提供者直接装;输出、选择面板、上下文转给服务端。
-    fn install_services(&self, registry: &Registry, network_grants: Vec<(String, Vec<String>)>) {
-        for (service, name, grants) in [
-            (Service::Output, "output", None),
-            (Service::Panel, "panel", None),
-            (Service::Context, "context", Some(Arc::clone(&self.grants))),
+    fn install_services(&self, registry: &Registry) {
+        for (service, name) in [
+            (Service::Output, "output"),
+            (Service::Panel, "panel"),
+            (Service::Context, "context"),
         ] {
             registry.set(
                 service,
@@ -457,19 +439,16 @@ impl Host {
                     self.out.clone(),
                     Arc::clone(&self.pending),
                     Arc::clone(&self.next_request),
-                    grants,
                 )),
             );
         }
         #[cfg(windows)]
-        self.install_local(registry, network_grants);
-        #[cfg(not(windows))]
-        let _ = network_grants;
+        self.install_local(registry);
     }
 
     /// Windows 本地提供者:截图、识别、剪贴板、存储、音频、热键与联网。
     #[cfg(windows)]
-    fn install_local(&self, registry: &Registry, network_grants: Vec<(String, Vec<String>)>) {
+    fn install_local(&self, registry: &Registry) {
         registry.set(Service::Capture, Arc::new(services::CaptureProvider));
         registry.set(Service::Ocr, Arc::new(services::OcrProvider::new()));
         registry.set(
@@ -486,8 +465,6 @@ impl Host {
             Arc::clone(&self.hotkey) as Arc<dyn lueying_ext::host::Provider>,
         );
         let network = services::NetworkProvider::new();
-        network.set_allow(network_grants);
-        network.set_open_all(self.config.allow_all_network);
         registry.set(Service::Network, Arc::new(network));
     }
 
