@@ -586,16 +586,76 @@ pub fn load_punct(path: Option<&Path>) -> BTreeMap<char, String> {
 /// 按应用覆盖模板;实际文件是 `apps.toml`。
 pub use crate::config_file::APPS_TEMPLATE;
 
-/// 保存用户配置;目录不存在就创建。扩展命名空间原样写回。
-pub fn save(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
+/// 保存配置的改动。`before` 是调用方读入时的版本,`after` 是它想要的版本:
+/// 只有两者不同的键才写进磁盘上的最新文件,其余键原样保留。这样设置窗与
+/// 服务端各自的改动互不覆盖(例如 Ctrl+. 切换的中文标点不会被设置窗的旧副本冲掉)。
+pub fn save(path: &Path, before: &AppConfig, after: &AppConfig) -> std::io::Result<()> {
+    let invalid = |error: String| std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+    let before = crate::config_file::table(before).map_err(invalid)?;
+    let after = crate::config_file::table(after).map_err(invalid)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let text = crate::config_file::render(cfg)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    with_file_lock(|| {
+        // 磁盘上坏掉的文件当空表处理:读不出的键本来就按默认值生效。
+        let mut disk: toml::Table = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or_default();
+        merge(&mut disk, &before, &after);
+        let body = toml::to_string_pretty(&disk).map_err(|error| invalid(error.to_string()))?;
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, format!("{}{body}", crate::config_file::HEADER))?;
+        std::fs::rename(&tmp, path)
+    })
+}
+
+/// 把 `before` → `after` 的改动合进 `disk`:只动两者不同的键,表则递归到键级。
+fn merge(disk: &mut toml::Table, before: &toml::Table, after: &toml::Table) {
+    disk.retain(|key, _| after.contains_key(key) || !before.contains_key(key));
+    for (key, value) in after {
+        if before.get(key) == Some(value) {
+            continue;
+        }
+        match (value, before.get(key), disk.get_mut(key)) {
+            (
+                toml::Value::Table(new),
+                Some(toml::Value::Table(old)),
+                Some(toml::Value::Table(current)),
+            ) => {
+                merge(current, old, new);
+            }
+            _ => {
+                disk.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
+/// 配置的读改写串行化:设置窗与服务端共用一个命名互斥量。等待有上限,
+/// 挂住的一方不能拖死另一方;超时仍写,只是失去串行保证。
+#[cfg(windows)]
+fn with_file_lock<T>(run: impl FnOnce() -> T) -> T {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
+    let name = windows::core::HSTRING::from("Local\\lueying-config");
+    let Ok(mutex) = (unsafe { CreateMutexW(None, false, &name) }) else {
+        return run();
+    };
+    unsafe {
+        WaitForSingleObject(mutex, 3000);
+    }
+    let out = run();
+    unsafe {
+        let _ = ReleaseMutex(mutex);
+        let _ = CloseHandle(mutex);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn with_file_lock<T>(run: impl FnOnce() -> T) -> T {
+    run()
 }
 
 /// 运行期扩展 id:与扩展清单同一套字符规则,同时保证能安全地当目录名。

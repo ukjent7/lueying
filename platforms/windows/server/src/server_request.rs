@@ -554,16 +554,20 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             Reply::default()
         }
         Request::TogglePunct => {
-            let cfg = {
-                let mut cfg = state.config.write().unwrap_or_else(|p| p.into_inner());
-                cfg.chinese_punct = !cfg.chinese_punct;
-                cfg.clone()
+            let before = state
+                .config
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            let cfg = AppConfig {
+                chinese_punct: !before.chinese_punct,
+                ..before.clone()
             };
             // Ctrl+. 是隐藏快捷键;借模式徽标短暂显示「，。」或「,.」,让用户知道切换结果。
             let label = if cfg.chinese_punct { "，。" } else { ",." };
             println!("切换中文标点 → {}", cfg.chinese_punct);
             match &state.config_path {
-                Some(path) => match config::save(path, &cfg) {
+                Some(path) => match config::save(path, &before, &cfg) {
                     Ok(()) => println!("配置已保存 {}", path.display()),
                     Err(e) => println!("保存配置 {} 失败: {e}", path.display()),
                 },

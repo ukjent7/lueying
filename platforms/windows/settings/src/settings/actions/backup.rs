@@ -115,6 +115,7 @@ pub fn backup_import(settings: &mut Settings) {
     reload();
     if let Some(path) = settings.path.clone() {
         settings.cfg = config::load(&path);
+        settings.saved = settings.cfg.clone();
     }
     if written > 0 || imported_user {
         settings.say(

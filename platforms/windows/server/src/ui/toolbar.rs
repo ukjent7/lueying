@@ -137,13 +137,14 @@ fn saved_bar(state: &State, screen: Rect) -> Toolbar {
 
 /// 拖动结束后把位置写回配置并保存,下次启动回到同一个地方。
 fn save_position(state: &Arc<State>, x: i32, y: i32) {
-    let cfg = {
+    let (before, cfg) = {
         let mut cfg = state.config.write().unwrap_or_else(|p| p.into_inner());
+        let before = cfg.clone();
         cfg.toolbar_pos = Some((x, y));
-        cfg.clone()
+        (before, cfg.clone())
     };
     if let Some(path) = &state.config_path {
-        if let Err(e) = config::save(path, &cfg) {
+        if let Err(e) = config::save(path, &before, &cfg) {
             println!("保存工具栏位置 {} 失败: {e}", path.display());
         }
     }
@@ -325,14 +326,15 @@ fn run_action(state: &Arc<State>, action: Action) {
 
 /// 简繁切换:写进配置并保存,然后应用。和标点切换走同一条路。
 fn toggle_traditional(state: &Arc<State>) {
-    let cfg = {
+    let (before, cfg) = {
         let mut cfg = state.config.write().unwrap_or_else(|p| p.into_inner());
+        let before = cfg.clone();
         cfg.traditional = !cfg.traditional;
-        cfg.clone()
+        (before, cfg.clone())
     };
     match &state.config_path {
         Some(path) => {
-            if let Err(e) = config::save(path, &cfg) {
+            if let Err(e) = config::save(path, &before, &cfg) {
                 println!("保存配置 {} 失败: {e}", path.display());
             }
         }

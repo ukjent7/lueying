@@ -246,7 +246,8 @@ pub fn run(report: &mut String) -> usize {
     let cfg = lueying_server::config::load(&path);
     let loaded = cfg.extensions == vec!["my-pack", "other-pack"];
     let saved =
-        lueying_server::config::save(&path, &cfg).and_then(|()| std::fs::read_to_string(&path));
+        lueying_server::config::save(&path, &lueying_server::config::AppConfig::default(), &cfg)
+            .and_then(|()| std::fs::read_to_string(&path));
     let reloaded = lueying_server::config::load(&path);
     let _ = std::fs::remove_file(&path);
     push(

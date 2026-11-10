@@ -143,7 +143,7 @@ fn save_keeps_extensions_and_round_trips() {
         ocr_backend: OcrBackend::Ppocr,
         ..AppConfig::default()
     };
-    save(&path, &cfg).expect("写配置");
+    save(&path, &AppConfig::default(), &cfg).expect("写配置");
     let text = std::fs::read_to_string(&path).expect("读配置");
     let loaded = load(&path);
     let _ = std::fs::remove_file(&path);
@@ -160,6 +160,52 @@ fn save_keeps_extensions_and_round_trips() {
     );
     assert_eq!(loaded.extensions, vec!["first", "second"]);
     assert_eq!(loaded.ocr_backend, OcrBackend::Ppocr);
+}
+
+/// 设置窗读入之后服务端切了中文标点并落盘;设置窗拿着旧副本只改页大小再存。
+/// 服务端的改动必须保留,设置窗的改动必须写进去。
+#[test]
+fn save_keeps_keys_written_by_the_other_side() {
+    let path = temp("merge-concurrent.toml");
+    let read = AppConfig::default();
+    let server = AppConfig {
+        chinese_punct: false,
+        ..read.clone()
+    };
+    save(&path, &read, &server).expect("服务端写入");
+    let settings = AppConfig {
+        page_size: 7,
+        ..read.clone()
+    };
+    save(&path, &read, &settings).expect("设置窗写入");
+    let text = std::fs::read_to_string(&path).expect("读配置");
+    let _ = std::fs::remove_file(&path);
+    let disk: toml::Table = text.parse().expect("解析配置");
+    assert_eq!(disk["chinese_punct"].as_bool(), Some(false), "{text}");
+    assert_eq!(disk["page_size"].as_integer(), Some(7), "{text}");
+}
+
+/// 编辑清掉的键要从磁盘上删除,未动的键原样留着。
+#[test]
+fn save_removes_keys_the_edit_cleared() {
+    let path = temp("merge-clear.toml");
+    let placed = AppConfig {
+        toolbar_pos: Some((10, 20)),
+        page_size: 7,
+        ..AppConfig::default()
+    };
+    save(&path, &AppConfig::default(), &placed).expect("写位置");
+    let cleared = AppConfig {
+        toolbar_pos: None,
+        ..placed.clone()
+    };
+    save(&path, &placed, &cleared).expect("清位置");
+    let text = std::fs::read_to_string(&path).expect("读配置");
+    let _ = std::fs::remove_file(&path);
+    let disk: toml::Table = text.parse().expect("解析配置");
+    assert!(!disk.contains_key("toolbar_x"), "{text}");
+    assert!(!disk.contains_key("toolbar_y"), "{text}");
+    assert_eq!(disk["page_size"].as_integer(), Some(7), "{text}");
 }
 
 #[test]

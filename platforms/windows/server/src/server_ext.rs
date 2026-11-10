@@ -136,14 +136,15 @@ pub(crate) fn settings_set(
         }
     }
     let full = lueying_server::ext_settings::values(id, &settings, Some(&table));
-    let mut cfg = state
+    let before = state
         .config
         .read()
         .unwrap_or_else(|p| p.into_inner())
         .clone();
+    let mut cfg = before.clone();
     cfg.ext_settings.insert(id.to_string(), table);
     if let Some(path) = &state.config_path
-        && let Err(error) = config::save(path, &cfg)
+        && let Err(error) = config::save(path, &before, &cfg)
     {
         return Err(format!("保存配置失败: {error}"));
     }

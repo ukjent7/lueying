@@ -243,6 +243,9 @@ pub enum Action {
 /// 设置窗的状态:配置 + 服务端回来的东西 + 提示。
 pub struct Settings {
     pub cfg: AppConfig,
+    /// 读入或最近一次存盘时的版本;存盘只写相对它改动的项,
+    /// 服务端在此期间改的项(如 Ctrl+. 切换标点)因此保留。
+    pub saved: AppConfig,
     /// 配置文件路径;没有就存不了。
     pub path: Option<std::path::PathBuf>,
     /// 模糊组当前适应次数,来自常驻 Server。
@@ -271,6 +274,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             cfg: AppConfig::default(),
+            saved: AppConfig::default(),
             path: None,
             groups: Vec::new(),
             status: None,
@@ -293,6 +297,7 @@ impl Settings {
     /// 换掉配置。
     pub fn with_config(cfg: AppConfig) -> Self {
         Self {
+            saved: cfg.clone(),
             cfg,
             ..Self::default()
         }

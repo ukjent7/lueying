@@ -67,9 +67,10 @@ pub fn save(settings: &mut Settings) {
         return;
     };
     let dropped = crate::settings::ext::normalize(&mut settings.cfg, &settings.scripts);
-    match config::save(&path, &settings.cfg) {
+    match config::save(&path, &settings.saved, &settings.cfg) {
         Ok(()) => {
             settings.cfg.config_issues.clear();
+            settings.saved = settings.cfg.clone();
             reload();
             if dropped == 0 {
                 settings.say(Notice::Success, "已保存");

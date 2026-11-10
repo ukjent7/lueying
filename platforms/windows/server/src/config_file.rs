@@ -280,8 +280,12 @@ pub fn apps_from_toml(text: &str) -> Result<BTreeMap<String, AppLayer>, String> 
         .collect())
 }
 
-/// 渲染 `config.toml`。扩展命名空间原样写回,未知键已在上层拒绝。
-pub fn render(cfg: &AppConfig) -> Result<String, String> {
+/// `config.toml` 的文件头注释;保存时放在最前面。
+pub const HEADER: &str = "# 掠影配置(TOML)。未知键会被拒绝并记进日志与服务日志。\n\
+# 按应用覆盖写在 apps.toml;扩展设置在各 [ext.<id>] 表。\n\n";
+
+/// 配置的 TOML 表形式;保存时与磁盘上的表做键级合并。扩展命名空间原样写回,未知键已在上层拒绝。
+pub fn table(cfg: &AppConfig) -> Result<toml::Table, String> {
     let bindings: BTreeMap<&str, &str> = cfg
         .bindings
         .iter()
@@ -316,11 +320,7 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         triggers,
         ext: &cfg.ext_settings,
     };
-    let body = toml::to_string_pretty(&file).map_err(|error| format!("配置序列化失败: {error}"))?;
-    Ok(format!(
-        "# 掠影配置(TOML)。未知键会被拒绝并记进日志与服务日志。\n\
-         # 按应用覆盖写在 apps.toml;扩展设置在各 [ext.<id>] 表。\n\n{body}"
-    ))
+    toml::Table::try_from(&file).map_err(|error| format!("配置序列化失败: {error}"))
 }
 
 #[derive(Serialize)]
