@@ -1,9 +1,12 @@
 //! 上游按键重排模型(`lm_step.ort`)的加载器。
 //!
 //! 这些模型与 `sentence-model.safetensors` 的块结构相同,区别只有三处:
-//! 词向量和位置表是 uint8 量化、每层多一个固定的段落向量、候选打分直接
+//! 文件里的词向量和线性层是 uint8 按张量量化、每层多一个固定的段落向量、候选打分直接
 //! 用字向量点积(8M 自归一化,25M 仍需全词表归一化)。因此复用
 //! [`SentenceModel`] 的前向与批式评分,只增加一个 `Variant`。
+//!
+//! 加载时矩阵不展开成 f32:每个输出行重新对称量化成 i8、带一个行缩放(见 `int8_rows`),
+//! 这是产品默认的存放精度。位置表与归一化参数仍是 f32。
 
 use std::collections::HashMap;
 
@@ -108,19 +111,9 @@ impl SentenceModel {
             .ok_or_else(|| ModelError::MissingTensor("segment".into()))?;
 
         let token = Matrix {
-            inner: Tensor::Float(dequantize_rows(
-                &model,
-                "model.chars.weight",
-                config.vocab,
-                width,
-            )?),
+            inner: int8_token(&model, config.vocab, width)?,
         };
-        let position = dequantize_rows(
-            &model,
-            "model.positions.weight",
-            manifest.max_positions,
-            width,
-        )?;
+        let position = positions(&model, manifest.max_positions, width)?;
 
         let mut blocks = Vec::with_capacity(config.n_layer);
         for layer in 0..config.n_layer {
@@ -133,7 +126,7 @@ impl SentenceModel {
                         .get(&bias)
                         .ok_or_else(|| ModelError::MissingTensor(bias.clone()))?;
                     Ok(Matrix {
-                        inner: Tensor::Float(dequantize_transposed(&model, base, outputs, inputs)?),
+                        inner: int8_transposed(&model, base, outputs, inputs)?,
                     })
                 };
             blocks.push(Block {
@@ -187,55 +180,109 @@ fn plain(model: &OrtModel, name: &str) -> Result<Vec<f32>, ModelError> {
     }
 }
 
-/// 量化阵在 ORT 里按 `[输入, 输出]` 存放,换成线性层要求的 `[输出, 输入]`。
-fn dequantize_transposed(
+/// 上游按键模型的矩阵是 uint8 按张量量化(一个缩放、一个零点)。加载时把每个矩阵逐行重新对称
+/// 量化成 i8,行缩放在点积后乘一次;矩阵只占 f32 的四分之一,激活与累加仍是 f32。
+///
+/// 量化阵在 ORT 里按 `[输入, 输出]` 存放,转置成线性层要求的 `[输出, 输入]` 行。
+fn int8_transposed(
     model: &OrtModel,
     base: &str,
     outputs: usize,
     inputs: usize,
-) -> Result<Vec<f32>, ModelError> {
-    let quantized = model.weight(&format!("{base}_quantized"))?;
-    if quantized.shape != vec![inputs, outputs] {
-        return Err(ModelError::Geometry(format!(
-            "{base} 的形状是 {:?},期望 [{inputs}, {outputs}]",
-            quantized.shape
-        )));
-    }
-    let scale = scalar_f32(model, &format!("{base}_scale"))?;
-    let zero = scalar_u8(model, &format!("{base}_zero_point"))?;
-    let OrtTensor::Uint8(values) = &quantized.data else {
-        return Err(ModelError::Header(format!("{base} 不是 uint8")));
-    };
-    let mut out = vec![0.0; outputs * inputs];
-    for (output, row) in out.chunks_exact_mut(inputs).enumerate() {
-        for (input, slot) in row.iter_mut().enumerate() {
-            *slot = (f32::from(values[input * outputs + output]) - zero) * scale;
-        }
-    }
-    Ok(out)
+) -> Result<Tensor, ModelError> {
+    let source = uint8_source(model, base, &[inputs, outputs], &format!("{base}_scale"))?;
+    Ok(int8_rows(&source, outputs, inputs, |output, input| {
+        input * outputs + output
+    }))
 }
 
-fn dequantize_rows(
-    model: &OrtModel,
+/// 词向量表按 `[词表, 宽度]` 存放,每个词一行。
+fn int8_token(model: &OrtModel, rows: usize, columns: usize) -> Result<Tensor, ModelError> {
+    let base = "model.chars.weight";
+    let source = uint8_source(
+        model,
+        base,
+        &[rows, columns],
+        &dequant_scale_name(model, base),
+    )?;
+    Ok(int8_rows(&source, rows, columns, |row, column| {
+        row * columns + column
+    }))
+}
+
+/// 一个 uint8 量化张量的原始码值、张量缩放与零点。
+struct Uint8Source<'a> {
+    codes: &'a [u8],
+    scale: f32,
+    zero: f32,
+}
+
+fn uint8_source<'a>(
+    model: &'a OrtModel,
     base: &str,
-    rows: usize,
-    columns: usize,
-) -> Result<Vec<f32>, ModelError> {
+    shape: &[usize],
+    scale_name: &str,
+) -> Result<Uint8Source<'a>, ModelError> {
     let quantized = model.weight(&format!("{base}_quantized"))?;
-    if quantized.shape != vec![rows, columns] {
+    if quantized.shape != shape {
         return Err(ModelError::Geometry(format!(
-            "{base} 的形状是 {:?},期望 [{rows}, {columns}]",
+            "{base} 的形状是 {:?},期望 {shape:?}",
             quantized.shape
         )));
     }
-    let scale = scalar_f32(model, &dequant_scale_name(model, base))?;
-    let zero = scalar_u8(model, &format!("{base}_zero_point"))?;
-    let OrtTensor::Uint8(values) = &quantized.data else {
+    let OrtTensor::Uint8(codes) = &quantized.data else {
         return Err(ModelError::Header(format!("{base} 不是 uint8")));
     };
-    Ok(values
+    Ok(Uint8Source {
+        codes,
+        scale: scalar_f32(model, scale_name)?,
+        zero: scalar_u8(model, &format!("{base}_zero_point"))?,
+    })
+}
+
+/// 逐行对称量化:行内最大的 |码值 - 零点| 映到 127,行缩放 = 最大值 × 张量缩放 / 127。
+/// `at(row, column)` 给出码值在源数组里的下标。整行为零点时任取缩放,码值全零。
+fn int8_rows(
+    source: &Uint8Source<'_>,
+    rows: usize,
+    columns: usize,
+    at: impl Fn(usize, usize) -> usize,
+) -> Tensor {
+    let mut values = Vec::with_capacity(rows * columns);
+    let mut scales = Vec::with_capacity(rows);
+    for row in 0..rows {
+        let codes: Vec<f32> = (0..columns)
+            .map(|column| f32::from(source.codes[at(row, column)]) - source.zero)
+            .collect();
+        let largest = codes.iter().fold(0.0f32, |most, code| most.max(code.abs()));
+        if largest == 0.0 {
+            scales.push(source.scale);
+            values.extend(std::iter::repeat_n(0i8, columns));
+        } else {
+            scales.push(largest * source.scale / 127.0);
+            values.extend(
+                codes
+                    .iter()
+                    .map(|code| (code * 127.0 / largest).round() as i8),
+            );
+        }
+    }
+    Tensor::Quantized { values, scales }
+}
+
+/// 位置表保持 f32:它是加在词向量上的偏置,不进矩阵乘。
+fn positions(model: &OrtModel, rows: usize, columns: usize) -> Result<Vec<f32>, ModelError> {
+    let base = "model.positions.weight";
+    let source = uint8_source(
+        model,
+        base,
+        &[rows, columns],
+        &dequant_scale_name(model, base),
+    )?;
+    Ok(source
+        .codes
         .iter()
-        .map(|&value| (f32::from(value) - zero) * scale)
+        .map(|&code| (f32::from(code) - source.zero) * source.scale)
         .collect())
 }
 
@@ -270,5 +317,28 @@ fn scalar_u8(model: &OrtModel, name: &str) -> Result<f32, ModelError> {
             .map(f32::from)
             .ok_or_else(|| ModelError::Geometry(format!("{name} 为空"))),
         OrtTensor::Float(_) => Err(ModelError::Header(format!("{name} 应为 uint8"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Uint8Source, int8_rows};
+    use crate::lm::weights::Tensor;
+
+    #[test]
+    fn rows_quantize_around_the_zero_point() {
+        // 零点 128:码值 255 与 1 分别是行内最大偏差 127 的两端,全零行取张量缩放。
+        let codes = [128u8, 255, 1, 128, 128, 128];
+        let source = Uint8Source {
+            codes: &codes,
+            scale: 0.5,
+            zero: 128.0,
+        };
+        let Tensor::Quantized { values, scales } = int8_rows(&source, 3, 2, |r, c| r * 2 + c)
+        else {
+            panic!("keystroke matrices must stay quantized");
+        };
+        assert_eq!(values, vec![0, 127, -127, 0, 0, 0]);
+        assert_eq!(scales, vec![0.5, 0.5, 0.5]);
     }
 }
