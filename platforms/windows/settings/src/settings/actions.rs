@@ -62,7 +62,6 @@ pub use backup::{backup_export, backup_import};
 
 /// 存盘:写配置并让常驻服务重读。
 pub fn save(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = settings.path.clone() else {
         settings.say(Notice::Error, "没有可写的配置路径");
         return;
@@ -85,19 +84,8 @@ pub fn save(settings: &mut Settings) {
     }
 }
 
-/// 清空用户词库:要点两次,防误触。
-pub fn clear_user(settings: &mut Settings) {
-    settings.confirm_clear = false;
-    if send(&Request::ClearUser) {
-        settings.say(Notice::Success, "已清空用户词库");
-    } else {
-        settings.say(Notice::Error, "输入法服务未运行,启动后再试");
-    }
-}
-
 /// 打开按应用配置文件。
 pub fn open_apps(settings: &mut Settings) {
-    settings.confirm_clear = false;
     open_text_file(
         settings,
         config::apps_path(),
@@ -208,7 +196,6 @@ pub fn ppocr_ready() -> bool {
 
 /// 打开 PP-OCRv6 原生扩展目录:没有就建,并放一份文件名与下载说明。
 pub fn open_ocr_models(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(dir) = config::extensions_dir().map(|root| root.join("ppocr")) else {
         settings.say(Notice::Error, "没有可写的扩展目录");
         return;
@@ -249,7 +236,6 @@ const PPOCR_README: &str = "\
 /// 打开运行期扩展目录:没有就建,再拉起资源管理器。每个包一个子
 /// 目录,启用哪个由配置里的 `script` 决定。
 pub fn open_scripts(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(dir) = config::extensions_dir() else {
         settings.say(Notice::Error, "没有可写的扩展目录");
         return;
@@ -329,7 +315,6 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
 
 /// 同意配置里启用的扩展;单项列表与多项有序列表用同一条路径。
 pub fn approve_extension(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let ids = settings.cfg.extensions.clone();
     if ids.is_empty() {
         settings.say(Notice::Error, "先在「运行期扩展」选择要启用的扩展");
@@ -372,7 +357,6 @@ pub fn approve_package(id: &str) -> Result<ConsentCheck, String> {
 
 /// 从文件导入一个 .luext 扩展包;文件对话框外壳,落盘在纯函数里。
 pub fn import_luext(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = choose_file(
         false,
         "",
@@ -480,7 +464,6 @@ pub fn read_ext_metrics() -> Option<ExtMetrics> {
 
 /// 刷新设置页的扩展运行摘要;数据在服务端每秒更新。
 pub fn refresh_ext_metrics(settings: &mut Settings) {
-    settings.confirm_clear = false;
     match read_ext_metrics() {
         Some(metrics) => {
             let count = metrics.extensions.len();
@@ -493,7 +476,6 @@ pub fn refresh_ext_metrics(settings: &mut Settings) {
 
 /// 导出用户词库到文件。
 pub fn export_user(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = choose_user_file(true) else {
         return;
     };
@@ -508,7 +490,6 @@ pub fn export_user(settings: &mut Settings) {
 
 /// 从文件导入用户词库:本机导出的原生格式、标准 TSV 词表与纯汉字词表都能读。
 pub fn import_user(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = choose_user_file(false) else {
         return;
     };
@@ -559,7 +540,6 @@ pub fn import_user(settings: &mut Settings) {
 
 /// 导出诊断报告:版本、配置、模糊组统计与服务日志末尾。
 pub fn export_diagnostics(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = choose_diag_file() else {
         return;
     };
@@ -610,8 +590,7 @@ pub fn export_diagnostics(settings: &mut Settings) {
 }
 
 /// 更新确认框;确认后由设置窗后台下载并运行安装程序。
-pub fn install_update(settings: &mut Settings, release: &update::Release) -> bool {
-    settings.confirm_clear = false;
+pub fn install_update(release: &update::Release) -> bool {
     let text = format!(
         "安装掠影 {}？\n\n安装包会下载到临时目录,校验后直接运行安装程序。",
         release.version

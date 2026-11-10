@@ -109,7 +109,7 @@ pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
                 score: c.score as f32,
                 channel: c.channel as f32,
                 personal: c.personal as f32,
-                locked: c.learned && c.user_freq >= 2,
+                locked: c.learned_enough(),
                 edited: c.edits > 0,
             })
             .collect(),

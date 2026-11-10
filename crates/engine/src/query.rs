@@ -22,14 +22,16 @@ pub struct Candidate {
     pub full: bool,
     /// 逐音节精确命中(含简拼),未经模糊扩写;用户词不算。
     pub trusted: bool,
+    /// 读法是精确读音(没有简拼、手误、模糊改动、补全)。学习的词序加分只给精确路径。
+    pub exact: bool,
     /// 两个及以上精确词典词拼成的整句。没有单词条频次,保护时另设门槛。
     pub sentence: bool,
     /// 模糊改动处数;0 表示逐音节精确命中。
     pub edits: usize,
     /// 词典词频(用户独有词为 0)。精确首位保护只锁有 corpus 依据的常用词。
     pub freq: u64,
-    /// 同一按键下用户选过该词的次数。
-    pub user_freq: u32,
+    /// 同一按键下用户对该词的有效层级(保持率加权的使用次数,首次使用不计)。
+    pub level: f64,
     /// 用户词库在该键下精确学过这个词(全拼与简拼互认),可作为首位覆盖的依据。
     pub learned: bool,
     /// 命中的模糊组位掩码(0 表示精确)。
@@ -43,12 +45,12 @@ pub struct Candidate {
     /// 这种读法的信道代价(nat):模糊、手误、补全越多越大。重排模型只看文字,
     /// 比较候选时要把它算回去。
     pub channel: f64,
-    /// `score` 里来自用户学习的部分:选词次数、上下文、词序、应用偏好,减去跳过负分。
+    /// `score` 里来自用户学习的部分:词的层级与词序。
     /// 重排给引擎分的权重很小,这一份要单独按完整权重算回去。
     pub personal: f64,
     /// 快捷输入(日期/时间/数字金额/符号):不写词库,也不参与词级转移。
     pub quick: bool,
-    /// 用户在同键下跳过过该候选:只小幅降权,精确首位保护也会让位。
+    /// 用户刚误选过该词、记忆仍清楚:不许占首位。
     pub rejected: bool,
     /// 显示文本是繁体时的简体规范形式。学习与左邻上下文用它,避免简繁分裂词库。
     pub learn_text: Option<String>,
@@ -64,6 +66,11 @@ pub struct Candidate {
 }
 
 impl Candidate {
+    /// 用户在这个键下学过这个词,且层级已达首位门槛:重排不得改动它的位置。
+    pub fn learned_enough(&self) -> bool {
+        self.learned && self.level >= crate::user::PROMOTE_LEVEL
+    }
+
     /// 功能模块添加“整串上屏”候选的最小构造:一个区间覆盖整个原始输入,
     /// 上屏后组合结束。`quick` 保持 false,由模块按需改写。
     pub fn whole(raw_len: usize, text: impl Into<String>, score: f64) -> Self {
@@ -76,10 +83,11 @@ impl Candidate {
             spans: vec![(0, raw_len)],
             full: true,
             trusted: false,
+            exact: true,
             sentence: false,
             edits: 0,
             freq: 0,
-            user_freq: 0,
+            level: 0.0,
             learned: false,
             groups: 0,
             hint: None,
@@ -120,8 +128,6 @@ pub(crate) struct BuildArgs<'a> {
     /// 上一次解码的前缀图,按键之间复用。
     pub charts: &'a mut Charts,
     pub context: &'a str,
-    pub host: &'a str,
-    pub previous2: Option<&'a str>,
     pub previous: Option<&'a str>,
     pub raw: &'a str,
     /// 当前串处于快捷模块的触发会话;触发键要秒出,不加手误读法。

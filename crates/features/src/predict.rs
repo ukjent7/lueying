@@ -1,8 +1,8 @@
 //! 下一词联想扩展。
 //!
-//! 只用本机用户词库里的词级转移与三词窗口:上一词之后用户实际接过的词,
+//! 只用本机用户词库里的词序:上一词之后用户实际接过的词,
 //! 在下一段输入是它的拼音前缀时作为「联想」候选出现。没有云端请求,也没有
-//! 冷启动语料;用户第一次接某个词后,下一次就能命中。
+//! 冷启动语料;用户接过某个词两次以上(保持的记忆够强)后,下一次就能命中。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -69,12 +69,9 @@ impl Module for Prediction {
         if query.is_empty() {
             return;
         }
-        let mut predicted = ctx.user.predict_next(ctx.previous, 24);
-        if predicted.is_empty() {
-            predicted = ctx.user.predict_after(ctx.previous2, ctx.previous, 24);
-        }
+        let predicted = ctx.user.predict_next(ctx.previous, 24);
         let mut inserted = 0usize;
-        for (word, _count) in predicted {
+        for word in predicted {
             let Some(key) = ctx.user.key_for_word(&word) else {
                 continue;
             };

@@ -1,12 +1,13 @@
 //! 词库导入:第三方词表 → 用户词库的原生格式。
 //!
 //! 一份词表里能混着三种写法,逐行认:
-//! - 原生导出格式(键 / 词 / 频次 / 时间戳):本机导出的用户词库,原样并入。
+//! - 本机导出的用户词库(以 `w` `t` `g` `a` `p` 开头的记录行):原样并入,
+//!   由引擎的导入校验。
 //! - 标准词表(词 / 拼音 / 权重):搜狗、QQ、Rime 导出的文本词库。
 //! - 纯汉字词表:每行一个词,读音从主词典反查;查不到就整条跳过,不猜。
 //!
-//! 词表里的拼音统一规范成引擎的学习键(`ni'hao`),权重取对数折算成用户
-//! 词频:导入的词要压过普通候选,又不能把别的候选挤出候选窗。
+//! 词表里的拼音统一规范成引擎的学习键(`ni'hao`),权重取对数折算成使用次数:
+//! 导入的词要压过普通候选,又不能把别的候选挤出候选窗。
 //!
 //! 解析与解码都在设置窗那侧做,常驻服务只收合并好的原生文本。
 
@@ -62,17 +63,11 @@ pub fn parse(text: &str) -> Report {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        // 引擎自己的统计行(@group / @context / @pin 等),原样并入。
-        if trimmed.starts_with('@') {
+        let cols: Vec<&str> = line.split('\t').collect();
+        // 本机导出的记录行,原样并入;格式由引擎的导入校验。
+        if is_engine_line(&cols) {
             report.text.push_str(line);
             report.text.push('\n');
-            continue;
-        }
-        let cols: Vec<&str> = line.split('\t').collect();
-        // 原生导出格式:键 / 词 / 频次 / 时间戳,原样并入。
-        if let Some(native) = native_entry(&cols) {
-            report.text.push_str(&native);
-            report.imported += 1;
             continue;
         }
         // 标准词表:词 / 拼音 / 权重。
@@ -90,25 +85,9 @@ pub fn parse(text: &str) -> Report {
     report
 }
 
-/// 原生导出格式的一行:键 / 词 / 频次 / 时间戳。键原样保留,简拼键也在内。
-fn native_entry(cols: &[&str]) -> Option<String> {
-    if cols.len() != 4 || cols[0].trim().is_empty() {
-        return None;
-    }
-    if cols[2].trim().parse::<u32>().is_err() || cols[3].trim().parse::<u64>().is_err() {
-        return None;
-    }
-    // 第二列读得出音节就说明这是标准词表,不是原生导出。
-    if key_of(cols[1]).is_some() {
-        return None;
-    }
-    Some(format!(
-        "{}\t{}\t{}\t{}\n",
-        cols[0].trim(),
-        cols[1].trim(),
-        cols[2].trim(),
-        cols[3].trim()
-    ))
+/// 本机导出的记录行:首列是记录类型(词、词序、模糊组、快捷字面、置顶)。
+fn is_engine_line(cols: &[&str]) -> bool {
+    matches!(cols.first(), Some(&("w" | "t" | "g" | "a" | "p")))
 }
 
 /// 标准词表的一行:词 / 拼音 / 权重。读音读不出来,或词与音节数对不上,就没有词条。
@@ -167,10 +146,10 @@ impl Report {
         !self.pending.is_empty()
     }
 
-    /// 追加一条原生格式词条。
-    fn push(&mut self, key: &str, word: &str, freq: u32, ts: u64) {
+    /// 追加一条词记忆:词表权重折算成的使用次数,稳定度取初始值,按现在记。
+    fn push(&mut self, key: &str, word: &str, uses: u32, now: u64) {
         self.text
-            .push_str(&format!("{key}\t{word}\t{freq}\t{ts}\n"));
+            .push_str(&format!("w\t{key}\t{word}\t{uses}\t1\t{now}\t0\n"));
         self.imported += 1;
     }
 }
@@ -262,7 +241,7 @@ fn count_matches(word: &str, key: &str) -> bool {
     !is_hanzi_word(word) || word.chars().count() == key.split('\'').count()
 }
 
-/// 文件权重 → 用户词频:取对数(权重 1000 → 词频 10)。
+/// 文件权重 → 使用次数:取对数(权重 1000 → 10 次)。
 fn weight_to_freq(weight: Option<&str>) -> u32 {
     let weight = weight
         .and_then(|text| text.trim().parse::<u32>().ok())

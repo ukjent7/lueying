@@ -423,12 +423,16 @@ pub fn run(report: &mut String) -> usize {
     let imported = lueying_settings::dict_import::parse("你好\tni hao\t1000\n");
     let native = imported.text.trim_end().to_string();
     let native_row: Vec<&str> = native.split('\t').collect();
-    let key = native_row.first().copied().unwrap_or_default();
-    let word = native_row.get(1).copied().unwrap_or_default();
+    let key = native_row.get(1).copied().unwrap_or_default();
+    let word = native_row.get(2).copied().unwrap_or_default();
     push(
         &mut checks,
         "词表转用户词库格式",
-        imported.imported == 1 && imported.skipped == 0 && key == "ni'hao" && word == "你好",
+        imported.imported == 1
+            && imported.skipped == 0
+            && native_row.first() == Some(&"w")
+            && key == "ni'hao"
+            && word == "你好",
         format!("导入 {} 条:{native}", imported.imported),
     );
 

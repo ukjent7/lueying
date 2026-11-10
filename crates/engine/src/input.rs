@@ -53,14 +53,6 @@ impl Engine {
                     if self.context_handled > 0 {
                         self.context_handled -= 1;
                     } else if !text.is_ascii() {
-                        // 快捷输入是系统生成的数字/日期,不进个人搭配;左邻文本
-                        // 仍要更新,让紧随其后的候选看到正确的上下文。
-                        if self.learning && self.quick_handled == 0 {
-                            self.user
-                                .write()
-                                .unwrap_or_else(|p| p.into_inner())
-                                .learn_context(&self.context, text);
-                        }
                         self.push_context(text);
                     }
                     // 候选提交已在 apply_consume 学过词级转移;标点、英文和
@@ -69,7 +61,6 @@ impl Engine {
                         self.transition_handled -= 1;
                     } else {
                         self.last_word = None;
-                        self.second_last_word = None;
                     }
                     if self.quick_handled > 0 {
                         self.quick_handled -= 1;
@@ -80,18 +71,15 @@ impl Engine {
                     self.after_digit = true;
                     // 直通内容由宿主直接写进文档,已经断开中文词序。
                     self.last_word = None;
-                    self.second_last_word = None;
                 }
                 Event::Passthrough(_) => {
                     self.after_digit = false;
                     self.last_word = None;
-                    self.second_last_word = None;
                 }
                 // 命令没有上屏文字,词序在这里断开;左邻上下文保持原样。
                 Event::Action(_) => {
                     self.after_digit = false;
                     self.last_word = None;
-                    self.second_last_word = None;
                 }
                 Event::Mode(_) => {}
             }
@@ -269,10 +257,6 @@ impl Engine {
             }
             Key::SegmentRight => {
                 self.move_segment(1);
-                Vec::new()
-            }
-            Key::DeleteCandidate => {
-                self.forget_highlighted();
                 Vec::new()
             }
             Key::Left => {

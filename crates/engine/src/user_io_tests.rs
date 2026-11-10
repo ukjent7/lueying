@@ -1,116 +1,58 @@
-//! 导入的特征测试:锁定 `import` 对每种行、坏行与同键合并的现有行为。
-//!
-//! 断言都落在 `export` 的文本上:导出按内容排序,且不依赖当前时间。
+//! 导入导出的测试:往返逐位相等,坏行跳过,已有记录按较新的那份合并。
 
 use lueying_dict::syllables::FUZZY_GROUPS;
 
 use crate::UserDict;
-use crate::user::{NO_LEFT, reject_key};
+use crate::user::set_sim_now;
 
-const GROUP: &str = FUZZY_GROUPS[0];
+const DAY: u64 = 86_400;
+const T0: u64 = 1_800_000_000;
 
-/// 导入一段文本再导出,得到规范文本。
-fn round_trip(text: &str) -> String {
+#[test]
+fn round_trip_is_lossless() {
+    set_sim_now(T0);
     let mut user = UserDict::new();
-    user.import(text);
-    user.export()
+    user.learn("ni'hao", "你好");
+    user.learn("ni'hao", "你好");
+    user.mispick("ni'hao", "你好");
+    user.learn("ni'hao", "你好");
+    user.learn("ni'hao", "泥好");
+    set_sim_now(T0 + 9 * DAY);
+    user.learn("ni'hao", "你好");
+    user.learn_transitions(Some("你好"), &["世界".to_string()]);
+    user.learn_raw("nihao", "你好");
+    user.learn_raw("nihao", "泥好");
+    user.learn_groups(1);
+    user.learn_literal("rq", "!date");
+    user.pin("ni", "你");
+    let text = user.export();
+    let mut again = UserDict::new();
+    again.import(&text);
+    assert_eq!(again.export(), text);
+    set_sim_now(0);
 }
 
 #[test]
-fn word_lines_export_sorted_and_merge_by_maximum() {
-    let text = "ni\t你\t5\t100\nni\t你\t3\t200\nhao\t好\t2\t50\n";
-    assert_eq!(round_trip(text), "hao\t好\t2\t50\nni\t你\t5\t200\n");
-}
-
-#[test]
-fn every_control_kind_survives_a_round_trip() {
-    let lines = [
-        format!("@group\t{GROUP}\t3:100"),
-        "@context\t你\t好\t2\t100".to_string(),
-        "@wordctx\t_\t好\t1".to_string(),
-        "@wordctx\t你\t好\t2".to_string(),
-        "@transition\t你\t好\t1\t10".to_string(),
-        "@trigram\t我\t们\t好\t1\t10".to_string(),
-        "@app\tnotepad.exe\t你\t1\t10".to_string(),
-        "@reject\t_ni\t你\t1\t10".to_string(),
-        "@pin\tni\t你".to_string(),
-    ];
-    let text = lines.join("\n") + "\n";
-    assert_eq!(round_trip(&text), text);
-}
-
-#[test]
-fn word_context_counts_follow_the_left_character() {
+fn bad_lines_are_skipped() {
     let mut user = UserDict::new();
-    user.learn_word_context("去", "店", false);
-    user.learn_word_context("去", "店", false);
-    assert_eq!(user.word_context_count('去', "店"), 2);
-    assert_eq!(user.word_context_count('在', "店"), 0);
-    assert_eq!(user.export(), "@wordctx\t去\t店\t2\n");
-}
-
-#[test]
-fn rejects_apply_only_after_the_same_left_character() {
-    let mut user = UserDict::new();
-    user.reject(&reject_key('去', "dian"), "店");
-    assert!(user.reject_penalty_in('去', "dian", "店") > 0.0);
-    assert_eq!(user.reject_penalty_in('在', "dian", "店"), 0.0);
-    // 句首记下的跳过对所有上文都生效。
-    user.reject(&reject_key(NO_LEFT, "dian"), "电");
-    assert!(user.reject_penalty_in('在', "dian", "电") > 0.0);
-}
-
-#[test]
-fn legacy_reject_keys_become_sentence_start_rejects() {
-    assert_eq!(
-        round_trip("@reject\tni\t你\t1\t10\n"),
-        "@reject\t_ni\t你\t1\t10\n"
+    user.import(
+        "w\tni\t你\tx\t1\t1\t0\nt\t你\t\t1\t1\t1\nold\t你\t3\t10\nw\tni\t你\t2\t1\t100\t0\n",
     );
+    let text = user.export();
+    assert_eq!(text, "w\tni\t你\t2\t1\t100\t0\n");
 }
 
 #[test]
-fn repeated_statistics_keep_the_larger_count_and_latest_time() {
-    let text = "@context\t你\t好\t2\t100\n@context\t你\t好\t5\t50\n";
-    assert_eq!(round_trip(text), "@context\t你\t好\t5\t100\n");
+fn existing_records_take_the_more_recent_one() {
+    let mut user = UserDict::new();
+    user.import("w\tni\t你\t5\t2.5\t200\t0\n");
+    user.import("w\tni\t你\t3\t9\t100\t0\n");
+    assert_eq!(user.export(), "w\tni\t你\t5\t2.5\t200\t0\n");
 }
 
 #[test]
-fn app_host_names_are_trimmed_and_lowercased() {
-    let text = "@app\t  Notepad.EXE \t你\t1\t10\n";
-    assert_eq!(round_trip(text), "@app\tnotepad.exe\t你\t1\t10\n");
-}
-
-#[test]
-fn malformed_lines_are_skipped() {
-    let text = [
-        "ni\t你\tx\t1",
-        "ni\t你\t1",
-        "ni\t你\t1\t2\textra",
-        "\t你\t1\t2",
-        "@group\tnot-a-group\t3:100",
-        "@group\tno-colon",
-        "@context\t你\t好\t0\t100",
-        "@context\tab\t好\t2\t100",
-        "@transition\t\t好\t1\t1",
-        "@trigram\t我\t\t好\t1\t1",
-        "@app\tnotepad.exe\t你\t1",
-        "@reject\tni\t你\t1\t2\textra",
-        "@pin\tni\t",
-        "@pin\tni\t你\textra",
-        "",
-    ]
-    .join("\n");
-    assert_eq!(round_trip(&text), "");
-}
-
-#[test]
-fn unknown_at_prefixed_key_is_read_as_a_word() {
-    assert_eq!(round_trip("@foo\tbar\t1\t2\n"), "@foo\tbar\t1\t2\n");
-}
-
-#[test]
-fn export_is_a_fixed_point_of_import() {
-    let text = "ni\t你\t5\t100\n@context\t你\t好\t2\t100\n@pin\tni\t你\n";
-    let once = round_trip(text);
-    assert_eq!(round_trip(&once), once);
+fn group_lines_keep_known_groups_only() {
+    let mut user = UserDict::new();
+    user.import(&format!("g\t{}\t2\t10\ng\tnope\t2\t10\n", FUZZY_GROUPS[0]));
+    assert_eq!(user.export(), format!("g\t{}\t2\t10\n", FUZZY_GROUPS[0]));
 }

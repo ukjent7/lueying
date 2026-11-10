@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 lueying-cli.workspace = true
 lueying-dict.workspace = true
-lueying-engine.workspace = true
+lueying-engine = { workspace = true, features = ["sim-clock"] }
 # 运行期 Wasm 扩展宿主:E2E 直接驱动 Pack/Runtime 与绑定表。
 lueying-ext = { workspace = true, features = ["host"] }
 lueying-features.workspace = true

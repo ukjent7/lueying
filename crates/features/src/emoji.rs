@@ -92,7 +92,7 @@ impl Module for EmojiModule {
                 extra.sentence = false;
                 extra.edits = 0;
                 extra.freq = 0;
-                extra.user_freq = 0;
+                extra.level = 0.0;
                 extra.learned = false;
                 extra.groups = 0;
                 extra.hint = Some("表情".to_string());

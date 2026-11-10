@@ -29,7 +29,7 @@ impl Engine {
             context_handled: 0,
             quick_handled: 0,
             last_word: None,
-            second_last_word: None,
+            last_pick: None,
             host: String::new(),
             transition_handled: 0,
             now: None,
@@ -90,7 +90,7 @@ impl Engine {
         self.learning = enabled;
     }
 
-    /// 记录宿主 exe 名,用于按应用学习;空名(未知宿主)不产生应用偏好。
+    /// 记录宿主 exe 名,供功能模块读取;空名表示未知宿主。
     pub fn set_host(&mut self, host: &str) {
         self.host = host.trim().to_ascii_lowercase();
     }
@@ -165,22 +165,12 @@ impl Engine {
 
     /// 左邻文本整体替换后,只保留仍在文本末尾的上一个/上上个词。
     pub(crate) fn retain_last_words(&mut self, text: &str) {
-        let Some(word) = self.last_word.clone() else {
-            self.second_last_word = None;
-            return;
-        };
-        if !text.ends_with(&word) {
-            self.last_word = None;
-            self.second_last_word = None;
-            return;
-        }
-        let before = &text[..text.len() - word.len()];
         if self
-            .second_last_word
+            .last_word
             .as_deref()
-            .is_some_and(|previous| !before.ends_with(previous))
+            .is_some_and(|word| !text.ends_with(word))
         {
-            self.second_last_word = None;
+            self.last_word = None;
         }
     }
 
@@ -188,7 +178,7 @@ impl Engine {
     pub fn clear_context(&mut self) {
         self.context.clear();
         self.last_word = None;
-        self.second_last_word = None;
+        self.last_pick = None;
         self.after_digit = false;
         // 新输入框的引号从开引号重新配对;沿用上一个文档的奇偶会把
         // 句首引号打成闭引号。
@@ -365,7 +355,7 @@ impl Engine {
         true
     }
 
-    /// 降权当前页第 `slot` 条:同键记一次跳过负分,让位给相邻候选。
+    /// 降权当前页第 `slot` 条:同键减弱一次记忆,让位给相邻候选。
     pub fn demote_in_page(&mut self, slot: usize) -> bool {
         let ps = self.cfg.page_size.max(1);
         self.demote(self.page * ps + slot)
@@ -386,11 +376,10 @@ impl Engine {
             .clone()
             .unwrap_or_else(|| self.scheme.key_for_spans(&comp.raw, &cand.spans));
         let text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
-        let left = crate::user::left_key(&self.context);
         self.user
             .write()
             .unwrap_or_else(|p| p.into_inner())
-            .reject(&crate::user::reject_key(left, &key), &text);
+            .skip(&key, &text);
         self.recompute();
         true
     }
@@ -400,7 +389,6 @@ impl Engine {
     pub fn finalize_display(&mut self) -> Option<String> {
         let comp = self.comp.take()?;
         let cand = self.cands.get(self.hl);
-        let fixed = cand.is_some_and(|cand| cand.quick || cand.no_learn);
         let learn_text = cand
             .and_then(|cand| cand.learn_text.clone())
             .unwrap_or_else(|| comp.display.clone());
@@ -428,51 +416,13 @@ impl Engine {
             } else {
                 learn_text.as_str()
             };
-            // 快捷/表情/英文文本不学个人搭配,但仍作为后续候选的左邻上下文。
-            if self.learning && !fixed {
-                self.user
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .learn_context(&self.context, context_text);
-            }
+            // 快捷/表情/英文文本不学习,但仍作为后续候选的左邻上下文。
             self.push_context(context_text);
         }
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
         self.last_word = None;
-        self.second_last_word = None;
         Some(text)
-    }
-
-    /// 忘掉高亮候选的学习记录(用户词与跳过负分);候选仍可由主词典提供,
-    /// 只是回到原始词频。返回是否真的删掉了一条记录。
-    pub fn forget_highlighted(&mut self) -> bool {
-        let Some(cand) = self.cands.get(self.hl).cloned() else {
-            return false;
-        };
-        // 日期/金额/表情/英文不是用户词,没有可忘的学习记录;也不能按同文删到真正的词。
-        if cand.quick || cand.no_learn {
-            return false;
-        }
-        let learn_text = cand.learn_text.clone().unwrap_or_else(|| cand.text.clone());
-        // 用户可能用全拼学过、现在用简拼忘掉,按词删除所有学习键下的记录;
-        // 置顶记录跨键一并取消。
-        let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
-        let unpinned = user.unpin_word(&learn_text);
-        let removed = user.remove_word(&learn_text) || unpinned;
-        drop(user);
-        if removed {
-            self.recompute();
-            // 主词典仍能给出这个词时保持它高亮,连按 Shift+Delete 不会误删下一条。
-            if let Some(index) = self.cands.iter().position(|c| {
-                c.learn_text.as_deref().unwrap_or(c.text.as_str()) == learn_text.as_str()
-            }) {
-                self.hl = index;
-                self.page = index / self.cfg.page_size.max(1);
-                self.sync_display();
-            }
-        }
-        removed
     }
 
     /// 按全局候选序号点选;宿主自绘候选时可能直接给绝对序号。
@@ -530,11 +480,6 @@ impl Engine {
             .write()
             .unwrap_or_else(|p| p.into_inner())
             .import(text);
-    }
-
-    /// 清空所有会话共用的用户词库。
-    pub fn clear_user(&mut self) {
-        self.user.write().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     /// 模糊组的当前有效学习次数,设置页展示与 E2E 断言用。

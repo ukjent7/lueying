@@ -1,178 +1,174 @@
-//! 用户词典:选词提频、同键跳过降权、自动造词、字级搭配、词级/三词 n-gram
-//! 与按应用偏好学习,支持导出/导入。
+//! 用户词库:个人学习的唯一存储,全局一份,不分应用。
 //!
-//! 词条本身不做时间衰减:用户记住的词是永久资产,只按使用次数晋级。
-//! 上下文、转移、三词窗口、跳过负分与模糊组仍按周衰减,避免长期噪音。
+//! 学的东西有三类:读音词(学习键 + 词)、原样输入(用户实际敲的字母 + 词)与词序(前词 → 后词)。
+//! 三者共用一个记忆模型 [`Memory`]:每用一次,记忆稳定度随之增长;不用时按幂律遗忘;条目永不删除。
+//! 误选与跳过只减弱记忆,没有任何手动删除入口。
 //!
-//! 文件布局:`user_learn` 放学习与打分,`user_io` 放删除、导出与导入。
+//! 打字习惯(模糊组、快捷词抑制)不是词的记忆,单独放在 `user_typing`。
+//!
+//! 文件布局:`user_learn` 放学习与打分,`user_io` 放导出与导入。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+#[cfg(any(test, feature = "sim-clock"))]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lueying_dict::syllables::FUZZY_GROUPS;
-/// 用户词条上限。超过后按频次/时间保留九成,防止长期使用后文件与查询无限膨胀。
-const MAX_ENTRIES: usize = 20_000;
-/// 字级上下文搭配上限。只保留最常见的前后字对,避免长期使用后文件无界增长。
-const MAX_CONTEXT: usize = 50_000;
-/// 左邻字与词的上限。超出后保留次数高的九成。
-const MAX_WORD_CONTEXT: usize = 50_000;
-/// 上下文搭配的衰减周期与加分权重。它只做同分附近的个人化，不能压过词典证据。
-const CONTEXT_DECAY_SECS: u64 = 7 * 24 * 3600;
-const CONTEXT_BONUS_STEP: f64 = 0.25;
-const CONTEXT_BONUS_MAX: f64 = 1.5;
-/// 词级转移上限与加分。词比单字更有区分度，但仍只做同分附近的个人语序。
-const MAX_TRANSITIONS: usize = 20_000;
-const TRANSITION_DECAY_SECS: u64 = 7 * 24 * 3600;
-const TRANSITION_BONUS_STEP: f64 = 0.2;
-const TRANSITION_BONUS_MAX: f64 = 1.2;
-/// 三词窗口上限与加分。三词比词对少见,只给反复出现的固定说法一点顺序分;
-/// 衰减复用字级搭配的每周减半。
-const MAX_TRIGRAMS: usize = 20_000;
-const TRIGRAM_BONUS_STEP: f64 = 0.12;
-const TRIGRAM_BONUS_MAX: f64 = 0.9;
-/// 按应用的词偏好上限与加分。应用内常用词只做同分附近的个人化,
-/// 全局词频仍是主依据。
-const MAX_APP_WORDS: usize = 20_000;
-const APP_BONUS_STEP: f64 = 0.15;
-const APP_BONUS_MAX: f64 = 0.9;
-/// 同键下被跳过的候选。用户每次选后面的词,前面被越过的候选记一次小负分;
-/// 再选中它时清除。负分只够翻动同分附近,不会把常用词压到长尾后面。
-const MAX_REJECTS: usize = 20_000;
-const REJECT_DECAY_SECS: u64 = 7 * 24 * 3600;
-const REJECT_BONUS_STEP: f64 = 0.28;
-const REJECT_BONUS_MAX: f64 = 1.4;
-/// 组级适应按周减半;用户改口音或换输入习惯后一周内就会自然回退,
-/// 不会因为历史上选过几次就让所有组一起顶到上限、失去区分度。
-const GROUP_DECAY_SECS: u64 = 7 * 24 * 3600;
-/// 每组每选一次给模糊候选加的分,以及单组/总计的上限。
-const GROUP_BONUS_STEP: f64 = 0.12;
-const GROUP_BONUS_COUNT_CAP: u32 = 5;
-const GROUP_BONUS_MAX: f64 = 0.6;
-const GROUP_COUNT: usize = FUZZY_GROUPS.len();
+use crate::user_typing::Typing;
 
-#[derive(Clone, Copy, Default)]
-struct GroupStat {
-    count: u32,
-    ts: u64,
+const DAY_SECS: u64 = 86_400;
+
+/// 遗忘曲线取 FSRS-4.5/5 公布的幂律形式 R(t, S) = (1 + F·t/S)^C,C = −0.5。
+/// F 由「t = S 时保持率为 0.9」反解:F = 0.9^(1/C) − 1 = 0.9^(−2) − 1 = 19/81。
+/// 稳定度 S 的单位是天,即保持率降到 0.9 所需的天数。
+const FORGET_C: f64 = -0.5;
+const FORGET_F: f64 = 19.0 / 81.0;
+/// 第一次使用后的稳定度:一天后保持率约 0.9。之后每次在保持率 R 下使用,
+/// 稳定度乘 (2 − R):刚用过就再用几乎不增长,久不用才再用时增长接近一倍。
+const INITIAL_STABILITY: f64 = 1.0;
+
+/// 层级达到这个值才抢首位:期望仍记得的使用次数达到两次,即「新词两三次才成为首选」。
+pub(crate) const PROMOTE_LEVEL: f64 = 1.0;
+/// 误选惩罚的遗忘门槛:误选记号按初始稳定度衰减,保持率跌破一半即解除。
+const MISS_FLOOR: f64 = 0.5;
+/// 「立刻删掉重打」的时间窗口(秒):上屏后这段时间内同键改选别的词,算误选。
+pub(crate) const MISPICK_SECS: u64 = 60;
+
+/// 模拟时钟(秒);0 表示用系统时钟。只在测试与 `sim-clock` 特性下存在,产品构建没有这个口子。
+#[cfg(any(test, feature = "sim-clock"))]
+static SIM_NOW: AtomicU64 = AtomicU64::new(0);
+
+/// 固定学习用的当前时间(秒);传 0 恢复系统时钟。仅供评测与测试使用(需 `sim-clock` 特性)。
+#[cfg(any(test, feature = "sim-clock"))]
+pub fn set_sim_now(secs: u64) {
+    SIM_NOW.store(secs, Ordering::Relaxed);
 }
 
-impl GroupStat {
-    /// 按完整周数减半后的有效次数。
-    fn effective(self, current: u64) -> u32 {
-        let weeks = current.saturating_sub(self.ts) / GROUP_DECAY_SECS;
-        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
+pub(crate) fn now() -> u64 {
+    #[cfg(any(test, feature = "sim-clock"))]
+    {
+        let sim = SIM_NOW.load(Ordering::Relaxed);
+        if sim != 0 {
+            return sim;
+        }
     }
-}
-
-#[derive(Clone)]
-struct UserEntry {
-    word: String,
-    freq: u32,
-    ts: u64,
-}
-
-#[derive(Clone, Copy, Default)]
-struct ContextStat {
-    count: u32,
-    ts: u64,
-}
-
-impl ContextStat {
-    fn effective(self, current: u64) -> u32 {
-        let weeks = current.saturating_sub(self.ts) / CONTEXT_DECAY_SECS;
-        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct RejectStat {
-    count: u32,
-    ts: u64,
-}
-
-impl RejectStat {
-    fn effective(self, current: u64) -> u32 {
-        let weeks = current.saturating_sub(self.ts) / REJECT_DECAY_SECS;
-        self.count.checked_shr(weeks.min(31) as u32).unwrap_or(0)
-    }
-}
-
-#[derive(Default)]
-pub struct UserDict {
-    map: HashMap<String, Vec<UserEntry>>,
-    /// (音节数, 首字母) → 键。查询只扫同形用户词,用户词库到达上限后
-    /// 也不会退化成每个音节组合线性扫全表;首字母的模糊等价由调用方展开。
-    by_shape: HashMap<(usize, char), Vec<String>>,
-    /// 词条总数,避免每次学习都扫全表。
-    count: usize,
-    /// 已上屏汉字的前后搭配。用户在不同词之间形成的固定说法会随使用增强,
-    /// 只用于候选整句重排,不单独产生候选。
-    context: HashMap<(char, char), ContextStat>,
-    /// 左邻汉字 → 词 → 次数。有上文时词的频次只看这段上文之后选过它几次,
-    /// 同一个键在别的上文里的选择不会把它顶上来。不衰减,与键上的词条一样永久记住。
-    word_ctx: HashMap<char, HashMap<String, u32>>,
-    /// 前词 → 后词 → 次数。只记相邻词对,区分度高于字对。
-    transitions: HashMap<String, HashMap<String, ContextStat>>,
-    /// 词 → 最完整的拼音学习键。下一词联想用它把已学词还原成可匹配的拼音;
-    /// 同一个词用简拼和全拼都学过时保留更长的键。
-    word_keys: HashMap<String, String>,
-    /// 前两词 → 后词 → 次数。三词窗口约束常见句式,权重低于词对。
-    trigrams: HashMap<String, HashMap<String, HashMap<String, ContextStat>>>,
-    /// 宿主 exe(小写) → 词 → 次数。应用内常用词只加小分,不改全局词频。
-    apps: HashMap<String, HashMap<String, ContextStat>>,
-    /// 学习键 → 被跳过的词 → 次数。用户在同键下越过它选了别的词;
-    /// 只小幅降权,并让精确首位保护让位。
-    rejects: HashMap<String, HashMap<String, RejectStat>>,
-    /// 学习键 → 置顶词。右键「置顶」写入,该键下直接放首位;一键一词,
-    /// 重新置顶覆盖旧值。键是完整读音串,简拼与全拼各自成键。
-    pinned: HashMap<String, String>,
-    /// 各模糊组的连续选择次数,与词条一起持久化。
-    groups: [GroupStat; GROUP_COUNT],
-    /// 内容每次变化自增;持久化线程据此决定是否写盘。
-    rev: u64,
-}
-
-fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
 
-fn shape(key: &str) -> (usize, char) {
-    (key.split('\'').count(), key.chars().next().unwrap_or('\0'))
+/// 当前天数。解码的前缀图按天失效:记忆随时间衰减,同一天内的变化忽略不计。
+pub(crate) fn day() -> u64 {
+    now() / DAY_SECS
 }
 
-/// 上下文只收汉字;标点、数字和英文不进入搭配统计。
-fn is_hanzi(c: char) -> bool {
-    matches!(c as u32,
-        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
-        | 0x20000..=0x2A6DF | 0x2A700..=0x2EBEF | 0x30000..=0x323AF)
+/// 从 `last` 到 `now` 的天数。
+fn elapsed_days(last: u64, now: u64) -> f64 {
+    now.saturating_sub(last) as f64 / DAY_SECS as f64
 }
 
-/// 只把紧邻的汉字算作搭配:末尾是标点、空格、数字或英文时,后面的字
-/// 不与更早的汉字构成搭配。
-pub(crate) fn tail_hanzi(text: &str) -> Option<char> {
-    text.chars().next_back().filter(|c| is_hanzi(*c))
+/// 稳定度为 `stability` 天时,过了 `days` 天的保持率。
+pub(crate) fn retention(stability: f64, days: f64) -> f64 {
+    (1.0 + FORGET_F * days / stability).powf(FORGET_C)
 }
 
-/// 没有中文上文时的左邻标记。它不是汉字,导出文本里只占一个字符。
-pub(crate) const NO_LEFT: char = '_';
-
-/// 上文的左邻标记:末尾是汉字用它,否则用 [`NO_LEFT`]。
-pub(crate) fn left_key(context: &str) -> char {
-    tail_hanzi(context).unwrap_or(NO_LEFT)
+/// 一条记忆:使用次数、稳定度与最近一次使用时刻。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Memory {
+    pub uses: u32,
+    pub stability: f64,
+    pub last: u64,
 }
 
-/// 跳过记录的键:左邻标记接在学习键前面。同一个键在不同上文里的跳过互不影响。
-pub(crate) fn reject_key(left: char, key: &str) -> String {
-    format!("{left}{key}")
+impl Memory {
+    /// 按当前时刻的有效层级:期望仍记得的使用次数,再减去首次使用(首次不算证据)。
+    /// 刚用过三次时为 2;闲置后保持率下降,层级随之下降,直到归零。
+    pub(crate) fn level(&self, now: u64) -> f64 {
+        if self.uses == 0 {
+            return 0.0;
+        }
+        let kept = retention(self.stability, elapsed_days(self.last, now));
+        (f64::from(self.uses) * kept - 1.0).max(0.0)
+    }
+
+    /// 一次使用:先按当前保持率增长稳定度,再记下这次时刻。
+    pub(crate) fn reinforce(&mut self, now: u64) {
+        if self.uses == 0 {
+            self.stability = INITIAL_STABILITY;
+        } else {
+            let kept = retention(self.stability, elapsed_days(self.last, now));
+            self.stability *= 2.0 - kept;
+        }
+        self.uses = self.uses.saturating_add(1);
+        self.last = now;
+    }
+
+    /// 负反馈:撤销一次使用(跳过或误选),稳定度与时刻保持不变。
+    pub(crate) fn weaken(&mut self) {
+        self.uses = self.uses.saturating_sub(1);
+    }
 }
 
-fn single_char(text: &str) -> Option<char> {
-    let mut chars = text.chars();
-    let c = chars.next()?;
-    chars.next().is_none().then_some(c)
+#[derive(Clone)]
+pub(crate) struct WordEntry {
+    pub word: String,
+    pub memory: Memory,
+    /// 最近一次误选的时刻;`None` 表示没有误选记录。
+    pub miss: Option<u64>,
+}
+
+#[derive(Default)]
+pub struct UserDict {
+    /// 学习键 → 词条。
+    words: HashMap<String, Vec<WordEntry>>,
+    /// 首字母变体(见 [`variants`]) → 学习键。查询按单元的首字母直接命中,不扫描。
+    by_initials: HashMap<String, Vec<String>>,
+    /// 各变体的音节前缀(以隔音符结尾)。判断「能否接更长的用户词」时查这里。
+    prefixes: HashSet<String>,
+    /// 词条总数。
+    count: usize,
+    /// 击键串(小写、无隔音符)→ 上屏过的词。只在击键串逐字相同时命中,不经读音。
+    raw: HashMap<String, Vec<(String, Memory)>>,
+    /// 前词 → 后词 → 记忆。只记相邻词对。
+    transitions: HashMap<String, HashMap<String, Memory>>,
+    /// 词 → 最完整的拼音学习键;下一词联想用它把已学词还原成可匹配的拼音。
+    word_keys: HashMap<String, String>,
+    /// 学习键 → 置顶词(用户手动置顶,不属于学习)。
+    pinned: HashMap<String, String>,
+    /// 打字习惯:模糊组与快捷词抑制。
+    typing: Typing,
+    /// 内容每次变化自增;解码器据此与时钟一起判断前缀图是否仍有效。
+    rev: u64,
+}
+
+/// 学习键的首字母变体:每个音节取首字母;zh/ch/sh 另取两字母。
+/// 查询时每个单元只取一种形式(见 `Lexicon` 的 `initials_of`),所以这里把键的每种形式都建好。
+fn variants(key: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    for (index, part) in key.split('\'').enumerate() {
+        let Some(first) = part.get(..1) else {
+            return Vec::new();
+        };
+        let mut options = vec![first];
+        if matches!(part.get(..2), Some("zh" | "ch" | "sh")) {
+            options.push(&part[..2]);
+        }
+        out = out
+            .iter()
+            .flat_map(|head| {
+                options.iter().map(move |option| {
+                    if index == 0 {
+                        option.to_string()
+                    } else {
+                        format!("{head}'{option}")
+                    }
+                })
+            })
+            .collect();
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 #[path = "user_io.rs"]

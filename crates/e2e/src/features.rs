@@ -316,7 +316,7 @@ pub fn run(report: &mut String) -> usize {
             .any(|event| matches!(event, Event::Commit(text) if text == "你好"))
             && exported
                 .lines()
-                .any(|line| line.starts_with("ni'hao\t你好\t")),
+                .any(|line| line.starts_with("w\tni'hao\t你好\t")),
         format!("{events:?} 词库 {} 行", exported.lines().count()),
     );
 
@@ -438,7 +438,7 @@ pub fn run(report: &mut String) -> usize {
             .any(|event| matches!(event, Event::Commit(text) if text == "頭髮"))
             && exported
                 .lines()
-                .any(|line| line.starts_with("tou'fa\t头发\t"))
+                .any(|line| line.starts_with("w\ttou'fa\t头发\t"))
             && !exported.contains("頭髮"),
         format!("词库 {}", exported.lines().count()),
     );

@@ -10,7 +10,6 @@ use std::io::Write;
 /// 一份文本。文件内容按行数声明长度,文件里出现什么标记都不影响
 /// 解析;服务未运行时词库一块跳过。
 pub fn backup_export(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let stamp = local_stamp().replace([':', ' '], "-");
     let Some(path) = choose_file(
         true,
@@ -59,7 +58,6 @@ pub fn backup_export(settings: &mut Settings) {
 /// 导入配置备份:逐块写回对应文件,用户词库走管道合并;最后让
 /// Server 重读配置并刷新设置窗里的当前值。
 pub fn backup_import(settings: &mut Settings) {
-    settings.confirm_clear = false;
     let Some(path) = choose_file(
         false,
         "",

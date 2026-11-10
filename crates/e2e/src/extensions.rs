@@ -313,6 +313,11 @@ pub fn run(report: &mut String) -> usize {
     let got_xue = commit(&mut train, "学习");
     type_text(&mut train, "wo");
     let again = commit(&mut train, "我");
+    // 词序要用两次才参与联想:再来一轮「我 → 学习」。
+    type_text(&mut train, "xuexi");
+    let _ = commit(&mut train, "学习");
+    type_text(&mut train, "wo");
+    let _ = commit(&mut train, "我");
     type_text(&mut train, "x");
     let suggested = train
         .candidates_detailed()

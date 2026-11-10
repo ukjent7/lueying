@@ -49,7 +49,6 @@ pub mod ids {
     pub const BACKUP_IMPORT: &str = "backup-import";
     pub const IMPORT_USER: &str = "import-user";
     pub const EXPORT_USER: &str = "export-user";
-    pub const CLEAR_USER: &str = "clear-user";
     pub const DIAGNOSTICS: &str = "diagnostics";
     pub const CHANNEL: &str = "channel";
     pub const CLOSE: &str = "close";
@@ -238,7 +237,6 @@ pub enum Action {
     BackupImport,
     ImportUser,
     ExportUser,
-    ClearUser,
     Diagnostics,
 }
 
@@ -254,8 +252,6 @@ pub struct Settings {
     /// 页脚那行提示文字。
     pub message: String,
     pub notice: Notice,
-    /// 清空词库要点两次,防误触。
-    pub confirm_clear: bool,
     /// 安装目录里的版本号。
     pub current: String,
     pub updates: UpdateState,
@@ -280,7 +276,6 @@ impl Default for Settings {
             status: None,
             message: String::new(),
             notice: Notice::None,
-            confirm_clear: false,
             current: String::new(),
             updates: UpdateState::Idle,
             scripts: Vec::new(),
@@ -307,14 +302,10 @@ impl Settings {
     pub fn clear_notice(&mut self) {
         self.notice = Notice::None;
         self.message.clear();
-        self.confirm_clear = false;
     }
 
-    /// 记一条提示。除了「再点一次确认清空」,任何提示都结束清空确认态。
+    /// 记一条提示。
     pub fn say(&mut self, notice: Notice, message: impl Into<String>) {
-        if notice != Notice::Info {
-            self.confirm_clear = false;
-        }
         self.notice = notice;
         self.message = message.into();
     }
@@ -460,7 +451,6 @@ impl Settings {
             ids::BACKUP_IMPORT => Some(Action::BackupImport),
             ids::IMPORT_USER => Some(Action::ImportUser),
             ids::EXPORT_USER => Some(Action::ExportUser),
-            ids::CLEAR_USER => Some(Action::ClearUser),
             ids::DIAGNOSTICS => Some(Action::Diagnostics),
             ids::CLOSE => Some(Action::Close),
             ids::SAVE => Some(Action::Save),

@@ -629,7 +629,6 @@ fn engine_key(key: KeyMsg) -> Key {
         KeyMsg::End => Key::End,
         KeyMsg::PageUp => Key::PageUp,
         KeyMsg::PageDown => Key::PageDown,
-        KeyMsg::DeleteCandidate => Key::DeleteCandidate,
         KeyMsg::Punct(c) => Key::Punct(c),
         KeyMsg::Shift => Key::Shift,
     }

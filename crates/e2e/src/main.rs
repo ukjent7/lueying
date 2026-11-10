@@ -673,7 +673,7 @@ fn check_one(
             }
         }
         Check::UserHas { key, word } => {
-            let prefix = format!("{key}\t{word}\t");
+            let prefix = format!("w\t{key}\t{word}\t");
             if !engine
                 .export_user()
                 .lines()

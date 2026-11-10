@@ -26,7 +26,6 @@ pub(super) fn slint_button(button: &model::Button) -> Btn {
             ButtonKind::Primary => 0,
             ButtonKind::Secondary => 1,
             ButtonKind::Ghost => 2,
-            ButtonKind::Danger => 3,
         },
         enabled: button.enabled,
     }
@@ -514,7 +513,7 @@ pub(super) fn install_update(ui: &SettingsWindow, core: &Shared) {
         let Some(release) = guard.release.clone() else {
             return;
         };
-        if !actions::install_update(&mut guard.settings, &release) {
+        if !actions::install_update(&release) {
             return;
         }
         guard

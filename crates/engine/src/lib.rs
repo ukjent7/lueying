@@ -27,6 +27,7 @@ mod search_tests;
 mod state;
 pub mod types;
 mod user;
+mod user_typing;
 
 use std::sync::{Arc, RwLock};
 
@@ -37,6 +38,8 @@ use lueying_dict::gram::Gram;
 pub use query::Candidate;
 pub use types::{Action, CivilTime, Composition, Config, Event, Key, Mode, Script};
 pub use user::UserDict;
+#[cfg(any(test, feature = "sim-clock"))]
+pub use user::set_sim_now;
 
 /// 功能模块与输入方案作者常用的公开类型。
 pub mod prelude {
@@ -76,8 +79,8 @@ pub struct Engine {
     comp: Option<Composition>,
     /// 当前组合里已经上屏过分段词(这时左邻文本不含这些词)。
     comp_committed: bool,
-    /// 同一次组合里连续上屏的片段,凑成整串自动造词。
-    phrase: Option<(String, String)>,
+    /// 同一次组合里连续上屏的片段,凑成整串自动造词:(击键串, 读音键, 文本)。
+    phrase: Option<(String, String, String)>,
     cands: Vec<query::Candidate>,
     hl: usize,
     page: usize,
@@ -89,13 +92,13 @@ pub struct Engine {
     context: String,
     /// 分段上屏已在重算前写入上下文的提交数;`note_events` 据此跳过重复学习。
     context_handled: usize,
-    /// 快捷候选上屏的条数;`note_events` 据此跳过字级搭配学习,但仍写入左邻文本。
+    /// 快捷候选上屏的条数;`note_events` 据此不把快捷项当作词序,但仍写入左邻文本。
     quick_handled: usize,
     /// 最近上屏的最后一个词;词级转移加分与学习使用。
     last_word: Option<String>,
-    /// 最近上屏的倒数第二个词;三词窗口加分与学习使用。
-    second_last_word: Option<String>,
-    /// 宿主 exe 名(小写,不含路径);按应用学习使用,空表示未知宿主。
+    /// 最近一次学习上屏的词;同键下立刻改选别的词时据此判定误选。
+    last_pick: Option<LastPick>,
+    /// 宿主 exe 名(小写,不含路径),供功能模块读取;空表示未知宿主。
     host: String,
     /// 候选提交已在 `apply_consume` 学过词级转移的条数。
     transition_handled: usize,
@@ -109,6 +112,14 @@ pub struct Engine {
     scheme: Arc<dyn scheme::Scheme>,
     /// 宿主绑定表把当前整串输入映射到的动作;只做整串完全匹配。
     action: Option<Action>,
+}
+
+/// 最近一次学习上屏的词:输入的击键串(用于判断是否重打同一串)、学习键、词与时刻(秒)。
+pub(crate) struct LastPick {
+    typed: String,
+    key: String,
+    word: String,
+    at: u64,
 }
 
 /// 文本末尾是不是数字;全角数字也按数字处理,小数点和 IP 地址不必切半角。

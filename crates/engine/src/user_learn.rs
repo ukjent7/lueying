@@ -1,8 +1,16 @@
-//! 用户词库的学习与打分:词组、上下文、转移、三词窗口、应用偏好、跳过负分。
+//! 用户词库的学习与打分:词记忆(选中、误选、跳过)、词序记忆与联想。
 //!
-//! 类型、字段与上限常量留在 `user.rs`,这里是子模块,可以直接访问私有字段。
+//! 类型与常量在 `user.rs`,这里是子模块,可以直接访问私有字段。
 
 use super::*;
+
+/// 词序加分:每个有效层级的对数权重与上限,沿用旧设计的分数尺度。
+const TRANSITION_BONUS_STEP: f64 = 0.2;
+const TRANSITION_BONUS_MAX: f64 = 1.2;
+
+fn multi_char(word: &str) -> bool {
+    word.chars().nth(1).is_some()
+}
 
 impl UserDict {
     pub fn new() -> Self {
@@ -14,183 +22,127 @@ impl UserDict {
         self.rev
     }
 
-    /// 清空全部学习结果(设置窗的「清空用户词库」)。
-    pub fn clear(&mut self) {
-        self.map.clear();
-        self.by_shape.clear();
-        self.word_keys.clear();
-        self.count = 0;
-        self.context.clear();
-        self.word_ctx.clear();
-        self.transitions.clear();
-        self.trigrams.clear();
-        self.apps.clear();
-        self.rejects.clear();
-        self.pinned.clear();
-        self.groups = [GroupStat::default(); GROUP_COUNT];
-        self.rev = self.rev.wrapping_add(1);
+    fn entry(&self, key: &str, word: &str) -> Option<&WordEntry> {
+        self.words.get(key)?.iter().find(|e| e.word == word)
     }
 
-    /// 记录一次模糊组命中;每组按周衰减后加一。
-    pub fn learn_groups(&mut self, mask: u8) {
-        if mask == 0 {
+    fn entry_mut(&mut self, key: &str, word: &str) -> Option<&mut WordEntry> {
+        self.words.get_mut(key)?.iter_mut().find(|e| e.word == word)
+    }
+
+    /// 同键下 `word` 的有效层级(见 [`Memory::level`]);没有记录为 0。
+    pub fn level(&self, key: &str, word: &str) -> f64 {
+        self.entry(key, word).map_or(0.0, |e| e.memory.level(now()))
+    }
+
+    /// 同键下的词是否已达到首位门槛(与词库首位保护同一标准)。
+    pub fn promoted(&self, key: &str, word: &str) -> bool {
+        self.level(key, word) >= PROMOTE_LEVEL
+    }
+
+    /// 同键下刚被误选过、记忆仍够清楚:这个词不许占首位。
+    pub fn penalized(&self, key: &str, word: &str) -> bool {
+        let now = now();
+        self.entry(key, word).is_some_and(|e| {
+            e.miss
+                .is_some_and(|at| retention(INITIAL_STABILITY, elapsed_days(at, now)) >= MISS_FLOOR)
+        })
+    }
+
+    /// 记一次「在 key 下选了 word」。词典里有没有这个词一视同仁:每次使用都是证据。
+    pub fn learn(&mut self, key: &str, word: &str) {
+        if key.is_empty() || word.is_empty() {
             return;
         }
-        let current = now();
-        for (index, stat) in self.groups.iter_mut().enumerate() {
-            if mask & (1 << index) == 0 {
-                continue;
+        let now = now();
+        let new_key = !self.words.contains_key(key);
+        let entries = self.words.entry(key.to_string()).or_default();
+        match entries.iter_mut().find(|e| e.word == word) {
+            Some(entry) => {
+                entry.memory.reinforce(now);
+                // 重新选中它,之前的误选记号就不再适用。
+                entry.miss = None;
             }
-            let weeks = current.saturating_sub(stat.ts) / GROUP_DECAY_SECS;
-            stat.count = stat
-                .count
-                .checked_shr(weeks.min(31) as u32)
-                .unwrap_or(0)
-                .saturating_add(1);
-            stat.ts = current;
+            None => {
+                let mut memory = Memory::default();
+                memory.reinforce(now);
+                entries.push(WordEntry {
+                    word: word.to_string(),
+                    memory,
+                    miss: None,
+                });
+                self.count += 1;
+            }
+        }
+        if new_key {
+            self.index_key(key);
+        }
+        // 同一个词可能用简拼和全拼各学过一次;联想取更完整的那条键。
+        if self
+            .word_keys
+            .get(word)
+            .is_none_or(|old| old.len() < key.len())
+        {
+            self.word_keys.insert(word.to_string(), key.to_string());
         }
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 命中这些组时给候选的加分;低于模糊罚分,精确首位仍由 `trusted` 保护。
-    pub fn group_bonus(&self, mask: u8) -> f64 {
-        if mask == 0 {
-            return 0.0;
+    /// 误选:上屏后立刻删掉重打并改选了别的词。撤销这次选择的强化,并记下误选时刻。
+    pub fn mispick(&mut self, key: &str, word: &str) {
+        let now = now();
+        if let Some(entry) = self.entry_mut(key, word) {
+            entry.memory.weaken();
+            entry.miss = Some(now);
+            self.rev = self.rev.wrapping_add(1);
         }
-        let current = now();
-        let mut bonus = 0.0;
-        for (index, stat) in self.groups.iter().enumerate() {
-            if mask & (1 << index) == 0 {
-                continue;
-            }
-            let effective = stat.effective(current);
-            // 前两次由词级学习负责;同一组连续选到第三次才开始整组上浮。
-            if effective >= 3 {
-                bonus += f64::from(effective.min(GROUP_BONUS_COUNT_CAP)) * GROUP_BONUS_STEP;
-            }
-        }
-        bonus.min(GROUP_BONUS_MAX)
     }
 
-    /// 设置页展示用:所有组及当前有效次数(已按周衰减)。
-    pub fn group_stats(&self) -> Vec<(&'static str, u32)> {
-        let current = now();
-        FUZZY_GROUPS
-            .iter()
-            .copied()
-            .zip(self.groups.iter().map(|stat| stat.effective(current)))
-            .collect()
+    /// 跳过:同键下用户选了排在它后面的候选,它减弱一次。
+    pub fn skip(&mut self, key: &str, word: &str) {
+        if let Some(entry) = self.entry_mut(key, word) {
+            entry.memory.weaken();
+            self.rev = self.rev.wrapping_add(1);
+        }
     }
 
-    /// 记录一段已上屏文本与它左侧上下文的字级搭配。
-    ///
-    /// 一次上屏可能包含整句或多段词;句内相邻字、以及左邻紧挨着的汉字到
-    /// 本次第一个汉字之间的衔接都会被记下来。只收汉字,标点和英文不参与。
-    pub fn learn_context(&mut self, context: &str, text: &str) {
-        let mut prev = tail_hanzi(context);
-        let current = now();
-        let mut changed = false;
-        for ch in text.chars() {
-            if !is_hanzi(ch) {
-                prev = None;
-                continue;
-            }
-            if let Some(left) = prev {
-                let stat = self.context.entry((left, ch)).or_default();
-                stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
-                    stat.count / 2 + 1
-                } else {
-                    stat.count.saturating_add(1)
-                };
-                stat.ts = current;
-                changed = true;
-            }
-            prev = Some(ch);
-        }
-        if !changed {
+    /// 原样输入记忆:用户敲的击键串 `typed`(小写、无隔音符)上屏了 `word`。同一击键串下改选了别的词,
+    /// 之前学过的词被越过一次,减弱一次。
+    pub fn learn_raw(&mut self, typed: &str, word: &str) {
+        if typed.is_empty() || word.is_empty() {
             return;
         }
-        if self.context.len() > MAX_CONTEXT {
-            self.prune_context();
+        let now = now();
+        let entries = self.raw.entry(typed.to_string()).or_default();
+        for (_, memory) in entries.iter_mut().filter(|(text, _)| text != word) {
+            memory.weaken();
+        }
+        match entries.iter_mut().find(|(text, _)| text == word) {
+            Some((_, memory)) => memory.reinforce(now),
+            None => {
+                let mut memory = Memory::default();
+                memory.reinforce(now);
+                entries.push((word.to_string(), memory));
+            }
         }
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 左邻汉字 `left` 之后用户选过 `word` 的次数。
-    pub(crate) fn word_context_count(&self, left: char, word: &str) -> u32 {
-        let words = self.word_ctx.get(&left);
-        words.and_then(|map| map.get(word)).copied().unwrap_or(0)
+    /// 击键串 `typed` 上屏过的词:(词, 有效层级, 使用次数)。
+    pub(crate) fn raw_words(&self, typed: &str) -> Vec<(&str, f64, u32)> {
+        let now = now();
+        self.raw.get(typed).map_or_else(Vec::new, |entries| {
+            entries
+                .iter()
+                .map(|(text, memory)| (text.as_str(), memory.level(now), memory.uses))
+                .collect()
+        })
     }
 
-    /// 记录一次「在这段上文之后选了 word」。`known` 与 [`Self::learn`] 一致:
-    /// 词典里本来就有的词记两次,选一次即可回到这段上文下的首位。
-    pub fn learn_word_context(&mut self, context: &str, word: &str, known: bool) {
-        let left = left_key(context);
-        if word.is_empty() || !word.chars().all(is_hanzi) {
-            return;
-        }
-        let words = self.word_ctx.entry(left).or_default();
-        let count = words.entry(word.to_string()).or_insert(0);
-        *count = count.saturating_add(if known { 2 } else { 1 });
-        let total: usize = self.word_ctx.values().map(HashMap::len).sum();
-        if total > MAX_WORD_CONTEXT {
-            self.prune_word_context();
-        }
-        self.rev = self.rev.wrapping_add(1);
-    }
-
-    /// 保留次数高的九成;一次性重建,与其它表的裁剪口径一致。
-    pub(crate) fn prune_word_context(&mut self) {
-        let keep = MAX_WORD_CONTEXT * 9 / 10;
-        let mut all: Vec<(char, String, u32)> = Vec::new();
-        for (left, words) in self.word_ctx.drain() {
-            for (word, count) in words {
-                all.push((left, word, count));
-            }
-        }
-        all.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
-        all.truncate(keep);
-        for (left, word, count) in all {
-            self.word_ctx.entry(left).or_default().insert(word, count);
-        }
-    }
-
-    /// 一个词在当前左邻上下文下的个人搭配加分。
-    ///
-    /// 词内相邻字也参与:用户常打的整句或词组会让它的内部搭配变强。加分
-    /// 只做同分附近的个人化,上限低于一个普通词罚分。
-    pub fn context_bonus(&self, context: &str, word: &str) -> f64 {
-        if self.context.is_empty() {
-            return 0.0;
-        }
-        let current = now();
-        let mut prev = tail_hanzi(context);
-        let mut bonus = 0.0;
-        for ch in word.chars() {
-            if !is_hanzi(ch) {
-                prev = None;
-                continue;
-            }
-            if let Some(left) = prev
-                && let Some(stat) = self.context.get(&(left, ch))
-            {
-                let effective = stat.effective(current);
-                if effective > 0 {
-                    bonus += (1.0 + f64::from(effective)).ln() * CONTEXT_BONUS_STEP;
-                }
-            }
-            prev = Some(ch);
-        }
-        bonus.min(CONTEXT_BONUS_MAX)
-    }
-
-    /// 记录一段已上屏词序列的相邻转移;`previous` 是上一段上屏的最后一个词。
+    /// 记录一段已上屏词序的相邻转移;`previous` 是上一段上屏的最后一个词。
     pub fn learn_transitions(&mut self, previous: Option<&str>, words: &[String]) {
-        if words.is_empty() {
-            return;
-        }
-        let current = now();
-        let mut prev = previous.map(|text| text.to_owned());
+        let now = now();
+        let mut prev = previous.map(str::to_owned);
         let mut changed = false;
         for word in words {
             if word.is_empty() {
@@ -198,194 +150,46 @@ impl UserDict {
                 continue;
             }
             if let Some(left) = prev.as_deref() {
-                let stat = self
-                    .transitions
+                self.transitions
                     .entry(left.to_string())
                     .or_default()
                     .entry(word.clone())
-                    .or_default();
-                stat.count = if current.saturating_sub(stat.ts) > TRANSITION_DECAY_SECS {
-                    stat.count / 2 + 1
-                } else {
-                    stat.count.saturating_add(1)
-                };
-                stat.ts = current;
+                    .or_default()
+                    .reinforce(now);
                 changed = true;
             }
             prev = Some(word.clone());
         }
         if changed {
-            if self.transition_count() > MAX_TRANSITIONS {
-                self.prune_transitions();
-            }
             self.rev = self.rev.wrapping_add(1);
         }
     }
 
-    /// 记录一段词序列的三词窗口;`second_previous`/`previous` 是上屏前的最后两个词。
-    pub fn learn_trigrams(
-        &mut self,
-        second_previous: Option<&str>,
-        previous: Option<&str>,
-        words: &[String],
-    ) {
-        if words.is_empty() {
-            return;
-        }
-        let current = now();
-        let mut prev2 = second_previous.map(|text| text.to_owned());
-        let mut prev1 = previous.map(|text| text.to_owned());
-        let mut changed = false;
-        for word in words {
-            if word.is_empty() {
-                prev2 = None;
-                prev1 = None;
-                continue;
-            }
-            if let (Some(left), Some(mid)) = (prev2.as_deref(), prev1.as_deref()) {
-                let stat = self
-                    .trigrams
-                    .entry(left.to_string())
-                    .or_default()
-                    .entry(mid.to_string())
-                    .or_default()
-                    .entry(word.clone())
-                    .or_default();
-                stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
-                    stat.count / 2 + 1
-                } else {
-                    stat.count.saturating_add(1)
-                };
-                stat.ts = current;
-                changed = true;
-            }
-            prev2 = prev1.take();
-            prev1 = Some(word.clone());
-        }
-        if changed {
-            if self.trigram_count() > MAX_TRIGRAMS {
-                self.prune_trigrams();
-            }
-            self.rev = self.rev.wrapping_add(1);
-        }
-    }
-
-    /// 一个候选词序列在当前前两词下的三词窗口加分。
-    pub fn trigram_bonus<'a>(
-        &self,
-        second_previous: Option<&'a str>,
-        previous: Option<&'a str>,
-        words: &'a [String],
-    ) -> f64 {
-        if self.trigrams.is_empty() {
-            return 0.0;
-        }
-        let current = now();
-        let mut prev2 = second_previous;
-        let mut prev1 = previous;
-        let mut bonus = 0.0;
-        for word in words {
-            if word.is_empty() {
-                prev2 = None;
-                prev1 = None;
-                continue;
-            }
-            if let (Some(left), Some(mid)) = (prev2, prev1)
-                && let Some(stat) = self
-                    .trigrams
-                    .get(left)
-                    .and_then(|next| next.get(mid))
-                    .and_then(|next| next.get(word.as_str()))
-            {
-                let effective = stat.effective(current);
-                if effective > 0 {
-                    bonus += (1.0 + f64::from(effective)).ln() * TRIGRAM_BONUS_STEP;
-                }
-            }
-            prev2 = prev1;
-            prev1 = Some(word.as_str());
-        }
-        bonus.min(TRIGRAM_BONUS_MAX)
-    }
-
-    /// 记录一段已上屏词在宿主应用内的使用。只影响该应用下的排序,
-    /// 不改全局词频;宿主名统一小写,空名(未知宿主)不学习。
-    pub fn learn_app(&mut self, host: &str, words: &[String]) {
-        let host = host.trim().to_ascii_lowercase();
-        if host.is_empty() || words.iter().all(|word| word.is_empty()) {
-            return;
-        }
-        let current = now();
-        let app = self.apps.entry(host).or_default();
-        let mut changed = false;
-        for word in words {
-            if word.is_empty() {
-                continue;
-            }
-            let stat = app.entry(word.clone()).or_default();
-            stat.count = if current.saturating_sub(stat.ts) > CONTEXT_DECAY_SECS {
-                stat.count / 2 + 1
-            } else {
-                stat.count.saturating_add(1)
-            };
-            stat.ts = current;
-            changed = true;
-        }
-        if changed {
-            if self.app_count() > MAX_APP_WORDS {
-                self.prune_apps();
-            }
-            self.rev = self.rev.wrapping_add(1);
-        }
-    }
-
-    /// 一个候选词序列在指定应用内的个人偏好加分。`host` 需已是小写;
-    /// 应用内常用词只做同分附近的个人化。
-    pub fn app_bonus(&self, host: &str, words: &[String]) -> f64 {
-        if host.is_empty() || self.apps.is_empty() {
-            return 0.0;
-        }
-        let Some(app) = self.apps.get(host) else {
-            return 0.0;
-        };
-        let current = now();
-        let mut bonus = 0.0;
-        for word in words {
-            if word.is_empty() {
-                continue;
-            }
-            if let Some(stat) = app.get(word.as_str()) {
-                let effective = stat.effective(current);
-                if effective > 0 {
-                    bonus += (1.0 + f64::from(effective)).ln() * APP_BONUS_STEP;
-                }
-            }
-        }
-        bonus.min(APP_BONUS_MAX)
-    }
-
-    /// 一个候选词序列在当前前词下的个人语序加分。
-    pub fn transition_bonus<'a>(&self, previous: Option<&'a str>, words: &'a [String]) -> f64 {
+    /// 一个候选词序列在当前前词下的词序加分。
+    pub fn transition_bonus(&self, previous: Option<&str>, words: &[String]) -> f64 {
         if self.transitions.is_empty() {
             return 0.0;
         }
-        let current = now();
-        let mut prev: Option<&'a str> = previous;
+        let now = now();
+        let mut prev = previous;
         let mut bonus = 0.0;
         for word in words {
             if word.is_empty() {
                 prev = None;
                 continue;
             }
+            // 只看多字词:单字的前后搭配是字级噪声,不能靠词序把切分拉偏。
             if let Some(left) = prev
-                && let Some(stat) = self
+                && multi_char(left)
+                && multi_char(word)
+                && let Some(memory) = self
                     .transitions
                     .get(left)
                     .and_then(|next| next.get(word.as_str()))
             {
-                let effective = stat.effective(current);
-                if effective > 0 {
-                    bonus += (1.0 + f64::from(effective)).ln() * TRANSITION_BONUS_STEP;
+                let level = memory.level(now);
+                if level > 0.0 {
+                    bonus += (1.0 + level).ln() * TRANSITION_BONUS_STEP;
                 }
             }
             prev = Some(word.as_str());
@@ -393,307 +197,29 @@ impl UserDict {
         bonus.min(TRANSITION_BONUS_MAX)
     }
 
-    /// 上一词之后用户实际接过的词,按衰减后的次数排序。下一词联想在
-    /// 冷启动阶段没有云端语料,只使用本机已经形成的词序。
-    pub fn predict_next(&self, previous: Option<&str>, limit: usize) -> Vec<(String, u32)> {
-        let Some(previous) = previous else {
+    /// 上一词之后用户接过的词,按有效层级从高到低。下一词联想只用本机形成的词序。
+    pub fn predict_next(&self, previous: Option<&str>, limit: usize) -> Vec<String> {
+        let (Some(previous), now) = (previous, now()) else {
             return Vec::new();
         };
         let Some(next) = self.transitions.get(previous) else {
             return Vec::new();
         };
-        let current = now();
-        let mut out: Vec<(String, u32)> = next
+        let mut out: Vec<(f64, &str)> = next
             .iter()
-            .filter_map(|(word, stat)| {
-                let count = stat.effective(current);
-                (count > 0).then(|| (word.clone(), count))
-            })
+            .map(|(word, memory)| (memory.level(now), word.as_str()))
+            .filter(|(level, _)| *level > 0.0)
             .collect();
-        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        out.truncate(limit);
-        out
-    }
-
-    /// 三词窗口里的下一词;前两词都匹配时才返回。
-    pub fn predict_after(
-        &self,
-        second_previous: Option<&str>,
-        previous: Option<&str>,
-        limit: usize,
-    ) -> Vec<(String, u32)> {
-        let (Some(second), Some(previous)) = (second_previous, previous) else {
-            return Vec::new();
-        };
-        let Some(next) = self
-            .trigrams
-            .get(second)
-            .and_then(|mids| mids.get(previous))
-        else {
-            return Vec::new();
-        };
-        let current = now();
-        let mut out: Vec<(String, u32)> = next
-            .iter()
-            .filter_map(|(word, stat)| {
-                let count = stat.effective(current);
-                (count > 0).then(|| (word.clone(), count))
-            })
-            .collect();
-        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        out.truncate(limit);
-        out
+        out.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+        out.into_iter()
+            .take(limit)
+            .map(|(_, word)| word.to_string())
+            .collect()
     }
 
     /// 词对应的最完整拼音键;联想据此判断用户当前输入是否在打这个词。
     pub fn key_for_word(&self, word: &str) -> Option<&str> {
         self.word_keys.get(word).map(String::as_str)
-    }
-
-    pub(crate) fn transition_count(&self) -> usize {
-        self.transitions.values().map(|next| next.len()).sum()
-    }
-
-    /// 保留最常见的前九成词对;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune_transitions(&mut self) {
-        let keep = MAX_TRANSITIONS * 9 / 10;
-        let mut all: Vec<(String, String, ContextStat)> = self
-            .transitions
-            .drain()
-            .flat_map(|(left, next)| {
-                next.into_iter()
-                    .map(move |(right, stat)| (left.clone(), right, stat))
-            })
-            .collect();
-        all.sort_by(|a, b| {
-            b.2.count
-                .cmp(&a.2.count)
-                .then(b.2.ts.cmp(&a.2.ts))
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
-        });
-        all.truncate(keep);
-        for (left, right, stat) in all {
-            self.transitions
-                .entry(left)
-                .or_default()
-                .insert(right, stat);
-        }
-    }
-
-    pub(crate) fn trigram_count(&self) -> usize {
-        self.trigrams
-            .values()
-            .flat_map(|next| next.values())
-            .map(|next| next.len())
-            .sum()
-    }
-
-    /// 保留最常见的前九成三词窗口;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune_trigrams(&mut self) {
-        let keep = MAX_TRIGRAMS * 9 / 10;
-        let mut all: Vec<(String, String, String, ContextStat)> = Vec::new();
-        for (left, mids) in self.trigrams.drain() {
-            for (mid, following) in mids {
-                for (right, stat) in following {
-                    all.push((left.clone(), mid.clone(), right, stat));
-                }
-            }
-        }
-        all.sort_by(|a, b| {
-            b.3.count
-                .cmp(&a.3.count)
-                .then(b.3.ts.cmp(&a.3.ts))
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
-                .then(a.2.cmp(&b.2))
-        });
-        all.truncate(keep);
-        for (left, mid, right, stat) in all {
-            self.trigrams
-                .entry(left)
-                .or_default()
-                .entry(mid)
-                .or_default()
-                .insert(right, stat);
-        }
-    }
-
-    pub(crate) fn app_count(&self) -> usize {
-        self.apps.values().map(|words| words.len()).sum()
-    }
-
-    /// 保留最常见的前九成应用词;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune_apps(&mut self) {
-        let keep = MAX_APP_WORDS * 9 / 10;
-        let mut all: Vec<(String, String, ContextStat)> = Vec::new();
-        for (host, words) in self.apps.drain() {
-            for (word, stat) in words {
-                all.push((host.clone(), word, stat));
-            }
-        }
-        all.sort_by(|a, b| {
-            b.2.count
-                .cmp(&a.2.count)
-                .then(b.2.ts.cmp(&a.2.ts))
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
-        });
-        all.truncate(keep);
-        for (host, word, stat) in all {
-            self.apps.entry(host).or_default().insert(word, stat);
-        }
-    }
-
-    /// 记录一次「在 key 下跳过了 word」。用户选择了同键下更靠后的候选,
-    /// 说明排在前面的词不符合当前意图;下次同键时让它在同分附近后退。
-    pub fn reject(&mut self, key: &str, word: &str) {
-        if key.is_empty() || word.is_empty() {
-            return;
-        }
-        let current = now();
-        let existed = self
-            .rejects
-            .get(key)
-            .is_some_and(|words| words.contains_key(word));
-        let stat = self
-            .rejects
-            .entry(key.to_string())
-            .or_default()
-            .entry(word.to_string())
-            .or_default();
-        stat.count = if current.saturating_sub(stat.ts) > REJECT_DECAY_SECS {
-            stat.count / 2 + 1
-        } else {
-            stat.count.saturating_add(1)
-        };
-        stat.ts = current;
-        // 只有新增键集合才会逼近上限,已有记录更新不必扫全表。
-        if !existed && self.reject_count() > MAX_REJECTS {
-            self.prune_rejects();
-        }
-        self.rev = self.rev.wrapping_add(1);
-    }
-
-    /// 同键下用户选过 `word` 的次数(不衰减)。英文候选据此决定是否升到首位。
-    pub fn picks(&self, key: &str, word: &str) -> u32 {
-        self.map
-            .get(key)
-            .and_then(|entries| entries.iter().find(|entry| entry.word == word))
-            .map_or(0, |entry| entry.freq)
-    }
-
-    /// 同键下的跳过负分,按上文区分:只算这段上文里的跳过。句首(没有中文上文)
-    /// 记下的跳过对所有上文都算,与词频的规则一致。
-    pub(crate) fn reject_penalty_in(&self, left: char, key: &str, word: &str) -> f64 {
-        let own = self.reject_penalty(&reject_key(left, key), word);
-        if left == NO_LEFT {
-            own
-        } else {
-            own.max(self.reject_penalty(&reject_key(NO_LEFT, key), word))
-        }
-    }
-
-    /// 同键下的负向加分;次数越多越接近上限,但不超过一个普通词罚分。
-    pub fn reject_penalty(&self, key: &str, word: &str) -> f64 {
-        let Some(stat) = self.rejects.get(key).and_then(|words| words.get(word)) else {
-            return 0.0;
-        };
-        let effective = stat.effective(now());
-        if effective == 0 {
-            return 0.0;
-        }
-        ((1.0 + f64::from(effective)).ln() * REJECT_BONUS_STEP).min(REJECT_BONUS_MAX)
-    }
-
-    /// 该键下某词的跳过次数(按周衰减);动作候选降频据此判断。
-    pub fn reject_effective(&self, key: &str, word: &str) -> u32 {
-        self.rejects
-            .get(key)
-            .and_then(|words| words.get(word))
-            .map_or(0, |stat| stat.effective(now()))
-    }
-
-    /// 用户重新选中该词:清掉它在所有学习键下的跳过记录。
-    /// 返回是否确实清掉了一条记录。
-    pub fn forgive_word(&mut self, word: &str) -> bool {
-        if self.rejects.is_empty() {
-            return false;
-        }
-        let mut changed = false;
-        let mut empty = Vec::new();
-        for (key, words) in &mut self.rejects {
-            if words.remove(word).is_some() {
-                changed = true;
-                if words.is_empty() {
-                    empty.push(key.clone());
-                }
-            }
-        }
-        for key in empty {
-            self.rejects.remove(&key);
-        }
-        if changed {
-            self.rev = self.rev.wrapping_add(1);
-        }
-        changed
-    }
-
-    /// 清掉某个学习键下的跳过记录;排名依据已经变了,旧负分不该继续生效。
-    pub(crate) fn forgive(&mut self, key: &str, word: &str) {
-        self.rev = self.rev.wrapping_add(1);
-        let empty = if let Some(words) = self.rejects.get_mut(key) {
-            let _ = words.remove(word);
-            words.is_empty()
-        } else {
-            false
-        };
-        if empty {
-            self.rejects.remove(key);
-        }
-    }
-
-    pub(crate) fn reject_count(&self) -> usize {
-        self.rejects.values().map(|words| words.len()).sum()
-    }
-
-    /// 保留次数最多的前九成记录;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune_rejects(&mut self) {
-        let keep = MAX_REJECTS * 9 / 10;
-        let mut all: Vec<(String, String, RejectStat)> = self
-            .rejects
-            .drain()
-            .flat_map(|(key, words)| {
-                words
-                    .into_iter()
-                    .map(move |(word, stat)| (key.clone(), word, stat))
-            })
-            .collect();
-        all.sort_by(|a, b| {
-            b.2.count
-                .cmp(&a.2.count)
-                .then(b.2.ts.cmp(&a.2.ts))
-                .then(a.0.cmp(&b.0))
-                .then(a.1.cmp(&b.1))
-        });
-        all.truncate(keep);
-        for (key, word, stat) in all {
-            self.rejects.entry(key).or_default().insert(word, stat);
-        }
-    }
-
-    /// 保留最常见的前九成搭配;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune_context(&mut self) {
-        let keep = MAX_CONTEXT * 9 / 10;
-        let mut all: Vec<((char, char), ContextStat)> = self.context.drain().collect();
-        all.sort_by(|a, b| {
-            b.1.count
-                .cmp(&a.1.count)
-                .then(b.1.ts.cmp(&a.1.ts))
-                .then(a.0.cmp(&b.0))
-        });
-        all.truncate(keep);
-        self.context.extend(all);
     }
 
     /// 置顶一个词在 `key` 下;同一键重复置顶覆盖旧值。
@@ -711,103 +237,77 @@ impl UserDict {
         self.pinned.get(key).map(String::as_str)
     }
 
-    /// 取消一个词的所有置顶(跨学习键);返回是否有变化。
-    pub fn unpin_word(&mut self, word: &str) -> bool {
-        let before = self.pinned.len();
-        self.pinned.retain(|_, old| old != word);
-        let changed = self.pinned.len() != before;
-        if changed {
-            self.rev = self.rev.wrapping_add(1);
-        }
-        changed
-    }
-
-    /// 记录一次「在 key 下选了 word」。
-    ///
-    /// `known` 表示这个词在主词典里本来就有:已有词首记两次使用,选一次
-    /// 即可回到首位;词典外的人名、临时短语首记一次,先落在候选后段,
-    /// 连续用两三次再逐级晋升。词条不做时间衰减。
-    pub fn learn(&mut self, key: &str, word: &str, known: bool) {
-        let ts = now();
-        let new_key = !self.map.contains_key(key);
-        let entries = self.map.entry(key.to_string()).or_default();
-        match entries.iter_mut().find(|e| e.word == word) {
-            Some(e) => {
-                e.freq = e.freq.saturating_add(1);
-                e.ts = ts;
+    /// 新键入表时建首字母变体与前缀。键只增不删,所以不维护删除。
+    pub(crate) fn index_key(&mut self, key: &str) {
+        for variant in variants(key) {
+            for (at, _) in variant.match_indices('\'') {
+                self.prefixes.insert(variant[..=at].to_string());
             }
-            None => {
-                entries.push(UserEntry {
-                    word: word.to_string(),
-                    freq: if known { 2 } else { 1 },
-                    ts,
-                });
-                self.count += 1;
-            }
-        }
-        if new_key {
-            self.by_shape
-                .entry(shape(key))
+            self.by_initials
+                .entry(variant)
                 .or_default()
                 .push(key.to_string());
         }
-        // 同一个词可能用简拼和全拼各学过一次;联想取更完整的那条键。
-        if self
-            .word_keys
-            .get(word)
-            .is_none_or(|old| old.len() < key.len())
-        {
-            self.word_keys.insert(word.to_string(), key.to_string());
-        }
-        // 刚选过它,同键下的旧负分已经过时。
-        self.forgive(key, word);
-        if self.count > MAX_ENTRIES {
-            self.prune();
-        }
+    }
+
+    /// 这组首字母串(见 `Lexicon` 的 `initials_of`)命中的学习键,排序去重,不扫描用户词库。
+    pub(crate) fn matching_keys(&self, lookups: &[String]) -> Vec<&str> {
+        let mut keys: Vec<&str> = lookups
+            .iter()
+            .filter_map(|lookup| self.by_initials.get(lookup))
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    /// 学习键对应的词条。
+    pub(crate) fn entries(&self, key: &str) -> &[WordEntry] {
+        self.words.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    /// 这组首字母串能否继续接成更长的用户键(前缀命中即可,允许误报,不漏词)。
+    pub(crate) fn may_extend(&self, lookups: &[String]) -> bool {
+        lookups
+            .iter()
+            .any(|lookup| self.prefixes.contains(&format!("{lookup}'")))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty() && self.raw.is_empty()
+    }
+
+    /// 词条总数。
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    /// 模糊组的打字习惯学习:选中一个模糊读法时调用。
+    pub fn learn_groups(&mut self, mask: u8) {
+        self.typing.learn_groups(mask, now());
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 保留高频、近期的九成词条;一次性重建,摊到每次学习里的成本可忽略。
-    pub(crate) fn prune(&mut self) {
-        let keep = MAX_ENTRIES * 9 / 10;
-        let mut all: Vec<(String, UserEntry)> = self
-            .map
-            .drain()
-            .flat_map(|(key, entries)| entries.into_iter().map(move |e| (key.clone(), e)))
-            .collect();
-        all.sort_by(|a, b| {
-            b.1.freq
-                .cmp(&a.1.freq)
-                .then(b.1.ts.cmp(&a.1.ts))
-                .then(a.0.cmp(&b.0))
-                .then(a.1.word.cmp(&b.1.word))
-        });
-        all.truncate(keep);
-        self.by_shape.clear();
-        for (key, entry) in all {
-            self.by_shape
-                .entry(shape(&key))
-                .or_default()
-                .push(key.clone());
-            self.map.entry(key).or_default().push(entry);
-        }
-        // 同一个键可能有多条词,上面按词条遍历会重复加入形状索引。
-        for keys in self.by_shape.values_mut() {
-            keys.sort();
-            keys.dedup();
-        }
-        self.count = self.map.values().map(Vec::len).sum();
-        let mut word_keys = std::collections::HashMap::new();
-        for (key, entries) in &self.map {
-            for entry in entries {
-                let slot = word_keys
-                    .entry(entry.word.clone())
-                    .or_insert_with(|| key.clone());
-                if slot.len() < key.len() {
-                    *slot = key.clone();
-                }
-            }
-        }
-        self.word_keys = word_keys;
+    /// 命中这些模糊组时给候选的加分;只降低模糊代价,精确首位保护不变。
+    pub fn group_bonus(&self, mask: u8) -> f64 {
+        self.typing.group_bonus(mask, now())
+    }
+
+    /// 设置页展示用:各模糊组当前有效次数。
+    pub fn group_stats(&self) -> Vec<(&'static str, u32)> {
+        self.typing.group_stats(now())
+    }
+
+    /// 用户在快捷触发键下选了字面原文而不是动作候选。
+    pub fn learn_literal(&mut self, key: &str, action: &str) {
+        self.typing.learn_literal(key, action, now());
+        self.rev = self.rev.wrapping_add(1);
+    }
+
+    /// 快捷词被选择字面原文的有效次数;够多了就不再注入动作候选。
+    pub fn literal_picks(&self, key: &str, action: &str) -> u32 {
+        self.typing.literal_picks(key, action, now())
     }
 }

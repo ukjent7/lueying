@@ -142,15 +142,6 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::ImportUser => with(core, actions::import_user),
         Action::ExportUser => with(core, actions::export_user),
         Action::Diagnostics => with(core, actions::export_diagnostics),
-        Action::ClearUser => {
-            let mut guard = lock(core);
-            if guard.settings.confirm_clear {
-                actions::clear_user(&mut guard.settings);
-            } else {
-                guard.settings.confirm_clear = true;
-                guard.settings.say(Notice::Info, "再点一次确认清空");
-            }
-        }
         Action::ChooseScript => choose_script(ui, core),
         Action::AddApp => add_app(ui, core),
         Action::EditSecret(ext, key, title) => open_secret_editor(ui, core, ext, key, title),
@@ -188,7 +179,6 @@ fn refresh(ui: &SettingsWindow, core: &Shared) {
     theme_colors.set_text_tertiary(color(colors.text_tertiary));
     theme_colors.set_success(color(colors.success));
     theme_colors.set_danger(color(colors.danger));
-    theme_colors.set_on_danger(color(colors.surface));
 
     let page_colors = page_colors(&colors, appearance);
     let page = guard.settings.page(&page_colors);

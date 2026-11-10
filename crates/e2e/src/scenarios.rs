@@ -439,6 +439,9 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("是".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["事"])]),
+                // 新词第一次选中不升首位,第二次起才升首位。
+                stage(l("shi"), vec![]),
+                stage(vec![Key::Digit(2)], vec![commits(&["事"])]),
                 stage(l("shi"), vec![Check::Top("事".into())]),
                 stage(vec![Key::Space], vec![commits(&["事"])]),
             ],
@@ -520,7 +523,9 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("四".into()), Check::Contains("是".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
-                // 同键选过一次的词直接回到首位,与微软/微信一致。
+                // 同键选过两次的词回到首位(一次不够,与新词规则一致)。
+                stage(l("si"), vec![]),
+                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
                 stage(l("si"), vec![Check::Top("是".into())]),
                 stage(vec![Key::Space], vec![commits(&["是"])]),
                 stage(l("si"), vec![Check::Top("是".into())]),

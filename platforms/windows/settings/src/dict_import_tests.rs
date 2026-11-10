@@ -35,50 +35,37 @@ fn parses_standard_tsv_dictionary() {
     assert_eq!(report.skipped, 0);
     let rows = lines(&report.text);
     assert_eq!(rows.len(), 2);
-    assert!(rows[0].starts_with("ni'hao\t你好\t"), "{rows:?}");
-    assert!(rows[1].starts_with("shi'zhong\t中国\t"), "{rows:?}");
+    assert!(rows[0].starts_with("w\tni'hao\t你好\t"), "{rows:?}");
+    assert!(rows[1].starts_with("w\tshi'zhong\t中国\t"), "{rows:?}");
 }
 
 #[test]
 fn parses_continuous_pinyin_without_separator() {
     let report = parse("你好\tnihao\t1000\n");
     assert_eq!(report.imported, 1);
-    assert!(report.text.starts_with("ni'hao\t你好\t"), "{}", report.text);
+    assert!(
+        report.text.starts_with("w\tni'hao\t你好\t"),
+        "{}",
+        report.text
+    );
 }
 
 #[test]
-fn weight_becomes_log_scaled_frequency() {
-    // 权重 1000 → 词频 10,导入的词压过普通候选又不至于清场。
+fn weight_becomes_log_scaled_uses() {
+    // 权重 1000 → 使用次数 10,导入的词压过普通候选又不至于清场。
     let report = parse("你好\tni hao\t1000\n");
     let row = report.text.lines().next().unwrap();
     let cols: Vec<&str> = row.split('\t').collect();
-    let freq: u32 = cols[2].parse().unwrap();
-    assert_eq!(freq, 10);
+    let uses: u32 = cols[3].parse().unwrap();
+    assert_eq!(uses, 10);
 }
 
 #[test]
-fn keeps_native_export_lines_untouched() {
-    let text = "ni'hao\t你好\t3\t1700000000\n";
+fn keeps_engine_record_lines_untouched() {
+    // 导出文件里的记录行要原样回去,不然模糊组、置顶与词记忆就丢了。
+    let text = "w\tni'hao\t你好\t3\t1.5\t1700000000\t0\np\tni'hao\t你好\ng\tzcs\t5\t1700000000\n";
     let report = parse(text);
-    assert_eq!(report.imported, 1);
-    assert_eq!(report.text, text);
-}
-
-#[test]
-fn keeps_native_abbreviated_key() {
-    // 简拼学出来的键不是音节,原生导出照样并得回去。
-    let text = "n'h\t你好\t3\t1700000000\n";
-    let report = parse(text);
-    assert_eq!(report.imported, 1);
-    assert_eq!(report.text, text);
-}
-
-#[test]
-fn keeps_engine_stat_lines() {
-    // 导出文件里的统计行要原样回去,不然模糊组与置顶就丢了。
-    let text = "@group\tzcs\t5:1700000000\n@pin\tni'hao\t你好\n";
-    let report = parse(text);
-    assert_eq!(report.imported, 0);
+    assert_eq!(report.skipped, 0);
     assert_eq!(report.text, text);
 }
 
@@ -86,7 +73,11 @@ fn keeps_engine_stat_lines() {
 fn standard_row_with_extra_column_is_not_native() {
     let report = parse("你好\tni hao\t1000\t2020\n");
     assert_eq!(report.imported, 1);
-    assert!(report.text.starts_with("ni'hao\t你好\t"), "{}", report.text);
+    assert!(
+        report.text.starts_with("w\tni'hao\t你好\t"),
+        "{}",
+        report.text
+    );
 }
 
 #[test]
@@ -107,7 +98,7 @@ fn reads_hanzi_only_list_from_main_dictionary() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.no_pinyin, 1);
     assert!(
-        report.text.starts_with("chong'qing\t重庆\t"),
+        report.text.starts_with("w\tchong'qing\t重庆\t"),
         "{}",
         report.text
     );

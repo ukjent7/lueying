@@ -68,8 +68,6 @@ pub struct CandidateContext<'a> {
     pub now: CivilTime,
     /// 上一个上屏词;用于下一词联想。
     pub previous: Option<&'a str>,
-    /// 上上个上屏词;用于三词窗口。
-    pub previous2: Option<&'a str>,
     /// 当前用户词库只读视图;模块可据此学习、联想或做个性化排序。
     pub user: &'a crate::UserDict,
 }

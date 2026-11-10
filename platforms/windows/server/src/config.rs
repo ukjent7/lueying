@@ -230,7 +230,7 @@ impl OcrBackend {
 pub struct AppOverride {
     /// 中文标点开关。
     pub punct: Option<bool>,
-    /// 学习开关(词库、搭配与转移都不写)。
+    /// 学习开关(词库与词序都不写)。
     pub learning: Option<bool>,
 }
 

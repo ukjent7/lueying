@@ -1,9 +1,10 @@
-//! 上屏与学习:落定候选、吃音节、词序、自动造词与负反馈。
+//! 上屏与学习:落定候选、吃音节、词序、自动造词与误选/跳过的负反馈。
 //!
 //! 与 `input`、`state` 等分文件只是职责边界:`Engine` 的 inherent impl,
 //! 共享 crate 根里的私有字段。跨文件调用的方法显式标为 `pub(crate)`。
 
 use super::*;
+use crate::user::MISPICK_SECS;
 
 impl Engine {
     /// 逐段落定整个组合;没有候选时上屏原文。返回按序的上屏事件。
@@ -55,7 +56,7 @@ impl Engine {
         let cand = self.cands.get(idx)?.clone();
         let cut = cand.spans.get(cand.consume - 1).map(|s| s.1)?;
         let raw = self.comp.as_ref()?.raw.clone();
-        // 用户明确选了字面原文而没有选动作候选:对触发词记一次同键负分;
+        // 用户明确选了字面原文而没有选动作候选:对触发词记一次同键记录;
         // 选够多次后不再注入动作候选,说明用户要的就是这段字母。
         if self.learning
             && cand.action.is_none()
@@ -68,7 +69,7 @@ impl Engine {
                 self.user
                     .write()
                     .unwrap_or_else(|p| p.into_inner())
-                    .reject(&key, &id);
+                    .learn_literal(&key, &id);
             }
         }
         // 学习与上下文用规范字形:繁体显示时仍写简体,切回简体不召回繁体词。
@@ -78,8 +79,8 @@ impl Engine {
             .unwrap_or(cand.text.as_str())
             .to_string();
         let fixed = cand.quick || cand.no_learn;
-        // 快捷/固定候选不是词:不写用户词库、不学组级适应,也不把日期/金额
-        // 当作用词接进词级转移。它们也不参与同一次组合的自动造词。
+        // 快捷/固定候选不是词:不写用户词库,也不把日期/金额当作用词接进词序。
+        // 它们也不参与同一次组合的自动造词。
         if cand.quick {
             self.quick_handled += 1;
         }
@@ -88,6 +89,8 @@ impl Engine {
         }
         // 用户词库的键必须和查询时的音节键一致(ni'hao),不能存原始串(nihao),
         // 否则多音节词学完也匹配不上。
+        // 本次上屏对应的击键串:去掉隔音符,与 `comp.raw` 同为小写。
+        let typed: String = raw[..cut].chars().filter(|c| *c != '\'').collect();
         let learned = if fixed {
             String::new()
         } else {
@@ -97,20 +100,18 @@ impl Engine {
             })
         };
         if self.learning && !fixed {
+            let now = crate::user::now();
             let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
-            // 同键下被越过的候选记一次小负分。只统计吃掉同样多音节的候选:
+            // 同键下被越过的候选减弱一次。只统计吃掉同样多音节的候选:
             // 用户改选前缀词上屏时,不能被当成否定了整句读法。手误纠正的候选
-            // 是推测出来的键,不拿它给正确输入留下负分。
+            // 是推测出来的键,不拿它去减弱正确输入的记忆。
             for skipped in self.cands.iter().take(idx) {
-                if skipped.quick || skipped.no_learn {
-                    continue;
-                }
-                if skipped.consume != cand.consume {
+                if skipped.quick || skipped.no_learn || skipped.consume != cand.consume {
                     continue;
                 }
                 let scheme_key = self.scheme.key_for_spans(&raw, &skipped.spans);
                 // 纠正/补全候选的学习键是推测出来的,和原始击键的规范键不同;
-                // 它们被越过不代表用户否定了正确输入,不记负分。
+                // 它们被越过不代表用户否定了正确输入。
                 if skipped
                     .learn_key
                     .as_deref()
@@ -123,63 +124,61 @@ impl Engine {
                     .learn_text
                     .as_deref()
                     .unwrap_or(skipped.text.as_str());
-                let left = crate::user::left_key(&self.context);
-                user.reject(&crate::user::reject_key(left, &key), text);
+                user.skip(&key, text);
             }
-            user.forgive_word(&learn_text);
-            user.learn(&learned, &learn_text, cand.freq > 0);
-            let left = crate::user::left_key(&self.context);
-            user.forgive(&crate::user::reject_key(left, &learned), &learn_text);
-            user.learn_word_context(&self.context, &learn_text, cand.freq > 0);
+            // 误选:上一次上屏的词在同一串击键下立刻被改选成别的词,那次选择不算数。
+            if let Some(pick) = self.last_pick.take()
+                && pick.typed == typed
+                && pick.word != learn_text
+                && now.saturating_sub(pick.at) <= MISPICK_SECS
+            {
+                user.mispick(&pick.key, &pick.word);
+            }
+            user.learn(&learned, &learn_text);
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
             }
             user.learn_transitions(self.last_word.as_deref(), &cand.words);
-            user.learn_trigrams(
-                self.second_last_word.as_deref(),
-                self.last_word.as_deref(),
-                &cand.words,
-            );
-            user.learn_app(&self.host, &cand.words);
+            user.learn_raw(&typed, &learn_text);
+            self.last_pick = Some(LastPick {
+                typed: typed.clone(),
+                key: learned.clone(),
+                word: learn_text.clone(),
+                at: now,
+            });
         }
         if fixed {
             // 让 `note_events` 把上一条词序切断,而不是把日期/表情记成前词。
             self.last_word = None;
-            self.second_last_word = None;
-        } else if cand.words.len() >= 2 {
-            self.second_last_word = cand.words.get(cand.words.len() - 2).cloned();
-            self.last_word = cand.words.last().cloned();
-            self.transition_handled += 1;
         } else {
-            self.second_last_word = self.last_word.take();
             self.last_word = cand.words.last().cloned();
             self.transition_handled += 1;
         }
         let rest = raw[cut..].trim_start_matches('\'').to_string();
-        // 同一次组合里连续选词:把各段拼音与文本拼起来,整串结束时造一个
+        // 同一次组合里连续选词:把各段的击键、拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
         let phrase = if self.learning && !fixed {
             match self.phrase.take() {
-                Some((mut key, mut text)) => {
+                Some((mut typed_all, mut key, mut text)) => {
+                    typed_all.push_str(&typed);
                     key.push('\'');
                     key.push_str(&learned);
                     text.push_str(&learn_text);
-                    Some((key, text))
+                    Some((typed_all, key, text))
                 }
-                None if !rest.is_empty() => Some((learned, learn_text.clone())),
+                None if !rest.is_empty() => Some((typed.clone(), learned, learn_text.clone())),
                 None => None,
             }
         } else {
             None
         };
         if rest.is_empty() {
-            if let Some((key, text)) = phrase
+            if let Some((typed_all, key, text)) = phrase
                 && text.chars().count() > 1
             {
-                self.user
-                    .write()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .learn(&key, &text, false);
+                let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
+                user.learn(&key, &text);
+                user.learn_raw(&typed_all, &text);
             }
         } else {
             self.phrase = phrase;
@@ -188,12 +187,6 @@ impl Engine {
             // 规范字形的上下文在这里写入;`note_events` 据此跳过这条提交,
             // 繁体显示也就不会把繁体字带进左邻文本。
             if !learn_text.is_ascii() {
-                if self.learning && !fixed {
-                    self.user
-                        .write()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .learn_context(&self.context, &learn_text);
-                }
                 self.push_context(&learn_text);
                 // `note_events` 据此跳过这条提交,不再把繁体显示写进上下文。
                 self.context_handled += 1;
@@ -208,12 +201,6 @@ impl Engine {
             // 剩余拼音马上要重算:先把刚上屏的片段并入左邻上下文,下一段的
             // 候选才能看到刚形成的搭配。`note_events` 会跳过这次重复处理。
             if !learn_text.is_ascii() {
-                if self.learning && !fixed {
-                    self.user
-                        .write()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .learn_context(&self.context, &learn_text);
-                }
                 self.push_context(&learn_text);
             }
             self.context_handled += 1;

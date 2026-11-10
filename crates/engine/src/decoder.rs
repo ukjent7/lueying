@@ -5,8 +5,8 @@
 //! 时,每段都接着上文解码。
 //!
 //! 按键是增量的:组合通常只在末尾增删一个字母,前缀位置上的束与词节点不变。[`Charts`]
-//! 保留上一次解码的各位置列,只重算变化的尾部。复用的条件是前缀字节、末尾可完成性与
-//! 整串级标志([`Variant`])都相同,此时结果与整串从头算逐位相等。
+//! 保留上一次解码的各位置列,只重算变化的尾部。复用的条件是前缀字节、末尾可完成性、
+//! 规范音节边界与整串级标志([`Variant`])都相同,此时结果与整串从头算逐位相等。
 //!
 //! 词的语言分把词频归一成对数概率,再减每词固定罚:拆成更多高频碎片的路径要额外付出
 //! 每词一份的归一化代价。读法代价来自 [`crate::channel`],全拼、简拼、模糊音、手误同轴。
@@ -18,7 +18,7 @@ use lueying_dict::gram::{CONTEXT_CHARS, Gram};
 use lueying_dict::{Dictionary, Fuzzy, syllables};
 
 use crate::channel::{self, Unit};
-use crate::lexicon::{CHAR_BONUS, Hit, Lexicon, WORD_PENALTY, user_gain};
+use crate::lexicon::{CHAR_BONUS, Hit, Lexicon, WORD_PENALTY, raw_candidate, user_gain};
 use crate::query::{BuildArgs, Built, Candidate};
 use crate::user::UserDict;
 
@@ -86,9 +86,12 @@ struct Node {
     reading: Arc<Reading>,
     /// 零代价读法的词典命中;简拼也算,全拼串里混入的简拼有代价,不算。
     trusted: bool,
+    /// 读法是精确读音:没有简拼、手误或模糊改动。学习的词序加分只给精确路径。
+    exact: bool,
     edits: usize,
     freq: u64,
-    user_freq: u32,
+    /// 用户在这组音节上的有效层级。
+    level: f64,
     /// 用户在这组音节上直接学过这个词。
     learned: bool,
     groups: u8,
@@ -114,6 +117,8 @@ struct Walker<'a, 'd> {
     finish: &'a [bool],
     /// 只保留终点不小于它的词;更靠前的列已经在前缀图里。
     first_end: usize,
+    /// 规范音节边界(见 [`channel::canonical_bounds`]):简拼词只在边界上给学习加分。
+    bounds: &'a [bool],
     found: &'a mut [Vec<Node>],
     units: Vec<&'a Unit>,
     visits: usize,
@@ -177,13 +182,16 @@ impl Walker<'_, '_> {
         if end < self.first_end {
             return;
         }
-        let hits = self.lexicon.lookup(&self.units);
+        // 简拼单元的消费终点必须落在规范音节边界上:切进完整音节内部的读法不给学习加分。
+        let bonus = !self.units.iter().any(|unit| unit.abbrev) || self.bounds[end];
+        let hits = self.lexicon.lookup(&self.units, bonus);
         if hits.is_empty() {
             return;
         }
         let cost: f64 = self.units.iter().map(|unit| unit.cost).sum();
         let edits: usize = self.units.iter().map(|unit| unit.edits).sum();
         let typos = self.units.iter().filter(|unit| unit.typo).count();
+        let units_exact = bonus && crate::lexicon::bonus_eligible(&self.units);
         let groups = self.units.iter().fold(0, |mask, unit| mask | unit.groups);
         // 组级学习只降低该组的模糊代价,不改精确命中的保护。
         let relief = if groups == 0 {
@@ -218,12 +226,13 @@ impl Walker<'_, '_> {
                 word: Arc::clone(&hit.word),
                 score: hit.prior - cost + relief,
                 channel: (cost - relief).max(0.0),
-                personal: user_gain(hit.user_freq),
+                personal: user_gain(hit.level),
                 reading: Arc::clone(&reading),
                 trusted: hit.dictionary && cost == 0.0,
+                exact: units_exact,
                 edits: edits + typos,
                 freq: hit.freq,
-                user_freq: hit.user_freq,
+                level: hit.level,
                 learned: hit.learned && typos == 0,
                 groups,
                 accent: (edits > 0).then(|| Arc::clone(&hit.key)),
@@ -246,6 +255,7 @@ fn enumerate<'d>(
     let mut found: Vec<Vec<Node>> = std::iter::repeat_with(Vec::new)
         .take(raw.len() + 1)
         .collect();
+    let bounds = channel::canonical_bounds(raw);
     let mut walker = Walker {
         lexicon,
         user,
@@ -253,6 +263,7 @@ fn enumerate<'d>(
         raw,
         finish,
         first_end,
+        bounds: &bounds,
         found: &mut found,
         units: Vec::new(),
         visits: 0,
@@ -326,9 +337,11 @@ struct State {
     link: Option<Arc<Link>>,
     /// 整条路径由单个精确词典词构成时,才允许让模型让位。
     trusted: bool,
+    /// 路径上每个词都是精确读音。
+    exact: bool,
     /// 单节点路径的词典词频;多词拼句为 0。
     freq: u64,
-    user_freq: u32,
+    level: f64,
     learned: bool,
     /// 路径累计的模糊改动与手误处数。
     edits: usize,
@@ -346,8 +359,9 @@ impl State {
             text: String::new(),
             link: None,
             trusted: true,
+            exact: true,
             freq: 0,
-            user_freq: 0,
+            level: 0.0,
             learned: false,
             edits: 0,
             groups: 0,
@@ -355,23 +369,43 @@ impl State {
         }
     }
 
+    /// 接上 `node` 时要从路径分里扣掉的学习加分。单字词只在单节点路径里有学习加分:
+    /// 多词拼句里的单字是字级噪声,靠它的学习分把切分拉偏不可取。路径由一个词变成两个词时,
+    /// 原先那个单字的加分也一并扣掉。
+    fn unlearned(&self, node: &Node) -> f64 {
+        let Some(link) = self.link.as_ref() else {
+            return 0.0;
+        };
+        let mut drop = if single_char(&node.word) {
+            node.personal
+        } else {
+            0.0
+        };
+        if link.prev.is_none() && single_char(&link.node.word) {
+            drop += link.node.personal;
+        }
+        drop
+    }
+
     fn extend(&self, node: &Arc<Node>, gain: f64) -> Self {
         let first = self.link.is_none();
+        let drop = self.unlearned(node);
         let mut text = String::with_capacity(self.text.len() + node.word.len());
         text.push_str(&self.text);
         text.push_str(&node.word);
         Self {
-            score: self.score + node.score + gain,
+            score: self.score + node.score + gain - drop,
             channel: self.channel + node.channel,
-            personal: self.personal + node.personal,
+            personal: self.personal + node.personal - drop,
             text,
             link: Some(Arc::new(Link {
                 node: Arc::clone(node),
                 prev: self.link.clone(),
             })),
             trusted: first && node.trusted,
+            exact: self.exact && node.exact,
             freq: if first { node.freq } else { 0 },
-            user_freq: if first { node.user_freq } else { 0 },
+            level: if first { node.level } else { 0.0 },
             learned: first && node.learned,
             edits: self.edits + node.edits,
             groups: self.groups | node.groups,
@@ -392,6 +426,10 @@ impl State {
     }
 }
 
+fn single_char(word: &str) -> bool {
+    word.chars().count() == 1
+}
+
 /// 从按分数降序排好的路径里取前 `width` 条不同文本。
 ///
 /// 往后的搭配分只看文本尾部,同位置同文本的路径分差不会再变,低分的那条永远赢不了,
@@ -405,7 +443,7 @@ fn distinct_beam(sorted: impl Iterator<Item = State>, width: usize) -> Vec<State
             first.trusted |= state.trusted;
             first.learned |= state.learned;
             first.freq = first.freq.max(state.freq);
-            first.user_freq = first.user_freq.max(state.user_freq);
+            first.level = first.level.max(state.level);
             continue;
         }
         at.insert(state.text.clone(), kept.len());
@@ -543,7 +581,12 @@ fn build_column(
                 0.0
             };
             let gain = sequence + bonus[at];
-            next.push((state.score + node.score + gain, state, Some((node, gain))));
+            let drop = state.unlearned(node);
+            next.push((
+                state.score + node.score + gain - drop,
+                state,
+                Some((node, gain)),
+            ));
         }
     }
     let beam = top_beam(next, width);
@@ -584,6 +627,8 @@ pub(crate) struct Chart {
     raw: String,
     /// `raw` 各位置的可完成性。
     finish: Vec<bool>,
+    /// `raw` 各位置的规范音节边界。边界变了,该位置及其后的列都不能复用。
+    bounds: Vec<bool>,
     /// 上一次解码的访问预算是否耗尽过;耗尽时整串的列都不可复用。
     truncated: bool,
     /// 位置 `0..raw.len()` 的列(末位不在其中,它每次都要重算)。
@@ -596,13 +641,14 @@ impl Chart {
             variant,
             raw: String::new(),
             finish: Vec::new(),
+            bounds: Vec::new(),
             truncated: false,
             columns: Vec::new(),
         }
     }
 
     /// 新整串能复用本图的前几列:前缀字节相同、末尾可完成性相同,且列是内部列。
-    fn reusable(&self, raw: &str, finish: &[bool]) -> usize {
+    fn reusable(&self, raw: &str, finish: &[bool], bounds: &[bool]) -> usize {
         if self.truncated {
             return 0;
         }
@@ -611,10 +657,18 @@ impl Chart {
             .zip(self.raw.bytes())
             .take_while(|(a, b)| a == b)
             .count();
+        // 列 `r` 的节点与束依赖 `bounds[0..=r]`:只复用边界仍然相同的前缀。
+        let stable = self
+            .bounds
+            .iter()
+            .zip(bounds)
+            .take_while(|(a, b)| a == b)
+            .count();
         let mut reuse = 0;
         while reuse < self.columns.len()
             && reuse < raw.len()
             && reuse <= shared
+            && reuse < stable
             && self.finish[reuse] == finish[reuse]
         {
             reuse += 1;
@@ -627,7 +681,7 @@ impl Chart {
 #[derive(Default)]
 pub(crate) struct Charts {
     context: String,
-    user: u64,
+    user: (u64, u64),
     fuzzy: Option<Fuzzy>,
     charts: Vec<Chart>,
     /// 词命中缓存,与前缀图同一失效条件(见 [`Lexicon`])。
@@ -636,7 +690,7 @@ pub(crate) struct Charts {
 
 impl Charts {
     /// 上文、用户词库修订或模糊配置变了,前缀图与词命中缓存整体作废。
-    fn sync(&mut self, context: &str, user: u64, fuzzy: Fuzzy) {
+    fn sync(&mut self, context: &str, user: (u64, u64), fuzzy: Fuzzy) {
         // 上文一直不变时(私密输入、宿主不给上文)命中缓存只增不减,超过上限就丢掉重填。
         if self.hits.len() > HITS_KEPT {
             self.hits.clear();
@@ -691,27 +745,19 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         fuzzy,
         gram,
         context,
-        host,
-        previous2,
         previous,
         raw,
         quick_trigger,
         charts,
     } = args;
     let total = dict.total_weight() as f64;
-    let left = crate::user::left_key(context);
-    charts.sync(context, user.revision(), *fuzzy);
-    let mut lexicon = Lexicon::new(
-        dict,
-        user,
-        total,
-        (!context.is_empty()).then_some(left),
-        std::mem::take(&mut charts.hits),
-    );
+    charts.sync(context, (user.revision(), crate::user::day()), *fuzzy);
+    let mut lexicon = Lexicon::new(dict, user, total, std::mem::take(&mut charts.hits));
     let edges = channel::lattice(raw, fuzzy, !quick_trigger);
     let finish = finishable(raw, &edges);
+    let bounds = channel::canonical_bounds(raw);
     let variant = Variant::of(raw, quick_trigger);
-    let mut reuse = charts.chart(variant).reusable(raw, &finish);
+    let mut reuse = charts.chart(variant).reusable(raw, &finish, &bounds);
     let (mut found, mut truncated) =
         enumerate(&mut lexicon, user, &edges, raw, &finish, variant, reuse);
     if truncated && reuse > 0 {
@@ -757,41 +803,62 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             .map(|node| node.reading.keys.as_str())
             .collect::<Vec<_>>()
             .join("'");
-        let reject = user.reject_penalty_in(left, &key, &state.text);
+        let penalized = user.penalized(&key, &state.text);
         let fuzzy_hint = match nodes.as_slice() {
             [only] => only.accent.as_deref(),
             _ => None,
         };
-        let mut cand = Candidate::whole(raw.len(), state.text.clone(), state.score - reject);
+        let mut cand = Candidate::whole(raw.len(), state.text.clone(), state.score);
         cand.words = nodes.iter().map(|node| node.word.to_string()).collect();
         cand.consume = spans.len();
         cand.spans = spans;
         cand.channel = state.channel;
-        cand.personal = state.personal - reject;
+        cand.personal = state.personal;
         cand.trusted = state.trusted;
+        cand.exact = state.exact;
         cand.sentence = nodes.len() > 1 && state.edits == 0;
         cand.edits = state.edits;
         cand.freq = state.freq;
-        cand.user_freq = state.user_freq;
+        cand.level = state.level;
         cand.learned = state.learned;
         cand.groups = state.groups;
         cand.hint = hint_of(state.corrected, &key, fuzzy_hint);
         cand.learn_key = Some(key);
         cand.correction = state.corrected;
-        cand.rejected = reject > 0.0;
+        cand.rejected = penalized;
         full.push(cand);
     }
-    // 个人上下文只调整整句候选的顺序:词频、读法代价和搭配分已经决定了进入束的路径,
-    // 这里再让用户常打的前后搭配与词序在同一批路径里靠前。
+    // 个人词序只调整整句候选的顺序:词频、读法代价和搭配分已经决定了进入束的路径,
+    // 这里再让用户常用的前后词序在同一批路径里靠前。
     let personal = |cand: &mut Candidate| {
-        let gain = user.context_bonus(context, &cand.text)
-            + user.app_bonus(host, &cand.words)
-            + user.transition_bonus(previous, &cand.words)
-            + user.trigram_bonus(previous2, previous, &cand.words);
+        // 词序加分同样只给精确读音的路径。
+        let gain = if cand.exact {
+            user.transition_bonus(previous, &cand.words)
+        } else {
+            0.0
+        };
         cand.score += gain;
         cand.personal += gain;
     };
     full.iter_mut().for_each(personal);
+    // 原样输入记忆:同一击键串上屏过的词。读音路径已经给出的词补上学习加分;没有的
+    // (手误、简拼或读音路径够不着)按用户词先验补进整串候选。
+    let typed: String = raw.chars().filter(|c| *c != '\'').collect();
+    for (word, level, uses) in user.raw_words(&typed) {
+        if full.iter().any(|cand| cand.text == word) {
+            if level > 0.0 {
+                let gain = user_gain(level);
+                for cand in full.iter_mut().filter(|cand| cand.text == word) {
+                    cand.score += gain;
+                    cand.personal += gain;
+                    cand.level = cand.level.max(level);
+                    cand.learned = true;
+                }
+            }
+        } else if uses >= 2 {
+            full.push(raw_candidate(raw.len(), word, level, total));
+        }
+    }
     // 把末音节补成更长的音节。像 `bulianhougu` 这种少打末尾字母的输入,精确图
     // 只能给出碎词;补全让整词也有机会进首页。有精确词时补全要比它常用得多才算。
     let exact = full
@@ -801,7 +868,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         .max()
         .unwrap_or(0);
     let floor = exact.saturating_mul(COMPLETION_OVERRIDE_RATIO);
-    let completed = completion_candidates(raw, dict, total);
+    let completed = completion_candidates(raw, dict, total, user);
     full.extend(completed.into_iter().filter(|c| c.freq >= floor));
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 同一句话可能由多种切分拼出,上屏文本完全相同;先按文本去重再占首页
@@ -817,7 +884,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             // 手误读法碰巧读出同一个词,不说明用户把末音节打完了。
             kept.completion &= cand.completion || cand.correction;
             kept.freq = kept.freq.max(cand.freq);
-            kept.user_freq = kept.user_freq.max(cand.user_freq);
+            kept.level = kept.level.max(cand.level);
             continue;
         }
         at.insert(cand.text.clone(), unique.len());
@@ -849,27 +916,27 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     for (end, column) in columns.iter().chain(std::iter::once(&last)).enumerate() {
         for node in column.nodes.iter().filter(|node| node.start == 0) {
             let keys = node.reading.keys.as_str();
-            let reject = user.reject_penalty_in(left, keys, &node.word);
+            let penalized = user.penalized(keys, &node.word);
             let gain = gram.map_or(0.0, |gram| {
                 gram.score(&before, &node.word, end == raw.len())
             });
-            let mut cand =
-                Candidate::whole(raw.len(), node.word.to_string(), node.score + gain - reject);
+            let mut cand = Candidate::whole(raw.len(), node.word.to_string(), node.score + gain);
             cand.consume = node.reading.spans.len();
             cand.spans = node.reading.spans.clone();
             cand.channel = node.channel;
-            cand.personal = node.personal - reject;
+            cand.personal = node.personal;
             cand.full = end == raw.len();
             cand.trusted = node.trusted;
+            cand.exact = node.exact;
             cand.edits = node.edits;
             cand.freq = node.freq;
-            cand.user_freq = node.user_freq;
+            cand.level = node.level;
             cand.learned = node.learned;
             cand.groups = node.groups;
             cand.hint = hint_of(node.corrected, keys, node.accent.as_deref());
             cand.learn_key = Some(keys.to_string());
             cand.correction = node.corrected;
-            cand.rejected = reject > 0.0;
+            cand.rejected = penalized;
             words.push(cand);
         }
     }
@@ -915,6 +982,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
 
     chart.raw = raw.to_string();
     chart.finish = finish;
+    chart.bounds = bounds;
     chart.truncated = truncated;
     chart.columns = columns;
     Built { cands }
@@ -935,7 +1003,12 @@ fn exact_full_word(raw: &str, cand: &Candidate) -> bool {
 /// 末音节补全:把最后一个音节换成词典里更长的音节,只保留音节数不变、
 /// 整词长度对得上的词条。没有精确整词时才调用,避免 `ni` 被补成 `nin/ning`
 /// 这类无关候选挤进首页。
-fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candidate> {
+fn completion_candidates(
+    raw: &str,
+    dict: &Dictionary,
+    total: f64,
+    user: &UserDict,
+) -> Vec<Candidate> {
     // 按最长音节切分输入,得到用户实际打出的音节序列。候选图里的切分可能
     // 来自模糊纠正,不能拿来当补全的基准。
     let spans = channel::first_path(raw);
@@ -989,6 +1062,9 @@ fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candid
             cand.hint = Some(format!("补全 {}", entry.key.replace('\'', " ")));
             cand.learn_key = Some(entry.key.to_string());
             cand.completion = true;
+            // 末音节补全是猜出来的读法,不享受词序加分。
+            cand.exact = false;
+            cand.rejected = user.penalized(&key, &cand.text);
             out.push(cand);
         }
     }
@@ -1003,13 +1079,11 @@ fn completion_candidates(raw: &str, dict: &Dictionary, total: f64) -> Vec<Candid
 /// 完全按分数排,80 倍词频差又会让高频模糊词压过精确词。这里取中间:
 /// 精确常用词占第 1 位,模糊候选从第 2 位开始按分数竞争。
 ///
-/// 学习覆盖优先于精确保护:同一按键下稳定用过的词直接回到首位,与微软
-/// 拼音、微信一致;词典外的新词第一次只进候选后段,连续用两三次才轮到
-/// 首位。选错了可以 Shift+Delete 忘掉。模糊词同样适用,用户既然选了它,
-/// 就说明这个音的分歧对他没有意义。
+/// 学习覆盖优先于精确保护:同一按键下保持层级达到 [`PROMOTE_LEVEL`] 的词直接回到
+/// 首位,与微软拼音、微信一致。词典外的新词第一次、第二次只进候选后段,用两三次才升首位;
+/// 久不用则层级随保持率下降,慢慢退下去,但不删除。
 ///
-/// 被跳过过的候选不享受这两层保护:负分已经说明它不符合当前意图,
-/// 再按词频或精确命中把它顶回首位会让跳过学习失去作用。
+/// 误选过的词(记忆仍清楚时)不许占首位:它被 `rejected` 标出,首位让给下一个未受罚的候选。
 ///
 /// 多词整句也保护,但只在分数与首位接近时生效:整句没有单词条频次,
 /// 勉强成立的精确切分(如 `zongguo` 拼出「总过」)不该顶掉真正的模糊词。
@@ -1019,32 +1093,38 @@ fn protect_exact(cands: &mut [Candidate]) {
     }
     // 学过的前缀词不能顶掉整句:回删分段上屏很常见,整句首选仍应由整句候选竞争。
     let has_full = cands.iter().any(|c| c.full);
-    if let Some(index) = cands
+    let learned = cands
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.learned && c.user_freq >= 2 && !c.rejected && (c.full || !has_full))
+        .filter(|(_, c)| c.learned_enough() && !c.rejected && (c.full || !has_full))
         .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
-        .map(|(i, _)| i)
-    {
+        .map(|(i, _)| i);
+    if let Some(index) = learned {
         cands[..=index].rotate_right(1);
-        return;
+    } else {
+        let leader = cands[0].score;
+        let leader_is_completion = cands[0].completion;
+        if let Some(index) = cands
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                !c.rejected
+                    && c.full
+                    && c.edits == 0
+                    && (c.trusted && !leader_is_completion && c.freq >= EXACT_PROTECT_MIN_FREQ
+                        || c.sentence
+                            && !leader_is_completion
+                            && c.score + EXACT_SENTENCE_MARGIN >= leader)
+            })
+            .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
+            .map(|(i, _)| i)
+        {
+            cands[..=index].rotate_right(1);
+        }
     }
-    let leader = cands[0].score;
-    let leader_is_completion = cands[0].completion;
-    if let Some(index) = cands
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            !c.rejected
-                && c.full
-                && c.edits == 0
-                && (c.trusted && !leader_is_completion && c.freq >= EXACT_PROTECT_MIN_FREQ
-                    || c.sentence
-                        && !leader_is_completion
-                        && c.score + EXACT_SENTENCE_MARGIN >= leader)
-        })
-        .max_by(|a, b| a.1.score.total_cmp(&b.1.score))
-        .map(|(i, _)| i)
+    // 误选的词不占首位:让给第一个未受罚的候选。
+    if cands[0].rejected
+        && let Some(index) = cands.iter().position(|c| !c.rejected)
     {
         cands[..=index].rotate_right(1);
     }

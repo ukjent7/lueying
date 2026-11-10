@@ -37,8 +37,6 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
-    /// 删除当前高亮候选的学习记录(Shift+Delete);词典词条本身不受影响。
-    DeleteCandidate,
     Punct(char),
     Shift,
 }

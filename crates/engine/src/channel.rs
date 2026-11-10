@@ -218,6 +218,8 @@ fn add_typos(raw: &str, complete: bool, out: &mut [Vec<Unit>]) {
                 out[pos].push(Unit {
                     cost: cost * TYPO_SCALE + valid + extra,
                     typo: true,
+                    // 字面是用户实际打出的字母,不是纠正后的音节:学习的同键匹配以此为准。
+                    literal: window.to_string(),
                     ..Unit::plain(syllable.to_string(), false, (pos, pos + len))
                 });
             }
@@ -393,6 +395,17 @@ pub fn first_path(raw: &str) -> Vec<(usize, usize)> {
             }
             None => pos += 1,
         }
+    }
+    out
+}
+
+/// 用户输入的规范音节边界:`bounds[p]` 为真表示某条规范读法恰好在 `p` 结束,末尾恒为真。
+/// 简拼单元的消费终点必须落在这里,才能给学习加分;切进完整音节内部的前缀读法不算。
+pub fn canonical_bounds(raw: &str) -> Vec<bool> {
+    let mut out = vec![false; raw.len() + 1];
+    out[raw.len()] = true;
+    for (_, end) in first_path(raw) {
+        out[end] = true;
     }
     out
 }

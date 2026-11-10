@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "拼音输入引擎:切分、候选、键状态机与可选功能模块契约(平台无关)"
 
+[features]
+# 评测用模拟时钟(set_sim_now);产品构建不开。
+sim-clock = []
+
 [dependencies]
 lueying-dict.workspace = true

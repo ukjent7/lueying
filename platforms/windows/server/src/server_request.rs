@@ -598,25 +598,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             apply_config(state, cfg);
             group_reply(&state.user)
         }
-        Request::ClearUser => {
-            state
-                .user
-                .write()
-                .unwrap_or_else(|p| p.into_inner())
-                .clear();
-            // 立即落盘:清空后马上退出也不能让旧词库在下一次启动回来。
-            if let Some(path) = crate::user_store::path() {
-                crate::user_store::flush(&state.user, &path);
-            }
-            // 正在组句的候选可能含刚学过的词;按当前配置重算一遍。
-            let cfg = state
-                .config
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone();
-            apply_config(state, cfg);
-            Reply::default()
-        }
         Request::FuzzyStats => group_reply(&state.user),
         Request::Status => {
             let sync_latency = state.rerank_sync_metrics.snapshot();

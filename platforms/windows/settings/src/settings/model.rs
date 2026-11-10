@@ -28,7 +28,6 @@ pub enum ButtonKind {
     Primary,
     Secondary,
     Ghost,
-    Danger,
 }
 
 /// 一个按钮。

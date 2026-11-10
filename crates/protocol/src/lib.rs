@@ -183,7 +183,6 @@ pub enum KeyMsg {
     End,
     PageUp,
     PageDown,
-    DeleteCandidate,
     Punct(char),
     Shift,
 }
@@ -229,8 +228,6 @@ pub enum Request {
     ReloadConfig,
     /// 保留键 Ctrl+.：切换中文标点并持久化。
     TogglePunct,
-    /// 设置窗清空共享用户词库(所有会话立即生效)。
-    ClearUser,
     /// 设置窗导出用户词库文本。
     ExportUser,
     /// 设置窗导入用户词库文本(与现有词条合并)。
@@ -257,7 +254,7 @@ pub enum Request {
     Pick { session: u64, slot: usize },
     /// 候选窗右键置顶:当前页内 0 基序号,该键下此后直接放首位。
     Pin { session: u64, slot: usize },
-    /// 候选窗右键降权:当前页内 0 基序号,同键记一次跳过负分。
+    /// 候选窗右键降权:当前页内 0 基序号,同键减弱一次记忆。
     Demote { session: u64, slot: usize },
     /// 宿主自绘候选时按全局候选序号点选。
     PickIndex { session: u64, index: usize },
@@ -315,7 +312,6 @@ impl Request {
             Self::SetFullwidth { .. } => "SetFullwidth",
             Self::ReloadConfig => "ReloadConfig",
             Self::TogglePunct => "TogglePunct",
-            Self::ClearUser => "ClearUser",
             Self::ExportUser => "ExportUser",
             Self::ImportUser { .. } => "ImportUser",
             Self::FuzzyStats => "FuzzyStats",
@@ -342,7 +338,6 @@ impl Request {
         match self {
             Request::Status => Privilege::Read,
             Request::ReloadConfig
-            | Request::ClearUser
             | Request::ExportUser
             | Request::ImportUser { .. }
             | Request::FuzzyStats

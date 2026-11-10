@@ -47,8 +47,6 @@ impl Engine {
             gram: self.gram.as_deref(),
             charts: &mut self.charts,
             context: &context,
-            host: &self.host,
-            previous2: self.second_last_word.as_deref(),
             previous: self.last_word.as_deref(),
             raw: &expansion.query,
             quick_trigger: self.modules.raw_trigger(&expansion.query),
@@ -71,7 +69,6 @@ impl Engine {
                 host: &self.host,
                 now,
                 previous: self.last_word.as_deref(),
-                previous2: self.second_last_word.as_deref(),
                 user: &user,
             };
             self.modules.candidates(&module_ctx, &mut built.cands);
@@ -183,7 +180,7 @@ fn inject_action(cands: &mut Vec<Candidate>, action: &Action, raw: &str, user: &
         return;
     }
     let pin = format!("!{}", action.id);
-    if user.reject_effective(&key, &pin) >= ACTION_SUPPRESS {
+    if user.literal_picks(&key, &pin) >= ACTION_SUPPRESS {
         return;
     }
     // 没有任何候选等于原文时补一条页尾字面候选:引擎与扩展都跳过了它,

@@ -55,7 +55,7 @@ impl Module for EnglishModule {
         cands.retain(|other| other.text != text);
         // 与微信一致:中文首选可信时英文排第二;用户选过 PROMOTE_PICKS 次就升到首位。
         let skip = cands.iter().take_while(|other| other.pinned).count();
-        let promoted = ctx.user.picks(raw, &text) >= PROMOTE_PICKS;
+        let promoted = ctx.user.promoted(raw, &text);
         let at = if trusted_full && !promoted {
             (skip + 1).min(cands.len())
         } else {
@@ -64,9 +64,6 @@ impl Module for EnglishModule {
         cands.insert(at, cand);
     }
 }
-
-/// 英文候选被用户选中这么多次后升到首位。
-const PROMOTE_PICKS: u32 = 2;
 
 fn table() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();

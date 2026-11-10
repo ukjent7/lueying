@@ -23,14 +23,13 @@ export global Theme {
     in property <color> text-tertiary;
     in property <color> success;
     in property <color> danger;
-    in property <color> on-danger;
 }
 
 export struct Btn {
     base: string,
     index: int,
     text: string,
-    // 对齐 ButtonKind:0 Primary 1 Secondary 2 Ghost 3 Danger。
+    // 对齐 ButtonKind:0 Primary 1 Secondary 2 Ghost。
     kind: int,
     enabled: bool,
 }
@@ -180,8 +179,7 @@ component ColoredButton inherits Rectangle {
     min-width: 54px;
     border-radius: 7px;
     background: btn.kind == 0 ? Theme.accent
-        : (btn.kind == 3 ? Theme.danger
-        : (btn.kind == 1 ? Theme.surface-alt : transparent));
+        : (btn.kind == 1 ? Theme.surface-alt : transparent);
     border-width: btn.kind == 1 ? 1px : 0px;
     border-color: Theme.border;
     opacity: btn.enabled ? 1 : 0.4;
@@ -207,8 +205,7 @@ component ColoredButton inherits Rectangle {
             text: btn.text;
             font-size: 12px;
             color: btn.kind == 0 ? Theme.on-accent
-                : (btn.kind == 3 ? Theme.on-danger
-                : (btn.kind == 2 ? Theme.accent-text : Theme.text));
+                : (btn.kind == 2 ? Theme.accent-text : Theme.text);
             horizontal-alignment: center;
             vertical-alignment: center;
         }
