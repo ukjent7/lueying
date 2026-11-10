@@ -219,8 +219,6 @@ pub(super) struct State {
     pub(super) version: AtomicU64,
     /// 每次中英切换自增,模式徽标据此决定是否重新显示。
     pub(super) hud_serial: AtomicU64,
-    /// 每处理一次按键自增;工具栏上的角色据此知道用户在打字。
-    pub(super) key_serial: AtomicU64,
     /// 候选窗的空闲等待;版本号变化时叫醒它。
     pub(super) wake_ui: Wake,
     /// 模式徽标的空闲等待;切换与淡入淡出期间叫醒它。
@@ -247,8 +245,6 @@ pub(super) struct State {
     pub(super) user: SharedUser,
     /// 对外 commit 通道的令牌缓存;首次使用时从文件读或生成。
     pub(super) commit_token: Mutex<Option<String>>,
-    /// 声明式皮肤(skin.toml);重载配置时一并重读。
-    pub(super) skin: Mutex<lueying_server::skin::Skin>,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
     pub(super) modules: Arc<Modules>,
     /// 自定义短语模块;设置重载时重新读文件。
@@ -532,7 +528,6 @@ pub(super) fn real_main() {
         conns: Mutex::new(HashMap::new()),
         version: AtomicU64::new(0),
         hud_serial: AtomicU64::new(0),
-        key_serial: AtomicU64::new(0),
         wake_ui,
         wake_hud,
         mode_hud: Mutex::new(None),
@@ -547,7 +542,6 @@ pub(super) fn real_main() {
         uia_tx: Some(uia_tx),
         user,
         commit_token: Mutex::new(None),
-        skin: Mutex::new(load_skin()),
         modules: crate::modules::registry(
             phrases.clone(),
             Arc::clone(&prediction),
@@ -811,22 +805,8 @@ fn group_reply(user: &SharedUser) -> Reply {
     }
 }
 
-/// 读声明式皮肤;文件缺失或坏键回落默认,问题写日志。
-fn load_skin() -> lueying_server::skin::Skin {
-    let Some(path) = lueying_server::config::skin_path() else {
-        return lueying_server::skin::Skin::default();
-    };
-    let (skin, issues) = lueying_server::skin::Skin::load(&path);
-    for issue in issues {
-        println!("皮肤: {issue}");
-    }
-    skin
-}
-
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
 pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
-    // 皮肤文件跟配置一起重读:改完 skin.toml 一次 reload 生效。
-    *state.skin.lock().unwrap_or_else(|p| p.into_inner()) = load_skin();
     let engine_cfg = cfg.engine();
     let old = state
         .config

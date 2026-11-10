@@ -2,14 +2,10 @@
 //!
 //! 按钮与传统输入法的工具栏一致:中/英、全/半角、中英标点、简/繁、设置,另补「收起」。
 //! 大小用倍率表示,按钮与间距一起缩放,倍率只能在 [`SCALE_MIN`, `SCALE_MAX`] 之间,
-//! 不会被设成无限大或无限小。舞台是工具栏外面一圈留白,角色可以在舞台里表演,
-//! 但按钮的点击始终优先。外观可以由扩展自定义,但按钮的功能不能丢。
+//! 不会被设成无限大或无限小。
 
-use crate::actor::{Actor, Stage, View};
-use crate::animation::{Pack, frame_at};
 use crate::paint::{Canvas, Color};
 use crate::panel::{Palette, Rect};
-use crate::skin_pack::{ActorSpec, Layer, SkinPack};
 
 /// 按钮的边长(倍率 1.0 时,逻辑像素)。
 pub const BUTTON: f32 = 28.0;
@@ -22,9 +18,6 @@ pub const TASKBAR: f32 = 48.0;
 /// 工具栏大小倍率的下限与上限:用户只能在这个范围内调。
 pub const SCALE_MIN: f32 = 0.75;
 pub const SCALE_MAX: f32 = 1.5;
-/// 舞台比工具栏多出的留白(倍率 1.0 时):左右各一点,上方多留一截给角色跳起来。
-pub const STAGE_SIDE: f32 = 12.0;
-pub const STAGE_UP: f32 = 24.0;
 
 /// 把倍率夹到允许的范围内。设置页的输入、配置文件里的值都要过这一关。
 pub fn clamp_scale(scale: f32) -> f32 {
@@ -129,18 +122,6 @@ impl Toolbar {
         Rect::from_xywh(self.x, self.y, width, height)
     }
 
-    /// 舞台:工具栏外面稍大的一块区域,角色在这里表演。夹在屏幕内。
-    pub fn stage(&self, screen: Rect) -> Rect {
-        let s = clamp_scale(self.scale);
-        let bar = self.rect();
-        Rect {
-            left: (bar.left - STAGE_SIDE * s).max(screen.left),
-            top: (bar.top - STAGE_UP * s).max(screen.top),
-            right: (bar.right + STAGE_SIDE * s).min(screen.right),
-            bottom: bar.bottom.min(screen.bottom),
-        }
-    }
-
     /// 每个按钮的矩形,从左到右。
     pub fn buttons(&self) -> Vec<(Button, Rect)> {
         let s = clamp_scale(self.scale);
@@ -233,90 +214,9 @@ pub fn label(button: Button, status: Status) -> &'static str {
     }
 }
 
-/// 角色的边长(倍率 1.0 时,逻辑像素)。
-pub const SPRITE: f32 = 36.0;
 /// 圆角半径与字号(倍率 1.0 时)。
 const RADIUS: f32 = 9.0;
 const FONT: f32 = 14.0;
-
-/// 一层角色:舞台与它们这一刻推进到的位置。
-pub struct Cast<'a> {
-    pub stage: &'a Stage,
-    pub views: &'a [View],
-}
-
-/// 舞台上的两层角色,以及它们这一刻的位置。平台每帧调用 [`Players::advance`],
-/// 再把 [`Players::below_cast`] 与 [`Players::above_cast`] 交给 [`paint`]。
-pub struct Players {
-    below: Stage,
-    above: Stage,
-    below_views: Vec<View>,
-    above_views: Vec<View>,
-}
-
-impl Players {
-    /// 按动画包建两层角色;角色的计时从 0 开始,由平台按自己的时钟推进。
-    pub fn new(skin: Option<&SkinPack>, bar: &Toolbar, screen: Rect) -> Self {
-        let area = bar.stage(screen);
-        Self {
-            below: cast(skin, Layer::Below, area, 0),
-            above: cast(skin, Layer::Above, area, 0),
-            below_views: Vec::new(),
-            above_views: Vec::new(),
-        }
-    }
-
-    /// 按时间推进两层角色;舞台的大小与角色的尺寸跟着工具栏的倍率走。舞台上有角色时返回 true。
-    pub fn advance(&mut self, bar: &Toolbar, screen: Rect, now_ms: u64) -> bool {
-        let area = bar.stage(screen);
-        let size = SPRITE * bar.scale;
-        for stage in [&mut self.below, &mut self.above] {
-            stage.area = area;
-            stage.sprite = (size, size);
-        }
-        self.below_views = self.below.tick(now_ms);
-        self.above_views = self.above.tick(now_ms);
-        !self.below.actors.is_empty() || !self.above.actors.is_empty()
-    }
-
-    /// 用户打了字:角色都收到一次按键,于是停下来看着输入。
-    pub fn key(&mut self, now_ms: u64) {
-        for actor in self
-            .below
-            .actors
-            .iter_mut()
-            .chain(self.above.actors.iter_mut())
-        {
-            actor.key(now_ms);
-        }
-    }
-
-    /// 点击舞台上的角色;上层优先。点中了哪个角色由角色自己决定怎么反应。
-    pub fn click(&mut self, x: f32, y: f32) {
-        if self.above.click(x, y).is_none() {
-            let _ = self.below.click(x, y);
-        }
-    }
-
-    /// 舞台上一个角色都没有时返回 true;没有动画包时就是这样。
-    pub fn is_empty(&self) -> bool {
-        self.below.actors.is_empty() && self.above.actors.is_empty()
-    }
-
-    pub fn below_cast(&self) -> Cast<'_> {
-        Cast {
-            stage: &self.below,
-            views: &self.below_views,
-        }
-    }
-
-    pub fn above_cast(&self) -> Cast<'_> {
-        Cast {
-            stage: &self.above,
-            views: &self.above_views,
-        }
-    }
-}
 
 /// 一帧工具栏的绘制输入。坐标都是屏幕坐标,`origin` 是窗口左上角,画的时候要减去它。
 pub struct Scene<'a> {
@@ -324,15 +224,9 @@ pub struct Scene<'a> {
     pub origin: (f32, f32),
     pub palette: &'a Palette,
     pub status: Status,
-    /// 动画包的帧表;没有就不画角色。
-    pub pack: Option<&'a Pack>,
-    pub now_ms: u64,
-    /// 按钮下面的角色与按钮上面的角色。
-    pub below: Cast<'a>,
-    pub above: Cast<'a>,
 }
 
-/// 画一帧:背景,按钮下面的角色,按钮,按钮上面的角色。三个平台共用这一个顺序。
+/// 画一帧:背景与按钮。
 pub fn paint(canvas: &mut dyn Canvas, scene: &Scene) {
     let scale = scene.toolbar.scale;
     let bar = local(scene.toolbar.rect(), scene.origin);
@@ -343,25 +237,10 @@ pub fn paint(canvas: &mut dyn Canvas, scene: &Scene) {
         1.0,
         Color::opaque(scene.palette.border),
     );
-    paint_cast(canvas, scene, &scene.below);
     for (button, rect) in scene.toolbar.buttons() {
         let text = label(button, scene.status);
         let color = Color::opaque(scene.palette.text);
         canvas.text_centered(text, local(rect, scene.origin), FONT * scale, color);
-    }
-    paint_cast(canvas, scene, &scene.above);
-}
-
-fn paint_cast(canvas: &mut dyn Canvas, scene: &Scene, cast: &Cast) {
-    let Some(pack) = scene.pack else {
-        return;
-    };
-    let size = SPRITE * scene.toolbar.scale;
-    for (actor, view) in cast.stage.actors.iter().zip(cast.views) {
-        if let Some(index) = frame_at(actor.clip(), scene.now_ms, pack) {
-            let (x, y) = (view.x - scene.origin.0, view.y - scene.origin.1);
-            canvas.draw_sprite(index, Rect::from_xywh(x, y, size, size));
-        }
     }
 }
 
@@ -373,39 +252,6 @@ fn local(rect: Rect, origin: (f32, f32)) -> Rect {
         right: rect.right - origin.0,
         bottom: rect.bottom - origin.1,
     }
-}
-
-/// 把动画包里某一层的角色排上舞台:各组按数量建出来,同一层的角色均匀地站在舞台上。
-/// 没有动画包时舞台是空的。包在解析时已经校验过行为,这里不会失败。
-fn cast(skin: Option<&SkinPack>, layer: Layer, area: Rect, now_ms: u64) -> Stage {
-    let mut stage = Stage::new(area, (SPRITE, SPRITE));
-    let Some(skin) = skin else {
-        return stage;
-    };
-    let specs: Vec<&ActorSpec> = skin
-        .actors
-        .iter()
-        .filter(|spec| spec.layer == layer)
-        .collect();
-    let total: usize = specs.iter().map(|spec| spec.count).sum();
-    let mut slot = 0usize;
-    for spec in specs {
-        for _ in 0..spec.count {
-            slot += 1;
-            let x = area.left + (area.right - area.left) * slot as f32 / (total + 1) as f32;
-            let y = (area.top + area.bottom - SPRITE) / 2.0;
-            // 每个角色的随机种子不同,行为才不会同步。
-            let seed = (slot as u64)
-                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                .wrapping_add(now_ms);
-            if let Ok(actor) =
-                Actor::new(seed, now_ms, (x - SPRITE / 2.0, y), spec.behavior.clone())
-            {
-                stage.add(actor);
-            }
-        }
-    }
-    stage
 }
 
 fn inside(rect: Rect, px: f32, py: f32) -> bool {
@@ -432,22 +278,6 @@ mod tests {
         assert_eq!(label(Button::FullWidth, status), "全");
         assert_eq!(label(Button::Punct, status), ",");
         assert_eq!(label(Button::Script, status), "繁");
-    }
-
-    #[test]
-    fn each_layer_gets_its_own_actors() {
-        let skin = crate::skin_pack::parse(
-            r#"{"format": 1, "name": "t", "clips": {"idle": {"ms": 100, "frames": [0]}},
-                "actors": [
-                    {"count": 1, "layer": "below", "behavior": {"states": [{"clip": "idle"}]}},
-                    {"count": 2, "layer": "above", "behavior": {"states": [{"clip": "idle"}]}}
-                ]}"#,
-        )
-        .expect("合法的包");
-        let area = Rect::from_xywh(0.0, 0.0, 200.0, 100.0);
-        assert_eq!(cast(Some(&skin), Layer::Below, area, 0).actors.len(), 1);
-        assert_eq!(cast(Some(&skin), Layer::Above, area, 0).actors.len(), 2);
-        assert!(cast(None, Layer::Below, area, 0).actors.is_empty());
     }
 
     #[test]
@@ -478,22 +308,6 @@ mod tests {
         let (w2, h2) = large.size();
         assert!((w2 - w1 * 1.5).abs() < 0.001);
         assert!((h2 - h1 * 1.5).abs() < 0.001);
-    }
-
-    #[test]
-    fn stage_is_slightly_larger_than_the_bar_and_stays_on_screen() {
-        let bar = Toolbar::at_default(screen());
-        let stage = bar.stage(screen());
-        let rect = bar.rect();
-        assert!(stage.left < rect.left && stage.right > rect.right);
-        assert!(stage.top < rect.top);
-        assert!(stage.right <= 1920.0 && stage.bottom <= 1080.0);
-        let corner = Toolbar {
-            x: 0.0,
-            y: 0.0,
-            ..bar
-        };
-        assert!(corner.stage(screen()).left >= 0.0 && corner.stage(screen()).top >= 0.0);
     }
 
     #[test]

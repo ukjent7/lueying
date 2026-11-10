@@ -24,7 +24,7 @@
 | 路径 | 内容 |
 |---|---|
 | `%APPDATA%\lueying\config.toml` | 主配置 |
-| `%APPDATA%\lueying\phrases.txt`、`punct.txt`、`apps.toml`、`skin.toml` | 自定义短语、标点、按应用配置、皮肤 |
+| `%APPDATA%\lueying\phrases.txt`、`punct.txt`、`apps.toml` | 自定义短语、标点、按应用配置 |
 | `%APPDATA%\lueying\extensions\` | 运行期扩展与同意记录 `consent.json` |
 | `%APPDATA%\lueying\secrets\` | 扩展的密钥类设置，仅当前用户可读 |
 | `%APPDATA%\lueying\webdav-password.txt`、`webdav-state.txt` | WebDAV 口令与上次同步记录，不进配置文件 |

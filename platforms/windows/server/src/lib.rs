@@ -25,8 +25,6 @@ pub mod official_extensions;
 
 pub mod settings;
 
-pub mod skin;
-
 /// 配置同步:载荷格式、摘要、冲突判定与 WebDAV 传输。
 pub mod sync;
 

@@ -1,20 +1,16 @@
-//! 输入法工具栏:一排常用按钮的悬浮条,默认在屏幕右下角,可以拖动。舞台上可以有角色表演。
+//! 输入法工具栏:一排常用按钮的悬浮条,默认在屏幕右下角,可以拖动。
 //!
 //! 画法与模式徽标一样:分层窗口 + Direct2D + UpdateLayeredWindow。窗口不带穿透样式,
-//! 所以能接收鼠标;按钮的动作复用服务端已有的请求处理。位置、大小与舞台的模型在
-//! `lueying_render::toolbar`,角色行为在 `lueying_render::actor`,动画帧由动画包提供。
-//! 动画包(`pack.json` 加帧图)放在服务端程序同目录的 `toolbar-pack` 里,没有就不画角色。
-//! 角色分两层:按钮下面的先画,按钮上面的最后画。
+//! 所以能接收鼠标;按钮的动作复用服务端已有的请求处理。位置、大小与按钮的模型在
+//! `lueying_render::toolbar`。
 
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lueying_protocol::Request;
 use lueying_render::panel::Rect;
-use lueying_render::skin_pack::{self, SkinPack};
 use lueying_render::toolbar::{self, Action, Button, Status, Toolbar};
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
@@ -35,19 +31,15 @@ use lueying_server::config;
 
 /// 鼠标左键按住时的标志(`MK_LBUTTON`)。
 const MK_LBUTTON: usize = 0x0001;
-/// 每一帧的间隔;工具栏上有角色时逐帧重画,没有角色时只在需要时重画。
+/// 轮询消息与脏标记的间隔;只在需要时重画。
 const TICK: Duration = Duration::from_millis(33);
 
-/// 窗口线程独占的状态:工具栏模型、两层舞台、动画包、窗口左上角的屏幕坐标、按钮交互。
+/// 窗口线程独占的状态:工具栏模型、窗口左上角的屏幕坐标、按钮交互。
 struct Ctx {
     state: Arc<State>,
     hwnd: HWND,
     bar: Toolbar,
     screen: Rect,
-    /// 舞台上的两层角色:按钮下面的与按钮上面的。
-    players: toolbar::Players,
-    skin: Option<SkinPack>,
-    started: Instant,
     /// 窗口左上角(屏幕坐标);鼠标坐标要加上它。
     origin: (f32, f32),
     /// 按下时落在哪个按钮上。
@@ -55,8 +47,6 @@ struct Ctx {
     /// 按下后是否真的拖动过;拖动过就不算点击。
     moved: bool,
     dirty: bool,
-    /// 上一次看到的按键计数;变了就说明用户又打了字。
-    seen_keys: u64,
 }
 
 thread_local! {
@@ -85,7 +75,7 @@ fn toolbar_loop(state: Arc<State>) {
     }
     let screen = to_rect(place::primary_work_area());
     let bar = saved_bar(&state, screen);
-    let hwnd = match create_window(&bar, screen) {
+    let hwnd = match create_window(&bar) {
         Ok(hwnd) => hwnd,
         Err(e) => {
             println!("工具栏建窗失败: {e}");
@@ -99,38 +89,27 @@ fn toolbar_loop(state: Arc<State>) {
             return;
         }
     };
-    let skin = load_skin(&mut surface);
-    let players = toolbar::Players::new(skin.as_ref(), &bar, screen);
     CTX.with(|cell| {
         *cell.borrow_mut() = Some(Ctx {
             state,
             hwnd,
             bar,
             screen,
-            players,
-            skin,
-            started: Instant::now(),
             origin: (0.0, 0.0),
             pressed: None,
             moved: false,
             dirty: true,
-            seen_keys: 0,
         });
     });
     loop {
         pump_messages();
-        let animated = CTX.with(|cell| {
-            cell.borrow()
-                .as_ref()
-                .is_some_and(|ctx| !ctx.players.is_empty())
-        });
         let dirty = CTX.with(|cell| {
             cell.borrow_mut()
                 .as_mut()
                 .map(|ctx| std::mem::take(&mut ctx.dirty))
                 .unwrap_or(false)
         });
-        if dirty || animated {
+        if dirty {
             CTX.with(|cell| {
                 if let Some(ctx) = cell.borrow_mut().as_mut() {
                     redraw(ctx, &mut surface);
@@ -139,40 +118,6 @@ fn toolbar_loop(state: Arc<State>) {
         }
         std::thread::sleep(TICK);
     }
-}
-
-/// 读动画包:`pack.json` 与帧图都在 `toolbar-pack` 里。缺了或坏了就不画角色,按钮照常。
-fn load_skin(surface: &mut Surface) -> Option<SkinPack> {
-    let dir = pack_dir()?;
-    let text = std::fs::read_to_string(dir.join("pack.json")).ok()?;
-    let skin = match skin_pack::parse(&text) {
-        Ok(skin) => skin,
-        Err(e) => {
-            println!("工具栏动画包错误: {e}");
-            return None;
-        }
-    };
-    let frames = dir.join(&skin.frames);
-    let last = skin.pack.max_frame()?;
-    let mut sprites = Vec::with_capacity(last + 1);
-    for number in 0..=last {
-        match surface.load_sprite(&frames.join(format!("{number}.png"))) {
-            Ok(bitmap) => sprites.push(bitmap),
-            Err(e) => {
-                println!("工具栏动画帧 {number} 读取失败: {e}");
-                return None;
-            }
-        }
-    }
-    surface.set_sprites(sprites);
-    Some(skin)
-}
-
-fn pack_dir() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()?
-        .parent()
-        .map(|dir| dir.join("toolbar-pack"))
 }
 
 /// 上次保存的大小与位置;没有就用默认的右下角。位置夹在屏幕内。
@@ -214,7 +159,7 @@ fn pump_messages() {
     }
 }
 
-/// 重画并上屏:先按时间推进角色,再按模型定窗口位置与大小;不可见时隐藏窗口。
+/// 重画并上屏:按模型定窗口位置与大小;不可见时隐藏窗口。
 fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     if !ctx.bar.visible {
         unsafe {
@@ -232,33 +177,21 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     if (configured - ctx.bar.scale).abs() > f32::EPSILON {
         ctx.bar = ctx.bar.with_scale(configured, ctx.screen);
     }
-    let stage_rect = ctx.bar.stage(ctx.screen);
-    ctx.origin = (stage_rect.left, stage_rect.top);
+    let rect = ctx.bar.rect();
+    ctx.origin = (rect.left, rect.top);
     let (w, h) = (
-        (stage_rect.right - stage_rect.left).max(1.0),
-        (stage_rect.bottom - stage_rect.top).max(1.0),
+        (rect.right - rect.left).max(1.0),
+        (rect.bottom - rect.top).max(1.0),
     );
-    let now_ms = ctx.started.elapsed().as_millis() as u64;
-    // 用户打了字:舞台上的角色都收到一次按键,于是停下来看着输入。
-    let keys = ctx.state.key_serial.load(Ordering::Relaxed);
-    if keys != ctx.seen_keys {
-        ctx.seen_keys = keys;
-        ctx.players.key(now_ms);
-    }
-    ctx.players.advance(&ctx.bar, ctx.screen, now_ms);
     let palette = theme::palette(theme::colors_with(
         theme::Appearance::of_system(),
         place::ui_options(&ctx.state).2,
     ));
     let scene = toolbar::Scene {
         toolbar: &ctx.bar,
-        origin: (stage_rect.left, stage_rect.top),
+        origin: (rect.left, rect.top),
         palette: &palette,
         status: status_of(&ctx.state),
-        pack: ctx.skin.as_ref().map(|skin| &skin.pack),
-        now_ms,
-        below: ctx.players.below_cast(),
-        above: ctx.players.above_cast(),
     };
     match surface.begin(w as u32, h as u32) {
         Ok(canvas) => toolbar::paint(canvas, &scene),
@@ -266,8 +199,8 @@ fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
     }
     if let Err(e) = surface.present(
         ctx.hwnd,
-        stage_rect.left as i32,
-        stage_rect.top as i32,
+        rect.left as i32,
+        rect.top as i32,
         w as i32,
         h as i32,
     ) {
@@ -346,11 +279,6 @@ fn on_up(lparam: LPARAM) {
         }
         match (pressed, released_on) {
             (Some(p), Some(r)) if p == r => Some((p.action(), ctx.state.clone())),
-            // 在按钮以外、没有拖动地点了一下:看看点中了哪个角色,上层的优先。
-            (None, _) => {
-                ctx.players.click(sx, sy);
-                None
-            }
             _ => None,
         }
     });
@@ -436,20 +364,20 @@ fn to_rect(r: RECT) -> Rect {
 }
 
 /// 无焦点置顶、接收鼠标的分层窗口。
-fn create_window(bar: &Toolbar, screen: Rect) -> Result<HWND, String> {
+fn create_window(bar: &Toolbar) -> Result<HWND, String> {
     unsafe {
         let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
         ensure_class(HINSTANCE(hmodule.0))?;
-        let stage = bar.stage(screen);
+        let rect = bar.rect();
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             w!("lueying-toolbar"),
             w!("lueying-toolbar"),
             WS_POPUP,
-            stage.left as i32,
-            stage.top as i32,
-            (stage.right - stage.left) as i32,
-            (stage.bottom - stage.top) as i32,
+            rect.left as i32,
+            rect.top as i32,
+            (rect.right - rect.left) as i32,
+            (rect.bottom - rect.top) as i32,
             None,
             None,
             Some(HINSTANCE(hmodule.0)),

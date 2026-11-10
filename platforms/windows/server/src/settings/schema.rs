@@ -692,12 +692,12 @@ pub static SETTINGS: &[SettingDef] = &[
     SettingDef {
         key: "toolbar_scale",
         title: "工具栏大小",
-        detail: "工具栏与它的舞台一起缩放,只在 75%–150% 之间调",
+        detail: "工具栏大小,只在 75%–150% 之间调",
         value: ValueType::Enum(&["75", "100", "125", "150"]),
         default: DefaultValue::Text("100"),
         ui: Some(UiDef {
             page: PageId::Input,
-            keywords: "工具栏 大小 缩放 舞台",
+            keywords: "工具栏 大小 缩放",
             control: segment(
                 ids::TOOLBAR_SCALE,
                 TOOLBAR_SCALE_CHOICES,

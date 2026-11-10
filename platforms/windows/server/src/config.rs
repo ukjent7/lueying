@@ -536,12 +536,6 @@ pub fn clipboard_history_path() -> Option<PathBuf> {
     Some(base.join("lueying").join("clipboard-history.json"))
 }
 
-/// 声明式皮肤(`%APPDATA%\lueying\skin.toml`);缺文件用默认主题。
-pub fn skin_path() -> Option<PathBuf> {
-    let base = PathBuf::from(std::env::var_os("APPDATA")?);
-    Some(base.join("lueying").join("skin.toml"))
-}
-
 /// 读配置。文件缺失用默认值;TOML/值域错误收集进 `config_issues`,不阻断
 /// 其余键。自定义标点从 `punct.txt` 并入,按应用层从 `apps.toml` 并入。
 pub fn load(path: &Path) -> AppConfig {

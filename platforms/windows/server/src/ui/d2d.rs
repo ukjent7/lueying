@@ -612,19 +612,11 @@ fn draw_view(ctx: &mut WinCtx, view: &SessionView) {
         Some(rgb) if !high_contrast => lueying_server::theme::colors_with_accent(appearance, rgb),
         _ => lueying_server::theme::colors_with(appearance, accent),
     };
-    // 皮肤(skin.toml)叠在脚本主题色之上,是用户显式放置的最后一层;
-    // 高对比度下 with_skin 原样返回。
-    let skin = ctx.state.skin.lock().unwrap_or_else(|p| p.into_inner());
-    // 用户的 skin.toml 是显式选择的自绘配色,有皮肤就不上材质背板。
-    let skinless = skin.is_empty();
-    let palette =
-        lueying_server::theme::palette(lueying_server::theme::with_skin(colors, appearance, &skin));
-    // 皮肤只参与配色;早点放锁,后面的出帧与显示不再借 `ctx`。
-    drop(skin);
+    let palette = lueying_server::theme::palette(colors);
     // 材质背板:毛玻璃由 DWM 出底色,自绘只铺半透明内容层;系统关闭
-    // 「透明效果」、高对比度、有皮肤或落属性失败时回实底主题。
+    // 「透明效果」、高对比度或落属性失败时回实底主题。
     let wanted = Material {
-        on: !high_contrast && skinless && material::transparency_enabled(),
+        on: !high_contrast && material::transparency_enabled(),
         tint: colors.bg,
         dark: matches!(appearance, lueying_server::theme::Appearance::Dark),
     };
