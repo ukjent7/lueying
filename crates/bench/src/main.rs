@@ -9,6 +9,7 @@ mod extensions;
 mod extwasm;
 mod features;
 mod harness;
+mod import_typing;
 mod learning;
 mod metrics;
 mod modules;
@@ -116,6 +117,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
 
   --dict <主词典> --gram <搭配表> --rerank-dir <模型目录>   场景 E2E 与准确率报告(--bench 全量,--bench-fast 快速)
   同上 --only-shared [--corpus <语料>] [--shard <序号>/<总片数>]   共享语料逐条结果,写到 target/bench/
+  import-typing <记录目录> [--out <文件>]   打字记录合成 eval-user-* 语料(见 lueying-core 的 typing_log)
 
 测试集(eval-v2-test、eval-v3-test 与私有 test)只在发版时跑:dict-bench 工作流 workflow_dispatch 勾选 test;
 日常 CI 不跑,也不打印测试集的数字。
@@ -134,6 +136,9 @@ fn main() {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
         return;
+    }
+    if args.get(1).map(String::as_str) == Some("import-typing") {
+        std::process::exit(import_typing::run(&args));
     }
     let dict_path = args
         .iter()
