@@ -206,3 +206,7 @@ impl Scheme for AuxScheme {
         self.base.key_for_spans(base_raw, &spans)
     }
 }
+
+#[cfg(test)]
+#[path = "aux_code_tests.rs"]
+mod tests;
