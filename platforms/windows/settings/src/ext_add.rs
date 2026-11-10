@@ -22,6 +22,7 @@ use lueying_ext::manifest::container;
 use lueying_server::config;
 
 use crate::ext_install::install_files;
+use crate::net;
 
 /// 清单应答的体积上限。
 const JSON_LIMIT: u64 = 1 << 20;
@@ -39,7 +40,7 @@ const USER_AGENT: &str = "lueying-settings (ext add)";
 /// 解析并安装一个社区扩展;返回给人看的汇报。
 pub fn add(source: &str) -> Result<String, String> {
     let (owner, repo, rev) = parse_source(source)?;
-    let agent = agent();
+    let agent = net::agent(Duration::from_secs(300));
 
     // 路径一:该版本的 GitHub Release 里有没有 `.luext` 资产。
     let release = release_json(&agent, owner, repo, rev)?;
@@ -109,14 +110,6 @@ fn safe_token(token: &str) -> bool {
         && token
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
-/// 一个带整体超时的 HTTP 客户端。
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(300)))
-        .build()
-        .new_agent()
 }
 
 /// 一个 GET;2xx 的响应体按上限读回,超限即错。

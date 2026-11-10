@@ -157,7 +157,7 @@ jobs:
         run: |
           cargo nextest run --locked \
             -p lueying-ext --all-features \
-            -p lueying-ext-host -p lueying-cli -p lueying-net
+            -p lueying-ext-host -p lueying-cli
 
   windows:
     if: ${{ !cancelled() }}
@@ -229,10 +229,10 @@ jobs:
         # 只编发版真正用到的包;E2E 宿主只在手动触发、打 tag 与 quality.yml 里编。
         # 安装冒烟成本更高,留在 quality.yml 跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
-        run: cargo build --release --locked -p lueying-server -p lueying-settings -p lueying-ext-host -p lueying-net -p lueying-installer
+        run: cargo build --release --locked -p lueying-server -p lueying-settings -p lueying-ext-host -p lueying-installer
       # 常驻进程不联网的可证明约束:按键、词库与候选窗都在 lueying-server 手里,它的
       # 导入表不得出现 WinHTTP/WinINet。联网只在两处:设置窗(更新、扩展商店)与扩展宿主。
-      # 反向对照:设置窗的导入表必须能找到 winhttp,否则上面的断言失去对照、可能空转。
+      # 反向对照:设置窗的导入表必须能找到 crypt32(HTTPS 证书链经系统证书库校验),否则上面的断言失去对照、可能空转。
       - name: 进程导入表断言(常驻 Server 不联网,设置窗是联网界面)
         shell: pwsh
         run: |
@@ -242,9 +242,9 @@ jobs:
             $server | ForEach-Object { Write-Host $_ }
             throw "lueying-server.exe 的导入表出现 WinHTTP/WinINet,常驻进程联网约束被破坏"
           }
-          $settings = & $objdump -x target/release/lueying-settings.exe | Select-String -Pattern 'winhttp'
+          $settings = & $objdump -x target/release/lueying-settings.exe | Select-String -Pattern 'crypt32'
           if (-not $settings) {
-            throw "lueying-settings.exe 的导入表没有 winhttp:更新与扩展商店的联网路径丢了,断言失去对照"
+            throw "lueying-settings.exe 的导入表没有 crypt32:更新与扩展商店的联网路径丢了,断言失去对照"
           }
       # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
       # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。

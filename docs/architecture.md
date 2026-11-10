@@ -26,7 +26,7 @@ lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 | 渲染 | `crates/render` | 候选窗与面板的布局、命中测试与绘制指令 |
 | 协议 | `crates/protocol` | 管道帧、`SessionView`、按键 |
 | 扩展 | `crates/ext`（契约、清单与包，宿主与 guest 按 feature） | 清单、协议、宿主与服务，见[扩展](extensions/README.md) |
-| 联网 | `crates/net`、`platforms/windows/ext-host` | 更新与下载、扩展联网 |
+| 联网 | `platforms/windows/settings`、`platforms/windows/ext-host` | 更新与下载、扩展安装、扩展联网 |
 | 平台 | `platforms/windows/*` | Windows 外壳 |
 
 核心 crate 不依赖任何平台目录；平台目录依赖核心 crate。

@@ -47,7 +47,9 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::Commands => {
             let entries = extcmd::commands()?;
             if entries.is_empty() {
-                println!("没有可触发的命令;先用 lueying-settings ext install 装好扩展,再 lueying ext reload");
+                println!(
+                    "没有可触发的命令;先用 lueying-settings ext install 装好扩展,再 lueying ext reload"
+                );
             }
             for (id, title) in entries {
                 println!("{id:<40}{title}");

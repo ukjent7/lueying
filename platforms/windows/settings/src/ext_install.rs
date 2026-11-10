@@ -33,8 +33,7 @@ pub fn install_files(files: &Files, root: &Path) -> Result<(Manifest, PathBuf), 
     let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
         return Err("包里没有 manifest.json".to_string());
     };
-    let manifest = Manifest::parse(manifest_bytes)
-        .map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest = Manifest::parse(manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
     let payload = manifest.payload_file().to_string();
     if !payload.is_empty() && !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));

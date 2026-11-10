@@ -17,9 +17,10 @@ path = "src/main.rs"
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 serde_json = "1"
 
-# 联网只在这个进程里:受限 HTTP 直连系统 WinHTTP,白名单按扩展强制。
+# 联网只在这个进程里:受限 HTTPS 客户端,扩展的域名清单在安装时同意。
+ureq.workspace = true
+
 [target."cfg(windows)".dependencies]
-lueying-net.workspace = true
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Globalization",

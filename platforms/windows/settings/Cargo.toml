@@ -3,7 +3,7 @@ name = "lueying-settings"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "设置窗独立进程:Slint 设置页、扩展商店、更新与备份;本产品唯一经 WinHTTP 联网的界面进程"
+description = "设置窗独立进程:Slint 设置页、扩展商店、更新与备份;可联网的界面进程"
 
 [lib]
 path = "src/lib.rs"
@@ -18,10 +18,12 @@ lueying-dict.workspace = true
 lueying-core.workspace = true
 # 设置页的行布局与工具条缩放共用渲染核心的常量与夹取规则。
 lueying-render.workspace = true
-# 更新检查与安装包下载:WinHTTP 只链接在本进程里,常驻 Server 不引用。
-lueying-net.workspace = true
-# 扩展安装(`ext add`):GitHub Release 与源码包的拉取与解包。
-ureq = "3"
+# 更新检查、安装包下载与扩展安装(`ext add`)的 HTTPS;常驻 Server 不引用。
+ureq.workspace = true
+# 更新清单的 Ed25519 验签;发布侧签名在 xtask,共用同一条实现。
+ed25519-dalek = "3"
+serde = { version = "1", features = ["derive"] }
+# `ext add` 解包 GitHub 源码包。
 flate2 = "1"
 tar = "0.4"
 lueying-protocol = { path = "../../../crates/protocol" }

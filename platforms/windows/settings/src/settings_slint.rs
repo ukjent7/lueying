@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use lueying_net::update::{self, Check, Release};
+use crate::update::{self, Check, Release};
 use lueying_protocol::Request;
 
 use crate::settings::actions;

@@ -1,4 +1,4 @@
-//! GitHub Release 自动更新:查询 latest、比较版本、WinHTTP 下载、SHA-256 校验。
+//! GitHub Release 自动更新:查询 latest、比较版本、HTTPS 下载、SHA-256 校验。
 //! Release 里带签名清单(`lueying-manifest.json` + `.sig`)时,镜像与哈希以
 //! 验签后的清单为准(见 [`crate::update_manifest`]);设置窗把安装包下载到
 //! 临时目录、校验后直接运行,由安装包完成替换。
@@ -6,10 +6,11 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use lueying_protocol::version::{is_newer, parse_sha256};
 
-use crate::http::Stream;
+use crate::net;
 use crate::update_manifest::{self, MANIFEST_NAME};
 
 /// 更新来源;发布工作流把 `lueying-<version>-setup.exe` 与 `.sha256` 传到这个仓库的 Release。
@@ -295,11 +296,13 @@ pub fn download_installer(release: &Release) -> Result<PathBuf, String> {
 }
 
 pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
-    let stream = Stream::open(url, 60_000)?;
-    let status = stream.status();
-    if !(200..300).contains(&status) {
-        return Err(format!("下载更新包返回 HTTP {status}"));
-    }
+    let response = match net::agent(Duration::from_secs(60)).get(url).call() {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(code)) => {
+            return Err(format!("下载更新包返回 HTTP {code}"));
+        }
+        Err(error) => return Err(format!("请求 {url} 失败: {error}")),
+    };
     // 清单带大小时按它卡上限;没带就给安装包留足余量。
     let limit = if expected > 0 {
         expected
@@ -308,10 +311,13 @@ pub fn download(url: &str, dest: &Path, expected: u64) -> Result<(), String> {
     };
     let written = (|| -> Result<u64, String> {
         let mut file = File::create(dest).map_err(|e| format!("创建 {}: {e}", dest.display()))?;
-        let written = stream.read_chunks(limit, |chunk| {
-            file.write_all(chunk)
-                .map_err(|e| format!("写入更新包: {e}"))
-        })?;
+        let mut reader = response
+            .into_body()
+            .into_with_config()
+            .limit(limit)
+            .reader();
+        let written =
+            std::io::copy(&mut reader, &mut file).map_err(|e| format!("写入更新包: {e}"))?;
         file.flush().map_err(|e| format!("写入更新包: {e}"))?;
         Ok(written)
     })();
@@ -362,20 +368,25 @@ fn fetch(url: &str, limit: u64) -> Result<(u16, Vec<u8>), String> {
 }
 
 fn fetch_with(url: &str, limit: u64, download: bool) -> Result<(u16, Vec<u8>), String> {
-    let response = crate::http::send(&crate::http::Request {
-        method: "GET".to_string(),
-        url: url.to_string(),
-        headers: vec![
-            (
-                "Accept".to_string(),
-                "application/vnd.github+json".to_string(),
-            ),
-            ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string()),
-        ],
-        body: None,
-        limit,
-        timeout_ms: if download { 60_000 } else { 15_000 },
-        credentials: None,
-    })?;
-    Ok((response.status, response.body))
+    let timeout = Duration::from_secs(if download { 60 } else { 15 });
+    let result = net::agent(timeout)
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .call();
+    match result {
+        Ok(mut response) => {
+            let status = response.status().as_u16();
+            let body = response
+                .body_mut()
+                .with_config()
+                .limit(limit)
+                .read_to_vec()
+                .map_err(|e| format!("读 {url}: {e}"))?;
+            Ok((status, body))
+        }
+        // 非 2xx 只要状态码,调用方按状态判断,与成功响应走同一条路径。
+        Err(ureq::Error::StatusCode(code)) => Ok((code, Vec::new())),
+        Err(error) => Err(format!("请求 {url} 失败: {error}")),
+    }
 }

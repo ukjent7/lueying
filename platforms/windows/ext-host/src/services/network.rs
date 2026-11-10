@@ -1,14 +1,17 @@
-//! 联网提供者:传输在本进程里经 WinHTTP 完成。扩展的域名清单在安装时亮给用户同意;
+//! 联网提供者:传输在本进程里经 ureq 完成。扩展的域名清单在安装时亮给用户同意;
 //! 同意之后宿主不再逐域名拦截,这里只做 URL 合法性检查。
 //!
 //! 外部地址只许 HTTPS,明文只留给回环;响应体与时限有上限,结果必须是 UTF-8 文本。
 //! 扩展卸载或停用时等待侧立刻取消,已在途的请求跑完后结果静默丢弃。
+
+use std::time::Duration;
 
 use lueying_ext::host::{Done, Provider};
 use lueying_ext::proto::{
     FETCH_DEFAULT_LIMIT, FETCH_DEFAULT_TIMEOUT_MS, FETCH_MAX_LIMIT, FETCH_MAX_TIMEOUT_MS,
     FetchArgs, FetchResult,
 };
+use ureq::tls::{RootCerts, TlsConfig};
 
 /// 收敛调用方给的体积与时限:缺省归默认,越界封顶,零视为缺省。
 pub fn normalize(mut args: FetchArgs) -> FetchArgs {
@@ -99,32 +102,58 @@ impl Provider for NetworkProvider {
     }
 }
 
-/// 受限传输:GET/POST 等经系统 WinHTTP,响应体按上限读回。
-#[cfg(windows)]
+/// 受限传输:HTTPS 直连(明文 HTTP 只许回环),非 2xx 也照常返回,响应体按上限读回。
 fn fetch(args: FetchArgs) -> Result<FetchResult, String> {
-    let request = lueying_net::http::Request {
-        method: args.method.unwrap_or_else(|| "GET".to_string()),
-        url: args.url,
-        headers: args.headers,
-        body: args.body.map(String::into_bytes),
-        limit: args.limit.unwrap_or(FETCH_DEFAULT_LIMIT),
-        timeout_ms: args.timeout_ms.unwrap_or(FETCH_DEFAULT_TIMEOUT_MS),
-        credentials: None,
-    };
-    let response = lueying_net::http::send(&request)?;
+    let scheme = args
+        .url
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_ascii_lowercase())
+        .unwrap_or_default();
+    let (host, _, _) = url_authority(&args.url)?;
+    let loopback = matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]");
+    if scheme == "http" && !loopback {
+        return Err("明文 HTTP 只允许本机回环地址".into());
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_millis(u64::from(
+            args.timeout_ms.unwrap_or(FETCH_DEFAULT_TIMEOUT_MS),
+        ))))
+        .http_status_as_error(false)
+        // 外部地址的重定向也不许降到明文;回环地址本就是明文。
+        .https_only(scheme == "https")
+        .tls_config(
+            TlsConfig::builder()
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .build()
+        .into();
+    let method = args.method.unwrap_or_else(|| "GET".to_string());
+    let mut request = ureq::http::Request::builder()
+        .method(method.as_str())
+        .uri(args.url.as_str());
+    for (name, value) in &args.headers {
+        request = request.header(name, value);
+    }
+    let body = args.body.map(String::into_bytes).unwrap_or_default();
+    let request = request
+        .body(body)
+        .map_err(|error| format!("请求不合法: {error}"))?;
+    let mut response = agent
+        .run(request)
+        .map_err(|error| format!("请求失败: {error}"))?;
+    let status = response.status().as_u16();
+    let limit = args.limit.unwrap_or(FETCH_DEFAULT_LIMIT);
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(limit)
+        .read_to_vec()
+        .map_err(|error| format!("读响应: {error}"))?;
     // 文本契约:二进制响应报错,不静默替换字节。
-    let body = String::from_utf8(response.body)
-        .map_err(|_| format!("响应不是 UTF-8 文本(状态 {})", response.status))?;
-    Ok(FetchResult {
-        status: response.status,
-        body,
-    })
-}
-
-/// 非 Windows 平台没有受限传输;联网调用明确失败。
-#[cfg(not(windows))]
-fn fetch(_args: FetchArgs) -> Result<FetchResult, String> {
-    Err("联网只在 Windows 上可用".into())
+    let body =
+        String::from_utf8(bytes).map_err(|_| format!("响应不是 UTF-8 文本(状态 {status})"))?;
+    Ok(FetchResult { status, body })
 }
 
 #[cfg(test)]
