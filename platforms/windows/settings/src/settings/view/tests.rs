@@ -1,8 +1,8 @@
 use super::*;
-use crate::config::OcrBackend;
 use crate::settings::model::Id;
 use crate::settings::schema::PageId;
 use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
+use lueying_server::config::OcrBackend;
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
     ScriptEntry::new(id, name)
@@ -200,7 +200,7 @@ fn app_override_buttons_cycle_three_states() {
     let mut settings = Settings::default();
     settings.cfg.apps.insert(
         "code.exe".to_string(),
-        crate::config::AppOverride::default(),
+        lueying_server::config::AppOverride::default(),
     );
     let punct = Id::new(ids::app_punct(0), 0);
     let learning = Id::new(ids::app_learning(0), 0);

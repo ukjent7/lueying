@@ -1,8 +1,8 @@
 //! 设置 schema 与运行时配置的绑定测试。
 
 use super::*;
-use crate::accents::ACCENTS;
-use crate::config::AppConfig;
+use lueying_server::accents::ACCENTS;
+use lueying_server::config::AppConfig;
 
 /// 有界面的设置,默认值必须与 `AppConfig::default` 一致。
 #[test]

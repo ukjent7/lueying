@@ -18,8 +18,9 @@ lueying-ext = { workspace = true, features = ["host"] }
 lueying-features.workspace = true
 lueying-render.workspace = true
 lueying-rerank.workspace = true
-# 设置页模型在服务端 crate 的平台无关部分,E2E 直接断言它的结构与交互。
+# 设置页模型在设置窗 crate 的平台无关部分,E2E 直接断言它的结构与交互。
 lueying-server.workspace = true
+lueying-settings.workspace = true
 # 扩展宿主进程:本可执行文件以 --ext-host 运行时即宿主(E2E 自拉起)。
 lueying-ext-host.workspace = true
 # 产品的候选快照与同步门控:基准直接走这条路径,不另写一份。

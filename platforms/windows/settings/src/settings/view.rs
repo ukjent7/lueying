@@ -7,9 +7,9 @@
 use lueying_ext::manifest::metrics::ExtMetrics;
 use lueying_protocol::EngineStatus;
 
-use crate::config::AppConfig;
 use crate::settings::model::Id;
 use crate::settings::schema::ControlDef;
+use lueying_server::config::AppConfig;
 
 pub use crate::settings::schema::PageId;
 
@@ -211,7 +211,7 @@ pub struct PageColors {
     pub notice_success: u32,
     /// 失败提示的颜色。
     pub notice_error: u32,
-    /// 主题色分段里每一格的颜色,顺序同 `crate::accents::ACCENTS`。
+    /// 主题色分段里每一格的颜色,顺序同 `lueying_server::accents::ACCENTS`。
     pub accents: Vec<u32>,
 }
 

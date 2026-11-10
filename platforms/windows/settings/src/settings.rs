@@ -6,6 +6,5 @@ pub mod consent;
 pub mod ext;
 pub mod model;
 pub mod schema;
-pub mod secret;
 mod text;
 pub mod view;

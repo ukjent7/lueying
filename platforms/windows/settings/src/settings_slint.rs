@@ -1,6 +1,6 @@
 //! 设置窗:Slint(winit 后端 + femtovg GPU 渲染,软件渲染兜底)承载页面,视觉对齐 macOS 27
-//! 系统设置。页面模型在 `lueying_server::settings::view` 与
-//! `settings::model`,平台侧动作在 `settings::actions`;这里只做三件事:
+//! 系统设置。页面模型在 `crate::settings::view` 与
+//! `crate::settings::model`,平台侧动作在 `settings::actions`;这里只做三件事:
 //! 把模型灌进 Slint 属性、把回调翻译回 `Settings::activate`、把要碰
 //! 文件系统与网络的动作放到后台线程再回事件循环。
 //!
@@ -13,14 +13,13 @@ use std::sync::{Arc, Mutex};
 use lueying_net::update::{self, Check, Release};
 use lueying_protocol::Request;
 
-use lueying_server::accents::ACCENTS;
-use lueying_server::config::{self, AppConfig};
-use lueying_server::settings::actions;
-use lueying_server::settings::model::{self as model, ButtonKind, Control};
-use lueying_server::settings::secret;
-use lueying_server::settings::view::{
+use crate::settings::actions;
+use crate::settings::model::{self as model, ButtonKind, Control};
+use crate::settings::view::{
     Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState,
 };
+use lueying_server::accents::ACCENTS;
+use lueying_server::config::{self, AppConfig};
 use lueying_server::theme;
 
 slint::include_modules!();

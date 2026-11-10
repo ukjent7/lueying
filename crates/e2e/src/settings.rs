@@ -11,8 +11,8 @@ use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_ext::manifest::{Setting, SettingValue};
 use lueying_features::SchemeId;
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
-use lueying_server::settings::model::{self as ui, Id};
-use lueying_server::settings::view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
+use lueying_settings::settings::model::{self as ui, Id};
+use lueying_settings::settings::view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};
 
 use crate::harness::push;
 
@@ -420,7 +420,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 导入词表:标准词表要转成用户词库能并的原生格式。
-    let imported = lueying_server::dict_import::parse("你好\tni hao\t1000\n");
+    let imported = lueying_settings::dict_import::parse("你好\tni hao\t1000\n");
     let native = imported.text.trim_end().to_string();
     let native_row: Vec<&str> = native.split('\t').collect();
     let key = native_row.first().copied().unwrap_or_default();

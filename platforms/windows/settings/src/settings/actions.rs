@@ -7,13 +7,13 @@ use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::{self, AppOverride};
 use crate::dict_import;
 use crate::settings::view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use lueying_ext::host::{ConsentBook, ConsentCheck};
 use lueying_ext::manifest::metrics::ExtMetrics;
 use lueying_net::update;
 use lueying_protocol::{Reply, Request, pipe_name};
+use lueying_server::config::{self, AppOverride};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{

@@ -9,16 +9,9 @@ description = "常驻服务进程:命名管道服务各 TSF 会话,持有词典�
 name = "lueying-server"
 path = "src/main.rs"
 
-[[bin]]
-name = "lueying-settings"
-path = "src/settings_main.rs"
-
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
-# 扩展运行指标快照:设置页与 `lueying ext top` 读同一份格式。
-# 联网边界:设置窗的更新检查与官方扩展下载走这里,常驻 Server 不引用。
-lueying-net.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
 # 渲染核心:候选窗/徽标/选择面板的布局与命中;设置窗 UI 已由 Slint 承担。
@@ -32,8 +25,6 @@ lueying-ext = { workspace = true, default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
-# 词表解码:UTF-8 / UTF-16 / GB18030 一份实现,词表是纯逻辑,不必绑平台。
-encoding_rs = "0.8"
 # 令牌生成的 CSPRNG,直连系统随机源。
 getrandom = "0.4"
 
@@ -44,8 +35,6 @@ mimalloc = "0.1.52"
 windows-numerics = "0.3.1"
 # 运行期 Wasm 扩展:组件沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
-# Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
-slint.workspace = true
 windows = { version = "0.62.2", features = [
     "Foundation",
     "Globalization",
@@ -85,6 +74,3 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
-
-[target.'cfg(windows)'.build-dependencies]
-slint-build.workspace = true

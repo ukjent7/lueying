@@ -5,11 +5,11 @@
 
 use super::*;
 
-use crate::config::OcrBackend;
 use crate::settings::model::{
     Button, ButtonKind, CandidatePreview, Control, Group, NavItem, Page, Row, SegmentOption,
 };
 use crate::settings::schema::{self, ControlDef, PageId, SettingDef};
+use lueying_server::config::OcrBackend;
 
 impl Settings {
     /// 当前页面:左栏导航 + 右栏设置卡片。
@@ -181,7 +181,7 @@ impl Settings {
                 style: CandidatePreview {
                     accent,
                     font_scale: self.cfg.ui_font.factor(),
-                    vertical: self.cfg.ui_layout == crate::config::UiLayout::Vertical,
+                    vertical: self.cfg.ui_layout == lueying_server::config::UiLayout::Vertical,
                     page_size: self.cfg.page_size,
                     pinyin: "lue ying".to_string(),
                     candidates: vec![

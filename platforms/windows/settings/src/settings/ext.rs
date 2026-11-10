@@ -3,15 +3,13 @@
 //! 这一层不碰 Windows:字段展开、当前值与点击后的新值都在这里,设置窗
 //! 只负责画。扩展没安装时读不到 schema,配置里已有的值原样保留。
 
-use std::collections::BTreeMap;
-
-use lueying_ext::manifest::{Manifest, Setting, SettingValue};
+use lueying_ext::manifest::{Setting, SettingValue};
 use serde_json::Value;
 
-use crate::config::AppConfig;
 use crate::settings::consent::ScriptEntry;
 use crate::settings::model::{Button, ButtonKind, Control, Group, Id, Row, SegmentOption};
 use crate::settings::view::ids;
+use lueying_server::config::AppConfig;
 
 /// 一页最多渲染的字段数;超出的值仍可在 `config.toml` 里手改。
 pub const MAX_FIELDS: usize = ids::EXT_FIELDS;
@@ -92,7 +90,7 @@ fn field(slot: usize, script: &ScriptEntry, setting: &Setting, cfg: &AppConfig) 
         }
     } else if setting.is_secret() {
         Kind::Secret {
-            filled: crate::settings::secret::has(&script.id, setting.key()),
+            filled: lueying_server::ext_secret::has(&script.id, setting.key()),
         }
     } else {
         let selected = match &value {
@@ -234,31 +232,6 @@ pub fn normalize(cfg: &mut AppConfig, scripts: &[ScriptEntry]) -> usize {
     }
     cfg.ext_settings.retain(|_, table| !table.is_empty());
     removed
-}
-
-/// 扩展设置的完整值:配置里的值,缺省补清单默认值;密钥从私密存储并进。
-pub fn values(ext: &str, settings: &[Setting], stored: Option<&BTreeMap<String, Value>>) -> Value {
-    let mut object = serde_json::Map::new();
-    for setting in settings {
-        let value = setting.resolve(stored.and_then(|table| table.get(setting.key())));
-        object.insert(setting.key().to_string(), value.to_json());
-    }
-    crate::settings::secret::merge(ext, settings, &mut object);
-    Value::Object(object)
-}
-
-/// 读已安装扩展的声明式设置;包不在、id 不合法或清单坏时 None。
-pub fn manifest_settings(id: &str) -> Option<Vec<Setting>> {
-    if !crate::config::valid_script_id(id) {
-        return None;
-    }
-    let path = crate::config::extensions_dir()?
-        .join(id)
-        .join("manifest.json");
-    let bytes = std::fs::read(path).ok()?;
-    Manifest::parse(&bytes)
-        .ok()
-        .map(|manifest| manifest.settings)
 }
 
 /// 控件前缀 → 字段下标;与 `ids::ext_field` 互为反查。

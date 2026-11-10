@@ -184,7 +184,7 @@ jobs:
         # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
         # 扩展宿主也要:安装冒烟要把 lueying-ext-host.exe 打进安装包,它不是
         # installer 的依赖,不显式编就缺文件。
-        run: cargo build --release --locked -p lueying-server -p lueying-ext-host -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+        run: cargo build --release --locked -p lueying-server -p lueying-settings -p lueying-ext-host -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release。
       - name: TSF 构建(静态 CRT)
         id: buildtsf

@@ -9,9 +9,9 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
 use crate::settings::view::ids;
 use lueying_features::SchemeId;
+use lueying_server::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
 
 /// 设置窗左栏的页面。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

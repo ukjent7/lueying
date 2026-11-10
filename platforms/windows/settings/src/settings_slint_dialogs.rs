@@ -4,6 +4,7 @@
 //! 等窗口骨架仍在父模块。
 
 use super::*;
+use lueying_server::ext_secret;
 
 /// 提示颜色反查种类:0 info 1 success 2 error。
 pub(super) fn notice_kind(tint: u32, colors: &PageColors) -> i32 {
@@ -190,7 +191,7 @@ pub(super) fn choose_script(ui: &SettingsWindow, core: &Shared) {
             // 确认框是模态泵,期间不能握着状态锁。
             let mut approved_now = false;
             if script.consent != ConsentState::Approved {
-                let text = lueying_server::settings::consent::prompt(script);
+                let text = crate::settings::consent::prompt(script);
                 if !confirm(&text, "扩展授权") {
                     lock(core)
                         .settings
@@ -317,7 +318,7 @@ pub(super) fn open_secret_editor(
     };
     editor.set_win_title(format!("扩展密钥 · {title}").into());
     editor.set_hint("只保存在本机;留空并保存即删除".into());
-    editor.set_body(secret::get(&ext, &key).unwrap_or_default().into());
+    editor.set_body(ext_secret::get(&ext, &key).unwrap_or_default().into());
     let main = ui.as_weak();
     let shared = Arc::clone(core);
     let weak = editor.as_weak();
@@ -329,7 +330,7 @@ pub(super) fn open_secret_editor(
         let _ = editor.hide();
         {
             let mut guard = lock(&shared);
-            match secret::set(&ext, &key, &text) {
+            match ext_secret::set(&ext, &key, &text) {
                 Ok(()) => guard.settings.say(Notice::Success, "已保存扩展密钥"),
                 Err(error) => guard
                     .settings

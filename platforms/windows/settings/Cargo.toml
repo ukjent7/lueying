@@ -1,0 +1,45 @@
+[package]
+name = "lueying-settings"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "设置窗独立进程:Slint 设置页、扩展商店、更新与备份;本产品唯一经 WinHTTP 联网的界面进程"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "lueying-settings"
+path = "src/main.rs"
+
+[dependencies]
+lueying-server.workspace = true
+lueying-dict.workspace = true
+lueying-features.workspace = true
+# 设置页的行布局与工具条缩放共用渲染核心的常量与夹取规则。
+lueying-render.workspace = true
+# 更新检查与安装包下载:WinHTTP 只链接在本进程里,常驻 Server 不引用。
+lueying-net.workspace = true
+lueying-protocol = { path = "../../../crates/protocol" }
+# 扩展清单与场景协议:设置页与指标快照共用,不带宿主运行时。
+lueying-ext = { workspace = true, default-features = false }
+serde_json = "1"
+toml = "1.1"
+# 词表解码:UTF-8 / UTF-16 / GB18030 一份实现。
+encoding_rs = "0.8"
+
+[target."cfg(windows)".dependencies]
+# 同意记录与扩展宿主的常量共用宿主模块;Windows 设置窗才需要。
+lueying-ext = { workspace = true, default-features = false, features = ["host"] }
+# Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
+slint.workspace = true
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+slint-build.workspace = true

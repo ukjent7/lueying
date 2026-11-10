@@ -18,6 +18,8 @@ members = [
     "crates/render",
     # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
     "platforms/windows/server",
+    # 设置窗独立进程:Slint 设置页、扩展商店、更新与备份;唯一经 WinHTTP 联网的界面进程
+    "platforms/windows/settings",
     # 扩展宿主进程:运行全部扩展(Wasm 与原生),允许联网;服务端经 stdio 行协议驱动
     "platforms/windows/ext-host",
     "platforms/windows/tsf",
@@ -53,6 +55,7 @@ lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
 lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
+lueying-settings = { path = "platforms/windows/settings" }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
 wasmtime = { version = "49", default-features = false, features = [
     "std",
