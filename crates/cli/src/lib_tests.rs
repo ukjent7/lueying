@@ -115,23 +115,6 @@ fn parses_reload_and_logs() {
 }
 
 #[test]
-fn parses_commit() {
-    assert_eq!(
-        parse_args(args(&["ext", "commit", "你好"])),
-        Ok(Invocation::Commit("你好".into()))
-    );
-    assert_eq!(
-        parse_args(args(&["ext", "commit", "hello", "world"])),
-        Ok(Invocation::Commit("hello world".into()))
-    );
-    assert_eq!(
-        parse_args(args(&["ext", "commit", "-n", "无旗标"])),
-        Ok(Invocation::Commit("-n 无旗标".into()))
-    );
-    assert!(parse_args(args(&["ext", "commit"])).is_err(), "缺文本");
-}
-
-#[test]
 fn parses_run_and_commands() {
     assert_eq!(
         parse_args(args(&["ext", "run", "shot-ocr.run"])),

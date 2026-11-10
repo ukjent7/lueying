@@ -311,64 +311,6 @@ pub fn reload() -> Result<(), String> {
     }
 }
 
-/// 对外 commit 通道的令牌路径,与服务端 `config::commit_token_path` 同址。
-fn commit_token_path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(base).join("lueying").join("commit-token"))
-}
-
-fn read_commit_token() -> Option<String> {
-    fs::read_to_string(commit_token_path()?)
-        .ok()
-        .map(|text| text.trim().to_string())
-}
-
-/// 借用输入法的上屏能力:把文本交给常驻服务写进当前输入框(任务书 6.3)。
-/// 服务端开启 commit_channel 后收到第一次请求才生成令牌,所以拿到的令牌
-/// 变了就读回新值重试一次;通道未开时令牌不会变化,不会白重试。
-pub fn commit(text: &str) -> Result<String, String> {
-    let mut token = read_commit_token();
-    let mut reply = send_external_commit(token.as_deref(), text)?;
-    let delivered = matches!(&reply.commit, Some(result) if result.delivered);
-    if !delivered {
-        let fresh = read_commit_token();
-        if fresh != token {
-            token = fresh;
-            reply = send_external_commit(token.as_deref(), text)?;
-        }
-    }
-    match reply.commit {
-        Some(result) if result.delivered => Ok(format!("已上屏: {text}")),
-        Some(result) if result.error.is_empty() => Err("服务没有确认上屏".into()),
-        Some(result) => Err(result.error),
-        None => Err("常驻服务不支持对外 commit;升级输入法后再试".into()),
-    }
-}
-
-fn send_external_commit(
-    token: Option<&str>,
-    text: &str,
-) -> Result<lueying_protocol::Reply, String> {
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(pipe_name())
-        .map_err(|_| "常驻服务未运行;启动输入法后再试".to_string())?;
-    let request = Request::ExternalCommit {
-        token: token.unwrap_or_default().to_string(),
-        text: text.to_string(),
-    };
-    let frame = lueying_protocol::encode(&request).map_err(|e| e.to_string())?;
-    file.write_all(&frame)
-        .and_then(|()| file.flush())
-        .map_err(|e| format!("写管道: {e}"))?;
-    match lueying_protocol::read_frame(&mut BufReader::new(file)) {
-        Ok(body) => lueying_protocol::decode::<lueying_protocol::Reply>(&body)
-            .map_err(|e| format!("解析应答: {e}")),
-        Err(_) => Err("服务没有应答 ExternalCommit".into()),
-    }
-}
-
 /// 发一条请求收一条应答;`what` 只用于空应答的报错。
 fn pipe_call(request: &Request, what: &str) -> Result<lueying_protocol::Reply, String> {
     let mut file = fs::OpenOptions::new()

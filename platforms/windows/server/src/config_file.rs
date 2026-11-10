@@ -42,7 +42,6 @@ pub struct FileConfig {
     pub triggers: Option<BTreeMap<String, String>>,
     pub panel_hotkey: Option<String>,
     pub ocr_engine: Option<String>,
-    pub commit_channel: Option<bool>,
     pub update_channel: Option<String>,
     /// WebDAV 同步的远端目录地址。
     pub webdav_url: Option<String>,
@@ -221,9 +220,6 @@ pub fn apply(
             None => note(format!("ocr_engine={value} 不合法")),
         }
     }
-    if let Some(on) = file.commit_channel {
-        cfg.commit_channel = on;
-    }
     if let Some(on) = file.allow_all_extension_network {
         cfg.allow_all_extension_network = on;
     }
@@ -337,7 +333,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         extensions: &cfg.extensions,
         panel_hotkey: &cfg.panel_hotkey,
         ocr_engine: cfg.ocr_backend.as_str(),
-        commit_channel: cfg.commit_channel,
         update_channel: cfg.update_channel.as_str(),
         webdav_url: &cfg.webdav_url,
         webdav_username: &cfg.webdav_username,
@@ -376,7 +371,6 @@ struct SaveFile<'a> {
     extensions: &'a [String],
     panel_hotkey: &'a str,
     ocr_engine: &'static str,
-    commit_channel: bool,
     update_channel: &'static str,
     webdav_url: &'a str,
     webdav_username: &'a str,

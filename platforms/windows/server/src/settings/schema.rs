@@ -904,14 +904,6 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: None,
     },
     SettingDef {
-        key: "commit_channel",
-        title: "对外上屏通道",
-        detail: "默认关闭;开启后本地工具可凭令牌借用上屏能力",
-        value: ValueType::Bool,
-        default: DefaultValue::Bool(false),
-        ui: None,
-    },
-    SettingDef {
         key: "ext",
         title: "扩展设置",
         detail: "[ext.<id>] 命名空间;由扩展清单声明的 schema 校验",

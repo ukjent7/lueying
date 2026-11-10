@@ -48,7 +48,6 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         }
         Invocation::Logs(args) => println!("{}", extcmd::logs(&args)?),
         Invocation::Replay(args) => print!("{}", replay::run(&args)?),
-        Invocation::Commit(text) => println!("{}", extcmd::commit(&text)?),
         Invocation::Run(id) => println!("{}", extcmd::run(&id)?),
         Invocation::Commands => {
             let entries = extcmd::commands()?;

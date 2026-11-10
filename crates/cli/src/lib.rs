@@ -30,7 +30,6 @@ pub const USAGE: &str = "\
   logs              看服务日志末尾
   top               查看扩展运行指标(派发次数、峰值、失败原因)
   replay [脚本]     无头回放:按键序列进,候选列表出(缺省读标准输入)
-  commit <文本>     借用输入法把文本上屏到当前输入框(需开启 commit_channel)
   run <命令 id>     触发扩展命令;PowerToys 命令面板等启动器走这里
   commands          列出可触发的扩展命令(标题表)
 
@@ -65,8 +64,6 @@ pub enum Invocation {
     Top(TopOptions),
     /// 无头回放。
     Replay(ReplayArgs),
-    /// 借用上屏能力写文本;多个词已按空格合并。
-    Commit(String),
     /// 触发扩展命令。
     Run(String),
     /// 列出可触发的扩展命令。
@@ -90,7 +87,7 @@ where
     }
     let sub = args
         .next()
-        .ok_or("缺子命令;用 new/pack/install/add/reload/logs/top/replay/commit/run/commands")?;
+        .ok_or("缺子命令;用 new/pack/install/add/reload/logs/top/replay/run/commands")?;
     match sub.as_str() {
         "new" => parse_new(args),
         "pack" => parse_pack(args),
@@ -100,12 +97,11 @@ where
         "logs" => parse_logs(args),
         "top" => parse_top(args),
         "replay" => parse_replay(args),
-        "commit" => parse_commit(args),
         "run" => parse_run(args),
         "commands" => parse_commands(args),
         "-h" | "--help" => Ok(Invocation::Help),
         other => Err(format!(
-            "未知子命令 {other:?};用 new/pack/install/add/reload/logs/top/replay/commit/run/commands"
+            "未知子命令 {other:?};用 new/pack/install/add/reload/logs/top/replay/run/commands"
         )),
     }
 }
@@ -215,19 +211,6 @@ where
     let source =
         source.ok_or("用法: lueying ext add github:作者/仓库#版本 [--dir 目录] [--force]")?;
     Ok(Invocation::Add(AddArgs { source, dir, force }))
-}
-
-/// 文本子命令:其余参数按空格合并成待上屏文本。本命令没有旗标,
-/// 以 `-` 开头的词也原样收进文本。
-fn parse_commit<I>(args: I) -> Result<Invocation, String>
-where
-    I: Iterator<Item = String>,
-{
-    let words: Vec<String> = args.collect();
-    if words.is_empty() {
-        return Err("用法: lueying ext commit <文本>".into());
-    }
-    Ok(Invocation::Commit(words.join(" ")))
 }
 
 /// 命令 id 子命令:恰好一个位置参数。清单 id 无空格,多给就报错。

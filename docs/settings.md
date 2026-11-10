@@ -35,7 +35,6 @@
 | `bindings` | 表：组合键 = 完整命令 id | 扩展命令的全局热键 |
 | `triggers` | 表：触发词 = 完整命令 id | 候选中的动作触发词，整串匹配才出现 |
 | `ocr_engine` | 字符串 | 截图识别引擎；模型缺失时明确报错 |
-| `commit_channel` | 布尔，默认关 | 允许本机工具凭令牌借用上屏能力 |
 | `extensions` | 扩展 id 数组 | 启用的运行期扩展，按顺序组合 |
 | `allow_all_extension_network` | 布尔 | 跳过扩展的域名白名单，不推荐 |
 | `update_channel` | `stable`、`beta` | 更新渠道 |

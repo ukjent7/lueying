@@ -243,8 +243,6 @@ pub(super) struct State {
     pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
     /// 所有会话共用一份学习结果。
     pub(super) user: SharedUser,
-    /// 对外 commit 通道的令牌缓存;首次使用时从文件读或生成。
-    pub(super) commit_token: Mutex<Option<String>>,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
     pub(super) modules: Arc<Modules>,
     /// 自定义短语模块;设置重载时重新读文件。
@@ -541,7 +539,6 @@ pub(super) fn real_main() {
         settle_tx,
         uia_tx: Some(uia_tx),
         user,
-        commit_token: Mutex::new(None),
         modules: crate::modules::registry(
             phrases.clone(),
             Arc::clone(&prediction),

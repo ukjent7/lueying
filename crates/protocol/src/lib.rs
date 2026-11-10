@@ -279,10 +279,6 @@ pub enum Request {
         #[serde(default, with = "value_as_json")]
         params: Value,
     },
-    /// 对外 commit 通道:本地工具借用上屏能力,不必自己做输入法。令牌
-    /// 来自 `%APPDATA%\lueying\commit-token`,只在配置显式开启后生成;
-    /// 隐私字段下永不注入(任务书 6.3)。
-    ExternalCommit { token: String, text: String },
     /// 会话下线。
     Goodbye { session: u64 },
 }
@@ -337,13 +333,11 @@ impl Request {
             Self::Page { .. } => "Page",
             Self::UiMode { .. } => "UiMode",
             Self::Ext { .. } => "Ext",
-            Self::ExternalCommit { .. } => "ExternalCommit",
             Self::Goodbye { .. } => "Goodbye",
         }
     }
 
-    /// 请求的特权层级。`ExternalCommit` 自带令牌授权,`TogglePunct` 等
-    /// 是用户按键,都归 [`Privilege::Host`]。
+    /// 请求的特权层级。`TogglePunct` 等是用户按键,都归 [`Privilege::Host`]。
     pub fn privilege(&self) -> Privilege {
         match self {
             Request::Status => Privilege::Read,
@@ -400,17 +394,6 @@ pub struct Reply {
     /// 通用扩展请求的应答(仅 `Ext` 使用)。
     #[serde(default)]
     pub ext: Option<ExtReply>,
-    /// 对外 commit 通道的结果(仅 `ExternalCommit` 使用)。
-    #[serde(default)]
-    pub commit: Option<CommitReply>,
-}
-
-/// 对外 commit 通道的结果;失败带人话原因。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CommitReply {
-    pub delivered: bool,
-    #[serde(default)]
-    pub error: String,
 }
 
 /// 通用扩展请求的结果:成功带值,失败带人话原因。

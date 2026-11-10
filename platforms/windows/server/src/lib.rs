@@ -10,8 +10,6 @@ pub mod accents;
 
 pub mod command_panel;
 
-pub mod commit;
-
 pub mod config;
 
 mod config_file;

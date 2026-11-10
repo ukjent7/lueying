@@ -273,8 +273,6 @@ pub struct AppConfig {
     pub panel_hotkey: String,
     /// 截图 OCR 引擎;模型缺失时 PP-OCR 会回明确错误。
     pub ocr_backend: OcrBackend,
-    /// 对外 commit 通道;默认关。开启后本地工具可凭令牌借用上屏能力。
-    pub commit_channel: bool,
     /// 更新渠道。
     pub update_channel: Channel,
     /// WebDAV 同步的远端目录地址;空表示没配同步。
@@ -320,8 +318,6 @@ impl Default for AppConfig {
             // 三个修饰键避开常见应用快捷键;不想要就在配置里写 off。
             panel_hotkey: "Ctrl+Alt+Shift+Space".to_string(),
             ocr_backend: OcrBackend::System,
-            // 对外 commit 通道默认关;开启在设置里显式做,令牌随后生成。
-            commit_channel: false,
             update_channel: Channel::Stable,
             webdav_url: String::new(),
             webdav_username: String::new(),
@@ -515,13 +511,6 @@ pub fn log_path() -> Option<PathBuf> {
 pub fn ext_audit_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
     Some(base.join("lueying").join("logs").join("ext-audit.log"))
-}
-
-/// 对外 commit 通道的鉴权令牌(`%APPDATA%\lueying\commit-token`)。
-/// 只在 `commit_channel` 开启后由常驻服务生成。
-pub fn commit_token_path() -> Option<PathBuf> {
-    let base = PathBuf::from(std::env::var_os("APPDATA")?);
-    Some(crate::commit::token_path(&base.join("lueying")))
 }
 
 /// 扩展运行指标快照(`%LOCALAPPDATA%\lueying\logs\ext-metrics.json`)。
