@@ -8,7 +8,6 @@
 //! 用法:`cargo run -p xtask -- pack --bin target/release --data data --out dist/lueying`
 //! 用法:`cargo run -p xtask -- update-manifest --version 0.2.0 --name lueying-0.2.0-setup.exe --size N --sha256 <hex> --mirror <url> --out dist`
 //! 用法:`cargo run -p xtask -- sign-manifest --manifest dist/lueying-manifest.json --key <种子文件>`
-//! 用法:`cargo run -p xtask -- catalog-exe --id <ppocr|sensevoice> --exe <发布exe> --url <发布资产地址>`
 //! 用法:`cargo run -p xtask -- winget --version 0.2.0 --sha256 <setup哈希> --out dist/winget`
 
 #[path = "pack.rs"]
@@ -17,9 +16,6 @@ mod pack;
 #[path = "manifest.rs"]
 mod manifest;
 
-#[path = "catalog.rs"]
-mod catalog;
-
 #[path = "winget.rs"]
 mod winget;
 
@@ -27,7 +23,6 @@ enum Task {
     Pack(pack::PackArgs),
     UpdateManifest(manifest::UpdateManifestArgs),
     SignManifest(manifest::SignArgs),
-    CatalogExe(catalog::CatalogExeArgs),
     Winget(winget::WingetArgs),
 }
 
@@ -45,7 +40,6 @@ fn main() {
             "sign-manifest" => {
                 task = Some(Task::SignManifest(manifest::parse_sign_manifest(&mut it)))
             }
-            "catalog-exe" => task = Some(Task::CatalogExe(catalog::parse_catalog_exe(&mut it))),
             "winget" => task = Some(Task::Winget(winget::parse_winget(&mut it))),
             other => {
                 eprintln!("未知子命令或参数: {other}");
@@ -57,11 +51,10 @@ fn main() {
         Some(Task::Pack(args)) => pack::pack(args),
         Some(Task::UpdateManifest(args)) => manifest::update_manifest(args),
         Some(Task::SignManifest(args)) => manifest::sign_manifest(args),
-        Some(Task::CatalogExe(args)) => catalog::catalog_exe(args),
         Some(Task::Winget(args)) => winget::winget(args),
         None => {
             eprintln!(
-                "用法: xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask catalog-exe ... | xtask winget ..."
+                "用法: xtask pack ... | xtask update-manifest ... | xtask sign-manifest ... | xtask winget ..."
             );
             std::process::exit(2);
         }

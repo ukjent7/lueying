@@ -62,31 +62,8 @@ pub mod ids {
     pub const SAVE: &str = "save";
     /// 扩展声明式设置最多渲染多少个字段。
     pub const EXT_FIELDS: usize = 16;
-    /// 官方扩展目录最多渲染多少项。
-    pub const OFFICIAL_SLOTS: usize = 8;
     /// 已安装扩展列表最多渲染多少项。
     pub const SCRIPT_SLOTS: usize = 16;
-
-    /// 第 `slot` 个官方扩展的安装按钮前缀。
-    pub fn official_ext(slot: usize) -> &'static str {
-        match slot {
-            0 => "official-0",
-            1 => "official-1",
-            2 => "official-2",
-            3 => "official-3",
-            4 => "official-4",
-            5 => "official-5",
-            6 => "official-6",
-            7 => "official-7",
-            _ => "official-0",
-        }
-    }
-
-    /// 安装按钮前缀 → 目录下标。
-    pub fn official_slot(base: &str) -> Option<usize> {
-        let slot: usize = base.strip_prefix("official-")?.parse().ok()?;
-        (slot < OFFICIAL_SLOTS).then_some(slot)
-    }
 
     /// 第 `slot` 个已安装扩展的启用开关前缀。
     pub fn script_toggle(slot: usize) -> &'static str {
@@ -268,8 +245,6 @@ pub enum Action {
     OpenExtAudit,
     RefreshExtMetrics,
     OpenOcrModels,
-    /// 安装官方目录里的扩展或模型;id 来自目录项。
-    InstallOfficial(String),
     /// 编辑扩展密钥:扩展 id、设置键、显示标题。
     EditSecret(String, String, String),
     OpenPhrases,
@@ -316,8 +291,6 @@ pub struct Settings {
     pub page: PageId,
     /// 顶部搜索框的文字;非空时右栏显示跨页搜索结果。
     pub search: String,
-    /// 正在安装的官方扩展/模型 id;下载在后台线程进行。
-    pub installing: Option<String>,
     /// 上次云同步的结果摘要;空表示还没同步过。
     pub last_sync: String,
 }
@@ -339,7 +312,6 @@ impl Default for Settings {
             ext_metrics: None,
             page: PageId::Input,
             search: String::new(),
-            installing: None,
             last_sync: String::new(),
         }
     }
@@ -388,19 +360,6 @@ impl Settings {
             self.search.clear();
             self.clear_notice();
             return None;
-        }
-        if let Some(slot) = ids::official_slot(&id.base) {
-            let extension = crate::official_extensions::catalog().extensions.get(slot)?;
-            let installed = if extension.is_model() {
-                extension.installed_model()
-            } else {
-                self.scripts.iter().any(|script| script.id == extension.id)
-            };
-            if installed || self.installing.is_some() {
-                return None;
-            }
-            self.clear_notice();
-            return Some(Action::InstallOfficial(extension.id.clone()));
         }
         if let Some(slot) = ids::script_slot(&id.base) {
             let script = self.scripts.get(slot)?;

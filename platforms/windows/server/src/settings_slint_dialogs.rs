@@ -786,38 +786,3 @@ pub(super) fn install_update(ui: &SettingsWindow, core: &Shared) {
         });
     }
 }
-
-/// 开始安装官方扩展/模型:先显示下载中,完成后回事件循环刷新。
-pub(super) fn start_official_install(ui: &SettingsWindow, core: &Shared, id: String) {
-    {
-        let mut guard = lock(core);
-        guard.settings.installing = Some(id.clone());
-        guard
-            .settings
-            .say(Notice::Info, "正在下载并校验;界面可以继续使用");
-    }
-    refresh(ui, core);
-    let handle = ui.as_weak();
-    let shared = Arc::clone(core);
-    let spawned = std::thread::Builder::new()
-        .name("settings-official".into())
-        .spawn(move || {
-            let result = official::install(&id);
-            let _ = handle.upgrade_in_event_loop(move |ui| {
-                let mut guard = lock(&shared);
-                guard.settings.installing = None;
-                guard.settings.scripts = actions::installed_scripts();
-                guard.settings.ppocr_ready = actions::ppocr_ready();
-                match result {
-                    Ok(message) => guard.settings.say(Notice::Success, message),
-                    Err(error) => guard.settings.say(Notice::Error, error),
-                }
-                refresh(&ui, &shared);
-            });
-        });
-    if let Err(error) = spawned {
-        with(core, |settings| {
-            settings.say(Notice::Error, format!("启动安装线程失败: {error}"));
-        });
-    }
-}

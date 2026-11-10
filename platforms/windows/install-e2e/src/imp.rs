@@ -163,7 +163,6 @@ fn real_run() -> Result<String, String> {
             "lueying-settings.exe",
             "version.txt",
             "licenses/README.md",
-            "Catalog/official-extensions.json",
             "extensions/shot-ocr/manifest.json",
         ] {
             if !target.join(name).exists() {
@@ -306,9 +305,8 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     std::fs::write(payload.join("version.txt"), version)
         .map_err(|e| format!("写 version.txt: {e}"))?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    // 官方扩展源与目录副本随安装包分发;扩展中心从 {app}\extensions 安装。
+    // 官方扩展源随安装包分发。
     copy_tree(&root.join("extensions"), &payload.join("extensions"))?;
-    copy_tree(&root.join("Catalog"), &payload.join("Catalog"))?;
     let license = root.join("LICENSE");
     std::fs::copy(&license, payload.join("LICENSE")).map_err(|e| format!("复制 LICENSE: {e}"))?;
     let licenses = payload.join("licenses");

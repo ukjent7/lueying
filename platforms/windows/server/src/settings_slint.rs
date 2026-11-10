@@ -17,7 +17,6 @@ use lueying_server::accents::ACCENTS;
 use lueying_server::config::{self, AppConfig};
 use lueying_server::settings::actions;
 use lueying_server::settings::model::{self as model, ButtonKind, Control};
-use lueying_server::settings::official;
 use lueying_server::settings::secret;
 use lueying_server::settings::view::{
     Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState, WebdavField,
@@ -163,7 +162,6 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::OpenPunct => open_text_editor(ui, core, TextKind::Punct),
         Action::CheckUpdate => start_update_check(ui, core),
         Action::InstallUpdate(_) => install_update(ui, core),
-        Action::InstallOfficial(id) => start_official_install(ui, core, id),
     }
 }
 
@@ -242,8 +240,8 @@ mod dialogs;
 
 use dialogs::{
     TextKind, add_app, choose_script, color, install_update, notice_kind, open_secret_editor,
-    open_text_editor, open_webdav_editor, page_colors, slint_button, slint_row,
-    start_official_install, start_update_check, start_webdav_sync,
+    open_text_editor, open_webdav_editor, page_colors, slint_button, slint_row, start_update_check,
+    start_webdav_sync,
 };
 
 /// 自检:写报告并返回成败;首行必须是「结果:通过/失败」。

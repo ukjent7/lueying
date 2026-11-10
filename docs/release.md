@@ -24,7 +24,7 @@ git push origin v0.2.0
 | `lueying-<版本>-setup.exe` | 安装包（x64） |
 | `*.sha256` | 安装包的校验值 |
 | `lueying-manifest.json` | 更新清单；配置了 `LUEYING_SIGN_KEY` 时附 Ed25519 签名 |
-| `lueying-ppocr.exe`、`lueying-sensevoice.exe` | 原生官方扩展；地址与哈希写入官方目录 |
+| `lueying-ppocr.exe`、`lueying-sensevoice.exe` | 原生官方扩展；随各自的 Release 单独发布 |
 
 `cargo run -p xtask -- winget` 生成 winget manifest，需要另外向 microsoft/winget-pkgs 提交 PR。
 

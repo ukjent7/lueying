@@ -87,14 +87,9 @@ Source: "{#PayloadDir}\rerank-8m.vocab.json"; DestDir: "{app}"; Flags: ignorever
 Source: "{#PayloadDir}\rerank-25m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-25m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-25m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; PP-OCR 模型不随基础安装包分发;设置窗的「官方扩展」按需下载,
-; 逐文件校验 SHA-256 后写入 %APPDATA%\lueying\extensions。
-; 官方起步扩展(截图 OCR 等)随包分发,作为扩展中心的本地安装源;用户
-; 在设置窗里点安装后才复制到 %APPDATA%\lueying\extensions。
+; PP-OCR 模型不随基础安装包分发。
+; 官方扩展源随包分发。
 Source: "{#PayloadDir}\extensions\*"; DestDir: "{app}\extensions"; \
-    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-; 官方扩展目录副本,供离线审计;运行时使用可执行文件里嵌入的同一份元数据。
-Source: "{#PayloadDir}\Catalog\*"; DestDir: "{app}\Catalog"; \
     Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [InstallDelete]

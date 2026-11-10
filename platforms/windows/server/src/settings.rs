@@ -5,8 +5,6 @@ pub mod actions;
 pub mod consent;
 pub mod ext;
 pub mod model;
-#[cfg(windows)]
-pub mod official;
 pub mod schema;
 pub mod secret;
 mod text;

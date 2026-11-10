@@ -233,7 +233,7 @@ pub fn open_ocr_models(settings: &mut Settings) {
 const PPOCR_README: &str = "\
 掠影 PP-OCRv6 识别引擎(原生扩展)目录
 
-需要五个文件(推荐在「官方扩展」里一键安装,放好五件即视为已装):
+需要五个文件,放好五件即视为已装:
   manifest.json  扩展清单
   ppocr.exe      识别引擎(独立进程,模型常驻)
   det.onnx       文字检测模型

@@ -89,10 +89,7 @@ impl Settings {
                 }]
             }
             PageId::Extensions => {
-                let mut groups = vec![Group {
-                    title: "官方扩展".to_string(),
-                    rows: self.official_extension_rows(),
-                }];
+                let mut groups = Vec::new();
                 if !self.scripts.is_empty() {
                     groups.push(Group {
                         title: "已安装扩展".to_string(),
@@ -251,46 +248,6 @@ impl Settings {
         }
     }
 
-    /// 官方扩展目录:一项一行,已安装的按钮禁用。
-    fn official_extension_rows(&self) -> Vec<Row> {
-        crate::official_extensions::catalog()
-            .extensions
-            .iter()
-            .take(ids::OFFICIAL_SLOTS)
-            .enumerate()
-            .map(|(slot, extension)| {
-                let installed = if extension.is_model() {
-                    extension.installed_model()
-                } else {
-                    self.scripts.iter().any(|script| script.id == extension.id)
-                };
-                let installing = self.installing.as_deref() == Some(extension.id.as_str());
-                let (text, kind, enabled) = if installing {
-                    ("安装中", ButtonKind::Secondary, false)
-                } else if installed {
-                    ("已安装", ButtonKind::Secondary, false)
-                } else {
-                    ("安装", ButtonKind::Primary, self.installing.is_none())
-                };
-                Row {
-                    label: extension.name.clone(),
-                    detail: format!(
-                        "{} · v{} · {}",
-                        extension.description, extension.version, extension.size
-                    ),
-                    control: Control::Buttons {
-                        items: vec![Button {
-                            id: Id::new(ids::official_ext(slot), 0),
-                            text: text.to_string(),
-                            kind,
-                            enabled,
-                        }],
-                    },
-                }
-            })
-            .collect()
-    }
-
     /// 已安装扩展:一行一个开关;权限状态写在说明里。
     fn installed_extension_rows(&self) -> Vec<Row> {
         self.scripts
@@ -390,7 +347,7 @@ impl Settings {
     fn ocr_dir_row(&self) -> Row {
         self.action_row(
             "识别模型",
-            "在「官方扩展」里按需安装 PP-OCRv6;缺失时可用系统 OCR".to_string(),
+            "PP-OCRv6 模型缺失时可用系统 OCR".to_string(),
             vec![Self::secondary(ids::OCR_DIR, "目录", true)],
         )
     }
@@ -627,7 +584,7 @@ impl Settings {
             (OcrBackend::Ppocr, true) => {
                 "PP-OCRv6 · 原生扩展,首次识别拉起进程,识别不联网".to_string()
             }
-            (OcrBackend::Ppocr, false) => "识别引擎未安装;到「官方扩展」里安装".to_string(),
+            (OcrBackend::Ppocr, false) => "识别引擎未安装;用 lueying ext add 安装".to_string(),
             (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
             (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 引擎未安装,可按需安装".to_string(),
         }

@@ -47,7 +47,7 @@ const PACK_BINS: &[&str] = &[
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
 /// 默认包带精确词典、8M/25M 按键重排模型与原生紧凑搭配表。`collocation.bin` 缺失时
 /// 引擎退回纯词频;词典与搭配表由 `tools/fetch_dict.sh` 钉版本。
-/// PP-OCR 模型体积大,仍在设置窗「官方扩展」里按需下载,详见 `Catalog/official-extensions.json`。
+/// PP-OCR 模型体积大,不随包分发。
 const PACK_DATA: &[&str] = &[
     "main.pyd",
     "collocation.bin",
@@ -189,13 +189,6 @@ b8f84f0b80c529de40b4fbb3544b84fa7233a513);\
             )?;
         }
     }
-    // 官方扩展目录也放一份在发布目录里,供审计与离线检查;程序运行时用
-    // 编译期嵌入的同一份文件,不依赖这个副本。
-    let catalog = root.join("Catalog");
-    if catalog.is_dir() {
-        copy_tree(&catalog, &args.out.join("Catalog"), "Catalog", &mut files)?;
-    }
-
     std::fs::write(args.out.join("version.txt"), format!("{}\n", args.version))
         .map_err(|e| format!("写 version.txt: {e}"))?;
     let manifest = serde_json::json!({

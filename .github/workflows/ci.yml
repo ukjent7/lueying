@@ -223,26 +223,6 @@ jobs:
         run: |
           rustup target add aarch64-pc-windows-msvc
           cargo build --release -p lueying-tsf --target aarch64-pc-windows-msvc --locked
-      # 官方原生扩展 ppocr:由 extensions.yml 单独发 Release;主 CI 只下载成品。
-      - name: 下载已发布的 ppocr 扩展
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
-          $tag = "ppocr-v$($manifest.version)"
-          New-Item -ItemType Directory -Force target/release | Out-Null
-          gh release download $tag --pattern lueying-ppocr.exe --dir target/release
-          Move-Item target/release/lueying-ppocr.exe target/release/ppocr.exe -Force
-      # 目录在编译期嵌入 server,测试安装包也要带真实哈希,否则官方扩展装不上。
-      - name: 补官方目录的 ppocr.exe
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
-        shell: pwsh
-        run: |
-          $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
-          $url = "https://github.com/ukjent7/lueying/releases/download/ppocr-v$($manifest.version)/lueying-ppocr.exe"
-          cargo run -p xtask --release --locked -- catalog-exe --exe target/release/ppocr.exe --url $url
       # Clippy 已在 Linux engine job 跑过;Windows 这份只观察、不阻断,纯属重复编译。
       - name: Build (release)
         id: build

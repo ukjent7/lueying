@@ -21,8 +21,6 @@ pub mod dict_import;
 
 pub mod host_panel;
 
-pub mod official_extensions;
-
 pub mod settings;
 
 /// 配置同步:载荷格式、摘要、冲突判定与 WebDAV 传输。
