@@ -20,13 +20,13 @@ use std::time::{Duration, Instant};
 
 use crate::context::ContextProvider;
 use assets::{dict_path, load_dict, load_model, single_instance};
+use lueying_core::features::{CustomPhrases, Prediction, ScriptModule};
+use lueying_core::module::Modules;
+use lueying_core::scheme::Scheme;
+use lueying_core::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::module::Modules;
-use lueying_engine::scheme::Scheme;
-use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
 use lueying_ext::host::{Done, Provider};
-use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{LatencyMetrics, Model, Rerank};
 use lueying_server::config::{self, AppConfig};
@@ -496,11 +496,11 @@ pub(super) fn real_main() {
             let _ = std::fs::create_dir_all(dir);
         }
         if !path.exists() {
-            let _ = std::fs::write(&path, lueying_features::phrases::TEMPLATE);
+            let _ = std::fs::write(&path, lueying_core::features::phrases::TEMPLATE);
         }
         Arc::new(CustomPhrases::load(path))
     });
-    let scheme = lueying_features::scheme(app_config.scheme, app_config.aux);
+    let scheme = lueying_core::schemes::scheme(app_config.scheme, app_config.aux);
     let prediction = Arc::new(Prediction::with_enabled(app_config.predict));
     let script = Arc::new(ScriptModule::new(app_config.script()));
     let (settle_tx, settle_rx) = mpsc::channel();
@@ -865,7 +865,7 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
         .unwrap_or_else(|p| p.into_inner())
         .clone();
     let scheme = (old.scheme != cfg.scheme || old.aux != cfg.aux)
-        .then(|| lueying_features::scheme(cfg.scheme, cfg.aux));
+        .then(|| lueying_core::schemes::scheme(cfg.scheme, cfg.aux));
     let predict = cfg.predict;
     let script = cfg.script();
     if let Some(scheme) = &scheme {
@@ -985,5 +985,5 @@ pub(super) fn sync_pending(s: &mut Session) {
 
 /// 同步会话视图(候选窗渲染的数据源)。
 pub(super) fn refresh_view(s: &mut Session) {
-    lueying_session::refresh(&s.engine, &mut s.view);
+    lueying_core::session::refresh(&s.engine, &mut s.view);
 }

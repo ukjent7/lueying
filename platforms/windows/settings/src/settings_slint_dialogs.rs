@@ -373,7 +373,7 @@ impl TextKind {
 
     fn template(self) -> &'static str {
         match self {
-            Self::Phrases => lueying_features::phrases::TEMPLATE,
+            Self::Phrases => lueying_core::features::phrases::TEMPLATE,
             Self::Punct => config::PUNCT_TEMPLATE,
         }
     }

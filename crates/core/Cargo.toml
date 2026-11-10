@@ -1,0 +1,17 @@
+[package]
+name = "lueying-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影输入内核:解码、信道、状态机、学习、双拼形码、内建功能与会话同步(平台无关)"
+
+[features]
+# 评测用模拟时钟(set_sim_now);产品构建不开。
+sim-clock = []
+
+[dependencies]
+lueying-dict.workspace = true
+# 会话视图的数据结构。
+lueying-protocol.workspace = true
+# 两档神经重排模型。
+lueying-rerank.workspace = true

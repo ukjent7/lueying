@@ -1,8 +1,6 @@
-//! 掠影官方内置扩展:自定义短语、下一词联想,以及快捷输入、表情、
-//! 英文混输与简繁转换。双拼与形码在 `extensions/input-schemes`。
-//!
-//! 这些能力都通过 [`lueying_ext`] 的公开契约接入,核心引擎只保留全拼、
-//! 候选生成与学习。宿主按配置选择方案并注册模块。
+//! 掠影官方内置功能:自定义短语、下一词联想,以及快捷输入、表情、
+//! 英文混输与简繁转换。它们都经 [`crate::module`] 的契约接入,宿主按配置
+//! 选择并注册。双拼与形码在 [`crate::schemes`]。
 
 pub mod emoji;
 pub mod english;
@@ -16,16 +14,13 @@ use std::sync::Arc;
 
 pub use emoji::EmojiModule;
 pub use english::EnglishModule;
-pub use lueying_ext::Script;
-pub use lueying_input_schemes::{
-    AuxCode, AuxLookup, AuxScheme, CodeEntry, CodeScheme, CodeTable, SchemeId, Shuangpin, scheme,
-};
 pub use phrases::CustomPhrases;
 pub use predict::Prediction;
 pub use quick::QuickModule;
 pub use script::{ScriptModule, convert};
 
-use lueying_ext::{Module, Modules};
+use crate::Script;
+use crate::module::{Module, Modules};
 
 /// 组合第一批内置模块。自定义短语按宿主给出的文件创建;联想默认启用。
 pub fn registry(phrases: Option<Arc<CustomPhrases>>) -> Arc<Modules> {

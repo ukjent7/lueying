@@ -10,11 +10,13 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use lueying_core::Script;
+use lueying_core::features::{Prediction, ScriptModule, registry_with_script};
+use lueying_core::module::Modules;
+use lueying_core::schemes::{SchemeId, scheme};
+use lueying_core::{Action, Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_dict::Dictionary;
-use lueying_engine::module::Modules;
-use lueying_engine::{Action, Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_ext::manifest::Manifest;
-use lueying_features::{Prediction, SchemeId, Script, ScriptModule, registry_with_script, scheme};
 
 /// `replay` 的参数。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

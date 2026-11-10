@@ -1,17 +1,14 @@
 [workspace]
 resolver = "3"
 members = [
-    # 核心:平台无关的词典、引擎、模型与协议
+    # 核心:平台无关的词典、输入内核(解码、学习、功能、会话)、重排模型与协议
     "crates/dict",
-    "crates/engine",
+    "crates/core",
     "crates/cli",
     "crates/ext",
-    "crates/features",
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
-    # 输入会话内核:候选视图同步与重排决策
-    "crates/session",
     # 联网边界:更新与下载,常驻 Server 不依赖
     "crates/net",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
@@ -30,7 +27,6 @@ members = [
     "platforms/windows/install-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
-    "extensions/input-schemes",
     "extensions/clipboard-history",
     "extensions/voice-asr",
     "extensions/ppocr",
@@ -44,16 +40,13 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 lueying-cli = { path = "crates/cli" }
 lueying-dict = { path = "crates/dict" }
-lueying-engine = { path = "crates/engine" }
+lueying-core = { path = "crates/core" }
 lueying-ext = { path = "crates/ext" }
 lueying-ext-host = { path = "platforms/windows/ext-host" }
 lueying-net = { path = "crates/net" }
-lueying-features = { path = "crates/features" }
-lueying-input-schemes = { path = "extensions/input-schemes" }
 lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
-lueying-session = { path = "crates/session" }
 lueying-server = { path = "platforms/windows/server" }
 lueying-settings = { path = "platforms/windows/settings" }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。

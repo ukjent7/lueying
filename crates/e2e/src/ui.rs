@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
+use lueying_core::{Config, Engine, Event, Key, MAX_RAW};
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Event, Key, MAX_RAW};
 
 use crate::harness::push;
 

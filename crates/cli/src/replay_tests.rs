@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lueying_engine::Key;
+use lueying_core::Key;
 
 use super::{ReplayArgs, parse_line, replay_with, run};
 

@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lueying_engine::{Config, Fuzzy, Script};
-use lueying_features::SchemeId;
+use lueying_core::schemes::SchemeId;
+use lueying_core::{Config, Fuzzy, Script};
 
 /// 一处配置问题:出错的文件层 + 人话。
 #[derive(Clone, Debug, PartialEq, Eq)]

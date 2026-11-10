@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
+use crate::Candidate;
+
+use crate::module::{CandidateContext, Capability, Manifest, Module};
 
 /// 首次启动写出的短语文件模板。示例全部注释,不改变默认候选。
 pub const TEMPLATE: &str = "\

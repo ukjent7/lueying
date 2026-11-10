@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::shared::pct;
+use lueying_core::{Candidate, Config, Engine, Event, Key};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Candidate, Config, Engine, Event, Key};
 use lueying_rerank::debounce::Debounce;
 use lueying_rerank::settle::result_is_current;
 use lueying_rerank::{Fact, Model, Rerank};
@@ -73,7 +73,7 @@ pub(crate) struct Snap {
 
 /// 与产品同一份快照逻辑;没有组合时只带上文。
 pub(crate) fn snapshot(engine: &Engine) -> Snap {
-    match lueying_session::snapshot(engine) {
+    match lueying_core::session::snapshot(engine) {
         Some(snap) => Snap {
             context: snap.context,
             texts: snap.texts,
@@ -519,7 +519,7 @@ pub fn run(
     push(
         &mut checks,
         "左邻上下文只留末尾 128 字",
-        kept.chars().count() == lueying_engine::CONTEXT_KEEP
+        kept.chars().count() == lueying_core::CONTEXT_KEEP
             && kept.chars().filter(|&c| c == '旧').count() == 28
             && kept.ends_with(&"新".repeat(100)),
         format!("{} 字", kept.chars().count()),

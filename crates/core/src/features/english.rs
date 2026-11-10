@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
+use crate::Candidate;
+
+use crate::module::{CandidateContext, Capability, Manifest, Module};
 
 /// 内置英文混输模块。
 #[derive(Default)]
@@ -68,7 +70,7 @@ impl Module for EnglishModule {
 fn table() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        include_str!("../data/en.tsv")
+        include_str!("../../data/en.tsv")
             .lines()
             .filter_map(|line| {
                 let (key, word) = line.split_once('\t')?;

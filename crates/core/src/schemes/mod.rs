@@ -1,8 +1,7 @@
-//! 官方输入方案扩展:双拼、形码与辅助码。
+//! 内建输入方案:双拼、形码与辅助码。
 //!
-//! 这些方案通过 `lueying-ext` 的 `Scheme` 编译期契约接入,可以在宿主构建时
-//! 选择是否注册;核心引擎只保留全拼、简拼与全简混输,不包含任何双拼或
-//! 字形逻辑。官方默认启用,用户也可以在设置里切回全拼。
+//! 这些方案实现 [`crate::scheme::Scheme`] 契约,由宿主按配置选择。
+//! 核心解码只认全拼、简拼与全简混输,不含任何双拼或字形逻辑。
 //!
 //! - [`Shuangpin`]：小鹤、自然码、微软、搜狗四套双拼布局。
 //! - [`CodeScheme`]：五笔、仓颉等按字形取码的形码方案。
@@ -18,7 +17,7 @@ pub use aux_code::{AuxCode, AuxLookup, AuxScheme};
 pub use code::{CodeEntry, CodeScheme, CodeTable};
 pub use shuangpin::Shuangpin;
 
-use lueying_ext::{FullPinyin, Scheme};
+use crate::scheme::{FullPinyin, Scheme};
 
 /// 宿主可选输入方案。`Full` 是默认值,其余为双拼或形码扩展。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

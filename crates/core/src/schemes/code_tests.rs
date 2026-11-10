@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::{Config, Engine, Key};
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Key};
 
 use super::{CodeScheme, CodeTable};
 
@@ -68,7 +68,7 @@ fn engine_commits_the_code_candidate() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, lueying_engine::Event::Commit(text) if text == "你")),
+            .any(|event| matches!(event, crate::Event::Commit(text) if text == "你")),
         "{events:?}"
     );
 }

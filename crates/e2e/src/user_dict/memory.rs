@@ -5,7 +5,7 @@
 
 use std::sync::RwLock;
 
-use lueying_engine::{Key, UserDict, set_sim_now};
+use lueying_core::{Key, UserDict, set_sim_now};
 
 use super::*;
 
@@ -385,7 +385,7 @@ fn record(key: &str, word: &str, uses: u32) -> String {
 
 /// 打一段键:上文置空但不清除误选记录(焦点切换才清,见 `clear_context`)。
 /// 隔音符是标点键,与字母分开送入(与真实键盘一致)。
-fn type_keys(e: &mut lueying_engine::Engine, keys: &str) {
+fn type_keys(e: &mut lueying_core::Engine, keys: &str) {
     e.process(Key::Esc);
     e.set_context("");
     for c in keys.chars() {

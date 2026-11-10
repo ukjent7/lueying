@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use lueying_features::SchemeId;
+use lueying_core::schemes::SchemeId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

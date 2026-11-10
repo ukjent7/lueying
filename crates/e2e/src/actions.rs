@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
+use lueying_core::{Action, Config, Engine, Event, Key};
 use lueying_dict::Dictionary;
-use lueying_engine::{Action, Config, Engine, Event, Key};
 
 fn engine() -> Engine {
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(crate::builtins())

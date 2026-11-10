@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module, Script};
+use crate::{Candidate, Script};
+
+use crate::module::{CandidateContext, Capability, Manifest, Module};
 
 /// OpenCC `STPhrases` 最长条目为 15 个汉字。
 const MAX_PHRASE_CHARS: usize = 15;
@@ -111,12 +113,12 @@ pub fn convert(text: &str, script: Script) -> String {
 
 fn tw_chars() -> &'static HashMap<char, char> {
     static TW: OnceLock<HashMap<char, char>> = OnceLock::new();
-    TW.get_or_init(|| regional_chars(include_str!("../data/s2t_tw.tsv")))
+    TW.get_or_init(|| regional_chars(include_str!("../../data/s2t_tw.tsv")))
 }
 
 fn hk_chars() -> &'static HashMap<char, char> {
     static HK: OnceLock<HashMap<char, char>> = OnceLock::new();
-    HK.get_or_init(|| regional_chars(include_str!("../data/s2t_hk.tsv")))
+    HK.get_or_init(|| regional_chars(include_str!("../../data/s2t_hk.tsv")))
 }
 
 /// 地区字形二次映射:变体表全是单字,逐字替换即可。
@@ -189,7 +191,7 @@ fn longest_phrase<'a>(
 fn char_table() -> &'static HashMap<char, char> {
     static TABLE: OnceLock<HashMap<char, char>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        include_str!("../data/s2t_chars.tsv")
+        include_str!("../../data/s2t_chars.tsv")
             .lines()
             .filter_map(|line| {
                 let (from, to) = line.split_once('\t')?;
@@ -206,7 +208,7 @@ fn char_table() -> &'static HashMap<char, char> {
 fn phrase_table() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        include_str!("../data/s2t_phrases.tsv")
+        include_str!("../../data/s2t_phrases.tsv")
             .lines()
             .filter_map(|line| {
                 let (from, to) = line.split_once('\t')?;

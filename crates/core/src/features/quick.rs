@@ -5,9 +5,11 @@
 //! 把触发会话里的运算符、数字、十六进制字母与小数点认领成输入;只有清单
 //! 声明的触发前缀(`v`/`u`/`rq`/`sj`/`xq`)命中时引擎才会咨询本模块。
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Key, KeyContext, Manifest, Module};
+use crate::{Candidate, Key};
 
-use crate::symbols;
+use crate::module::{CandidateContext, Capability, KeyContext, Manifest, Module};
+
+use super::symbols;
 
 const LOWER_DIGITS: [&str; 10] = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
 /// 逐位读法专用:阿拉伯数字的 0 读「〇」,位值读法的空缺才用「零」。
@@ -148,7 +150,7 @@ pub(crate) fn is_trigger(raw: &str) -> bool {
 }
 
 /// 当前原始串对应的快捷候选;没有触发时返回空。
-pub(crate) fn candidates(raw: &str, now: lueying_ext::CivilTime) -> Vec<Candidate> {
+pub(crate) fn candidates(raw: &str, now: crate::CivilTime) -> Vec<Candidate> {
     if let Some(cands) = symbols::candidates(raw) {
         return cands;
     }
@@ -177,7 +179,7 @@ pub(crate) fn candidates(raw: &str, now: lueying_ext::CivilTime) -> Vec<Candidat
 pub(crate) fn keyword(
     cands: &[Candidate],
     raw: &str,
-    now: lueying_ext::CivilTime,
+    now: crate::CivilTime,
 ) -> Option<(usize, Vec<Candidate>)> {
     const SCAN: usize = 5;
     let (index, texts) = cands
@@ -215,7 +217,7 @@ fn wrap(texts: Vec<String>, raw: &str) -> Vec<Candidate> {
         .collect()
 }
 
-fn date_texts(now: lueying_ext::CivilTime) -> Vec<String> {
+fn date_texts(now: crate::CivilTime) -> Vec<String> {
     vec![
         format!("{}年{}月{}日", now.year, now.month, now.day),
         format!("{:04}-{:02}-{:02}", now.year, now.month, now.day),
@@ -224,7 +226,7 @@ fn date_texts(now: lueying_ext::CivilTime) -> Vec<String> {
     ]
 }
 
-fn time_texts(now: lueying_ext::CivilTime) -> Vec<String> {
+fn time_texts(now: crate::CivilTime) -> Vec<String> {
     let mut out = vec![
         format!("{:02}:{:02}", now.hour, now.minute),
         format!("{:02}:{:02}:{:02}", now.hour, now.minute, now.second),
@@ -245,7 +247,7 @@ fn time_texts(now: lueying_ext::CivilTime) -> Vec<String> {
     out
 }
 
-fn weekday_texts(now: lueying_ext::CivilTime) -> Vec<String> {
+fn weekday_texts(now: crate::CivilTime) -> Vec<String> {
     const NAMES: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
     let index = (now.weekday.clamp(1, 7) - 1) as usize;
     let mut out = vec![

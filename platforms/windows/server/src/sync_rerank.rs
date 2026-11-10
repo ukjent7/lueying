@@ -16,7 +16,7 @@ pub(super) struct Job {
     /// 发起时的焦点/上下文代次;中途换了输入范围就丢弃。
     seq: u64,
     /// 重排输入快照;上下文、候选与版本号都在里面。
-    snap: lueying_session::Snapshot,
+    snap: lueying_core::session::Snapshot,
     rerank: Arc<Mutex<lueying_rerank::Rerank>>,
 }
 
@@ -29,15 +29,15 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
         return;
     };
     // 快捷候选固定在本轮插入的位置,8M 模型不能把它们换走;置顶词同理。
-    if lueying_session::pinned_candidates(&s.engine) {
+    if lueying_core::session::pinned_candidates(&s.engine) {
         return;
     }
-    let Some(snap) = lueying_session::snapshot(&s.engine) else {
+    let Some(snap) = lueying_core::session::snapshot(&s.engine) else {
         return;
     };
     // 没有左邻上下文时,8M 只能按句子自身打分:共享语料上它的排序比引擎
     // 低 7.6 个百分点,而停顿重排的最终结果与是否先跑 8M 完全相同。
-    if !lueying_session::sync_worthwhile(&snap) {
+    if !lueying_core::session::sync_worthwhile(&snap) {
         return;
     }
     // 通道满说明上一键的结果还没出来:直接丢掉这一次,排队只会让结果更旧。
@@ -62,7 +62,7 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Job>) {
 }
 
 fn run(state: &State, job: &Job) {
-    let promote = lueying_session::decide_sync(&job.rerank, &job.snap);
+    let promote = lueying_core::session::decide_sync(&job.rerank, &job.snap);
     let Some(index) = promote else {
         return;
     };

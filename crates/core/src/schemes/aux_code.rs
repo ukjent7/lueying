@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use lueying_ext::{CandidateFilter, CodeCandidate, Expansion, Scheme, SchemeManifest};
+use crate::scheme::{CandidateFilter, CodeCandidate, Expansion, Scheme, SchemeManifest};
 
 /// 字形码查询。返回该字是否有任一码以 `prefix` 开头。
 pub trait AuxLookup: Send + Sync {
@@ -61,7 +61,7 @@ impl AuxCode {
     pub fn builtin() -> Arc<Self> {
         static TABLE: OnceLock<Arc<AuxCode>> = OnceLock::new();
         Arc::clone(
-            TABLE.get_or_init(|| Arc::new(AuxCode::from_text(include_str!("../data/wubi.txt")))),
+            TABLE.get_or_init(|| Arc::new(AuxCode::from_text(include_str!("../../data/wubi.txt")))),
         )
     }
 

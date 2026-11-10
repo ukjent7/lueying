@@ -7,9 +7,9 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 
+use lueying_core::{Candidate, Engine, Fuzzy, Key};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Candidate, Engine, Fuzzy, Key};
 use lueying_rerank::Rerank;
 
 use crate::bench;
@@ -152,7 +152,7 @@ pub(crate) fn apply_rerank(
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    // 与 `lueying_session::sync_worthwhile` 同一门控:没有上文就跳过。
+    // 与 `lueying_core::session::sync_worthwhile` 同一门控:没有上文就跳过。
     let promote = (!snap.context.is_empty())
         .then(|| four.decide(&snap.context, &texts, &snap.facts))
         .flatten();

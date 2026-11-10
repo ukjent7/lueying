@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
+use lueying_core::{Config, Engine, Event, Key, Script};
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Event, Key, Script};
 
 use crate::harness::push;
 
@@ -54,12 +54,15 @@ const READINGS_DICT: &str = "\
 ";
 
 /// 引擎 + 简繁模块句柄:组合中切换字形的用例直接翻句柄。
-fn custom(script: Script) -> (Engine, Arc<lueying_features::ScriptModule>) {
+fn custom(script: Script) -> (Engine, Arc<lueying_core::features::ScriptModule>) {
     let (dict, bad) = Dictionary::from_text(TEST_DICT);
     assert_eq!(bad, 0, "测试词库不应有坏行");
-    let script_module = Arc::new(lueying_features::ScriptModule::new(script));
+    let script_module = Arc::new(lueying_core::features::ScriptModule::new(script));
     let engine = Engine::new(Arc::new(dict), Config::default()).with_modules(Arc::new(
-        lueying_features::complete_builtins(lueying_engine::module::Modules::new(), &script_module),
+        lueying_core::features::complete_builtins(
+            lueying_core::module::Modules::new(),
+            &script_module,
+        ),
     ));
     (engine, script_module)
 }

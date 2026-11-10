@@ -12,7 +12,7 @@
 
 use std::sync::Mutex;
 
-use lueying_engine::{Engine, Mode};
+use crate::{Engine, Mode};
 use lueying_protocol::SessionView;
 use lueying_rerank::{Fact, Rerank};
 
@@ -156,8 +156,8 @@ pub fn decide_settled(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usi
 mod tests {
     use std::sync::Arc;
 
+    use crate::{Config, Engine, Key};
     use lueying_dict::Dictionary;
-    use lueying_engine::{Config, Engine, Key};
 
     use super::*;
 

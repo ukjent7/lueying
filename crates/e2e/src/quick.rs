@@ -24,8 +24,8 @@
 
 use std::sync::{Arc, RwLock};
 
+use lueying_core::{CivilTime, Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_dict::Dictionary;
-use lueying_engine::{CivilTime, Config, Engine, Event, Key, SharedUser, UserDict};
 
 use crate::harness::push;
 

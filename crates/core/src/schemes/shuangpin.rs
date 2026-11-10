@@ -6,10 +6,10 @@
 
 use std::collections::HashMap;
 
+use crate::scheme::{Expansion, Scheme, SchemeManifest};
 use lueying_dict::syllables;
-use lueying_ext::{Expansion, Scheme, SchemeManifest};
 
-use crate::SchemeId;
+use super::SchemeId;
 
 struct Layout {
     id: &'static str,

@@ -26,16 +26,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use lueying_core::{Config, Engine, Event, Fuzzy, Key, Mode};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Config, Engine, Event, Fuzzy, Key, Mode};
 use scenarios::{Check, Scenario, probes, scenarios};
 
 /// 生产内置模块(表情、英文混输、简繁转换):核心引擎迁到同一契约后,
 /// 主题回归用它保持与产品一致的候选装饰。
-pub(crate) fn builtins() -> Arc<lueying_engine::module::Modules> {
-    Arc::new(lueying_features::builtins(
-        lueying_features::Script::Simplified,
+pub(crate) fn builtins() -> Arc<lueying_core::module::Modules> {
+    Arc::new(lueying_core::features::builtins(
+        lueying_core::Script::Simplified,
     ))
 }
 

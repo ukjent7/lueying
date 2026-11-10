@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
+use crate::Candidate;
+
+use crate::module::{CandidateContext, Capability, Manifest, Module};
 
 /// 只给前几条候选配表情,避免整页都是表情。
 const SCAN: usize = 6;
@@ -115,7 +117,7 @@ impl Module for EmojiModule {
 fn table() -> &'static HashMap<&'static str, &'static str> {
     static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        include_str!("../data/emoji.tsv")
+        include_str!("../../data/emoji.tsv")
             .lines()
             .filter_map(|line| {
                 let (alias, emojis) = line.split_once('\t')?;

@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 lueying-server.workspace = true
 lueying-dict.workspace = true
-lueying-features.workspace = true
+lueying-core.workspace = true
 # 设置页的行布局与工具条缩放共用渲染核心的常量与夹取规则。
 lueying-render.workspace = true
 # 更新检查与安装包下载:WinHTTP 只链接在本进程里,常驻 Server 不引用。

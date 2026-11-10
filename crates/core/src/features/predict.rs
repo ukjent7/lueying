@@ -6,7 +6,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use lueying_ext::{Candidate, CandidateContext, Capability, Manifest, Module};
+use crate::Candidate;
+
+use crate::module::{CandidateContext, Capability, Manifest, Module};
 
 /// 每次组合最多补几条联想,避免把首页灌满。
 const MAX_SUGGESTIONS: usize = 3;

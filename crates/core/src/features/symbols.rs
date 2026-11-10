@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use lueying_ext::Candidate;
+use crate::Candidate;
 
 /// 单个分类最多保留的符号数;超出部分对输入法候选窗没有实用价值。
 const MAX_SYMBOLS: usize = 120;
@@ -39,7 +39,7 @@ fn code(raw: &str) -> Option<(&str, &'static str, &'static str)> {
 fn table() -> &'static HashMap<&'static str, (&'static str, &'static str)> {
     static TABLE: OnceLock<HashMap<&'static str, (&'static str, &'static str)>> = OnceLock::new();
     TABLE.get_or_init(|| {
-        include_str!("../data/symbols.tsv")
+        include_str!("../../data/symbols.tsv")
             .lines()
             .filter_map(|line| {
                 let mut parts = line.splitn(3, '\t');

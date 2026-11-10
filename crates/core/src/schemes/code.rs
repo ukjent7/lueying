@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use lueying_ext::{CodeCandidate, Expansion, Scheme, SchemeManifest};
+use crate::scheme::{CodeCandidate, Expansion, Scheme, SchemeManifest};
 
 /// 码表里的一条:一个码对应一个字或词。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,16 +53,14 @@ impl CodeTable {
     pub fn from_text(text: &str) -> Self {
         let mut entries: Vec<CodeEntry> = Vec::new();
         for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            // 不能先 trim 整行:行首的制表符是空码列,trim 后会把它错当成码。
+            let line = line.trim_end();
+            if line.trim().is_empty() || line.trim_start().starts_with('#') {
                 continue;
             }
             let mut parts = line.split('\t');
-            let (Some(code), Some(word)) = (parts.next(), parts.next()) else {
-                continue;
-            };
-            let code = code.trim().to_lowercase();
-            let word = word.trim();
+            let code = parts.next().unwrap_or_default().trim().to_lowercase();
+            let word = parts.next().unwrap_or_default().trim();
             if code.is_empty() || word.is_empty() {
                 continue;
             }

@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
+use lueying_core::{Config, Engine, Event, SharedUser};
 use lueying_dict::Dictionary;
-use lueying_engine::{Config, Engine, Event, SharedUser};
 
 use crate::harness::{Checks, push};
 

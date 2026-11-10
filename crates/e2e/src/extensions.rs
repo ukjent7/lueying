@@ -8,22 +8,23 @@
 
 use std::sync::{Arc, RwLock};
 
+use lueying_core::features::CustomPhrases;
+use lueying_core::module::Modules;
+use lueying_core::schemes::{AuxCode, SchemeId};
+use lueying_core::{Config, Engine, Event, Key, SharedUser, UserDict};
 use lueying_dict::Dictionary;
-use lueying_engine::module::Modules;
-use lueying_engine::{Config, Engine, Event, Key, SharedUser, UserDict};
-use lueying_features::{AuxCode, CustomPhrases, SchemeId};
 
 fn engine(scheme: SchemeId, aux: bool, modules: Arc<Modules>, user: SharedUser) -> Engine {
-    let script = Arc::new(lueying_features::ScriptModule::new(
-        lueying_features::Script::Simplified,
+    let script = Arc::new(lueying_core::features::ScriptModule::new(
+        lueying_core::Script::Simplified,
     ));
     Engine::new(Arc::new(Dictionary::builtin()), Config::default())
         .with_user(user)
-        .with_modules(Arc::new(lueying_features::complete_builtins(
+        .with_modules(Arc::new(lueying_core::features::complete_builtins(
             (*modules).clone(),
             &script,
         )))
-        .with_scheme(lueying_features::scheme(scheme, aux))
+        .with_scheme(lueying_core::schemes::scheme(scheme, aux))
 }
 
 fn shared() -> SharedUser {
@@ -102,7 +103,7 @@ pub fn run(report: &mut String) -> usize {
     }
 
     // 双拼两键就是一个音节:零声母与相邻音节不能靠核心再猜一次切分。
-    let xiaohe = lueying_features::scheme(SchemeId::Xiaohe, false);
+    let xiaohe = lueying_core::schemes::scheme(SchemeId::Xiaohe, false);
     check(
         &mut checks,
         "双拼零声母",
@@ -125,7 +126,7 @@ pub fn run(report: &mut String) -> usize {
     );
 
     // 微软/搜狗的 `;` 是 ing,不是标点。
-    let mspy = lueying_features::scheme(SchemeId::Mspy, false);
+    let mspy = lueying_core::schemes::scheme(SchemeId::Mspy, false);
     let expanded = mspy.expand("y;");
     check(
         &mut checks,
@@ -208,7 +209,7 @@ pub fn run(report: &mut String) -> usize {
     // 运行中切换方案:旧击键不能按新规则继续解释。
     let mut switching = engine(SchemeId::Full, false, Arc::new(Modules::new()), shared());
     type_text(&mut switching, "ni");
-    switching.set_scheme(lueying_features::scheme(SchemeId::Xiaohe, false));
+    switching.set_scheme(lueying_core::schemes::scheme(SchemeId::Xiaohe, false));
     check(
         &mut checks,
         "切换方案清组合",
@@ -226,7 +227,7 @@ pub fn run(report: &mut String) -> usize {
         phrases.len() == 2,
         format!("{} 条", phrases.len()),
     );
-    let modules = lueying_features::registry(Some(Arc::clone(&phrases)));
+    let modules = lueying_core::features::registry(Some(Arc::clone(&phrases)));
     let mut full = engine(SchemeId::Full, false, modules.clone(), shared());
     type_text(&mut full, "nihao");
     check(
@@ -304,8 +305,8 @@ pub fn run(report: &mut String) -> usize {
 
     // 联想:先形成「我 → 学习」的词序,再在上一词是「我」时打 x。
     let user = shared();
-    let prediction = Arc::new(lueying_features::Prediction::new());
-    let modules = lueying_features::registry_with_prediction(None, Arc::clone(&prediction));
+    let prediction = Arc::new(lueying_core::features::Prediction::new());
+    let modules = lueying_core::features::registry_with_prediction(None, Arc::clone(&prediction));
     let mut train = engine(SchemeId::Full, false, modules.clone(), Arc::clone(&user));
     type_text(&mut train, "wo");
     let got_wo = commit(&mut train, "我");
@@ -358,7 +359,7 @@ pub fn run(report: &mut String) -> usize {
         manifests.contains(&"custom-phrases") && manifests.contains(&"prediction"),
         format!("{manifests:?}"),
     );
-    let aux_manifest = lueying_features::scheme(SchemeId::Xiaohe, true).manifest();
+    let aux_manifest = lueying_core::schemes::scheme(SchemeId::Xiaohe, true).manifest();
     check(
         &mut checks,
         "方案叠加",
@@ -382,7 +383,7 @@ pub fn run(report: &mut String) -> usize {
 }
 
 fn phrases_manifests(phrases: &Arc<CustomPhrases>) -> Vec<&'static str> {
-    lueying_features::registry(Some(Arc::clone(phrases)))
+    lueying_core::features::registry(Some(Arc::clone(phrases)))
         .manifests()
         .map(|manifest| manifest.id)
         .collect()

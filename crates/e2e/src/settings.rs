@@ -7,9 +7,9 @@
 //! 4. Tab 走到一半断了,键盘用户够不到后面的控件。
 //! 5. 控件排到卡片外面,点不到也看不见。
 
+use lueying_core::schemes::SchemeId;
 use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_ext::manifest::{Setting, SettingValue};
-use lueying_features::SchemeId;
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
 use lueying_settings::settings::model::{self as ui, Id};
 use lueying_settings::settings::view::{Action, PageColors, PageId, ScriptEntry, Settings, ids};

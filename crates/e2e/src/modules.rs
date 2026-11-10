@@ -7,11 +7,11 @@
 
 use std::sync::Arc;
 
-use lueying_dict::Dictionary;
-use lueying_engine::module::{
+use lueying_core::module::{
     CandidateContext, Capability, CommitContext, Manifest, Module, Modules,
 };
-use lueying_engine::{Candidate, Config, Engine, Event, Key};
+use lueying_core::{Candidate, Config, Engine, Event, Key};
+use lueying_dict::Dictionary;
 
 struct Demo;
 
@@ -41,11 +41,11 @@ impl Module for Demo {
 }
 
 fn engine(modules: Modules) -> Engine {
-    let script = Arc::new(lueying_features::ScriptModule::new(
-        lueying_features::Script::Simplified,
+    let script = Arc::new(lueying_core::features::ScriptModule::new(
+        lueying_core::Script::Simplified,
     ));
     Engine::new(Arc::new(Dictionary::builtin()), Config::default()).with_modules(Arc::new(
-        lueying_features::complete_builtins(modules, &script),
+        lueying_core::features::complete_builtins(modules, &script),
     ))
 }
 

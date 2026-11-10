@@ -8,7 +8,7 @@
 | Wasm 扩展 | Wasm 组件，由 wasmtime 加载 | 候选外观、命令、声明式设置 |
 | 原生扩展 | 独立可执行文件 | 较重的系统能力，如 OCR、语音识别；也可订阅候选窗状态 |
 
-官方扩展随发布提供：`shot-ocr`（截图识别）、`clipboard-history`（剪贴板历史）、`voice-asr`（语音输入）、`input-schemes`（输入方案），以及原生的 `ppocr` 与 `sensevoice`。官方扩展与社区扩展一样用 `lueying ext add github:作者/仓库#版本` 安装，见[社区目录](catalog.md)。
+官方扩展随发布提供：`shot-ocr`（截图识别）、`clipboard-history`（剪贴板历史）、`voice-asr`（语音输入），以及原生的 `ppocr` 与 `sensevoice`。官方扩展与社区扩展一样用 `lueying ext add github:作者/仓库#版本` 安装，见[社区目录](catalog.md)。
 
 ## 清单
 

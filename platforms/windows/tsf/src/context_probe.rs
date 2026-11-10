@@ -23,7 +23,7 @@ use windows::core::{Interface, Result, implement};
 use crate::log;
 use crate::service::{Shared, SharedClient};
 
-/// 与 `lueying_engine::CONTEXT_KEEP` 一致;DLL 不为了一个常量依赖整个引擎。
+/// 与 `lueying_core::CONTEXT_KEEP` 一致;DLL 不为了一个常量依赖整个引擎。
 const KEEP: usize = 128;
 
 /// 在当前文档上排一次左邻文本读取;已有读取在途时跳过。

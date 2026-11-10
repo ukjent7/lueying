@@ -8,11 +8,13 @@
 //! 堆条件分支,而是作为模块由宿主组合进来。
 //!
 //! 文件布局:`state` 放会话、配置与候选选择,`input` 放按键状态机与上屏。
+//! 内建功能在 [`features`],双拼与形码在 [`schemes`],输入会话同步在 [`session`]。
 
 mod address;
 mod channel;
 mod code;
 mod decoder;
+pub mod features;
 mod input;
 mod input_commit;
 mod input_edit;
@@ -22,8 +24,10 @@ pub mod module;
 mod punct;
 mod query;
 pub mod scheme;
+pub mod schemes;
 #[cfg(test)]
 mod search_tests;
+pub mod session;
 mod state;
 pub mod types;
 mod user;

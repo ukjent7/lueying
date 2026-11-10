@@ -3169,15 +3169,23 @@ name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "lueying-core",
  "lueying-dict",
- "lueying-engine",
  "lueying-ext",
- "lueying-features",
  "lueying-protocol",
  "serde_json",
  "tar",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "lueying-core"
+version = "0.1.0"
+dependencies = [
+ "lueying-dict",
+ "lueying-protocol",
+ "lueying-rerank",
 ]
 
 [[package]]
@@ -3192,31 +3200,21 @@ name = "lueying-e2e"
 version = "0.1.0"
 dependencies = [
  "lueying-cli",
+ "lueying-core",
  "lueying-dict",
- "lueying-engine",
  "lueying-ext",
  "lueying-ext-host",
- "lueying-features",
  "lueying-render",
  "lueying-rerank",
  "lueying-server",
- "lueying-session",
  "lueying-settings",
  "serde_json",
-]
-
-[[package]]
-name = "lueying-engine"
-version = "0.1.0"
-dependencies = [
- "lueying-dict",
 ]
 
 [[package]]
 name = "lueying-ext"
 version = "0.1.0"
 dependencies = [
- "lueying-engine",
  "serde",
  "serde_json",
  "wasmtime",
@@ -3231,24 +3229,6 @@ dependencies = [
  "lueying-net",
  "serde_json",
  "windows",
-]
-
-[[package]]
-name = "lueying-features"
-version = "0.1.0"
-dependencies = [
- "lueying-dict",
- "lueying-ext",
- "lueying-input-schemes",
-]
-
-[[package]]
-name = "lueying-input-schemes"
-version = "0.1.0"
-dependencies = [
- "lueying-dict",
- "lueying-engine",
- "lueying-ext",
 ]
 
 [[package]]
@@ -3313,14 +3293,12 @@ name = "lueying-server"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "lueying-core",
  "lueying-dict",
- "lueying-engine",
  "lueying-ext",
- "lueying-features",
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
- "lueying-session",
  "mimalloc",
  "serde",
  "serde_json",
@@ -3330,23 +3308,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-session"
-version = "0.1.0"
-dependencies = [
- "lueying-dict",
- "lueying-engine",
- "lueying-protocol",
- "lueying-rerank",
-]
-
-[[package]]
 name = "lueying-settings"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "lueying-core",
  "lueying-dict",
  "lueying-ext",
- "lueying-features",
  "lueying-net",
  "lueying-protocol",
  "lueying-render",

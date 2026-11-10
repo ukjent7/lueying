@@ -21,10 +21,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use lueying_core::{Config, Engine, Event, Fuzzy, Key};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_dict::syllables::is_syllable;
-use lueying_engine::{Config, Engine, Event, Fuzzy, Key};
 
 const LONG_TERM_WORDS: usize = 60;
 const LONG_TERM_ROUNDS: usize = 6;

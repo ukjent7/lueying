@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use lueying_core::{Engine, Fuzzy, Key};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
-use lueying_engine::{Engine, Fuzzy, Key};
 use lueying_rerank::Rerank;
 
 use crate::bench;

@@ -5,6 +5,34 @@
 //! 音节切分,以引擎级方案接口扩展。模块由宿主在启动时组合进 [`Modules`],
 //! 引擎按注册顺序调用,默认注册表为空,现有输入行为与性能不变。
 //!
+//!
+//! # 最小模块
+//!
+//! ```
+//! use lueying_core::Candidate;
+//! use lueying_core::module::{CandidateContext, Capability, Manifest, Module};
+//!
+//! struct Ping;
+//!
+//! impl Module for Ping {
+//!     fn manifest(&self) -> Manifest {
+//!         Manifest {
+//!             id: "ping",
+//!             name: "示例",
+//!             version: "1.0",
+//!             capabilities: &[Capability::Candidates],
+//!             triggers: &[],
+//!         }
+//!     }
+//!
+//!     fn candidates(&self, ctx: &CandidateContext<'_>, cands: &mut Vec<Candidate>) {
+//!         if ctx.query == "ping" {
+//!             cands.insert(0, Candidate::whole(ctx.raw.len(), "示例", 1.0));
+//!         }
+//!     }
+//! }
+//! ```
+//!
 //! 参考 pi / deepseek harness 的模块化思路:核心定义稳定契约与生命周期,宿主管
 //! 组合与顺序,功能模块只依赖核心契约。这里使用编译期注册而不是运行期加载
 //! DLL,避免把未签名代码加载进输入法进程。

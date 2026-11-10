@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use lueying_engine::CONTEXT_KEEP;
+use lueying_core::CONTEXT_KEEP;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,

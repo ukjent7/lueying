@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use lueying_engine::{SharedUser, UserDict};
+use lueying_core::{SharedUser, UserDict};
 
 const CHECK_EVERY: Duration = Duration::from_secs(1);
 

@@ -29,7 +29,7 @@ pub(super) struct SettleJob {
     /// 发起时的焦点/上下文代次;中途换了输入范围就丢弃。
     seq: u64,
     /// 重排输入快照;上下文、候选与版本号都在里面。
-    snap: lueying_session::Snapshot,
+    snap: lueying_core::session::Snapshot,
     rerank: Arc<Mutex<lueying_rerank::Rerank>>,
 }
 
@@ -56,11 +56,11 @@ pub(super) fn schedule(state: &State, session: u64, s: &Session) {
     }
     // 快捷候选必须留在插入位置;停顿重排不能把它们换走,
     // 否则空格上屏的会是另一个词。置顶词同理。
-    if lueying_session::pinned_candidates(&s.engine) {
+    if lueying_core::session::pinned_candidates(&s.engine) {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     }
-    let Some(snap) = lueying_session::snapshot(&s.engine) else {
+    let Some(snap) = lueying_core::session::snapshot(&s.engine) else {
         let _ = tx.send(SettleMessage::Cancel { session });
         return;
     };
@@ -103,7 +103,7 @@ pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<SettleMessage>) {
                 for job in debounce.take_due(now) {
                     // 一次推理 panic 不能让整条 25M 线程退出;丢掉本次结果即可。
                     let _ = catch_unwind(AssertUnwindSafe(|| {
-                        let promote = lueying_session::decide_settled(&job.rerank, &job.snap);
+                        let promote = lueying_core::session::decide_settled(&job.rerank, &job.snap);
                         apply(&state, &job, promote);
                     }));
                 }
