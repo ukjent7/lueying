@@ -4,7 +4,7 @@
 //! 这里;平台侧只管窗口、绘制与文件对话框。Linux E2E 因此能直接断言
 //! 设置页的结构与交互结果。
 
-use lueying_extmeta::metrics::ExtMetrics;
+use lueying_ext::manifest::metrics::ExtMetrics;
 use lueying_protocol::EngineStatus;
 
 use crate::config::AppConfig;
@@ -36,7 +36,6 @@ pub mod ids {
     pub const SCRIPTS_DIR: &str = "scripts-dir";
     pub const IMPORT_LUEXT: &str = "ext-import";
     pub const CONSENT: &str = "consent";
-    pub const AUDIT: &str = "audit";
     pub const EXT_METRICS: &str = "ext-metrics";
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
@@ -227,7 +226,6 @@ pub enum Action {
     OpenScripts,
     ImportLuext,
     ApproveExtension,
-    OpenExtAudit,
     RefreshExtMetrics,
     OpenOcrModels,
     /// 编辑扩展密钥:扩展 id、设置键、显示标题。
@@ -417,7 +415,6 @@ impl Settings {
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
             ids::IMPORT_LUEXT => Some(Action::ImportLuext),
             ids::CONSENT => Some(Action::ApproveExtension),
-            ids::AUDIT => Some(Action::OpenExtAudit),
             ids::EXT_METRICS => Some(Action::RefreshExtMetrics),
             ids::PHRASES => Some(Action::OpenPhrases),
             ids::PUNCT => Some(Action::OpenPunct),

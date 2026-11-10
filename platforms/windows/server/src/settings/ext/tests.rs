@@ -1,5 +1,5 @@
 use super::*;
-use lueying_extmeta::SettingValue;
+use lueying_ext::manifest::SettingValue;
 
 fn toggle() -> Setting {
     Setting {

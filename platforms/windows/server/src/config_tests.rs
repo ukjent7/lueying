@@ -100,25 +100,6 @@ fn valid_script_id_boundaries() {
 }
 
 #[test]
-fn panel_hotkey_parses_and_off_values_disable() {
-    let cfg = load_text("panel", "panel_hotkey = \"Ctrl+Alt+Shift+P\"\n");
-    assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+P");
-    for (index, value) in ["", "off", "none"].into_iter().enumerate() {
-        let cfg = load_text(
-            &format!("panel-off-{index}"),
-            &format!("panel_hotkey = {}\n", toml_string(value)),
-        );
-        assert!(cfg.panel_hotkey.is_empty(), "{value:?}");
-    }
-}
-
-#[test]
-fn panel_hotkey_defaults_to_three_modifiers() {
-    let cfg = load_text("panel-default", "");
-    assert_eq!(cfg.panel_hotkey, "Ctrl+Alt+Shift+Space");
-}
-
-#[test]
 fn ocr_engine_parses_aliases() {
     assert_eq!(load_text("ocr-default", "").ocr_backend, OcrBackend::System);
     for value in ["ppocr", "pp-ocr", "paddle"] {
@@ -159,7 +140,6 @@ fn save_keeps_extensions_and_round_trips() {
     let cfg = AppConfig {
         extensions: vec!["first".to_string(), "second".to_string()],
         triggers: vec![("bc".to_string(), "shot.run".to_string())],
-        panel_hotkey: "Ctrl+Alt+Shift+P".to_string(),
         ocr_backend: OcrBackend::Ppocr,
         ..AppConfig::default()
     };
@@ -173,17 +153,12 @@ fn save_keeps_extensions_and_round_trips() {
         "{text}"
     );
     assert!(text.contains("bc = \"shot.run\""), "{text}");
-    assert!(
-        text.contains("panel_hotkey = \"Ctrl+Alt+Shift+P\""),
-        "{text}"
-    );
     assert!(text.contains("ocr_engine = \"ppocr\""), "{text}");
     assert_eq!(
         loaded.triggers,
         vec![("bc".to_string(), "shot.run".to_string())]
     );
     assert_eq!(loaded.extensions, vec!["first", "second"]);
-    assert_eq!(loaded.panel_hotkey, "Ctrl+Alt+Shift+P");
     assert_eq!(loaded.ocr_backend, OcrBackend::Ppocr);
 }
 

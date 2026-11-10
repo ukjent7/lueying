@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lueying_extmeta::metrics::ExtMetrics;
+use lueying_ext::manifest::metrics::ExtMetrics;
 
 pub mod extadd;
 pub mod extcmd;

@@ -10,8 +10,8 @@ use std::process::Command;
 use crate::config::{self, AppOverride};
 use crate::dict_import;
 use crate::settings::view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
-use lueying_extmeta::metrics::ExtMetrics;
-use lueying_extwasm::{ConsentBook, ConsentCheck};
+use lueying_ext::host::{ConsentBook, ConsentCheck};
+use lueying_ext::manifest::metrics::ExtMetrics;
 use lueying_net::update;
 use lueying_protocol::{Reply, Request, pipe_name};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
@@ -287,13 +287,13 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
         let Ok(meta) = std::fs::metadata(&manifest_path) else {
             continue;
         };
-        if meta.len() > lueying_extwasm::MAX_MANIFEST_BYTES as u64 {
+        if meta.len() > lueying_ext::host::MAX_MANIFEST_BYTES as u64 {
             continue;
         }
         let Ok(bytes) = std::fs::read(&manifest_path) else {
             continue;
         };
-        let Ok(manifest) = lueying_extwasm::Manifest::parse(&bytes) else {
+        let Ok(manifest) = lueying_ext::host::Manifest::parse(&bytes) else {
             continue;
         };
         if entry.file_name().to_str() != Some(manifest.id.as_str()) {
@@ -358,7 +358,7 @@ pub fn approve_extension(settings: &mut Settings) {
 pub fn approve_package(id: &str) -> Result<ConsentCheck, String> {
     let root = config::extensions_dir().ok_or("没有扩展目录")?;
     let dir = root.join(id);
-    let manifest = lueying_extwasm::manifest_at(&dir)?;
+    let manifest = lueying_ext::host::manifest_at(&dir)?;
     let path = config::extensions_consent_path().ok_or("没有同意记录路径")?;
     let mut book = ConsentBook::load(&path);
     let check = book.check(&dir, &manifest)?;
@@ -416,12 +416,12 @@ const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
 /// 先解包到临时目录再改名换位,任何一步失败旧目录都保持原样。替换
 /// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
 fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
-    let files = lueying_extmeta::container::decode(bytes)?;
+    let files = lueying_ext::manifest::container::decode(bytes)?;
     let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
         return Err("包里没有 manifest.json".to_string());
     };
-    let manifest =
-        lueying_extmeta::Manifest::parse(manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    let manifest = lueying_ext::manifest::Manifest::parse(manifest_bytes)
+        .map_err(|e| format!("清单不合法: {e}"))?;
     let payload = manifest.payload_file().to_string();
     if !payload.is_empty() && !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));
@@ -469,25 +469,6 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// 打开审计日志;没有就建一份空的。
-pub fn open_ext_audit(settings: &mut Settings) {
-    settings.confirm_clear = false;
-    let Some(path) = config::ext_audit_path() else {
-        settings.say(Notice::Error, "没有可写的审计日志路径");
-        return;
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if !path.exists() {
-        let _ = std::fs::write(&path, "");
-    }
-    match std::process::Command::new("notepad.exe").arg(&path).spawn() {
-        Ok(_) => settings.say(Notice::Info, format!("已打开 {}", path.display())),
-        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
-    }
 }
 
 /// 读服务端写下的运行指标;服务还没写就返回 `None`。

@@ -1,18 +1,18 @@
 //! `lueying ext` 的开发回路:新建骨架、打包、安装、重载与日志。
 //!
 //! 全部是纯文件与管道操作:不加载 Wasm,不碰 TSF,Windows 与 Linux 都能跑。
-//! 包格式 `### lueying-pack v2` 的编解码在 [`lueying_extmeta::container`];
+//! 包格式 `### lueying-pack v2` 的编解码在 [`lueying_ext::manifest::container`];
 //! 这里管目录收集、清单校验与安装落盘。
 
 use std::fs;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use lueying_extmeta::Manifest;
-use lueying_extmeta::container::Files;
+use lueying_ext::manifest::Manifest;
+use lueying_ext::manifest::container::Files;
 use lueying_protocol::{Request, pipe_name};
 
-pub use lueying_extmeta::container::PACK_HEADER;
+pub use lueying_ext::manifest::container::PACK_HEADER;
 
 /// 参与打包的文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
 /// `.wasm` 是唯一的代码,其余是清单、文档与素材。
@@ -53,7 +53,7 @@ pub struct LogsArgs {
 /// 新建扩展包骨架:Rust crate(指向 guest SDK)+ 合法清单。
 /// 作者编出 wasm 后拷成 `extension.wasm`,清单与目录就能直接打包。
 pub fn new(args: &NewArgs) -> Result<PathBuf, String> {
-    if !lueying_extmeta::valid_id(&args.id) {
+    if !lueying_ext::manifest::valid_id(&args.id) {
         return Err(format!(
             "扩展 id {:?} 不合法:只允许小写字母、数字、- 与 _,且以字母或数字开头",
             args.id
@@ -89,7 +89,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-lueying-extguest = {{ git = "https://github.com/ukjent7/lueying" }}
+lueying-ext = {{ git = "https://github.com/ukjent7/lueying", default-features = false, features = ["guest"] }}
 serde_json = "1"
 wit-bindgen = "0.63"
 "#,
@@ -101,7 +101,7 @@ wit-bindgen = "0.63"
 //! 然后 `wasm-tools component new target/wasm32-unknown-unknown/release/<id>.wasm
 //! -o extension.wasm` 包成组件,放进包目录,再 `lueying ext pack`。
 
-use lueying_extguest::Extension;
+use lueying_ext::guest::Extension;
 use serde_json::json;
 
 #[derive(Default)]
@@ -116,7 +116,7 @@ impl Extension for Hello {
     }
 }
 
-lueying_extguest::export_component!(Hello, commands: [hello]);
+lueying_ext::export_component!(Hello, commands: [hello]);
 "#;
     fs::create_dir_all(dir.join("src")).map_err(|e| format!("建 {}: {e}", dir.display()))?;
     write_file(&dir.join("manifest.json"), &manifest_text(&manifest)?)?;
@@ -177,7 +177,7 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
             .replace('\\', "/");
         packed_files.push((name, bytes));
     }
-    let out = lueying_extmeta::container::encode(&packed_files)?;
+    let out = lueying_ext::manifest::container::encode(&packed_files)?;
     let target = args.out.clone().unwrap_or_else(|| {
         dir.with_file_name(format!(
             "{}.luext",
@@ -273,7 +273,7 @@ fn read_directory(source: &Path) -> Result<(String, Files), String> {
             .to_string_lossy()
             .replace('\\', "/");
         let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        if !lueying_extmeta::container::is_binary(&relative) {
+        if !lueying_ext::manifest::container::is_binary(&relative) {
             std::str::from_utf8(&bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
         }
         files.push((relative, bytes));
@@ -283,7 +283,7 @@ fn read_directory(source: &Path) -> Result<(String, Files), String> {
 
 /// 解包一个 `.luext`:容器解码后按清单取 id。清单必须存在且能解析。
 pub fn unpack(data: &[u8]) -> Result<(String, Files), String> {
-    let files = lueying_extmeta::container::decode(data)?;
+    let files = lueying_ext::manifest::container::decode(data)?;
     let manifest = files
         .iter()
         .find(|(name, _)| name == "manifest.json")

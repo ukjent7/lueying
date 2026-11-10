@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 lueying-dict.workspace = true
 lueying-engine.workspace = true
-lueying-extmeta.workspace = true
+lueying-ext.workspace = true
 lueying-features.workspace = true
 lueying-protocol = { path = "../protocol" }
 serde_json = "1"

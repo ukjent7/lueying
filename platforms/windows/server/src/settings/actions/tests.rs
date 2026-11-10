@@ -1,7 +1,7 @@
 //! `.luext` 导入落盘的测试;只盖纯函数,文件对话框不进测试。
 
 use super::*;
-use lueying_extmeta::container::{self, Files};
+use lueying_ext::manifest::container::{self, Files};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(

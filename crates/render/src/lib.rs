@@ -2,11 +2,10 @@
 //!
 //! 候选窗的行几何(`item_rects`/`pager_rects`)与窗口尺寸公式在这里;
 //! 文字测宽走 [`panel::Measure`](Windows 侧 DirectWrite 实量,E2E 走
-//! [`panel::Estimate`])。徽标、命令面板与选择面板只产出绘制指令,
+//! [`panel::Estimate`])。徽标与选择面板只产出绘制指令,
 //! 由平台侧的 Direct2D 画布执行。
 
 pub mod badge;
-pub mod command;
 pub mod paint;
 pub mod panel;
 pub mod picker;

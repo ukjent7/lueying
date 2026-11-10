@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 use lueying_dict::Dictionary;
 use lueying_engine::module::Modules;
 use lueying_engine::{Action, Config, Engine, Event, Key, SharedUser, UserDict};
-use lueying_extmeta::Manifest;
+use lueying_ext::manifest::Manifest;
 use lueying_features::{Prediction, SchemeId, Script, ScriptModule, registry_with_script, scheme};
 
 /// `replay` 的参数。

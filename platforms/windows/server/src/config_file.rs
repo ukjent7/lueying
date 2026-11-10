@@ -40,7 +40,6 @@ pub struct FileConfig {
     pub extensions: Option<Vec<String>>,
     pub bindings: Option<BTreeMap<String, String>>,
     pub triggers: Option<BTreeMap<String, String>>,
-    pub panel_hotkey: Option<String>,
     pub ocr_engine: Option<String>,
     pub update_channel: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
@@ -204,12 +203,6 @@ pub fn apply(
         }
         cfg.triggers = out;
     }
-    if let Some(hotkey) = file.panel_hotkey {
-        cfg.panel_hotkey = match hotkey.trim() {
-            "" | "off" | "none" => String::new(),
-            combo => combo.to_string(),
-        };
-    }
     if let Some(value) = file.ocr_engine {
         match OcrBackend::parse(&value) {
             Some(backend) => cfg.ocr_backend = backend,
@@ -317,7 +310,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         ui_accent: cfg.ui_accent,
         effects: cfg.effects,
         extensions: &cfg.extensions,
-        panel_hotkey: &cfg.panel_hotkey,
         ocr_engine: cfg.ocr_backend.as_str(),
         update_channel: cfg.update_channel.as_str(),
         bindings,
@@ -353,7 +345,6 @@ struct SaveFile<'a> {
     ui_accent: usize,
     effects: bool,
     extensions: &'a [String],
-    panel_hotkey: &'a str,
     ocr_engine: &'static str,
     update_channel: &'static str,
     bindings: BTreeMap<&'a str, &'a str>,

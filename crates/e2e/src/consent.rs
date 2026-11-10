@@ -9,9 +9,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use lueying_extmeta::Manifest;
-use lueying_extmeta::consent::ConsentBook;
-use lueying_extwasm::{ConsentGate, Pack, Poll, Registry};
+use lueying_ext::host::{ConsentGate, Pack, Poll, Registry};
+use lueying_ext::manifest::Manifest;
+use lueying_ext::manifest::consent::ConsentBook;
 
 use crate::extwasm::harness::{fixture_a, fixture_b, fixture_or_skip};
 use crate::harness::Temp;

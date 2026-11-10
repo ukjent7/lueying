@@ -1,6 +1,6 @@
 //! 输入法面板的 Direct2D 绘制表面:画到 32 位预乘位图,再上屏。
 //!
-//! 徽标走分层窗口(`UpdateLayeredWindow`),命令面板与选择面板是不透明
+//! 徽标走分层窗口(`UpdateLayeredWindow`),选择面板是不透明
 //! 窗口(`BitBlt`)。三条路共用同一块 DIB 与同一套 Direct2D/DirectWrite
 //! 绘制代码;候选窗的 GPU 路径在 `ui::d2d::pipe`,不经过这里。
 

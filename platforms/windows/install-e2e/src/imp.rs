@@ -159,11 +159,10 @@ fn real_run() -> Result<String, String> {
         for name in [
             "lueying-user.exe",
             "lueying-server.exe",
-            "lueying-broker.exe",
+            "lueying-ext-host.exe",
             "lueying-settings.exe",
             "version.txt",
             "licenses/README.md",
-            "extensions/shot-ocr/manifest.json",
         ] {
             if !target.join(name).exists() {
                 return Err(format!("安装目录缺少 {name}"));
@@ -295,7 +294,7 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     for name in [
         "lueying-user.exe",
         "lueying-server.exe",
-        "lueying-broker.exe",
+        "lueying-ext-host.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
     ] {
@@ -305,8 +304,6 @@ fn stage_payload(bin: &Path, payload: &Path, version: &str) -> Result<(), String
     std::fs::write(payload.join("version.txt"), version)
         .map_err(|e| format!("写 version.txt: {e}"))?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    // 官方扩展源随安装包分发。
-    copy_tree(&root.join("extensions"), &payload.join("extensions"))?;
     let license = root.join("LICENSE");
     std::fs::copy(&license, payload.join("LICENSE")).map_err(|e| format!("复制 LICENSE: {e}"))?;
     let licenses = payload.join("licenses");
@@ -441,7 +438,7 @@ fn update_installed(
     for name in [
         "lueying-user.exe",
         "lueying-server.exe",
-        "lueying-broker.exe",
+        "lueying-ext-host.exe",
         "lueying-settings.exe",
         "lueying_tsf.dll",
         "LICENSE",
@@ -561,26 +558,6 @@ fn cleanup_install(
 fn tail(bytes: &[u8]) -> String {
     let start = bytes.len().saturating_sub(800);
     String::from_utf8_lossy(&bytes[start..]).trim().to_string()
-}
-
-/// 递归复制随包扩展/目录副本;源不存在时跳过(安装冒烟可不带数据)。
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
-    let entries = match std::fs::read_dir(from) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("读 {}: {error}", from.display())),
-    };
-    std::fs::create_dir_all(to).map_err(|e| format!("创建 {}: {e}", to.display()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let into = to.join(entry.file_name());
-        if path.is_dir() {
-            copy_tree(&path, &into)?;
-        } else {
-            std::fs::copy(&path, &into).map_err(|e| format!("复制 {}: {e}", path.display()))?;
-        }
-    }
-    Ok(())
 }
 
 /// 递归列出目录下的文件;目录本身不作为残留,空目录可以整体删除。

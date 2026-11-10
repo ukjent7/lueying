@@ -17,7 +17,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use lueying_extmeta::Manifest;
+use lueying_ext::manifest::Manifest;
 
 use crate::extcmd::{self, InstallArgs};
 
@@ -79,7 +79,7 @@ pub fn add(args: &AddArgs) -> Result<String, String> {
             ("仓库源码包", bytes, source)
         }
     };
-    let fingerprint = lueying_extmeta::sha256::hex(&hash(&packed));
+    let fingerprint = lueying_ext::manifest::sha256::hex(&hash(&packed));
 
     let target = extcmd::install(&InstallArgs {
         source: packed_path,
@@ -431,7 +431,7 @@ pub fn summary(manifest: &Manifest) -> String {
 
 /// 包内容的 SHA-256。
 fn hash(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = lueying_extmeta::sha256::Sha256::new();
+    let mut hasher = lueying_ext::manifest::sha256::Sha256::new();
     hasher.update(bytes);
     hasher.finish()
 }

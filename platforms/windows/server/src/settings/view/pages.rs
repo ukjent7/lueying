@@ -99,7 +99,6 @@ impl Settings {
                 let mut rows = vec![
                     self.script_row(),
                     self.consent_row(),
-                    self.audit_row(),
                     self.ext_metrics_row(),
                 ];
                 rows.extend(self.setting_rows(PageId::Extensions, colors));
@@ -321,14 +320,6 @@ impl Settings {
                     &self.scripts,
                 ),
             }],
-        )
-    }
-
-    fn audit_row(&self) -> Row {
-        self.action_row(
-            "审计日志",
-            "谁在什么时候调用了截图、识别与上屏".to_string(),
-            vec![Self::secondary(ids::AUDIT, "查看", true)],
         )
     }
 

@@ -1,7 +1,7 @@
 //! 设置页的扩展授权视图模型:同意状态、人话能力表与按钮可用性。
 //!
 //! 平台无关;设置窗与 Linux E2E 共用。真正的哈希检查与记录读写在
-//! `lueying-extmeta::consent` 与平台侧动作里。
+//! `lueying_ext::manifest::consent` 与平台侧动作里。
 
 /// 已安装的运行期扩展包;设置页只读清单,不加载 Wasm。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub struct ScriptEntry {
     /// 当前同意状态。
     pub consent: ConsentState,
     /// 清单里的声明式设置;设置页按它渲染。
-    pub settings: Vec<lueying_extmeta::Setting>,
+    pub settings: Vec<lueying_ext::manifest::Setting>,
 }
 
 impl ScriptEntry {

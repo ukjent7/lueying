@@ -348,7 +348,8 @@ pub fn fetch_sha256(url: &str) -> Result<String, String> {
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     let file = File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
-    lueying_extmeta::sha256::sha256_reader(&mut reader).map_err(|e| format!("计算 SHA-256: {e}"))
+    lueying_ext::manifest::sha256::sha256_reader(&mut reader)
+        .map_err(|e| format!("计算 SHA-256: {e}"))
 }
 
 fn normalize_version(tag: &str) -> String {

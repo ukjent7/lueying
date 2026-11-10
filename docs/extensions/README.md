@@ -50,7 +50,7 @@
 
 `capture`、`ocr`、`clipboard`、`panel`、`output`、`hotkey`、`store`、`notify`、`network`、`context`、`audio`、`asr`。
 
-网络服务只经独立的 `lueying-broker.exe` 访问，且只能到清单白名单内的域名。
+网络服务只经独立的扩展宿主 `lueying-ext-host.exe` 访问，且只能到清单白名单内的域名。
 
 ## 权限（capabilities）
 

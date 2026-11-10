@@ -1,6 +1,6 @@
 # Wasm 扩展
 
-Wasm 扩展是打包成 WebAssembly 组件的插件，由 wasmtime 加载，运行在 `crates/extwasm` 的沙箱中。
+Wasm 扩展是打包成 WebAssembly 组件的插件，由 wasmtime 加载，运行在 `crates/ext` 的 host 模块（沙箱）中。
 
 ## 清单
 
@@ -8,7 +8,7 @@ Wasm 扩展是打包成 WebAssembly 组件的插件，由 wasmtime 加载，运�
 
 ## 导出
 
-组件按 WIT 契约 `lueying:ext@2.0.0`（`crates/extwasm/lueying.wit`）导出 `entry` 接口：
+组件按 WIT 契约 `lueying:ext@2.0.0`（`crates/ext/lueying.wit`）导出 `entry` 接口：
 
 - `init()`：加载后调用一次，返回错误则加载失败。
 - `command(id, args)`：命令入口，参数与返回值都是 JSON 文本；命令 id 由清单 `activate.commands` 声明。
@@ -18,7 +18,7 @@ Wasm 扩展是打包成 WebAssembly 组件的插件，由 wasmtime 加载，运�
 
 ## 宿主服务
 
-宿主把全部服务接口链接进组件，是否放行按调用逐次核对清单 `needs`：用到没声明的服务，一调即拒。服务与 Rust 侧的封装都在 `crates/extguest` 中（`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`、`network`、`context`、`audio`、`asr`）。
+宿主把全部服务接口链接进组件，是否放行按调用逐次核对清单 `needs`：用到没声明的服务，一调即拒。服务与 Rust 侧的封装都在 `crates/ext` 的 `guest` 模块中（`capture`、`ocr`、`clipboard`、`store`、`output`、`panel`、`hotkey`、`notify`、`network`、`context`、`audio`、`asr`）。
 
 ## 打包
 

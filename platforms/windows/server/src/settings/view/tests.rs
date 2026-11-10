@@ -2,7 +2,7 @@ use super::*;
 use crate::config::OcrBackend;
 use crate::settings::model::Id;
 use crate::settings::schema::PageId;
-use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
+use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
     ScriptEntry::new(id, name)
@@ -66,10 +66,6 @@ fn script_buttons_map_to_actions() {
     assert_eq!(
         settings.activate(&Id::new(ids::CONSENT, 0)),
         Some(Action::ApproveExtension)
-    );
-    assert_eq!(
-        settings.activate(&Id::new(ids::AUDIT, 0)),
-        Some(Action::OpenExtAudit)
     );
     assert_eq!(
         settings.activate(&Id::new(ids::EXT_METRICS, 0)),
@@ -224,7 +220,7 @@ fn app_override_buttons_cycle_three_states() {
 
 #[test]
 fn secret_extension_field_opens_editor() {
-    use lueying_extmeta::Setting;
+    use lueying_ext::manifest::Setting;
     let mut script = ScriptEntry::new("demo", "演示");
     script.settings = vec![Setting {
         key: "token".to_string(),
@@ -251,7 +247,7 @@ fn secret_extension_field_opens_editor() {
 }
 
 fn ext_entry() -> ScriptEntry {
-    use lueying_extmeta::{Setting, SettingValue};
+    use lueying_ext::manifest::{Setting, SettingValue};
     let mut script = ScriptEntry::new("shot", "截图");
     script.settings = vec![
         Setting {

@@ -7,8 +7,8 @@
 //! 4. Tab 走到一半断了,键盘用户够不到后面的控件。
 //! 5. 控件排到卡片外面,点不到也看不见。
 
-use lueying_extmeta::metrics::{ExtMetrics, ExtStat, ExtState};
-use lueying_extmeta::{Setting, SettingValue};
+use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
+use lueying_ext::manifest::{Setting, SettingValue};
 use lueying_features::SchemeId;
 use lueying_server::config::{Channel, Region, UiFont, UiLayout};
 use lueying_server::settings::model::{self as ui, Id};
@@ -122,10 +122,8 @@ pub fn run(report: &mut String) -> usize {
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let import = settings.activate(&Id::new(ids::IMPORT_LUEXT, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
-    let audit = settings.activate(&Id::new(ids::AUDIT, 0));
     let metrics = settings.activate(&Id::new(ids::EXT_METRICS, 0));
     let consent_row = row_detail(&settings, PageId::Extensions, "扩展", "扩展授权");
-    let audit_row = row_detail(&settings, PageId::Extensions, "扩展", "审计日志");
     let stat = ExtStat {
         id: "demo-pack".to_string(),
         name: "演示包".to_string(),
@@ -156,14 +154,10 @@ pub fn run(report: &mut String) -> usize {
             && open == Some(Action::OpenScripts)
             && import == Some(Action::ImportLuext)
             && consent == Some(Action::ApproveExtension)
-            && audit == Some(Action::OpenExtAudit)
             && metrics == Some(Action::RefreshExtMetrics)
             && consent_row
                 .as_deref()
                 .is_some_and(|text| text.contains("无需授权"))
-            && audit_row
-                .as_deref()
-                .is_some_and(|text| text.contains("截图"))
             && metrics_row
                 .as_deref()
                 .is_some_and(|text| text.contains("运行 1") && text.contains("派发峰值 1.5 ms"))
@@ -173,7 +167,7 @@ pub fn run(report: &mut String) -> usize {
                 .as_deref()
                 .is_some_and(|text| text.contains("未安装")),
         format!(
-            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{import:?}/{consent:?}/{audit:?}/{metrics:?} 切换 {switched}"
+            "未启用 {idle:?} 启用后 {active:?} 未安装 {missing:?} 动作 {choose:?}/{open:?}/{import:?}/{consent:?}/{metrics:?} 切换 {switched}"
         ),
     );
 

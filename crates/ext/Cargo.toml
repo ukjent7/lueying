@@ -3,7 +3,22 @@ name = "lueying-ext"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "掠影输入法扩展 SDK:输入方案与候选模块的稳定契约"
+description = "掠影扩展:内建模块契约、清单与包、场景协议;宿主与 Wasm guest SDK 按 feature 取用"
+
+[features]
+default = ["contract"]
+# 内建模块契约(Module、Scheme):依赖引擎的类型。
+contract = ["dep:lueying-engine"]
+# Wasm 扩展作者 SDK:只依赖协议层,可编到 wasm32-unknown-unknown。
+guest = []
+# 宿主侧:Wasm 组件运行时与原生进程;只有扩展宿主进程链接它。
+host = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
-lueying-engine.workspace = true
+lueying-engine = { workspace = true, optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasmtime = { workspace = true, optional = true }
+# WASI 0.2:非 Rust 工具链编出的组件会导入 WASI 接口。能力按最紧配置给:
+# 无文件、无网络、无环境变量,只有时钟与随机;联网只能走宿主的 network 服务。
+wasmtime-wasi = { version = "49", optional = true }

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::harness::push;
-use lueying_extwasm::Pack;
+use lueying_ext::host::Pack;
 
 /// 测试客人 A 的主题色。
 pub(crate) const ACCENT_A: u32 = 0x10_20_30;

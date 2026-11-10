@@ -880,14 +880,6 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: None,
     },
     SettingDef {
-        key: "panel_hotkey",
-        title: "命令面板热键",
-        detail: "默认 Ctrl+Alt+Shift+Space;写 off 关闭",
-        value: ValueType::Text,
-        default: DefaultValue::Text("Ctrl+Alt+Shift+Space"),
-        ui: None,
-    },
-    SettingDef {
         key: "ext",
         title: "扩展设置",
         detail: "[ext.<id>] 命名空间;由扩展清单声明的 schema 校验",

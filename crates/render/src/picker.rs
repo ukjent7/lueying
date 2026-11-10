@@ -3,7 +3,6 @@
 //! 只认数据:标题与可见行由服务端的 `HostPanel` 模型给出,调色板由窗口层
 //! 传入。绘制与命中共用同一份 [`Layout`],所指即所画。
 
-use crate::command::{ellipsize, text};
 use crate::paint::{Canvas, Color, Point};
 use crate::panel::{Palette, Rect};
 
@@ -257,4 +256,39 @@ pub fn hit(layout: &Layout, spec: &Spec, x: f32, y: f32) -> Hit {
         }
     }
     Hit::Nothing
+}
+
+/// 画一段文字;`max_width` 给定时裁掉超出部分。
+fn text(
+    canvas: &mut dyn Canvas,
+    size: f32,
+    rgb: u32,
+    origin: Point,
+    content: &str,
+    max_width: Option<f32>,
+) {
+    canvas.text(content, origin, size, Color::opaque(rgb), max_width);
+}
+
+/// 超宽时截断并加省略号;`max_width` 不够放省略号时返回空串。
+fn ellipsize(canvas: &mut dyn Canvas, size: f32, content: &str, max_width: f32) -> String {
+    if canvas.measure(content, size) <= max_width {
+        return content.to_string();
+    }
+    let ellipsis = "…";
+    if canvas.measure(ellipsis, size) > max_width {
+        return String::new();
+    }
+    let mut out = String::new();
+    for ch in content.chars() {
+        let mut next = out.clone();
+        next.push(ch);
+        next.push_str(ellipsis);
+        if canvas.measure(&next, size) > max_width {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str(ellipsis);
+    out
 }

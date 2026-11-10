@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use lueying_extwasm::bindings::{BindingTable, Input};
-use lueying_extwasm::{Done, Pack, Provider, Registry, Runtime, Service, When};
+use lueying_ext::host::bindings::{BindingTable, Input};
+use lueying_ext::host::{Done, Pack, Provider, Registry, Runtime, Service, When};
 
 use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::{Temp, push};
@@ -77,7 +77,7 @@ fn services(checks: &mut Vec<(&'static str, bool, String)>) {
 
 /// 用户绑定表:解析归一、语法与保留组合拒绝、表内冲突、when 过滤。
 fn hotkey_bindings(checks: &mut Vec<(&'static str, bool, String)>) {
-    let parse = |combo: &str| lueying_extwasm::bindings::parse(combo);
+    let parse = |combo: &str| lueying_ext::host::bindings::parse(combo);
     let canonical = parse("alt+CTRL+o").map(|hotkey| hotkey.canonical()).ok();
     push(
         checks,

@@ -27,14 +27,14 @@ pub fn has(ext: &str, key: &str) -> bool {
 
 /// 设置一个密钥;空串等价于删除。
 pub fn set(ext: &str, key: &str, value: &str) -> Result<(), String> {
-    if !lueying_extmeta::valid_id(ext) || !lueying_extmeta::valid_id(key) {
+    if !lueying_ext::manifest::valid_id(ext) || !lueying_ext::manifest::valid_id(key) {
         return Err("扩展或设置键不合法".to_string());
     }
     let mut values = table(ext);
     if value.is_empty() {
         values.remove(key);
     } else {
-        if value.chars().count() > lueying_extmeta::MAX_TEXT_CHARS {
+        if value.chars().count() > lueying_ext::manifest::MAX_TEXT_CHARS {
             return Err("密钥过长".to_string());
         }
         values.insert(key.to_string(), Value::String(value.to_string()));
@@ -50,7 +50,11 @@ pub fn remove(ext: &str, key: &str) -> Result<(), String> {
 }
 
 /// 把某扩展的密钥并进设置值的对象;只写声明过 `secureText` 的键。
-pub fn merge(ext: &str, settings: &[lueying_extmeta::Setting], object: &mut Map<String, Value>) {
+pub fn merge(
+    ext: &str,
+    settings: &[lueying_ext::manifest::Setting],
+    object: &mut Map<String, Value>,
+) {
     let values = table(ext);
     for setting in settings.iter().filter(|setting| setting.is_secret()) {
         if let Some(value) = values.get(setting.key()).and_then(Value::as_str) {
@@ -103,7 +107,7 @@ fn save(ext: &str, values: &Map<String, Value>) -> Result<(), String> {
 }
 
 fn path(ext: &str) -> Option<PathBuf> {
-    if !lueying_extmeta::valid_id(ext) {
+    if !lueying_ext::manifest::valid_id(ext) {
         return None;
     }
     Some(config::secrets_dir()?.join(format!("{ext}.json")))

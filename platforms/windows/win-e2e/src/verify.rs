@@ -79,7 +79,7 @@ fn v3_sizes(rows: &mut Vec<Row>) {
     let mut parts = Vec::new();
     for name in [
         "lueying-server.exe",
-        "lueying-broker.exe",
+        "lueying-ext-host.exe",
         "lueying-settings.exe",
         "lueying-user.exe",
         "lueying_tsf.dll",
@@ -468,9 +468,9 @@ fn deferred(rows: &mut Vec<Row>) {
     ));
     rows.push((
         "V4",
-        "命令面板归还焦点后上屏",
+        "选择面板归还焦点后上屏",
         Verdict::Note,
-        "面板已实现,`--panel-selftest` 覆盖记录/归还前台窗口、拼音搜索、方向键、Enter 与 Esc,并覆盖扩展 `panel.show` 的宿主选择面板(方向键选中与 Esc 取消);`output.deliver` 已接线为 Unicode 注入,win-e2e 在 RichEdit 上跑通热键 → 截图 → 识别 → 上屏。Electron 与自绘控件需要可下载的测试应用,留待手动实测。"
+        "扩展 `panel.show` 的宿主选择面板由 `--panel-selftest` 覆盖(方向键选中与 Esc 取消,焦点归还);`output.deliver` 已接线为 Unicode 注入,win-e2e 在 RichEdit 上跑通热键 → 截图 → 识别 → 上屏。Electron 与自绘控件需要可下载的测试应用,留待手动实测。"
             .to_string(),
     ));
     rows.push((

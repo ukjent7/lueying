@@ -10,10 +10,10 @@ pub fn check(data: &std::path::Path) -> Result<String, String> {
     let mut last: Option<String> = None;
     loop {
         if path.exists() {
-            let metrics = lueying_extmeta::metrics::ExtMetrics::load(&path);
+            let metrics = lueying_ext::manifest::metrics::ExtMetrics::load(&path);
             match metrics.extensions.iter().find(|stat| stat.id == "shot-ocr") {
                 Some(stat)
-                    if stat.state == lueying_extmeta::metrics::ExtState::Loaded
+                    if stat.state == lueying_ext::manifest::metrics::ExtState::Loaded
                         && stat.dispatches > 0 =>
                 {
                     return Ok(format!(

@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use lueying_cli::{Invocation, TopOptions, parse_args, read_metrics, render_json, render_table};
-use lueying_extmeta::metrics::{ExtMetrics, ExtStat};
-use lueying_extwasm::{ExtState, Runtime};
+use lueying_ext::host::{ExtState, Runtime};
+use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat};
 
 use crate::extwasm::harness::{command_manifest, fixture_a, fixture_or_skip, write_pack};
 use crate::harness::Temp;
@@ -79,7 +79,7 @@ pub fn run(report: &mut String) -> usize {
     pending_stat.id = "pending".to_string();
     pending_stat.state = ExtState::Unapproved;
     let metrics = ExtMetrics {
-        version: lueying_extwasm::METRICS_VERSION,
+        version: lueying_ext::host::METRICS_VERSION,
         updated_ms: 42,
         extensions: vec![loaded_stat, pending_stat],
     };

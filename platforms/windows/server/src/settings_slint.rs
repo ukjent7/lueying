@@ -135,7 +135,6 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::OpenScripts => with(core, actions::open_scripts),
         Action::ImportLuext => with(core, actions::import_luext),
         Action::ApproveExtension => with(core, actions::approve_extension),
-        Action::OpenExtAudit => with(core, actions::open_ext_audit),
         Action::RefreshExtMetrics => with(core, actions::refresh_ext_metrics),
         Action::OpenOcrModels => with(core, actions::open_ocr_models),
         Action::OpenApps => with(core, actions::open_apps),

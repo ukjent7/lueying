@@ -64,7 +64,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#PayloadDir}\lueying-server.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PayloadDir}\lueying-broker.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\lueying-ext-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; PrepareToInstall 在复制文件前就要停掉旧服务,所以再嵌一份临时副本。
@@ -88,9 +88,6 @@ Source: "{#PayloadDir}\rerank-25m.ort"; DestDir: "{app}"; Flags: ignoreversion s
 Source: "{#PayloadDir}\rerank-25m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\rerank-25m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 ; PP-OCR 模型不随基础安装包分发。
-; 官方扩展源随包分发。
-Source: "{#PayloadDir}\extensions\*"; DestDir: "{app}\extensions"; \
-    Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [InstallDelete]
 ; 旧的自建安装器已被 lueying-user.exe 取代,不再随包分发。

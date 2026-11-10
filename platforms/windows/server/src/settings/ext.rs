@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use lueying_extmeta::{Manifest, Setting, SettingValue};
+use lueying_ext::manifest::{Manifest, Setting, SettingValue};
 use serde_json::Value;
 
 use crate::config::AppConfig;

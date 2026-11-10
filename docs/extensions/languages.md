@@ -1,6 +1,6 @@
 # 多语言扩展
 
-掠影扩展的契约是 [`lueying.wit`](../../crates/extwasm/lueying.wit) 里的 `lueying:ext@2.0.0`
+掠影扩展的契约是 [`lueying.wit`](../../crates/ext/lueying.wit) 里的 `lueying:ext@2.0.0`
 世界:组件导出 `entry` 接口(`init`/`command`/`appearance`),按清单 `needs`
 声明要调用的宿主服务。契约是标准 WebAssembly 组件,任何能产出组件的
 语言都能写扩展;这里列当前验证过的工具链与最小路径。
@@ -55,7 +55,7 @@ export const entry = {
 用 `null` 表示 none。构建:
 
 ```sh
-npx componentize-qjs --wit <掠影仓库>/crates/extwasm/lueying.wit \
+npx componentize-qjs --wit <掠影仓库>/crates/ext/lueying.wit \
   --js guest.js --world extension --sync --opt-size -o extension.wasm
 ```
 
@@ -111,7 +111,7 @@ componentize-py --wit-path wit --world extension componentize app -o extension.w
 直出组件,不用适配器)。产物轻量,默认资源档内运行。
 
 ```sh
-wit-bindgen c crates/extwasm/lueying.wit
+wit-bindgen c crates/ext/lueying.wit
 ```
 
 生成 `lueying_ext.c`/`lueying_ext.h`/`lueying_ext_component_type.o`;在

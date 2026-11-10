@@ -1,11 +1,10 @@
-//! 模式徽标、命令面板与选择面板的布局、命中与绘制指令 E2E。
+//! 模式徽标与选择面板的布局、命中与绘制指令 E2E。
 //!
 //! 绘制端口把画面描述成指令,这一层断言几何、绘制次序与配色;Direct2D
 //! 画出来的真实像素由 Windows 侧的自检覆盖,Linux CI 不需要光栅后端。
 
 use lueying_render::Palette;
 use lueying_render::badge;
-use lueying_render::command;
 use lueying_render::paint::{Canvas, Color, Point};
 use lueying_render::panel::{Estimate, Measure, Rect};
 use lueying_render::picker;
@@ -67,19 +66,6 @@ impl Recorder {
         self.ops.iter().find(|op| match op {
             Op::Text { content: c, .. } | Op::TextCentered { content: c, .. } => c == content,
             _ => false,
-        })
-    }
-
-    /// 以某段文字开头的文字指令。
-    fn text_starting(&self, prefix: &str) -> Option<(&str, f32, Option<f32>)> {
-        self.ops.iter().find_map(|op| match op {
-            Op::Text {
-                content,
-                size,
-                max_width,
-                ..
-            } if content.starts_with(prefix) => Some((content.as_str(), *size, *max_width)),
-            _ => None,
         })
     }
 
@@ -164,167 +150,7 @@ fn background(recorder: &Recorder, palette: &Palette) -> bool {
     )
 }
 
-/// 命令面板:尺寸、命中、绘制次序、选中行底色与长标题截断。
-fn command_checks(checks: &mut Vec<(&'static str, bool, String)>) {
-    let palette = palette();
-    let spec = command::Spec {
-        query: "xue".into(),
-        rows: vec![
-            command::Row {
-                title: "OCR 取字".into(),
-                extension: "demo".into(),
-            },
-            command::Row {
-                title: "学习".into(),
-                extension: "demo".into(),
-            },
-            command::Row {
-                title: "工作".into(),
-                extension: "demo".into(),
-            },
-        ],
-        selected: 1,
-        total: 3,
-        above: 0,
-        below: 0,
-    };
-    let layout = command::layout(&spec, 1.0);
-    let expect_h = command::INPUT_H + 3.0 * command::ROW_H + command::FOOTER_H;
-    push(
-        checks,
-        "命令面板尺寸",
-        (layout.size.0 - command::WIDTH).abs() < 0.5 && (layout.size.1 - expect_h).abs() < 0.5,
-        format!("{:?} 期望 ({}, {expect_h})", layout.size, command::WIDTH),
-    );
-    let input_hit = command::hit(&layout, &spec, command::WIDTH / 2.0, command::INPUT_H / 2.0);
-    push(
-        checks,
-        "命令面板输入框命中",
-        input_hit == command::Hit::Input,
-        format!("{input_hit:?}"),
-    );
-    let row = layout.rows[1];
-    let row_hit = command::hit(&layout, &spec, row.center_x(), row.center_y());
-    push(
-        checks,
-        "命令面板行命中",
-        row_hit == command::Hit::Row(1),
-        format!("{row_hit:?}"),
-    );
-    let footer_hit = command::hit(
-        &layout,
-        &spec,
-        command::WIDTH / 2.0,
-        layout.footer.center_y(),
-    );
-    push(
-        checks,
-        "命令面板页脚命中",
-        footer_hit == command::Hit::Footer,
-        format!("{footer_hit:?}"),
-    );
-    let outside = command::hit(&layout, &spec, command::WIDTH + 10.0, 10.0);
-    push(
-        checks,
-        "命令面板外部不命中",
-        outside == command::Hit::Nothing,
-        format!("{outside:?}"),
-    );
-
-    let mut recorder = Recorder::new(layout.size.0, layout.size.1);
-    command::draw(&mut recorder, &spec, &layout, &palette, 1.0);
-    push(
-        checks,
-        "命令面板底色",
-        background(&recorder, &palette),
-        format!("首条指令 {:?}", recorder.ops.first()),
-    );
-    let selected = Rect::from_ltrb(row.left, row.top + 2.0, row.right, row.bottom - 2.0);
-    let rrects = recorder.rrects(palette.selected_bg);
-    push(
-        checks,
-        "命令面板选中行底色",
-        rrects.len() == 1 && *rrects[0].0 == selected,
-        format!("{rrects:?} 期望 {selected:?}"),
-    );
-    push(
-        checks,
-        "命令面板查询与选中行文字",
-        matches!(
-            recorder.text("xue"),
-            Some(Op::Text { color, .. }) if color.rgb == palette.text
-        ) && matches!(
-            recorder.text("学习"),
-            Some(Op::Text { color, .. }) if color.rgb == palette.selected_text
-        ),
-        "查询串与选中行各有一条文字指令".into(),
-    );
-    push(
-        checks,
-        "命令面板绘制不越界",
-        recorder.inside(),
-        format!("{} 条指令", recorder.ops.len()),
-    );
-
-    // 空状态仍占一行高度;提示语画在列表区。
-    let empty = command::Spec {
-        query: "zzz".into(),
-        total: 0,
-        ..command::Spec::default()
-    };
-    let empty_layout = command::layout(&empty, 1.0);
-    let expect_empty = command::INPUT_H + command::ROW_H + command::FOOTER_H;
-    push(
-        checks,
-        "命令面板空状态尺寸",
-        (empty_layout.size.1 - expect_empty).abs() < 0.5,
-        format!("{:.1} 期望 {expect_empty:.1}", empty_layout.size.1),
-    );
-    let mut empty_recorder = Recorder::new(empty_layout.size.0, empty_layout.size.1);
-    command::draw(&mut empty_recorder, &empty, &empty_layout, &palette, 1.0);
-    push(
-        checks,
-        "命令面板空状态提示",
-        empty_recorder.text("没有匹配的命令").is_some(),
-        format!("{:?}", empty_recorder.ops.len()),
-    );
-
-    // 长标题按行宽截断,卷动提示不影响几何。
-    let long = command::Spec {
-        query: "a".into(),
-        rows: vec![command::Row {
-            title: "很长的命令标题".repeat(20),
-            extension: "very-long-extension-name".into(),
-        }],
-        selected: 0,
-        total: 9,
-        above: 3,
-        below: 5,
-    };
-    let long_layout = command::layout(&long, 1.5);
-    let mut long_recorder = Recorder::new(long_layout.size.0, long_layout.size.1);
-    command::draw(&mut long_recorder, &long, &long_layout, &palette, 1.5);
-    let title = long_recorder.text_starting("很长的命令标题");
-    push(
-        checks,
-        "命令面板长标题不越界",
-        long_layout.rows.len() == 1
-            && long_layout.rows[0].right <= long_layout.size.0
-            && title.is_some_and(|(content, size, max_width)| {
-                let estimate = Estimate;
-                content.ends_with('…')
-                    && max_width.is_some_and(|limit| estimate.width(content, size) <= limit + 0.01)
-            }),
-        format!("{:?} 标题 {title:?}", long_layout.rows),
-    );
-    push(
-        checks,
-        "命令面板卷动提示",
-        long_recorder.text("▲").is_some() && long_recorder.text("▼").is_some(),
-        "上下都有内容时画箭头".into(),
-    );
-}
-
+/// 选择面板:尺寸、命中、绘制次序、选中行底色与长标题截断。
 /// 宿主选择面板:尺寸、行命中、底色、选中行与空状态。
 fn picker_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     let palette = palette();
@@ -513,6 +339,5 @@ fn badge_checks(checks: &mut Vec<(&'static str, bool, String)>) {
 
 pub(crate) fn ui_checks(checks: &mut Vec<(&'static str, bool, String)>) {
     badge_checks(checks);
-    command_checks(checks);
     picker_checks(checks);
 }

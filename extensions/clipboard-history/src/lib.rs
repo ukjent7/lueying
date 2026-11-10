@@ -3,7 +3,7 @@
 //! 历史由宿主 `clipboard` 服务在后台维护;这里只负责取最近 60 条,
 //! 用宿主面板展示,用户选中后写回剪贴板并通过 `output` 注入当前焦点。
 
-use lueying_extguest::{ClipboardHistoryItem, Extension};
+use lueying_ext::guest::{ClipboardHistoryItem, Extension};
 use serde_json::json;
 
 /// 面板条数上限;宿主面板最多 64 行,留几行给标题与滚动。
@@ -56,4 +56,4 @@ fn preview(item: &ClipboardHistoryItem) -> String {
     }
 }
 
-lueying_extguest::export_component!(ClipboardHistoryExt, commands: [show]);
+lueying_ext::export_component!(ClipboardHistoryExt, commands: [show]);
