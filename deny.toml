@@ -1,10 +1,49 @@
-# cargo-deny:漏洞(RustSec)一律红,依赖来源与重复版本一起管。许可证暂不做门禁:
-# GPL 项目的依赖许可口径还没定,先靠审计日志可见,红不拦。
+# cargo-deny:漏洞(RustSec)一律红,许可证、依赖来源与重复版本一起管。
 [advisories]
 # yanked 是提示级信号,由每周审计人工复核,不拦红。
 yanked = "warn"
 # unmaintained 只对直接依赖可选作用域,现 schema 没有 warn 档,先整个关掉。
 unmaintained = "none"
+
+[licenses]
+# 白名单只列依赖树里实际用到、且与 GPL-3.0-or-later 兼容的许可证;新出现的许可证一律红,先审再加。
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "0BSD",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# GPL-3.0-only 之所以在名单里:Slint 的三选一许可里有 GPL-3.0-only 这一项,本项目按 GPL 取它。
+# 个别依赖不在白名单里时只在这里逐条放行,附原因;不放宽全局规则。
+[[licenses.exceptions]]
+# UEFI 绑定,只在 uefi 目标上编译,不进 Windows 发布物;LGPL-2.1-or-later 可按 GPL-3.0 使用。
+name = "r-efi"
+allow = ["LGPL-2.1-or-later"]
+
+[[licenses.exceptions]]
+# Mozilla 根证书数据集,数据许可 CDLA-Permissive-2.0,宽松允许再分发。
+name = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+# 小型类型映射库,Blue Oak Council 宽松许可 1.0.0。
+name = "anymap3"
+allow = ["BlueOak-1.0.0"]
 
 [sources]
 # crates.io 是默认唯一允许的注册源,git 依赖一律拦。

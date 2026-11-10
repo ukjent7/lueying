@@ -23,6 +23,6 @@ jobs:
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-deny
-      # 漏洞(RustSec)、依赖来源与重复版本;配置见仓库根的 deny.toml。
+      # 漏洞(RustSec)、许可证白名单、依赖来源与重复版本;配置见仓库根的 deny.toml。
       - name: 审计依赖
-        run: cargo deny check advisories sources bans
+        run: cargo deny check
