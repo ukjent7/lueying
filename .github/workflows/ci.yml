@@ -60,7 +60,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
         run: |
-          core_re='^(crates/(dict|core|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py)$)'
+          core_re='^(crates/(dict|core|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py|bench_shard\.sh)$)'
           # 手动触发跑全量;新分支首推(before 全零)或历史缺失时保守地当作核心改动。
           if [ "$EVENT" = workflow_dispatch ] || [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             core=true

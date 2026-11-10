@@ -1,6 +1,6 @@
 # 词典与引擎的共享语料基准:编译一次,按档位 × 分片铺到多台 runner,合并成 summary.json。
 # 每次运行同时跑父提交(HEAD^)的同一批用例,逐条配对做 McNemar 检验;父提交的逐条结果按引擎目录缓存,
-# 通常只跑当前提交一次。机器读 artifact 里的逐条 TSV 与 summary.json;比较两次运行用 tools/bench_shared.py diff。
+# 通常只跑当前提交一次。父提交的二进制用的是当前的基准代码,只换引擎。机器读 artifact 里的逐条 TSV 与 summary.json;比较两次运行用 tools/bench_shared.py diff。
 # tag 留空时测 fetch_dict.sh 钉住的词典(档位名 main),quality 这样调用。
 name: dict-bench
 
@@ -125,12 +125,15 @@ jobs:
           name: bench-bin
           path: target/release/lueying-bench
           retention-days: 1
-      # 父提交的基准二进制:与当前提交同一批用例,同一个构建目录(依赖已编好,只重编改动的 crate)。
+      # 父提交的基准二进制:父提交的引擎配当前的基准代码,与当前提交用同一批用例,差别只在引擎。
+      # 同一个构建目录(依赖已编好,只重编改动的 crate)。
       - name: 构建父提交的 E2E
         env:
           BASE: ${{ steps.keys.outputs.base-sha }}
         run: |
           git worktree add --detach "$RUNNER_TEMP/base-src" "$BASE"
+          rm -rf "$RUNNER_TEMP/base-src/crates/bench"
+          cp -r crates/bench "$RUNNER_TEMP/base-src/crates/bench"
           (cd "$RUNNER_TEMP/base-src" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo build -p lueying-bench --release --locked)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -93,6 +93,17 @@ CI 把当前提交与父提交（`HEAD^`）跑同一批用例，按(类别, 键�
 
 父提交的逐条结果按引擎文件的内容哈希缓存，通常只跑当前提交一次。不再有存档基线文件，也不需要手动刷新。
 
+## 学习与延迟
+
+```sh
+lueying-bench learn-sim --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank [--full]
+lueying-bench latency --old <旧> --new <新> --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank
+```
+
+`learn-sim` 模拟新词前三次选中后的首选率、曝光间隔、闲置 90 天后的退位、误选后次日、衰减与用户整句的三遍收益;`--full` 另加用户语料训练后对验收集的副作用。快速版每项取 100 条,CI 每次都跑;完整版只在 quality 手动勾选 `full` 时跑。用户语料只输出汇总数字。
+
+`latency` 让新旧两个二进制交替跑同一段产品链路,比较线程 CPU 时间,报告中位数与逐轮比值。CPU 时间精度为 10 毫秒,只支持 Linux。CI 只报告比值,不设门限。
+
 ## 本地打字记录
 
 设置页「输入」页的「本地打字记录」默认关闭。开启后,记录目录里的 `typing-log.tsv`(干净句)与 `typing-edits.tsv`(编辑过的句子,键入串为原样击键,末列 `trail` 记完整按键流)可以合成评测语料:
