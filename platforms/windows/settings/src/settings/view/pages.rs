@@ -76,10 +76,14 @@ impl Settings {
     /// 某一页的分组。
     fn groups_page(&self, page: PageId, colors: &PageColors) -> Vec<Group> {
         match page {
-            PageId::Input => vec![Group {
-                title: PageId::Input.title().to_string(),
-                rows: self.setting_rows(PageId::Input, colors),
-            }],
+            PageId::Input => {
+                let mut rows = self.setting_rows(PageId::Input, colors);
+                rows.push(self.typing_log_row());
+                vec![Group {
+                    title: PageId::Input.title().to_string(),
+                    rows,
+                }]
+            }
             PageId::Candidate => {
                 let mut rows = vec![self.candidate_preview_row(colors)];
                 rows.extend(self.setting_rows(PageId::Candidate, colors));
@@ -392,6 +396,17 @@ impl Settings {
             vec![Self::secondary(ids::APPS, "打开", true)],
         ));
         rows
+    }
+
+    fn typing_log_row(&self) -> Row {
+        self.action_row(
+            "打字记录文件",
+            "保存在 %LOCALAPPDATA%\\lueying\\typing;清空只删评测记录,不动学习数据".to_string(),
+            vec![
+                Self::secondary(ids::TYPING_OPEN, "打开记录文件夹", true),
+                Self::secondary(ids::TYPING_CLEAR, "清空记录", true),
+            ],
+        )
     }
 
     fn backup_row(&self) -> Row {

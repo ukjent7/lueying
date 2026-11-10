@@ -11,9 +11,11 @@ impl Engine {
     pub fn process(&mut self, key: Key) -> Vec<Event> {
         // Shift 会先落定中文组合再切模式;上屏文本仍属于切换前的模式。
         let mode = self.mode;
+        let composing = self.comp.is_some();
         let mut events = self.process_inner(key);
         self.apply_output(mode, &mut events);
         self.note_events(&events);
+        self.note_typing(Some(key), composing, &events);
         events
     }
 
@@ -23,6 +25,7 @@ impl Engine {
         let mut events = self.commit_all();
         self.apply_output(self.mode, &mut events);
         self.note_events(&events);
+        self.note_typing(None, false, &events);
         events
     }
 

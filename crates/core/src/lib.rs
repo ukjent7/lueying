@@ -30,6 +30,7 @@ mod search_tests;
 pub mod session;
 mod state;
 pub mod types;
+pub mod typing_log;
 mod user;
 mod user_typing;
 
@@ -116,6 +117,8 @@ pub struct Engine {
     scheme: Arc<dyn scheme::Scheme>,
     /// 宿主绑定表把当前整串输入映射到的动作;只做整串完全匹配。
     action: Option<Action>,
+    /// 本地打字记录(评测用,默认关闭)。
+    typing: typing_log::Recorder,
 }
 
 /// 最近一次学习上屏的词:输入的击键串(用于判断是否重打同一串)、学习键、词与时刻(秒)。

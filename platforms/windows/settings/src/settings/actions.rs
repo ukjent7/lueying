@@ -235,6 +235,34 @@ const PPOCR_README: &str = "\
 首次识别会拉起引擎进程。
 ";
 
+/// 打开打字记录目录:没有就建,再拉起资源管理器。
+pub fn open_typing_log(settings: &mut Settings) {
+    let Some(dir) = lueying_server::typing_store::dir() else {
+        settings.say(Notice::Error, "没有可写的本地数据目录");
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        settings.say(Notice::Error, format!("建目录失败: {e}"));
+        return;
+    }
+    match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+        Ok(_) => settings.say(Notice::Info, format!("已打开 {}", dir.display())),
+        Err(e) => settings.say(Notice::Error, format!("打开失败: {e}")),
+    }
+}
+
+/// 清空打字记录:只删评测用的记录文件,学习数据与词库不动。
+pub fn clear_typing_log(settings: &mut Settings) {
+    let Some(dir) = lueying_server::typing_store::dir() else {
+        settings.say(Notice::Error, "没有可写的本地数据目录");
+        return;
+    };
+    match lueying_core::typing_log::clear(&dir) {
+        Ok(()) => settings.say(Notice::Info, "已清空打字记录"),
+        Err(e) => settings.say(Notice::Error, format!("清空失败: {e}")),
+    }
+}
+
 /// 打开运行期扩展目录:没有就建,再拉起资源管理器。每个包一个子
 /// 目录,启用哪个由配置里的 `script` 决定。
 pub fn open_scripts(settings: &mut Settings) {

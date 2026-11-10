@@ -22,6 +22,7 @@ mod scenarios;
 mod segmented;
 mod settings;
 mod shared;
+mod typing_log;
 mod ui;
 mod user_dict;
 
@@ -292,6 +293,9 @@ fn main() {
 
     // 设置页模型:页面结构、点击改配置、键盘改值与焦点顺序。
     failures += settings::run(&mut report);
+
+    // 本地打字记录:默认关闭,开启后按句落成评测行,私密范围不记。
+    failures += typing_log::run(&mut report);
 
     // 主词典探针与性能
     let mut rerank_inputs: Option<(Arc<Dictionary>, Option<Arc<Gram>>)> = None;

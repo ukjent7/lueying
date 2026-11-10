@@ -133,7 +133,9 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 let before_rev = s.engine.revision();
                 // 每次按键刷新本地时间,跨午夜/夏令时切换后日期仍然正确。
                 s.engine.set_now(local_time());
+                s.engine.set_typing_log(typing_on(state));
                 let events = s.engine.process(engine_key);
+                send_typing(state, s);
                 // 触发词整串匹配时把动作交给引擎注入候选;命令是否可执行看标题表。
                 sync_action(state, s);
                 // 只有候选集合重算过才重排;翻页/移动高亮不能把用户的选择重置。
@@ -326,7 +328,9 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 if !focused {
                     // 失焦:把敲了一半的拼音整串落定,再清上下文。
                     // 只按一次空格会留下吃前缀候选之后的残余拼音。
+                    s.engine.set_typing_log(typing_on(state));
                     let events = s.engine.flush();
+                    send_typing(state, &mut s);
                     reply = reply_from(&s, &events);
                     if let Some(carried) = carried {
                         let mut commits = carried.commits;
@@ -672,5 +676,22 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             touch_view(state);
             Reply::default()
         }
+    }
+}
+
+/// 本地打字记录是否开着(设置里的开关,保存后经 ReloadConfig 生效)。
+fn typing_on(state: &State) -> bool {
+    state
+        .config
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .typing_log
+}
+
+/// 把引擎里收齐的句子交给落盘线程;没有句子时什么也不做。
+fn send_typing(state: &State, s: &mut Session) {
+    let sentences = s.engine.take_typing_log();
+    if !sentences.is_empty() {
+        let _ = state.typing_tx.send(sentences);
     }
 }

@@ -253,6 +253,8 @@ pub struct AppConfig {
     pub scheme: SchemeId,
     /// 在拼音后按 `` ` `` 打 1–2 位五笔辅码。
     pub aux: bool,
+    /// 本地打字记录(评测用):只存本机、从不上传,默认关闭。
+    pub typing_log: bool,
     /// 按本机上屏词序补全下一词。
     pub predict: bool,
     /// 候选窗排列:横排换行或竖排列。
@@ -298,6 +300,7 @@ impl Default for AppConfig {
             region: Region::General,
             scheme: SchemeId::Full,
             aux: false,
+            typing_log: false,
             predict: true,
             ui_layout: UiLayout::Horizontal,
             ui_font: UiFont::Standard,

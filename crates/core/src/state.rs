@@ -37,6 +37,7 @@ impl Engine {
             modules: Arc::new(module::Modules::new()),
             scheme: Arc::new(scheme::FullPinyin),
             action: None,
+            typing: Default::default(),
         }
     }
 

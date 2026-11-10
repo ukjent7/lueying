@@ -79,6 +79,8 @@ V2 来自 chinese-ime-lm 的 `sentences-ctx-v1`,文本不在词典与重排模�
 
 `dicts/eval-user-v4.tsv` 是整句纠错专项(50 句):用户按预先出好的目标句自然打字,错误原样采集,分词空格已剥除(引擎收不到空格)。采集时先只发目标句、收齐键入串再建库,保证期望答案先于键入串存在。
 
+设置页「本地打字记录」默认关闭。开启后每句的击键与上屏文字追加到 `%LOCALAPPDATA%\lueying\typing\typing-log.tsv`，列与 `eval-user-*.tsv` 相同，可直接 `--corpus` 使用；编辑过的句子（删除已上屏文字）进 `typing-edits.tsv`，键入串是原样击键，末列 `trail` 记完整按键流。私密输入范围与关闭学习的应用不记。记录只存本机，从不上传。
+
 ## 核心指标与门限
 
 `summarize` 的 `core` 节是核心类别的宏平均:全拼、词级简拼与混打、整句混打、`chunk-`、`fuzzy-`、`typo-`、`user-`。纯声母整句(`clause-initials-`)只记录,不计入。

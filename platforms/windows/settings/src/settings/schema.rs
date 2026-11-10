@@ -246,6 +246,14 @@ fn punct_set(cfg: &mut AppConfig, value: bool) {
     cfg.chinese_punct = value;
 }
 
+fn typing_get(cfg: &AppConfig) -> bool {
+    cfg.typing_log
+}
+
+fn typing_set(cfg: &mut AppConfig, value: bool) {
+    cfg.typing_log = value;
+}
+
 fn shift_get(cfg: &AppConfig) -> bool {
     cfg.shift_toggle
 }
@@ -622,6 +630,19 @@ pub static SETTINGS: &[SettingDef] = &[
             page: PageId::Input,
             keywords: "中英 切换 大写",
             control: toggle(ids::SHIFT_TOGGLE, shift_get, shift_set),
+            visible: always,
+        }),
+    },
+    SettingDef {
+        key: "typing_log",
+        title: "本地打字记录",
+        detail: "按句记下击键与上屏文字,供评测用;只存本机,从不上传,默认关闭",
+        value: ValueType::Bool,
+        default: DefaultValue::Bool(false),
+        ui: Some(UiDef {
+            page: PageId::Input,
+            keywords: "评测 记录 语料 日志 隐私",
+            control: toggle(ids::TYPING_LOG, typing_get, typing_set),
             visible: always,
         }),
     },

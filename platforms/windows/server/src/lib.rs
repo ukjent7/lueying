@@ -13,6 +13,7 @@ pub mod accents;
 
 pub mod config;
 pub mod ext_link;
+pub mod typing_store;
 
 mod config_file;
 

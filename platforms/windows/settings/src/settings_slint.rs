@@ -132,6 +132,8 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         }
         Action::Save => with(core, actions::save),
         Action::OpenScripts => with(core, actions::open_scripts),
+        Action::OpenTypingLog => with(core, actions::open_typing_log),
+        Action::ClearTypingLog => with(core, actions::clear_typing_log),
         Action::ImportLuext => with(core, actions::import_luext),
         Action::ApproveExtension => with(core, actions::approve_extension),
         Action::RefreshExtMetrics => with(core, actions::refresh_ext_metrics),

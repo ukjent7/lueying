@@ -22,6 +22,9 @@ pub mod ids {
     pub const AUX: &str = "aux";
     pub const CHINESE_PUNCT: &str = "chinese-punct";
     pub const SHIFT_TOGGLE: &str = "shift-toggle";
+    pub const TYPING_LOG: &str = "typing-log";
+    pub const TYPING_OPEN: &str = "typing-open";
+    pub const TYPING_CLEAR: &str = "typing-clear";
     pub const TRADITIONAL: &str = "traditional";
     pub const REGION: &str = "region";
     pub const PAGE_SIZE: &str = "page-size";
@@ -222,6 +225,8 @@ pub enum Action {
     InstallUpdate(String),
     ChooseScript,
     OpenScripts,
+    OpenTypingLog,
+    ClearTypingLog,
     ImportLuext,
     ApproveExtension,
     RefreshExtMetrics,
@@ -445,6 +450,8 @@ impl Settings {
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::SCRIPTS => Some(Action::ChooseScript),
             ids::SCRIPTS_DIR => Some(Action::OpenScripts),
+            ids::TYPING_OPEN => Some(Action::OpenTypingLog),
+            ids::TYPING_CLEAR => Some(Action::ClearTypingLog),
             ids::IMPORT_LUEXT => Some(Action::ImportLuext),
             ids::CONSENT => Some(Action::ApproveExtension),
             ids::EXT_METRICS => Some(Action::RefreshExtMetrics),

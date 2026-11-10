@@ -32,6 +32,7 @@ pub struct FileConfig {
     pub traditional_region: Option<String>,
     pub scheme: Option<String>,
     pub aux_code: Option<bool>,
+    pub typing_log: Option<bool>,
     pub predict: Option<bool>,
     pub ui_layout: Option<String>,
     pub ui_font: Option<String>,
@@ -110,6 +111,9 @@ pub fn apply(
     let _ = file.allow_all_extension_network;
     if let Some(on) = file.shift_toggle {
         cfg.shift_toggle = on;
+    }
+    if let Some(on) = file.typing_log {
+        cfg.typing_log = on;
     }
     if let Some(on) = file.traditional {
         cfg.traditional = on;
@@ -308,6 +312,7 @@ pub fn table(cfg: &AppConfig) -> Result<toml::Table, String> {
         traditional_region: cfg.region.as_str(),
         scheme: cfg.scheme.as_str(),
         aux_code: cfg.aux,
+        typing_log: cfg.typing_log,
         predict: cfg.predict,
         ui_layout: cfg.ui_layout.as_str(),
         ui_font: cfg.ui_font.as_str(),
@@ -338,6 +343,7 @@ struct SaveFile<'a> {
     traditional_region: &'static str,
     scheme: &'static str,
     aux_code: bool,
+    typing_log: bool,
     predict: bool,
     ui_layout: &'static str,
     ui_font: &'static str,
