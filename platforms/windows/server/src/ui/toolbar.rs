@@ -7,7 +7,6 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use lueying_protocol::Request;
 use lueying_render::panel::Rect;
@@ -15,13 +14,11 @@ use lueying_render::toolbar::{self, Action, Button, Status, Toolbar};
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
-    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow, TranslateMessage, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
@@ -31,10 +28,8 @@ use lueying_server::config;
 
 /// 鼠标左键按住时的标志(`MK_LBUTTON`)。
 const MK_LBUTTON: usize = 0x0001;
-/// 轮询消息与脏标记的间隔;只在需要时重画。
-const TICK: Duration = Duration::from_millis(33);
 
-/// 窗口线程独占的状态:工具栏模型、窗口左上角的屏幕坐标、按钮交互。
+/// 界面线程独占的状态:工具栏模型、窗口左上角的屏幕坐标、按钮交互。
 struct Ctx {
     state: Arc<State>,
     hwnd: HWND,
@@ -53,45 +48,32 @@ thread_local! {
     static CTX: RefCell<Option<Ctx>> = const { RefCell::new(None) };
 }
 
-/// 起工具栏线程。工具栏独立于候选窗,候选窗的 GPU 管线起不来时照样显示。
-pub(super) fn spawn(state: Arc<State>) {
-    let spawned = std::thread::Builder::new()
-        .name("toolbar".into())
-        .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| toolbar_loop(state)))
-                .is_err()
-            {
-                println!("工具栏线程崩溃,工具栏不再显示");
-            }
-        });
-    if let Err(e) = spawned {
-        println!("工具栏线程启动失败: {e}");
-    }
+/// 工具栏:右下角可拖动的一排按钮。窗口过程与绘制共用线程局部的 `CTX`。
+pub(super) struct Bar {
+    surface: Surface,
 }
 
-fn toolbar_loop(state: Arc<State>) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+/// 建工具栏窗口。建不出来只写日志并返回 `None`;候选窗的 GPU 管线起不来时它照样显示。
+pub(super) fn init(state: &Arc<State>) -> Option<Bar> {
     let screen = to_rect(place::primary_work_area());
-    let bar = saved_bar(&state, screen);
+    let bar = saved_bar(state, screen);
     let hwnd = match create_window(&bar) {
         Ok(hwnd) => hwnd,
         Err(e) => {
             println!("工具栏建窗失败: {e}");
-            return;
+            return None;
         }
     };
-    let mut surface = match Surface::new() {
+    let surface = match Surface::new() {
         Ok(surface) => surface,
         Err(e) => {
             println!("工具栏建表面失败: {e}");
-            return;
+            return None;
         }
     };
     CTX.with(|cell| {
         *cell.borrow_mut() = Some(Ctx {
-            state,
+            state: Arc::clone(state),
             hwnd,
             bar,
             screen,
@@ -101,8 +83,12 @@ fn toolbar_loop(state: Arc<State>) {
             dirty: true,
         });
     });
-    loop {
-        pump_messages();
+    Some(Bar { surface })
+}
+
+impl Bar {
+    /// 有待重画的内容(鼠标交互或配置变化置了脏标记)时画一次。
+    pub(super) fn tick(&mut self) {
         let dirty = CTX.with(|cell| {
             cell.borrow_mut()
                 .as_mut()
@@ -112,11 +98,10 @@ fn toolbar_loop(state: Arc<State>) {
         if dirty {
             CTX.with(|cell| {
                 if let Some(ctx) = cell.borrow_mut().as_mut() {
-                    redraw(ctx, &mut surface);
+                    redraw(ctx, &mut self.surface);
                 }
             });
         }
-        std::thread::sleep(TICK);
     }
 }
 
@@ -146,16 +131,6 @@ fn save_position(state: &Arc<State>, x: i32, y: i32) {
     if let Some(path) = &state.config_path {
         if let Err(e) = config::save(path, &before, &cfg) {
             println!("保存工具栏位置 {} 失败: {e}", path.display());
-        }
-    }
-}
-
-fn pump_messages() {
-    unsafe {
-        let mut msg = MSG::default();
-        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
         }
     }
 }

@@ -15,12 +15,11 @@ use lueying_render::panel::Palette;
 use lueying_server::theme;
 use lueying_server::ui_surface::Surface;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, MSG, PM_REMOVE, PeekMessageW,
-    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow, TranslateMessage, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    WS_POPUP,
 };
 use windows::core::w;
 
@@ -47,109 +46,120 @@ struct HudView {
     at: Instant,
 }
 
-/// 起徽标线程;徽标独立于候选窗,GPU 不可用时照样显示。
-pub(super) fn spawn(state: Arc<State>) {
-    let spawned = std::thread::Builder::new()
-        .name("mode-hud".into())
-        .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hud_loop(state))).is_err() {
-                println!("模式徽标线程崩溃,中英切换不再提示");
-            }
-        });
-    if let Err(e) = spawned {
-        println!("模式徽标线程启动失败: {e}");
-    }
+/// 模式徽标:分层窗口与它的表面,以及当前这份徽标的显示状态。
+pub(super) struct Badge {
+    hwnd: HWND,
+    surface: Surface,
+    /// 上次看到的切换序号;没变就不重读徽标与外观。
+    serial: u64,
+    current: Option<HudView>,
+    /// 首帧上屏后才显示,避免从停靠点挪到光标处时闪一帧旧徽标。
+    visible: bool,
+    // 外观、主题色与动效开关按切换取一次:系统主题切得很慢,每帧读注册表
+    // 与系统参数纯属浪费。
+    appearance: theme::Appearance,
+    accent: usize,
+    reduce: bool,
+    /// 下一次该醒来的时间;停靠时为 `None`。
+    next: Option<Duration>,
 }
 
-/// 徽标线程:等切换事件,可见期间按淡入/保持/淡出分段出帧,到期后停靠。
-fn hud_loop(state: Arc<State>) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+/// 建徽标窗口。建不出来只写日志并返回 `None`,中英切换照常生效。
+pub(super) fn init(state: &Arc<State>) -> Option<Badge> {
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
         Err(e) => {
             println!("模式徽标建窗失败: {e}");
-            return;
+            return None;
         }
     };
-    let mut surface = match Surface::new() {
+    let surface = match Surface::new() {
         Ok(surface) => surface,
         Err(e) => {
             println!("模式徽标建表面失败: {e}");
-            return;
+            return None;
         }
     };
-    let mut serial = 0u64;
-    let mut current: Option<HudView> = None;
-    // 首帧上屏后再显示,避免从停靠点挪到光标处时闪一帧旧徽标。
+    // 先挪到停靠点:之后只在切换时才动窗口。
     let mut visible = false;
-    // 外观、主题色与动效开关按事件取一次:系统主题切得很慢,每帧读注册表
-    // 与系统参数纯属浪费。
-    let mut appearance = theme::Appearance::of_system();
-    let mut accent = accent_of(&state);
-    let mut reduce = false;
-    loop {
-        // 徽标不吃输入,消息排干净就行。
-        unsafe {
-            let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+    park(hwnd, &mut visible);
+    Some(Badge {
+        hwnd,
+        surface,
+        serial: 0,
+        current: None,
+        visible,
+        appearance: theme::Appearance::of_system(),
+        accent: accent_of(state),
+        reduce: false,
+        next: None,
+    })
+}
+
+impl Badge {
+    /// 切换序号变了就重读徽标;可见期间按淡入/保持/淡出分段出帧,到期后停靠。
+    pub(super) fn tick(&mut self, state: &State) {
+        let serial = state.hud_serial.load(Ordering::Acquire);
+        // 停靠且没有新的切换:什么都不用做,也不挪窗口。
+        if serial == self.serial && self.current.is_none() {
+            self.next = None;
+            return;
         }
         let now = Instant::now();
-        let next = state.hud_serial.load(Ordering::Acquire);
-        if next != serial {
-            serial = next;
-            current = hud_view(&state);
-            appearance = theme::Appearance::of_system();
-            accent = accent_of(&state);
-            reduce = crate::ui::d2d::reduce_motion();
+        if serial != self.serial {
+            self.serial = serial;
+            self.current = hud_view(state);
+            self.appearance = theme::Appearance::of_system();
+            self.accent = accent_of(state);
+            self.reduce = crate::ui::d2d::reduce_motion();
         }
-        let expired = current
+        if self
+            .current
             .as_ref()
-            .is_some_and(|view| now.saturating_duration_since(view.at) >= HUD_TOTAL);
-        if expired {
-            current = None;
+            .is_some_and(|view| now.saturating_duration_since(view.at) >= HUD_TOTAL)
+        {
+            self.current = None;
         }
-        match current.clone() {
-            Some(view) => {
-                if let Some((x, y, w, h)) = place(&state, &view) {
-                    let scale = w as f32 / badge::WIDTH;
-                    let palette = theme::palette(theme::colors_with(appearance, accent));
-                    let opacity = opacity(&view, now, reduce);
-                    match surface.begin(w as u32, h as u32) {
-                        Ok(canvas) => {
-                            draw_badge(
-                                canvas,
-                                &view,
-                                &palette,
-                                appearance,
-                                opacity,
-                                scale,
-                                (w as f32, h as f32),
-                            );
-                        }
-                        Err(e) => println!("模式徽标表面失败: {e}"),
-                    }
-                    if let Err(e) = surface.present(hwnd, x, y, w, h) {
-                        println!("模式徽标上屏失败: {e}");
-                    } else if !visible {
-                        unsafe {
-                            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-                        }
-                        visible = true;
-                    }
-                } else {
-                    park(hwnd, &mut visible);
-                }
+        match self.current.clone() {
+            Some(view) => self.draw(state, &view, now),
+            None => park(self.hwnd, &mut self.visible),
+        }
+        self.next = next_wait(self.current.as_ref(), Instant::now(), self.reduce);
+    }
+
+    /// 下一个动画节点;停靠时为空。
+    pub(super) fn timeout(&self) -> Option<Duration> {
+        self.next
+    }
+
+    fn draw(&mut self, state: &State, view: &HudView, now: Instant) {
+        let Some((x, y, w, h)) = place(state, view) else {
+            park(self.hwnd, &mut self.visible);
+            return;
+        };
+        let scale = w as f32 / badge::WIDTH;
+        let palette = theme::palette(theme::colors_with(self.appearance, self.accent));
+        let opacity = opacity(view, now, self.reduce);
+        match self.surface.begin(w as u32, h as u32) {
+            Ok(canvas) => draw_badge(
+                canvas,
+                view,
+                &palette,
+                self.appearance,
+                opacity,
+                scale,
+                (w as f32, h as f32),
+            ),
+            Err(e) => println!("模式徽标表面失败: {e}"),
+        }
+        if let Err(e) = self.surface.present(self.hwnd, x, y, w, h) {
+            println!("模式徽标上屏失败: {e}");
+        } else if !self.visible {
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             }
-            None => park(hwnd, &mut visible),
+            self.visible = true;
         }
-        // 停靠时一直睡到下一次切换;可见时睡到下一个动画节点。
-        let wait = next_wait(current.as_ref(), Instant::now(), reduce);
-        state.wake_hud.wait(wait);
     }
 }
 

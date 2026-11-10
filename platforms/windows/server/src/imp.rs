@@ -34,9 +34,7 @@ use lueying_server::ext_link::{ExtLink, Handler, Replier, Request as ExtRequest}
 use lueying_server::services::{OutputProvider, PanelProvider};
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use windows::Win32::System::Threading::{
-    CreateEventW, CreateMutexW, INFINITE, SetEvent, WaitForSingleObject,
-};
+use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
@@ -60,8 +58,6 @@ fn local_time() -> CivilTime {
 pub(super) struct Session {
     pub(super) engine: Engine,
     pub(super) view: SessionView,
-    /// `Key` 的预演结果,`TakeKey` 取走(DLL 在 OnKeyDown 应用到文档)。
-    pub(super) pending: Option<Reply>,
     /// 停顿重排算出、等下一次 `Sync` 生效的首选。
     pub(super) settle_pick: Option<crate::settle::SettlePick>,
     /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
@@ -154,10 +150,11 @@ pub(super) struct ModeHud {
     pub(super) at: Instant,
 }
 
-/// 自建事件:窗口线程等它休眠,请求线程触发它上岗。
+/// 界面线程的唤醒事件:请求线程改了候选、徽标或选择面板的数据后触发它,
+/// 界面线程的消息循环据此醒来逐个窗口检查。
 ///
-/// `HANDLE` 里的裸指针不自动 Send/Sync;而 SetEvent/WaitForSingleObject
-/// 都是线程安全的内核调用,句柄值本身跨线程传递没有共享可变状态。
+/// `HANDLE` 里的裸指针不自动 Send/Sync;而 SetEvent 是线程安全的内核调用,
+/// 句柄值本身跨线程传递没有共享可变状态。
 #[derive(Clone, Copy)]
 pub(super) struct Wake(HANDLE);
 
@@ -166,30 +163,15 @@ unsafe impl Send for Wake {}
 unsafe impl Sync for Wake {}
 
 impl Wake {
-    /// 建一个自动复位事件;建不出来时退化成空句柄,等待改走定时。
-    fn create() -> Self {
+    /// 建一个自动复位事件;建不出来时退化成空句柄,循环改走定时。
+    pub(super) fn create() -> Self {
         Self(unsafe { CreateEventW(None, false, false, None) }.unwrap_or_default())
     }
 
-    /// 触发一次,叫醒等待方。
-    fn set(self) {
+    /// 触发一次,叫醒界面线程。
+    pub(super) fn set(self) {
         unsafe {
             let _ = SetEvent(self.0);
-        }
-    }
-
-    /// 等一次唤醒;`timeout` 为空表示一直等到有事件。
-    pub(super) fn wait(self, timeout: Option<Duration>) {
-        if self.0.is_invalid() {
-            // 事件建不出来时退化成定时空转,线程不能变成满核忙等。
-            std::thread::sleep(timeout.unwrap_or(Duration::from_millis(15)));
-            return;
-        }
-        let ms = timeout.map_or(INFINITE, |wait| {
-            wait.as_millis().min(u128::from(u32::MAX)) as u32
-        });
-        unsafe {
-            let _ = WaitForSingleObject(self.0, ms);
         }
     }
 
@@ -209,10 +191,8 @@ pub(super) struct State {
     pub(super) version: AtomicU64,
     /// 每次中英切换自增,模式徽标据此决定是否重新显示。
     pub(super) hud_serial: AtomicU64,
-    /// 候选窗的空闲等待;版本号变化时叫醒它。
+    /// 界面线程的唤醒事件;候选、徽标、工具栏与选择面板的数据变了都触发它。
     pub(super) wake_ui: Wake,
-    /// 模式徽标的空闲等待;切换与淡入淡出期间叫醒它。
-    pub(super) wake_hud: Wake,
     pub(super) mode_hud: Mutex<Option<ModeHud>>,
     /// 候选窗当前贴光标的上方还是下方;模式徽标据此躲到另一侧。
     pub(super) candidate_above: AtomicBool,
@@ -247,7 +227,7 @@ pub(super) struct State {
     pub(super) config: RwLock<AppConfig>,
     /// 扩展宿主连接:配置、上下文、外观提交与动作命令都经它转给宿主进程。
     pub(super) ext: Arc<lueying_server::ext_link::ExtLink>,
-    /// 扩展 `panel.show` 的宿主选择面板;窗口线程启动时装填。
+    /// 扩展 `panel.show` 的宿主选择面板;界面线程启动时装填。
     pub(super) panel_service: Arc<lueying_server::services::PanelProvider>,
     pub(super) config_path: Option<PathBuf>,
     /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
@@ -300,7 +280,7 @@ impl State {
     }
 }
 
-/// 候选窗的数据变了:版本号自增并叫醒等待的窗口线程。
+/// 候选窗的数据变了:版本号自增并叫醒界面线程。
 pub(super) fn touch_view(state: &State) {
     state.version.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
@@ -321,7 +301,7 @@ pub(super) fn wake_ui(state: &State) {
 /// 模式徽标该刷新了。
 pub(super) fn touch_hud(state: &State) {
     state.hud_serial.fetch_add(1, Ordering::Release);
-    state.wake_hud.set();
+    state.wake_ui.set();
 }
 
 /// 把三个标准句柄接到 NUL。进程被无控制台、无句柄继承的方式拉起时,
@@ -508,9 +488,8 @@ pub(super) fn real_main() {
     let (sync_tx, sync_rx) = mpsc::sync_channel(1);
     let sync_tx = sync_model.as_ref().map(|_| sync_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
-    // 两个窗口线程各等自己的一份数据;建不出事件时等待退化成定时轮询。
+    // 界面线程与所有窗口共用一个唤醒事件;建不出事件时循环退化成定时轮询。
     let wake_ui = Wake::create();
-    let wake_hud = Wake::create();
     let panel_service = Arc::new(lueying_server::services::PanelProvider::new());
     let ext = Arc::new(spawn_ext_host(
         Arc::clone(&panel_service),
@@ -530,7 +509,6 @@ pub(super) fn real_main() {
         version: AtomicU64::new(0),
         hud_serial: AtomicU64::new(0),
         wake_ui,
-        wake_hud,
         mode_hud: Mutex::new(None),
         candidate_above: AtomicBool::new(false),
         active: AtomicU64::new(0),
@@ -577,7 +555,7 @@ pub(super) fn real_main() {
     let pipe = pipe_name();
     println!("lueying-server 监听 {pipe}");
     {
-        // 管道服务在后台线程,主线程只等着;窗口各有各的线程。
+        // 管道服务在后台线程;主线程跑界面循环(候选窗、徽标、工具栏、选择面板)。
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
     }
@@ -727,7 +705,6 @@ fn set_global_mode(state: &State, chinese: bool) {
             // ui_reply,由那个窗口自己的轮询写进文档;否则内联拼音会僵住。
             let events = switch_mode(&mut s, chinese);
             let commits = commits_of(&events);
-            s.pending = None;
             crate::settle::cancel(state, session);
             refresh_view(&mut s);
             if !commits.is_empty() {
@@ -774,10 +751,6 @@ fn set_global_fullwidth(state: &State, fullwidth: bool) {
         let mut s = handle.lock();
         s.engine.set_fullwidth(fullwidth);
         s.view.fullwidth = fullwidth;
-        // 预演或排队中的应答带着旧全角位;一并改掉,免得下一次写回拨回指示器。
-        if let Some(reply) = s.pending.as_mut() {
-            reply.fullwidth = fullwidth;
-        }
         if let Some(reply) = s.ui_reply.as_mut() {
             reply.fullwidth = fullwidth;
         }
@@ -884,8 +857,6 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
             s.engine.set_scheme(Arc::clone(scheme));
         }
         s.engine.set_config(engine_cfg.clone());
-        // 候选重算后旧按键应答的内联文本/候选都不再有效。
-        s.pending = None;
         refresh_view(&mut s);
         // 点选待写回的文本保留,但内联文本要跟上新配置。
         let preedit = s.view.preedit.clone();
@@ -967,13 +938,6 @@ fn sync_ui_reply(s: &mut Session) {
 /// 后台重排落地后,把在途应答里的候选与内联文本同步到当前引擎状态。
 /// 按键应答在重排完成前就已生成,不同步的话 TSF 会写回旧顺序。
 pub(super) fn sync_pending(s: &mut Session) {
-    if let Some(pending) = s.pending.as_mut() {
-        pending.preedit = s.view.preedit.clone();
-        pending.candidates.clone_from(&s.view.candidates);
-        pending.page = s.view.page;
-        pending.page_size = s.view.page_size;
-        pending.highlight = s.view.highlight;
-    }
     if let Some(pending) = s.ui_reply.as_mut() {
         pending.preedit = s.view.preedit.clone();
         pending.candidates.clone_from(&s.view.candidates);

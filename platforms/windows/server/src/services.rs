@@ -24,21 +24,34 @@ pub struct PanelJob {
     pub done: Done,
 }
 
-/// 宿主选择面板;窗口线程由 `ui::picker::spawn` 装填,未启动时明确报错。
+/// 宿主选择面板的投递端;界面线程装好请求通道与唤醒方式,未装时明确报错。
 #[derive(Default)]
 pub struct PanelProvider {
-    sender: Mutex<Option<mpsc::SyncSender<PanelJob>>>,
+    queue: Mutex<Option<Queue>>,
+}
+
+/// 请求通道,以及投递后叫醒界面线程的办法。
+struct Queue {
+    sender: mpsc::SyncSender<PanelJob>,
+    notify: Box<dyn Fn() + Send + Sync>,
 }
 
 impl PanelProvider {
-    /// 没装窗口线程的空提供者;no-UI 模式与服务单测走这条路径。
+    /// 没装界面线程的空提供者;no-UI 模式与服务单测走这条路径。
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 装窗口线程的请求通道;重复装会替换旧通道。
-    pub fn install(&self, sender: mpsc::SyncSender<PanelJob>) {
-        *self.sender.lock().unwrap_or_else(|p| p.into_inner()) = Some(sender);
+    /// 装上请求通道与唤醒方式;重复装会替换旧的。
+    pub fn install(
+        &self,
+        sender: mpsc::SyncSender<PanelJob>,
+        notify: impl Fn() + Send + Sync + 'static,
+    ) {
+        *self.queue.lock().unwrap_or_else(|p| p.into_inner()) = Some(Queue {
+            sender,
+            notify: Box::new(notify),
+        });
     }
 }
 
@@ -46,27 +59,22 @@ impl Provider for PanelProvider {
     fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
         one_method("panel", method, "show")?;
         let panel = crate::host_panel::HostPanel::parse(args)?;
-        let sender = self
-            .sender
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        let Some(sender) = sender else {
+        let guard = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(queue) = guard.as_ref() else {
             done.complete(Err("宿主面板不可用:UI 未启动".into()));
             return Ok(());
         };
-        match sender.try_send(PanelJob { panel, done }) {
-            Ok(()) => Ok(()),
+        match queue.sender.try_send(PanelJob { panel, done }) {
+            Ok(()) => (queue.notify)(),
             Err(mpsc::TrySendError::Full(job)) => {
                 job.done.complete(Err("宿主面板正忙".into()));
-                Ok(())
             }
             Err(mpsc::TrySendError::Disconnected(job)) => {
                 job.done
-                    .complete(Err("宿主面板不可用:窗口线程已退出".into()));
-                Ok(())
+                    .complete(Err("宿主面板不可用:界面线程已退出".into()));
             }
         }
+        Ok(())
     }
 }
 

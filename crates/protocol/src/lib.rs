@@ -193,11 +193,8 @@ pub enum Request {
     /// 会话上线(会话号 = 宿主进程 id 高 32 位 + 线程 id 低 32 位;
     /// host 为宿主 exe 名,兼容性判断用)。
     Hello { session: u64, host: String },
-    /// 一次按键(TSF 的 TestKeyDown 阶段送达;Server 无副作用地预演,
-    /// 结果缓存在会话里,随后的 `TakeKey` 取走写文档)。
+    /// 一次按键:Server 直接给出这次的应答,由 TSF 在按键阶段应用到文档。
     Key { session: u64, key: KeyMsg },
-    /// 取走上次 `Key` 的结果(OnKeyDown 时)。
-    TakeKey { session: u64 },
     /// 停顿轮询:只读当前内联文本,供 TSF 定时器把异步重排后的首选写回文档。
     Sync { session: u64 },
     /// TSF 读到的光标前文本;组合开始时上报,让重排从第一个候选就有上下文。
@@ -303,7 +300,6 @@ impl Request {
         match self {
             Self::Hello { .. } => "Hello",
             Self::Key { .. } => "Key",
-            Self::TakeKey { .. } => "TakeKey",
             Self::Sync { .. } => "Sync",
             Self::Context { .. } => "Context",
             Self::SetMode { .. } => "SetMode",

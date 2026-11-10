@@ -1,13 +1,13 @@
 //! 宿主选择面板窗口:可获焦的原生窗 + Direct2D 绘制 + GDI 贴图。
 //!
-//! 扩展 `panel.show({title, items})` 经 PanelProvider 投递到这里;窗口
-//! 线程一次只显示一单,键盘/鼠标选择后把下标经完成队列回传,取消回传
+//! 扩展 `panel.show({title, items})` 经 PanelProvider 投递到这里;界面线程
+//! 一次只显示一单,键盘/鼠标选择后把下标经完成队列回传,取消回传
 //! `null`。关闭时把焦点还给唤出前的窗口。
 
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+use lueying_ext::host::Done;
 use lueying_render::panel::Palette;
 use lueying_render::picker;
 use lueying_server::host_panel::{HostPanel, HostPanelView};
@@ -25,17 +25,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClassNameW,
-    GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-    IDC_ARROW, IsWindow, LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOW,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE, WINDOW_EX_STYLE,
-    WM_ACTIVATE, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClassNameW, GetCursorPos,
+    GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindow,
+    LoadCursorW, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
-use crate::imp::State;
+use crate::imp::{State, Wake};
 use crate::ui::place;
 
 /// 窗口类名;自检按它确认面板已拿到前台。
@@ -43,62 +43,82 @@ const CLASS: windows::core::PCWSTR = w!("lueying-host-panel");
 /// 请求通道容量:面板开着时再来的请求直接回「正忙」。
 const QUEUE: usize = 1;
 
-/// 起窗口线程;空闲时阻塞在通道上,第一次请求才建窗。
-pub(super) fn spawn(state: Arc<State>) {
+/// 宿主选择面板:一次显示一单,窗口在第一次请求时才建。请求经通道进来,
+/// 显示期间不阻塞界面线程;收起后在循环里把选择回传给请求方。
+pub(super) struct Panel {
+    jobs: Receiver<PanelJob>,
+    window: Option<Box<HostWindow>>,
+    /// 正在显示的那一单的完成句柄;收起后用它回传选择。
+    current: Option<Done>,
+}
+
+/// 装上请求通道:扩展 `panel.show` 投递后经 `wake` 叫醒界面线程。
+pub(super) fn init(state: &State, wake: Wake) -> Panel {
     let (tx, rx) = mpsc::sync_channel::<PanelJob>(QUEUE);
-    state.panel_service.install(tx);
-    let spawned = std::thread::Builder::new()
-        .name("host-panel".into())
-        .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| panel_loop(state, rx)))
-                .is_err()
-            {
-                println!("宿主选择面板线程崩溃,扩展 panel.show 不再响应");
-            }
-        });
-    if let Err(error) = spawned {
-        println!("宿主选择面板线程启动失败: {error}");
+    state.panel_service.install(tx, move || wake.set());
+    Panel {
+        jobs: rx,
+        window: None,
+        current: None,
     }
 }
 
-/// 面板线程:等请求、显示、跑内层消息循环,关掉后回传选择。
-fn panel_loop(state: Arc<State>, rx: Receiver<PanelJob>) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+impl Panel {
+    /// 面板开着就等它收起;收起了就回传选择,接着处理排队的下一单。
+    pub(super) fn tick(&mut self, state: &State) {
+        if self.current.is_some() {
+            if !self.window.as_ref().is_some_and(|window| window.hidden) {
+                return;
+            }
+            let selected = self
+                .window
+                .as_mut()
+                .and_then(|window| window.selected.take());
+            if let Some(done) = self.current.take() {
+                done.complete(Ok(serde_json::json!({ "selected": selected }).to_string()));
+            }
+        }
+        while let Ok(job) = self.jobs.try_recv() {
+            if self.start(state, job) {
+                return;
+            }
+        }
     }
-    let mut window: Option<Box<HostWindow>> = None;
-    while let Ok(job) = rx.recv() {
-        if window.is_none() {
+
+    /// 显示一单;建窗或显示失败时直接回传错误,返回 `false` 接着处理下一单。
+    fn start(&mut self, state: &State, job: PanelJob) -> bool {
+        let PanelJob { panel, done } = job;
+        if self.window.is_none() {
             let accent = state
                 .config
                 .read()
                 .unwrap_or_else(|p| p.into_inner())
                 .ui_accent;
             match HostWindow::create(accent) {
-                Ok(created) => window = Some(created),
+                Ok(created) => self.window = Some(created),
                 Err(error) => {
                     println!("宿主选择面板建窗失败: {error}");
-                    job.done.complete(Err(error));
-                    continue;
+                    done.complete(Err(error));
+                    return false;
                 }
             }
         }
-        let Some(panel) = window.as_mut() else {
-            continue;
+        let Some(window) = self.window.as_mut() else {
+            done.complete(Err("宿主选择面板不可用".into()));
+            return false;
         };
         let restore = unsafe { GetForegroundWindow() };
-        if let Err(error) = panel.show(job.panel, restore) {
+        if let Err(error) = window.show(panel, restore) {
             println!("宿主选择面板显示失败: {error}");
-            job.done.complete(Err(error));
-            continue;
+            done.complete(Err(error));
+            return false;
         }
-        let selected = pump_until_hidden(panel.hwnd);
-        let result = serde_json::json!({ "selected": selected }).to_string();
-        job.done.complete(Ok(result));
+        self.current = Some(done);
+        true
     }
 }
 
-/// 面板窗口状态;由窗口的 USERDATA 指向,生命周期与窗口线程一致。
+/// 面板窗口状态;由窗口的 USERDATA 指向,生命周期与界面线程一致。
 struct HostWindow {
     hwnd: HWND,
     surface: Surface,
@@ -366,21 +386,11 @@ impl HostWindow {
     }
 }
 
-/// 内层消息循环:面板显示期间阻塞在这里,收起后返回选中的下标。
+/// 自检专用:显示期间排干消息直到面板收起,取回选中的下标。
 fn pump_until_hidden(hwnd: HWND) -> Option<u32> {
-    loop {
-        let mut msg = MSG::default();
-        let got = unsafe { GetMessageW(&mut msg, None, 0, 0) };
-        if got.0 <= 0 {
-            break;
-        }
-        unsafe {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-        if state_of(hwnd).is_some_and(|window| window.hidden) {
-            break;
-        }
+    while !state_of(hwnd).is_some_and(|window| window.hidden) {
+        crate::ui::wait(None, Some(Duration::from_millis(10)));
+        crate::ui::pump_messages();
     }
     state_of(hwnd).and_then(|window| window.selected.take())
 }

@@ -1,6 +1,6 @@
 //! D2D 候选窗:Win32 无焦点弹出窗 + DirectComposition 合成交换链 + Direct2D。
 //!
-//! 候选窗:独立线程自建消息泵,等版本号事件、窗口消息与动画帧;摆位、停靠、DPI 与
+//! 候选窗:在界面线程的消息循环里渲染,版本号变化与动画帧驱动重绘;摆位、停靠、DPI 与
 //! 全屏避让同 `ui::place` 助手共用。交互 parity:淡入/淡出、翻页滑动、点选/
 //! 滚轮/翻页箭头、右键菜单与悬停,动效可被按键打断,「减少动态效果」时
 //! 全部走终态。管线在 `ui::d2d::pipe`:硬件优先,没有适配器退 WARP;设备
@@ -17,17 +17,15 @@ use lueying_protocol::SessionView;
 use lueying_render::Spring;
 use lueying_render::panel::{self, Metrics, PanelSpec};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GWLP_USERDATA,
-    GetWindowLongPtrW, HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, MSG,
-    MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE, PeekMessageW, QS_ALLINPUT,
-    RegisterClassW, SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW,
+    HCURSOR, HWND_TOPMOST, IDC_ARROW, IDC_HAND, LoadCursorW, RegisterClassW,
+    SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TranslateMessage, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_RBUTTONDOWN, WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    SystemParametersInfoW, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+    WM_SETCURSOR, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{BOOL, w};
 
@@ -58,23 +56,7 @@ const PAGE_SLIDE: Duration = Duration::from_millis(90);
 /// 停顿重排换了首选时,候选列表轻微变暗再亮起的时长。
 const PROMOTE_FLASH: Duration = Duration::from_millis(160);
 
-/// 启动 D2D 候选窗线程;建窗或建管线失败只写日志,输入法照常工作。
-pub(super) fn spawn(state: Arc<State>) {
-    let spawned = std::thread::Builder::new()
-        .name("d2d-candidate".into())
-        .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| window_loop(state)))
-                .is_err()
-            {
-                println!("D2D 候选窗线程崩溃,后续组合不再有候选窗");
-            }
-        });
-    if let Err(e) = spawned {
-        println!("D2D 候选窗线程启动失败: {e}");
-    }
-}
-
-/// 窗口线程的动画与交互状态;全部归窗口线程所有。
+/// 候选窗的动画与交互状态;全部归界面线程所有。
 #[derive(Default)]
 pub(super) struct Fx {
     /// 出现弹簧:窗口从落点下方弹回,落定清空。
@@ -160,7 +142,7 @@ pub(super) struct Geom {
     pub(super) menu_xy: Option<(f32, f32)>,
 }
 
-/// 窗口过程持有的上下文;窗口与线程同生命周期,进程退出一起回收。
+/// 窗口过程持有的上下文;窗口与界面线程同生命周期,进程退出一起回收。
 pub(super) struct WinCtx {
     /// 上一次发布给原生扩展的候选窗状态;内容没变就不再发。
     sent: Option<CandidateState>,
@@ -188,17 +170,22 @@ pub(super) struct WinCtx {
     material: Option<(Material, bool)>,
 }
 
-/// 窗口线程主循环:排干消息、轮询会话、按需重绘。
-fn window_loop(state: Arc<State>) {
-    // DComp 与窗口消息都归这条线程;COM 已按别的 apartment 初始化过时忽略。
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+/// 候选窗:窗口、出帧管线与文字引擎。窗口过程经 `GWLP_USERDATA` 反查
+/// 上下文,上下文泄漏到进程结束,与界面线程同寿命。
+pub(crate) struct Candidate {
+    ctx: *mut WinCtx,
+    /// 上一次摆位用的版本号;版本变了才重新摆位。
+    last_version: u64,
+}
+
+/// 建候选窗。建窗或文字引擎起不来只写日志并返回 `None`,输入法照常工作;
+/// 出帧管线起不来则窗口停用,仍返回候选窗但它一直停靠在屏幕外。
+pub(super) fn init(state: &Arc<State>) -> Option<Candidate> {
     let hwnd = match create_window() {
         Ok(hwnd) => hwnd,
         Err(e) => {
             println!("D2D 候选窗建窗失败: {e}");
-            return;
+            return None;
         }
     };
     let pipe = match Pipeline::new(hwnd) {
@@ -215,7 +202,7 @@ fn window_loop(state: Arc<State>) {
         Ok(text) => text,
         Err(e) => {
             println!("D2D 文字引擎起不来: {e}");
-            return;
+            return None;
         }
     };
     let (cursor_arrow, cursor_hand) = unsafe {
@@ -224,19 +211,17 @@ fn window_loop(state: Arc<State>) {
             LoadCursorW(None, IDC_HAND).ok(),
         )
     };
-    let script = Arc::clone(&state.ext);
-    // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
         sent: None,
         hwnd,
-        state: Arc::clone(&state),
+        state: Arc::clone(state),
         fx: Fx::default(),
         pipe,
         text,
         cursor_arrow,
         cursor_hand,
-        script,
+        script: Arc::clone(&state.ext),
         script_accent: None,
         private: false,
         visible: false,
@@ -246,41 +231,34 @@ fn window_loop(state: Arc<State>) {
     unsafe {
         let _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, ctx as isize);
     }
-    let mut last_version = 0u64;
-    loop {
-        // 空闲时一直等下去:版本号、窗口消息与脚本补丁都会叫醒这里;
-        // 动画进行时按帧推进,其余时间不烧 CPU。
-        let waiting = busy_animating(unsafe { &*ctx });
-        let timeout = waiting.then_some(ANIM_TICK);
-        wait_for_input(&state, timeout);
-        // 无焦点窗口的消息量很小,醒来顺手排干。
-        unsafe {
-            let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-        // 脚本补丁到了就应用;这一轮有新内容时由 place 一起重绘。
-        let patch = unsafe { &(*ctx).script }.take_patch();
-        if let Some((seq, patch)) = patch {
-            let ctx = unsafe { &mut *ctx };
-            let redraw_now = state.version.load(Ordering::Acquire) == last_version;
+    Some(Candidate {
+        ctx,
+        last_version: 0,
+    })
+}
+
+impl Candidate {
+    /// 一轮:脚本补丁到了就应用;版本变了就摆位;动画进行中就推一帧。
+    pub(super) fn tick(&mut self, state: &State) {
+        let ctx = unsafe { &mut *self.ctx };
+        if let Some((seq, patch)) = ctx.script.take_patch() {
+            let redraw_now = state.version.load(Ordering::Acquire) == self.last_version;
             apply_script(ctx, seq, patch, redraw_now);
         }
         let version = state.version.load(Ordering::Acquire);
-        if version != last_version {
-            last_version = version;
-            // 消息泵之外取可变借用;窗口过程里的借用都已结束。
-            let ctx = unsafe { &mut *ctx };
+        if version != self.last_version {
+            self.last_version = version;
             ctx.fx.reduce = reduce_motion();
             place(ctx);
         }
-        // 淡入/淡出/滑动进行中按循环节奏重绘。
-        let ctx = unsafe { &mut *ctx };
         if busy_animating(ctx) {
             animate(ctx);
         }
+    }
+
+    /// 动画进行中按帧推进;静止时没有截止时间。
+    pub(super) fn timeout(&self) -> Option<Duration> {
+        busy_animating(unsafe { &*self.ctx }).then_some(ANIM_TICK)
     }
 }
 
@@ -288,21 +266,6 @@ fn window_loop(state: Arc<State>) {
 fn busy_animating(ctx: &WinCtx) -> bool {
     let fx = &ctx.fx;
     fx.hide.is_some() || fx.show.is_some() || fx.slide.is_some() || fx.flash.is_some()
-}
-
-/// 等版本号事件、窗口消息或动画帧;`timeout` 为空时一直睡到有事件。
-fn wait_for_input(state: &State, timeout: Option<Duration>) {
-    let event = state.wake_ui.raw();
-    if event.is_invalid() {
-        std::thread::sleep(timeout.unwrap_or(Duration::from_millis(15)));
-        return;
-    }
-    let ms = timeout.map_or(windows::Win32::System::Threading::INFINITE, |wait| {
-        wait.as_millis().min(u128::from(u32::MAX)) as u32
-    });
-    unsafe {
-        MsgWaitForMultipleObjectsEx(Some(&[event]), ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-    }
 }
 
 /// 组合变化后重新摆位并出帧;无内容时淡出或停靠。
@@ -840,7 +803,7 @@ pub(super) fn create_window() -> Result<HWND, String> {
     }
 }
 
-/// 窗口类进程内只注册一次(自检与候选窗线程可能先后建窗)。
+/// 窗口类进程内只注册一次(自检与候选窗可能先后建窗)。
 fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
     static ONCE: Once = Once::new();
     let mut result = Ok(());

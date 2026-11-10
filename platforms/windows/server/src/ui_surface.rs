@@ -48,7 +48,7 @@ enum Align {
     Centered,
 }
 
-/// 一层可绘制的位图表面;窗口线程独占。
+/// 一层可绘制的位图表面;界面线程独占。
 pub struct Surface {
     dwrite: IDWriteFactory,
     /// 绑到 `mem_dc` 的绘制目标;删 GDI 资源前先置空。

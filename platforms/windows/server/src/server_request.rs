@@ -66,7 +66,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     fullwidth: state.fullwidth.load(Ordering::Relaxed),
                     ..SessionView::default()
                 },
-                pending: None,
                 ui_reply: None,
                 sync_rerank: state.sync_model.as_ref().map(|model| {
                     Arc::new(Mutex::new(Rerank::with_metrics(
@@ -162,7 +161,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 }
                 refresh_view(s);
                 fill_view(&mut reply, &s.view);
-                s.pending = Some(reply.clone());
                 crate::settle::schedule(state, session, s);
                 if s.engine.mode() != before_mode {
                     switched = Some(s.engine.mode() == Mode::Chinese);
@@ -194,8 +192,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     commits.extend(reply.commits);
                     reply.commits = commits;
                 }
-                // 模式切换可能已把组合落定,之前缓存的按键应答不能再写回。
-                s.pending = None;
                 refresh_view(s);
                 fill_view(&mut reply, &s.view);
                 crate::settle::schedule(state, session, s);
@@ -262,10 +258,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             }
             Reply::default()
         }
-        Request::TakeKey { session } => state
-            .with_session(session, |s| s.pending.take())
-            .flatten()
-            .unwrap_or_else(|| neutral(state)),
         Request::SetMode { session, chinese } => {
             state.activate(session);
             let Some(handle) = state.session(session) else {
@@ -285,8 +277,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     commits.extend(reply.commits);
                     reply.commits = commits;
                 }
-                // 切模式前的按键应答已过期,避免 OnKeyDown 把旧内联文本写回。
-                s.pending = None;
                 refresh_view(s);
                 fill_view(&mut reply, &s.view);
                 crate::settle::schedule(state, session, s);
@@ -334,7 +324,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 s.private = false;
                 s.context_epoch = s.context_epoch.wrapping_add(1);
                 s.context_seq = s.context_seq.wrapping_add(1);
-                s.pending = None;
                 let carried = s.ui_reply.take();
                 if !focused {
                     // 失焦:把敲了一半的拼音整串落定,再清上下文。
@@ -492,8 +481,6 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     commits.extend(reply.commits);
                     reply.commits = commits;
                 }
-                // 组合已经结束,之前的按键应答不能再写回内联拼音。
-                s.pending = None;
                 refresh_view(s);
                 fill_view(&mut reply, &s.view);
                 crate::settle::schedule(state, session, s);
