@@ -146,9 +146,9 @@ jobs:
       # 组件测试客人:场景 E2E 的扩展行为检查由它驱动。
       - name: 组件测试客人构建
         run: |
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"

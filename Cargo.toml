@@ -6,25 +6,20 @@ members = [
     "crates/engine",
     "crates/cli",
     "crates/ext",
-    "crates/extguest",
-    "crates/extmeta",
-    "crates/extproto",
     "crates/features",
     "crates/lm",
     "crates/rerank",
     "crates/protocol",
-    # 运行期扩展:组件宿主与每扩展 worker,平台无关
-    "crates/extwasm",
     # 输入会话内核:候选视图同步与重排决策
     "crates/session",
     # 联网边界:更新与下载,常驻 Server 不依赖
     "crates/net",
-    # 联网 broker:扩展网络请求的唯一出口,独立进程,平台无关协议层
-    "crates/broker",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
     "crates/render",
     # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
     "platforms/windows/server",
+    # 扩展宿主进程:运行全部扩展(Wasm 与原生),允许联网;服务端经 stdio 行协议驱动
+    "platforms/windows/ext-host",
     "platforms/windows/tsf",
     "platforms/windows/installer",
     # 验证与工具
@@ -49,11 +44,7 @@ lueying-cli = { path = "crates/cli" }
 lueying-dict = { path = "crates/dict" }
 lueying-engine = { path = "crates/engine" }
 lueying-ext = { path = "crates/ext" }
-lueying-extguest = { path = "crates/extguest" }
-lueying-extmeta = { path = "crates/extmeta" }
-lueying-extproto = { path = "crates/extproto" }
-lueying-extwasm = { path = "crates/extwasm" }
-lueying-broker = { path = "crates/broker" }
+lueying-ext-host = { path = "platforms/windows/ext-host" }
 lueying-net = { path = "crates/net" }
 lueying-features = { path = "crates/features" }
 lueying-input-schemes = { path = "extensions/input-schemes" }

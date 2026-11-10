@@ -104,9 +104,9 @@ jobs:
       # 组件测试客人:场景 E2E 的扩展行为检查由它驱动。
       - name: 组件测试客人构建
         run: |
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
@@ -166,7 +166,7 @@ jobs:
         shell: pwsh
         run: |
           $env:CARGO_TARGET_DIR = "target"
-          cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
           "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # 安装冒烟每次都编译真实安装包,复用与发版相同的 Inno 脚本。
@@ -182,9 +182,9 @@ jobs:
       - name: Build (release)
         id: build
         # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
-        # broker 也要:安装冒烟要把 lueying-broker.exe 打进安装包,它不是
+        # 扩展宿主也要:安装冒烟要把 lueying-ext-host.exe 打进安装包,它不是
         # installer 的依赖,不显式编就缺文件。
-        run: cargo build --release --locked -p lueying-server -p lueying-broker -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
+        run: cargo build --release --locked -p lueying-server -p lueying-ext-host -p lueying-net -p lueying-installer -p lueying-win-e2e -p lueying-install-e2e
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release。
       - name: TSF 构建(静态 CRT)
         id: buildtsf

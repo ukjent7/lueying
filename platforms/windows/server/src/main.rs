@@ -6,7 +6,7 @@
 fn main() {
     #[cfg(windows)]
     {
-        // 命令面板自检:独立进程建窗、注入按键、验证焦点归还,不碰管道。
+        // 选择面板自检:独立进程建窗、注入按键、验证焦点归还,不碰管道。
         if std::env::args().nth(1).as_deref() == Some("--panel-selftest") {
             imp::panel_selftest();
             return;
@@ -21,14 +21,8 @@ fn main() {
 mod context;
 
 #[cfg(windows)]
-mod ext_audit;
-
 #[cfg(windows)]
-mod ext_host;
-
 #[cfg(windows)]
-mod ext_selftest;
-
 #[cfg(windows)]
 mod imp;
 
@@ -39,7 +33,6 @@ mod modules;
 mod pipe;
 
 #[cfg(windows)]
-mod candidate_events;
 #[cfg(windows)]
 mod settle;
 

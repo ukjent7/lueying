@@ -10,11 +10,12 @@
 //! 7. 卸载扩展时挂起的宿主服务等待不被取消。
 
 pub(crate) mod harness;
+pub(crate) mod process;
 pub(crate) mod services;
 
 use std::time::{Duration, Instant};
 
-use lueying_extwasm::{Done, Pack, Poll, Provider, Runtime, SceneIn, Service};
+use lueying_ext::host::{Done, Pack, Poll, Provider, Runtime, SceneIn, Service};
 
 use crate::extwasm::harness::{
     ACCENT_A, ACCENT_B, appearance_manifest, command_manifest, fixture_a, fixture_b,
@@ -407,7 +408,7 @@ fn cancel_wait(checks: &mut Vec<(&'static str, bool, String)>) {
         }
     }
 
-    let registry = std::sync::Arc::new(lueying_extwasm::Registry::new());
+    let registry = std::sync::Arc::new(lueying_ext::host::Registry::new());
     registry.set(Service::Notify, std::sync::Arc::new(Stuck));
     let (mut runtime, errors) = Runtime::open_with(&temp.root, &["sleep".to_string()], registry);
     if !errors.is_empty() {

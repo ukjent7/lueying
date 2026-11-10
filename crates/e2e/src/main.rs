@@ -112,6 +112,14 @@ fn binary_roundtrip() -> Vec<(&'static str, bool, String)> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // 扩展宿主进程:服务端拉起的本可执行文件副本(见 extwasm::process)。
+    if args.get(1).map(String::as_str) == Some("--ext-host") && args.len() == 4 {
+        let paths = lueying_ext_host::Paths {
+            data: PathBuf::from(&args[2]),
+            local: PathBuf::from(&args[3]),
+        };
+        std::process::exit(lueying_ext_host::run(paths));
+    }
     let dict_path = args
         .iter()
         .position(|a| a == "--dict")
@@ -236,6 +244,9 @@ fn main() {
 
     // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
     failures += extwasm::services::run(&mut report);
+
+    // 扩展宿主进程:服务端经行协议驱动独立进程,宿主死循环时服务端照常返回。
+    failures += extwasm::process::run(&mut report);
 
     // 扩展授权:同意记录、升级重新同意与热重载门控。
     failures += consent::run(&mut report);

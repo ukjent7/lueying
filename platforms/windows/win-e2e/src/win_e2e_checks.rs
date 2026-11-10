@@ -247,17 +247,32 @@ pub(super) fn check_d2d_selftest() -> Result<String, String> {
     Ok(format!("## D2D 渲染管线\n\nPASS,{line}\n\n字体:{font}"))
 }
 
-/// 运行期扩展自检:Server 启动时按 `LUEYING_D2D_SELFTEST` 建临时扩展包,
+/// 运行期扩展自检:扩展宿主进程按 `LUEYING_SELFTEST_WASM` 建临时扩展包,
 /// 验证 Wasm 扩展在 Windows 上能加载、派发、拦截隐私场景。
-pub(super) fn check_ext_selftest() -> Result<String, String> {
-    let text = std::fs::read_to_string(server_log()).unwrap_or_default();
-    if let Some(line) = text.lines().find(|line| line.contains("扩展自检失败")) {
-        return Err(format!("扩展自检失败:{line}"));
+pub(super) fn check_ext_selftest(dir: &std::path::Path) -> Result<String, String> {
+    let exe = dir.join("lueying-ext-host.exe");
+    if !exe.exists() {
+        return Err(format!("没有 {}", exe.display()));
     }
-    let Some(line) = text.lines().find(|line| line.contains("扩展自检通过")) else {
-        return Err("Server 日志里没有扩展自检记录".into());
-    };
-    Ok(format!("## 运行期扩展\n\nPASS,{line}"))
+    let report = std::env::current_dir()
+        .unwrap_or_default()
+        .join("target")
+        .join("lueying-ext-selftest.txt");
+    let _ = std::fs::create_dir_all("target");
+    let _ = std::fs::remove_file(&report);
+    let output = std::process::Command::new(&exe)
+        .arg("--selftest")
+        .arg(&report)
+        .output()
+        .map_err(|e| format!("启动扩展宿主自检失败: {e}"))?;
+    let text = std::fs::read_to_string(&report).unwrap_or_default();
+    if !output.status.success() {
+        return Err(format!("扩展自检失败:{text}"));
+    }
+    if !text.contains("扩展自检通过") {
+        return Err(format!("扩展自检没有结论:{text}"));
+    }
+    Ok(format!("## 运行期扩展\n\nPASS,{}", text.trim()))
 }
 
 /// Ctrl+. 是 TSF 保留键;切换后 Server 应把 chinese_punct 写进 config.toml。

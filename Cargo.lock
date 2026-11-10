@@ -826,7 +826,7 @@ dependencies = [
 name = "clipboard-history"
 version = "0.1.0"
 dependencies = [
- "lueying-extguest",
+ "lueying-ext",
  "serde_json",
  "wit-bindgen 0.63.0",
 ]
@@ -3165,22 +3165,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
-name = "lueying-broker"
-version = "0.1.0"
-dependencies = [
- "lueying-extproto",
- "lueying-net",
- "serde_json",
-]
-
-[[package]]
 name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
  "flate2",
  "lueying-dict",
  "lueying-engine",
- "lueying-extmeta",
+ "lueying-ext",
  "lueying-features",
  "lueying-protocol",
  "serde_json",
@@ -3203,8 +3194,8 @@ dependencies = [
  "lueying-cli",
  "lueying-dict",
  "lueying-engine",
- "lueying-extmeta",
- "lueying-extwasm",
+ "lueying-ext",
+ "lueying-ext-host",
  "lueying-features",
  "lueying-render",
  "lueying-rerank",
@@ -3225,41 +3216,19 @@ name = "lueying-ext"
 version = "0.1.0"
 dependencies = [
  "lueying-engine",
-]
-
-[[package]]
-name = "lueying-extguest"
-version = "0.1.0"
-dependencies = [
- "lueying-extproto",
-]
-
-[[package]]
-name = "lueying-extmeta"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lueying-extproto"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lueying-extwasm"
-version = "0.1.0"
-dependencies = [
- "lueying-extmeta",
- "lueying-extproto",
  "serde",
  "serde_json",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "lueying-ext-host"
+version = "0.1.0"
+dependencies = [
+ "lueying-ext",
+ "lueying-net",
+ "serde_json",
  "windows",
 ]
 
@@ -3310,7 +3279,7 @@ name = "lueying-net"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
- "lueying-extmeta",
+ "lueying-ext",
  "lueying-protocol",
  "serde",
  "serde_json",
@@ -3344,12 +3313,9 @@ version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "getrandom 0.4.3",
- "lueying-broker",
  "lueying-dict",
  "lueying-engine",
- "lueying-extmeta",
- "lueying-extproto",
- "lueying-extwasm",
+ "lueying-ext",
  "lueying-features",
  "lueying-net",
  "lueying-protocol",
@@ -3390,7 +3356,7 @@ dependencies = [
 name = "lueying-win-e2e"
 version = "0.1.0"
 dependencies = [
- "lueying-extmeta",
+ "lueying-ext",
  "lueying-protocol",
  "serde_json",
  "windows",
@@ -5169,7 +5135,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "shot-ocr"
 version = "0.1.0"
 dependencies = [
- "lueying-extguest",
+ "lueying-ext",
  "serde_json",
  "wit-bindgen 0.63.0",
 ]
@@ -6302,7 +6268,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voice-asr"
 version = "0.1.0"
 dependencies = [
- "lueying-extguest",
+ "lueying-ext",
  "serde_json",
  "wit-bindgen 0.63.0",
 ]
@@ -7765,7 +7731,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
- "lueying-extmeta",
+ "lueying-ext",
  "serde_json",
 ]
 

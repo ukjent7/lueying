@@ -104,7 +104,7 @@ jobs:
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
-      # 组件缝验证桩:extwasm 的测试要在运行时把 guest 包成组件。
+      # 组件缝验证桩:lueying-ext 宿主的测试要在运行时把 guest 包成组件。
       - name: 安装 wasm-tools
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
@@ -136,9 +136,9 @@ jobs:
       # 独立 crate,自带锁文件生成,不加 --locked。
       - name: 组件测试客人构建
         run: |
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
-          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
+          CARGO_TARGET_DIR=target cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown --features variant-b
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-b.wasm
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
@@ -147,17 +147,17 @@ jobs:
       # 1 MiB,默认限额内即可运行。
       - name: JS 组件客人构建
         run: |
-          cd crates/extwasm/tests/js-guest
+          cd crates/ext/tests/js-guest
           npm install --no-fund --no-audit --loglevel=error
-          npx componentize-qjs --wit ../../../extwasm/lueying.wit --js guest.js --world extension --sync --opt-size --minify -o "$GITHUB_WORKSPACE/target/js-fixture.wasm"
+          npx componentize-qjs --wit ../../lueying.wit --js guest.js --world extension --sync --opt-size --minify -o "$GITHUB_WORKSPACE/target/js-fixture.wasm"
           echo "LUEYING_JS_FIXTURE_WASM=$GITHUB_WORKSPACE/target/js-fixture.wasm" >> "$GITHUB_ENV"
       # 扩展层单测:清单、权限与补丁的边界矩阵,E2E 覆盖不到的取值组合;
-      # CLI 的子命令解析与联网 broker 的协议层同场。
+      # CLI 的子命令解析与扩展宿主的白名单、规范化同场。
       - name: 扩展层单元测试
         run: |
           cargo nextest run --locked \
-            -p lueying-extwasm -p lueying-extmeta -p lueying-extproto -p lueying-extguest \
-            -p lueying-broker -p lueying-cli -p lueying-net
+            -p lueying-ext --all-features \
+            -p lueying-ext-host -p lueying-cli -p lueying-net
 
   windows:
     if: ${{ !cancelled() }}
@@ -195,7 +195,7 @@ jobs:
         shell: pwsh
         run: |
           $env:CARGO_TARGET_DIR = "target"
-          cargo build --release --manifest-path crates/extwasm/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
+          cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
           wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
           "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       # 测试安装包(push 到 main)与发版打包共用同一份 Inno 脚本;PR 不需要安装器。
@@ -229,7 +229,7 @@ jobs:
         # 只编发版真正用到的包;E2E 宿主只在手动触发、打 tag 与 quality.yml 里编。
         # 安装冒烟成本更高,留在 quality.yml 跑。
         # TSF 不在这里:它要静态 CRT,单独一步构建。
-        run: cargo build --release --locked -p lueying-server -p lueying-broker -p lueying-net -p lueying-installer
+        run: cargo build --release --locked -p lueying-server -p lueying-ext-host -p lueying-net -p lueying-installer
       # 常驻进程不联网的可证明约束:按键与词库都在 lueying-server 手里,它的
       # 导入表不得出现 winhttp;联网只允许出现在设置窗与更新器的交互路径。
       - name: 常驻进程导入表断言
@@ -265,7 +265,7 @@ jobs:
       - name: 运行时体积门禁
         shell: pwsh
         run: |
-          $names = "lueying-server.exe", "lueying-broker.exe", "lueying-settings.exe", "lueying-user.exe", "lueying_tsf.dll"
+          $names = "lueying-server.exe", "lueying-ext-host.exe", "lueying-settings.exe", "lueying-user.exe", "lueying_tsf.dll"
           $bytes = 0
           foreach ($name in $names) {
             $length = (Get-Item "target/release/$name").Length

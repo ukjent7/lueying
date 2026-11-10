@@ -8,9 +8,8 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod accents;
 
-pub mod command_panel;
-
 pub mod config;
+pub mod ext_link;
 
 mod config_file;
 

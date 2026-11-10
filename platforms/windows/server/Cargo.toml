@@ -14,21 +14,20 @@ name = "lueying-settings"
 path = "src/settings_main.rs"
 
 [dependencies]
-lueying-broker.workspace = true
 lueying-dict.workspace = true
 lueying-engine.workspace = true
 # 扩展运行指标快照:设置页与 `lueying ext top` 读同一份格式。
-lueying-extmeta.workspace = true
-lueying-extproto.workspace = true
 # 联网边界:设置窗的更新检查与官方扩展下载走这里,常驻 Server 不引用。
 lueying-net.workspace = true
 lueying-features.workspace = true
 lueying-rerank.workspace = true
-# 渲染核心:候选窗/徽标/命令面板的布局与命中;设置窗 UI 已由 Slint 承担。
+# 渲染核心:候选窗/徽标/选择面板的布局与命中;设置窗 UI 已由 Slint 承担。
 lueying-render.workspace = true
 # 会话内核:候选视图同步与重排快照。
 lueying-session.workspace = true
 lueying-protocol = { path = "../../../crates/protocol" }
+# 扩展清单与场景协议:设置页与指标快照共用,不带宿主运行时。
+lueying-ext = { workspace = true, default-features = false }
 # 配置 schema:typed TOML,未知键在读取时拒绝。
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -44,7 +43,7 @@ mimalloc = "0.1.52"
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
 windows-numerics = "0.3.1"
 # 运行期 Wasm 扩展:组件沙箱与每扩展 worker,只改候选窗外观或执行命令。
-lueying-extwasm.workspace = true
+lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 # Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
 slint.workspace = true
 windows = { version = "0.62.2", features = [

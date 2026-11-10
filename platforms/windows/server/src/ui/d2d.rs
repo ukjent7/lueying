@@ -11,8 +11,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
-use lueying_extproto::candidate::CandidateState;
-use lueying_extwasm::{SceneIn, ScenePatch};
+use lueying_ext::host::{SceneIn, ScenePatch};
+use lueying_ext::proto::candidate::CandidateState;
 use lueying_protocol::SessionView;
 use lueying_render::Spring;
 use lueying_render::panel::{self, Metrics, PanelSpec};
@@ -175,7 +175,8 @@ pub(super) struct WinCtx {
     pub(super) cursor_arrow: Option<HCURSOR>,
     pub(super) cursor_hand: Option<HCURSOR>,
     /// 运行期扩展:后台 worker 跑 Wasm 组件,这里只收主题色补丁。
-    script: crate::ext_host::Script,
+    /// 扩展宿主连接:外观提交与补丁取回都经它,从不等待宿主。
+    script: Arc<lueying_server::ext_link::ExtLink>,
     script_accent: Option<u32>,
     /// 隐私字段(密码框):外观扩展开关与补丁停用。
     private: bool,
@@ -223,7 +224,7 @@ fn window_loop(state: Arc<State>) {
             LoadCursorW(None, IDC_HAND).ok(),
         )
     };
-    let script = crate::ext_host::Script::spawn(Arc::clone(&state));
+    let script = Arc::clone(&state.ext);
     // 窗口过程要反查状态;循环常驻,泄漏的 Box 与进程同寿命。
     let dead = pipe.is_none();
     let ctx: *mut WinCtx = Box::leak(Box::new(WinCtx {
@@ -261,7 +262,7 @@ fn window_loop(state: Arc<State>) {
             }
         }
         // 脚本补丁到了就应用;这一轮有新内容时由 place 一起重绘。
-        let patch = unsafe { &(*ctx).script }.take();
+        let patch = unsafe { &(*ctx).script }.take_patch();
         if let Some((seq, patch)) = patch {
             let ctx = unsafe { &mut *ctx };
             let redraw_now = state.version.load(Ordering::Acquire) == last_version;
@@ -440,13 +441,13 @@ fn submit_scene(ctx: &WinCtx, view: &SessionView, private: bool) {
         private,
         ..SceneIn::default()
     };
-    ctx.script.submit(scene);
+    ctx.script.submit_scene(scene);
 }
 
 /// 应用脚本补丁;只有主题色还有效,内容没变就不重绘。
 fn apply_script(ctx: &mut WinCtx, seq: u64, patch: Option<ScenePatch>, redraw_now: bool) {
     // 旧外观补丁晚到:新一帧或隐私字段已经提交,直接丢弃。
-    if seq < ctx.script.seq() {
+    if seq < ctx.script.scene_seq() {
         return;
     }
     let accent = patch.and_then(|patch| patch.accent);
@@ -910,6 +911,6 @@ fn publish_state(ctx: &mut WinCtx, view: Option<&SessionView>) {
     if ctx.sent.as_ref() == Some(&state) {
         return;
     }
-    crate::candidate_events::publish(state.clone());
+    ctx.state.ext.publish_candidates(state.clone());
     ctx.sent = Some(state);
 }

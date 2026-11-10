@@ -269,8 +269,6 @@ pub struct AppConfig {
     pub bindings: Vec<(String, String)>,
     /// 动作候选触发词:(触发词, 完整命令 id);整串完全匹配才出现。
     pub triggers: Vec<(String, String)>,
-    /// 命令面板总热键;空串表示关闭。需要两个以上修饰键,保留组合会被拒。
-    pub panel_hotkey: String,
     /// 截图 OCR 引擎;模型缺失时 PP-OCR 会回明确错误。
     pub ocr_backend: OcrBackend,
     /// 更新渠道。
@@ -311,8 +309,6 @@ impl Default for AppConfig {
             extensions: Vec::new(),
             bindings: Vec::new(),
             triggers: Vec::new(),
-            // 三个修饰键避开常见应用快捷键;不想要就在配置里写 off。
-            panel_hotkey: "Ctrl+Alt+Shift+Space".to_string(),
             ocr_backend: OcrBackend::System,
             update_channel: Channel::Stable,
             punct: BTreeMap::new(),
@@ -392,6 +388,13 @@ pub fn punct_path() -> Option<PathBuf> {
 /// 运行期扩展目录(`%APPDATA%\lueying\extensions`);每个包一个子目录。
 pub fn extensions_dir() -> Option<PathBuf> {
     user_file("extensions")
+}
+
+/// 扩展宿主的两个本机目录:数据目录(`%APPDATA%\lueying`)与本地数据目录(`%LOCALAPPDATA%\lueying`)。
+pub fn ext_host_dirs() -> Option<(PathBuf, PathBuf)> {
+    let data = extensions_dir()?.parent()?.to_path_buf();
+    let local = ext_metrics_path()?.parent()?.parent()?.to_path_buf();
+    Some((data, local))
 }
 
 /// 扩展同意记录(`%APPDATA%\lueying\extensions\consent.json`)。
@@ -487,12 +490,6 @@ fn config_dir() -> Option<PathBuf> {
 pub fn log_path() -> Option<PathBuf> {
     let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
     Some(base.join("lueying").join("logs").join("server.log"))
-}
-
-/// 能力调用审计(`%LOCALAPPDATA%\lueying\logs\ext-audit.log`)。
-pub fn ext_audit_path() -> Option<PathBuf> {
-    let base = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
-    Some(base.join("lueying").join("logs").join("ext-audit.log"))
 }
 
 /// 扩展运行指标快照(`%LOCALAPPDATA%\lueying\logs\ext-metrics.json`)。

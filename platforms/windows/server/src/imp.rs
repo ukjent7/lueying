@@ -18,17 +18,20 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
+use crate::context::ContextProvider;
 use assets::{dict_path, load_dict, load_model, single_instance};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_engine::module::Modules;
 use lueying_engine::scheme::Scheme;
 use lueying_engine::{CivilTime, Engine, Event, Key, Mode, SharedUser, UserDict};
+use lueying_ext::host::{Done, Provider};
 use lueying_features::{CustomPhrases, Prediction, ScriptModule};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
 use lueying_rerank::{LatencyMetrics, Model, Rerank};
-use lueying_server::command_panel::CommandItem;
 use lueying_server::config::{self, AppConfig};
+use lueying_server::ext_link::{ExtLink, Handler, Replier, Request as ExtRequest};
+use lueying_server::services::{OutputProvider, PanelProvider};
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{
@@ -151,19 +154,6 @@ pub(super) struct ModeHud {
     pub(super) at: Instant,
 }
 
-/// 动作候选与命令面板执行命令的入口:请求线程投完整命令 id,脚本线程执行。
-pub(super) struct ExtHub {
-    pub(super) invoke: mpsc::Sender<ExtInvoke>,
-    /// 完整命令 id → 标题;扩展重载后由脚本线程刷新。
-    pub(super) titles: Arc<Mutex<HashMap<String, String>>>,
-}
-
-/// 一次命令执行请求;来源只用于日志。
-pub(super) struct ExtInvoke {
-    pub(super) command: String,
-    pub(super) source: &'static str,
-}
-
 /// 自建事件:窗口线程等它休眠,请求线程触发它上岗。
 ///
 /// `HANDLE` 里的裸指针不自动 Send/Sync;而 SetEvent/WaitForSingleObject
@@ -255,14 +245,10 @@ pub(super) struct State {
     pub(super) scheme: RwLock<Arc<dyn Scheme>>,
     /// 设置窗保存的配置;新会话取它,重载时下发给所有会话。
     pub(super) config: RwLock<AppConfig>,
-    /// 动作候选执行命令的通道;脚本线程启动时装填。
-    pub(super) ext_hub: Mutex<Option<ExtHub>>,
-    /// 命令面板的唤出通道;面板线程启动时装填。
-    pub(super) panel: Mutex<Option<mpsc::SyncSender<Vec<CommandItem>>>>,
+    /// 扩展宿主连接:配置、上下文、外观提交与动作命令都经它转给宿主进程。
+    pub(super) ext: Arc<lueying_server::ext_link::ExtLink>,
     /// 扩展 `panel.show` 的宿主选择面板;窗口线程启动时装填。
     pub(super) panel_service: Arc<lueying_server::services::PanelProvider>,
-    /// 面板正开着;此时再按总热键直接丢弃,关闭后不补开。
-    pub(super) panel_open: AtomicBool,
     pub(super) config_path: Option<PathBuf>,
     /// 全局中/英模式:所有应用共享,微软拼音同款;新会话上线时跟随。
     pub(super) chinese: AtomicBool,
@@ -318,6 +304,13 @@ impl State {
 pub(super) fn touch_view(state: &State) {
     state.version.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
+    // 输入上下文跟着视图走:隐私门禁与热键的 when 判断在宿主侧用它。
+    let active = state.active_published();
+    state.ext.set_context(lueying_ext::proto::link::Context {
+        private: active.as_ref().is_some_and(|published| published.private),
+        editable: active.is_some(),
+        composing: active.as_ref().is_some_and(|published| published.composing),
+    });
 }
 
 /// 只叫醒候选窗,不宣布新视图;脚本补丁走这条轻量路径。
@@ -420,14 +413,14 @@ fn attach_stdio() {
     attach_log_stdio();
 }
 
-/// 命令面板自检入口:`lueying-server.exe --panel-selftest <报告>`。
+/// 选择面板自检入口:`lueying-server.exe --panel-selftest <报告>`。
 /// 独立进程跑,不碰单实例锁、管道与 TSF;结论写文件供 win-e2e 断言。
 pub(super) fn panel_selftest() {
     let report = std::env::args()
         .nth(2)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/panel-selftest.txt"));
-    let result = crate::ui::panel::selftest(&report);
+    let result = crate::ui::picker::selftest(&report);
     std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
@@ -518,6 +511,17 @@ pub(super) fn real_main() {
     // 两个窗口线程各等自己的一份数据;建不出事件时等待退化成定时轮询。
     let wake_ui = Wake::create();
     let wake_hud = Wake::create();
+    let panel_service = Arc::new(lueying_server::services::PanelProvider::new());
+    let ext = Arc::new(spawn_ext_host(
+        Arc::clone(&panel_service),
+        Arc::new(crate::context::ContextProvider::new()),
+    ));
+    ext.set_config(
+        app_config.extensions.clone(),
+        app_config.allow_all_extension_network,
+        app_config.bindings.clone(),
+        app_config.ocr_backend == config::OcrBackend::Ppocr,
+    );
     let state = Arc::new(State {
         dict: Arc::new(dict),
         dict_source,
@@ -549,18 +553,24 @@ pub(super) fn real_main() {
         script,
         scheme: RwLock::new(scheme),
         config: RwLock::new(app_config),
-        ext_hub: Mutex::new(None),
-        panel: Mutex::new(None),
-        panel_service: Arc::new(lueying_server::services::PanelProvider::new()),
-        panel_open: AtomicBool::new(false),
+        ext: Arc::clone(&ext),
+        panel_service,
         config_path,
         chinese: AtomicBool::new(true),
         fullwidth: AtomicBool::new(false),
     });
+    {
+        // 外观补丁到达:叫醒候选窗重绘。状态对象只弱引用,不随宿主连接成环。
+        let weak = Arc::downgrade(&state);
+        state.ext.on_patch(move || {
+            if let Some(state) = weak.upgrade() {
+                state.wake_ui.set();
+            }
+        });
+    }
     if state.settle_tx.is_some() {
         crate::settle::spawn(Arc::clone(&state), settle_rx);
     }
-    crate::candidate_events::spawn_subscribers();
     if state.sync_tx.is_some() {
         crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
     }
@@ -576,14 +586,9 @@ pub(super) fn real_main() {
     // 不依赖管道与真实输入,无 UI 环境也能跑。
     if std::env::var_os("LUEYING_D2D_SELFTEST").is_some() {
         crate::ui::d2d::selftest::selftest();
-        crate::ext_selftest::run();
     }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
-        // 扩展宿主平时跟着候选窗起;无 UI 时单独开一个(Windows E2E 用),
-        // 默认不开,空闲成本仍然为零。
-        let _host = std::env::var_os("LUEYING_EXT_HOST")
-            .map(|_| crate::ext_host::Script::spawn(Arc::clone(&state)));
         loop {
             std::thread::park();
         }
@@ -802,9 +807,61 @@ fn group_reply(user: &SharedUser) -> Reply {
     }
 }
 
+/// 拉起扩展宿主进程(`lueying-ext-host`,与服务端同目录)。
+/// 宿主请求的服务只有输出、选择面板与上下文,它们要碰服务端的窗口与会话,留在这里完成。
+fn spawn_ext_host(panel: Arc<PanelProvider>, context: Arc<ContextProvider>) -> ExtLink {
+    let exe = std::env::current_exe()
+        .map(|path| path.with_file_name("lueying-ext-host.exe"))
+        .unwrap_or_default();
+    let (data, local) = config::ext_host_dirs().unwrap_or_default();
+    let log = local.join("logs").join("ext-host.log");
+    let args = vec![data.display().to_string(), local.display().to_string()];
+    let handler: Handler = Arc::new(move |_id, request, replier| {
+        route_request(&panel, &context, request, replier);
+    });
+    ExtLink::spawn(exe, args, Some(log), handler)
+}
+
+/// 宿主请求的服务在服务端完成;结果经 `replier` 异步回送,超时由宿主侧的调用负责。
+fn route_request(
+    panel: &PanelProvider,
+    context: &ContextProvider,
+    request: ExtRequest,
+    replier: Replier,
+) {
+    /// 选择面板要等用户操作,应答等待给足时间。
+    const REPLY_WAIT: Duration = Duration::from_secs(300);
+    let (done, receiver) = Done::channel();
+    let started = match request.service.as_str() {
+        "output" => OutputProvider.call(&request.caller, &request.method, &request.args, done),
+        "panel" => panel.call(&request.caller, &request.method, &request.args, done),
+        "context" => context.call(&request.caller, &request.method, &request.args, done),
+        other => Err(format!("服务端没有服务 {other:?}")),
+    };
+    match started {
+        Err(error) => replier.send(Err(error)),
+        Ok(()) => {
+            let _ = std::thread::Builder::new()
+                .name("ext-reply".into())
+                .spawn(move || {
+                    let result = receiver
+                        .recv_timeout(REPLY_WAIT)
+                        .unwrap_or_else(|_| Err("服务端没有回传结果".to_string()));
+                    replier.send(result);
+                });
+        }
+    }
+}
+
 /// 设置重载:写回内存配置,并让所有现有会话按新配置重算。
 pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
     let engine_cfg = cfg.engine();
+    state.ext.set_config(
+        cfg.extensions.clone(),
+        cfg.allow_all_extension_network,
+        cfg.bindings.clone(),
+        cfg.ocr_backend == config::OcrBackend::Ppocr,
+    );
     let old = state
         .config
         .read()

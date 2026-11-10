@@ -131,16 +131,16 @@ fn install_shot_ocr(data: &std::path::Path) -> Result<(), String> {
     std::fs::write(dir.join("manifest.json"), MANIFEST)
         .and_then(|()| std::fs::write(dir.join("extension.wasm"), &wasm))
         .map_err(|e| format!("写扩展文件: {e}"))?;
-    let manifest = lueying_extmeta::Manifest::parse(MANIFEST.as_bytes())
+    let manifest = lueying_ext::manifest::Manifest::parse(MANIFEST.as_bytes())
         .map_err(|e| format!("解析清单: {e}"))?;
-    let mut book = lueying_extmeta::consent::ConsentBook::default();
+    let mut book = lueying_ext::manifest::consent::ConsentBook::default();
     book.approve(&dir, &manifest, 0)
         .map_err(|e| format!("写同意记录: {e}"))?;
     book.save(&extensions.join("consent.json"))
         .map_err(|e| format!("保存同意记录: {e}"))?;
     std::fs::write(
         data.join("lueying").join("config.toml"),
-        "extensions = [\"shot-ocr\"]\npanel_hotkey = \"off\"\n\n[bindings]\n\"Ctrl+Alt+F9\" = \"shot-ocr.run\"\n",
+        "extensions = [\"shot-ocr\"]\n\n[bindings]\n\"Ctrl+Alt+F9\" = \"shot-ocr.run\"\n",
     )
     .map_err(|e| format!("写 E2E 配置: {e}"))?;
     Ok(())
@@ -176,7 +176,7 @@ fn settings_selftest(dir: &std::path::Path) -> Result<String, String> {
     Ok(format!("## 设置窗自检\n\n{text}\n"))
 }
 
-/// 命令面板自检:独立 Server 进程建可获焦窗口、注入按键、验证焦点归还。
+/// 选择面板自检:独立 Server 进程建可获焦窗口、注入按键、验证焦点归还。
 /// 面板会短暂抢前台,放在所有 TSF 文本断言之后跑。
 fn panel_selftest(dir: &std::path::Path) -> Result<String, String> {
     let exe = dir.join("lueying-server.exe");
@@ -193,15 +193,15 @@ fn panel_selftest(dir: &std::path::Path) -> Result<String, String> {
         .arg("--panel-selftest")
         .arg(&report)
         .output()
-        .map_err(|e| format!("启动命令面板自检失败: {e}"))?;
+        .map_err(|e| format!("启动选择面板自检失败: {e}"))?;
     let text = std::fs::read_to_string(&report).unwrap_or_default();
     if !output.status.success() {
-        return Err(format!("命令面板自检失败: {text}"));
+        return Err(format!("选择面板自检失败: {text}"));
     }
     if !text.contains("结果:通过") {
-        return Err(format!("命令面板自检没有结论: {text}"));
+        return Err(format!("选择面板自检没有结论: {text}"));
     }
-    Ok(format!("## 命令面板自检\n\n{text}\n"))
+    Ok(format!("## 选择面板自检\n\n{text}\n"))
 }
 
 fn server_log() -> std::path::PathBuf {
@@ -569,10 +569,10 @@ fn real_run() -> Result<(String, String), String> {
         // D2D 管线自检结论在启动日志里;读不到或失败都让整轮红。
         let d2d_note = check_d2d_selftest()?;
         // 运行期扩展自检:Wasm guest 在 Windows 上加载、派发、隐私拦截。
-        let ext_note = check_ext_selftest()?;
+        let ext_note = check_ext_selftest(&dir)?;
         // 设置窗自检:Slint 组件实例化,页面模型吃得进、关键控件在位。
         let settings_note = settings_selftest(&dir)?;
-        // 命令面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
+        // 选择面板自检:独立进程建可获焦窗口、拼音搜索、执行与焦点归还。
         let panel_note = panel_selftest(&dir)?;
         // 管道授权门:本进程不是工具进程,特权请求被拒、只读放行。
         let gate_note = pipe_gate::check()?;

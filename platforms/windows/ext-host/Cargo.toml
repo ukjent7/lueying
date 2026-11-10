@@ -1,0 +1,41 @@
+[package]
+name = "lueying-ext-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "掠影扩展宿主进程:运行全部扩展(Wasm 与原生),可联网;服务端经 stdio 行协议驱动,与输入法本体隔离"
+
+[lib]
+name = "lueying_ext_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lueying-ext-host"
+path = "src/main.rs"
+
+[dependencies]
+lueying-ext = { workspace = true, default-features = false, features = ["host"] }
+serde_json = "1"
+
+# 联网只在这个进程里:受限 HTTP 直连系统 WinHTTP,白名单按扩展强制。
+[target."cfg(windows)".dependencies]
+lueying-net.workspace = true
+windows = { version = "0.62.2", features = [
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

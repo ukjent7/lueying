@@ -8,7 +8,7 @@ use super::*;
 use lueying_engine::Action;
 
 /// 当前组合的整串输入命中用户触发表时,把动作交给引擎注入候选。
-/// 标题表由脚本线程维护:命令不存在(扩展没启用或已卸载)就不出动作候选。
+/// 标题表由宿主上报:命令不存在(扩展没启用或已卸载)就不出动作候选。
 pub(crate) fn sync_action(state: &State, s: &mut Session) {
     // 隐私字段下扩展层整个停用:不注入动作候选,也不给执行入口。
     if s.private {
@@ -25,10 +25,12 @@ pub(crate) fn sync_action(state: &State, s: &mut Session) {
             .iter()
             .find(|(trigger, _)| trigger == &raw)
             .map(|(_, command)| command.clone())?;
-        let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
-        let hub = hub.as_ref()?;
-        let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
-        let title = titles.get(&command)?.clone();
+        let title = state
+            .ext
+            .titles()
+            .into_iter()
+            .find(|(id, _)| id == &command)
+            .map(|(_, title)| title)?;
         Some(Action {
             trigger: raw,
             id: command,
@@ -38,27 +40,15 @@ pub(crate) fn sync_action(state: &State, s: &mut Session) {
     s.engine.set_action(action);
 }
 
-/// 把动作候选选中的命令交给脚本线程执行;扩展不在线时只写日志。
+/// 把动作候选选中的命令交给扩展宿主执行;宿主不在线时消息留在队列里。
 pub(crate) fn invoke_extension(state: &State, id: &str) {
-    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
-    match hub.as_ref() {
-        Some(hub) => {
-            let _ = hub.invoke.send(ExtInvoke {
-                command: id.to_string(),
-                source: "动作候选",
-            });
-        }
-        None => println!("动作候选跳过:脚本线程未启动({id})"),
-    }
+    state.ext.invoke(id, "动作候选");
 }
 
 /// `Ext` 的 `commands.list`:标题表就是已加载命令的权威清单,供外部
 /// 启动器枚举(PowerToys 命令面板书签、脚本、CLI `lueying ext commands`)。
 pub(crate) fn commands_list(state: &State) -> Result<serde_json::Value, String> {
-    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
-    let hub = hub.as_ref().ok_or("扩展线程未启动;先在设置里启用扩展")?;
-    let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
-    let mut list: Vec<(&String, &String)> = titles.iter().collect();
+    let mut list = state.ext.titles();
     list.sort();
     Ok(serde_json::Value::Array(
         list.into_iter()
@@ -79,20 +69,10 @@ pub(crate) fn command_run(state: &State, id: &str) -> Result<serde_json::Value, 
     }
     // 清单 id 一律小写;外部调用方大小写混用也认。
     let id = id.trim().to_ascii_lowercase();
-    let hub = state.ext_hub.lock().unwrap_or_else(|p| p.into_inner());
-    let hub = hub.as_ref().ok_or("扩展线程未启动;先在设置里启用扩展")?;
-    {
-        let titles = hub.titles.lock().unwrap_or_else(|p| p.into_inner());
-        if !titles.contains_key(&id) {
-            return Err(format!("命令 {id} 不存在;用 commands.list 查看可用命令"));
-        }
+    if !state.ext.titles().iter().any(|(known, _)| known == &id) {
+        return Err(format!("命令 {id} 不存在;用 commands.list 查看可用命令"));
     }
-    hub.invoke
-        .send(ExtInvoke {
-            command: id.clone(),
-            source: "外部触发",
-        })
-        .map_err(|_| "扩展线程已退出".to_string())?;
+    state.ext.invoke(&id, "外部触发");
     Ok(serde_json::json!({ "submitted": true, "command": id }))
 }
 

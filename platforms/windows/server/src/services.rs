@@ -1,62 +1,20 @@
-//! Windows 服务提供者:T3 服务缝的平台实现。
-//!
-//! 提供者从扩展宿主线程被 [`lueying_extwasm::Registry::call`] 调进来,慢操作
-//! (截图、识别)在专用线程跑完经完成队列回传,不占派发线程。`output` 用
-//! Unicode 注入把文本送进当前焦点,`panel` 由独立的可选焦点窗口显示后回传
-//! 用户选择。
-//!
-//! 截图文件落在临时目录 `lueying-capture`,文件名带毫秒时间戳;旧文件的
-//! 清理随 T8 的预算与可见性一起做。热键在扩展线程上注册,WM_HOTKEY 由
-//! [`HotkeyProvider::pump`] 在同一线程收取:扩展 `press` 就地兑现,用户
-//! 绑定行号回带给调用方派发。
+//! 服务端持有的两个提供者:`output` 把文本注入当前焦点,`panel` 由选择面板
+//! 显示后回传用户选择。扩展宿主经 stdio 请求它们(见 `lueying_ext::proto::link`)。
 
-use lueying_extwasm::{Done, Provider};
-use serde_json::json;
 use std::sync::Mutex;
 use std::sync::mpsc;
+
+use lueying_ext::host::{Done, Provider};
+use serde_json::json;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
 };
 
-mod audio;
-mod capture;
-mod clipboard;
-mod hotkey;
-mod network;
-mod ocr;
-mod store;
-
-pub use audio::{AsrProvider, AudioProvider};
-pub use capture::CaptureProvider;
-#[cfg(test)]
-use capture::parse_region;
-pub use clipboard::ClipboardProvider;
-pub use hotkey::HotkeyProvider;
-pub use network::{NetworkProvider, network_broker};
-pub use ocr::OcrProvider;
-pub use store::StoreProvider;
-
-/// 单方法服务的入口守卫:方法名不符时回 provider 侧错误,与 [`Provider`] 约定一致。
 fn one_method(provider: &str, method: &str, expected: &str) -> Result<(), String> {
     if method == expected {
         Ok(())
     } else {
         Err(format!("{provider} 没有方法 {method:?}"))
-    }
-}
-
-/// 系统通知;v1 只落日志,toast 需要包标识或快捷方式激活,挂后续可见性任务。
-pub struct NotifyProvider;
-
-impl Provider for NotifyProvider {
-    fn call(&self, _caller: &str, method: &str, args: &str, done: Done) -> Result<(), String> {
-        one_method("notify", method, "show")?;
-        let parsed: serde_json::Value = serde_json::from_str(args).map_err(|e| e.to_string())?;
-        let title = parsed["title"].as_str().unwrap_or_default();
-        let body = parsed["body"].as_str().unwrap_or_default();
-        println!("扩展通知:{title}:{body}");
-        done.complete(Ok("{}".into()));
-        Ok(())
     }
 }
 
@@ -66,7 +24,7 @@ pub struct PanelJob {
     pub done: Done,
 }
 
-/// 宿主选择面板;窗口线程由 `ui::panel::host::spawn` 装填,未启动时明确报错。
+/// 宿主选择面板;窗口线程由 `ui::picker::spawn` 装填,未启动时明确报错。
 #[derive(Default)]
 pub struct PanelProvider {
     sender: Mutex<Option<mpsc::SyncSender<PanelJob>>>,
@@ -192,4 +150,20 @@ fn unicode_input(unit: u16, up: bool) -> INPUT {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deliver_units_normalize_lines_and_tabs() {
+        assert!(super::deliver_units("").is_empty());
+        assert_eq!(
+            super::deliver_units("a\r\nb\tc\rd"),
+            "a\rb cd".encode_utf16().collect::<Vec<_>>()
+        );
+        // 代理对按两个 UTF-16 单元送,不能按 char 截断。
+        assert_eq!(
+            super::deliver_units("😀"),
+            "😀".encode_utf16().collect::<Vec<_>>()
+        );
+    }
+}

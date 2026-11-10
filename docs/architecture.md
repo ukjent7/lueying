@@ -8,13 +8,13 @@ lueying_tsf.dll        TSF 薄壳，载入宿主进程，只依赖 lueying-proto
     ▼
 lueying-server.exe     常驻服务：引擎会话、候选窗、后台重排；不联网
 lueying-settings.exe   设置窗（Slint）：配置、扩展、更新检查与安装
-lueying-broker.exe     扩展联网的唯一出口，按清单白名单逐请求检查
+lueying-ext-host.exe   扩展宿主：运行全部扩展，联网按清单白名单逐请求检查
 lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 ```
 
 - 宿主进程只转发按键并执行上屏，引擎与绘制都在服务端。
 - 每个宿主线程对应一个引擎会话；词典、模型与用户词库在服务端进程内共享。
-- 原生扩展（OCR、语音识别）是独立进程，按需启动，在 AppContainer 与 Job Object 限额内运行。
+- 扩展（Wasm 与原生）全部运行在 `lueying-ext-host.exe` 里，服务端只经标准输入输出与它交换行协议；宿主卡死或崩溃不影响打字。
 
 ## 代码分层
 
@@ -27,8 +27,8 @@ lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 | 会话 | `crates/session` | 候选视图同步与重排决策 |
 | 渲染 | `crates/render` | 候选窗与面板的布局、命中测试与绘制指令 |
 | 协议 | `crates/protocol` | 管道帧、`SessionView`、按键 |
-| 扩展 | `crates/ext*`、`crates/extwasm` | 清单、协议、宿主与服务，见[扩展](extensions/README.md) |
-| 联网 | `crates/net`、`crates/broker` | 更新与下载、扩展联网代理 |
+| 扩展 | `crates/ext`（契约、清单与包，宿主与 guest 按 feature） | 清单、协议、宿主与服务，见[扩展](extensions/README.md) |
+| 联网 | `crates/net`、`platforms/windows/ext-host` | 更新与下载、扩展联网 |
 | 平台 | `platforms/windows/*` | Windows 外壳 |
 
 核心 crate 不依赖任何平台目录；平台目录依赖核心 crate。
