@@ -30,7 +30,7 @@ impl UserDict {
         self.words.get_mut(key)?.iter_mut().find(|e| e.word == word)
     }
 
-    /// 同键下 `word` 的有效层级(见 [`Memory::level`]);没有记录为 0。
+    /// 同键下 `word` 的有效层级(见 `Memory::level`);没有记录为 0。
     pub fn level(&self, key: &str, word: &str) -> f64 {
         self.entry(key, word).map_or(0.0, |e| e.memory.level(now()))
     }
