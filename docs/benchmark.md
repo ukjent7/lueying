@@ -31,7 +31,7 @@ CI 对每类的 top-1 与 top-5 设门限（`tools/bench_shared.py` 中的 `GATE
 ```sh
 bash tools/fetch_dict.sh data
 bash tools/fetch_rerank.sh data/rerank
-cargo run -p lueying-e2e --release --locked -- \
+cargo run -p lueying-bench --release --locked -- \
   --dict data/main.pyd --gram data/collocation.bin \
   --rerank-dir data/rerank --only-shared
 python3 tools/bench_shared.py summarize target/bench --print

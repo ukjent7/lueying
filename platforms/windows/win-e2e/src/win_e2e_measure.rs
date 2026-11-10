@@ -45,7 +45,7 @@ pub(crate) fn edit_text(edit: HWND) -> String {
 }
 
 /// 全链路提交延迟:清空编辑框,打「nihao」,量空格到组合结束、文本落地。
-/// 只设上限抓卡死/秒级回归,精确引擎耗时由 lueying-e2e 的分位数门禁负责。
+/// 只设上限抓卡死/秒级回归,精确引擎耗时由 lueying-bench 的分位数门禁负责。
 /// 全链路提交 p95 门限:2026-10-31 连续四次 Windows E2E 实测 14.7–15.1 ms。
 /// 留约 4 倍余量覆盖共享 runner 抖动,同时能抓住 TSF/管道/编辑会话的秒级回归。
 const COMMIT_P95_LIMIT_MS: f64 = 60.0;
@@ -100,7 +100,7 @@ pub(crate) fn commit_latency(edit: HWND, thread_mgr: &ITfThreadMgr) -> Result<St
 /// 每键延迟:逐键等 TSF 日志里的「应用 vk=」行前进(每键恰好一行,
 /// 键事件已被 DLL 交给 Server 并把组句写回)。BeginUIElement 与首次
 /// 候选更新不保证触发 UpdateUIElement,不能拿 UI 元素更新当观测点。
-/// 引擎门限在 lueying-e2e 卡,这里只抓组合通道整体停摆或秒级回归。
+/// 引擎门限在 lueying-bench 卡,这里只抓组合通道整体停摆或秒级回归。
 pub(crate) fn key_latency(edit: HWND, tsf_log: &std::path::Path) -> Result<String, String> {
     const ROUNDS: usize = 3;
     const KEYS: [char; 5] = ['w', 'o', 'a', 'i', 'n'];

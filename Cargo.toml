@@ -21,9 +21,8 @@ members = [
     "platforms/windows/tsf",
     "platforms/windows/installer",
     # 验证与工具
-    "crates/e2e",
+    "crates/bench",
     "platforms/windows/win-e2e",
-    "platforms/windows/install-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
     "extensions/clipboard-history",

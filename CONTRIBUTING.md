@@ -47,9 +47,9 @@ cargo test -p lueying-server --lib --release --locked
 在 Windows 环境下验证真实的输入法宿主注入与安装包打包逻辑：
 
 ```sh
-cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
+cargo run -p lueying-bench --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
 cargo run -p lueying-win-e2e --release --locked
-cargo run -p lueying-install-e2e --release --locked
+cargo run -p lueying-win-e2e --release --locked -- install
 ```
 
 ## 代码与设计规范

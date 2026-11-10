@@ -3165,6 +3165,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lueying-bench"
+version = "0.1.0"
+dependencies = [
+ "lueying-cli",
+ "lueying-core",
+ "lueying-dict",
+ "lueying-ext",
+ "lueying-ext-host",
+ "lueying-render",
+ "lueying-rerank",
+ "lueying-server",
+ "lueying-settings",
+ "serde_json",
+]
+
+[[package]]
 name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
@@ -3196,22 +3212,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-e2e"
-version = "0.1.0"
-dependencies = [
- "lueying-cli",
- "lueying-core",
- "lueying-dict",
- "lueying-ext",
- "lueying-ext-host",
- "lueying-render",
- "lueying-rerank",
- "lueying-server",
- "lueying-settings",
- "serde_json",
-]
-
-[[package]]
 name = "lueying-ext"
 version = "0.1.0"
 dependencies = [
@@ -3228,13 +3228,6 @@ dependencies = [
  "lueying-ext",
  "lueying-net",
  "serde_json",
- "windows",
-]
-
-[[package]]
-name = "lueying-install-e2e"
-version = "0.1.0"
-dependencies = [
  "windows",
 ]
 

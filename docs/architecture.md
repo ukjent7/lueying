@@ -56,8 +56,8 @@ lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 |---|---|---|
 | 运行时体积 | ≤ 90 MiB | `.github/workflows/ci.yml` |
 | 安装包 | ≤ 200 MB | `xtask/src/pack.rs` |
-| 8M 决策 | p95 ≤ 40 ms，p99 ≤ 80 ms | `crates/e2e` |
-| 25M 停顿重排 | p95 ≤ 800 ms | `crates/e2e` |
+| 8M 决策 | p95 ≤ 40 ms，p99 ≤ 80 ms | `crates/bench` |
+| 25M 停顿重排 | p95 ≤ 800 ms | `crates/bench` |
 | 提交上屏 | p95 ≤ 60 ms | Windows E2E |
 | 每键往返 | p95 ≤ 60 ms | Windows E2E |
 | 服务端峰值工作集 | ≤ 160 MB | Windows E2E |

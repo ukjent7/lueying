@@ -1,5 +1,5 @@
 //! E2E 运行器:跑场景规格与主词典探针,产出可复查的 Markdown 报告并按结果设退出码。
-//! 用法:`lueying-e2e [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast] [--bench-shared]`
+//! 用法:`lueying-bench [--dict 主词典.tsv] [--gram 语法模型.gram] [--bench|--bench-fast] [--bench-shared]`
 
 mod actions;
 mod address;

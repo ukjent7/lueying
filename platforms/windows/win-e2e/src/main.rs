@@ -5,12 +5,21 @@
 fn main() {
     #[cfg(windows)]
     {
-        imp::run();
+        // `install` 子命令跑安装/卸载冒烟,无参数跑 TSF 全链路。
+        if std::env::args().nth(1).as_deref() == Some("install") {
+            install::run();
+        } else {
+            imp::run();
+        }
     }
 }
 
 #[cfg(windows)]
 mod imp;
+
+/// 安装/卸载冒烟(`install` 子命令)。
+#[cfg(windows)]
+mod install;
 
 /// 扩展运行指标快照:扩展宿主写入后检查 shot-ocr 的内存与派发。
 #[cfg(windows)]

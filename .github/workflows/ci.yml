@@ -283,18 +283,14 @@ jobs:
         id: build_e2e
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
         run: cargo build --release --locked -p lueying-win-e2e
-      - name: Build install E2E harness
-        id: build_install
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-        run: cargo build --release --locked -p lueying-install-e2e
       - name: Windows 全链路 E2E
         if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
-        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_install.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         timeout-minutes: 8
-        run: cargo run -p lueying-install-e2e --release --locked
+        run: cargo run -p lueying-win-e2e --release --locked -- install
       # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
       # 失败时把两份都收进 artifact,否则只剩一个退出码。
       - name: 收集安装日志

@@ -3,7 +3,7 @@ name = "lueying-win-e2e"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "Windows 全链路 E2E:注册 TSF DLL、激活、注入按键、读回 EDIT 文本断言"
+description = "Windows 端到端:TSF 全链路(注册、激活、注入按键、读回文本)与安装/卸载冒烟(install 子命令)"
 
 [[bin]]
 name = "lueying-win-e2e"
@@ -37,6 +37,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_Accessibility",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_TextServices",
     "Win32_UI_WindowsAndMessaging",
 ] }

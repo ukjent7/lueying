@@ -90,7 +90,7 @@ jobs:
           sed -i -E "$PATCH" crates/core/src/query.rs crates/rerank/src/lib.rs
           git diff --stat --exit-code && exit 1 || git diff
       - name: 构建 E2E
-        run: cargo build -p lueying-e2e --release --locked
+        run: cargo build -p lueying-bench --release --locked
       - name: 展开档位
         id: tiers
         env:
@@ -98,8 +98,8 @@ jobs:
         run: echo "json=$(jq -cn --arg t "$TIERS" '$t | split(" ") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-bin
-          path: target/release/lueying-e2e
+          name: bench-bin
+          path: target/release/lueying-bench
           retention-days: 1
 
   # 带补丁的基准同时跑静态检查、单元测试与场景 E2E,结果好再提交时不用再等一轮。
@@ -120,7 +120,7 @@ jobs:
           DIFF: ${{ inputs.diff }}
         run: printf %s "$DIFF" | base64 -d | xz -d | git apply
       - name: Clippy
-        run: cargo clippy -p lueying-core -p lueying-rerank -p lueying-e2e --all-targets --locked -- -D warnings
+        run: cargo clippy -p lueying-core -p lueying-rerank -p lueying-bench --all-targets --locked -- -D warnings
       - name: 安装 cargo-nextest
         uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
@@ -153,7 +153,7 @@ jobs:
           echo "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> "$GITHUB_ENV"
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
       - name: 场景 E2E
-        run: cargo run -p lueying-e2e --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
+        run: cargo run -p lueying-bench --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --bench-fast
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -181,7 +181,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: e2e-bin
+          name: bench-bin
       - name: 缓存重排模型
         id: models
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -210,7 +210,7 @@ jobs:
           TEST: ${{ inputs.test }}
           EVAL_KEY: ${{ secrets.EVAL_KEY }}
         run: |
-          chmod +x lueying-e2e
+          chmod +x lueying-bench
           corpora=("" "--corpus dicts/eval-extra-v1.tsv" "--corpus dicts/eval-dev-v4.tsv" "--corpus dicts/eval-user-v1.tsv" "--corpus dicts/eval-user-v2.tsv" "--corpus dicts/eval-user-v3.tsv" "--corpus dicts/eval-user-v4.tsv")
           if [ "$TEST" = true ]; then corpora+=("--corpus dicts/eval-v2-test.tsv" "--corpus dicts/eval-v3-test.tsv"); fi
           if [ -n "$EVAL_KEY" ]; then
@@ -220,7 +220,7 @@ jobs:
             if [ "$TEST" = true ]; then corpora+=("--corpus $RUNNER_TEMP/private/eval-private-test.tsv"); fi
           fi
           for corpus in "${corpora[@]}"; do
-            ./lueying-e2e --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank \
+            ./lueying-bench --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank \
               --only-shared --shard "$SHARD/8" $corpus
           done
           for file in target/bench/eval-private-*.tsv; do

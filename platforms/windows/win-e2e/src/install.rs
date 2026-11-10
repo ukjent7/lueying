@@ -1,6 +1,6 @@
-//! Windows 宿主进程:跑真实安装包、真实更新器与真实卸载器的全链路冒烟。
+//! 安装/卸载冒烟:`lueying-win-e2e install` 跑真实安装包、真实更新器与真实卸载器的全链路。
 //!
-//! 从 `main.rs` 的内嵌模块挪出,文件边界不变语义。
+//! 原为独立的 install-e2e 包,并入 win-e2e 后只换了入口,检查项不变。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 /// Inno 的卸载项;AppId 与 installer/lueying.iss 必须一致。
 const INNO_UNINSTALL_KEY: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\{5F0C8C3E-9B7A-4E2D-9A6B-2C1D8E4F7A10}_is1";
 
-pub(super) fn run() {
+pub fn run() {
     let _ = std::fs::create_dir_all("target");
     let report = real_run().map_or_else(
         |e| format!("# 安装/卸载 E2E\n\nFAIL\n\n{e}\n"),

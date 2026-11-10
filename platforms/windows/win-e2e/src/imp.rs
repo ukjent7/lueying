@@ -581,7 +581,7 @@ fn real_run() -> Result<(String, String), String> {
             return Err(format!("RichEdit 文本 `{text}` 不含 你好abc你好"));
         }
         // 全链路提交延迟:空格按下到 RichEdit 出现文本。引擎门限在
-        // lueying-e2e 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
+        // lueying-bench 里卡;这里只抓 TSF/管道/编辑会话导致的卡死或秒级回归。
         let latency = commit_latency(edit, &thread_mgr)?;
         // 7. 宿主原样落定(搜索框 Enter):按当前显示文本上屏,不补全剩余
         //    拼音,也不改选候选;组合与 UI 元素都必须结束。
