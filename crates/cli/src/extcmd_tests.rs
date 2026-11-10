@@ -1,11 +1,12 @@
-//! `extcmd` 的回归:骨架、打包(含 Wasm 字节块)、解包、安装与日志切片。
+//! `extcmd` 的回归:骨架、打包(含 Wasm 字节块)与日志切片。解包与安装的回归在容器与 settings 侧。
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{
-    InstallArgs, LogsArgs, NewArgs, PACK_HEADER, PackArgs, install, logs, new, pack, unpack,
-};
+use lueying_ext::manifest::Manifest;
+use lueying_ext::manifest::container;
+
+use super::{LogsArgs, NewArgs, PACK_HEADER, PackArgs, logs, new, pack};
 
 fn temp_root(tag: &str) -> PathBuf {
     let base = std::env::temp_dir().join(format!("lueying-extcmd-{tag}-{}", std::process::id()));
@@ -47,12 +48,13 @@ fn new_pack_unpack_roundtrip() {
         "包要以 lueying-pack 头开始"
     );
 
-    let (id, files) = unpack(&bytes).expect("unpack 应成功");
-    assert_eq!(id, "demo");
+    let files = container::decode(&bytes).expect("decode 应成功");
     let manifest = files
         .iter()
         .find(|(name, _)| name == "manifest.json")
         .expect("包里要有清单");
+    let id = Manifest::parse(&manifest.1).expect("清单合法").id;
+    assert_eq!(id, "demo");
     assert_eq!(
         manifest.1,
         fs::read_to_string(dir.join("manifest.json"))
@@ -79,7 +81,7 @@ fn pack_roundtrips_blank_lines_and_subdirs() {
         out: None,
     })
     .expect("pack 应成功");
-    let (_, files) = unpack(&fs::read(out).expect("读包")).expect("unpack 应成功");
+    let files = container::decode(&fs::read(out).expect("读包")).expect("decode 应成功");
     let found = files
         .iter()
         .find(|(name, _)| name == "sub/notes.md")
@@ -105,38 +107,6 @@ fn new_rejects_bad_id_and_existing_dir() {
         dir: Some(root),
     });
     assert!(again.is_err(), "已有目录要被拒绝");
-}
-
-#[test]
-fn install_refuses_overwrite_then_force() {
-    let root = temp_root("install");
-    let dir = skeleton(&root, "demo");
-    let pack_path = pack(&PackArgs { dir, out: None }).expect("pack 应成功");
-    let out_root = root.join("out");
-
-    let installed = install(&InstallArgs {
-        source: pack_path.clone(),
-        dir: Some(out_root.clone()),
-        force: false,
-    })
-    .expect("首次安装应成功");
-    assert_eq!(installed, out_root.join("demo"));
-    assert!(installed.join("extension.wasm").exists());
-
-    let second = install(&InstallArgs {
-        source: pack_path.clone(),
-        dir: Some(out_root.clone()),
-        force: false,
-    });
-    assert!(second.is_err(), "不覆盖已有包");
-
-    let third = install(&InstallArgs {
-        source: pack_path,
-        dir: Some(out_root.clone()),
-        force: true,
-    })
-    .expect("force 覆盖应成功");
-    assert_eq!(third, out_root.join("demo"));
 }
 
 #[test]
@@ -182,30 +152,6 @@ fn pack_rejects_non_utf8_text_files() {
     .expect("new 应成功");
     let error = pack(&PackArgs { dir, out: None }).expect_err("缺 guest 要报错");
     assert!(error.contains("extension.wasm"), "{error}");
-}
-
-#[test]
-fn unpack_rejects_bad_header_and_unsafe_paths() {
-    assert!(unpack("没有头".as_bytes()).is_err(), "缺头要被拒绝");
-
-    let evil = "### lueying-pack v2\n### begin: ../evil.js 1\nx\n### end: ../evil.js\n";
-    let error = unpack(evil.as_bytes()).expect_err("越界路径要被拒绝");
-    assert!(error.contains("不安全"), "{error}");
-
-    let no_manifest = "### lueying-pack v2\n### begin: a.js 1\nx\n### end: a.js\n";
-    let error = unpack(no_manifest.as_bytes()).expect_err("缺清单要被拒绝");
-    assert!(error.contains("manifest.json"), "{error}");
-
-    let short = "### lueying-pack v2\n### begin: a.js 3\n只有一行\n";
-    let error = unpack(short.as_bytes()).expect_err("块被截断要被拒绝");
-    assert!(
-        error.contains("缺一行") || error.contains("对不上"),
-        "{error}"
-    );
-
-    let short_binary = "### lueying-pack v2\n### binary: extension.wasm 99\nxx";
-    let error = unpack(short_binary.as_bytes()).expect_err("字节块截断要被拒绝");
-    assert!(error.contains("截断"), "{error}");
 }
 
 #[test]

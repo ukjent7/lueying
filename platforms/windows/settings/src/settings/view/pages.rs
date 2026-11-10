@@ -513,7 +513,7 @@ impl Settings {
             (OcrBackend::Ppocr, true) => {
                 "PP-OCRv6 · 原生扩展,首次识别拉起进程,识别不联网".to_string()
             }
-            (OcrBackend::Ppocr, false) => "识别引擎未安装;用 lueying ext add 安装".to_string(),
+            (OcrBackend::Ppocr, false) => "识别引擎未安装;用 lueying-settings ext add 安装".to_string(),
             (OcrBackend::System, true) => "系统 OCR;也可切到 PP-OCRv6".to_string(),
             (OcrBackend::System, false) => "系统 OCR;PP-OCRv6 引擎未安装,可按需安装".to_string(),
         }

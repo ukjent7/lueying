@@ -1,4 +1,4 @@
-//! `lueying ext add`:从 GitHub 拉社区扩展,一条命令装好。
+//! `lueying-settings ext add`:从 GitHub 拉社区扩展,一条命令装好。
 //!
 //! 源写作 `github:<作者>/<仓库>#<版本>`,版本是 tag 或提交号,必填——装
 //! 的就是钉住的那一版。取货按顺序试两条路:
@@ -18,8 +18,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lueying_ext::manifest::Manifest;
+use lueying_ext::manifest::container;
+use lueying_server::config;
 
-use crate::extcmd::{self, InstallArgs};
+use crate::ext_install::install_files;
 
 /// 清单应答的体积上限。
 const JSON_LIMIT: u64 = 1 << 20;
@@ -32,22 +34,11 @@ const UNPACKED_LIMIT: u64 = 256 << 20;
 /// 源码包允许的条目数上限。
 const ENTRY_LIMIT: usize = 8192;
 /// GitHub 对无 UA 的请求直接 403。
-const USER_AGENT: &str = "lueying-cli (ext add)";
-
-/// `ext add` 的参数。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AddArgs {
-    /// 来源,形如 `github:作者/仓库#版本`。
-    pub source: String,
-    /// 扩展根目录;缺省用 [`extensions_dir`](extcmd::extensions_dir)。
-    pub dir: Option<PathBuf>,
-    /// 同名包已存在时覆盖。
-    pub force: bool,
-}
+const USER_AGENT: &str = "lueying-settings (ext add)";
 
 /// 解析并安装一个社区扩展;返回给人看的汇报。
-pub fn add(args: &AddArgs) -> Result<String, String> {
-    let (owner, repo, rev) = parse_source(&args.source)?;
+pub fn add(source: &str) -> Result<String, String> {
+    let (owner, repo, rev) = parse_source(source)?;
     let agent = agent();
 
     // 路径一:该版本的 GitHub Release 里有没有 `.luext` 资产。
@@ -57,12 +48,11 @@ pub fn add(args: &AddArgs) -> Result<String, String> {
         None => None,
     };
     let temp = TempDir::new("add")?;
-    let (origin, packed, packed_path) = match asset {
+    let (origin, packed, files) = match asset {
         Some((url, _size)) => {
             let bytes = download(&agent, &url, ASSET_LIMIT)?;
-            let path = temp.0.join(format!("{repo}.luext"));
-            fs::write(&path, &bytes).map_err(|e| format!("写临时包: {e}"))?;
-            ("GitHub Release 资产", bytes, path)
+            let files = container::decode(&bytes)?;
+            ("GitHub Release 资产", bytes, files)
         }
         None => {
             // 路径二:源码包;两条路都断时把修法一并说清。
@@ -76,19 +66,14 @@ pub fn add(args: &AddArgs) -> Result<String, String> {
             let unpacked = unpack_tarball(&bytes, &temp.0)?;
             let picked = pick_extension_dir(&unpacked)?;
             let source = align_dir_name(&picked, &temp.0)?;
-            ("仓库源码包", bytes, source)
+            let files = container::read_pack_dir(&source)?;
+            ("仓库源码包", bytes, files)
         }
     };
     let fingerprint = lueying_ext::manifest::sha256::hex(&hash(&packed));
 
-    let target = extcmd::install(&InstallArgs {
-        source: packed_path,
-        dir: args.dir.clone(),
-        force: args.force,
-    })?;
-    let manifest_bytes =
-        fs::read(target.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
-    let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
+    let root = config::extensions_dir().ok_or("找不到扩展目录(APPDATA 或 LUEYING_CONFIG)")?;
+    let (manifest, target) = install_files(&files, &root)?;
     Ok(format!(
         "来源: github:{owner}/{repo}#{rev}({origin})\nsha256: {fingerprint}\n\
          已安装 {};首次启用要在 设置 → 扩展 里同意:\n{}",
@@ -460,5 +445,5 @@ impl Drop for TempDir {
 }
 
 #[cfg(test)]
-#[path = "extadd_tests.rs"]
+#[path = "ext_add_tests.rs"]
 mod tests;

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::dict_import;
+use crate::ext_install::{MAX_PACKAGE_BYTES, install_luext_bytes};
 use crate::settings::view::{ConsentState, Notice, ScriptEntry, Settings, status_detail};
 use lueying_ext::host::{ConsentBook, ConsentCheck};
 use lueying_ext::manifest::metrics::ExtMetrics;
@@ -392,62 +393,6 @@ pub fn import_luext(settings: &mut Settings) {
         }
         Err(error) => settings.say(Notice::Error, error),
     }
-}
-
-/// 单个 `.luext` 的读入上限;容器对单文件与全包另有校验。
-const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
-
-/// 把 `.luext` 字节落盘到扩展目录;同 id 已有目录就整体替换。
-///
-/// 先解包到临时目录再改名换位,任何一步失败旧目录都保持原样。替换
-/// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
-fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> {
-    let files = lueying_ext::manifest::container::decode(bytes)?;
-    let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
-        return Err("包里没有 manifest.json".to_string());
-    };
-    let manifest = lueying_ext::manifest::Manifest::parse(manifest_bytes)
-        .map_err(|e| format!("清单不合法: {e}"))?;
-    let payload = manifest.payload_file().to_string();
-    if !payload.is_empty() && !files.iter().any(|(name, _)| *name == payload) {
-        return Err(format!("包里缺少 {payload}"));
-    }
-    let staging = root.join(format!(".import-{}", manifest.id));
-    let target = root.join(&manifest.id);
-    let backup = root.join(format!(".backup-{}", manifest.id));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).map_err(|e| format!("建临时目录失败: {e}"))?;
-    for (name, content) in &files {
-        let path = staging.join(name);
-        if let Some(parent) = path.parent()
-            && let Err(error) = std::fs::create_dir_all(parent)
-        {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("建 {} 目录失败: {error}", parent.display()));
-        }
-        if let Err(error) = std::fs::write(&path, content) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("写 {name} 失败: {error}"));
-        }
-    }
-    if target.exists() && std::fs::rename(&target, &backup).is_err() {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(format!("{} 可能正在运行,先停用或稍后再导入", manifest.id));
-    }
-    if let Err(error) = std::fs::rename(&staging, &target) {
-        if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
-        }
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(format!("落盘失败: {error}"));
-    }
-    let _ = std::fs::remove_dir_all(&backup);
-    let (kind, next) = if manifest.is_native() {
-        ("原生扩展", "在「运行期扩展」里同意后可用")
-    } else {
-        ("扩展", "在「运行期扩展」里同意后可用")
-    };
-    Ok(format!("{kind} {} 已导入;{next}", manifest.name))
 }
 
 fn now_ms() -> u64 {

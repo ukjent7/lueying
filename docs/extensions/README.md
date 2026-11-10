@@ -8,7 +8,7 @@
 | Wasm 扩展 | Wasm 组件，由 wasmtime 加载 | 候选外观、命令、声明式设置 |
 | 原生扩展 | 独立可执行文件 | 较重的系统能力，如 OCR、语音识别；也可订阅候选窗状态 |
 
-官方扩展随发布提供：`shot-ocr`（截图识别）、`clipboard-history`（剪贴板历史）、`voice-asr`（语音输入），以及原生的 `ppocr` 与 `sensevoice`。官方扩展与社区扩展一样用 `lueying ext add github:作者/仓库#版本` 安装，见[社区目录](catalog.md)。
+官方扩展随发布提供：`shot-ocr`（截图识别）、`clipboard-history`（剪贴板历史）、`voice-asr`（语音输入），以及原生的 `ppocr` 与 `sensevoice`。官方扩展与社区扩展一样用 `lueying-settings ext add github:作者/仓库#版本` 安装，见[社区目录](catalog.md)。
 
 ## 清单
 
@@ -65,10 +65,11 @@
 |---|---|
 | `lueying ext commands` | 列出已启用扩展的命令 id |
 | `lueying ext run <命令 id>` | 执行一个命令，如 `shot-ocr.run`；见[启动器集成](powertoys.md) |
-| `lueying ext add github:作者/仓库#版本` | 一条命令安装社区扩展，见[社区目录](catalog.md) |
+| `lueying-settings ext add github:作者/仓库#版本` | 一条命令安装社区扩展，见[社区目录](catalog.md) |
 | `lueying ext reload` | 重新加载配置，扩展即时生效 |
 | `lueying ext top` | 查看扩展运行指标 |
-| `lueying ext new`、`pack`、`install` | 创建、打包与安装扩展 |
+| `lueying ext new`、`pack` | 创建与打包扩展 |
+| `lueying-settings ext install <包.luext>` | 安装本地扩展包 |
 
 Wasm 扩展的开发方式见 [wasm.md](wasm.md)；Rust 之外的语言（JS/Python/C/Go）见
 [languages.md](languages.md)；安装与发布社区扩展见 [catalog.md](catalog.md)。

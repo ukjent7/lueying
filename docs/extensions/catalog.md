@@ -3,7 +3,7 @@
 社区的 Wasm 扩展用一条命令安装:
 
 ```sh
-lueying ext add github:作者/仓库#版本
+lueying-settings ext add github:作者/仓库#版本
 ```
 
 版本是 tag 或提交号,必填——装的就是钉住的那一版,同一版本重复装,内容一样。取货顺序:
@@ -21,7 +21,7 @@ lueying ext add github:作者/仓库#版本
    wasm-tools component new target/wasm32-unknown-unknown/release/<id>.wasm -o extensions/<id>/extension.wasm
    ```
    组件文件不超过 16 MiB,清单要求见[扩展总览](README.md)。
-2. 打包并检查:`lueying ext pack extensions/<id>` 产出 `<id>.luext`,再 `lueying ext install` 真机跑通。
+2. 打包并检查:`lueying ext pack extensions/<id>` 产出 `<id>.luext`,再 `lueying-settings ext install` 真机跑通。
 3. 发到 GitHub:仓库打 tag,并在该 tag 的 GitHub Release 里附上 `<id>.luext`(一个 Release 一个包;资产名用 `<仓库名>.luext` 最稳)。
 4. (可选)在本页列表里加一行:发起 PR,改下面的小节即可。
 

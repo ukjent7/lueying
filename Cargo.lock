@@ -3184,15 +3184,12 @@ dependencies = [
 name = "lueying-cli"
 version = "0.1.0"
 dependencies = [
- "flate2",
  "lueying-core",
  "lueying-dict",
  "lueying-ext",
  "lueying-protocol",
  "serde_json",
- "tar",
  "toml",
- "ureq",
 ]
 
 [[package]]
@@ -3298,6 +3295,7 @@ name = "lueying-settings"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "flate2",
  "lueying-core",
  "lueying-dict",
  "lueying-ext",
@@ -3308,7 +3306,9 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "tar",
  "toml",
+ "ureq",
  "windows",
 ]
 

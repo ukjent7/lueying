@@ -1,10 +1,10 @@
-//! `lueying` 命令行入口:扩展开发回路(new/pack/install/reload/logs/replay)与运行指标(top)。
+//! `lueying` 命令行入口:扩展开发回路(new/pack/reload/logs/replay)与运行指标(top)。
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use lueying_cli::{
-    Invocation, TopOptions, USAGE, default_metrics_path, extadd, extcmd, parse_args, read_metrics,
+    Invocation, TopOptions, USAGE, default_metrics_path, extcmd, parse_args, read_metrics,
     render_json, render_table, replay,
 };
 
@@ -32,16 +32,11 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::Pack(args) => {
             let path = extcmd::pack(&args)?;
             println!(
-                "已打包 {};下一步:lueying ext install {}",
+                "已打包 {};下一步:lueying-settings ext install {}",
                 path.display(),
                 path.display()
             );
         }
-        Invocation::Install(args) => {
-            let dir = extcmd::install(&args)?;
-            println!("已安装 {};启用后 lueying ext reload 生效", dir.display());
-        }
-        Invocation::Add(args) => println!("{}", extadd::add(&args)?),
         Invocation::Reload => {
             extcmd::reload()?;
             println!("已重载");
@@ -52,7 +47,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         Invocation::Commands => {
             let entries = extcmd::commands()?;
             if entries.is_empty() {
-                println!("没有可触发的命令;先安装并启用扩展,再 lueying ext reload");
+                println!("没有可触发的命令;先用 lueying-settings ext install 装好扩展,再 lueying ext reload");
             }
             for (id, title) in entries {
                 println!("{id:<40}{title}");

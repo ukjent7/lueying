@@ -20,6 +20,10 @@ lueying-core.workspace = true
 lueying-render.workspace = true
 # 更新检查与安装包下载:WinHTTP 只链接在本进程里,常驻 Server 不引用。
 lueying-net.workspace = true
+# 扩展安装(`ext add`):GitHub Release 与源码包的拉取与解包。
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
 lueying-protocol = { path = "../../../crates/protocol" }
 # 扩展清单与场景协议:设置页与指标快照共用,不带宿主运行时。
 lueying-ext = { workspace = true, default-features = false }
@@ -35,6 +39,7 @@ lueying-ext = { workspace = true, default-features = false, features = ["host"] 
 slint.workspace = true
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    "Win32_System_Console",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Controls_Dialogs",

@@ -45,4 +45,4 @@
 | `Ctrl + Alt + V` | 离线语音输入：录音后经本地 SenseVoice 识别并上屏 |
 | `Ctrl + Alt + O` | 截图识别（OCR） |
 
-语音与截图识别需要先用 `lueying ext add` 安装对应的官方扩展，并在「设置 → 扩展」中同意。热键可在 `config.toml` 的 `bindings` 中修改。
+语音与截图识别需要先用 `lueying-settings ext add` 安装对应的官方扩展，并在「设置 → 扩展」中同意。热键可在 `config.toml` 的 `bindings` 中修改。

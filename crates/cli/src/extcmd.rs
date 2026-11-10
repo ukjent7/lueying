@@ -1,24 +1,17 @@
-//! `lueying ext` 的开发回路:新建骨架、打包、安装、重载与日志。
+//! `lueying ext` 的开发回路:新建骨架、打包、重载与日志。
 //!
 //! 全部是纯文件与管道操作:不加载 Wasm,不碰 TSF,Windows 与 Linux 都能跑。
-//! 包格式 `### lueying-pack v2` 的编解码在 [`lueying_ext::manifest::container`];
-//! 这里管目录收集、清单校验与安装落盘。
+//! 包格式 `### lueying-pack v2` 的编解码与目录收集在 [`lueying_ext::manifest::container`];
+//! 这里管清单校验。安装(本地包与社区来源)在 `lueying-settings ext`。
 
 use std::fs;
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use lueying_ext::manifest::Manifest;
-use lueying_ext::manifest::container::Files;
 use lueying_protocol::{Request, pipe_name};
 
 pub use lueying_ext::manifest::container::PACK_HEADER;
-
-/// 参与打包的文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
-/// `.wasm` 是唯一的代码,其余是清单、文档与素材。
-const PACK_EXTS: &[&str] = &[
-    "json", "txt", "md", "wasm", "toml", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg",
-];
 
 /// `ext new` 的参数。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,14 +26,6 @@ pub struct NewArgs {
 pub struct PackArgs {
     pub dir: PathBuf,
     pub out: Option<PathBuf>,
-}
-
-/// `ext install` 的参数。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstallArgs {
-    pub source: PathBuf,
-    pub dir: Option<PathBuf>,
-    pub force: bool,
 }
 
 /// `ext logs` 的参数。
@@ -153,29 +138,12 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
             manifest.id
         ));
     }
-    let mut files = Vec::new();
-    collect(dir, &mut files)?;
-    files.sort();
+    let packed_files = lueying_ext::manifest::container::read_pack_dir(dir)?;
     let wasm = manifest.wasm_main().to_string();
-    if !wasm.is_empty()
-        && !files.iter().any(|path| {
-            path.strip_prefix(dir)
-                .is_ok_and(|relative| relative.to_string_lossy().replace('\\', "/") == wasm)
-        })
-    {
+    if !wasm.is_empty() && !packed_files.iter().any(|(name, _)| *name == wasm) {
         return Err(format!(
             "清单声明了 {wasm} 但目录里没有;先构建 guest 再打包"
         ));
-    }
-    let mut packed_files: Vec<(String, Vec<u8>)> = Vec::new();
-    for path in &files {
-        let bytes = fs::read(path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        let name = path
-            .strip_prefix(dir)
-            .expect("collect 只产出 dir 下的路径")
-            .to_string_lossy()
-            .replace('\\', "/");
-        packed_files.push((name, bytes));
     }
     let out = lueying_ext::manifest::container::encode(&packed_files)?;
     let target = args.out.clone().unwrap_or_else(|| {
@@ -186,110 +154,6 @@ pub fn pack(args: &PackArgs) -> Result<PathBuf, String> {
     });
     fs::write(&target, &out).map_err(|e| format!("写 {}: {e}", target.display()))?;
     Ok(target)
-}
-
-fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = fs::read_dir(dir).map_err(|e| format!("读 {}: {e}", dir.display()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect(&path, out)?;
-            continue;
-        }
-        let kept = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| PACK_EXTS.contains(&ext));
-        if kept {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// 安装一个 `.luext` 包或目录到扩展目录;默认不覆盖已有包。
-pub fn install(args: &InstallArgs) -> Result<PathBuf, String> {
-    let target_root = args
-        .dir
-        .clone()
-        .or_else(extensions_dir)
-        .ok_or("找不到扩展目录;用 --dir 指定,或设置 APPDATA/LOCALAPPDATA")?;
-    if !target_root.exists() {
-        fs::create_dir_all(&target_root)
-            .map_err(|e| format!("建 {}: {e}", target_root.display()))?;
-    }
-    let (id, files) = if args.source.is_dir() {
-        read_directory(&args.source)?
-    } else {
-        let bytes =
-            fs::read(&args.source).map_err(|e| format!("读 {}: {e}", args.source.display()))?;
-        unpack(&bytes)?
-    };
-    let target = target_root.join(&id);
-    if target.exists() {
-        if !args.force {
-            return Err(format!("{} 已存在;加 --force 覆盖", target.display()));
-        }
-        fs::remove_dir_all(&target).map_err(|e| format!("清掉旧包: {e}"))?;
-    }
-    for (name, content) in &files {
-        let path = target.join(name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("建 {}: {e}", parent.display()))?;
-        }
-        fs::write(&path, content).map_err(|e| format!("写 {}: {e}", path.display()))?;
-    }
-    // 装完再校验一次:清单必须能解析,id 必须等于目录名。
-    let manifest_bytes =
-        fs::read(target.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
-    Manifest::parse(&manifest_bytes).map_err(|e| {
-        let _ = fs::remove_dir_all(&target);
-        format!("清单不合法: {e}")
-    })?;
-    Ok(target)
-}
-
-fn read_directory(source: &Path) -> Result<(String, Files), String> {
-    let manifest_bytes =
-        fs::read(source.join("manifest.json")).map_err(|e| format!("读清单: {e}"))?;
-    let manifest = Manifest::parse(&manifest_bytes).map_err(|e| format!("清单不合法: {e}"))?;
-    let name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("{} 目录名不可用", source.display()))?;
-    if manifest.id != name {
-        return Err(format!(
-            "目录名 {name:?} 与清单 id {:?} 不一致",
-            manifest.id
-        ));
-    }
-    let mut files = Vec::new();
-    let mut paths = Vec::new();
-    collect(source, &mut paths)?;
-    for path in paths {
-        let relative = path
-            .strip_prefix(source)
-            .expect("collect 只产出 source 下的路径")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let bytes = fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
-        if !lueying_ext::manifest::container::is_binary(&relative) {
-            std::str::from_utf8(&bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
-        }
-        files.push((relative, bytes));
-    }
-    Ok((manifest.id, files))
-}
-
-/// 解包一个 `.luext`:容器解码后按清单取 id。清单必须存在且能解析。
-pub fn unpack(data: &[u8]) -> Result<(String, Files), String> {
-    let files = lueying_ext::manifest::container::decode(data)?;
-    let manifest = files
-        .iter()
-        .find(|(name, _)| name == "manifest.json")
-        .ok_or("包里没有 manifest.json")?;
-    let manifest = Manifest::parse(&manifest.1).map_err(|e| format!("清单不合法: {e}"))?;
-    Ok((manifest.id, files))
 }
 
 /// 让常驻服务重读配置;扩展启停、绑定与设置改动都会被拾起。

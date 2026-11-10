@@ -7,10 +7,15 @@
 //! `--selftest <报告路径>` 跑一遍自检:模型五页铺得开、关键控件在位、
 //! Slint 组件能实例化,Windows CI 用它确认设置窗这条链路没断。
 //! `--dump-config-schema` 输出设置 schema 的 JSON,供脚本与 AI agent 读取。
+//! `ext install <包>` / `ext add <来源>` 在终端里装扩展,不开窗口。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "ext") {
+        std::process::exit(ext_command(&args[1..]));
+    }
     // 平台无关:脚本与 AI agent 读取设置元数据,不需要启动窗口。
     if std::env::args().nth(1).as_deref() == Some("--dump-config-schema") {
         println!(
@@ -38,4 +43,27 @@ fn main() {
     }
     #[cfg(not(windows))]
     println!("lueying-settings 仅支持 Windows");
+}
+
+/// `ext` 子命令:输出走调用方的终端,返回进程退出码。
+fn ext_command(args: &[String]) -> i32 {
+    #[cfg(windows)]
+    attach_parent_console();
+    match lueying_settings::ext_cli::run(args) {
+        Ok(text) => {
+            println!("{text}");
+            0
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    }
+}
+
+/// 窗口子系统进程没有控制台;挂到调用它的终端,输出才看得见。双击启动没有父控制台,失败即忽略。
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }

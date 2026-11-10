@@ -1,11 +1,11 @@
 //! `### lueying-pack v2` 扩展包容器:文本块按行数声明长度,Wasm 按
 //! 字节数原样内嵌,整个包是可 diff 的 UTF-8 文本。
 //!
-//! 容器只管「文件集 ⇄ 字节流」;目录收集与清单校验在调用方(cli 的
-//! `ext pack`、设置页的「导入」)。授权面约束:包内路径必须是相对
-//! 路径,`consent.json` 只由宿主写,包里出现即拒。
+//! 容器管「文件集 ⇄ 字节流」,[`read_pack_dir`] 管「目录 → 文件集」;清单与
+//! Wasm 的存在性校验在调用方(cli 的 `ext pack`、安装落盘)。授权面约束:包内
+//! 路径必须是相对路径,`consent.json` 只由宿主写,包里出现即拒。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 扩展包文件头;导入时先认它。
 pub const PACK_HEADER: &str = "### lueying-pack v2";
@@ -16,8 +16,54 @@ const BINARY_EXTS: &[&str] = &[
     "otf",
 ];
 
+/// 参与打包的文件后缀。其它后缀一律报错,宁可失败也不静默丢文件;
+/// `.wasm` 是唯一的代码,其余是清单、文档与素材。
+const PACK_EXTS: &[&str] = &[
+    "json", "txt", "md", "wasm", "toml", "png", "jpg", "jpeg", "webp", "gif", "wav", "mp3", "ogg",
+];
+
 /// 容器里的一个文件:`(包内相对路径, 内容)`。
 pub type Files = Vec<(String, Vec<u8>)>;
+
+/// 收集目录下参与打包的文件(递归,路径排序);文本后缀必须是 UTF-8。
+pub fn read_pack_dir(dir: &Path) -> Result<Files, String> {
+    let mut paths = Vec::new();
+    collect(dir, &mut paths)?;
+    paths.sort();
+    let mut files = Vec::new();
+    for path in paths {
+        let relative = path
+            .strip_prefix(dir)
+            .expect("collect 只产出 dir 下的路径")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let bytes = std::fs::read(&path).map_err(|e| format!("读 {}: {e}", path.display()))?;
+        if !is_binary(&relative) {
+            std::str::from_utf8(&bytes).map_err(|_| format!("{relative} 不是 UTF-8 文本"))?;
+        }
+        files.push((relative, bytes));
+    }
+    Ok(files)
+}
+
+fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("读 {}: {e}", dir.display()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(&path, out)?;
+            continue;
+        }
+        let kept = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| PACK_EXTS.contains(&ext));
+        if kept {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
 
 /// 包内路径白名单:相对路径、不越界、不写隐藏文件,`consent.json` 拒收。
 pub fn check_name(name: &str) -> Result<(), String> {

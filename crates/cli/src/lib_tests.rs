@@ -2,9 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::{
-    InstallArgs, Invocation, LogsArgs, NewArgs, PackArgs, ReplayArgs, TopOptions, parse_args,
-};
+use super::{Invocation, LogsArgs, NewArgs, PackArgs, ReplayArgs, TopOptions, parse_args};
 
 fn args(list: &[&str]) -> Vec<String> {
     list.iter().map(|item| item.to_string()).collect()
@@ -61,7 +59,7 @@ fn parses_new() {
 }
 
 #[test]
-fn parses_pack_and_install() {
+fn parses_pack() {
     assert_eq!(
         parse_args(args(&["ext", "pack", "demo", "--out", "d.luext"])),
         Ok(Invocation::Pack(PackArgs {
@@ -70,23 +68,10 @@ fn parses_pack_and_install() {
         }))
     );
     assert!(parse_args(args(&["ext", "pack"])).is_err(), "缺目录");
-    assert_eq!(
-        parse_args(args(&["ext", "install", "demo.luext", "--force"])),
-        Ok(Invocation::Install(InstallArgs {
-            source: PathBuf::from("demo.luext"),
-            dir: None,
-            force: true,
-        }))
+    assert!(
+        parse_args(args(&["ext", "install", "demo.luext"])).is_err(),
+        "install 已迁入 lueying-settings"
     );
-    assert_eq!(
-        parse_args(args(&["ext", "install", "demo", "--dir", "/tmp/e"])),
-        Ok(Invocation::Install(InstallArgs {
-            source: PathBuf::from("demo"),
-            dir: Some(PathBuf::from("/tmp/e")),
-            force: false,
-        }))
-    );
-    assert!(parse_args(args(&["ext", "install"])).is_err(), "缺源");
 }
 
 #[test]

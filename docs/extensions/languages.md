@@ -136,5 +136,5 @@ C 标准库的 `printf` 等会引入 WASI 导入,宿主已提供;但产物里别
 ## 打包与分发
 
 组件就是包目录里的 `extension.wasm`,清单要求见[扩展总览](README.md);
-`lueying ext pack` 打包,`lueying ext install` 安装,发布与收录见
+`lueying ext pack` 打包,`lueying-settings ext install` 安装,发布与收录见
 [社区目录](catalog.md)。
