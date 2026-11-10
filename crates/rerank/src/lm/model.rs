@@ -1,18 +1,20 @@
 //! 整句模型:权重加载、几何校验、编码与评分入口。
 //!
-//! 逐层前向与批式评分在 [`crate::forward`],数值内核在 [`crate::math`];
+//! 逐层前向与批式评分在 [`crate::lm::forward`],数值内核在 [`crate::lm::math`];
 //! 这里只负责把权重文件变成模型,再把模型用到候选上。
 
 use std::collections::HashMap;
 
-use crate::ModelError;
+use crate::lm::ModelError;
 #[cfg(test)]
-use crate::forward::Prefix;
-use crate::forward::{BatchContext, BatchRow, HiddenState};
-use crate::math::{LinearScratch, Matrix, dot, dot_i8};
-use crate::weights::{Tensor, Weights};
+use crate::lm::forward::Prefix;
+use crate::lm::forward::{BatchContext, BatchRow, HiddenState};
+use crate::lm::math::{LinearScratch, Matrix, dot, dot_i8};
+use crate::lm::weights::{Tensor, Weights};
 #[cfg(test)]
-use crate::{FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS};
+use crate::lm::{
+    FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS,
+};
 const UNK: u32 = 1;
 pub(crate) const BOS: u32 = 2;
 

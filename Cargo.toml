@@ -6,7 +6,6 @@ members = [
     "crates/core",
     "crates/cli",
     "crates/ext",
-    "crates/lm",
     "crates/rerank",
     "crates/protocol",
     # 联网边界:更新与下载,常驻 Server 不依赖

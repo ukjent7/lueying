@@ -4,6 +4,8 @@
 //! 按键的候选、最多九条。8M 走同步按键路径,25M 只在下文 [`debounce`] 的停顿
 //! 槽位运行;两者共用同一套 [`Fact`] 契约。
 
+pub mod lm;
+
 pub mod debounce;
 pub mod metrics;
 
@@ -14,8 +16,8 @@ mod metrics_tests;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub use lueying_lm::ModelError;
-use lueying_lm::{CandidateFacts, Reranker, SentenceModel};
+pub use lm::ModelError;
+use lm::{CandidateFacts, Reranker, SentenceModel};
 
 pub use metrics::{LatencyMetrics, LatencySnapshot};
 

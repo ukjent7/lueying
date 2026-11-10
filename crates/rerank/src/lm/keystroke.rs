@@ -9,11 +9,11 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::ModelError;
-use crate::math::Matrix;
-use crate::model::{Block, Config, SentenceModel, Variant};
-use crate::ort::{OrtModel, OrtTensor};
-use crate::weights::Tensor;
+use crate::lm::ModelError;
+use crate::lm::math::Matrix;
+use crate::lm::model::{Block, Config, SentenceModel, Variant};
+use crate::lm::ort::{OrtModel, OrtTensor};
+use crate::lm::weights::Tensor;
 
 #[derive(Deserialize)]
 struct Manifest {

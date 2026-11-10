@@ -3,7 +3,7 @@
 //! 与权重精度有关的分支都收在这里;上层只调 [`Matrix`] 的行点积与
 //! `linear_into` 等入口。块化内核的求和顺序与标量参考一致,由测试逐位钉住。
 
-use crate::weights::Tensor;
+use crate::lm::weights::Tensor;
 
 /// 把内核编成基线与 AVX2 两份,运行时按 CPU 挑一份。
 ///

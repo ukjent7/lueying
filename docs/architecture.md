@@ -22,7 +22,7 @@ lueying-user.exe       安装辅助：注册输入法、自启、卸载清理
 |---|---|---|
 | 词典 | `crates/dict` | `main.pyd` 的内存映射读取与校验 |
 | 内核 | `crates/core` | 音节切分、词图解码（束宽 24）、纠错、用户词库学习、双拼与形码、内建功能、输入会话同步 |
-| 模型 | `crates/lm`、`crates/rerank` | 8M 与 25M 模型推理及重排决策；`lm` 的来源见其 README |
+| 模型 | `crates/rerank` | 8M 与 25M 模型推理及重排决策；推理内核 `src/lm` 的来源见模块文档 |
 | 渲染 | `crates/render` | 候选窗与面板的布局、命中测试与绘制指令 |
 | 协议 | `crates/protocol` | 管道帧、`SessionView`、按键 |
 | 扩展 | `crates/ext`（契约、清单与包，宿主与 guest 按 feature） | 清单、协议、宿主与服务，见[扩展](extensions/README.md) |

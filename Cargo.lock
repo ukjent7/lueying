@@ -3247,15 +3247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lueying-lm"
-version = "0.3.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "lueying-net"
 version = "0.1.0"
 dependencies = [
@@ -3285,7 +3276,9 @@ version = "0.1.0"
 name = "lueying-rerank"
 version = "0.1.0"
 dependencies = [
- "lueying-lm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

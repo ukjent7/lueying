@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::ModelError;
+use crate::lm::ModelError;
 
 #[derive(Deserialize)]
 struct Entry {

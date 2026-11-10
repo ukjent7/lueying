@@ -60,7 +60,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
         run: |
-          core_re='^(crates/(dict|core|lm|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py)$)'
+          core_re='^(crates/(dict|core|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py)$)'
           # 手动触发跑全量;新分支首推(before 全零)或历史缺失时保守地当作核心改动。
           if [ "$EVENT" = workflow_dispatch ] || [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             core=true
@@ -113,7 +113,7 @@ jobs:
         run: |
           cargo nextest run --locked \
             -p lueying-core -p lueying-protocol -p lueying-render \
-            -p lueying-lm -p lueying-rerank -p lueying-server -p lueying-settings
+            -p lueying-rerank -p lueying-server -p lueying-settings
       # 文档断链、裸 HTML 只有 rustdoc 会报;坏文档不会红编译,只能靠这条门禁
       - name: Rustdoc
         env:

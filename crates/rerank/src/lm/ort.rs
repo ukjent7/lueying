@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::ModelError;
+use crate::lm::ModelError;
 
 pub(crate) enum OrtTensor {
     Float(Vec<f32>),

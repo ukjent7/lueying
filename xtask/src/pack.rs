@@ -119,10 +119,10 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     }
     let licenses = args.out.join("licenses");
     std::fs::create_dir_all(&licenses).map_err(|e| format!("创建 {}: {e}", licenses.display()))?;
-    let lm_license = root.join("crates/lm/LICENSE");
-    if lm_license.exists() {
+    let apache_license = root.join("crates/rerank/LICENSE");
+    if apache_license.exists() {
         copy_file(
-            &lm_license,
+            &apache_license,
             &args.out,
             "licenses/Apache-2.0.txt",
             &mut files,

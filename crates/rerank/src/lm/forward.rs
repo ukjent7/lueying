@@ -1,19 +1,19 @@
 //! 前向引擎与候选续跑状态。
 //!
 //! 逐层前向、批式评分,以及跨按键复用的前缀 KV、末行终态与续跑记录;
-//! [`crate::reranker`] 只规划批次,真正的算术都在这里。
+//! [`crate::lm::reranker`] 只规划批次,真正的算术都在这里。
 
 use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
-use crate::math::{
+use crate::lm::math::{
     HALF_BLOCK, ROW_BLOCK, dot, dot_block, gelu, gelu_tanh, layer_norm_into, linear_into,
     log_normalizer, row_blocks, split_qkv_with_suffix_into, widen,
 };
-use crate::model::{Block, FeedForwardScratch, SentenceModel};
-use crate::weights::Tensor;
+use crate::lm::model::{Block, FeedForwardScratch, SentenceModel};
+use crate::lm::weights::Tensor;
 #[cfg(test)]
-use crate::{ATTENTION_POSITIONS, FORWARD_POSITIONS, VOCABULARY_PROJECTIONS};
+use crate::lm::{ATTENTION_POSITIONS, FORWARD_POSITIONS, VOCABULARY_PROJECTIONS};
 // 状态只属于生成它的模型；分叉续跑共享归一化常数，不缓存整张词表。
 pub(crate) struct HiddenState {
     pub(crate) values: Vec<f32>,

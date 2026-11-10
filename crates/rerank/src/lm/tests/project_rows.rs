@@ -1,11 +1,11 @@
-use crate::{Config, Matrix, SentenceModel, Tensor};
+use crate::lm::{Config, Matrix, SentenceModel, Tensor};
 use std::hint::black_box;
 use std::time::Instant;
 
 // 固定 362bf56 的完整投影正文，只把方法接收者改为显式参数。
 #[inline(never)]
 fn reference(model: &SentenceModel, hidden: &[f32]) -> (Vec<f32>, f32) {
-    crate::VOCABULARY_PROJECTIONS.with(|count| count.set(count.get() + 1));
+    crate::lm::VOCABULARY_PROJECTIONS.with(|count| count.set(count.get() + 1));
     let n_embd = model.config.n_embd;
     let mut logits = Vec::with_capacity(model.config.vocab);
     let mut highest = f32::NEG_INFINITY;

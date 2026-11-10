@@ -1,5 +1,5 @@
 // 固定 #53 的完整评分流程，只重命名并移除说明；对照时保留同样的跨轮状态。
-use crate::{Reranker, SentenceModel};
+use crate::lm::{Reranker, SentenceModel};
 use std::sync::Arc;
 
 impl Reranker {

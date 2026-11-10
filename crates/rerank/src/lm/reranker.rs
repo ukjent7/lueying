@@ -1,13 +1,13 @@
 //! 重排器:用语言模型给引擎候选重新排序。
 //!
 //! 可比集的判定与提位阈值在这里;每轮的续跑状态与批式评分计划也归它持有,
-//! 前向算术交给 [`crate::forward`]。
+//! 前向算术交给 [`crate::lm::forward`]。
 
 use std::sync::{Arc, OnceLock};
 
-use crate::forward::{BatchContext, BatchRow, HiddenState, Prefix, TailRun, TerminalState};
-use crate::model::SentenceModel;
-use crate::{CandidateFacts, DICTIONARY_SOURCES};
+use crate::lm::forward::{BatchContext, BatchRow, HiddenState, Prefix, TailRun, TerminalState};
+use crate::lm::model::SentenceModel;
+use crate::lm::{CandidateFacts, DICTIONARY_SOURCES};
 /// How many comparable candidates are scored. The engine rarely returns more than a handful that
 /// answer the same key — two in almost every real case — so this is a ceiling on the worst case
 /// rather than a limit that normally binds.

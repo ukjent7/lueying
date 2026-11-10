@@ -57,7 +57,7 @@ cargo run -p lueying-install-e2e --release --locked
 1. **平台解耦**：词典、分词引擎、协议编解码、图形排版与扩展沙箱保持纯粹的跨平台属性；Windows API 与 COM 互操作严格封装在 `lueying-tsf` 与 `lueying-server` 中。
 2. **源码精简**：保持单文件聚焦，单个 Rust 源码文件尽量控制在 1000 行内；通过 `#[path = "..."] mod ...;` 维持模块的清晰与平铺。
 3. **依赖安全**：新增依赖仅允许来自 crates.io，严禁直接引用未经锁定的外部 Git 仓库。
-4. **安全边界**：`unsafe` 代码仅允许出现在操作系统 FFI 边界与 `lueying-lm` 的 CPU 特性分派，且必须在代码注释中明确列出前置不变式（Safety invariants）。
+4. **安全边界**：`unsafe` 代码仅允许出现在操作系统 FFI 边界与 `lueying-rerank` 的 CPU 特性分派，且必须在代码注释中明确列出前置不变式（Safety invariants）。
 5. **文档同步**：修改通信协议、扩展契约、配置项或文件存储路径时，必须同步更新 `docs/` 下的对应文档。
 6. **更新日志**：任何用户可见的功能增删或修复，请在 `CHANGELOG.md` 的 `[Unreleased]` 节中记录。
 
