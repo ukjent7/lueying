@@ -19,7 +19,7 @@ use lueying_server::settings::actions;
 use lueying_server::settings::model::{self as model, ButtonKind, Control};
 use lueying_server::settings::secret;
 use lueying_server::settings::view::{
-    Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState, WebdavField,
+    Action, ConsentState, Notice, PageColors, PageId, Settings, UpdateState,
 };
 use lueying_server::theme;
 
@@ -141,8 +141,6 @@ fn dispatch(ui: &SettingsWindow, core: &Shared, action: Action) {
         Action::OpenApps => with(core, actions::open_apps),
         Action::BackupExport => with(core, actions::backup_export),
         Action::BackupImport => with(core, actions::backup_import),
-        Action::EditWebdav(field) => open_webdav_editor(ui, core, field),
-        Action::SyncWebdav => start_webdav_sync(ui, core),
         Action::ImportUser => with(core, actions::import_user),
         Action::ExportUser => with(core, actions::export_user),
         Action::Diagnostics => with(core, actions::export_diagnostics),
@@ -240,8 +238,7 @@ mod dialogs;
 
 use dialogs::{
     TextKind, add_app, choose_script, color, install_update, notice_kind, open_secret_editor,
-    open_text_editor, open_webdav_editor, page_colors, slint_button, slint_row, start_update_check,
-    start_webdav_sync,
+    open_text_editor, page_colors, slint_button, slint_row, start_update_check,
 };
 
 /// 自检:写报告并返回成败;首行必须是「结果:通过/失败」。

@@ -21,8 +21,8 @@ pub mod host_panel;
 
 pub mod settings;
 
-/// 配置同步:载荷格式、摘要、冲突判定与 WebDAV 传输。
-pub mod sync;
+/// 配置备份包:备份导出与导入共用的文本格式。
+pub mod bundle;
 
 #[cfg(windows)]
 pub mod ui_surface;

@@ -41,7 +41,7 @@ pub fn backup_export(settings: &mut Settings) {
         settings.say(Notice::Error, "没有可备份的数据");
         return;
     }
-    let out = crate::sync::pack(&files);
+    let out = crate::bundle::pack(&files);
     // 临时文件 + fsync + 改名:失败与断电都不留半截备份。
     let tmp = path.with_extension("bak.tmp");
     let written = std::fs::File::create(&tmp)
@@ -76,11 +76,11 @@ pub fn backup_import(settings: &mut Settings) {
             return;
         }
     };
-    if !crate::sync::is_bundle(&text) {
+    if !crate::bundle::is_bundle(&text) {
         settings.say(Notice::Error, "这份文件不是掠影备份");
         return;
     }
-    let files = crate::sync::unpack(&text);
+    let files = crate::bundle::unpack(&text);
     let mut written = 0usize;
     let mut imported_user = false;
     for (name, content) in &files {

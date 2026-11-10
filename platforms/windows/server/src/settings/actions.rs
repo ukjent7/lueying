@@ -58,10 +58,7 @@ pub fn reload() {
 
 mod backup;
 
-mod sync;
-
 pub use backup::{backup_export, backup_import};
-pub use sync::{Outcome, SyncJob, build_payload, pull, push, sync_once};
 
 /// 存盘:写配置并让常驻服务重读。
 pub fn save(settings: &mut Settings) {

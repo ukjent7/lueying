@@ -161,51 +161,6 @@ fn ocr_dir_maps_to_action() {
 }
 
 #[test]
-fn webdav_rows_and_actions() {
-    let mut settings = Settings::default();
-    settings.set_page(PageId::Dictionary);
-    let page = settings.page_view(
-        PageId::Dictionary,
-        &crate::settings::view::PageColors::default(),
-    );
-    let group = page
-        .groups
-        .iter()
-        .find(|group| group.title == "云同步")
-        .expect("词库页有云同步分组");
-    let labels: Vec<&str> = group.rows.iter().map(|row| row.label.as_str()).collect();
-    assert_eq!(labels, ["同步设置", "云同步"]);
-    assert_eq!(
-        settings.activate(&Id::new(ids::WEBDAV_URL, 0)),
-        Some(Action::EditWebdav(WebdavField::Url))
-    );
-    assert_eq!(
-        settings.activate(&Id::new(ids::WEBDAV_USERNAME, 0)),
-        Some(Action::EditWebdav(WebdavField::Username))
-    );
-    assert_eq!(
-        settings.activate(&Id::new(ids::WEBDAV_PASSWORD, 0)),
-        Some(Action::EditWebdav(WebdavField::Password))
-    );
-    assert_eq!(
-        settings.activate(&Id::new(ids::WEBDAV_SYNC, 0)),
-        Some(Action::SyncWebdav)
-    );
-}
-
-#[test]
-fn webdav_detail_shows_address_and_account() {
-    let mut settings = Settings::default();
-    assert!(settings.webdav_detail().contains("未设置地址"));
-    settings.cfg.webdav_url = "https://dav.example.com/ly".to_string();
-    assert!(settings.webdav_detail().contains("匿名"));
-    settings.cfg.webdav_username = "alice".to_string();
-    let detail = settings.webdav_detail();
-    assert!(detail.contains("https://dav.example.com/ly"), "{detail}");
-    assert!(detail.contains("alice"), "{detail}");
-}
-
-#[test]
 fn search_spans_pages_and_clears_on_navigation() {
     let mut settings = Settings::default();
     settings.set_search("辅助码");

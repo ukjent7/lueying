@@ -480,11 +480,4 @@ fn deferred(rows: &mut Vec<Row>) {
         "QuickJS 运行期已被 Wasm 组件运行期(wasmtime JIT)替换:命令在扩展自己的 worker 上同步执行,长计算不设预算,阻塞服务调用在扩展卸载时取消。原 Promise 步进模型不再适用。"
             .to_string(),
     ));
-    rows.push((
-        "V7",
-        "AccessKit 集成 Slint 自绘窗口",
-        Verdict::Pass,
-        "设置窗接 SubclassingAdapter 回答 WM_GETOBJECT;win-e2e 用 UIA 读树,断言保存/关闭/分组/开关,再经 UIA Invoke 打开短语编辑器,确认标准 EDIT 文本控件与保存按钮存在。"
-            .to_string(),
-    ));
 }

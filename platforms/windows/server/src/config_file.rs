@@ -43,10 +43,6 @@ pub struct FileConfig {
     pub panel_hotkey: Option<String>,
     pub ocr_engine: Option<String>,
     pub update_channel: Option<String>,
-    /// WebDAV 同步的远端目录地址。
-    pub webdav_url: Option<String>,
-    /// WebDAV 的 Basic 认证账号。
-    pub webdav_username: Option<String>,
     /// 扩展命名空间:`[ext.<id>]` 下的自由键值。
     pub ext: Option<BTreeMap<String, BTreeMap<String, Value>>>,
     /// 允许所有扩展自由联网。
@@ -229,16 +225,6 @@ pub fn apply(
             None => note(format!("update_channel={value} 不合法")),
         }
     }
-    if let Some(value) = file.webdav_url {
-        if crate::sync::valid_url(&value) {
-            cfg.webdav_url = value.trim().to_string();
-        } else {
-            note(format!("webdav_url={value} 不合法,只接受 HTTPS 地址"));
-        }
-    }
-    if let Some(value) = file.webdav_username {
-        cfg.webdav_username = value.trim().to_string();
-    }
     if let Some(ext) = file.ext {
         for (id, table) in ext {
             if !valid_script_id(&id) {
@@ -334,8 +320,6 @@ pub fn render(cfg: &AppConfig) -> Result<String, String> {
         panel_hotkey: &cfg.panel_hotkey,
         ocr_engine: cfg.ocr_backend.as_str(),
         update_channel: cfg.update_channel.as_str(),
-        webdav_url: &cfg.webdav_url,
-        webdav_username: &cfg.webdav_username,
         bindings,
         triggers,
         allow_all_extension_network: cfg.allow_all_extension_network,
@@ -372,8 +356,6 @@ struct SaveFile<'a> {
     panel_hotkey: &'a str,
     ocr_engine: &'static str,
     update_channel: &'static str,
-    webdav_url: &'a str,
-    webdav_username: &'a str,
     bindings: BTreeMap<&'a str, &'a str>,
     triggers: BTreeMap<&'a str, &'a str>,
     allow_all_extension_network: bool,

@@ -27,7 +27,6 @@
 | `%APPDATA%\lueying\phrases.txt`、`punct.txt`、`apps.toml` | 自定义短语、标点、按应用配置 |
 | `%APPDATA%\lueying\extensions\` | 运行期扩展与同意记录 `consent.json` |
 | `%APPDATA%\lueying\secrets\` | 扩展的密钥类设置，仅当前用户可读 |
-| `%APPDATA%\lueying\webdav-password.txt`、`webdav-state.txt` | WebDAV 口令与上次同步记录，不进配置文件 |
 | `%LOCALAPPDATA%\lueying\user.tsv` | 用户词库：选词学习、造词、置顶 |
 | `%LOCALAPPDATA%\lueying\logs\server.log` | 服务日志 |
 
@@ -36,5 +35,5 @@
 ## 网络与隐私
 
 - 输入法本体不联网，不上传按键、候选或上屏文本。常驻服务端 `lueying-server.exe` 不链接 `winhttp`，CI 检查其导入表。
-- 只有以下操作会联网：点击「检查更新」、WebDAV 同步，以及经 `lueying-broker.exe` 访问清单白名单内域名的扩展。
+- 只有以下操作会联网：点击「检查更新」，以及经 `lueying-broker.exe` 访问清单白名单内域名的扩展。
 - 私密字段（如密码框）中不学习，候选文字也不交给扩展。

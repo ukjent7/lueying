@@ -410,24 +410,6 @@ pub fn run(report: &mut String) -> usize {
         ),
     );
 
-    // 云同步:词库页有地址、账号、口令与同步按钮。
-    let mut sync_settings = sample_settings();
-    let sync_page = sync_settings.page_view(PageId::Dictionary, &colors());
-    let sync_group = sync_page
-        .groups
-        .iter()
-        .find(|group| group.title == "云同步");
-    let sync_labels: Vec<&str> = sync_group
-        .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
-        .unwrap_or_default();
-    let sync_button = sync_settings.activate(&Id::new(ids::WEBDAV_SYNC, 0));
-    push(
-        &mut checks,
-        "设置云同步行",
-        sync_labels == ["同步设置", "云同步"] && sync_button == Some(Action::SyncWebdav),
-        format!("行 {sync_labels:?} 按钮 {sync_button:?}"),
-    );
-
     // 词库导入:词库页有用户词库那行,点导入走的是导入动作。
     let mut dict_settings = sample_settings();
     let dict_page = dict_settings.page_view(PageId::Dictionary, &colors());

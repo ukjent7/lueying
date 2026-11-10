@@ -28,22 +28,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "accesskit"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e883d1d28c5fd5568c79ed2d2bd48d9f2fd3945c8974ed0f53690ceddb051be"
-dependencies = [
- "uuid",
-]
-
-[[package]]
 name = "accesskit_atspi_common"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "023da0e5097f46df7092d5280b02efb9bbf8d93298daeced42652463e357d636"
 dependencies = [
- "accesskit 0.24.1",
- "accesskit_consumer 0.38.0",
+ "accesskit",
+ "accesskit_consumer",
  "atspi-common",
  "phf",
  "serde",
@@ -56,18 +47,8 @@ version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d10a236f96f87d70732e44520046785431ef01d5bcd6b041317bfadd2f88245"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "hashbrown 0.16.1",
-]
-
-[[package]]
-name = "accesskit_consumer"
-version = "0.39.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3da8f27636015191b2264ee1df681503170a632cafd832fdc1edfdd4e3a2fd3"
-dependencies = [
- "accesskit 0.25.2",
- "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -76,8 +57,8 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "750c4e9f6ce888dfe8a10c0f1b5ceb646a7854fd46579d74919219d1bb314083"
 dependencies = [
- "accesskit 0.24.1",
- "accesskit_consumer 0.38.0",
+ "accesskit",
+ "accesskit_consumer",
  "hashbrown 0.16.1",
  "objc2 0.5.3",
  "objc2-foundation 0.2.2",
@@ -90,8 +71,8 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce02dc63b43f0c9296af9ac946312a2dc8814427d7a64d2d600971dac55b6076"
 dependencies = [
- "accesskit 0.24.1",
- "accesskit_consumer 0.38.0",
+ "accesskit",
+ "accesskit_consumer",
  "hashbrown 0.16.1",
  "objc2 0.5.3",
  "objc2-app-kit 0.2.2",
@@ -104,7 +85,7 @@ version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03e156ed3802e35eefe894ef2671bc6c889303d8a7e110b5e1b48f504b91362f"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "accesskit_atspi_common",
  "async-channel",
  "async-executor",
@@ -122,23 +103,9 @@ version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "106c2b961215864d1c2e703ee63269c25c4e80a577ffb2c1017b9c17dcdf83a1"
 dependencies = [
- "accesskit 0.24.1",
- "accesskit_consumer 0.38.0",
+ "accesskit",
+ "accesskit_consumer",
  "hashbrown 0.16.1",
- "static_assertions",
- "windows",
- "windows-core",
-]
-
-[[package]]
-name = "accesskit_windows"
-version = "0.35.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "498668b90da9995302a0055aaecad4756932333da2ddef6baee1c00844c430fc"
-dependencies = [
- "accesskit 0.25.2",
- "accesskit_consumer 0.39.2",
- "hashbrown 0.17.1",
  "static_assertions",
  "windows",
  "windows-core",
@@ -150,11 +117,11 @@ version = "0.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5b41e63a69f36d9f1f41e70464c7e5f72eee485ef26aab19f0b4f86e6c0a84c"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "accesskit_ios",
  "accesskit_macos",
  "accesskit_unix",
- "accesskit_windows 0.34.0",
+ "accesskit_windows",
  "raw-window-handle",
  "winit",
 ]
@@ -2342,7 +2309,7 @@ version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae4fcf1b19e9cb109984d2af87d2b9485388c619265bff71dd523133888bee2"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "accesskit_winit",
  "arboard",
  "block2 0.6.2",
@@ -2439,7 +2406,7 @@ version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2ea15059d70bc31b1a8b1eb4c34f2c5df04cb7e53f36179b43c0261231d646"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "bitflags 2.13.2",
  "cfg-if",
  "chrono",
@@ -3375,8 +3342,6 @@ dependencies = [
 name = "lueying-server"
 version = "0.1.0"
 dependencies = [
- "accesskit 0.25.2",
- "accesskit_windows 0.35.2",
  "encoding_rs",
  "getrandom 0.4.3",
  "lueying-broker",
@@ -4286,7 +4251,7 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "fontique",
  "harfrust",
  "hashbrown 0.17.1",
