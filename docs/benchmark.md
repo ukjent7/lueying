@@ -41,6 +41,14 @@ python3 tools/bench_shared.py summarize target/bench --print
 
 `summary.json` 按语料、类别与链路（`engine`、`8m`、`settled`）给出 top-1/3/5、MRR、Wilson 区间、耗时、候选池覆盖，以及逐段选词打出整句的按键成本（选词次数与翻页数）。`macro` 是各类等权平均。
 
+## 数据划分
+
+- 训练:`dicts/eval-v2-dev.tsv`、`dicts/eval-v3-dev.tsv`,可用来拟合常数(词典学 EM 与重排权重的来源)。
+- 验收:`dicts/eval-dev-v4.tsv`,由训练侧派生,与训练同源,不是独立留出集。改动后看一次,不对着它反复试数字。
+- 测试:`eval-v2-test`、`eval-v3-test` 与私有 test,是唯一的留出集。只在发版时跑:`dict-bench` 工作流 `workflow_dispatch` 勾选 `test`;日常 CI 不跑、不打印测试集的数字。
+
+验收集与测试集在 8 字及以上的句子上没有重叠;较短的词与短语有重复(与 `eval-v2-test` 234 对、与 `eval-v3-test` 95 对),是 V2 的原有结构。`shared-v1` 的 `context` 类有 58 条来自 V2 测试集,日常门禁的数字含这部分。
+
 ## V2 开发集与测试集
 
 - `dicts/eval-dev-v4.tsv`：调参只看这一份(3600 条)。由 `tools/make_dev_v4.py` 从 V2 开发集和 V3 分段语料派生:词级每类最多 300 条,分段(1–3 字,带真实上文)全部保留,整句只留全拼与混打各 300 条做回归。去掉整句声母和整句手误/模糊音。
