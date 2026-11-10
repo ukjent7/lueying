@@ -247,14 +247,14 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             } else if want_uia && let Some(tx) = state.uia_tx.as_ref() {
                 crate::uia::say(&format!("UIA: 回退受理 hwnd={hwnd}"));
                 // 空上下文已经先应用;UIA 结果回来再按代次/页/高亮决定
-                // 是否采用。容量 1,前一次查询没回来时直接丢新任务。
-                let _ = tx.try_send(crate::uia::Job {
+                // 是否采用。队列满时直接丢新任务。
+                let _ = tx.try_send(crate::uia::Work::Caret(crate::uia::Job {
                     session,
                     hwnd,
                     epoch,
                     seq: uia_seq,
                     context: uia_context,
-                });
+                }));
             }
             Reply::default()
         }

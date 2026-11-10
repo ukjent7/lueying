@@ -209,8 +209,8 @@ pub(super) struct State {
     /// 25M 停顿重排的延迟分布;所有会话共享一份。
     pub(super) rerank_settle_metrics: Arc<LatencyMetrics>,
     pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
-    /// TSF 读不到左邻文本时交给 UIA 线程补读;容量 1,忙时丢新任务。
-    pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Job>>,
+    /// TSF 读不到左邻文本时交给 UIA 线程补读;队列满时丢新任务。
+    pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Work>>,
     /// 所有会话共用一份学习结果。
     pub(super) user: SharedUser,
     /// 宿主组合好的可选功能模块;所有会话共享同一组注册表。
@@ -291,11 +291,6 @@ pub(super) fn touch_view(state: &State) {
         editable: active.is_some(),
         composing: active.as_ref().is_some_and(|published| published.composing),
     });
-}
-
-/// 只叫醒候选窗,不宣布新视图;脚本补丁走这条轻量路径。
-pub(super) fn wake_ui(state: &State) {
-    state.wake_ui.set();
 }
 
 /// 模式徽标该刷新了。
@@ -487,13 +482,13 @@ pub(super) fn real_main() {
     let settle_tx = settle_available.then_some(settle_tx);
     let (sync_tx, sync_rx) = mpsc::sync_channel(1);
     let sync_tx = sync_model.as_ref().map(|_| sync_tx);
-    let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Job>(1);
+    let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Work>(4);
     // 界面线程与所有窗口共用一个唤醒事件;建不出事件时循环退化成定时轮询。
     let wake_ui = Wake::create();
     let panel_service = Arc::new(lueying_server::services::PanelProvider::new());
     let ext = Arc::new(spawn_ext_host(
         Arc::clone(&panel_service),
-        Arc::new(crate::context::ContextProvider::new()),
+        Arc::new(crate::context::ContextProvider::new(uia_tx.clone())),
     ));
     ext.set_config(
         app_config.extensions.clone(),

@@ -1,15 +1,14 @@
-//! UI Automation 左邻文本回退。TSF 在 Office/自绘宿主上常读不到文本,
-//! 由独立 MTA 线程用 TextPattern 取光标前 128 字;查询不占管道与界面线程,
-//! UIA 自身带连接/事务超时,失败只丢本次上下文。
+//! UI Automation 读取。TSF 在 Office/自绘宿主上常读不到文本,由一条 MTA 线程
+//! 用 TextPattern 取光标前 128 字;扩展的「选中文字」也在它上面读。查询不占管道与
+//! 界面线程,UIA 自身带连接/事务超时,失败只丢本次结果。
 
 use std::ffi::c_void;
 use std::io::Write as _;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use lueying_core::CONTEXT_KEEP;
+use lueying_ext::host::Done;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -49,16 +48,22 @@ pub(crate) fn say(message: &str) {
     }
 }
 
-pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Job>) {
+/// 交给 UIA 线程的工作:TSF 读不到左邻文本时的回退,或扩展要的选中文字。
+pub(super) enum Work {
+    Caret(Job),
+    Selection(Done),
+}
+
+pub(super) fn spawn(state: Arc<State>, rx: mpsc::Receiver<Work>) {
     let spawned = std::thread::Builder::new()
         .name("lueying-uia".into())
         .spawn(move || worker(&state, &rx));
     if spawned.is_err() {
-        say("UIA 线程启动失败,左邻文本回退停用");
+        say("UIA 线程启动失败,左邻文本回退与选中文字停用");
     }
 }
 
-fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
+fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Work>) {
     if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
         say("UIA 线程 COM 初始化失败");
         return;
@@ -82,10 +87,13 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
         let _ = unsafe { automation2.SetConnectionTimeout(1000) };
         let _ = unsafe { automation2.SetTransactionTimeout(1000) };
     }
-    while let Ok(job) = rx.recv() {
-        say(&format!("UIA: 收到任务 hwnd={:x}", job.hwnd));
-        let text =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&automation, &job)))
+    while let Ok(work) = rx.recv() {
+        match work {
+            Work::Caret(job) => {
+                say(&format!("UIA: 收到任务 hwnd={:x}", job.hwnd));
+                let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    read(&automation, &job)
+                }))
                 .unwrap_or_else(|error| {
                     let message = error
                         .downcast_ref::<String>()
@@ -95,8 +103,20 @@ fn worker(state: &Arc<State>, rx: &mpsc::Receiver<Job>) {
                     say(&format!("UIA 读取 panic: {message}"));
                     None
                 });
-        if let Some(text) = text {
-            crate::imp::apply_uia_context(state, &job, &text);
+                if let Some(text) = text {
+                    crate::imp::apply_uia_context(state, &job, &text);
+                }
+            }
+            Work::Selection(done) => {
+                let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    selection(&automation)
+                }))
+                .unwrap_or(None);
+                done.complete(match text {
+                    Some(text) => Ok(serde_json::json!({ "text": text }).to_string()),
+                    None => Err("读不到选中文字(没有焦点元素或被系统拒绝)".to_string()),
+                });
+            }
         }
     }
     unsafe { CoUninitialize() };
@@ -207,69 +227,6 @@ fn debug(message: &str) {
 
 /// 选中文字的上限(字符);够用,又不至于把整篇文档塞进扩展。
 const SELECTION_LIMIT: usize = 8192;
-
-/// 选中文字读取器:独立 MTA 线程常驻,COM 与 UIA 实例只初始化一次。
-/// 扩展的 `context` 服务在这里取用户当前选中的文字。
-pub(crate) struct SelectionReader {
-    tx: Mutex<Option<mpsc::Sender<mpsc::Sender<Option<String>>>>>,
-}
-
-impl SelectionReader {
-    /// 读一次选中文字。读不到(没有焦点元素、密码框、自家进程、UIA
-    /// 报错)返回 `None`;没有选中文字时返回空串。
-    pub(crate) fn read(&self) -> Option<String> {
-        let tx = self.tx.lock().ok()?.clone()?;
-        let (reply, wait) = mpsc::channel();
-        tx.send(reply).ok()?;
-        wait.recv_timeout(Duration::from_secs(2)).ok().flatten()
-    }
-}
-
-/// 拉起选中文字读取线程;线程起不来就返回 `None`(调用方按不可用处理)。
-pub(crate) fn selection_reader() -> Option<SelectionReader> {
-    let (tx, rx) = mpsc::channel::<mpsc::Sender<Option<String>>>();
-    let spawned = std::thread::Builder::new()
-        .name("lueying-uia-selection".into())
-        .spawn(move || {
-            if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
-                say("选中文字读取线程 COM 初始化失败");
-                return;
-            }
-            let automation: IUIAutomation = match unsafe {
-                CoCreateInstance(
-                    &CUIAutomation8,
-                    None::<&windows::core::IUnknown>,
-                    CLSCTX_INPROC_SERVER,
-                )
-            } {
-                Ok(automation) => automation,
-                Err(error) => {
-                    say(&format!("选中文字 UIA 创建失败: {error}"));
-                    unsafe { CoUninitialize() };
-                    return;
-                }
-            };
-            if let Ok(automation2) = automation.cast::<IUIAutomation2>() {
-                let _ = unsafe { automation2.SetConnectionTimeout(1000) };
-                let _ = unsafe { automation2.SetTransactionTimeout(1000) };
-            }
-            while let Ok(reply) = rx.recv() {
-                let text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    selection(&automation)
-                }))
-                .unwrap_or(None);
-                let _ = reply.send(text);
-            }
-            unsafe { CoUninitialize() };
-        });
-    if spawned.is_err() {
-        say("选中文字读取线程启动失败");
-        return None;
-    }
-    Some(SelectionReader {
-        tx: Mutex::new(Some(tx)),
-    })
-}
 
 /// 取焦点元素里选中的文字;密码框与自家进程一律不读。
 fn selection(automation: &IUIAutomation) -> Option<String> {
