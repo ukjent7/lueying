@@ -29,7 +29,7 @@ toml = "1.1"
 encoding_rs = "0.8"
 
 [target."cfg(windows)".dependencies]
-# 同意记录与扩展宿主的常量共用宿主模块;Windows 设置窗才需要。
+# 扩展宿主模块:同意记录的读写与设置页的扩展列表,只在 Windows 设置窗里用。
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 # Slint 只服务设置窗(候选窗走自绘 D2D);Linux E2E 不背这棵树。
 slint.workspace = true

@@ -173,7 +173,20 @@ fn settings_selftest(dir: &std::path::Path) -> Result<String, String> {
     if !text.contains("结果:通过") {
         return Err(format!("设置窗自检没有结论: {text}"));
     }
-    Ok(format!("## 设置窗自检\n\n{text}\n"))
+    // 独立进程:设置窗不经常驻 Server 也能输出设置 schema(脚本与 agent 用),
+    // 证明它只靠自己的 exe 与配置文件工作,没有偷偷依赖服务端。
+    let schema = std::process::Command::new(&exe)
+        .arg("--dump-config-schema")
+        .output()
+        .map_err(|e| format!("启动设置窗 schema 输出失败: {e}"))?;
+    let json = String::from_utf8_lossy(&schema.stdout);
+    if !schema.status.success() || !json.trim_start().starts_with('{') {
+        return Err(format!("设置窗独立输出 schema 失败: {json}"));
+    }
+    Ok(format!(
+        "## 设置窗自检\n\n{text}\n\n独立进程输出设置 schema:{} 字节\n",
+        json.len()
+    ))
 }
 
 /// 选择面板自检:独立 Server 进程建可获焦窗口、注入按键、验证焦点归还。
