@@ -75,6 +75,7 @@
 天气	900000	tian'qi
 田七	100000	tian'qi
 很好	600000	hen'hao
+而且还	300000	er'qie'hai
 上班	500000	shang'ban
 西安	200000	xi'an
 现在	1200000	xian'zai

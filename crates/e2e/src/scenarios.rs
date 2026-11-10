@@ -134,6 +134,14 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
+            "零声母简拼 eqh→而且还",
+            false,
+            vec![
+                stage(l("eqh"), vec![Check::Top("而且还".into())]),
+                stage(vec![Key::Space], vec![commits(&["而且还"])]),
+            ],
+        ),
+        s(
             "ü 写作 ue:lue/nue 兼容",
             false,
             vec![
