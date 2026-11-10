@@ -11,7 +11,7 @@
     import-qingjian   把青简 --eval-details 的 JSONL 转成统一逐条结果
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
     import-msime      把水杉 convert_eval --dump 的 JSONL 转成统一逐条结果
-    summarize         把逐条结果(可含分片)合成 summary.json,含门限判定
+    summarize         把逐条结果(可含分片)合成 summary.json,含门限判定;--base 时与父提交配对做 McNemar 门禁
     diff              逐条对比两份结果:增量、McNemar p 与被改坏的样本,JSON 输出
 
 统一结果 TSV 的头部用 `# key=value` 记录 schema/engine/corpus/kind:
@@ -284,8 +284,12 @@ CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", 
 EXCLUDED_FROM_CORE = ("clause-initials-",)
 # 延迟不在这里门限:共享语料分片在同一台机器上并行跑,逐条的 ms 互相干扰,只作诊断。
 # 产品延迟门限只看 E2E 单线程的数字(rerank.rs 的 8M/25M 决策 p95,main.rs 的按键 p95)。
-# 干净全拼用例:打得准的部分,首选准确率不能低于基线(见 --baseline)。
+# 受保护类别:干净全拼。它们的首选若被纠错候选替换(误纠),与父提交配对后净退步不得超过下面的条数。
 CLEAN_PREFIXES = ("clause-full-", "word-full-", "chunk-full-")
+PROTECTED_MAX_NET_LOSS = 1
+# 配对门禁的显著性水平。每个类别单独做 McNemar 精确检验,只看净退步且 p 低于它的类别;
+# 常规取值 0.05。类别之间不做多重比较校正,判红依据的是单次运行里的配对计数。
+ALPHA = 0.05
 
 
 def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]:
@@ -406,49 +410,101 @@ def gate_failures(summary: dict[str, object]) -> list[str]:
     return failed
 
 
-def clean_top1(section: dict[str, object]) -> tuple[float, int]:
-    """干净全拼类别在产品链路(settled)上的加权首选准确率与条数。"""
-    categories = section["categories"]
-    picked = [c for name, c in categories.items() if name.startswith(CLEAN_PREFIXES)]
-    total = sum(c["settled"]["n"] for c in picked)
-    hit = sum(c["settled"]["top1"] * c["settled"]["n"] for c in picked)
-    return (hit / total if total else 0.0), total
+def corpus_groups(path: Path) -> dict[str, list[Path]]:
+    """目录下的逐条结果按语料分组;分片文件名为 <语料>.<分片>.tsv。"""
+    groups: dict[str, list[Path]] = {}
+    for item in sorted(path.glob("*.tsv")):
+        groups.setdefault(item.name.split(".")[0], []).append(item)
+    return groups
 
 
-def baseline_failures(section: dict[str, object], base: dict[str, object], tolerance: float) -> list[str]:
-    """打得准的用例首选准确率不能比基线低超过 tolerance(百分点)。"""
-    now, n_now = clean_top1(section)
-    before, n_before = clean_top1(base)
-    if n_now == 0 or n_before == 0:
-        return []
-    if now < before - tolerance:
-        return [f"干净全拼首选 {now:.2f} < 基线 {before:.2f} - {tolerance}(n={n_now})"]
-    return []
+def paired(base_rows: list[dict[str, str]], head_rows: list[dict[str, str]]) -> dict[str, dict[str, float]]:
+    """同一语料两次运行的配对比较:按(类别, 键入串, 期望, 出现序)对齐,逐类统计退步、进步与 McNemar p。
+
+    退步 = 父提交首选正确、当前首选错误;进步则相反。两边用例集合必须一致,否则报错。
+    """
+
+    def index(rows: list[dict[str, str]]) -> dict[tuple[str, str, str, int], dict[str, str]]:
+        seen: dict[tuple[str, str, str], int] = {}
+        keyed = {}
+        for row in rows:
+            base = (row["category"], row["input"], row.get("expected", ""))
+            nth = seen.get(base, 0)
+            seen[base] = nth + 1
+            keyed[(*base, nth)] = row
+        return keyed
+
+    before, after = index(base_rows), index(head_rows)
+    if before.keys() != after.keys():
+        raise SystemExit(
+            f"两次运行的用例不一致: 仅父提交 {len(before.keys() - after.keys())} 条, "
+            f"仅当前 {len(after.keys() - before.keys())} 条"
+        )
+    stats: dict[str, dict[str, float]] = {}
+    for key, row in after.items():
+        was = rank_in(before[key], "settled") == 0
+        now = rank_in(row, "settled") == 0
+        entry = stats.setdefault(key[0], {"n": 0, "regressed": 0, "improved": 0})
+        entry["n"] += 1
+        entry["regressed"] += was and not now
+        entry["improved"] += now and not was
+    for entry in stats.values():
+        entry["net"] = entry["improved"] - entry["regressed"]
+        entry["p"] = round(mcnemar_exact(int(entry["improved"]), int(entry["regressed"])), 4)
+    return stats
+
+
+def paired_failures(stats_by_corpus: dict[str, dict[str, dict[str, float]]]) -> list[str]:
+    """配对门禁:任一类别显著净退步判红;干净全拼的净退步合计超过 PROTECTED_MAX_NET_LOSS 判红。"""
+    failed = []
+    protected_loss = 0
+    for corpus, stats in stats_by_corpus.items():
+        for category, entry in stats.items():
+            if entry["net"] < 0 and entry["p"] < ALPHA:
+                failed.append(f"{corpus}/{category}: 显著净退步 {-entry['net']:g} 条 (p={entry['p']})")
+            if category.startswith(CLEAN_PREFIXES):
+                protected_loss -= entry["net"]
+    if protected_loss > PROTECTED_MAX_NET_LOSS:
+        failed.append(f"干净全拼净退步 {protected_loss:g} 条,超过 {PROTECTED_MAX_NET_LOSS} 条")
+    return failed
 
 
 def cmd_summarize(args: argparse.Namespace) -> int:
-    """把一个目录下的分片合成 summary.json;每份语料一节。"""
-    baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8")) if args.baseline else None
-    groups: dict[str, list[Path]] = {}
-    for path in sorted(Path(args.dir).glob("*.tsv")):
-        groups.setdefault(path.name.split(".")[0], []).append(path)
+    """把一个目录下的分片合成 summary.json;每份语料一节。给了 --base 时与父提交逐条配对。"""
+    groups = corpus_groups(Path(args.dir))
     if not groups:
         raise SystemExit(f"{args.dir}: 没有结果")
+    base_groups = corpus_groups(Path(args.base)) if args.base else None
     summary: dict[str, object] = {}
     failed: list[str] = []
+    stats_by_corpus: dict[str, dict[str, dict[str, float]]] = {}
     for corpus, paths in groups.items():
         meta, rows = read_items(paths)
         section = summarize_rows(rows)
         section["engine_name"] = meta.get("engine", "")
         section["gate_failures"] = gate_failures(section)
-        if baseline and corpus in baseline:
-            section["baseline_failures"] = baseline_failures(section, baseline[corpus], args.tolerance)
-            section["gate_failures"] += section["baseline_failures"]
+        if base_groups is not None:
+            if corpus not in base_groups:
+                raise SystemExit(f"父提交缺少语料 {corpus}")
+            stats = paired(read_items(base_groups[corpus])[1], rows)
+            section["paired"] = stats
+            stats_by_corpus[corpus] = stats
         failed += section["gate_failures"]
         summary[corpus] = section
+    if stats_by_corpus:
+        failed += paired_failures(stats_by_corpus)
+        protected = sum(
+            -entry["net"]
+            for stats in stats_by_corpus.values()
+            for category, entry in stats.items()
+            if category.startswith(CLEAN_PREFIXES)
+        )
+        print(f"干净全拼净变化 {-protected:+g} 条(门限:退步不超过 {PROTECTED_MAX_NET_LOSS} 条)")
     text = json.dumps(summary, ensure_ascii=False, indent=1)
     Path(args.dir, "summary.json").write_text(text, encoding="utf-8")
     print(text if args.print else f"写出 {args.dir}/summary.json")
+    for line in failed:
+        print(f"门禁未过: {line}")
     return 1 if args.gate and failed else 0
 
 
@@ -632,8 +688,7 @@ def main() -> int:
     summarize.add_argument("dir")
     summarize.add_argument("--gate", action="store_true", help="门限不达标时退出码非零")
     summarize.add_argument("--print", action="store_true", help="同时打印到标准输出")
-    summarize.add_argument("--baseline", help="上一次的 summary.json;干净全拼首选准确率不能低于它")
-    summarize.add_argument("--tolerance", type=float, default=0.0, help="允许下降的百分点,默认 0")
+    summarize.add_argument("--base", help="父提交的逐条结果目录;与之配对做退步/进步计数与 McNemar 检验")
     summarize.set_defaults(func=cmd_summarize)
 
     diff = sub.add_parser("diff", help="逐条对比两份结果,JSON 输出;路径后可跟 :engine/:8m/:settled")

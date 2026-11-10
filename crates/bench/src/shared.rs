@@ -303,6 +303,11 @@ fn feature_rows(
         .collect()
 }
 
+/// 私有语料与用户语料:逐条文字只允许出现在加密文件里。
+pub(crate) fn is_sensitive(name: &str) -> bool {
+    name.starts_with("eval-private") || name.starts_with("eval-user")
+}
+
 /// 跑一份语料的第 `shard.0` 片(共 `shard.1` 片),返回失败数。
 pub fn run(
     dict: Arc<Dictionary>,
@@ -332,8 +337,8 @@ pub fn run(
         .map_or(1, usize::from)
         .max(1);
     let chunk_size = picked.len().div_ceil(threads).max(1);
-    // 私有语料的文字不能离开加密文件,不导出特征。
-    let features = !name.starts_with("eval-private");
+    // 私有与用户语料的文字只进加密文件,不导出特征。
+    let features = !is_sensitive(&name);
     let dict_ref = &dict;
     let gram_ref = &gram;
     let outcomes: Vec<Vec<Outcome>> = std::thread::scope(|scope| {

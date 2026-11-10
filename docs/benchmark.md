@@ -71,11 +71,19 @@ V2 来自 chinese-ime-lm 的 `sentences-ctx-v1`,文本不在词典与重排模�
 
 `dicts/eval-user-v4.tsv` 是整句纠错专项(50 句):用户按预先出好的目标句自然打字,错误原样采集,分词空格已剥除(引擎收不到空格)。采集时先只发目标句、收齐键入串再建库,保证期望答案先于键入串存在。
 
-## 核心指标与基线门限
+## 核心指标与门限
 
 `summarize` 的 `core` 节是核心类别的宏平均:全拼、词级简拼与混打、整句混打、`chunk-`、`fuzzy-`、`typo-`、`user-`。纯声母整句(`clause-initials-`)只记录,不计入。
 
-`summarize --baseline <上一次的 summary.json>` 检查干净全拼用例(`clause-full-`、`word-full-`)在产品链路 `settled` 上的加权首选准确率,不能低于基线超过 `--tolerance`(默认 0 个百分点)。
+## 配对门禁
+
+CI 把当前提交与父提交（`HEAD^`）跑同一批用例，按(类别, 键入串, 期望)逐条配对，在产品链路 `settled` 上比较首选：
+
+- 每个类别给出退步条数（父提交对、当前错）、进步条数与配对的 McNemar 精确检验 p 值（`summarize --base <父提交结果目录>`）。
+- 判红一：任一类别净退步且 p < 0.05（`ALPHA`）。
+- 判红二：干净全拼（`clause-full-`、`word-full-`、`chunk-full-`）的净退步合计超过 1 条（`PROTECTED_MAX_NET_LOSS`）。1 条的差异（如 INT8 量化）放行。
+
+父提交的逐条结果按引擎文件的内容哈希缓存，通常只跑当前提交一次。不再有存档基线文件，也不需要手动刷新。
 
 ## 私有语料
 
