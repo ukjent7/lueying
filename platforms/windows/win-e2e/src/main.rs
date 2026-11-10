@@ -12,7 +12,7 @@ fn main() {
 #[cfg(windows)]
 mod imp;
 
-/// 扩展运行指标快照:服务端写入后检查 shot-ocr 的内存与派发。
+/// 扩展运行指标快照:扩展宿主写入后检查 shot-ocr 的内存与派发。
 #[cfg(windows)]
 mod ext_metrics;
 

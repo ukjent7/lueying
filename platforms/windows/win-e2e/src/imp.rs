@@ -10,8 +10,7 @@ use checks::*;
 
 pub(crate) use measure::{
     chord, commit_latency, composing, create_host_window, edit_text, key_input, key_latency,
-    peak_working_set, pump_for, report_tsf_focus, server_memory, tap, type_text,
-    wait_for_tsf_focus,
+    pump_for, report_tsf_focus, server_memory, tap, type_text, wait_for_tsf_focus,
 };
 
 use std::cell::RefCell;
@@ -99,8 +98,9 @@ pub(super) fn run() {
         Err(e) => {
             let tsf = tail_of(std::env::var_os("LUEYING_TSF_LOG").map(std::path::PathBuf::from));
             let server = tail_of(Some(server_log()));
+            let ext = tail_of(Some(ext_host_log()));
             format!(
-                "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n"
+                "# Windows E2E\n\nFAIL\n\n{e}\n\n## TSF 日志(末尾)\n\n```\n{tsf}\n```\n\n## Server 日志(末尾)\n\n```\n{server}\n```\n\n## 扩展宿主日志(末尾)\n\n```\n{ext}\n```\n"
             )
         }
     };
@@ -224,6 +224,16 @@ fn server_log() -> std::path::PathBuf {
         .join("win-e2e-server.log")
 }
 
+/// 扩展宿主进程的诊断日志(`%LOCALAPPDATA%\lueying\logs\ext-host.log`)。
+/// 扩展侧的输出(热键绑定、扩展加载)都在这里,不进服务端日志。路径与服务端一样
+/// 取自 LOCALAPPDATA,E2E 启动前已把它指向隔离目录。
+fn ext_host_log() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default())
+        .join("lueying")
+        .join("logs")
+        .join("ext-host.log")
+}
+
 /// UIA 回退的调试痕迹;server 是 GUI 子系统进程,stdout 重定向靠不住,
 /// 统一写共享 TEMP 下的追加日志。
 fn uia_log() -> std::path::PathBuf {
@@ -311,6 +321,8 @@ fn real_run() -> Result<(String, String), String> {
     }
     let server_out = server_log();
     let _ = std::fs::remove_file(&server_out);
+    // 扩展宿主日志是追加写的;先清掉上一轮的绑定行,免得旧日志让断言误过。
+    let _ = std::fs::remove_file(ext_host_log());
     let _ = std::fs::remove_file(uia_log());
     let out = std::fs::File::create(&server_out).map_err(|e| format!("创建 Server 日志: {e}"))?;
     let err = out
@@ -325,8 +337,6 @@ fn real_run() -> Result<(String, String), String> {
         .env("LUEYING_D2D_SELFTEST", "1")
         // UIA 回退的运行痕迹默认静默;E2E 要断言这条链路真的在跑。
         .env("LUEYING_DEBUG_UIA", "1")
-        // 无候选窗时也起扩展宿主:官方 shot-ocr 的命令热键要靠它。
-        .env("LUEYING_EXT_HOST", "1")
         // CI 镜像不一定有 OCR 语言包;识别换成固定文本,截图与上屏仍是真实现。
         .env("LUEYING_FAKE_OCR", "1")
         .stdout(std::process::Stdio::from(out))

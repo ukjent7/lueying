@@ -313,9 +313,10 @@ pub(super) fn check_shot_ocr(edit: HWND, hwnd: HWND) -> Result<String, String> {
     const VK_F9: u16 = 0x78;
     const GOLDEN: &str = "掠影截图识别测试";
 
-    // 热键注册在 Server 的扩展线程上;日志出现绑定行再按键。
-    let log = server_log();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // 热键注册在扩展宿主进程里,绑定行写进它的日志;出现绑定行再按键。
+    // 扩展宿主是独立进程,冷启动要编译 Wasm 组件,CI 上给 30 秒。
+    let log = ext_host_log();
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let text = std::fs::read_to_string(&log).unwrap_or_default();
         if let Some(line) = text
@@ -328,7 +329,10 @@ pub(super) fn check_shot_ocr(edit: HWND, hwnd: HWND) -> Result<String, String> {
             break;
         }
         if Instant::now() >= deadline {
-            return Err("5 秒内没有看到 shot-ocr 热键绑定日志".into());
+            return Err(format!(
+                "30 秒内没有看到 shot-ocr 热键绑定日志(扩展宿主日志 {})",
+                log.display()
+            ));
         }
         pump_for(Duration::from_millis(100));
     }
