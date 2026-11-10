@@ -42,8 +42,8 @@ use std::sync::Arc;
 pub use crate::manifest::consent::{ConsentBook, ConsentCheck, ConsentEntry};
 pub use crate::manifest::metrics::{ExtMetrics, ExtStat, ExtState, METRICS_VERSION};
 pub use crate::manifest::{
-    Activate, Command, EXT_API, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, Permission, Service,
-    Setting, SettingValue, When,
+    Activate, Category, Command, EXT_API, MAX_MANIFEST_BYTES, MAX_TEXT_CHARS, Manifest, Permission,
+    Service, Setting, SettingValue, When,
 };
 pub use crate::proto::{
     AsrText, AudioRecording, ClipboardHistory, ClipboardHistoryItem, ClipboardText, Delivered,

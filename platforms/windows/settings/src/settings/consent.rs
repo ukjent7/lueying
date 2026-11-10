@@ -16,6 +16,8 @@ pub struct ScriptEntry {
     pub consent: ConsentState,
     /// 清单里的声明式设置;设置页按它渲染。
     pub settings: Vec<lueying_ext::manifest::Setting>,
+    /// 类别;同类扩展同时只启用一个。
+    pub category: Option<lueying_ext::manifest::Category>,
 }
 
 impl ScriptEntry {
@@ -28,6 +30,7 @@ impl ScriptEntry {
             items: Vec::new(),
             consent: ConsentState::Approved,
             settings: Vec::new(),
+            category: None,
         }
     }
 }

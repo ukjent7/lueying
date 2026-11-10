@@ -491,3 +491,18 @@ fn rejects_bad_settings() {
     ]);
     assert!(parse(value).is_err());
 }
+
+#[test]
+fn category_is_optional_and_closed() {
+    let plain = parse(base()).expect("缺省类别的清单合法");
+    assert_eq!(plain.category, None);
+    let mut value = base();
+    value["category"] = json!("skin");
+    assert_eq!(
+        parse(value).expect("皮肤类别合法").category,
+        Some(Category::Skin)
+    );
+    let mut value = base();
+    value["category"] = json!("font");
+    assert!(parse(value).is_err(), "未知类别必须拒绝");
+}

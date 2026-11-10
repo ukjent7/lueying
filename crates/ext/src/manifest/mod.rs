@@ -24,6 +24,19 @@ pub const EXT_API: u32 = 4;
 /// 文本类设置的最大长度;密钥太长没有实际用途,也避免撑爆输入框。
 pub const MAX_TEXT_CHARS: usize = 4096;
 
+/// 扩展类别。同一类扩展同时只启用一个:启用新的,旧的自动停用(设置窗负责)。
+/// 缺省不参与互斥。
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Category {
+    /// 输入方案:整套键位与词源。
+    InputScheme,
+    /// 候选来源:往候选窗里加候选。
+    CandidateSource,
+    /// 皮肤:候选窗外观。
+    Skin,
+}
+
 /// 扩展形态。Wasm 在宿主进程内解释执行;原生是独立进程的服务提供者,
 /// 由扩展宿主按需拉起并沙箱化。
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -51,6 +64,9 @@ pub struct Manifest {
     /// 扩展形态;缺省是 Wasm。
     #[serde(default)]
     pub kind: Kind,
+    /// 类别;同类扩展同时只启用一个。缺省不互斥。
+    #[serde(default)]
+    pub category: Option<Category>,
     /// Wasm 模块,包内裸文件名;仅 [`Kind::Wasm`]。
     #[serde(default)]
     pub wasm: String,

@@ -329,6 +329,35 @@ impl Settings {
         self.clear_notice();
     }
 
+    /// 启用 `id` 前停用同类扩展;返回被停用扩展的名字,给提示用。
+    fn displace_same_category(&mut self, id: &str) -> Vec<String> {
+        let Some(category) = self
+            .scripts
+            .iter()
+            .find(|script| script.id == id)
+            .and_then(|script| script.category)
+        else {
+            return Vec::new();
+        };
+        let mut displaced = Vec::new();
+        let scripts = &self.scripts;
+        self.cfg.extensions.retain(|enabled| {
+            let same = enabled != id
+                && scripts
+                    .iter()
+                    .any(|script| &script.id == enabled && script.category == Some(category));
+            if same {
+                let name = scripts
+                    .iter()
+                    .find(|script| &script.id == enabled)
+                    .map_or_else(|| enabled.clone(), |script| script.name.clone());
+                displaced.push(name);
+            }
+            !same
+        });
+        displaced
+    }
+
     /// 点一下控件:能改配置的直接改,改不了的交给平台侧。
     pub fn activate(&mut self, id: &Id) -> Option<Action> {
         if let Some(page) = PageId::from_nav(&id.base) {
@@ -347,10 +376,18 @@ impl Settings {
                 .position(|candidate| candidate == &script_id)
             {
                 self.cfg.extensions.remove(index);
+                self.clear_notice();
             } else {
+                let displaced = self.displace_same_category(&script_id);
                 self.cfg.extensions.push(script_id);
+                self.clear_notice();
+                if !displaced.is_empty() {
+                    self.say(
+                        Notice::Info,
+                        format!("已停用同类扩展:{}", displaced.join("、")),
+                    );
+                }
             }
-            self.clear_notice();
             return None;
         }
         if let Some(slot) = ids::app_punct_slot(&id.base) {

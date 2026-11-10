@@ -320,6 +320,7 @@ pub fn installed_scripts() -> Vec<ScriptEntry> {
             items,
             consent,
             settings: manifest.settings,
+            category: manifest.category,
         });
     }
     scripts.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));

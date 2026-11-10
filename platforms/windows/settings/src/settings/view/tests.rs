@@ -301,3 +301,39 @@ fn extension_settings_render_and_activate() {
     );
     assert!(!settings.shift(&Id::new(toggle, 0), 1), "开关不吃左右键");
 }
+
+#[test]
+fn enabling_same_category_displaces_the_old_one() {
+    use lueying_ext::manifest::Category;
+    let skin = |id: &str| {
+        let mut script = entry(id, id);
+        script.category = Some(Category::Skin);
+        script
+    };
+    let mut settings = Settings {
+        scripts: vec![skin("old"), skin("new"), entry("other", "其它")],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["old".to_string(), "other".to_string()];
+    settings.activate(&Id::new(ids::script_toggle(1), 0));
+    assert_eq!(settings.cfg.extensions, vec!["other", "new"]);
+    assert!(
+        settings.message.contains("已停用同类扩展:old"),
+        "提示要点名被停用的扩展: {}",
+        settings.message
+    );
+    // 关掉当前扩展不算启用,不触发互斥,也不留提示。
+    settings.activate(&Id::new(ids::script_toggle(1), 0));
+    assert_eq!(settings.cfg.extensions, vec!["other"]);
+}
+
+#[test]
+fn uncategorised_extensions_never_displace_each_other() {
+    let mut settings = Settings {
+        scripts: vec![entry("first", "第一"), entry("second", "第二")],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["first".to_string()];
+    settings.activate(&Id::new(ids::script_toggle(1), 0));
+    assert_eq!(settings.cfg.extensions, vec!["first", "second"]);
+}
