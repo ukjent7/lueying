@@ -1,4 +1,4 @@
-//! 扩展宿主的方法族:动作候选注入、命令执行与声明式设置的读写。
+//! 扩展宿主的方法族:动作候选注入与命令执行。
 //!
 //! 从 `server_request` 挪出:`Ext` 请求与动作候选共用这一层,管道分发
 //! 只留编排。方法都拿 `&State` 操作,隐私门禁在各入口自行把关。
@@ -74,80 +74,4 @@ pub(crate) fn command_run(state: &State, id: &str) -> Result<serde_json::Value, 
     }
     state.ext.invoke(&id, "外部触发");
     Ok(serde_json::json!({ "submitted": true, "command": id }))
-}
-
-/// `Ext` 的 `settings.get`:清单默认值 + 配置里的当前值。
-pub(crate) fn settings_get(state: &State, id: &str) -> Result<serde_json::Value, String> {
-    let settings = lueying_server::ext_settings::manifest_settings(id)
-        .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
-    if settings.is_empty() {
-        return Err(format!("扩展 {id} 没有声明式设置"));
-    }
-    let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
-    Ok(lueying_server::ext_settings::values(
-        id,
-        &settings,
-        cfg.ext_settings.get(id),
-    ))
-}
-
-/// `Ext` 的 `settings.set`:逐键校验 schema,合并后落盘并下发。
-pub(crate) fn settings_set(
-    state: &State,
-    id: &str,
-    params: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let settings = lueying_server::ext_settings::manifest_settings(id)
-        .ok_or_else(|| format!("扩展 {id} 未安装或清单不可读"))?;
-    if settings.is_empty() {
-        return Err(format!("扩展 {id} 没有声明式设置"));
-    }
-    let serde_json::Value::Object(object) = params else {
-        return Err("params 必须是对象,键是设置键".into());
-    };
-    if object.is_empty() {
-        return Err("params 为空".into());
-    }
-    let mut table = state
-        .config
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .ext_settings
-        .get(id)
-        .cloned()
-        .unwrap_or_default();
-    for (key, value) in &object {
-        let Some(setting) = settings
-            .iter()
-            .find(|setting| setting.key() == key.as_str())
-        else {
-            return Err(format!("扩展 {id} 没有设置 {key:?}"));
-        };
-        if !setting.accepts(value) {
-            return Err(format!("设置 {key} 的值不符合清单 schema"));
-        }
-        if setting.is_secret() {
-            let Some(text) = value.as_str() else {
-                return Err(format!("密钥设置 {key} 必须是文本"));
-            };
-            lueying_server::ext_secret::set(id, key, text)?;
-        } else {
-            table.insert(key.clone(), value.clone());
-        }
-    }
-    let full = lueying_server::ext_settings::values(id, &settings, Some(&table));
-    let before = state
-        .config
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone();
-    let mut cfg = before.clone();
-    cfg.ext_settings.insert(id.to_string(), table);
-    if let Some(path) = &state.config_path
-        && let Err(error) = config::save(path, &before, &cfg)
-    {
-        return Err(format!("保存配置失败: {error}"));
-    }
-    apply_config(state, cfg);
-    Ok(full)
 }

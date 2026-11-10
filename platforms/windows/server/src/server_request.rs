@@ -7,9 +7,7 @@ use lueying_protocol::{EngineStatus, RerankLatency};
 
 use super::*;
 
-use super::ext::{
-    command_run, commands_list, invoke_extension, settings_get, settings_set, sync_action,
-};
+use super::ext::{command_run, commands_list, invoke_extension, sync_action};
 
 pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
     match req {
@@ -621,14 +619,12 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 ..Reply::default()
             }
         }
-        Request::Ext { id, method, params } => {
+        Request::Ext { id, method } => {
             let result = match method.as_str() {
-                "settings.get" => settings_get(state, &id),
-                "settings.set" => settings_set(state, &id, params),
                 "commands.list" => commands_list(state),
                 "command.run" => command_run(state, &id),
                 _ => Err(format!(
-                    "扩展方法 {method:?} 不存在;宿主提供 settings.get / settings.set / commands.list / command.run"
+                    "扩展方法 {method:?} 不存在;宿主提供 commands.list / command.run"
                 )),
             };
             let ext = match result {

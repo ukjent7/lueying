@@ -6,6 +6,7 @@
 
 pub mod bundle;
 pub mod dict_import;
+pub mod ext_secret;
 pub mod settings;
 
 #[cfg(windows)]

@@ -90,7 +90,7 @@ fn field(slot: usize, script: &ScriptEntry, setting: &Setting, cfg: &AppConfig) 
         }
     } else if setting.is_secret() {
         Kind::Secret {
-            filled: lueying_server::ext_secret::has(&script.id, setting.key()),
+            filled: crate::ext_secret::has(&script.id, setting.key()),
         }
     } else {
         let selected = match &value {

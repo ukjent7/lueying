@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::config;
+use lueying_server::config;
 
 /// 读取一个密钥;没有或文件损坏时返回 None。
 pub fn get(ext: &str, key: &str) -> Option<String> {
@@ -47,20 +47,6 @@ pub fn remove(ext: &str, key: &str) -> Result<(), String> {
     let mut values = table(ext);
     values.remove(key);
     save(ext, &values)
-}
-
-/// 把某扩展的密钥并进设置值的对象;只写声明过 `secureText` 的键。
-pub fn merge(
-    ext: &str,
-    settings: &[lueying_ext::manifest::Setting],
-    object: &mut Map<String, Value>,
-) {
-    let values = table(ext);
-    for setting in settings.iter().filter(|setting| setting.is_secret()) {
-        if let Some(value) = values.get(setting.key()).and_then(Value::as_str) {
-            object.insert(setting.key().to_string(), Value::String(value.to_string()));
-        }
-    }
 }
 
 /// 某扩展当前已设置的密钥键;供设置页显示「已设置」状态。

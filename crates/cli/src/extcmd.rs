@@ -335,7 +335,6 @@ fn ext_value(id: &str, method: &str, what: &str) -> Result<serde_json::Value, St
         &Request::Ext {
             id: id.to_string(),
             method: method.to_string(),
-            params: serde_json::Value::Null,
         },
         what,
     )?;

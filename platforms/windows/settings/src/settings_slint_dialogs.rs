@@ -4,7 +4,7 @@
 //! 等窗口骨架仍在父模块。
 
 use super::*;
-use lueying_server::ext_secret;
+use crate::ext_secret;
 
 /// 提示颜色反查种类:0 info 1 success 2 error。
 pub(super) fn notice_kind(tint: u32, colors: &PageColors) -> i32 {

@@ -1,6 +1,5 @@
 use super::*;
 use lueying_ext::manifest::SettingValue;
-use lueying_server::ext_settings::values;
 use std::collections::BTreeMap;
 
 fn toggle() -> Setting {
@@ -90,16 +89,6 @@ fn normalize_drops_unknown_and_bad_values() {
     assert_eq!(
         cfg.ext_settings["shot-ocr"],
         BTreeMap::from([("notify".to_string(), Value::Bool(false))])
-    );
-}
-
-#[test]
-fn values_merge_defaults() {
-    let stored = BTreeMap::from([("notify".to_string(), Value::Bool(false))]);
-    let value = values("shot-ocr", &[toggle(), choice()], Some(&stored));
-    assert_eq!(
-        value,
-        serde_json::json!({"notify": false, "quality": "high"})
     );
 }
 

@@ -16,12 +16,6 @@ pub mod ext_link;
 
 mod config_file;
 
-/// 扩展密钥的私密存储;设置窗与服务端的 `settings.set` 共用。
-pub mod ext_secret;
-
-/// 扩展声明式设置的读值:服务端 `settings.get` / `settings.set` 与设置窗共用。
-pub mod ext_settings;
-
 pub mod host_panel;
 
 #[cfg(windows)]

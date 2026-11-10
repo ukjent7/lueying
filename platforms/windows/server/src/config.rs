@@ -277,7 +277,7 @@ pub struct AppConfig {
     pub punct: BTreeMap<char, String>,
     /// 按应用覆盖层,来自 `apps.toml`;键是宿主 exe 名小写。
     pub apps: BTreeMap<String, AppOverride>,
-    /// 扩展命名空间 `[ext.<id>]`,声明式设置与 `Request::Ext` 共用。
+    /// 扩展命名空间 `[ext.<id>]`,声明式设置的值;设置窗写入。
     pub ext_settings: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
     /// 读取时收集的问题;保存成功后清空。
     pub config_issues: Vec<ConfigIssue>,

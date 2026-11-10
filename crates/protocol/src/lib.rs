@@ -264,15 +264,9 @@ pub enum Request {
     /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
     UiMode { session: u64, host_draws: bool },
     /// 通用扩展请求:`id` 是扩展(命令方法里是完整命令 id),`method`
-    /// 由宿主分派,`params` 原样透传。宿主提供 `settings.get` /
-    /// `settings.set`(声明式设置的读写)与 `commands.list` /
-    /// `command.run`(外部启动器触发扩展命令)。
-    Ext {
-        id: String,
-        method: String,
-        #[serde(default, with = "value_as_json")]
-        params: Value,
-    },
+    /// 由宿主分派。宿主提供 `commands.list`(已加载命令的标题表)与
+    /// `command.run`(外部启动器触发扩展命令,CLI `lueying ext run` 走这条)。
+    Ext { id: String, method: String },
     /// 会话下线。
     Goodbye { session: u64 },
 }
