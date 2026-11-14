@@ -30,7 +30,7 @@ getrandom = "0.4"
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
-windows-numerics = "0.3.1"
+windows-numerics = "0.100.0"
 # 运行期 Wasm 扩展:组件沙箱与每扩展 worker,只改候选窗外观或执行命令。
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 windows = { version = "0.62.2", features = [
