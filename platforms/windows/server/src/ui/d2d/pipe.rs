@@ -363,7 +363,11 @@ impl Target for Pipeline {
             dc.SetTarget(&bitmap);
             dc.BeginDraw();
             paint(&dc, &factory, f, text);
-            dc.EndDraw(None, None)
+            let result = dc.EndDraw(None, None);
+            // 后缓冲引用必须当场撤掉,DXGI 才允许下一次 ResizeBuffers;
+            // 攥着不放会让候选窗首次调整尺寸后永远出不了帧。
+            dc.SetTarget(None);
+            result
         }
         .map_err(|e| format!("EndDraw: {e}"))
     }
