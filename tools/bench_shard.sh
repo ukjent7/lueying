@@ -4,9 +4,9 @@
 # 需要 EVAL_KEY,没有它时只跑公开语料。TEST=true 时加跑 V2、V3 测试集(只在发版时)。
 set -euo pipefail
 bin=$(realpath "$1")
+root=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)
 cd "$2"
 shard=$3
-root=$(cd "$(dirname "$0")/.." && pwd)
 args=(--dict "$root/data/main.pyd" --gram "$root/data/collocation.bin" --rerank-dir "$root/data/rerank" --only-shared --shard "$shard")
 run() {
   if [ -n "$1" ]; then "$bin" "${args[@]}" --corpus "$1"; else "$bin" "${args[@]}"; fi
