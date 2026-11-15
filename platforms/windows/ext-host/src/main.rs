@@ -3,6 +3,9 @@
 //! 标准输入输出是与服务端的协议通道,诊断只能写标准错误(服务端把它接到日志)。
 //! `--selftest <报告>` 跑一次组件自检后退出,供 Windows 端到端验证。
 
+// 被服务端以管道拉起,不需要控制台;缺了会在桌面上留一个终端窗口。
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.as_slice() {
