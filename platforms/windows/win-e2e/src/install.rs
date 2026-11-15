@@ -169,8 +169,8 @@ fn real_run() -> Result<String, String> {
             }
             checks.push(format!("文件 {name}"));
         }
-        let dll64 = format!("lueying_tsf-{}.dll", safe_version(version));
-        if !target.join(&dll64).is_file() {
+        let dll64 = "lueying_tsf.dll";
+        if !target.join(dll64).is_file() {
             return Err(format!("安装目录缺少 {dll64}"));
         }
         checks.push(format!("TSF DLL {dll64}"));
@@ -230,7 +230,7 @@ fn real_run() -> Result<String, String> {
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if !is_versioned_tsf_dll(&name) {
+                if !is_tsf_dll_leftover(&name) {
                     unexpected.push(file.display().to_string());
                     continue;
                 }
@@ -324,7 +324,6 @@ fn compile_setup(payload: &Path, version: &str, out: &Path) -> Result<PathBuf, S
         .arg(format!("/DPayloadDir={}", payload.display()))
         .arg(format!("/DOutDir={}", out.display()))
         .arg(format!("/DVersion={version}"))
-        .arg(format!("/DVersionSafe={}", safe_version(version)))
         .arg(format!("/DVersionInfo={}", version_info(version)))
         .arg(&script);
     let output = run_command("ISCC", &mut command, Duration::from_secs(180))?;
@@ -357,19 +356,6 @@ fn iscc_path() -> Result<PathBuf, String> {
     .into_iter()
     .find(|path| path.is_file())
     .ok_or_else(|| "找不到 ISCC.exe;安装 Inno Setup 6 或设置 LUEYING_ISCC".to_string())
-}
-
-fn safe_version(version: &str) -> String {
-    version
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 fn version_info(version: &str) -> String {
@@ -465,6 +451,24 @@ fn update_installed(
     phase("编译 9.9.9 安装包");
     let setup = compile_setup(&package, "9.9.9", dist)?;
 
+    // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。组件文件名固定后,
+    // 静默安装里 Restart Manager 会强制关闭这类进程,升级才能在
+    // 不弹窗、不要求用户手动重启应用的情况下覆盖文件。
+    let holder_script = root.join("tsf-holder.ps1");
+    std::fs::write(
+        &holder_script,
+        "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern IntPtr LoadLibrary(string path);'\n[void][W.K]::LoadLibrary($args[0])\nStart-Sleep -Seconds 600\n",
+    )
+    .map_err(|e| format!("写 holder 脚本: {e}"))?;
+    let mut holder = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&holder_script)
+        .arg(target.join("lueying_tsf.dll"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("启动 DLL 宿主: {e}"))?;
+
     run_setup(
         "升级安装",
         &setup,
@@ -479,15 +483,26 @@ fn update_installed(
     if installed.trim() != "9.9.9" {
         return Err(format!("更新后版本是 {},期望 9.9.9", installed.trim()));
     }
-    for name in ["lueying_tsf-9.9.9.dll"] {
-        if !target.join(name).is_file() {
-            return Err(format!("更新后缺少 {name}"));
-        }
+    if !target.join("lueying_tsf.dll").is_file() {
+        return Err("更新后缺少 lueying_tsf.dll".into());
     }
     for name in stale {
         if target.join(name).exists() {
             return Err(format!("更新后仍留着旧 DLL {name}"));
         }
+    }
+    // 升级能覆盖固定名文件,靠的就是 Restart Manager 关掉了占用者。
+    let mut closed = false;
+    for _ in 0..20 {
+        if holder.try_wait().map_or(false, |state| state.is_some()) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    if !closed {
+        let _ = holder.kill();
+        return Err("持有旧 TSF 组件的进程未被安装器关闭".into());
     }
     Ok(())
 }
@@ -578,10 +593,12 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// 卸载时允许因宿主仍加载而留到重启的只有版本化 TSF DLL。
-fn is_versioned_tsf_dll(name: &str) -> bool {
+/// 卸载时允许因宿主仍加载而留到重启的 TSF 组件:稳定名本体、升级时
+/// 改名让路的 .previous,以及旧版本安装留下的版本化文件。
+fn is_tsf_dll_leftover(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.starts_with("lueying_tsf-") && lower.ends_with(".dll")
+    (lower.starts_with("lueying_tsf") && lower.ends_with(".dll"))
+        || lower.starts_with("lueying_tsf.dll.")
 }
 
 /// 文件是否已排进 Windows 的重启删除队列。Inno 对 `uninsrestartdelete`

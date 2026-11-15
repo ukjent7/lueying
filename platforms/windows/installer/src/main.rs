@@ -77,7 +77,7 @@ mod imp {
                 stop_server();
                 trace("stop_server: done");
             }
-            Some("--prune") => prune(&args),
+            Some("--prune") => prune(),
             _ => {
                 trace(&format!("helper: 未知参数 {args:?}"));
                 std::process::exit(2);
@@ -113,16 +113,13 @@ mod imp {
         trace("uninstall: done");
     }
 
-    /// 删除旧版本 DLL。被宿主加载的文件删不掉,留给下次安装;失败不报错。
-    fn prune(args: &[String]) {
-        let Some(keep) = value_after(args, "--keep") else {
-            trace("prune: 缺少 --keep");
-            return;
-        };
+    /// 删除旧版 TSF 组件:版本化遗留与升级时改名让路的 .previous。
+    /// 被宿主加载的文件删不掉,留给下次安装;失败不报错。
+    fn prune() {
         let Ok(target) = app_dir() else {
             return;
         };
-        prune_old_dlls(&target, &format!("lueying_tsf-{keep}.dll"));
+        prune_old_dlls(&target, "lueying_tsf.dll");
     }
 
     fn prune_old_dlls(target: &Path, keep: &str) {
@@ -134,19 +131,12 @@ mod imp {
             let lower = name.to_ascii_lowercase();
             if name.eq_ignore_ascii_case(keep)
                 || !lower.starts_with("lueying_tsf")
-                || !lower.ends_with(".dll")
+                || !(lower.ends_with(".dll") || lower.ends_with(".dll.previous"))
             {
                 continue;
             }
             let _ = std::fs::remove_file(entry.path());
         }
-    }
-
-    fn value_after(args: &[String], flag: &str) -> Option<String> {
-        args.iter()
-            .position(|a| a == flag)
-            .and_then(|i| args.get(i + 1))
-            .cloned()
     }
 
     fn app_dir() -> Result<PathBuf, String> {

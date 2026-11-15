@@ -6,7 +6,7 @@
 ;
 ; 编译参数(xtask pack 与安装 E2E 共用):
 ;   /DPayloadDir=<发布目录>  /DOutDir=<输出目录>
-;   /DVersion=<版本>  /DVersionSafe=<文件名安全版本>  /DVersionInfo=<x.y.z.w>
+;   /DVersion=<版本>  /DVersionInfo=<x.y.z.w>
 
 #ifndef AppName
   #define AppName "掠影"
@@ -16,9 +16,6 @@
 #endif
 #ifndef Version
   #define Version "0.0.0"
-#endif
-#ifndef VersionSafe
-  #define VersionSafe Version
 #endif
 #ifndef VersionInfo
   #define VersionInfo "0.0.0.0"
@@ -69,10 +66,12 @@ Source: "{#PayloadDir}\lueying-settings.exe"; DestDir: "{app}"; Flags: ignorever
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; PrepareToInstall 在复制文件前就要停掉旧服务,所以再嵌一份临时副本。
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{tmp}"; Flags: dontcopy noencryption
-; 版本号进 DLL 文件名:升级时新文件不会被宿主加载的旧 DLL 锁住。
-Source: "{#PayloadDir}\lueying_tsf.dll"; DestDir: "{app}"; DestName: "lueying_tsf-{#VersionSafe}.dll"; \
-    Flags: ignoreversion regserver 64bit uninsrestartdelete
-Source: "{#PayloadDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+; TSF 组件文件名固定:升级覆盖同一文件,Restart Manager 才能把正在用
+; 旧组件的应用列出来征询关闭并在装完重启;仍被宿主加载时由
+; PrepareTsfDll 改名让路,注册表指向的路径因此长期稳定。
+Source: "{#PayloadDir}\lueying_tsf.dll"; DestDir: "{app}"; DestName: "lueying_tsf.dll"; \
+    Flags: ignoreversion regserver 64bit uninsrestartdelete; \
+    BeforeInstall: PrepareTsfDllSource: "{#PayloadDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\licenses\*"; DestDir: "{app}\licenses"; \
@@ -92,6 +91,8 @@ Source: "{#PayloadDir}\rerank-25m.vocab.json"; DestDir: "{app}"; Flags: ignoreve
 [InstallDelete]
 ; 旧的自建安装器已被 lueying-user.exe 取代,不再随包分发。
 Type: files; Name: "{app}\lueying-install.exe"
+; 上次升级改名让路的旧 TSF 组件;仍被宿主加载时删不掉,留给下次。
+Type: files; Name: "{app}\lueying_tsf.dll.previous"
 
 [Icons]
 Name: "{group}\掠影设置"; Filename: "{app}\lueying-settings.exe"
@@ -105,7 +106,7 @@ Filename: "{app}\lueying-user.exe"; Parameters: "--install"; \
     Flags: runasoriginaluser runhidden waituntilterminated
 ; 旧版本 DLL 可能仍被宿主加载,删不掉的留给下次。Inno 不检查 [Run]
 ; 进程退出码,所以 prune 失败不会中断安装。
-Filename: "{app}\lueying-user.exe"; Parameters: "--prune --keep {#VersionSafe}"; \
+Filename: "{app}\lueying-user.exe"; Parameters: "--prune"; \
     Flags: runhidden waituntilterminated
 
 [UninstallRun]
@@ -113,6 +114,22 @@ Filename: "{app}\lueying-user.exe"; Parameters: "--uninstall"; \
     Flags: runhidden waituntilterminated; RunOnceId: "LueyingUserCleanup"
 
 [Code]
+; 宿主进程仍加载着旧 TSF 组件时,覆盖同名文件会失败。改名让路:
+; 已加载的模块照常运行,新进程从原名拿到新文件;改动名即未加载,
+; 统一走这一步也无副作用。改名失败(极少见的双重占用)交给 Inno
+; 常规的文件占用提示。
+procedure PrepareTsfDll;
+var
+  Target, Previous: String;
+begin
+  Target := ExpandConstant('{app}\lueying_tsf.dll');
+  Previous := Target + '.previous';
+  if not FileExists(Target) then
+    exit;
+  DeleteFile(Previous);
+  RenameFile(Target, Previous);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Helper: String;

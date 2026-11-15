@@ -219,7 +219,6 @@ fn compile_setup(args: &PackArgs, root: &Path) -> Result<PathBuf, String> {
         .arg(format!("/DPayloadDir={}", payload.display()))
         .arg(format!("/DOutDir={}", out_dir.display()))
         .arg(format!("/DVersion={}", args.version))
-        .arg(format!("/DVersionSafe={}", safe_version(&args.version)))
         .arg(format!("/DVersionInfo={}", version_info(&args.version)));
     command.arg(&script);
     let output = command
@@ -279,19 +278,7 @@ fn version_info(version: &str) -> String {
     format!("{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3])
 }
 
-/// 文件名安全的版本号(与安装器 `dll_name` 同一规则)。
-fn safe_version(version: &str) -> String {
-    version
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+
 
 /// 复制并记录大小;源文件名与目标名可以不同(DLL 统一成版本化文件名)。
 fn copy_file(
