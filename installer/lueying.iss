@@ -71,7 +71,8 @@ Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{tmp}"; Flags: dontcopy noen
 ; PrepareTsfDll 改名让路,注册表指向的路径因此长期稳定。
 Source: "{#PayloadDir}\lueying_tsf.dll"; DestDir: "{app}"; DestName: "lueying_tsf.dll"; \
     Flags: ignoreversion regserver 64bit uninsrestartdelete; \
-    BeforeInstall: PrepareTsfDllSource: "{#PayloadDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+    BeforeInstall: PrepareTsfDll
+Source: "{#PayloadDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\licenses\*"; DestDir: "{app}\licenses"; \
