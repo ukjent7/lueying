@@ -90,8 +90,8 @@ pub(crate) fn open_keyboard(thread_mgr: &ITfThreadMgr, tid: u32) {
     let Ok(manager) = thread_mgr.cast::<ITfCompartmentMgr>() else {
         return;
     };
-    let Ok(compartment) = unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
-    else {
+    let compartment = unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) };
+    let Ok(compartment) = compartment else {
         return;
     };
     if read_i32(&compartment) != Some(1) {
