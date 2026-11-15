@@ -1,6 +1,6 @@
-//! 中/英模式与系统状态同步:写「转换模式」「输入法开/关」两条 compartment,
-//! 让 Win11 输入指示器、Ctrl+Space 和任务栏菜单与输入法保持一致;反向变化
-//! 经 [`ITfCompartmentEventSink`] 回到 Server,成为全局模式。
+//! 中/英模式与系统状态同步:中英与全/半角写「转换模式」,激活时把
+//! 「输入法开/关」打开;反向变化经 [`ITfCompartmentEventSink`] 回到
+//! Server,成为全局模式。
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
@@ -54,8 +54,12 @@ pub(crate) fn unadvise(advice: Advice) {
     }
 }
 
-/// 写系统状态:中文 = 转换模式 NATIVE 位亮 + 输入法开关打开;
-/// 全角 = 转换模式 FULLSHAPE 位亮。已经是目标值时不写,避免触发无意义的 OnChange。
+/// 写系统状态:中文 = 转换模式 NATIVE 位亮,全角 = FULLSHAPE 位亮。
+/// 只碰转换模式;「输入法开/关」不随中英写——TSF 对关闭状态的输入法
+/// 不再派键,一旦把英文态写进开关,Shift 与语言栏都收不到键,输入法
+/// 会被锁死在英文。开关只在激活时打开(见 [`open_keyboard`]),此后
+/// 归系统 Ctrl+Space 管,变化经事件汇同步回全局模式。
+/// 已经是目标值时不写,避免触发无意义的 OnChange。
 pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool, fullwidth: bool) {
     let Ok(manager) = thread_mgr.cast::<ITfCompartmentMgr>() else {
         return;
@@ -79,12 +83,19 @@ pub(crate) fn write_indicator(thread_mgr: &ITfThreadMgr, tid: u32, chinese: bool
             let _ = unsafe { compartment.SetValue(tid, &VARIANT::from(next)) };
         }
     }
-    if let Ok(compartment) = unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
-    {
-        let target = i32::from(chinese);
-        if read_i32(&compartment) != Some(target) {
-            let _ = unsafe { compartment.SetValue(tid, &VARIANT::from(target)) };
-        }
+}
+
+/// 激活时把「输入法开/关」写为开:选了这个输入法就是想打字。
+pub(crate) fn open_keyboard(thread_mgr: &ITfThreadMgr, tid: u32) {
+    let Ok(manager) = thread_mgr.cast::<ITfCompartmentMgr>() else {
+        return;
+    };
+    let Ok(compartment) = unsafe { manager.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) }
+    else {
+        return;
+    };
+    if read_i32(&compartment) != Some(1) {
+        let _ = unsafe { compartment.SetValue(tid, &VARIANT::from(1)) };
     }
 }
 

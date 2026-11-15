@@ -560,7 +560,8 @@ impl TextService_Impl {
             // 大写锁定期间字母直通,实际是英文;语言栏先对齐,灭灯后再恢复。
             self.shared.set_chinese(false);
         }
-        // 激活时先把系统指示器对齐当前模式;Focus 回调随后再跟 Server 的全局值。
+        // 激活时先把系统指示器对齐当前模式,并确保键盘处于打开状态
+        // (TSF 对关闭状态的输入法不派键);Focus 回调随后再跟 Server 的全局值。
         self.shared.mode_writing.set(true);
         crate::mode::write_indicator(
             &thread_mgr,
@@ -568,6 +569,7 @@ impl TextService_Impl {
             self.shared.chinese.get(),
             self.shared.fullwidth.get(),
         );
+        crate::mode::open_keyboard(&thread_mgr, tid);
         self.shared.mode_writing.set(false);
         *self.poll.borrow_mut() = crate::poll::PollTimer::new(
             self.client.clone(),
