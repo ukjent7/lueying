@@ -17,6 +17,10 @@ import re
 import sys
 from pathlib import Path
 
+# Windows 下 stdout 默认是 cp1252，打印中文会 UnicodeEncodeError；发布统一按 UTF-8 走。
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
 HEADING = re.compile(r"^##\s+\[?v?([^\]\s]+)\]?(?:\s+-\s+.*)?$")
