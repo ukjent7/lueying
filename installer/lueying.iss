@@ -115,10 +115,10 @@ Filename: "{app}\lueying-user.exe"; Parameters: "--uninstall"; \
     Flags: runhidden waituntilterminated; RunOnceId: "LueyingUserCleanup"
 
 [Code]
-; 宿主进程仍加载着旧 TSF 组件时,覆盖同名文件会失败。改名让路:
-; 已加载的模块照常运行,新进程从原名拿到新文件;改动名即未加载,
-; 统一走这一步也无副作用。改名失败(极少见的双重占用)交给 Inno
-; 常规的文件占用提示。
+// 宿主进程仍加载着旧 TSF 组件时,覆盖同名文件会失败。改名让路:
+// 已加载的模块照常运行,新进程从原名拿到新文件;改动名即未加载,
+// 统一走这一步也无副作用。改名失败(极少见的双重占用)交给 Inno
+// 常规的文件占用提示。
 procedure PrepareTsfDll;
 var
   Target, Previous: String;
