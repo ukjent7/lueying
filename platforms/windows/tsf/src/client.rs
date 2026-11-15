@@ -35,7 +35,9 @@ pub(crate) struct Client {
 const ROUND_TRIP_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// 校验管道对端是 lueying-server:抢占了管道名的进程连按键都拿不到。
-/// 查不到服务端 PID 或映像名不符一律视为假服务。
+/// 查不到服务端 PID 或映像名不符一律视为假服务;AppContainer 宿主
+/// (开始菜单搜索、UWP)无权查服务端进程,管道名已按用户加会话隔离,
+/// 这时放行,不能因此让系统应用打不了中文。
 fn verify_server(file: &File) -> bool {
     let mut pid = 0u32;
     let Ok(()) = (unsafe { GetNamedPipeServerProcessId(HANDLE(file.as_raw_handle()), &mut pid) })
@@ -44,7 +46,7 @@ fn verify_server(file: &File) -> bool {
     };
     let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
     else {
-        return false;
+        return true;
     };
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
