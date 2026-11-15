@@ -85,14 +85,14 @@ component GlassCard inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     drop-shadow-blur: 20px;
-    drop-shadow-color: #1E000000;
+    drop-shadow-color: #0000001E;
     drop-shadow-offset-y: 5px;
 
     sheen := Rectangle {
         width: 100%;
         height: 100%;
         border-radius: parent.border-radius;
-        background: @linear-gradient(180deg, #0AFFFFFF 0%, #00FFFFFF 48%);
+        background: @linear-gradient(180deg, #FFFFFF0A 0%, #FFFFFF00 48%);
     }
 }
 
@@ -167,7 +167,7 @@ component SwatchDot inherits Rectangle {
         border-radius: self.width / 2;
         background: tint;
         border-width: 1px;
-        border-color: #1A000000;
+        border-color: #0000001A;
     }
 }
 
