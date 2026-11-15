@@ -278,9 +278,7 @@ fn version_info(version: &str) -> String {
     format!("{}.{}.{}.{}", parts[0], parts[1], parts[2], parts[3])
 }
 
-
-
-/// 复制并记录大小;源文件名与目标名可以不同(DLL 统一成版本化文件名)。
+/// 复制并记录大小;源文件名与目标名可以不同。
 fn copy_file(
     source: &Path,
     out: &Path,
