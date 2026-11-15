@@ -451,9 +451,9 @@ fn update_installed(
     phase("编译 9.9.9 安装包");
     let setup = compile_setup(&package, "9.9.9", dist)?;
 
-    // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。组件文件名固定后,
-    // 静默安装里 Restart Manager 会强制关闭这类进程,升级才能在
-    // 不弹窗、不要求用户手动重启应用的情况下覆盖文件。
+    // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。静默安装不征询也
+    // 不强关(CloseApplications=yes 在静默下视为 no),升级靠改名让路
+    // 完成:宿主进程与其加载的模块照常运行,新进程从原名拿到新文件。
     let holder_script = root.join("tsf-holder.ps1");
     std::fs::write(
         &holder_script,
@@ -491,19 +491,17 @@ fn update_installed(
             return Err(format!("更新后仍留着旧 DLL {name}"));
         }
     }
-    // 升级能覆盖固定名文件,靠的就是 Restart Manager 关掉了占用者。
-    let mut closed = false;
-    for _ in 0..20 {
-        if holder.try_wait().map_or(false, |state| state.is_some()) {
-            closed = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    if !closed {
+    // 改名让路生效的证据:宿主进程还在跑,旧组件以 .previous 形态
+    // 留在磁盘上,等宿主退出后的下次安装清理。
+    if holder.try_wait().map_or(false, |state| state.is_some()) {
         let _ = holder.kill();
-        return Err("持有旧 TSF 组件的进程未被安装器关闭".into());
+        return Err("升级时持有旧 TSF 组件的进程被意外终止".into());
     }
+    if !target.join("lueying_tsf.dll.previous").is_file() {
+        let _ = holder.kill();
+        return Err("升级后缺少改名让路的 lueying_tsf.dll.previous".into());
+    }
+    let _ = holder.kill();
     Ok(())
 }
 
