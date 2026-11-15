@@ -1,5 +1,6 @@
 # push/PR:格式、构建、静态检查、单测与 Windows 构建体积门禁;主分支每次推送出测试安装包。
 # 场景 E2E、候选基准与安装冒烟在 quality.yml:核心路径改动在 push 到 main 时由本工作流调用,手动触发也跑。
+# tag 发版只走构建与打包,几分钟出产物;全链路 E2E 与安装冒烟只在手动 dispatch 时跑,不挡发版。
 name: ci
 
 on:
@@ -281,20 +282,20 @@ jobs:
           if ($bytes -gt 90MB) { throw "运行时体积超过 90 MiB" }
       - name: Build Windows E2E harness
         id: build_e2e
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'workflow_dispatch'
         run: cargo build --release --locked -p lueying-win-e2e
       - name: Windows 全链路 E2E
-        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
+        if: github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
-        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
+        if: github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-win-e2e --release --locked -- install
       # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
       # 失败时把两份都收进 artifact,否则只剩一个退出码。
       - name: 收集安装日志
-        if: always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        if: always() && github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $dst = "target/install-e2e-logs"
@@ -326,7 +327,7 @@ jobs:
             target/win-e2e-server.log
             target/lueying-settings-selftest.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        if: always() && github.event_name == 'workflow_dispatch'
         with:
           name: install-e2e-report
           path: |
