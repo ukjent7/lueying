@@ -54,7 +54,7 @@ pub(crate) fn winget(args: WingetArgs) -> Result<(), String> {
         (
             format!("{id}.installer.yaml"),
             format!(
-                "PackageIdentifier: {id}\nPackageVersion: {version}\nInstallers:\n  - Architecture: x64\n    InstallerLocale: zh-CN\n    InstallerType: inno\n    InstallerUrl: {installer_url}\n    InstallerSha256: {sha256}\n    InstallerSwitches:\n      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\n      SilentWithProgress: /SILENT\n      InstallLocation: /DIR=\"<INSTALLPATH>\"\n    Scope: machine\nManifestType: installer\nManifestVersion: 1.6.0\n"
+                "PackageIdentifier: {id}\nPackageVersion: {version}\nInstallers:\n  - Architecture: x64\n    InstallerLocale: zh-CN\n    InstallerType: inno\n    InstallerUrl: {installer_url}\n    InstallerSha256: {sha256}\n    InstallerSwitches:\n      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS\n      SilentWithProgress: /SILENT\n      InstallLocation: /DIR=\"<INSTALLPATH>\"\n    Scope: machine\nManifestType: installer\nManifestVersion: 1.6.0\n"
             ),
         ),
         (

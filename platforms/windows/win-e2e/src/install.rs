@@ -387,6 +387,10 @@ fn run_setup(
             .arg("/VERYSILENT")
             .arg("/SUPPRESSMSGBOXES")
             .arg("/NORESTART")
+            // 与 winget 的静默开关一致:静默升级不打扰运行中的应用,
+            // 被宿主锁住的 TSF 组件由 BeforeInstall 的改名让路处理,
+            // 不靠 Restart Manager 强杀进程。
+            .arg("/NOCLOSEAPPLICATIONS")
             .arg(format!("/LANG={lang}"))
             .arg(format!("/DIR={}", target.display()))
             .arg(format!("/LOG={}", log.display()));
@@ -451,11 +455,11 @@ fn update_installed(
     phase("编译 9.9.9 安装包");
     let setup = compile_setup(&package, "9.9.9", dist)?;
 
-    // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。静默安装不征询也
-    // 不强关(CloseApplications=yes 在静默下视为 no),升级靠改名让路
-    // 完成:宿主进程与其加载的模块照常运行,新进程从原名拿到新文件。
-    // LoadLibrary 的结果写进状态文件:加载失败会让升级退化成普通覆盖,
-    // 场景失真,必须当场报错,不能让后面的断言空转。
+    // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。静默安装带
+    // /NOCLOSEAPPLICATIONS(与 winget 一致),Restart Manager 不强杀
+    // 占用进程,升级靠改名让路完成:宿主进程与其加载的模块照常运行,
+    // 新进程从原名拿到新文件。LoadLibrary 的结果写进状态文件:加载失败
+    // 会让升级退化成普通覆盖,场景失真,必须当场报错,不能让断言空转。
     let holder_script = root.join("tsf-holder.ps1");
     let holder_status = root.join("tsf-holder-loaded.txt");
     std::fs::write(
