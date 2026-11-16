@@ -454,20 +454,43 @@ fn update_installed(
     // 模拟宿主:像 Chrome 一样加载着旧 TSF 组件。静默安装不征询也
     // 不强关(CloseApplications=yes 在静默下视为 no),升级靠改名让路
     // 完成:宿主进程与其加载的模块照常运行,新进程从原名拿到新文件。
+    // LoadLibrary 的结果写进状态文件:加载失败会让升级退化成普通覆盖,
+    // 场景失真,必须当场报错,不能让后面的断言空转。
     let holder_script = root.join("tsf-holder.ps1");
+    let holder_status = root.join("tsf-holder-loaded.txt");
     std::fs::write(
         &holder_script,
-        "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern IntPtr LoadLibrary(string path);'\n[void][W.K]::LoadLibrary($args[0])\nStart-Sleep -Seconds 600\n",
+        "Add-Type -Namespace W -Name K -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern IntPtr LoadLibrary(string path);'\n$h = [W.K]::LoadLibrary($args[0])\nSet-Content -Path $args[1] -Value $h -Encoding ascii\nStart-Sleep -Seconds 600\n",
     )
     .map_err(|e| format!("写 holder 脚本: {e}"))?;
     let mut holder = Command::new("powershell")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&holder_script)
         .arg(target.join("lueying_tsf.dll"))
+        .arg(&holder_status)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("启动 DLL 宿主: {e}"))?;
+
+    // 等 holder 加载完再跑升级,不然安装可能赶在加载完成之前复制文件。
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let loaded = loop {
+        match std::fs::read_to_string(&holder_status) {
+            Ok(text) => {
+                let handle = text.trim();
+                break !handle.is_empty() && handle != "0";
+            }
+            Err(_) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => break false,
+        }
+    };
+    if !loaded {
+        let _ = holder.kill();
+        return Err("模拟宿主的进程没有加载到旧 TSF 组件".into());
+    }
 
     run_setup(
         "升级安装",
@@ -491,15 +514,13 @@ fn update_installed(
             return Err(format!("更新后仍留着旧 DLL {name}"));
         }
     }
-    // 改名让路生效的证据:宿主进程还在跑,旧组件以 .previous 形态
-    // 留在磁盘上,等宿主退出后的下次安装清理。
+    // 改名让路生效的证据:宿主进程还在跑,新组件已从原名就位——若仍走
+    // 覆盖旧文件的路线,Setup 会因文件被宿主占用而失败。.previous 的去留
+    // 取决于系统对被加载模块的删除语义:允许删除就当场消失,不允许则留给
+    // 下次安装的 [InstallDelete];两种结果都算升级成功,不作断言。
     if holder.try_wait().map_or(false, |state| state.is_some()) {
         let _ = holder.kill();
         return Err("升级时持有旧 TSF 组件的进程被意外终止".into());
-    }
-    if !target.join("lueying_tsf.dll.previous").is_file() {
-        let _ = holder.kill();
-        return Err("升级后缺少改名让路的 lueying_tsf.dll.previous".into());
     }
     let _ = holder.kill();
     Ok(())
