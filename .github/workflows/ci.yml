@@ -1,6 +1,7 @@
 # push/PR:格式、构建、静态检查、单测与 Windows 构建体积门禁;主分支每次推送出测试安装包。
-# 场景 E2E、候选基准与安装冒烟在 quality.yml:核心路径改动在 push 到 main 时由本工作流调用,手动触发也跑。
-# tag 发版只走构建与打包,几分钟出产物;全链路 E2E 与安装冒烟只在手动 dispatch 时跑,不挡发版。
+# Windows 全链路 E2E 与安装冒烟在 push 到 main 与手动 dispatch 时随 windows job 直跑;
+# Linux 场景 E2E、候选基准、学习模拟、共享语料基准与延迟 ABAB 在 quality.yml,核心路径改动时由本工作流调用。
+# tag 发版只走构建与打包,几分钟出产物;E2E 与冒烟不挡发版。
 name: ci
 
 on:
@@ -73,7 +74,8 @@ jobs:
           echo "核心路径改动: $core"
           echo "core=$core" >> "$GITHUB_OUTPUT"
 
-  # 核心路径改动:场景 E2E、准确率与延迟红线、共享语料基准、Windows E2E 与安装冒烟,整套复用 quality.yml。
+  # 核心路径改动:Linux 场景 E2E、准确率与延迟红线、共享语料基准,复用 quality.yml;
+  # Windows E2E 与安装冒烟已在下面的 windows job 直跑,不再重复起一套 Windows 构建。
   quality:
     needs: changes
     if: needs.changes.outputs.core == 'true'
@@ -159,6 +161,23 @@ jobs:
           cargo nextest run --locked \
             -p lueying-ext --all-features \
             -p lueying-ext-host -p lueying-cli
+
+  # Windows 平台特有单测:与 windows 构建并行,不占发版关键路径;
+  # 平台无关单测已在 Linux 的 engine job 跑过,这里只留平台特有路径。
+  windows-test:
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # 只读缓存:windows job 负责保存,这里恢复后直接跑测试。
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: true
+      - name: 服务端单元测试(Windows)
+        run: cargo test -p lueying-server --lib --release --locked
 
   windows:
     if: ${{ !cancelled() }}
@@ -247,14 +266,8 @@ jobs:
           if (-not $settings) {
             throw "lueying-settings.exe 的导入表没有 crypt32:更新与扩展商店的联网路径丢了,断言失去对照"
           }
-      # 服务提供者(服务缝 T3)的 Windows 集成验证:真 GDI 截图、真 WinRT 识别
-      # 与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
-      # 平台无关的服务端单测已在 Linux 的 engine job 跑过;Windows 这份只留平台特有
-      # 路径,挂到发版构建,push 门禁省下三分多钟的测试编译。
-      - name: 服务端单元测试(Windows)
-        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && steps.build.outcome == 'success'
-        run: |
-          cargo test -p lueying-server --lib --release --locked
+      # 服务提供者(服务缝 T3)的 Windows 集成验证在 windows-test job:真 GDI 截图、
+      # 真 WinRT 识别与热键注册语义;语言包缺失时只接受确定性的「没有可用引擎」失败。
       # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release 供打包用。
       - name: TSF 构建(静态 CRT)
         env:
@@ -282,20 +295,20 @@ jobs:
           if ($bytes -gt 90MB) { throw "运行时体积超过 90 MiB" }
       - name: Build Windows E2E harness
         id: build_e2e
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         run: cargo build --release --locked -p lueying-win-e2e
       - name: Windows 全链路 E2E
-        if: github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         run: cargo run -p lueying-win-e2e --release --locked
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
-        if: github.event_name == 'workflow_dispatch' && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
+        if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
         timeout-minutes: 8
         run: cargo run -p lueying-win-e2e --release --locked -- install
       # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
       # 失败时把两份都收进 artifact,否则只剩一个退出码。
       - name: 收集安装日志
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
         shell: pwsh
         run: |
           $dst = "target/install-e2e-logs"
@@ -327,7 +340,7 @@ jobs:
             target/win-e2e-server.log
             target/lueying-settings-selftest.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
         with:
           name: install-e2e-report
           path: |

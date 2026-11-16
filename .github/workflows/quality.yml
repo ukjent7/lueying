@@ -1,4 +1,5 @@
-# 真实词典与安装链路的门禁:场景 E2E、抽样候选基准、共享语料基准与 Windows 安装冒烟并行跑。
+# 真实词典与引擎链路的门禁:Linux 场景 E2E、候选基准、学习模拟、共享语料基准与延迟 ABAB 并行跑。
+# Windows 全链路 E2E 与安装冒烟在 ci.yml 的 windows job 直跑,不再重复一套 Windows 构建。
 # 核心路径改动在 push 到 main 时由 ci.yml 通过 workflow_call 调用;也可手动 workflow_dispatch,勾 full 跑全量候选基准。
 # 同一提交成功跑过就跳过。
 name: quality
@@ -53,11 +54,12 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-  linux:
+  # 场景 E2E 与候选准确率基准;OCR 真模型单测也在这里(与 ci.yml 共用 Linux 缓存)。
+  linux-e2e:
     needs: preflight
     if: needs.preflight.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -112,14 +114,11 @@ jobs:
           echo "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> "$GITHUB_ENV"
       - name: 主词典 E2E + 候选准确率基准
         run: cargo run -p lueying-bench --release --locked -- --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--bench' || '--bench-fast' }}
-      # 学习模拟:快速版每次都跑;完整版(含对验收集的副作用)只在手动勾选 full 时跑。用户语料只出汇总数字。
-      - name: 学习模拟
-        run: cargo run -p lueying-bench --release --locked -- learn-sim --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--full' || '' }}
       - name: 报告摘要
         if: always()
         shell: bash
         run: |
-          for f in target/e2e-report.md target/bench-report.md target/learn-sim.md; do
+          for f in target/e2e-report.md target/bench-report.md; do
             if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - name: 上传 E2E/基准报告
@@ -130,147 +129,53 @@ jobs:
           path: |
             target/e2e-report.md
             target/bench-report.md
-            target/learn-sim.md
             target/e2e-failures.txt
 
-  # 共享语料基准单独铺开,不和上面的场景串行。
+  # 学习模拟与场景 E2E 并行:只吃引擎与词典,不需要 wasm 客人;
+  # 单独一个 runner 拉平整条流水线。快速版每次都跑;完整版(含对验收集
+  # 的副作用)只在手动勾选 full 时跑。用户语料只出汇总数字。
+  linux-learn:
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
+          prefix-key: linux
+      - name: 缓存词典与模型
+        id: dict-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: data
+          key: dict-${{ hashFiles('tools/fetch_dict.sh', 'tools/fetch_rerank.sh') }}
+      - name: 下载词典与搭配表
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_dict.sh data
+      - name: 下载神经重排模型
+        if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: bash tools/fetch_rerank.sh data/rerank
+      - name: 学习模拟
+        run: cargo run -p lueying-bench --release --locked -- learn-sim --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank ${{ inputs.full && '--full' || '' }}
+      - name: 报告摘要
+        if: always()
+        shell: bash
+        run: |
+          if [ -f target/learn-sim.md ]; then cat target/learn-sim.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: 上传学习模拟报告
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: quality-learn-report
+          path: target/learn-sim.md
+
+  # 共享语料基准单独铺开,不和上面的场景串行;延迟 ABAB 也在里面,与分片并行。
   shared:
     needs: preflight
     if: needs.preflight.outputs.run == 'true'
     uses: ./.github/workflows/dict-bench.yml
     secrets: inherit
-
-  # 延迟 ABAB:新旧两个基准二进制交替跑同一段产品链路,报告线程 CPU 时间的比值。只报告,不设门限。
-  latency:
-    needs: [preflight, shared]
-    if: needs.preflight.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: bench-bin
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: bench-base-bin
-          path: base-bin
-      - name: 下载词典与模型
-        run: |
-          bash tools/fetch_dict.sh data
-          bash tools/fetch_rerank.sh data/rerank
-      - name: 延迟 ABAB
-        run: |
-          chmod +x lueying-bench base-bin/lueying-bench
-          ./lueying-bench latency --old base-bin/lueying-bench --new ./lueying-bench \
-            --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --rounds 6
-      - name: 报告摘要
-        if: always()
-        run: cat target/latency.md >> "$GITHUB_STEP_SUMMARY" || true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: quality-latency-report
-          path: target/latency.md
-
-  windows:
-    needs: preflight
-    if: needs.preflight.outputs.run == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # 不区分 PR,恢复并保存缓存。
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # 官方 guest:win-e2e 装扩展与安装冒烟的发布包都要它;产物拷进仓库路径供运行期读取。
-      - name: 安装 wasm-tools
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: wasm-tools
-      - name: 构建官方 guest
-        shell: pwsh
-        run: |
-          cargo build --release -p shot-ocr --target wasm32-unknown-unknown --locked
-          cargo build --release -p clipboard-history --target wasm32-unknown-unknown --locked
-          cargo build --release -p voice-asr --target wasm32-unknown-unknown --locked
-          wasm-tools component new target/wasm32-unknown-unknown/release/shot_ocr.wasm -o extensions/shot-ocr/extension.wasm
-          wasm-tools component new target/wasm32-unknown-unknown/release/clipboard_history.wasm -o extensions/clipboard-history/extension.wasm
-          wasm-tools component new target/wasm32-unknown-unknown/release/voice_asr.wasm -o extensions/voice-asr/extension.wasm
-      # 扩展自检的外观客人:fixture-guest 编出的组件(固定主题色)。
-      - name: 组件测试客人构建
-        shell: pwsh
-        run: |
-          $env:CARGO_TARGET_DIR = "target"
-          cargo build --release --manifest-path crates/ext/tests/fixture-guest/Cargo.toml --target wasm32-unknown-unknown
-          wasm-tools component new target/wasm32-unknown-unknown/release/fixture_guest.wasm -o target/fixture-a.wasm
-          "LUEYING_SELFTEST_WASM=$PWD/target/fixture-a.wasm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      # 安装冒烟每次都编译真实安装包,复用与发版相同的 Inno 脚本。
-      - name: 安装 Inno Setup
-        shell: pwsh
-        run: |
-          $setup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
-          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $setup
-          Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "Inno Setup 安装失败" }
-          "LUEYING_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Build (release)
-        id: build
-        # TSF 不在这里:它要静态 CRT,单独一步构建(见 .cargo/config.toml)。
-        # 扩展宿主也要:安装冒烟要把 lueying-ext-host.exe 打进安装包,它不是
-        # installer 的依赖,不显式编就缺文件。
-        run: cargo build --release --locked -p lueying-server -p lueying-settings -p lueying-ext-host -p lueying-installer -p lueying-win-e2e
-      # TSF DLL(64 位):静态 CRT,独立 target 目录;产物拷回 target/release。
-      - name: TSF 构建(静态 CRT)
-        id: buildtsf
-        env:
-          CARGO_TARGET_DIR: target/tsf
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: |
-          cargo build --release --locked -p lueying-tsf
-          Copy-Item target/tsf/release/lueying_tsf.dll target/release/lueying_tsf.dll -Force
-      - name: Windows 全链路 E2E
-        run: cargo run -p lueying-win-e2e --release --locked
-      - name: 安装/卸载冒烟
-        if: always() && steps.build.outcome == 'success' && steps.buildtsf.outcome == 'success'
-        timeout-minutes: 8
-        run: cargo run -p lueying-win-e2e --release --locked -- install
-      # Setup 在语言/提权问题下会在写 /LOG 前退出,默认日志落在 %TEMP%。
-      # 失败时把两份都收进 artifact,否则只剩一个退出码。
-      - name: 收集安装日志
-        if: always()
-        shell: pwsh
-        run: |
-          $dst = "target/install-e2e-logs"
-          New-Item -ItemType Directory -Force $dst | Out-Null
-          Get-ChildItem $env:TEMP -Filter "Setup Log*.txt" -File -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $dst -ErrorAction SilentlyContinue
-          Get-ChildItem $env:TEMP -Directory -Filter "lueying-install-e2e-*" -ErrorAction SilentlyContinue | ForEach-Object {
-            Get-ChildItem $_.FullName -Filter "*.log" -File -ErrorAction SilentlyContinue | ForEach-Object {
-              $dir = Split-Path $_.DirectoryName -Leaf
-              Copy-Item $_.FullName (Join-Path $dst "$dir-$($_.Name)") -ErrorAction SilentlyContinue
-            }
-          }
-      - name: 报告摘要
-        if: always()
-        shell: pwsh
-        run: |
-          $files = @("target/win-e2e-report.md", "target/install-e2e-report.md")
-          foreach ($file in $files) {
-            if (Test-Path $file) { Get-Content $file | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 }
-          }
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: quality-windows-report
-          path: |
-            target/win-e2e-report.md
-            target/win-e2e-tsf.log
-            target/win-e2e-server.log
-            target/install-e2e-report.md
-            target/install-e2e-trace.log
-            target/install-e2e-logs/

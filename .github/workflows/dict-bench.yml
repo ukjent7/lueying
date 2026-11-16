@@ -206,13 +206,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # 语料增多后单片常超过 60 分钟(曾整片超时被取消),留足余量。
-    # 8 片并行:语料约 1.4 万条,4 片时单片近 60 分钟。配对对照只在缓存未命中时多跑一遍。
+    # 12 片并行:语料约 1.4 万条,8 片时单片近 60 分钟。配对对照只在缓存未命中时多跑一遍。
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         tier: ${{ fromJSON(needs.build.outputs.tiers) }}
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -260,7 +260,7 @@ jobs:
           EVAL_KEY: ${{ secrets.EVAL_KEY }}
           TEST: ${{ inputs.test }}
           SHARD: ${{ matrix.shard }}
-          TOTAL: "8"
+          TOTAL: "12"
         run: |
           chmod +x base-bin/lueying-bench
           mkdir -p "$RUNNER_TEMP/base-run" base
@@ -272,7 +272,7 @@ jobs:
           EVAL_KEY: ${{ secrets.EVAL_KEY }}
           TEST: ${{ inputs.test }}
           SHARD: ${{ matrix.shard }}
-          TOTAL: "8"
+          TOTAL: "12"
         run: |
           chmod +x lueying-bench
           bash tools/bench_shard.sh lueying-bench . "$SHARD/$TOTAL"
@@ -362,3 +362,38 @@ jobs:
         with:
           name: bench
           path: results
+
+  # 延迟 ABAB:新旧两个基准二进制交替跑同一段产品链路,报告线程 CPU 时间的比值。
+  # 只报告,不设门限;只依赖基准二进制,与分片并行,不必等分片跑完。
+  latency:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bench-bin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bench-base-bin
+          path: base-bin
+      - name: 下载词典与模型
+        run: |
+          bash tools/fetch_dict.sh data
+          bash tools/fetch_rerank.sh data/rerank
+      - name: 延迟 ABAB
+        run: |
+          chmod +x lueying-bench base-bin/lueying-bench
+          ./lueying-bench latency --old base-bin/lueying-bench --new ./lueying-bench \
+            --dict data/main.pyd --gram data/collocation.bin --rerank-dir data/rerank --rounds 6
+      - name: 报告摘要
+        if: always()
+        run: cat target/latency.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: quality-latency-report
+          path: target/latency.md
