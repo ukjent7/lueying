@@ -19,7 +19,9 @@ fn main() {
         return;
     }
     // MSVC 专用参数,不能发给其它目标的链接器(Linux 文档测试会真的链接 cdylib)。
-    println!("cargo:rustc-cdylib-link-arg=/IGNORE:4104");
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-cdylib-link-arg=/IGNORE:4104");
+    }
     if has_static_crt() {
         return;
     }
