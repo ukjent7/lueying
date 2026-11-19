@@ -3,6 +3,11 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 发布工作流按 tag 从本文件提取对应版本段，作为 GitHub Release 的说明。
 
+## [0.2.5] - 2026-11-19
+
+### 修复
+- 卸载后安装目录残留 `lueying_tsf.dll.previous`:profile 激活后系统宿主会长期加载 TSF 组件,升级时改名让路的旧文件删不掉,而卸载后再没有「下次安装」来收尾。现在卸载辅助程序把删不掉的 TSF 组件直接排进 Windows 重启删除队列,安装目录不再留残文件。
+
 ## [0.2.4] - 2026-11-19
 
 ### 修复

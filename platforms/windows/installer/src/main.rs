@@ -17,6 +17,7 @@ fn main() {
 #[cfg(windows)]
 mod imp {
     use std::io::Write;
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ mod imp {
 
     use lueying_protocol::{Request, pipe_name};
     use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, FreeLibrary, HANDLE};
+    use windows::Win32::Storage::FileSystem::{MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
@@ -116,6 +118,8 @@ mod imp {
         let _ = set_profile_enabled(false);
         trace("uninstall: registry");
         remove_registry();
+        trace("uninstall: prune");
+        prune_on_uninstall();
         trace("uninstall: done");
     }
 
@@ -126,6 +130,39 @@ mod imp {
             return;
         };
         prune_old_dlls(&target, "lueying_tsf.dll");
+    }
+
+    /// 卸载后再没有「下次安装」来收尾:删不掉的 TSF 组件直接排进重启删除队列。
+    /// profile 激活后系统宿主会长期加载本 DLL,改名让路的 .previous 同样删不掉。
+    fn prune_on_uninstall() {
+        let Ok(target) = app_dir() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(&target) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let lower = name.to_ascii_lowercase();
+            if !lower.starts_with("lueying_tsf")
+                || !(lower.ends_with(".dll") || lower.ends_with(".dll.previous"))
+            {
+                continue;
+            }
+            let path = entry.path();
+            if std::fs::remove_file(&path).is_ok() {
+                continue;
+            }
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let scheduled =
+                unsafe { MoveFileExW(PCWSTR(wide.as_ptr()), None, MOVEFILE_DELAY_UNTIL_REBOOT) }
+                    .is_ok();
+            trace(&format!("uninstall: 重启删除 {name} = {scheduled}"));
+        }
     }
 
     fn prune_old_dlls(target: &Path, keep: &str) {
