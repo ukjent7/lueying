@@ -57,16 +57,11 @@ pub fn reload() {
     let _ = send(&Request::ReloadConfig);
 }
 
-/// 让常驻 Server 带着新数据重启:模型只在启动时装载,重读配置不会重新加载。
-/// 退出后立刻重新拉起,候选与状态不断档;TSF 侧本来也会按需拉起服务。
+/// 让常驻 Server 退出,好让它下次启动时带上新数据(模型只在启动时装载)。
+/// 不在这里重新拉起:本进程可能随安装器提权运行,拉起来的服务会带管理员令牌,
+/// 普通应用反而连不上它。TSF 在下一次按键时按宿主自己的权限拉起服务。
 pub fn restart_server() {
     let _ = call(&Request::Shutdown);
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let _ = lueying_protocol::spawn_detached(&dir.join("lueying-server.exe"), Some(dir));
-    }
 }
 
 mod backup;
