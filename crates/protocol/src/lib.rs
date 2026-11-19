@@ -9,7 +9,7 @@ use serde_json::Value;
 #[cfg(windows)]
 mod spawn;
 #[cfg(windows)]
-pub use spawn::spawn_detached;
+pub use spawn::{spawn_detached, spawn_detached_args};
 pub mod version;
 
 /// 管道名(版本号入名,协议不兼容时换版本号)。

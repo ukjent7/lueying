@@ -70,6 +70,8 @@ pub fn run() {
     }));
     let ui = SettingsWindow::new().expect("Slint 设置窗创建失败");
     refresh(&ui, &core);
+    // 重排模型不随安装包分发;打开设置窗时后台补齐,已就绪则不发请求。
+    start_model_fetch(&ui, &core);
 
     let handle = ui.as_weak();
     let shared = Arc::clone(&core);
@@ -228,7 +230,7 @@ mod dialogs;
 
 use dialogs::{
     TextKind, add_app, choose_script, color, install_update, notice_kind, open_secret_editor,
-    open_text_editor, page_colors, slint_button, slint_row, start_update_check,
+    open_text_editor, page_colors, slint_button, slint_row, start_model_fetch, start_update_check,
 };
 
 /// 自检:写报告并返回成败;首行必须是「结果:通过/失败」。

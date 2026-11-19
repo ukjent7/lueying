@@ -240,7 +240,11 @@ fn real_run() -> Result<String, String> {
                     continue;
                 }
                 if !pending_delete(&file, &root.join("uninstall.log")) {
-                    return Err(format!("卸载后 {} 仍在,且没有安排重启删除", file.display()));
+                    return Err(format!(
+                        "卸载后 {} 仍在,且没有安排重启删除。重启删除队列现状:\n{}",
+                        file.display(),
+                        pending_queue_dump()
+                    ));
                 }
                 reboot_pending.push(name);
             }
@@ -640,6 +644,11 @@ fn pending_delete(path: &Path, uninstall_log: &Path) -> bool {
 }
 
 fn registry_value_contains(value: &str, needle: &str) -> bool {
+    reg_query_value(value).is_some_and(|text| text.to_ascii_lowercase().contains(needle))
+}
+
+/// 读重启删除队列的原始输出;失败诊断用,读不到就注明。
+fn reg_query_value(value: &str) -> Option<String> {
     let mut command = Command::new("reg");
     command.args([
         "query",
@@ -647,15 +656,27 @@ fn registry_value_contains(value: &str, needle: &str) -> bool {
         "/v",
         value,
     ]);
-    let Ok(output) = command.output() else {
-        return false;
-    };
+    let output = command.output().ok()?;
     if !output.status.success() {
-        return false;
+        return None;
     }
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(needle)
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// 断言失败时把两个队列值都打出来:路径形式(短名/长名/`\??\` 前缀)与
+/// 队列是否被后续写入覆盖,只有原文能分辨。
+fn pending_queue_dump() -> String {
+    let mut text = String::new();
+    for value in [
+        "PendingFileRenameOperations",
+        "PendingFileRenameOperations2",
+    ] {
+        text.push_str(&format!(
+            "--- {value} ---\n{}\n",
+            reg_query_value(value).unwrap_or_else(|| "(读不到)".into())
+        ));
+    }
+    text
 }
 
 fn log_schedules_delete(log: &Path, needle: &str) -> bool {

@@ -77,17 +77,13 @@ Source: "{#PayloadDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion sk
 Source: "{#PayloadDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\licenses\*"; DestDir: "{app}\licenses"; \
     Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-; 安装冒烟只验证安装/注册/卸载;发版时 xtask 会先确认词典与模型文件齐全,
+; 安装冒烟只验证安装/注册/卸载;发版时 xtask 会先确认词典与搭配表齐全,
 ; --allow-missing-data 只用于本地调试。
 Source: "{#PayloadDir}\main.pyd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\collocation.bin"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-8m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-8m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-8m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-25m.ort"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-25m.model.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#PayloadDir}\rerank-25m.vocab.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; PP-OCR 模型不随基础安装包分发。
+; 两档神经重排模型与 PP-OCR 模型都不随包:体积大且很少变动,由设置窗按需
+; 下载到用户数据目录(%LOCALAPPDATA%\lueying\models),升级与卸载都不动它。
+; 模型缺失时引擎只保留词频候选,装完离线即可打字。
 
 [InstallDelete]
 ; 旧的自建安装器已被 lueying-user.exe 取代,不再随包分发。

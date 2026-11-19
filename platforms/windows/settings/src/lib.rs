@@ -10,6 +10,7 @@ pub mod ext_add;
 pub mod ext_cli;
 pub mod ext_install;
 pub mod ext_secret;
+pub mod models;
 pub mod net;
 pub mod settings;
 pub mod update;

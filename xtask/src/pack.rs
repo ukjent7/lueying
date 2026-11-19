@@ -45,20 +45,13 @@ const PACK_BINS: &[&str] = &[
     "lueying-user.exe",
 ];
 const PACK_DLLS: &[&str] = &["lueying_tsf.dll", "lueying-tsf.dll"];
-/// 默认包带精确词典、8M/25M 按键重排模型与原生紧凑搭配表。`collocation.bin` 缺失时
+/// 默认包带精确词典与原生紧凑搭配表——装完离线即可打字。两档神经重排模型
+/// (约 38 MiB)不随包:设置窗按需下载到用户数据目录,升级不重下(见
+/// `platforms/windows/settings/src/models.rs`)。`collocation.bin` 缺失时
 /// 引擎退回纯词频;词典与搭配表由 `tools/fetch_dict.sh` 钉版本。
-/// PP-OCR 模型体积大,不随包分发。
-const PACK_DATA: &[&str] = &[
-    "main.pyd",
-    "collocation.bin",
-    "rerank-8m.ort",
-    "rerank-8m.model.json",
-    "rerank-8m.vocab.json",
-    "rerank-25m.ort",
-    "rerank-25m.model.json",
-    "rerank-25m.vocab.json",
-];
-/// 发布体积门禁:25M 随包后发布目录约 183 MiB、安装包约 95 MiB。
+/// PP-OCR 模型体积大,同样不随包分发。
+const PACK_DATA: &[&str] = &["main.pyd", "collocation.bin"];
+/// 发布体积门禁:只带词典后发布目录约 80 MiB、安装包约 25 MB。
 /// 产品上限是安装包 200 MB;发布目录按当前压缩比约一半折算,只防失控。
 const MAX_PAYLOAD_BYTES: u64 = 400 * 1024 * 1024;
 const MAX_SETUP_BYTES: u64 = 200 * 1000 * 1000;
@@ -91,13 +84,7 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     // 发布目录保持构建产物的原名,便于 E2E 直接复用。
     copy_file(&dll, &args.out, "lueying_tsf.dll", &mut files)?;
     for name in PACK_DATA {
-        // fetch_rerank.sh 默认下载到 data/rerank/,发布目录却是平铺的;两种布局都接受。
-        let flat = args.data.join(name);
-        let source = if flat.exists() {
-            flat
-        } else {
-            args.data.join("rerank").join(name)
-        };
+        let source = args.data.join(name);
         if source.exists() {
             copy_file(&source, &args.out, name, &mut files)?;
         } else if args.allow_missing_data {

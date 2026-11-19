@@ -448,7 +448,14 @@ pub fn models_dir() -> Option<PathBuf> {
     }
     #[cfg(windows)]
     {
-        user_file("models")
+        // 模型是可再生的大文件缓存,放 Local,不进漫游 profile。
+        if let Some(path) = std::env::var_os("LUEYING_CONFIG") {
+            return Path::new(&path).parent().map(|dir| dir.join("models"));
+        }
+        let base = PathBuf::from(
+            std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"))?,
+        );
+        Some(base.join("lueying").join("models"))
     }
     #[cfg(not(windows))]
     {

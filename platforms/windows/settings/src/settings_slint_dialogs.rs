@@ -506,6 +506,42 @@ pub(super) fn start_update_check(ui: &SettingsWindow, core: &Shared) {
     }
 }
 
+/// 启动时后台补齐重排模型:安装包不再随带,下一次就够,升级不重下。
+/// 真下到了才让常驻服务带新模型重启;已就绪时一个请求都不发。
+pub(super) fn start_model_fetch(ui: &SettingsWindow, core: &Shared) {
+    let handle = ui.as_weak();
+    let shared = Arc::clone(core);
+    let spawned = std::thread::Builder::new()
+        .name("settings-models".into())
+        .spawn(move || {
+            let result = crate::models::ensure();
+            if result.as_ref().is_ok_and(|&count| count > 0) {
+                actions::restart_server();
+            }
+            let _ = handle.upgrade_in_event_loop(move |ui| {
+                {
+                    let mut guard = lock(&shared);
+                    guard.settings.status =
+                        actions::call(&Request::Status).and_then(|reply| reply.status);
+                    match result {
+                        Ok(0) => {}
+                        Ok(count) => guard.settings.say(
+                            Notice::Success,
+                            format!("重排模型已就绪(补齐 {count} 个文件)"),
+                        ),
+                        Err(error) => guard
+                            .settings
+                            .say(Notice::Error, format!("重排模型补齐失败: {error}")),
+                    }
+                }
+                refresh(&ui, &shared);
+            });
+        });
+    if let Err(e) = spawned {
+        eprintln!("补齐重排模型的线程启动失败: {e}");
+    }
+}
+
 /// 确认后后台下载安装包并直接运行安装程序;设置窗保持可用。
 pub(super) fn install_update(ui: &SettingsWindow, core: &Shared) {
     let release = {

@@ -107,8 +107,21 @@ mod imp {
         {
             trace(&format!("install: spawn server failed: {error}"));
         }
+        fetch_models(&target);
         trace("install: done");
         Ok(())
+    }
+
+    /// 重排模型不随安装包分发:装完在后台补齐,下完由设置窗让服务带新模型重启。
+    /// 词典与搭配表随包,断网装完也能打字,模型随后补上。
+    fn fetch_models(target: &Path) {
+        if let Err(error) = lueying_protocol::spawn_detached_args(
+            &target.join("lueying-settings.exe"),
+            &["models", "fetch"],
+            Some(target),
+        ) {
+            trace(&format!("install: spawn models fetch failed: {error}"));
+        }
     }
 
     fn uninstall() {

@@ -8,6 +8,7 @@
 //! Slint 组件能实例化,Windows CI 用它确认设置窗这条链路没断。
 //! `--dump-config-schema` 输出设置 schema 的 JSON,供脚本与 AI agent 读取。
 //! `ext install <包>` / `ext add <来源>` 在终端里装扩展,不开窗口。
+//! `models fetch` 补齐重排模型(安装器装完在后台调一次),`models status` 只报就绪数。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -15,6 +16,9 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "ext") {
         std::process::exit(ext_command(&args[1..]));
+    }
+    if args.first().is_some_and(|arg| arg == "models") {
+        std::process::exit(models_command(&args[1..]));
     }
     // 平台无关:脚本与 AI agent 读取设置元数据,不需要启动窗口。
     if std::env::args().nth(1).as_deref() == Some("--dump-config-schema") {
@@ -56,6 +60,34 @@ fn ext_command(args: &[String]) -> i32 {
         }
         Err(error) => {
             eprintln!("{error}");
+            1
+        }
+    }
+}
+
+/// `models` 子命令:补齐重排模型。下载完成后让常驻服务退出,TSF 下次按键
+/// 会重新拉起它并装载新模型(服务端只在启动时装载模型)。
+fn models_command(args: &[String]) -> i32 {
+    #[cfg(windows)]
+    attach_parent_console();
+    if args.first().is_some_and(|arg| arg == "status") {
+        let (done, total) = lueying_settings::models::ready();
+        println!("重排模型 {done}/{total}");
+        return 0;
+    }
+    match lueying_settings::models::ensure() {
+        Ok(0) => {
+            println!("重排模型已就绪");
+            0
+        }
+        Ok(count) => {
+            println!("重排模型已补齐 {count} 个文件");
+            #[cfg(windows)]
+            lueying_settings::settings::actions::restart_server();
+            0
+        }
+        Err(error) => {
+            eprintln!("重排模型补齐失败: {error}");
             1
         }
     }
