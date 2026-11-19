@@ -23,11 +23,12 @@ mod imp {
     use std::process::{Command, Stdio};
 
     use lueying_protocol::{Request, pipe_name};
-    use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, FreeLibrary, HANDLE};
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,
     };
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
@@ -37,15 +38,20 @@ mod imp {
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
-        TF_IPPMF_DISABLEPROFILE, TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
+        TF_IPPMF_DISABLEPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE,
+        TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
     };
-    use windows::core::{GUID, HSTRING, Interface, PCWSTR};
+    use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR, w};
 
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "Lueying";
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
+    /// `InstallLayoutOrTip`/`SetDefaultLayoutOrTip` 的字符串格式:
+    /// `<LANGID>:<TIP CLSID><PROFILE GUID>`。
+    const PROFILE_ID: &str =
+        "0804:{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}{76F58072-AB35-4AA7-BA2D-324F994587DB}";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     /// 安装包与更新器都看不到控制台输出;设置 `LUEYING_INSTALL_TRACE` 后把
@@ -167,9 +173,40 @@ mod imp {
                 CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?
             };
             if enabled {
-                return unsafe {
-                    profiles.EnableLanguageProfile(&CLSID_IME, LANGID_ZH_CN, &GUID_PROFILE, true)
+                unsafe {
+                    profiles.EnableLanguageProfile(
+                        &CLSID_IME,
+                        LANGID_ZH_CN,
+                        &GUID_PROFILE,
+                        true,
+                    )?;
+                }
+                // EnableLanguageProfile 只写 HKLM 下的 Enable 标志，不会把 profile
+                // 追加到当前用户的输入法列表；InstallLayoutOrTip 才写 HKCU\User Profile。
+                let listed = call_input_dll(b"InstallLayoutOrTip\0", PROFILE_ID);
+                let defaulted = call_input_dll(b"SetDefaultLayoutOrTip\0", PROFILE_ID);
+                // 已在运行的宿主不会因注册表变化重新选择 TIP；FORSESSION 立即把当前
+                // 桌面切到掠影，装完就能用，不必重启 Chrome / Windows Terminal。
+                let activated = match profiles.cast::<ITfInputProcessorProfileMgr>() {
+                    Ok(manager) => unsafe {
+                        manager.ActivateProfile(
+                            TF_PROFILETYPE_INPUTPROCESSOR,
+                            LANGID_ZH_CN,
+                            &CLSID_IME,
+                            &GUID_PROFILE,
+                            HKL::default(),
+                            TF_IPPMF_FORSESSION
+                                | TF_IPPMF_ENABLEPROFILE
+                                | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
+                        )
+                    }
+                    .is_ok(),
+                    Err(_) => false,
                 };
+                trace(&format!(
+                    "profile: listed={listed} default={defaulted} activated={activated}"
+                ));
+                return Ok(());
             }
             // Win10/11 上 DeactivateProfile 比 EnableLanguageProfile(false) 可靠,
             // 老接口作兜底。
@@ -204,6 +241,26 @@ mod imp {
                 if enabled { "加入" } else { "移出" }
             )
         })
+    }
+
+    /// 调 `input.dll` 里的布局/文本服务安装函数。Windows 没有为它们提供
+    /// 稳定的链接库导入项，只能按名字取地址；缺失时返回 false 由安装流程继续。
+    fn call_input_dll(procedure: &[u8], profile: &str) -> bool {
+        type Proc = unsafe extern "system" fn(*const u16, u32) -> i32;
+        unsafe {
+            let Ok(module) = LoadLibraryW(w!("input.dll")) else {
+                return false;
+            };
+            let Some(address) = GetProcAddress(module, PCSTR(procedure.as_ptr())) else {
+                let _ = FreeLibrary(module);
+                return false;
+            };
+            let function: Proc = std::mem::transmute(address);
+            let wide: Vec<u16> = profile.encode_utf16().chain(std::iter::once(0)).collect();
+            let ok = function(wide.as_ptr(), 0) != 0;
+            let _ = FreeLibrary(module);
+            ok
+        }
     }
 
     /// 先按当前用户的管道名请服务退出,再按进程名兜底。

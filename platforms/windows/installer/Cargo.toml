@@ -16,6 +16,7 @@ lueying-protocol = { path = "../../../crates/protocol" }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_System_Com",
+    "Win32_System_LibraryLoader",
     "Win32_System_Pipes",
     "Win32_System_Registry",
     "Win32_System_Threading",
