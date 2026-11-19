@@ -624,8 +624,10 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 /// 改名让路的 .previous,以及旧版本安装留下的版本化文件。
 fn is_tsf_dll_leftover(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    (lower.starts_with("lueying_tsf") && lower.ends_with(".dll"))
-        || lower.starts_with("lueying_tsf.dll.")
+    // 与安装辅助程序的 prune 同一套前缀后缀:稳定名、版本化遗留,
+    // 以及带时间戳的改名让路文件 lueying_tsf-<时间戳>.dll.previous。
+    lower.starts_with("lueying_tsf")
+        && (lower.ends_with(".dll") || lower.ends_with(".dll.previous"))
 }
 
 /// 文件是否已排进 Windows 的重启删除队列。Inno 对 `uninsrestartdelete`
