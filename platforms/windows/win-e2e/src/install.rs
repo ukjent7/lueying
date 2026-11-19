@@ -634,12 +634,21 @@ fn is_tsf_dll_leftover(name: &str) -> bool {
 /// 「Will delete on restart」是同一动作的兜底证据。
 fn pending_delete(path: &Path, uninstall_log: &Path) -> bool {
     let needle = path.to_string_lossy().to_ascii_lowercase();
+    // 重启删除队列存的是长名,而安装目录可能以 8.3 短名(RUNNER~1)给出;
+    // 展开成长名再比一次。卸载日志用的是安装时的写法,仍按原样比。
+    let long = std::fs::canonicalize(path)
+        .map(|path| {
+            path.to_string_lossy()
+                .trim_start_matches(r"\\?\")
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_else(|_| needle.clone());
     [
         "PendingFileRenameOperations",
         "PendingFileRenameOperations2",
     ]
     .iter()
-    .any(|value| registry_value_contains(value, &needle))
+    .any(|value| registry_value_contains(value, &needle) || registry_value_contains(value, &long))
         || log_schedules_delete(uninstall_log, &needle)
 }
 
