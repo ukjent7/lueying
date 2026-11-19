@@ -124,7 +124,7 @@ begin
   if not FileExists(Target) then
     exit;
   Previous := ExpandConstant('{app}\lueying_tsf-') +
-    GetDateTimeString('yyyymmddhhnnsszzz', '', '') + '.dll.previous';
+    GetDateTimeString('yyyymmddhhnnsszzz', '-', '-') + '.dll.previous';
   RenameFile(Target, Previous);
 end;
 
