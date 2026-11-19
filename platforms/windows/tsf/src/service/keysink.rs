@@ -22,6 +22,10 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         // 任何意外 panic 都不能穿过 COM 边界拖垮宿主进程。
         match catch_unwind(AssertUnwindSafe(|| {
             let vk = wparam.0 as u32;
+            // 自驱键馈刚代驱过这个键,宿主又问一次:回放结论,不再往返 Server。
+            if let Some(eaten) = crate::keyfeed::replay(vk, lparam.0) {
+                return Ok(eaten.into());
+            }
             // 字符键按物理扫描码 + 当前布局翻译。
             let scan = ((lparam.0 >> 16) & 0xff) as u32;
             self.tap.note_down(vk);

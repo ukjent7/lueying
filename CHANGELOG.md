@@ -3,7 +3,13 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 发布工作流按 tag 从本文件提取对应版本段，作为 GitHub Release 的说明。
 
-## [Unreleased]
+## [0.2.4] - 2026-11-19
+
+### 修复
+- Chrome、Windows Terminal、新版记事本等大多数应用打不出中文:这些应用自己激活 TSF 线程管理器后,系统不再经 CUAS 代驱击键,而它们从不调用 `ITfKeystrokeMgr::TestKeyDown/KeyDown`,前台键汇一个键也收不到(只有 Firefox 显式调用、IMM32 应用由 CUAS 代驱,所以此前只有它们能打字)。现在激活时在宿主线程挂 `WH_GETMESSAGE`,取键时替宿主走一遍击键管理器,吃掉的键把 `wParam` 换成 `VK_PROCESSKEY`,宿主不再生成重复字符;宿主自己会驱动时按同一按键回放结论,不重复往返服务端。微信输入法同样以线程钩子自驱,走的是同一条路。
+- 修复升级时 `DllRegisterServer` 因 profile 已存在返回 0x80004005:注册流程先查已有 profile,存在就只补类别,不再把重复注册当失败。
+- 注册时撤销 `GUID_TFCAT_CATEGORY_OF_TIP`、`GUID_TFCAT_DISPLAYATTRIBUTEPROPERTY`、`GUID_TFCAT_TIPCAP_SECUREMODE` 三项能力声明,与微软拼音、微信输入法、青简的声明对齐;升级不再留下旧声明。
+- 安装/修复时用 `InstallLayoutOrTip`、`SetDefaultLayoutOrTip` 把掠影写进当前用户的输入法列表并设为当前桌面默认 profile,不再只写 `EnableLanguageProfile` 的启用标志。
 
 ## [0.2.3] - 2026-11-16
 

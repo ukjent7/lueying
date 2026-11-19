@@ -8,6 +8,7 @@ mod context;
 mod context_probe;
 mod edit;
 mod factory;
+mod keyfeed;
 mod keys;
 mod langbar;
 mod mode;
@@ -47,7 +48,7 @@ pub(crate) const NAME: &str = "掠影";
 static DLL_REFERENCES: AtomicIsize = AtomicIsize::new(0);
 
 /// DllMain 记下的模块句柄。
-static DLL_MODULE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+pub(crate) static DLL_MODULE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
 pub(crate) fn lock_module() {
     DLL_REFERENCES.fetch_add(1, Ordering::SeqCst);

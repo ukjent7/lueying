@@ -549,6 +549,7 @@ impl TextService_Impl {
         // 安全桌面不启动进程,也不为候选窗挂布局监听。
         if !self.secure.get() {
             crate::client::warm_server();
+            crate::keyfeed::install(&keystroke);
             self.advise_layout();
         }
         // 激活时 Caps 已经亮着:记下当前模式,灭灯时恢复到它而不是默认中文。
@@ -672,6 +673,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
     }
 
     fn Deactivate(&self) -> Result<()> {
+        crate::keyfeed::remove();
         let secure = self.secure.replace(false);
         self.unadvise_layout();
         crate::ui_element::end(&self.shared, &self.client);
