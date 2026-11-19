@@ -102,11 +102,9 @@ mod imp {
         trace(&format!("install: profile listed={listed}"));
         set_run_key(&target.join("lueying-server.exe"))?;
         // 扩展不再由安装器自动复制:设置窗的「官方扩展」按需安装并走同意流程。
-        if let Err(error) =
-            lueying_protocol::spawn_detached(&target.join("lueying-server.exe"), Some(&target))
-        {
-            trace(&format!("install: spawn server failed: {error}"));
-        }
+        // 不在这里拉起服务:本程序可能随安装器提权运行,拉起来的服务会带管理员
+        // 令牌,普通应用里的 TSF 查不到它的映像名,按假服务拒连,所有键直通。
+        // 服务由 TSF 在激活/首次按键时按宿主自己的权限拉起。
         fetch_models(&target);
         trace("install: done");
         Ok(())
