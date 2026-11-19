@@ -12,11 +12,13 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
 use windows::Win32::UI::TextServices::{
-    CLSID_TF_CategoryMgr, CLSID_TF_InputProcessorProfiles, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
+    CLSID_TF_CategoryMgr, CLSID_TF_InputProcessorProfiles, GUID_TFCAT_CATEGORY_OF_TIP,
+    GUID_TFCAT_DISPLAYATTRIBUTEPROPERTY, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
     GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_COMLESS, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
     GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT, GUID_TFCAT_TIPCAP_SECUREMODE,
     GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, ITfCategoryMgr,
-    ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
+    ITfInputProcessorProfileMgr, ITfInputProcessorProfiles, TF_INPUTPROCESSORPROFILE,
+    TF_PROFILETYPE_INPUTPROCESSOR,
 };
 use windows::core::{GUID, HSTRING, Interface, PCWSTR, Result};
 
@@ -32,9 +34,17 @@ const CATEGORIES: &[GUID] = &[
     GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
 ];
 
-/// 旧版本声明过、现已撤销的能力。安全桌面里本 DLL 会自拉常驻服务,
-/// 从用户可写目录执行进程会变成 SYSTEM 提权面;未做安全模式隔离前不声明。
-const REVOKED_CATEGORIES: &[GUID] = &[GUID_TFCAT_TIPCAP_SECUREMODE];
+/// 声明过又撤销的能力,注册时一并清掉,升级不会留下旧声明。
+///
+/// - 安全桌面:本 DLL 会自拉常驻服务,从用户可写目录执行进程会变成 SYSTEM
+///   提权面;未做安全模式隔离前不声明。
+/// - `CATEGORY_OF_TIP` / `DISPLAYATTRIBUTEPROPERTY`:微软拼音、微信输入法、
+///   青简都不声明这两项,本服务也用不到,声明只会留下多余的类别项。
+const REVOKED_CATEGORIES: &[GUID] = &[
+    GUID_TFCAT_TIPCAP_SECUREMODE,
+    GUID_TFCAT_CATEGORY_OF_TIP,
+    GUID_TFCAT_DISPLAYATTRIBUTEPROPERTY,
+];
 
 fn clsid_key() -> String {
     format!("CLSID\\{CLSID_STR}")
@@ -123,56 +133,63 @@ fn register_profile() -> Result<()> {
         let profiles: ITfInputProcessorProfiles = unsafe {
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?
         };
-        // AddLanguageProfile 按 null 扫描读字符串,不补 0 会多读相邻内存。
-        let description = wide_z(NAME);
-        let icon = vec![0u16];
-        unsafe { profiles.Register(&CLSID_IME)? };
-        // Win8+ 的 ProfileMgr 能声明“默认启用”,否则用户还要去语言设置里手动添加。
-        // 老接口作为兜底(Win7 语义;本机只支持 Win10+,但接口缺失时不至于装不上)。
-        let modern: std::result::Result<ITfInputProcessorProfileMgr, _> = unsafe {
-            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)
-        };
-        let registered = match modern {
-            Ok(manager) => {
-                let name: Vec<u16> = NAME.encode_utf16().collect();
-                let icon_file: Vec<u16> = crate::module_path_file()
-                    .map(|path| path.to_string_lossy().encode_utf16().collect())
-                    .unwrap_or_default();
-                unsafe {
-                    manager.RegisterProfile(
-                        &CLSID_IME,
-                        LANGID_ZH_CN,
-                        &GUID_PROFILE,
-                        &name,
-                        &icon_file,
-                        0,
-                        HKL::default(),
-                        0,
-                        true,
-                        0,
-                    )
-                }
-            }
-            Err(_) => Err(windows::core::Error::from(
-                windows::Win32::Foundation::E_NOTIMPL,
-            )),
-        };
-        if registered.is_err() {
-            unsafe {
-                profiles.AddLanguageProfile(
+        let manager: ITfInputProcessorProfileMgr = profiles.cast()?;
+        let mut existing = TF_INPUTPROCESSORPROFILE::default();
+        let exists = unsafe {
+            manager.GetProfile(
+                TF_PROFILETYPE_INPUTPROCESSOR,
+                LANGID_ZH_CN,
+                &CLSID_IME,
+                &GUID_PROFILE,
+                HKL::default(),
+                &mut existing,
+            )
+        }
+        .is_ok();
+        // Register/RegisterProfile 在 profile 已存在时返回失败;升级重跑
+        // DllRegisterServer 不能因此整体报错,否则类别更新也会被跳过。
+        let _ = unsafe { profiles.Register(&CLSID_IME) };
+        if !exists {
+            let description = wide_z(NAME);
+            let icon_file = crate::module_path_file()
+                .map(|path| wide_z(&path.to_string_lossy()))
+                .unwrap_or_else(|| vec![0u16]);
+            let registered = unsafe {
+                manager.RegisterProfile(
                     &CLSID_IME,
                     LANGID_ZH_CN,
                     &GUID_PROFILE,
                     &description,
-                    &icon,
+                    &icon_file,
                     0,
-                )?;
+                    HKL::default(),
+                    0,
+                    true,
+                    0,
+                )
+            };
+            if registered.is_err() {
+                // AddLanguageProfile 按 null 扫描读字符串,不补 0 会多读相邻内存。
+                let icon = vec![0u16];
+                unsafe {
+                    profiles.AddLanguageProfile(
+                        &CLSID_IME,
+                        LANGID_ZH_CN,
+                        &GUID_PROFILE,
+                        &description,
+                        &icon,
+                        0,
+                    )?;
+                }
             }
         }
         let category: ITfCategoryMgr =
             unsafe { CoCreateInstance(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)? };
         for catid in CATEGORIES {
             unsafe { category.RegisterCategory(&CLSID_IME, catid, &CLSID_IME)? };
+        }
+        for catid in REVOKED_CATEGORIES {
+            let _ = unsafe { category.UnregisterCategory(&CLSID_IME, catid, &CLSID_IME) };
         }
         Ok(())
     })
