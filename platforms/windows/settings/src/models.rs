@@ -115,7 +115,8 @@ fn matches(path: &Path, expected: &str) -> bool {
 /// 下到 `.part` 再校验改名:失败或校验不过都不留看着齐全的半截文件。
 fn fetch(asset: &Asset, target: &Path) -> Result<(), String> {
     let url = format!("{BASE}/{}", asset.name);
-    let part = target.with_file_name(format!("{}.part", asset.name));
+    // 安装器与设置窗可能同时补齐;临时名带进程号,互不覆盖。
+    let part = target.with_file_name(format!("{}.{}.part", asset.name, std::process::id()));
     let result = (|| -> Result<(), String> {
         let agent = net::agent(&url, TIMEOUT)?;
         let response = agent
