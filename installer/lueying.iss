@@ -88,8 +88,8 @@ Source: "{#PayloadDir}\collocation.bin"; DestDir: "{app}"; Flags: ignoreversion 
 [InstallDelete]
 ; 旧的自建安装器已被 lueying-user.exe 取代,不再随包分发。
 Type: files; Name: "{app}\lueying-install.exe"
-; 上次升级改名让路的旧 TSF 组件;仍被宿主加载时删不掉,留给下次。
-Type: files; Name: "{app}\lueying_tsf.dll.previous"
+; 历次升级改名让路的旧 TSF 组件;仍被宿主加载时删不掉,留给下次。
+Type: files; Name: "{app}\lueying_tsf*.dll.previous"
 
 [Icons]
 Name: "{group}\掠影设置"; Filename: "{app}\lueying-settings.exe"
@@ -112,18 +112,19 @@ Filename: "{app}\lueying-user.exe"; Parameters: "--uninstall"; \
 
 [Code]
 // 宿主进程仍加载着旧 TSF 组件时,覆盖同名文件会失败。改名让路:
-// 已加载的模块照常运行,新进程从原名拿到新文件;改动名即未加载,
-// 统一走这一步也无副作用。改名失败(极少见的双重占用)交给 Inno
-// 常规的文件占用提示。
+// 已加载的模块照常运行,新进程从原名拿到新文件。让路名带时间戳:
+// 上一次让路的文件可能仍被长期宿主(explorer、SearchHost 等)加载而
+// 删不掉,固定名会让本次改名撞名失败,进而整个升级中止回滚。
+// 旧让路文件由 [InstallDelete] 与 --prune 在能删时清掉。
 procedure PrepareTsfDll;
 var
   Target, Previous: String;
 begin
   Target := ExpandConstant('{app}\lueying_tsf.dll');
-  Previous := Target + '.previous';
   if not FileExists(Target) then
     exit;
-  DeleteFile(Previous);
+  Previous := ExpandConstant('{app}\lueying_tsf-') +
+    GetDateTimeString('yyyymmddhhnnsszzz', '', '') + '.dll.previous';
   RenameFile(Target, Previous);
 end;
 

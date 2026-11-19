@@ -3,6 +3,11 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 发布工作流按 tag 从本文件提取对应版本段，作为 GitHub Release 的说明。
 
+## [0.2.6] - 2026-11-19
+
+### 修复
+- 连续升级时安装中止回滚:改名让路用的是固定名 `lueying_tsf.dll.previous`,上一次让路的文件若仍被长期宿主(explorer、SearchHost 等)加载就删不掉,本次改名撞名失败,Setup 转去覆盖被占用的原文件,最终报「文件正在使用」并回滚。让路名改为带时间戳的唯一名,`[InstallDelete]` 与 `--prune` 按通配清理历次让路文件,能删就删、删不掉留给下次。
+
 ## [0.2.5] - 2026-11-19
 
 ### 变更
