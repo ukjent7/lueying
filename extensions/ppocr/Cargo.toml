@@ -11,5 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 # 纯 Rust ONNX 运行时,不随包带 onnxruntime.dll;只编 det/rec 需要的算子。
-tract-onnx = { version = "0.23.9", default-features = false }
+tract-onnx = { version = "0.23.10", default-features = false }
 serde_json = "1"

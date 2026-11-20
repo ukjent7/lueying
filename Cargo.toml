@@ -55,14 +55,14 @@ ureq = { version = "3", default-features = false, features = [
     "socks-proxy",
 ] }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
-wasmtime = { version = "49", default-features = false, features = [
+wasmtime = { version = "51", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",
     "wat",
     "component-model",
 ] }
-slint = { version = "1.18.1", default-features = false, features = [
+slint = { version = "1.19.0", default-features = false, features = [
     "std",
     "compat-1-2",
     "backend-winit",
@@ -70,7 +70,7 @@ slint = { version = "1.18.1", default-features = false, features = [
     "renderer-software",
     "accessibility",
 ] }
-slint-build = "1.18.1"
+slint-build = "1.19.0"
 
 [profile.release]
 lto = "thin"

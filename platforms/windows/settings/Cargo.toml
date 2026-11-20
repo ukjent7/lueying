@@ -30,7 +30,7 @@ lueying-protocol = { path = "../../../crates/protocol" }
 # 扩展清单与场景协议:设置页与指标快照共用,不带宿主运行时。
 lueying-ext = { workspace = true, default-features = false }
 serde_json = "1"
-toml = "1.1"
+toml = "1.2"
 # 词表解码:UTF-8 / UTF-16 / GB18030 一份实现。
 encoding_rs = "0.8"
 
@@ -48,5 +48,5 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-[target.'cfg(windows)'.build-dependencies]
+[build-dependencies]
 slint-build.workspace = true

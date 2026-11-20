@@ -1,7 +1,5 @@
 //! 录音与离线识别:WinMM 采 16 kHz PCM WAV,识别交给 sensevoice 扩展。
 
-use std::path::Path;
-
 use std::sync::Arc;
 
 use std::time::Duration;

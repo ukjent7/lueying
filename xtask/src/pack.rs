@@ -237,7 +237,7 @@ fn compile_setup(args: &PackArgs, root: &Path) -> Result<PathBuf, String> {
     Ok(setup)
 }
 
-/// CI 通过 `LUEYING_ISCC` 指定;本地默认 Inno Setup 6 的安装位置。
+/// CI 通过 `LUEYING_ISCC` 指定;本地默认 Inno Setup 7 的安装位置,旧版 6 兜底。
 fn iscc_path() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("LUEYING_ISCC").map(PathBuf::from) {
         if path.is_file() {
@@ -246,12 +246,14 @@ fn iscc_path() -> Result<PathBuf, String> {
         return Err(format!("LUEYING_ISCC 指向的 {} 不存在", path.display()));
     }
     [
-        PathBuf::from(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+        PathBuf::from(r"C:\Program Files\Inno Setup 7\ISCC.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\Inno Setup 7\ISCC.exe"),
         PathBuf::from(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
     ]
     .into_iter()
     .find(|path| path.is_file())
-    .ok_or_else(|| "找不到 ISCC.exe;安装 Inno Setup 6 或设置 LUEYING_ISCC".to_string())
+    .ok_or_else(|| "找不到 ISCC.exe;安装 Inno Setup 7 或设置 LUEYING_ISCC".to_string())
 }
 
 /// Inno 的 VersionInfoVersion 只接受最多四段数字;预发布后缀不进资源版本。

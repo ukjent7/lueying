@@ -4,7 +4,7 @@
 //! 要问常驻服务」的事,以及那些离不开 Windows API 的对话框。
 
 use std::io::{BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::dict_import;

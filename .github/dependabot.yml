@@ -14,3 +14,10 @@ updates:
       cargo-all:
         patterns:
           - "*"
+    ignore:
+      # windows 0.62 的配套版本仍停在 core 0.62 / numerics 0.3。
+      # 0.100 是下一代独立发布,单方面直接依赖会让 #[implement] 宏展开错位。
+      - dependency-name: windows-core
+        update-types: ["version-update:semver-major"]
+      - dependency-name: windows-numerics
+        update-types: ["version-update:semver-major"]
