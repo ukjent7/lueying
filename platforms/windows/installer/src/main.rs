@@ -167,6 +167,11 @@ mod imp {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             let lower = name.to_ascii_lowercase();
+            // 主 DLL 留给 Inno 的 regserver 注销与 uninsrestartdelete:
+            // [UninstallRun] 先于 regsvr32 /u 执行,这里删掉会让注销找不到文件。
+            if name.eq_ignore_ascii_case("lueying_tsf.dll") {
+                continue;
+            }
             if !lower.starts_with("lueying_tsf")
                 || !(lower.ends_with(".dll") || lower.ends_with(".dll.previous"))
             {
