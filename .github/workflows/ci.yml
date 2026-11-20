@@ -177,6 +177,9 @@ jobs:
         with:
           lookup-only: true
       - name: 服务端单元测试(Windows)
+        # 测试二进制同样不能被 uiAccess 清单拦住;它只验证库逻辑,不需要真实候选窗资格。
+        env:
+          LUEYING_NO_UIACCESS: "1"
         run: cargo test -p lueying-server --lib --release --locked
 
   windows:
@@ -297,9 +300,26 @@ jobs:
         id: build_e2e
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
         run: cargo build --release --locked -p lueying-win-e2e
+      # E2E 在独立 target 目录里编一份无 uiAccess 的测试 server:uiAccess 清单
+      # 要求受信任签名,CI 的未签名产品 server 会被进程创建直接拒绝。
+      # 测试逻辑继续留在 lueying-win-e2e;workflow 只构建并调用一次,避免每来
+      # 一项 Windows 验证就往 YAML 里加一步。
       - name: Windows 全链路 E2E
         if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
-        run: cargo run -p lueying-win-e2e --release --locked
+        shell: pwsh
+        env:
+          LUEYING_NO_UIACCESS: "1"
+          CARGO_TARGET_DIR: target/e2e
+        run: |
+          cargo build --release --locked -p lueying-server
+          $stage = Join-Path $PWD "target/e2e-bin"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item "target/e2e/release/lueying-server.exe", `
+            "target/release/lueying-win-e2e.exe", `
+            "target/release/lueying_tsf.dll", `
+            "target/release/lueying-settings.exe", `
+            "target/release/lueying-ext-host.exe" $stage -Force
+          & (Join-Path $stage "lueying-win-e2e.exe")
       - name: 安装/卸载冒烟
         # 构建失败时没有 lueying-user.exe,这条只会在日志里添一条假失败。
         if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && steps.build.outcome == 'success' && steps.build_e2e.outcome == 'success'
