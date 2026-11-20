@@ -11,16 +11,6 @@ fn main() {
             imp::panel_selftest();
             return;
         }
-        // 玻璃预览:亮/暗合成背景上叠玻璃帧,存 BMP 供人眼核对。
-        if std::env::args().nth(1).as_deref() == Some("--glass-preview") {
-            let prefix = std::env::args()
-                .nth(2)
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("target/glass"));
-            crate::ui::d2d::selftest::glass_preview(&prefix);
-            return;
-        }
-
         imp::real_main();
     }
     #[cfg(not(windows))]

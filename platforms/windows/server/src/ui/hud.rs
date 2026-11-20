@@ -111,7 +111,7 @@ impl Badge {
             self.current = hud_view(state);
             self.appearance = theme::Appearance::of_system();
             self.accent = accent_of(state);
-            self.reduce = crate::ui::d2d::reduce_motion();
+            self.reduce = crate::ui::rune::reduce_motion();
         }
         if self
             .current

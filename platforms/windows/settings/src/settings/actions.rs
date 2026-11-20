@@ -172,9 +172,7 @@ pub fn running_apps(
     unsafe {
         let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut Found as isize));
     }
-    found
-        .apps
-        .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    found.apps.sort_by_key(|app| app.1.to_lowercase());
     found.apps.truncate(40);
     found.apps
 }
@@ -578,15 +576,14 @@ pub fn install_update(release: &update::Release) -> bool {
         "安装掠影 {}？\n\n安装包会下载到临时目录,校验后直接运行安装程序。",
         release.version
     );
-    let confirmed = unsafe {
+    unsafe {
         MessageBoxW(
             None,
             &HSTRING::from(text),
             &HSTRING::from("检查更新"),
             MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2,
         ) == IDOK
-    };
-    confirmed
+    }
 }
 
 /// 后台下载安装包到临时目录,校验后直接运行安装程序;由设置窗线程调。

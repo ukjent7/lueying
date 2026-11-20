@@ -1,11 +1,11 @@
 //! 设置窗独立进程:输入方案、候选外观、标点、词库数据、扩展商店、更新与备份。
 //!
-//! 窗口是 Slint(winit 后端 + femtovg GPU 渲染,无头环境回退软件渲染);页面模型在
-//! `lueying_settings::settings::view`,宿主接线在 `lueying_settings::settings_slint`。
+//! 窗口是 Rune(GPU 渲染,与候选窗同一框架);页面模型在
+//! `lueying_settings::settings::view`,宿主接线在 `lueying_settings::settings_rune`。
 //! 保存写 `config.toml`,再经命名管道让常驻 Server 立即重载。
 //!
-//! `--selftest <报告路径>` 跑一遍自检:模型五页铺得开、关键控件在位、
-//! Slint 组件能实例化,Windows CI 用它确认设置窗这条链路没断。
+//! `--selftest <报告路径>` 跑一遍自检:模型五页铺得开、关键控件在位,
+//! Windows CI 用它确认设置窗这条链路没断。
 //! `--dump-config-schema` 输出设置 schema 的 JSON,供脚本与 AI agent 读取。
 //! `ext install <包>` / `ext add <来源>` 在终端里装扩展,不开窗口。
 //! `models fetch` 补齐重排模型(安装器装完在后台调一次),`models status` 只报就绪数。
@@ -30,20 +30,20 @@ fn main() {
     }
     #[cfg(windows)]
     {
-        use lueying_settings::settings_slint;
+        use lueying_settings::settings_rune;
         let mut args = std::env::args().skip(1);
         if args.next().as_deref() == Some("--selftest") {
             let path = args
                 .next()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| std::env::temp_dir().join("lueying-settings-selftest.txt"));
-            if let Err(e) = settings_slint::selftest(&path) {
+            if let Err(e) = settings_rune::selftest(&path) {
                 eprintln!("设置窗自检失败: {e}");
                 std::process::exit(1);
             }
             return;
         }
-        settings_slint::run();
+        settings_rune::run();
     }
     #[cfg(not(windows))]
     println!("lueying-settings 仅支持 Windows");

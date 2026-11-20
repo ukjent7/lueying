@@ -33,6 +33,10 @@ getrandom = "0.4"
 winresource = "0.1"
 
 [target."cfg(windows)".dependencies]
+# 候选窗界面层:Rune overlay(GPU 玻璃材质);布局与命中仍来自 lueying-render。
+rune.workspace = true
+# 候选条自然宽度排版在显示前就要量好(容量喂给引擎分页);TextSystem 直接量。
+rune-text = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0", default-features = false }
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。

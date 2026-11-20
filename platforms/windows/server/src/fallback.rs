@@ -17,20 +17,18 @@ use std::time::Duration;
 
 use lueying_protocol::{KeyMsg, Reply, Request};
 use lueying_win_keys::{KeyTap, is_shift, vk_to_key};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::ScreenToClient;
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, FindWindowW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
-    IsWindow, IsWindowVisible, KBDLLHOOKSTRUCT, LLKHF_UP, MSLLHOOKSTRUCT, PostMessageW,
-    SetWindowsHookExW, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+    CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, KBDLLHOOKSTRUCT, LLKHF_UP,
+    MSLLHOOKSTRUCT, SetWindowsHookExW, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
 };
 
-use windows::core::{PWSTR, w};
+use windows::core::PWSTR;
 
 use crate::imp::State;
 
@@ -153,45 +151,43 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
 }
 
 /// 候选窗在浮层下面,真实点击到不了它;把落在候选窗矩形里的鼠标事件
-/// 转发过去,原事件吞掉。候选窗不用激活,搜索框保持焦点。
+/// 经 Rune 候选窗的注入口转过去,原事件吞掉。候选窗不用激活,搜索框保持焦点。
 fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
     let message = wparam.0 as u32;
-    let (candidate, rect) = visible_candidate()?;
-    let (x, y) = (info.pt.x, info.pt.y);
-    let inside = x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+    let rect = visible_candidate()?;
+    let (x, y) = (info.pt.x as f32, info.pt.y as f32);
+    let inside = x >= rect.0 as f32
+        && x < (rect.0 + rect.2) as f32
+        && y >= rect.1 as f32
+        && y < (rect.1 + rect.3) as f32;
+    use crate::ui::rune::FallbackMouse;
     match message {
         WM_LBUTTONDOWN if inside => {
-            forward(candidate, WM_LBUTTONDOWN, 1, x, y);
+            crate::ui::rune::forward_mouse(FallbackMouse::Down(x, y));
             MOUSE_CAPTURED.with(|captured| captured.set(true));
             Some(LRESULT(1))
         }
         WM_LBUTTONUP if MOUSE_CAPTURED.with(std::cell::Cell::get) => {
             MOUSE_CAPTURED.with(|captured| captured.set(false));
-            forward(candidate, WM_LBUTTONUP, 0, x, y);
+            crate::ui::rune::forward_mouse(FallbackMouse::Up);
             Some(LRESULT(1))
         }
         WM_RBUTTONDOWN if inside => {
-            forward(candidate, WM_RBUTTONDOWN, 0, x, y);
+            crate::ui::rune::forward_mouse(FallbackMouse::Right(x, y));
             Some(LRESULT(1))
         }
         WM_MOUSEWHEEL if inside => {
             // WM_MOUSEWHEEL 的键状态在高 16 位;坐标按屏幕坐标给。
             let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
-            unsafe {
-                let _ = PostMessageW(
-                    Some(candidate),
-                    WM_MOUSEWHEEL,
-                    WPARAM((delta as u16 as usize) << 16),
-                    pack(x, y),
-                );
-            }
+            crate::ui::rune::forward_mouse(FallbackMouse::Wheel(delta));
             Some(LRESULT(1))
         }
         WM_MOUSEMOVE if inside => {
             // 只转发悬停,不吞移动;同一点不重复发。
-            if LAST_MOVE.with(|last| last.replace((x, y))) != (x, y) {
-                forward(candidate, WM_MOUSEMOVE, 0, x, y);
+            if LAST_MOVE.with(|last| last.replace((info.pt.x, info.pt.y))) != (info.pt.x, info.pt.y)
+            {
+                crate::ui::rune::forward_mouse(FallbackMouse::Move(x, y));
             }
             None
         }
@@ -199,49 +195,19 @@ fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     }
 }
 
-/// 找可见的候选窗;停靠/收起时返回 `None`。
-fn visible_candidate() -> Option<(HWND, RECT)> {
-    // 只有回落会话需要替候选窗接鼠标:TSF 宿主的候选窗本来就在最上面,
-    // 别去重复转发、吞掉 Normal 应用的点击。
+/// 可见的候选窗矩形(屏幕物理像素);停靠/收起时返回 `None`。
+/// 只有回落会话需要替候选窗接鼠标:TSF 宿主的候选窗本来就在最上面,
+/// 别去重复转发、吞掉 Normal 应用的点击。
+fn visible_candidate() -> Option<(i32, i32, i32, i32)> {
     let state = STATE.get()?;
     if state.active.load(std::sync::atomic::Ordering::Relaxed) != SESSION {
         return None;
     }
-    let cached = HWND(CANDIDATE.with(std::cell::Cell::get) as *mut std::ffi::c_void);
-    let window = if !cached.is_invalid() && unsafe { IsWindow(Some(cached)) }.as_bool() {
-        cached
-    } else {
-        let found = unsafe { FindWindowW(w!("lueying-d2d-candidate"), None) }.ok()?;
-        CANDIDATE.with(|candidate| candidate.set(found.0 as isize));
-        found
-    };
-    if !unsafe { IsWindowVisible(window) }.as_bool() {
-        return None;
-    }
-    let mut rect = RECT::default();
-    if unsafe { GetWindowRect(window, &mut rect) }.is_err() {
-        return None;
-    }
-    Some((window, rect))
-}
-
-/// 屏幕坐标转成候选窗客户坐标后投递鼠标消息。
-fn forward(candidate: HWND, message: u32, keys: usize, x: i32, y: i32) {
-    let mut point = POINT { x, y };
-    unsafe {
-        let _ = ScreenToClient(candidate, &mut point);
-        let _ = PostMessageW(
-            Some(candidate),
-            message,
-            WPARAM(keys),
-            pack(point.x, point.y),
-        );
-    }
-}
-
-/// 鼠标消息低 16 位 x、高 16 位 y。
-fn pack(x: i32, y: i32) -> LPARAM {
-    LPARAM((x & 0xffff) as isize | ((y & 0xffff) as isize) << 16)
+    state
+        .candidate_rect
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .filter(|(_, _, w, h)| *w > 0 && *h > 0)
 }
 
 /// 实时按键状态;钩子线程不处理普通输入消息,`GetKeyState` 在这里不更新。

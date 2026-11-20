@@ -225,28 +225,6 @@ pub(super) fn check_fullwidth(edit: HWND) -> Result<String, String> {
     Ok(format!("## 全角模式\n\nPASS,文本 `{text}`"))
 }
 
-/// D2D 渲染管线自检:Server 启动时按 `LUEYING_D2D_SELFTEST` 离屏出帧并
-/// 读回像素,结论写进日志;这里读日志断言。WARP 软件渲染,没有 GPU 的
-/// CI runner 也跑得出确定性的像素。
-pub(super) fn check_d2d_selftest() -> Result<String, String> {
-    let text = std::fs::read_to_string(server_log()).unwrap_or_default();
-    if let Some(line) = text.lines().find(|line| line.contains("D2D 自检失败")) {
-        return Err(format!("D2D 自检失败:{line}"));
-    }
-    let Some(line) = text.lines().find(|line| line.contains("D2D 自检通过")) else {
-        return Err("Server 日志里没有 D2D 自检记录".into());
-    };
-    let font = text
-        .lines()
-        .find(|line| {
-            line.contains("DirectWrite 字型已画出")
-                || line.contains("字体自检")
-                || line.contains("自检失败:字体")
-        })
-        .unwrap_or("无");
-    Ok(format!("## D2D 渲染管线\n\nPASS,{line}\n\n字体:{font}"))
-}
-
 /// 运行期扩展自检:扩展宿主进程按 `LUEYING_SELFTEST_WASM` 建临时扩展包,
 /// 验证 Wasm 扩展在 Windows 上能加载、派发、拦截隐私场景。
 pub(super) fn check_ext_selftest(dir: &std::path::Path) -> Result<String, String> {

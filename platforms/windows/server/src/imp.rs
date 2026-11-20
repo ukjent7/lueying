@@ -202,6 +202,8 @@ pub(super) struct State {
     pub(super) mode_hud: Mutex<Option<ModeHud>>,
     /// 候选窗当前贴光标的上方还是下方;模式徽标据此躲到另一侧。
     pub(super) candidate_above: AtomicBool,
+    /// 候选窗的可见矩形(屏幕物理像素);None 为停靠。回落钩子据此替它接鼠标。
+    pub(super) candidate_rect: Mutex<Option<(i32, i32, i32, i32)>>,
     /// 最近收到按键/光标上报的会话,候选窗只跟它。
     pub(super) active: AtomicU64,
     /// 三档降级后实际生效的主词典来源:`pyd`、`tsv` 或 `builtin`。
@@ -311,10 +313,11 @@ impl State {
     }
 }
 
-/// 候选窗的数据变了:版本号自增并叫醒界面线程。
+/// 候选窗的数据变了:版本号自增并叫醒界面线程与 Rune 候选窗。
 pub(super) fn touch_view(state: &State) {
     state.version.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
+    crate::ui::rune::kick();
     // 输入上下文跟着视图走:隐私门禁与热键的 when 判断在宿主侧用它。
     let active = state.active_published();
     state.ext.set_context(lueying_ext::proto::link::Context {
@@ -539,6 +542,7 @@ pub(super) fn real_main() {
         wake_ui,
         mode_hud: Mutex::new(None),
         candidate_above: AtomicBool::new(false),
+        candidate_rect: Mutex::new(None),
         active: AtomicU64::new(0),
         sync_model,
         settled_model,
@@ -573,6 +577,7 @@ pub(super) fn real_main() {
         state.ext.on_patch(move || {
             if let Some(state) = weak.upgrade() {
                 state.wake_ui.set();
+                crate::ui::rune::kick();
             }
         });
     }
@@ -591,18 +596,14 @@ pub(super) fn real_main() {
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
     }
-    // D2D 渲染管线自检(E2E 打开):WARP 离屏出一帧、读回像素,结论写日志;
-    // 不依赖管道与真实输入,无 UI 环境也能跑。
-    if std::env::var_os("LUEYING_D2D_SELFTEST").is_some() {
-        crate::ui::d2d::selftest::selftest();
-    }
     // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
         loop {
             std::thread::park();
         }
     }
-    // 界面循环单独一条线程(栈与原先各窗口线程相同);主线程只等着。
+    // 界面循环单独一条线程(栈与原先各窗口线程相同);候选窗在 Rune 自己
+    // 的事件循环线程上,两边经版本号与共享矩形互通。
     let ui_state = Arc::clone(&state);
     let ui = std::thread::Builder::new()
         .name("lueying-ui".into())
@@ -617,6 +618,21 @@ pub(super) fn real_main() {
         });
     if let Err(error) = ui {
         println!("界面线程启动失败,继续无界面服务: {error}");
+    }
+    let rune_state = Arc::clone(&state);
+    let rune = std::thread::Builder::new()
+        .name("lueying-rune-ui".into())
+        .spawn(move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::ui::rune::run(rune_state);
+            }))
+            .is_err()
+            {
+                println!("Rune 候选窗线程崩溃,输入法照常工作");
+            }
+        });
+    if let Err(error) = rune {
+        println!("Rune 候选窗线程启动失败,继续无界面服务: {error}");
     }
     // 界面循环意外结束时进程也要留着,否则整个输入法跟着退出。
     loop {

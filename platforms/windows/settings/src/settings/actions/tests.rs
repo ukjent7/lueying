@@ -2,6 +2,7 @@
 
 use super::*;
 use lueying_ext::manifest::container::{self, Files};
+use std::path::Path;
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
