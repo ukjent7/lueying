@@ -116,7 +116,7 @@ pub(super) fn check_touch_layout(thread_mgr: &ITfThreadMgr) -> Result<String, St
     Ok(format!("## 触屏键盘\n\nPASS,layout={id}"))
 }
 
-/// 搜索框按 Enter 时宿主调用原样落定:提交眼前显示的汉字,组合与 UI 元素结束。
+/// 搜索框按 Enter 时宿主调用原样落定:提交眼前的拼音原文,组合与 UI 元素结束。
 pub(super) fn check_finalize(
     edit: HWND,
     thread_mgr: &ITfThreadMgr,
@@ -150,9 +150,9 @@ pub(super) fn check_finalize(
     }
     pump_for(Duration::from_millis(100));
     let text = edit_text(edit);
-    // 上一轮延迟测试已上屏「你好」;原样落定提交当前显示,再追加一次。
-    if !text.ends_with("你好你好") {
-        return Err(format!("原样落定后文本 `{text}` 不以 你好你好 结尾"));
+    // 上一轮延迟测试已上屏「你好」;原样落定提交内联拼音原文,再追加一次。
+    if !text.ends_with("你好nihao") {
+        return Err(format!("原样落定后文本 `{text}` 不以 你好nihao 结尾"));
     }
     if !events.borrow().ended {
         return Err("原样落定后候选 UI 元素没有结束".into());

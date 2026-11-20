@@ -4,7 +4,7 @@
 //! 逐显示器 DPI、工作区夹取与全屏避让;"画什么"由会话快照决定。
 
 use lueying_protocol::SessionView;
-use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, PreeditBar};
+use lueying_render::panel::{self, GridItem, Item, Layout, Measure, Metrics, PanelSpec};
 use lueying_server::config::{UiFont, UiLayout};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -181,39 +181,82 @@ pub(super) fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
         && rect.bottom >= screen.bottom
 }
 
-/// 会话视图转面板输入;页切片、选中态与页码标签与候选窗同一套语义。
-pub(super) fn spec_of(view: &SessionView, layout: UiLayout) -> PanelSpec {
-    let ps = view.page_size.max(1);
-    let start = view.page * ps;
-    let end = (start + ps).min(view.candidates.len());
-    let items = (start..end)
-        .map(|i| Item {
-            text: view.candidates[i].clone(),
-            hint: view.hints.get(i).cloned().unwrap_or_default(),
-            selected: i == view.highlight,
-        })
-        .collect();
-    let pages = view.candidates.len().div_ceil(ps).max(1);
-    let page_label = if pages > 1 {
-        format!("{}/{}", view.page + 1, pages)
+/// 会话视图转面板输入;展开态(view.expanded)只在横排生效:固定条是
+/// 候选摘要,展开后 4×6 棋盘是一屏连续滚动的候选。固定条按内容自适应
+/// 条数(1..=9),返回的条数同时喂给引擎当页大小,数字键才不会错位。
+pub(super) fn spec_of(
+    view: &SessionView,
+    layout: UiLayout,
+    metrics: &Metrics,
+    measure: &dyn Measure,
+) -> (PanelSpec, usize) {
+    let horizontal = matches!(layout, UiLayout::Horizontal);
+    let expand = view.expanded && horizontal;
+    let len = view.candidates.len();
+    let widths = view
+        .candidates
+        .iter()
+        .map(|text| measure.width(text, metrics.text));
+    let fit = panel::strip_capacity(widths, metrics);
+    let page_size = if horizontal { fit } else { view.page_size };
+    let page = panel::page_bounds(view.page, view.page_size, len);
+    let (items, grid, scroll) = if horizontal && !expand {
+        // 条只画当前页;页号来自引擎,翻页后候选必须跟着换。
+        let items: Vec<Item> = page
+            .clone()
+            .map(|i| Item {
+                text: view.candidates[i].clone(),
+                hint: String::new(),
+                selected: i == view.highlight,
+            })
+            .collect();
+        (items, Vec::new(), None)
+    } else if expand {
+        // 棋盘是一屏滚动窗口:一屏 24 条,方向键到底行时整行滚动。
+        let cap = panel::GRID_MAX;
+        let start = panel::grid_clamp_scroll(view.grid_scroll, len);
+        let end = (start + cap).min(len);
+        let grid: Vec<GridItem> = (start..end)
+            .map(|i| GridItem {
+                text: view.candidates[i].clone(),
+                index: i,
+                selected: i == view.highlight,
+            })
+            .collect();
+        (
+            Vec::new(),
+            grid,
+            Some(panel::Scroll {
+                offset: start,
+                len,
+                cap,
+            }),
+        )
     } else {
-        String::new()
+        let items = page
+            .map(|i| Item {
+                text: view.candidates[i].clone(),
+                hint: view.hints.get(i).cloned().unwrap_or_default(),
+                selected: i == view.highlight,
+            })
+            .collect();
+        (items, Vec::new(), None)
     };
-    PanelSpec {
+    let spec = PanelSpec {
         width: 0.0,
         // 摆位时按字号档 × DPI 补上;这里先置零。
         max_text_width: 0.0,
-        preedit: PreeditBar {
-            text: view.raw.clone(),
-            page_label,
-        },
+        expand,
         items,
-        layout: if matches!(layout, UiLayout::Horizontal) {
+        grid,
+        scroll,
+        layout: if horizontal {
             Layout::Wrap
         } else {
             Layout::Column
         },
-    }
+    };
+    (spec, page_size)
 }
 
 /// 全组合候选都参与估宽;翻页时窗口宽度保持一致,不会来回跳。
@@ -223,7 +266,7 @@ pub(super) fn measure_width(
     metrics: &Metrics,
     measure: &dyn Measure,
 ) -> f32 {
-    let mut spec = spec_of(view, layout);
+    let (mut spec, _) = spec_of(view, layout, metrics, measure);
     spec.items = view
         .candidates
         .iter()

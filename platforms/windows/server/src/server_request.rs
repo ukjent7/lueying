@@ -57,6 +57,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             }
             let chinese = engine.mode() == Mode::Chinese;
             let handle = SessionHandle::new(Session {
+                expanded: false,
                 engine,
                 view: SessionView {
                     host,
@@ -113,7 +114,102 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 // 鼠标点选可能还没被 TSF 的 Sync 取走;先记下,和本次按键的
                 // 结果一起写,避免快速连打把点选上屏吞掉。
                 let carried = s.ui_reply.take();
-                let engine_key = engine_key(key);
+                // 组句中 Tab 切固定条/展开网格;空闲 Tab 直通给应用(缩进)。
+                if key == KeyMsg::Tab {
+                    if s.engine.composition().is_some() {
+                        if s.expanded {
+                            s.expanded = false;
+                            refresh_view(s);
+                        } else {
+                            expand_grid(s, state, session);
+                        }
+                    }
+                    if let Some(carried) = carried {
+                        s.ui_reply = Some(carried);
+                    }
+                    // 带回当前内联文本,免得 TSF 的应用路径清掉组合。
+                    return current_reply(s);
+                }
+                // 编辑组合的键把展开网格收回去;展开/选词键保持不动。
+                if matches!(
+                    key,
+                    KeyMsg::Letter(_)
+                        | KeyMsg::Digit(_)
+                        | KeyMsg::Backspace
+                        | KeyMsg::Delete
+                        | KeyMsg::SegmentBackspace
+                        | KeyMsg::SegmentDelete
+                ) {
+                    s.expanded = false;
+                }
+                let Some(engine_key) = engine_key(key) else {
+                    if let Some(carried) = carried {
+                        s.ui_reply = Some(carried);
+                    }
+                    return Reply {
+                        passthrough: true,
+                        chinese: state.chinese.load(Ordering::Relaxed),
+                        fullwidth: state.fullwidth.load(Ordering::Relaxed),
+                        ..Reply::default()
+                    };
+                };
+                // 候选浏览:固定条是摘要,展开棋盘是一屏连续滚动。
+                // 组合中 - / = / PageUp / PageDown / ↓ 展开;展开后
+                // 这些键整屏滚,上下左右按格挪高亮。
+                if s.engine.composition().is_some() && s.engine.candidates().len() > 1 {
+                    let page_key = matches!(
+                        engine_key,
+                        Key::Punct('=') | Key::Punct('-') | Key::PageUp | Key::PageDown
+                    );
+                    if page_key {
+                        if s.expanded {
+                            let delta = if matches!(engine_key, Key::Punct('-') | Key::PageUp) {
+                                -1
+                            } else {
+                                1
+                            };
+                            scroll_grid(s, delta);
+                        } else {
+                            expand_grid(s, state, session);
+                        }
+                        if let Some(carried) = carried {
+                            s.ui_reply = Some(carried);
+                        }
+                        return current_reply(s);
+                    }
+                    if !s.expanded && engine_key == Key::Down {
+                        expand_grid(s, state, session);
+                        if let Some(carried) = carried {
+                            s.ui_reply = Some(carried);
+                        }
+                        return current_reply(s);
+                    }
+                    let (dc, dr) = match engine_key {
+                        Key::Left => (-1, 0),
+                        Key::Right => (1, 0),
+                        Key::Up if s.expanded => (0, -1),
+                        Key::Down if s.expanded => (0, 1),
+                        Key::Up => (-1, 0),
+                        _ => (0, 0),
+                    };
+                    if dc != 0 || dr != 0 {
+                        if s.expanded {
+                            step_grid(s, dc, dr);
+                        } else {
+                            let len = s.engine.candidates().len();
+                            let last = len - 1;
+                            let step = if dc < 0 { -1 } else { 1 };
+                            let target =
+                                (s.engine.highlight() as i64 + step).clamp(0, last as i64) as usize;
+                            s.engine.set_highlight(target);
+                            refresh_view(s);
+                        }
+                        if let Some(carried) = carried {
+                            s.ui_reply = Some(carried);
+                        }
+                        return current_reply(s);
+                    }
+                }
                 let shift_toggle = state
                     .config
                     .read()
@@ -160,6 +256,10 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     }
                 }
                 refresh_view(s);
+                if s.engine.composition().is_none() {
+                    s.expanded = false;
+                    s.view.expanded = false;
+                }
                 fill_view(&mut reply, &s.view);
                 crate::settle::schedule(state, session, s);
                 if s.engine.mode() != before_mode {
@@ -475,7 +575,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     chinese: s.engine.mode() == Mode::Chinese,
                     ..Reply::default()
                 };
-                if let Some(text) = s.engine.finalize_display() {
+                if let Some(text) = s.engine.finalize_raw() {
                     reply.commits.push(text);
                 }
                 if let Some(carried) = carried {
@@ -503,12 +603,10 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     sync_ui_reply(s);
                 }
                 fill_view(&mut reply, &s.view);
-                // 宿主自绘候选时,高亮变化要同步到内联预编辑;否则文档里
-                // 还是旧候选,点选前后看到的文本对不上。
                 reply.preedit = s
                     .engine
                     .composition()
-                    .map(|c| c.display.clone())
+                    .map(|c| c.raw.clone())
                     .unwrap_or_default();
                 reply.chinese = s.engine.mode() == Mode::Chinese;
             });
@@ -517,14 +615,46 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
         Request::Page { session, delta } => {
             state.activate(session);
             let _ = state.with_session(session, |s| {
-                if s.engine.page_by(delta) {
-                    // 用户正在翻看候选,别让停顿重排回来把当前页换掉。
+                if s.expanded {
+                    // 用户正在滚动候选,别让停顿重排回来把列表换掉。
                     crate::settle::cancel(state, session);
-                    refresh_view(s);
+                    scroll_grid(s, delta);
                     sync_ui_reply(s);
                 }
             });
             Reply::default()
+        }
+        Request::ScrollTo { session, offset } => {
+            state.activate(session);
+            let _ = state.with_session(session, |s| {
+                if s.expanded {
+                    // 拖动滚动条期间同样冻结重排,列表不会在指下换词。
+                    crate::settle::cancel(state, session);
+                    scroll_grid_to(s, offset);
+                    sync_ui_reply(s);
+                }
+            });
+            Reply::default()
+        }
+        Request::SetPageSize { session, size } => {
+            state.activate(session);
+            let _ = state.with_session(session, |s| {
+                s.engine.set_page_size(size);
+                refresh_view(s);
+            });
+            neutral(state)
+        }
+        Request::Expand { session } => {
+            state.activate(session);
+            let _ = state.with_session(session, |s| {
+                if s.expanded {
+                    s.expanded = false;
+                    refresh_view(s);
+                } else {
+                    expand_grid(s, state, session);
+                }
+            });
+            neutral(state)
         }
         Request::UiMode {
             session,
@@ -677,6 +807,64 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             Reply::default()
         }
     }
+}
+
+/// 打开棋盘:以高亮所在行为中心取第一屏,并冻结后台重排。
+fn expand_grid(s: &mut Session, state: &State, session: u64) {
+    s.expanded = true;
+    let len = s.view.candidates.len();
+    s.view.grid_scroll = lueying_render::panel::grid_scroll_for(s.view.highlight, len);
+    // 棋盘打开后列表冻结,停顿重排不能再换首选。
+    crate::settle::cancel(state, session);
+    refresh_view(s);
+}
+
+/// 棋盘整屏滚动;高亮留在屏内原格,内容整行推进。
+fn scroll_grid(s: &mut Session, delta: i32) {
+    let len = s.engine.candidates().len();
+    if len == 0 {
+        return;
+    }
+    let cap = lueying_render::panel::GRID_MAX;
+    let old = lueying_render::panel::grid_clamp_scroll(s.view.grid_scroll, len);
+    let pos = s.engine.highlight().saturating_sub(old).min(cap - 1);
+    let max_scroll = lueying_render::panel::grid_max_scroll(len);
+    let step = cap as i64 * i64::from(delta);
+    let scroll = (old as i64 + step).clamp(0, max_scroll as i64) as usize;
+    let scroll = lueying_render::panel::grid_clamp_scroll(scroll, len);
+    s.view.grid_scroll = scroll;
+    s.engine.set_highlight((scroll + pos).min(len - 1));
+    refresh_view(s);
+}
+
+/// 拖动滚动条:定位到目标起点;高亮不在屏内时收进屏内。
+fn scroll_grid_to(s: &mut Session, offset: usize) {
+    let len = s.engine.candidates().len();
+    if len == 0 {
+        return;
+    }
+    let cap = lueying_render::panel::GRID_MAX;
+    let scroll = lueying_render::panel::grid_clamp_scroll(offset, len);
+    s.view.grid_scroll = scroll;
+    let highlight = s.engine.highlight().min(len - 1);
+    s.engine.set_highlight(if highlight < scroll {
+        scroll.min(len - 1)
+    } else if highlight >= scroll + cap {
+        (scroll + cap - 1).min(len - 1)
+    } else {
+        highlight
+    });
+    refresh_view(s);
+}
+
+/// 棋盘里按格移动;到底行/顶行时整屏滚一行。
+fn step_grid(s: &mut Session, dc: i32, dr: i32) {
+    let len = s.engine.candidates().len();
+    let step =
+        lueying_render::panel::grid_step(s.engine.highlight(), s.view.grid_scroll, len, dc, dr);
+    s.view.grid_scroll = step.scroll;
+    s.engine.set_highlight(step.highlight);
+    refresh_view(s);
 }
 
 /// 本地打字记录是否开着(设置里的开关,保存后经 ReloadConfig 生效)。

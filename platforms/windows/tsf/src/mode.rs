@@ -158,6 +158,12 @@ impl ITfCompartmentEventSink_Impl for ModeSink_Impl {
 
 impl ModeSink_Impl {
     fn sync(&self, guid: GUID) {
+        // compartment 是全系统共用的:微信输入法们切中英也会写进来。
+        // 掠影不是当前线程的激活输入法时,那个变化是别人的模式,不采纳,
+        // 否则主用别的输入法期间,掠影会被一路带着切到英文。
+        if crate::active::active_now() != Some(true) {
+            return;
+        }
         // 自己写 compartment 触发的那次读回与当前一致,直接忽略,避免回环。
         if self.shared.mode_writing.get() {
             return;

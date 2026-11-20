@@ -243,7 +243,7 @@ impl ITfCandidateListUIElementBehavior_Impl for CandidateElement_Impl {
                 index,
             },
         ) {
-            // 把高亮对应的内联预编辑也写回文档,候选列表与编辑框保持同一项。
+            // 把当前内联拼音原文写回文档,随后的原样落定与编辑框所见一致。
             apply_reply(&self.shared, &self.client, &reply);
         }
         Ok(())

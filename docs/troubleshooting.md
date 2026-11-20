@@ -10,6 +10,13 @@
 
 常驻服务 `lueying-server.exe` 可能挂起。在任务管理器中结束它；下次在输入框中按键时，TSF 会重新启动服务。
 
+- 服务启动完全没动静（任务管理器里一闪而过）：候选窗需要 UIAccess 资格，`lueying-server.exe` 带有 uiAccess 清单，**没有可信签名时系统会直接拒绝创建进程**。安装包会在安装时自动建证书并签名；本地构建直接运行时需要在管理员 PowerShell 里跑一次（证书已存在则复用）：
+
+  ```powershell
+  $c = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq 'CN=lueying dev' } | Select-Object -First 1
+  Set-AuthenticodeSignature -FilePath .\target\x86_64-pc-windows-gnu\release\lueying-server.exe -Certificate $c
+  ```
+
 ## 候选质量差，只剩单字
 
 安装目录缺少词典或模型时会降级。检查 `%ProgramFiles%\lueying` 中是否有：

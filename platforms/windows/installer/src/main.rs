@@ -1,9 +1,11 @@
 //! 当前用户辅助程序。机器级安装(复制文件、注册 TSF、卸载项)由 Inno Setup
-//! 完成;这里只处理必须落在发起安装的用户名下的状态:输入法列表、自启动项,
+//! 完成;uiAccess 本体的机器级签名由本程序的提权路径(`--sign-server`)完成。
+//! 这里还处理必须落在发起安装的用户名下的状态:输入法列表、自启动项,
 //! 以及升级/卸载前停止常驻服务。
 //!
-//! `--install` 由安装包的 `[Run] runasoriginaluser` 调用;`--uninstall` 由卸载器
-//! 提权调用。程序没有控制台输出,失败信息写入 `LUEYING_INSTALL_TRACE`。
+//! `--sign-server` 由安装包的 `[Run]`(提权上下文)调用;`--install` 由
+//! `[Run] runasoriginaluser` 调用;`--uninstall` 由卸载器提权调用。
+//! 程序没有控制台输出,失败信息写入 `LUEYING_INSTALL_TRACE`。
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -40,8 +42,7 @@ mod imp {
     use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
     use windows::Win32::UI::TextServices::{
         CLSID_TF_InputProcessorProfiles, ITfInputProcessorProfileMgr, ITfInputProcessorProfiles,
-        TF_IPPMF_DISABLEPROFILE, TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE, TF_IPPMF_ENABLEPROFILE,
-        TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
+        TF_IPPMF_DISABLEPROFILE, TF_IPPMF_FORSESSION, TF_PROFILETYPE_INPUTPROCESSOR,
     };
     use windows::core::{GUID, HSTRING, Interface, PCSTR, PCWSTR, w};
 
@@ -50,11 +51,13 @@ mod imp {
     const CLSID_IME: GUID = GUID::from_u128(0x8ffecd5b_dba4_480c_9749_fecdcaa8fa17);
     const GUID_PROFILE: GUID = GUID::from_u128(0x76f58072_ab35_4aa7_ba2d_324f994587db);
     const LANGID_ZH_CN: u16 = 0x0804;
-    /// `InstallLayoutOrTip`/`SetDefaultLayoutOrTip` 的字符串格式:
+    /// `InstallLayoutOrTip` 的字符串格式:
     /// `<LANGID>:<TIP CLSID><PROFILE GUID>`。
     const PROFILE_ID: &str =
         "0804:{8FFECD5B-DBA4-480C-9749-FECDCAA8FA17}{76F58072-AB35-4AA7-BA2D-324F994587DB}";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    /// 自签名代码签名证书主题;升级按主题复用,卸载按主题清理。
+    const CERT_SUBJECT: &str = "CN=lueying dev";
 
     /// 安装包与更新器都看不到控制台输出;设置 `LUEYING_INSTALL_TRACE` 后把
     /// 阶段追加到该文件,CI 卡住时仍能定位。
@@ -79,6 +82,13 @@ mod imp {
                     trace(&format!("install: 失败: {error}"));
                     std::process::exit(1);
                 }
+            }
+            Some("--sign-server") => {
+                if let Err(error) = sign_server() {
+                    trace(&format!("sign_server: 失败: {error}"));
+                    std::process::exit(1);
+                }
+                trace("sign_server: done");
             }
             Some("--uninstall") => uninstall(),
             Some("--stop-server") => {
@@ -129,6 +139,8 @@ mod imp {
         let _ = set_profile_enabled(false);
         trace("uninstall: registry");
         remove_registry();
+        trace("uninstall: cert");
+        remove_code_sign_cert();
         trace("uninstall: prune");
         prune_on_uninstall();
         trace("uninstall: done");
@@ -231,29 +243,10 @@ mod imp {
                 }
                 // EnableLanguageProfile 只写 HKLM 下的 Enable 标志，不会把 profile
                 // 追加到当前用户的输入法列表；InstallLayoutOrTip 才写 HKCU\User Profile。
+                // 只加入列表，不碰默认/会话激活：任务栏搜索等 shell 宿主跟的是
+                // 会话默认输入法，安装器抢默认会让这些宿主再也切不走。
                 let listed = call_input_dll(b"InstallLayoutOrTip\0", PROFILE_ID);
-                let defaulted = call_input_dll(b"SetDefaultLayoutOrTip\0", PROFILE_ID);
-                // 已在运行的宿主不会因注册表变化重新选择 TIP；FORSESSION 立即把当前
-                // 桌面切到掠影，装完就能用，不必重启 Chrome / Windows Terminal。
-                let activated = match profiles.cast::<ITfInputProcessorProfileMgr>() {
-                    Ok(manager) => unsafe {
-                        manager.ActivateProfile(
-                            TF_PROFILETYPE_INPUTPROCESSOR,
-                            LANGID_ZH_CN,
-                            &CLSID_IME,
-                            &GUID_PROFILE,
-                            HKL::default(),
-                            TF_IPPMF_FORSESSION
-                                | TF_IPPMF_ENABLEPROFILE
-                                | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE,
-                        )
-                    }
-                    .is_ok(),
-                    Err(_) => false,
-                };
-                trace(&format!(
-                    "profile: listed={listed} default={defaulted} activated={activated}"
-                ));
+                trace(&format!("profile: listed={listed} default untouched"));
                 return Ok(());
             }
             // Win10/11 上 DeactivateProfile 比 EnableLanguageProfile(false) 可靠,
@@ -311,8 +304,88 @@ mod imp {
         }
     }
 
+    /// 机器级签名资格:建/复用自签名代码签名证书(进机器受信任根与
+    /// 受信任发布者),给 `lueying-server.exe` 盖上签名。带 uiAccess 清单的
+    /// 本体没有受信任根下的签名时,进程创建会被系统直接拒绝——签名失败
+    /// 等于装出一个打不了字的服务,所以这一步失败按安装失败处理。
+    fn sign_server() -> Result<(), String> {
+        let target = app_dir()?.join("lueying-server.exe");
+        let script = SIGN_SCRIPT
+            .replace("{cn}", CERT_SUBJECT)
+            .replace("{target}", &ps_single_quoted(&target.display().to_string()));
+        let output = run_script(&script)?;
+        if !output.contains("Valid") {
+            return Err(format!("签名验证未通过: {output}"));
+        }
+        Ok(())
+    }
+
+    /// 卸载收回机器信任:三处证书存储里按主题清掉自签名证书。
+    /// 失败不拦卸载,痕迹进 trace。
+    fn remove_code_sign_cert() {
+        let script = REMOVE_CERT_SCRIPT.replace("{cn}", CERT_SUBJECT);
+        match run_script(&script) {
+            Ok(_) => trace("uninstall: 证书已移除"),
+            Err(error) => trace(&format!("uninstall: 证书移除失败: {error}")),
+        }
+    }
+
+    /// 用系统 PowerShell 5.1 跑一段脚本,返回 stdout。脚本临时落盘再 -File:
+    /// -Command 的引号嵌套不可靠;UTF-8 BOM 让 5.1 按 UTF-8 读,中文路径不乱。
+    fn run_script(script: &str) -> Result<String, String> {
+        let path = std::env::temp_dir().join(format!("lueying-script-{}.ps1", std::process::id()));
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend_from_slice(script.as_bytes());
+        std::fs::write(&path, bytes).map_err(|e| format!("写脚本临时文件: {e}"))?;
+        let output = Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"))
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&path)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("运行 PowerShell: {e}"));
+        let _ = std::fs::remove_file(&path);
+        let output = output?;
+        if !output.status.success() {
+            return Err(format!(
+                "PowerShell 退出码 {:?}: {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// PowerShell 单引号字面量:' 是唯一要转义的字符。
+    fn ps_single_quoted(text: &str) -> String {
+        text.replace('\'', "''")
+    }
+
+    const SIGN_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+$cn = '{cn}'
+$target = '{target}'
+$cert = Get-ChildItem Cert:\LocalMachine\My |
+  Where-Object { $_.Subject -eq $cn -and $_.HasPrivateKey } |
+  Sort-Object NotAfter -Descending | Select-Object -First 1
+if (-not $cert) {
+  $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $cn `
+    -KeyUsage DigitalSignature -KeySpec Signature -KeyLength 3072 `
+    -CertStoreLocation Cert:\LocalMachine\My -NotAfter (Get-Date).AddYears(10)
+  $cer = Join-Path $env:TEMP 'lueying-dev.cer'
+  Export-Certificate -Cert $cert -FilePath $cer | Out-Null
+  Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+  Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+  Remove-Item $cer -Force
+}
+Set-AuthenticodeSignature -FilePath $target -Certificate $cert | Out-Null
+Write-Output (Get-AuthenticodeSignature -FilePath $target).Status
+"#;
+
+    const REMOVE_CERT_SCRIPT: &str = r#"$cn = '{cn}'
+Get-ChildItem Cert:\LocalMachine\My, Cert:\LocalMachine\Root, Cert:\LocalMachine\TrustedPublisher |
+  Where-Object { $_.Subject -eq $cn } | Remove-Item
+"#;
+
     /// 先按当前用户的管道名请服务退出,再按进程名兜底。
-    ///
     /// 管理员代装时,提权进程的管道名与被安装用户不同,连不上原用户的服务;
     /// 而升级必须替换 lueying-server.exe。TSF 会在下次输入时按需重新拉起服务,
     /// 所以这里接受停止本机所有 lueying-server 进程。

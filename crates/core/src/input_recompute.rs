@@ -10,7 +10,7 @@ use super::*;
 const ACTION_SUPPRESS: u32 = 2;
 
 impl Engine {
-    /// 重算候选与内联显示。任何组合变化后必须调用。
+    /// 重算候选与音节切分。任何组合变化后必须调用。
     pub(crate) fn recompute(&mut self) {
         self.rev = self.rev.wrapping_add(1);
         self.hl = 0;
@@ -25,11 +25,6 @@ impl Engine {
         let codes = self.scheme.code_candidates(&raw);
         if !codes.is_empty() {
             let built = crate::code::build(codes, raw.len());
-            comp.display = built
-                .cands
-                .first()
-                .map(|cand| cand.text.clone())
-                .unwrap_or_else(|| raw.clone());
             // 码输入不分音节:整串算一段,退格与 Ctrl+左右按整段走。
             comp.seg_spans = vec![(0, raw.len())];
             self.cands = built.cands;
@@ -78,11 +73,6 @@ impl Engine {
         if let Some(action) = self.action.clone() {
             inject_action(&mut built.cands, &action, &raw, &user);
         }
-        comp.display = built
-            .cands
-            .first()
-            .map(|c| c.text.clone())
-            .unwrap_or_else(|| raw.clone());
         comp.seg_spans = built
             .cands
             .first()

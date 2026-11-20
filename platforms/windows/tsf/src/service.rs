@@ -242,7 +242,7 @@ impl TextService {
         // 安全桌面里全部直通:密码/凭据不能进入组句、学习或候选窗。
         // Alt 组合一律归应用;Ctrl 只放行按音节编辑的四个键,其余快捷键
         // (Ctrl+C/V/A/Z 等)不经过输入法。
-        if self.secure.get() || keys::caps_on() || keys::alt_down() {
+        if self.secure.get() || keys::caps_on() || keys::alt_down() || keys::win_down() {
             return None;
         }
         let ctrl = keys::ctrl_down();

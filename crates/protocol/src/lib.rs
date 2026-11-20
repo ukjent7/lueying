@@ -185,6 +185,8 @@ pub enum KeyMsg {
     PageDown,
     Punct(char),
     Shift,
+    /// 组句中切候选窗的固定条/展开网格(编到枚举尾部,旧报文序号不变)。
+    Tab,
 }
 
 /// DLL → Server。
@@ -263,13 +265,24 @@ pub enum Request {
     Page { session: u64, delta: i32 },
     /// 宿主经 TSF `BeginUIElement`/`Show` 接管了候选绘制;Server 收起自己的窗口。
     UiMode { session: u64, host_draws: bool },
+    /// 切候选窗固定条/展开网格(Tab 键与条尾 ⌄ 共用;同样编在尾部)。
+    Expand { session: u64 },
+    /// 固定条按内容自适应条数;UI 量出放得下几条就设几条(1..=9)。
+    SetPageSize { session: u64, size: usize },
     /// 通用扩展请求:`id` 是扩展(命令方法里是完整命令 id),`method`
     /// 由宿主分派。宿主提供 `commands.list`(已加载命令的标题表)与
     /// `command.run`(外部启动器触发扩展命令,CLI `lueying ext run` 走这条)。
     Ext { id: String, method: String },
     /// 会话下线。
     Goodbye { session: u64 },
+    /// 拖动棋盘滚动条:直接定位到绝对候选序号(编在尾部,旧报文序号不变)。
+    ScrollTo { session: u64, offset: usize },
 }
+
+/// 回落宿主 → 常驻服务的窗口消息:宿主线程当前选中的输入法是否为本产品。
+/// AppContainer 宿主连不上服务管道,UIPI 过滤后改用这条轻量通道。
+/// `wparam` = active(0/1),`lparam` = 宿主进程 id。
+pub const FALLBACK_ACTIVE_MESSAGE: u32 = 0x8000 + 0x4C59;
 
 /// 请求的特权层级。管道 ACL 必须放行低完整性宿主(UWP 打字所需),分级
 /// 由服务端在处理前按客户端身份校验;键入流永不设限。
@@ -318,8 +331,11 @@ impl Request {
             Self::SelectIndex { .. } => "SelectIndex",
             Self::Page { .. } => "Page",
             Self::UiMode { .. } => "UiMode",
+            Self::Expand { .. } => "Expand",
+            Self::SetPageSize { .. } => "SetPageSize",
             Self::Ext { .. } => "Ext",
             Self::Goodbye { .. } => "Goodbye",
+            Self::ScrollTo { .. } => "ScrollTo",
         }
     }
 
@@ -431,15 +447,18 @@ pub struct EngineStatus {
 pub struct SessionView {
     /// 组合的原始拼音(含用户输入的隔音符),候选窗首行显示它。
     pub raw: String,
+    /// 内联拼音原文(空 = 无组合),TSF 把它写进文档组句。
     pub preedit: String,
-    /// 分段显示的拼音。
-    pub segments: Vec<String>,
+    /// 候选窗当前是不是展开网格。
+    pub expanded: bool,
     pub candidates: Vec<String>,
     /// 与 `candidates` 一一对应的注音提示;空串表示不显示。
     pub hints: Vec<String>,
     pub page: usize,
     pub page_size: usize,
     pub highlight: usize,
+    /// 展开棋盘的滚动起点(绝对候选序号);收起时为 0。
+    pub grid_scroll: usize,
     pub chinese: bool,
     pub fullwidth: bool,
     /// 停顿重排换过首选的次数;候选窗据此做一次轻微提示。

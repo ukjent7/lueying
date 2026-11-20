@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use lueying_render::panel::{Item, Layout, Palette, PanelSpec, PreeditBar};
+use lueying_render::panel::{Item, Layout, Palette, PanelSpec};
 
 /// 一条区域检查表:`(检查名, 是否通过, 说明)`。
 pub type Checks = Vec<(&'static str, bool, String)>;
@@ -66,10 +66,7 @@ pub fn spec() -> PanelSpec {
     PanelSpec {
         width: 360.0,
         max_text_width: 300.0,
-        preedit: PreeditBar {
-            text: "nihao".into(),
-            page_label: "1/2".into(),
-        },
+        expand: false,
         items: vec![
             Item {
                 text: "你好".into(),
@@ -82,6 +79,8 @@ pub fn spec() -> PanelSpec {
                 selected: false,
             },
         ],
+        grid: Vec::new(),
+        scroll: None,
         layout: Layout::Wrap,
     }
 }

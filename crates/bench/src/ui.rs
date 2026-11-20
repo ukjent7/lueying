@@ -116,37 +116,37 @@ pub fn run(report: &mut String) -> usize {
         );
     }
 
-    // 高亮换候选时内联文本必须一起变;否则空格上屏的内容与眼前看到的不一致。
+    // 内联始终是拼音原文:换候选只动候选窗,空格上屏以候选窗高亮为准。
     let mut e = engine();
     type_into(&mut e, "shi");
+    let first = e.candidates().first().cloned().unwrap_or_default();
     let second = e.candidates().get(1).cloned().unwrap_or_default();
     e.process(Key::Down);
-    let display = e
+    let inline = e
         .composition()
-        .map(|comp| comp.display.clone())
+        .map(|comp| comp.raw.clone())
         .unwrap_or_default();
     push(
         &mut checks,
-        "高亮候选同步内联文本",
-        !second.is_empty() && display == second,
-        format!("内联 {display:?} / 第二候选 {second:?}"),
+        "内联始终是拼音原文",
+        !second.is_empty() && second != first && inline == "shi",
+        format!("内联 {inline:?} / 第二候选 {second:?}"),
     );
 
-    // 搜索框的 FinalizeExactCompositionString:落定当前显示文本,不补全剩余拼音。
+    // 搜索框的 FinalizeExactCompositionString:按内联拼音原文落定,
+    // 不补全剩余拼音,也不改选候选。
     let mut e = engine();
     type_into(&mut e, "nihao");
-    let shown = e.candidates().first().cloned().unwrap_or_default();
-    let finalized = e.finalize_display();
-    let idle = e.finalize_display();
+    let finalized = e.finalize_raw();
+    let idle = e.finalize_raw();
     push(
         &mut checks,
-        "宿主原样落定当前显示文本",
-        !shown.is_empty()
-            && finalized.as_deref() == Some(shown.as_str())
+        "宿主原样落定拼音原文",
+        finalized.as_deref() == Some("nihao")
             && e.composition().is_none()
             && e.candidates().is_empty()
             && idle.is_none(),
-        format!("显示 {shown:?} → 落定 {finalized:?}"),
+        format!("落定 {finalized:?}"),
     );
 
     // 长句候选:整句备选先占满一页(最多五条),最高分前缀词紧跟其后;
@@ -271,29 +271,41 @@ pub fn run(report: &mut String) -> usize {
         format!("上屏 {committed:?}"),
     );
 
-    // `-`/`=` 多页翻页;首页再按 `-` 停在边界,不把候选连同标点一起上屏。
+    // 候选浏览改成纯展开:核心不再把 -/= 当翻页键,组合中照常上屏标点。
     let mut e = engine();
     type_into(&mut e, "yi");
-    let pages = e.candidates().len().div_ceil(e.page_size());
-    if pages > 1 {
-        let minus = e.process(Key::Punct('-'));
-        let stayed = e.page() == 0 && minus.is_empty();
-        e.process(Key::Punct('='));
-        let moved = e.page() == 1;
-        push(
-            &mut checks,
-            "-/= 多页翻页且边界停住",
-            stayed && moved && e.composition().is_some(),
-            format!("pages={pages} page={}", e.page()),
-        );
-    } else {
-        push(
-            &mut checks,
-            "-/= 多页翻页且边界停住",
-            false,
-            "内置词库 yi 只有一页,无法验证".into(),
-        );
-    }
+    let events = e.process(Key::Punct('='));
+    let typed: String = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Commit(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    push(
+        &mut checks,
+        "= 不再翻页,照常上屏标点",
+        e.composition().is_none() && typed.ends_with('='),
+        format!("上屏 {typed:?}"),
+    );
+
+    // 中括号恢复为中文方头括号。
+    let mut e = engine();
+    type_into(&mut e, "yi");
+    let events = e.process(Key::Punct('['));
+    let typed: String = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Commit(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    push(
+        &mut checks,
+        "中括号上屏方头括号",
+        e.composition().is_none() && typed.ends_with('【'),
+        format!("上屏 {typed:?}"),
+    );
 
     // 无中文映射的 `/`:先把首选上屏,再上屏 ASCII 斜杠。
     let mut e = engine();

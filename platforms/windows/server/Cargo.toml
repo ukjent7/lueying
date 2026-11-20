@@ -17,6 +17,8 @@ lueying-rerank.workspace = true
 lueying-render.workspace = true
 # 会话内核:候选视图同步与重排快照。
 lueying-protocol = { path = "../../../crates/protocol" }
+# VK → 协议键的映射:TSF 键汇与低层钩子回落通道共用。
+lueying-win-keys = { workspace = true }
 # 扩展清单与场景协议:设置页与指标快照共用,不带宿主运行时。
 lueying-ext = { workspace = true, default-features = false }
 # 配置 schema:typed TOML,未知键在读取时拒绝。
@@ -25,6 +27,10 @@ serde_json = "1"
 toml = "1.1"
 # 令牌生成的 CSPRNG,直连系统随机源。
 getrandom = "0.4"
+
+[build-dependencies]
+# 嵌 uiAccess 清单:MSVC 走 rc.exe,GNU 交叉走 windres,CI 与本地两边都能用。
+winresource = "0.1"
 
 [target."cfg(windows)".dependencies]
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
@@ -60,6 +66,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
+    "Win32_System_Ole",
     "Win32_System_Pipes",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",

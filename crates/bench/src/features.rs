@@ -11,7 +11,7 @@
 //! 8. 英文大小写丢失,`iphone` 只能上屏小写;`vscode` 被 v 快捷前缀吞掉。
 //! 9. 简繁只做单字映射:头发/干净/皇后/面条等歧义词转换错。
 //! 10. 繁体候选写进词库,切回简体后仍召回繁体词。
-//! 11. 组合中切换简繁不重算,内联显示与候选仍是旧字形。
+//! 11. 组合中切换简繁不重算:候选换字形,内联保持拼音原文。
 //! 12. 繁体模式误转英文、拼音原文或快捷输入的 ASCII 部分。
 //! 13. 少打末音节最后一个字母时没有整词候选;完整拼音、单音节或简拼被误补全。
 //! 14. 口语读音 zhei/nei 没有整词,`zheige` 被拆成「贼个」。
@@ -92,10 +92,10 @@ fn top(engine: &Engine) -> String {
     engine.candidates().first().cloned().unwrap_or_default()
 }
 
-fn display(engine: &Engine) -> String {
+fn inline(engine: &Engine) -> String {
     engine
         .composition()
-        .map(|comp| comp.display.clone())
+        .map(|comp| comp.raw.clone())
         .unwrap_or_default()
 }
 
@@ -403,7 +403,7 @@ pub fn run(report: &mut String) -> usize {
         push(
             &mut checks,
             "简繁转换",
-            actual == want && display(&engine) == want,
+            actual == want && inline(&engine) == raw,
             format!("{raw} → {actual}"),
         );
     }
@@ -423,7 +423,7 @@ pub fn run(report: &mut String) -> usize {
         push(
             &mut checks,
             "地区字形",
-            actual == want && display(&engine) == want,
+            actual == want && inline(&engine) == raw,
             format!("{raw} {script:?} → {actual}"),
         );
     }
@@ -455,20 +455,20 @@ pub fn run(report: &mut String) -> usize {
         format!("{:?}", canonical.candidates()),
     );
 
-    // 组合中切换:候选与内联显示同时换字形。模块句柄翻动后,引擎要靠
+    // 组合中切换:候选换字形,内联拼音原文不动。模块句柄翻动后,引擎要靠
     // 宿主下发配置来重算(与服务端 apply_config 的路径一致)。
     let (mut switch, script_handle) = custom(Script::Simplified);
     letters(&mut switch, "toufa");
     let simplified = top(&switch) == "头发";
     script_handle.set_script(Script::Traditional);
     switch.set_config(Config::default());
-    let traditional = top(&switch) == "頭髮" && display(&switch) == "頭髮";
+    let traditional = top(&switch) == "頭髮" && inline(&switch) == "toufa";
     script_handle.set_script(Script::Simplified);
     switch.set_config(Config::default());
     push(
         &mut checks,
         "组合中切换简繁",
-        simplified && traditional && top(&switch) == "头发" && display(&switch) == "头发",
+        simplified && traditional && top(&switch) == "头发" && inline(&switch) == "toufa",
         format!("当前 {:?}", switch.candidates()),
     );
 

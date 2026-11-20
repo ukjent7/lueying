@@ -2,6 +2,7 @@
 //! TSF 文本服务 DLL:加载进每个应用进程,拦截按键交给拼音引擎,
 //! 经异步编辑会话写组句/上屏。激活流程、按键模式参考青简(qingjian)验证过的写法。
 
+mod active;
 mod attr;
 mod client;
 mod context;
@@ -96,6 +97,7 @@ extern "system" fn DllGetClassObject(
     riid: *const GUID,
     ppv: *mut *mut c_void,
 ) -> HRESULT {
+    active::start_once();
     if rclsid.is_null() || riid.is_null() || ppv.is_null() {
         return E_FAIL;
     }

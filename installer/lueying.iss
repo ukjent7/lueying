@@ -96,6 +96,12 @@ Name: "{group}\掠影设置"; Filename: "{app}\lueying-settings.exe"
 Name: "{group}\卸载掠影"; Filename: "{uninstallexe}"
 
 [Run]
+; 带 uiAccess 清单的 server 本体没有受信任根下的签名时,进程创建会被系统
+; 直接拒绝,所以签名必须在任何东西尝试拉起服务之前做完。Inno 不检查
+; [Run] 进程退出码,失败的痕迹在 LUEYING_INSTALL_TRACE。
+Filename: "{app}\lueying-user.exe"; Parameters: "--sign-server"; \
+    StatusMsg: "正在建立签名信任..."; \
+    Flags: runhidden waituntilterminated
 ; 输入法列表、自启动和旧版快捷方式都属于当前用户;Setup 是提权进程,
 ; 直接写 HKCU 会落到管理员账号上,所以交给以原用户身份运行的辅助程序。
 Filename: "{app}\lueying-user.exe"; Parameters: "--install"; \

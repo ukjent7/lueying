@@ -12,11 +12,12 @@ use lueying_render::paint::{Canvas, Color, Point};
 use lueying_render::panel::{Metrics, Rect};
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
+    D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_EXTEND_MODE_CLAMP,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_GAMMA_2_2,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_RENDER_TARGET_PROPERTIES,
     D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory,
     ID2D1SolidColorBrush, ID2D1StrokeStyle,
@@ -35,6 +36,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
 use windows::core::w;
+use windows_numerics::Vector2;
 
 /// 不限制宽度时给文字布局的可用宽度(物理像素);D2D 不接受无穷大。
 const TEXT_LIMIT: f32 = 4096.0;
@@ -333,6 +335,61 @@ impl Canvas for Surface {
         }
     }
 
+    fn fill_rrect_vertical(&mut self, rect: Rect, radius: f32, top: Color, bottom: Color) {
+        let Ok(target) = self.target() else {
+            return;
+        };
+        let mix = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+        let channel = |shift: u32| {
+            mix(
+                ((top.rgb >> shift) & 0xff) as u8,
+                ((bottom.rgb >> shift) & 0xff) as u8,
+            )
+        };
+        let flat = Color::with_alpha(
+            (u32::from(channel(16)) << 16) | (u32::from(channel(8)) << 8) | u32::from(channel(0)),
+            mix(top.alpha, bottom.alpha),
+        );
+        unsafe {
+            let stops = [
+                D2D1_GRADIENT_STOP {
+                    position: 0.0,
+                    color: d2d_color(top),
+                },
+                D2D1_GRADIENT_STOP {
+                    position: 1.0,
+                    color: d2d_color(bottom),
+                },
+            ];
+            let Ok(collection) =
+                target.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+            else {
+                self.brush.SetColor(&d2d_color(flat));
+                target.FillRoundedRectangle(&rrect(rect, radius), &self.brush);
+                return;
+            };
+            let Ok(brush) = target.CreateLinearGradientBrush(
+                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                    startPoint: Vector2 {
+                        X: rect.left,
+                        Y: rect.top,
+                    },
+                    endPoint: Vector2 {
+                        X: rect.left,
+                        Y: rect.bottom,
+                    },
+                },
+                None,
+                &collection,
+            ) else {
+                self.brush.SetColor(&d2d_color(flat));
+                target.FillRoundedRectangle(&rrect(rect, radius), &self.brush);
+                return;
+            };
+            target.FillRoundedRectangle(&rrect(rect, radius), &brush);
+        }
+    }
+
     fn stroke_rrect(&mut self, rect: Rect, radius: f32, width: f32, color: Color) {
         let Ok(target) = self.target() else {
             return;
@@ -450,6 +507,22 @@ impl Canvas for Surface {
                 &self.brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
+            );
+        }
+    }
+
+    fn line(&mut self, a: Point, b: Point, width: f32, color: Color) {
+        let Ok(target) = self.target() else {
+            return;
+        };
+        unsafe {
+            self.brush.SetColor(&d2d_color(color));
+            target.DrawLine(
+                Vector2 { X: a.x, Y: a.y },
+                Vector2 { X: b.x, Y: b.y },
+                &self.brush,
+                width,
+                None::<&ID2D1StrokeStyle>,
             );
         }
     }

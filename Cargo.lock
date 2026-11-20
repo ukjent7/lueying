@@ -3281,12 +3281,14 @@ dependencies = [
  "lueying-protocol",
  "lueying-render",
  "lueying-rerank",
+ "lueying-win-keys",
  "mimalloc",
  "serde",
  "serde_json",
  "toml",
  "windows",
  "windows-numerics",
+ "winresource",
 ]
 
 [[package]]
@@ -3317,6 +3319,7 @@ name = "lueying-tsf"
 version = "0.1.0"
 dependencies = [
  "lueying-protocol",
+ "lueying-win-keys",
  "serde_json",
  "windows",
  "windows-core",
@@ -3331,6 +3334,14 @@ dependencies = [
  "serde_json",
  "windows",
  "windows-core",
+]
+
+[[package]]
+name = "lueying-win-keys"
+version = "0.1.0"
+dependencies = [
+ "lueying-protocol",
+ "windows",
 ]
 
 [[package]]
@@ -4973,7 +4984,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7497,6 +7508,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bc6d36480b829272a5bdabf08e6dca8004761c1da7e35efef800540c66221b"
+dependencies = [
+ "toml",
+ "version_check",
 ]
 
 [[package]]

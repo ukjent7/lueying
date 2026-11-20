@@ -20,6 +20,9 @@ use crate::config::{
 #[serde(deny_unknown_fields, default)]
 pub struct FileConfig {
     pub page_size: Option<usize>,
+    /// 旧键(已取消):候选浏览改成纯展开,翻页开关不再生效;读到即忽略。
+    #[serde(default, skip_serializing)]
+    pub bracket_page: Option<serde::de::IgnoredAny>,
     pub chinese_punct: Option<bool>,
     pub settled_promote: Option<bool>,
     pub toolbar_scale: Option<f32>,
@@ -107,6 +110,8 @@ pub fn apply(
     }
     // 模糊音已取消、始终开启;旧配置里的 fuzzy 键不再生效。
     let _ = file.fuzzy;
+    // 中括号翻页已取消,候选浏览改成纯展开;旧键读到即忽略。
+    let _ = file.bracket_page;
     // 「允许扩展自由联网」已取消:同意之后本就不再逐域名拦截,旧键读到即忽略。
     let _ = file.allow_all_extension_network;
     if let Some(on) = file.shift_toggle {

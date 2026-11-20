@@ -8,6 +8,8 @@ members = [
     "crates/ext",
     "crates/rerank",
     "crates/protocol",
+    # Windows 虚拟键映射:TSF 键汇与常驻服务的回落通道共用
+    "crates/win-keys",
     # 渲染核心:候选窗与面板的绘制指令,平台无关
     "crates/render",
     # Windows 平台薄层:TSF 宿主、常驻服务与安装(E2E 见 platforms/windows/*)
@@ -42,6 +44,7 @@ lueying-ext-host = { path = "platforms/windows/ext-host" }
 lueying-protocol = { path = "crates/protocol" }
 lueying-render = { path = "crates/render" }
 lueying-rerank = { path = "crates/rerank" }
+lueying-win-keys = { path = "crates/win-keys" }
 lueying-server = { path = "platforms/windows/server" }
 lueying-settings = { path = "platforms/windows/settings" }
 # 出站 HTTPS:设置窗(更新、扩展安装)与扩展宿主共用;证书走系统证书库,HTTPS 不降级。

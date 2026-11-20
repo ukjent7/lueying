@@ -32,6 +32,7 @@ enum Op {
         size: f32,
         color: Color,
     },
+    Line(Point, Point, f32, Color),
 }
 
 /// 记录画布:按绘制顺序收集指令;测宽用与布局相同的估算实现。
@@ -78,7 +79,7 @@ impl Recorder {
                 | Op::RRect(rect, ..)
                 | Op::StrokeRRect(rect, ..)
                 | Op::TextCentered { rect, .. } => *rect,
-                Op::Shadow(..) | Op::Text { .. } => return true,
+                Op::Shadow(..) | Op::Text { .. } | Op::Line(..) => return true,
             };
             rect.left >= self.limit.left - 0.01
                 && rect.top >= self.limit.top - 0.01
@@ -138,6 +139,10 @@ impl Canvas for Recorder {
             size,
             color,
         });
+    }
+
+    fn line(&mut self, a: Point, b: Point, width: f32, color: Color) {
+        self.ops.push(Op::Line(a, b, width, color));
     }
 }
 

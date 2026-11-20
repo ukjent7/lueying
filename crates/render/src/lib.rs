@@ -9,13 +9,11 @@ pub mod badge;
 pub mod paint;
 pub mod panel;
 pub mod picker;
-pub mod spring;
 pub mod toolbar;
 
 pub use paint::{Canvas, Color, Point};
 pub use panel::{
-    Estimate, Hit, Item, Layout, ListFx, Measure, Metrics, Palette, PanelSpec, PreeditBar, Rect,
-    Surface, hit_test, item_rects, item_width, layout_rows, menu_height, menu_hit, pager_rects,
-    panel_height, panel_width,
+    Estimate, GRID_MAX, GridItem, Hit, Item, Layout, ListFx, Measure, Metrics, Palette, PanelSpec,
+    Rect, STRIP_W, Surface, chevron_rect, ellipsize, grid_rects, hit_test, item_rects, item_width,
+    layout_rows, menu_height, menu_hit, panel_height, panel_width,
 };
-pub use spring::Spring;

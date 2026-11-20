@@ -50,11 +50,35 @@ pub trait Canvas {
     /// 圆角矩形,`radius` 是圆角半径(物理像素)。
     fn fill_rrect(&mut self, rect: Rect, radius: f32, color: Color);
 
+    /// 竖向渐变的圆角矩形;选中块的亮面釉靠它做上亮下深。
+    ///
+    /// 默认退化成中间色实心,平台没有渐变笔时形状与不透明度仍一致;
+    /// 有渐变笔的后端覆盖它,亮面质感才完整。
+    fn fill_rrect_vertical(&mut self, rect: Rect, radius: f32, top: Color, bottom: Color) {
+        let mix = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+        let channel = |shift: u32| {
+            mix(
+                ((top.rgb >> shift) & 0xff) as u8,
+                ((bottom.rgb >> shift) & 0xff) as u8,
+            )
+        };
+        let rgb =
+            (u32::from(channel(16)) << 16) | (u32::from(channel(8)) << 8) | u32::from(channel(0));
+        self.fill_rrect(
+            rect,
+            radius,
+            Color::with_alpha(rgb, mix(top.alpha, bottom.alpha)),
+        );
+    }
+
     /// 圆角矩形描边。
     fn stroke_rrect(&mut self, rect: Rect, radius: f32, width: f32, color: Color);
 
     /// 圆角矩形外的一圈柔和投影;`blur` 是扩散半径。
     fn shadow_rrect(&mut self, rect: Rect, radius: f32, blur: f32, color: Color);
+
+    /// 线段;画矢量图形(如条尾箭头),`width` 是线宽(物理像素)。
+    fn line(&mut self, a: Point, b: Point, width: f32, color: Color);
 
     /// 以左缘与竖直中线为锚点画一段文字;`max_width` 给定时裁掉超出部分。
     fn text(

@@ -4,13 +4,17 @@
 //! 拆分只改变文件边界,不改变可见性和调用路径。
 
 #[path = "server_request.rs"]
-mod request;
+pub(crate) mod request;
 
 #[path = "server_ext.rs"]
 mod ext;
 
 #[path = "server_assets.rs"]
 mod assets;
+
+/// TSF 不覆盖的宿主的回落输入通道(低层钩子)。
+#[path = "fallback.rs"]
+pub(crate) mod fallback;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -68,6 +72,8 @@ pub(super) struct Session {
     pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
     pub(super) host_draws: bool,
+    /// 候选窗展开网格;编辑组合的键把它收回去。
+    pub(super) expanded: bool,
     /// 当前输入范围是密码/隐私字段;运行期扩展整个跳过。
     pub(super) private: bool,
     /// 最近一次 Context 的焦点代次;异步 UIA 结果据此丢弃过期文本。
@@ -211,6 +217,10 @@ pub(super) struct State {
     pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
     /// TSF 读不到左邻文本时交给 UIA 线程补读;队列满时丢新任务。
     pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Work>>,
+    /// 回落宿主的候选窗锚点查询;独立线程,不排在上下文读取后面。
+    pub(super) anchor_tx: Option<mpsc::Sender<crate::uia::AnchorJob>>,
+    /// 回落宿主上报的「当前输入法是否掠影」;按键钩子据此让路。
+    pub(super) fallback_active: Mutex<HashMap<u32, bool>>,
     /// 所有会话共用一份学习结果。
     pub(super) user: SharedUser,
     /// 本地打字记录的落盘通道;记录关闭时没有句子进来。
@@ -279,6 +289,25 @@ impl State {
     pub(super) fn active_published(&self) -> Option<Arc<Published>> {
         self.session(self.active.load(Ordering::Relaxed))
             .map(|handle| handle.published())
+    }
+
+    /// 回落宿主是否正用掠影;没上报过按「不用」处理,先把键让给系统输入法。
+    pub(super) fn fallback_active(&self, pid: u32) -> bool {
+        *self
+            .fallback_active
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&pid)
+            .unwrap_or(&false)
+    }
+
+    /// 记下宿主上报的状态;返回是否发生变化。
+    pub(super) fn set_fallback_active(&self, pid: u32, active: bool) -> bool {
+        self.fallback_active
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(pid, active)
+            != Some(active)
     }
 }
 
@@ -485,6 +514,7 @@ pub(super) fn real_main() {
     let (sync_tx, sync_rx) = mpsc::sync_channel(1);
     let sync_tx = sync_model.as_ref().map(|_| sync_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Work>(4);
+    let (anchor_tx, anchor_rx) = mpsc::channel();
     // 界面线程与所有窗口共用一个唤醒事件;建不出事件时循环退化成定时轮询。
     let wake_ui = Wake::create();
     let panel_service = Arc::new(lueying_server::services::PanelProvider::new());
@@ -517,6 +547,8 @@ pub(super) fn real_main() {
         sync_tx,
         settle_tx,
         uia_tx: Some(uia_tx),
+        anchor_tx: Some(anchor_tx),
+        fallback_active: Mutex::new(HashMap::new()),
         user,
         typing_tx: lueying_server::typing_store::spawn(),
         modules: crate::modules::registry(
@@ -551,6 +583,7 @@ pub(super) fn real_main() {
         crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
     }
     crate::uia::spawn(Arc::clone(&state), uia_rx);
+    crate::uia::spawn_anchor(anchor_rx);
     let pipe = pipe_name();
     println!("lueying-server 监听 {pipe}");
     {
@@ -592,9 +625,9 @@ pub(super) fn real_main() {
 }
 
 /// 协议按键转换成引擎按键。转换放在 Server 边界,协议 crate 不依赖引擎,
-/// TSF DLL 也就不会因此链接进整个引擎。
-fn engine_key(key: KeyMsg) -> Key {
-    match key {
+/// TSF DLL 也就不会因此链接进整个引擎。`Tab` 是候选窗的展开键,到不了引擎。
+fn engine_key(key: KeyMsg) -> Option<Key> {
+    Some(match key {
         KeyMsg::Letter(c) => Key::Letter(c),
         KeyMsg::Digit(d) => Key::Digit(d),
         KeyMsg::Space => Key::Space,
@@ -616,7 +649,8 @@ fn engine_key(key: KeyMsg) -> Key {
         KeyMsg::PageDown => Key::PageDown,
         KeyMsg::Punct(c) => Key::Punct(c),
         KeyMsg::Shift => Key::Shift,
-    }
+        KeyMsg::Tab => return None,
+    })
 }
 
 fn current_mode(state: &State) -> Mode {
@@ -672,7 +706,7 @@ fn reply_from(s: &Session, events: &[Event]) -> Reply {
         preedit: s
             .engine
             .composition()
-            .map(|c| c.display.clone())
+            .map(|c| c.raw.clone())
             .unwrap_or_default(),
         chinese: s.engine.mode() == Mode::Chinese,
         passthrough: events.iter().any(|e| matches!(e, Event::Passthrough(_))),
@@ -969,4 +1003,16 @@ pub(super) fn sync_pending(s: &mut Session) {
 /// 同步会话视图(候选窗渲染的数据源)。
 pub(super) fn refresh_view(s: &mut Session) {
     lueying_core::session::refresh(&s.engine, &mut s.view);
+    s.view.expanded = s.expanded;
+    // 展开棋盘的滚动起点:夹进可滚范围并保持整行对齐,高亮始终在窗口里。
+    let len = s.view.candidates.len();
+    let cap = lueying_render::panel::GRID_MAX;
+    if s.view.expanded {
+        s.view.grid_scroll = lueying_render::panel::grid_clamp_scroll(s.view.grid_scroll, len);
+        if s.view.highlight < s.view.grid_scroll || s.view.highlight >= s.view.grid_scroll + cap {
+            s.view.grid_scroll = lueying_render::panel::grid_scroll_for(s.view.highlight, len);
+        }
+    } else {
+        s.view.grid_scroll = 0;
+    }
 }

@@ -219,7 +219,6 @@ impl Engine {
         if let Some(comp) = self.comp.as_mut()
             && let Some(top) = self.cands.first()
         {
-            comp.display = top.text.clone();
             comp.seg_spans = top.spans.clone();
         }
         self.hl = 0;
@@ -240,7 +239,7 @@ impl Engine {
         }
         self.hl = index;
         self.page = index / self.cfg.page_size.max(1);
-        self.sync_display();
+        self.sync_spans();
         true
     }
 
@@ -252,10 +251,16 @@ impl Engine {
         self.cfg.page_size
     }
 
-    /// 候选是否不止一页(`-`/`=` 只在多页时翻页)。
-    pub(crate) fn has_pages(&self) -> bool {
-        let ps = self.cfg.page_size.max(1);
-        self.cands.len().div_ceil(ps) > 1
+    /// 候选窗按内容自适应条数(横排放得下几条放几条);页大小跟随时,
+    /// 数字键选中的与眼前看到的始终是同一条,翻页也不会跳过被挤掉的候选。
+    /// 高亮不动,页号跟随高亮落到新页大小下的所在页。
+    pub fn set_page_size(&mut self, size: usize) {
+        let size = size.max(1);
+        if self.cfg.page_size == size {
+            return;
+        }
+        self.cfg.page_size = size;
+        self.page = self.hl / size;
     }
 
     /// 上下翻一页;到边界返回 `false`。
@@ -271,7 +276,7 @@ impl Engine {
         }
         self.page = next;
         self.hl = next * ps;
-        self.sync_display();
+        self.sync_spans();
         true
     }
 
@@ -287,15 +292,14 @@ impl Engine {
         }
         self.hl = next;
         self.page = next / self.cfg.page_size.max(1);
-        self.sync_display();
+        self.sync_spans();
     }
 
-    /// 内联文本跟随高亮:方向键换候选后,未上屏的显示与即将上屏的内容一致。
-    pub(crate) fn sync_display(&mut self) {
+    /// 高亮换候选后音节切分跟着换:隔音符判断与候选窗切分按当前高亮的边界。
+    pub(crate) fn sync_spans(&mut self) {
         if let Some(cand) = self.cands.get(self.hl)
             && let Some(comp) = self.comp.as_mut()
         {
-            comp.display = cand.text.clone();
             comp.seg_spans = cand.spans.clone();
         }
     }
@@ -337,7 +341,7 @@ impl Engine {
             if let Some(pos) = self.cands.iter().position(|cand| cand.pinned) {
                 self.hl = pos;
                 self.page = pos / self.cfg.page_size.max(1);
-                self.sync_display();
+                self.sync_spans();
             }
             return true;
         }
@@ -351,7 +355,7 @@ impl Engine {
         if let Some(pos) = self.cands.iter().position(|cand| cand.pinned) {
             self.hl = pos;
             self.page = pos / self.cfg.page_size.max(1);
-            self.sync_display();
+            self.sync_spans();
         }
         true
     }
@@ -385,19 +389,11 @@ impl Engine {
         true
     }
 
-    /// 宿主要求原样落定当前显示文本(搜索框按 Enter):上屏内联预览,
-    /// 不补全剩余拼音,也不改选下一条候选。返回上屏文本。
-    pub fn finalize_display(&mut self) -> Option<String> {
+    /// 宿主要求原样落定内联拼音原文(搜索框按 Enter):不补全剩余拼音,
+    /// 也不改选候选。返回上屏文本。
+    pub fn finalize_raw(&mut self) -> Option<String> {
         let comp = self.comp.take()?;
-        let cand = self.cands.get(self.hl);
-        let learn_text = cand
-            .and_then(|cand| cand.learn_text.clone())
-            .unwrap_or_else(|| comp.display.clone());
-        let mut text = if comp.display.is_empty() {
-            comp.raw
-        } else {
-            comp.display
-        };
+        let mut text = comp.raw;
         if !self.modules.is_empty() {
             let ctx = module::CommitContext {
                 host: &self.host,
@@ -411,15 +407,6 @@ impl Engine {
         self.hl = 0;
         self.page = 0;
         self.rev = self.rev.wrapping_add(1);
-        if !text.is_ascii() {
-            let context_text = if learn_text.is_empty() {
-                text.as_str()
-            } else {
-                learn_text.as_str()
-            };
-            // 快捷/表情/英文文本不学习,但仍作为后续候选的左邻上下文。
-            self.push_context(context_text);
-        }
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
         self.last_word = None;

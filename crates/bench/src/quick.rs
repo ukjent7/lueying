@@ -724,14 +724,15 @@ pub fn run(report: &mut String) -> usize {
         exported.lines().next().unwrap_or_default().to_string(),
     );
 
-    // 失焦落定也按快捷语义:上屏星期,快捷项不作为用户词学习。
+    // 宿主原样落定拿到拼音原文;快捷词只在候选窗,不随落定上屏。
     let mut fin = at(fixed());
     letters(&mut fin, "xq");
-    let text = fin.finalize_display();
+    let quick = fin.candidates().first().cloned().unwrap_or_default();
+    let text = fin.finalize_raw();
     push(
         &mut checks,
-        "失焦落定快捷",
-        text.as_deref() == Some("星期一"),
+        "原样落定快捷出拼音原文",
+        quick == "星期一" && text.as_deref() == Some("xq"),
         format!("{text:?}"),
     );
 

@@ -62,16 +62,10 @@ pub fn refresh(engine: &Engine, view: &mut SessionView) {
             raw.push_str(&comp.raw[len - WINDOW * 2..]);
         }
         view.raw = raw;
-        view.preedit = comp.display.clone();
-        view.segments = comp
-            .seg_spans
-            .iter()
-            .map(|(start, end)| comp.raw[*start..*end].to_string())
-            .collect();
+        view.preedit = comp.raw.clone();
     } else {
         view.raw.clear();
         view.preedit.clear();
-        view.segments.clear();
     }
     let (texts, hints): (Vec<String>, Vec<String>) = engine
         .candidates_detailed()

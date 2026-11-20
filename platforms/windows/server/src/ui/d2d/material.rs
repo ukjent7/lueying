@@ -52,17 +52,30 @@ type SetWindowCompositionAttribute =
     unsafe extern "system" fn(HWND, *mut WindowCompositionAttribData) -> BOOL;
 
 /// 把材质落到窗口属性;返回毛玻璃是否真的启用,失败时调用方回实底。
-pub(super) fn apply(hwnd: HWND, material: Material) -> bool {
+/// `self_blur` = 自捕获背板已就绪:DWM 不再出底,免得双重模糊、
+/// 圆角外再露一圈系统背板的方晕。
+pub(super) fn apply(hwnd: HWND, material: Material, self_blur: bool) -> bool {
     // 深浅色决定系统背板的底色,先落;旧系统静默忽略。
     set_attr(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, material.dark as i32);
+    let fallback = Material {
+        on: material.on && !self_blur,
+        ..material
+    };
     // Win11 22H2+ 走文档化系统背板;旧系统不认这个属性,回退 accent policy。
-    let backdrop = if material.on {
+    let backdrop = if fallback.on {
         DWMSBT_TRANSIENTWINDOW
     } else {
         DWMSBT_NONE
     };
     let backdrop_ok = set_attr(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, backdrop.0);
-    let applied = material.on && (backdrop_ok || accent_apply(hwnd, material));
+    let accent_ok = backdrop_ok || accent_apply(hwnd, fallback);
+    let applied = fallback.on && accent_ok;
+    println!(
+        "背板材质: on={} self_blur={self_blur} backdrop_ok={backdrop_ok} accent_ok={accent_ok} dark={} 透明效果={}",
+        material.on,
+        material.dark,
+        transparency_enabled()
+    );
     // Win11 的圆角由 DWM 裁;Win10 没有这个属性,静默忽略,方角亚克力可接受。
     let corner = if applied {
         DWMWCP_ROUND

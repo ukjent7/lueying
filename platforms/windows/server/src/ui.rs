@@ -28,6 +28,9 @@ pub(super) fn run(state: Arc<State>) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
+    // 回落通道自带专用消息线程:低层钩子的回调靠取消息派发,
+    // 不能挂在界面线程的等待上。
+    crate::imp::fallback::install(&state);
     let mut ui = Ui::new(&state);
     ui.tick(&state);
     loop {

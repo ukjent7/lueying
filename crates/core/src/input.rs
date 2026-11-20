@@ -160,7 +160,6 @@ impl Engine {
         self.comp = Some(Composition {
             raw: c.to_string(),
             cursor: 1,
-            display: String::new(),
             seg_spans: Vec::new(),
         });
         self.comp_committed = false;
@@ -333,15 +332,6 @@ impl Engine {
                 } else {
                     self.commit_all_then(p.to_string())
                 }
-            }
-            // 微软拼音习惯:组合中 -/= 翻页;只有一页时退回标点。
-            Key::Punct('-') if self.has_pages() => {
-                self.page_by(-1);
-                Vec::new()
-            }
-            Key::Punct('=') if self.has_pages() => {
-                self.page_by(1);
-                Vec::new()
             }
             // 快捷会话(v 表达式、u 问字)里数字是输入的一部分,不再当候选
             // 序号;地址形态下数字继续筛域名。

@@ -120,6 +120,10 @@ fn apply(state: &State, job: &SettleJob, promote: Option<usize>) {
         return;
     };
     let mut s = handle.lock();
+    // 棋盘展开期间冻结列表,选中的词不能因为停顿重排换位。
+    if s.expanded {
+        return;
+    }
     if s.context_seq != job.seq {
         return;
     }
@@ -145,6 +149,10 @@ pub(super) fn take_pick(s: &mut Session) {
     let Some(pick) = s.settle_pick.take() else {
         return;
     };
+    // 展开棋盘期间不换首选,收起后再等下一次停顿。
+    if s.expanded {
+        return;
+    }
     if !result_is_current(
         s.engine.revision(),
         pick.revision,

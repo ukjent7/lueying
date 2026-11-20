@@ -70,6 +70,10 @@ fn run(state: &State, job: &Job) {
         return;
     };
     let mut s = handle.lock();
+    // 用户正在展开棋盘挑词,列表不能再被后台重排换位。
+    if s.expanded {
+        return;
+    }
     if s.context_seq != job.seq {
         return;
     }

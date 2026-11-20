@@ -158,8 +158,6 @@ pub struct Composition {
     pub raw: String,
     /// 光标(原始串内字节偏移,内容全 ASCII)。
     pub cursor: usize,
-    /// 内联显示文本:首选转换,无候选时原文。
-    pub display: String,
     /// 当前切分各音节的原始区间。
     pub seg_spans: Vec<(usize, usize)>,
 }
