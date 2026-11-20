@@ -212,6 +212,10 @@ impl Settings {
                 id: Id::new(*id, 0),
                 on: get(&self.cfg),
             },
+            ControlDef::Slider { id, get, .. } => Control::Slider {
+                id: Id::new(*id, 0),
+                value: get(&self.cfg),
+            },
             ControlDef::Segment {
                 id,
                 choices,

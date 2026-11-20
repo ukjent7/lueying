@@ -10,8 +10,8 @@ use std::path::Path;
 use lueying_protocol::Request;
 use rune::color::srgb_decode;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cx, El, KeyEvent, ScrollSpec, TextEdit, TextStyle, col, el,
-    row, text,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, El, KeyEvent, ScrollSpec, TextEdit, TextStyle, col,
+    el, row, text,
 };
 use rune_kit::{
     Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Switch,
@@ -519,6 +519,7 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
                 .on_pick(move |s: &mut State, index, _| activate(s, base.clone(), index))
                 .build(kit)
         }
+        Control::Slider { id, value } => slider_el(id, *value, colors),
         Control::Buttons { items } => buttons_el(items, kit),
         Control::ButtonsToggle {
             items,
@@ -540,6 +541,51 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
         Control::Preview { style, .. } => candidate_preview(style, colors),
         Control::None => el(),
     }
+}
+
+/// 滑杆:轨道 + 左侧强调色高亮段 + 圆形拇指;拖动即改值。
+/// 取值 0..=1,保存按钮把整份配置落盘。
+fn slider_el(id: &model::Id, value: f32, colors: &Colors) -> El {
+    const TRACK_W: f32 = 180.0;
+    const TRACK_H: f32 = 4.0;
+    const THUMB: f32 = 20.0;
+    const TRAVEL: f32 = TRACK_W - THUMB;
+    let base = id.base.clone();
+    let value = value.clamp(0.0, 1.0);
+    row()
+        .key(format!("slider-{}", id.base))
+        .w(TRACK_W)
+        .h(THUMB)
+        .center_y()
+        .cursor(Cursor::Pointer)
+        .on_drag(move |s: &mut State, drag, _| {
+            let x = drag.window_point()[0] - THUMB * 0.5;
+            let value = (x / TRAVEL).clamp(0.0, 1.0);
+            s.core.settings.set_slider(&base, value);
+        })
+        .child(
+            el().absolute(0.0, (THUMB - TRACK_H) * 0.5)
+                .w(TRACK_W)
+                .h(TRACK_H)
+                .radius(TRACK_H * 0.5)
+                .fill(color(colors.border))
+                .child(
+                    el().absolute(0.0, 0.0)
+                        .w(TRAVEL * value + THUMB * 0.5)
+                        .h(TRACK_H)
+                        .radius(TRACK_H * 0.5)
+                        .fill(color(colors.accent)),
+                ),
+        )
+        .child(
+            el().absolute(TRAVEL * value, 0.0)
+                .w(THUMB)
+                .h(THUMB)
+                .radius(THUMB * 0.5)
+                .fill(color(colors.bg))
+                .border(1.0, color(colors.border))
+                .shadow(0.0, 5.0, Color::BLACK.alpha(0.22)),
+        )
 }
 
 fn buttons_el(items: &[model::Button], kit: &Kit) -> El {
@@ -1162,9 +1208,10 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
 
 fn control_ids(control: &Control, ids: &mut Vec<String>) {
     match control {
-        Control::Toggle { id, .. } | Control::Segment { id, .. } | Control::Preview { id, .. } => {
-            ids.push(id.base.clone())
-        }
+        Control::Toggle { id, .. }
+        | Control::Segment { id, .. }
+        | Control::Slider { id, .. }
+        | Control::Preview { id, .. } => ids.push(id.base.clone()),
         Control::Buttons { items } | Control::ButtonsToggle { items, .. } => {
             ids.extend(items.iter().map(|button| button.id.base.clone()));
         }

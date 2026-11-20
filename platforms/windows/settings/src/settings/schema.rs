@@ -11,7 +11,9 @@ use serde_json::{Map, Value, json};
 
 use crate::settings::view::ids;
 use lueying_core::schemes::SchemeId;
-use lueying_server::config::{AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout};
+use lueying_server::config::{
+    AppConfig, Channel, OcrBackend, Region, UiCeramic, UiFont, UiLayout, UiMaterial,
+};
 
 /// 设置窗左栏的页面。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -63,10 +65,11 @@ impl PageId {
 }
 
 /// 配置默认值;与 `AppConfig::default` 由单测绑定。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DefaultValue {
     Bool(bool),
     Int(i64),
+    Number(f32),
     Text(&'static str),
     List,
     Table,
@@ -77,6 +80,7 @@ pub enum DefaultValue {
 pub enum ValueType {
     Bool,
     Int { min: Option<i64>, max: Option<i64> },
+    Number { min: Option<f32>, max: Option<f32> },
     Text,
     Enum(&'static [&'static str]),
     List,
@@ -107,12 +111,18 @@ pub enum ControlDef {
         get: fn(&AppConfig) -> usize,
         set: fn(&mut AppConfig, usize),
     },
+    /// 连续滑杆:取值 0..=1,macOS 系统设置的 Liquid Glass 那种。
+    Slider {
+        id: &'static str,
+        get: fn(&AppConfig) -> f32,
+        set: fn(&mut AppConfig, f32),
+    },
 }
 
 impl ControlDef {
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Toggle { id, .. } | Self::Segment { id, .. } => id,
+            Self::Toggle { id, .. } | Self::Segment { id, .. } | Self::Slider { id, .. } => id,
         }
     }
 }
@@ -174,6 +184,15 @@ pub fn config_schema_json() -> Value {
                     property.insert("maximum".to_string(), json!(max));
                 }
             }
+            ValueType::Number { min, max } => {
+                property.insert("type".to_string(), json!("number"));
+                if let Some(min) = min {
+                    property.insert("minimum".to_string(), json!(min));
+                }
+                if let Some(max) = max {
+                    property.insert("maximum".to_string(), json!(max));
+                }
+            }
             ValueType::Text => {
                 property.insert("type".to_string(), json!("string"));
             }
@@ -222,6 +241,7 @@ fn default_json(default: DefaultValue) -> Value {
     match default {
         DefaultValue::Bool(value) => json!(value),
         DefaultValue::Int(value) => json!(value),
+        DefaultValue::Number(value) => json!(value),
         DefaultValue::Text(value) => json!(value),
         DefaultValue::List => json!([]),
         DefaultValue::Table => json!({}),
@@ -387,6 +407,48 @@ fn font_set(cfg: &mut AppConfig, index: usize) {
     cfg.ui_font = UiFont::from_index(index);
 }
 
+fn material_get(cfg: &AppConfig) -> usize {
+    usize::from(cfg.ui_material == UiMaterial::Ceramic)
+}
+
+fn material_set(cfg: &mut AppConfig, index: usize) {
+    cfg.ui_material = UiMaterial::from_index(index);
+}
+
+fn frost_get(cfg: &AppConfig) -> f32 {
+    cfg.ui_glass_frost.clamp(0.0, 1.0)
+}
+
+fn frost_set(cfg: &mut AppConfig, value: f32) {
+    cfg.ui_glass_frost = value.clamp(0.0, 1.0);
+}
+
+fn ceramic_get(cfg: &AppConfig) -> usize {
+    usize::from(cfg.ui_ceramic == UiCeramic::White)
+}
+
+fn ceramic_set(cfg: &mut AppConfig, index: usize) {
+    cfg.ui_ceramic = UiCeramic::from_index(index);
+}
+
+/// 玻璃材质才显示磨砂滑杆。
+fn glass_only(cfg: &AppConfig) -> bool {
+    cfg.ui_material == UiMaterial::Glass
+}
+
+/// 陶瓷材质才显示胎色分段。
+fn ceramic_only(cfg: &AppConfig) -> bool {
+    cfg.ui_material == UiMaterial::Ceramic
+}
+
+const fn slider(
+    id: &'static str,
+    get: fn(&AppConfig) -> f32,
+    set: fn(&mut AppConfig, f32),
+) -> ControlDef {
+    ControlDef::Slider { id, get, set }
+}
+
 fn accent_get(cfg: &AppConfig) -> usize {
     cfg.ui_accent.min(ACCENT_CHOICES.len().saturating_sub(1))
 }
@@ -482,6 +544,26 @@ const LAYOUT_CHOICES: &[Choice] = &[
     Choice {
         value: "vertical",
         label: "竖排",
+    },
+];
+const MATERIAL_CHOICES: &[Choice] = &[
+    Choice {
+        value: "glass",
+        label: "液态玻璃",
+    },
+    Choice {
+        value: "ceramic",
+        label: "陶瓷",
+    },
+];
+const CERAMIC_CHOICES: &[Choice] = &[
+    Choice {
+        value: "black",
+        label: "黑瓷",
+    },
+    Choice {
+        value: "white",
+        label: "白瓷",
     },
 ];
 const FONT_VALUES: [UiFont; 3] = [UiFont::Small, UiFont::Standard, UiFont::Large];
@@ -740,6 +822,62 @@ pub static SETTINGS: &[SettingDef] = &[
                 layout_set,
             ),
             visible: always,
+        }),
+    },
+    SettingDef {
+        key: "ui_material",
+        title: "候选窗材质",
+        detail: "液态玻璃通透可调,陶瓷温润不透明",
+        value: ValueType::Enum(&["glass", "ceramic"]),
+        default: DefaultValue::Text("glass"),
+        ui: Some(UiDef {
+            page: PageId::Candidate,
+            keywords: "候选 材质 玻璃 陶瓷 质感",
+            control: segment(
+                ids::MATERIAL,
+                MATERIAL_CHOICES,
+                60.0,
+                false,
+                material_get,
+                material_set,
+            ),
+            visible: always,
+        }),
+    },
+    SettingDef {
+        key: "ui_glass_frost",
+        title: "玻璃质感",
+        detail: "从高透到磨砂连续可调",
+        value: ValueType::Number {
+            min: Some(0.0),
+            max: Some(1.0),
+        },
+        default: DefaultValue::Number(0.0),
+        ui: Some(UiDef {
+            page: PageId::Candidate,
+            keywords: "玻璃 通透 磨砂 高透 模糊 质感 滑杆",
+            control: slider(ids::FROST, frost_get, frost_set),
+            visible: glass_only,
+        }),
+    },
+    SettingDef {
+        key: "ui_ceramic",
+        title: "陶瓷胎色",
+        detail: "黑瓷沉稳,白瓷温润",
+        value: ValueType::Enum(&["black", "white"]),
+        default: DefaultValue::Text("white"),
+        ui: Some(UiDef {
+            page: PageId::Candidate,
+            keywords: "陶瓷 黑瓷 白瓷 胎色 材质",
+            control: segment(
+                ids::CERAMIC,
+                CERAMIC_CHOICES,
+                44.0,
+                false,
+                ceramic_get,
+                ceramic_set,
+            ),
+            visible: ceramic_only,
         }),
     },
     SettingDef {

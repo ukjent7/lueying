@@ -30,6 +30,9 @@ pub mod ids {
     pub const PAGE_SIZE: &str = "page-size";
     pub const TOOLBAR_SCALE: &str = "toolbar-scale";
     pub const LAYOUT: &str = "layout";
+    pub const MATERIAL: &str = "material";
+    pub const FROST: &str = "glass-frost";
+    pub const CERAMIC: &str = "ceramic";
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
@@ -424,6 +427,7 @@ impl Settings {
                         set(&mut self.cfg, id.index);
                     }
                 }
+                ControlDef::Slider { .. } => {}
             }
             self.clear_notice();
             return None;
@@ -509,6 +513,35 @@ impl Settings {
         false
     }
 
+    /// 滑杆的连续值;滑杆拖动走这条,不走 activate。
+    pub fn set_slider(&mut self, base: &str, value: f32) -> bool {
+        let Some(def) = crate::settings::schema::find(base) else {
+            return false;
+        };
+        let Some(ui) = def.ui.as_ref() else {
+            return false;
+        };
+        match &ui.control {
+            ControlDef::Slider { set, .. } => {
+                set(&mut self.cfg, value);
+                self.clear_notice();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 滑杆当前值;没有这个控件时回 0。
+    pub fn slider_value(&self, base: &str) -> f32 {
+        crate::settings::schema::find(base)
+            .and_then(|def| def.ui.as_ref())
+            .and_then(|ui| match &ui.control {
+                ControlDef::Slider { get, .. } => Some(get(&self.cfg)),
+                _ => None,
+            })
+            .unwrap_or(0.0)
+    }
+
     /// 这个前缀是不是分段组。
     pub fn is_segment(base: &str) -> bool {
         crate::settings::schema::find(base).is_some_and(|def| {
@@ -524,6 +557,7 @@ impl Settings {
             match &ui.control {
                 ControlDef::Toggle { get, .. } => return usize::from(get(&self.cfg)),
                 ControlDef::Segment { get, .. } => return get(&self.cfg),
+                ControlDef::Slider { .. } => return 0,
             }
         }
         if let Some(slot) = crate::settings::ext::slot(base) {

@@ -103,6 +103,8 @@ pub enum Control {
         toggle: Id,
         toggle_on: bool,
     },
+    /// 连续滑杆;取值 0..=1,拖动时走 set_slider。
+    Slider { id: Id, value: f32 },
     /// 候选窗预览;只画不点,占用比普通行更高的区域。
     Preview { id: Id, style: CandidatePreview },
     /// 右侧没有控件。

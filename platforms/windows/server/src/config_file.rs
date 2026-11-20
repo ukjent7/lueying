@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{
-    AppConfig, AppOverride, Channel, ConfigIssue, OcrBackend, Region, UiFont, UiLayout,
-    accent_by_name, valid_script_id,
+    AppConfig, AppOverride, Channel, ConfigIssue, OcrBackend, Region, UiCeramic, UiFont, UiLayout,
+    UiMaterial, accent_by_name, valid_script_id,
 };
 
 /// 用户配置文件 schema。字段都是可选层,合并时只覆盖写了的项。
@@ -38,6 +38,9 @@ pub struct FileConfig {
     pub typing_log: Option<bool>,
     pub predict: Option<bool>,
     pub ui_layout: Option<String>,
+    pub ui_material: Option<String>,
+    pub ui_glass_frost: Option<f32>,
+    pub ui_ceramic: Option<String>,
     pub ui_font: Option<String>,
     pub ui_accent: Option<AccentValue>,
     pub effects: Option<bool>,
@@ -145,6 +148,21 @@ pub fn apply(
         match UiLayout::parse(&value) {
             Some(layout) => cfg.ui_layout = layout,
             None => note(format!("ui_layout={value} 不合法")),
+        }
+    }
+    if let Some(value) = file.ui_material {
+        match UiMaterial::parse(&value) {
+            Some(material) => cfg.ui_material = material,
+            None => note(format!("ui_material={value} 不合法")),
+        }
+    }
+    if let Some(value) = file.ui_glass_frost {
+        cfg.ui_glass_frost = value.clamp(0.0, 1.0);
+    }
+    if let Some(value) = file.ui_ceramic {
+        match UiCeramic::parse(&value) {
+            Some(ceramic) => cfg.ui_ceramic = ceramic,
+            None => note(format!("ui_ceramic={value} 不合法")),
         }
     }
     if let Some(value) = file.ui_font {
@@ -320,6 +338,9 @@ pub fn table(cfg: &AppConfig) -> Result<toml::Table, String> {
         typing_log: cfg.typing_log,
         predict: cfg.predict,
         ui_layout: cfg.ui_layout.as_str(),
+        ui_material: cfg.ui_material.as_str(),
+        ui_glass_frost: cfg.ui_glass_frost.clamp(0.0, 1.0),
+        ui_ceramic: cfg.ui_ceramic.as_str(),
         ui_font: cfg.ui_font.as_str(),
         ui_accent: cfg.ui_accent,
         effects: cfg.effects,
@@ -351,6 +372,9 @@ struct SaveFile<'a> {
     typing_log: bool,
     predict: bool,
     ui_layout: &'static str,
+    ui_material: &'static str,
+    ui_glass_frost: f32,
+    ui_ceramic: &'static str,
     ui_font: &'static str,
     ui_accent: usize,
     effects: bool,

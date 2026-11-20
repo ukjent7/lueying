@@ -31,6 +31,9 @@ fn defaults_match_runtime_config() {
                 let selected = choices.get(get(&cfg)).map(|choice| choice.value);
                 assert_eq!(selected, Some(expected), "{} 默认值不一致", def.key);
             }
+            (ControlDef::Slider { get, .. }, DefaultValue::Number(expected)) => {
+                assert_eq!(get(&cfg), expected, "{} 默认值不一致", def.key);
+            }
             (_, default) => panic!("{} 的默认值类型不匹配: {default:?}", def.key),
         }
     }
@@ -101,6 +104,7 @@ fn schema_covers_every_key() {
         match def.value {
             ValueType::Bool => assert_eq!(property["type"], "boolean"),
             ValueType::Int { .. } => assert_eq!(property["type"], "integer"),
+            ValueType::Number { .. } => assert_eq!(property["type"], "number"),
             ValueType::Enum(_) => assert_eq!(property["type"], "string"),
             ValueType::Text => assert_eq!(property["type"], "string"),
             ValueType::List => assert_eq!(property["type"], "array"),

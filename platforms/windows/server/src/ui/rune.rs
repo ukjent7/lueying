@@ -25,6 +25,8 @@ use rune::{
 };
 use rune_text::TextSystem;
 
+use lueying_server::config::{UiCeramic, UiMaterial};
+
 use crate::imp;
 use crate::ui::place;
 
@@ -44,13 +46,18 @@ const PAGE_SLIDE: Duration = Duration::from_millis(90);
 const PROMOTE_FLASH: Duration = Duration::from_millis(160);
 /// 展开/收起的形变时长;弹簧在 300ms 内收敛,与 Apple 的 smooth 预设同量级。
 const EXPAND_MS: Duration = Duration::from_millis(300);
-/// 玻璃磨砂强度:40px 条上结构可辨、文字不可读。
+/// 高透玻璃的模糊强度:40px 条上结构可辨、文字不可读。
 const GLASS_BLUR: f32 = 7.0;
+/// 磨砂玻璃的模糊强度:更重,接近亚克力。
+const FROST_BLUR: f32 = 9.0;
 /// 测宽的内部放大倍数:measure 结果按设备像素取整,放大可拿到亚点精度。
 const MEASURE_SCALE: f32 = 4.0;
 
 /// 常驻的 overlay 句柄;别的线程靠它改状态、注入鼠标与唤醒。
 static HANDLE: OnceLock<OverlayHandle<Candidate>> = OnceLock::new();
+
+/// 服务端状态的转交点;AppSpec 的 fn 指针从这里取状态。
+static RUNE_STATE: OnceLock<Arc<imp::State>> = OnceLock::new();
 
 /// 展开/收起的形变:同一块玻璃的窗口矩形从旧态长到新态。
 #[derive(Clone, Copy)]
@@ -166,9 +173,9 @@ struct Look<'a> {
 }
 
 impl Look<'_> {
-    /// 玻璃上压半透明,实底用不透明色。
+    /// 悬停/滚动条这类覆盖层一律半透明,玻璃与瓷胎上都成立。
     fn tint(&self, v: u32, alpha: u8) -> Color {
-        if self.glass { tint(v, alpha) } else { rgb(v) }
+        tint(v, alpha)
     }
 }
 
@@ -194,6 +201,12 @@ struct Candidate {
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
     version: u64,
+    /// 候选窗材质;配置重载后随版本号生效。
+    material: UiMaterial,
+    /// 玻璃磨砂程度 0..=1;高透到磨砂连续可调。
+    frost: f32,
+    /// 陶瓷胎色;玻璃材质忽略它。
+    ceramic: UiCeramic,
     /// 私密字段标记;只影响扩展发布,绘制照常。
     private: bool,
     visible: bool,
@@ -216,6 +229,9 @@ impl Candidate {
             backdrop: None,
             script_accent: None,
             version: 0,
+            material: UiMaterial::Glass,
+            frost: 0.0,
+            ceramic: UiCeramic::White,
             private: false,
             visible: false,
             scale: 1.0,
@@ -253,7 +269,10 @@ impl Candidate {
     }
 
     fn live_glass(&self, high_contrast: bool) -> bool {
-        self.visible && !self.fx.fading() && self.glass_wanted(high_contrast)
+        self.material.is_glass()
+            && self.visible
+            && !self.fx.fading()
+            && self.glass_wanted(high_contrast)
     }
 
     /// 组合结束后的外观时钟;减少动态效果时恒为 1。
@@ -310,60 +329,100 @@ fn tint(v: u32, alpha: u8) -> Color {
     rgba(v, f32::from(alpha) / 255.0)
 }
 
-/// 固定暖墨烟熏玻璃的墨色修正;亮暗背板共用一组暖色立住。
+/// 液态玻璃的墨色:中性烟熏玻璃配暖白墨,亮暗背板共用一组暖色立住。
+/// 选中槽是探针配方的平涂亮黄胶囊,深墨字、深琥珀序号。
 fn glass_ink(mut p: panel::Palette) -> panel::Palette {
     p.text = 0xece7df;
     p.text_secondary = 0xe3ddd2;
     p.text_tertiary = 0xd4cec3;
     p.border = 0x4a4238;
     p.hover = 0x3a332a;
-    // 选中槽是亮面黄釉胶囊:帝王黄渐变、深墨字、深琥珀序号。
     p.accent = 0xd9a92e;
     p.on_accent = 0x2b2110;
-    p.selected_bg = 0xe7c24a;
+    p.selected_bg = 0xfac738;
+    p.selected_text = 0x2b2110;
+    p.accent_text = 0x7a5608;
+    p
+}
+
+/// 白瓷的墨色:不透明暖象牙胎配深墨,选中槽同一枚平涂亮黄。
+fn ceramic_white_ink(mut p: panel::Palette) -> panel::Palette {
+    p.bg = 0xefe9dd;
+    p.window_bg = 0xefe9dd;
+    p.surface_alt = 0xe6dfd0;
+    p.border = 0xd6cdbb;
+    p.border_strong = 0xc4bba8;
+    p.text = 0x3a352c;
+    p.text_secondary = 0x6b6355;
+    p.text_tertiary = 0x8a8172;
+    p.hover = 0x3a352c;
+    p.accent = 0xd9a92e;
+    p.on_accent = 0x2b2110;
+    p.selected_bg = 0xfac738;
+    p.selected_text = 0x2b2110;
+    p.accent_text = 0x7a5608;
+    p
+}
+
+/// 黑瓷的墨色:不透明暖黑胎配暖白墨,与玻璃同墨不同底。
+fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
+    p.bg = 0x2e2a24;
+    p.window_bg = 0x2e2a24;
+    p.surface_alt = 0x262220;
+    p.border = 0x4a4238;
+    p.border_strong = 0x554c3e;
+    p.text = 0xece7df;
+    p.text_secondary = 0xe3ddd2;
+    p.text_tertiary = 0xd4cec3;
+    p.hover = 0x3a332a;
+    p.accent = 0xd9a92e;
+    p.on_accent = 0x2b2110;
+    p.selected_bg = 0xfac738;
     p.selected_text = 0x2b2110;
     p.accent_text = 0x7a5608;
     p
 }
 
 /// 当前帧的调色板:玻璃固定暖墨烟熏,实底跟系统主题。
-fn palette_of(
-    s: &Candidate,
-    appearance: lueying_server::theme::Appearance,
-    accent: usize,
-    high_contrast: bool,
-    glass: bool,
-) -> panel::Palette {
+fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palette {
+    let look = match (s.material, s.ceramic) {
+        (UiMaterial::Ceramic, UiCeramic::White) => lueying_server::theme::Appearance::Light,
+        _ => lueying_server::theme::Appearance::Dark,
+    };
     let colors = match s.script_accent {
-        Some(v) if !high_contrast => {
-            let look = if glass {
-                lueying_server::theme::Appearance::Dark
-            } else {
-                appearance
-            };
-            lueying_server::theme::colors_with_accent(look, v)
-        }
-        _ => {
-            let look = if glass {
-                lueying_server::theme::Appearance::Dark
-            } else {
-                appearance
-            };
-            lueying_server::theme::colors_with(look, accent)
-        }
+        Some(v) if !high_contrast => lueying_server::theme::colors_with_accent(look, v),
+        _ => lueying_server::theme::colors_with(look, accent),
     };
     let palette = lueying_server::theme::palette(colors);
-    if glass { glass_ink(palette) } else { palette }
+    match (s.material, s.ceramic) {
+        (UiMaterial::Ceramic, UiCeramic::White) => ceramic_white_ink(palette),
+        (UiMaterial::Ceramic, UiCeramic::Black) => ceramic_black_ink(palette),
+        _ => glass_ink(palette),
+    }
+}
+
+/// 取证开关:%TEMP% 里有这个文件就关掉「排除捕获」,截图能看到候选窗;
+/// 平时不建文件,录屏/截图里候选窗照旧隐身。
+fn capture_exclusion() -> bool {
+    !std::env::temp_dir()
+        .join("lueying-rune-capture-off")
+        .exists()
 }
 
 /// 入口:建 Rune 应用与 overlay;事件循环不返回。
 pub(crate) fn run(state: Arc<imp::State>) {
+    let _ = RUNE_STATE.set(Arc::clone(&state));
     let spec = AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
-        ..AppSpec::new("lueying-candidate", (480.0, 40.0), no_window, view)
+        ..AppSpec::new("lueying-rune-candidate", (480.0, 40.0), no_window, view)
     };
-    let mut app = App::new(spec).windowless().keep_running();
-    let mut overlay = OverlaySpec::new("lueying-candidate", (480.0, 40.0), view);
+    let app = App::new(spec).windowless().keep_running();
+    // windowless 也会构建应用级状态;App::init 允许捕获闭包,把真实状态递进去。
+    let app_state = Arc::clone(&state);
+    let mut app = app.init(move || Candidate::with_state(app_state));
+    // overlay 的窗口标题用独立名,把「lueying-candidate」让给界面线程的
+    // 消息桥;TSF 宿主按标题找窗,同名会找到置顶的候选窗本体。
+    let mut overlay = OverlaySpec::new("lueying-rune-candidate", (480.0, 40.0), view);
     overlay.interactive = true;
     let (x, y) = place::park_point();
     let ((ox, oy), ps) = primary_basis();
@@ -378,7 +437,7 @@ pub(crate) fn run(state: Arc<imp::State>) {
                 }),
                 keys: rune::KeyPolicy::None,
                 input: OverlayInput::All,
-                exclude_from_capture: true,
+                exclude_from_capture: capture_exclusion(),
                 prewarm: true,
                 ..Default::default()
             })
@@ -390,9 +449,9 @@ pub(crate) fn run(state: Arc<imp::State>) {
     app.run();
 }
 
-/// windowless 应用不开主窗口,这个工厂永不运行。
+/// App::init 已接管状态构建;这个 fn 指针只是 AppSpec 的必填占位。
 fn no_window() -> Candidate {
-    unreachable!("候选窗应用不开主窗口");
+    Candidate::with_state(Arc::clone(RUNE_STATE.get().expect("候选窗状态未就绪")))
 }
 
 /// overlay 的状态工厂要一份服务端状态;主进程建好后经它转交。
@@ -442,6 +501,11 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     if version != s.version {
         s.version = version;
         s.fx.reduce = reduce_motion();
+        let cfg = s.state.config.read().unwrap_or_else(|p| p.into_inner());
+        s.material = cfg.ui_material;
+        s.frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
+        s.ceramic = cfg.ui_ceramic;
+        drop(cfg);
         place(s);
         changed = true;
     }
@@ -731,7 +795,7 @@ fn animate(s: &mut Candidate) {
 
 /// 抓取窗口区的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
 fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
-    if !s.glass_wanted(high_contrast) {
+    if !s.material.is_glass() || !s.glass_wanted(high_contrast) {
         s.backdrop = None;
         return;
     }
@@ -821,9 +885,15 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     };
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
-    let glass = s.glass_wanted(high_contrast) && s.backdrop.is_some();
+    let glass = s.material.is_glass() && s.glass_wanted(high_contrast) && s.backdrop.is_some();
+    // 高透到磨砂的连续插值:压光与模糊同步加重。
+    let frost = s.frost.clamp(0.0, 1.0);
+    let frost_blur = GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * frost;
+    let frost_fill = rgba(0x262624, 0.40 + 0.22 * frost);
+    let frost_top = rgba(0x000000, 0.06 + 0.04 * frost);
+    let frost_bottom = rgba(0x000000, 0.22 + 0.08 * frost);
     let (_, _, accent) = place::ui_options(&s.state);
-    let palette = palette_of(s, appearance, accent, high_contrast, glass);
+    let palette = palette_of(s, accent, high_contrast);
     let now = Instant::now();
     let (dx, opacity) = list_fx(s, now);
     let scale = geom.metrics.scale();
@@ -849,19 +919,37 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
             true
         })
         .on_secondary_press_local(|s: &mut Candidate, p, _| s.on_secondary(p.x, p.y));
-    if glass {
-        // 暖墨烟熏玻璃:模糊 + 烟熏渐变 + 1px 冷白描边 + 落影。
-        body = body
-            .backdrop_blur(GLASS_BLUR)
-            .fill(rgba(0x4d4436, 0x6c as f32 / 255.0))
-            .gradient(rgba(0x000000, 0.10), rgba(0x000000, 0.30))
-            .border(1.0 * scale, rgba(0xffffff, 0.14))
-            .shadow(8.0 * scale, 22.0 * scale, rgba(0x000000, 0.35));
-    } else {
-        body = body
-            .fill(rgb(palette.bg))
-            .border(1.0 * scale, rgb(palette.border))
-            .shadow(2.0 * scale, 16.0 * scale, tint(0x000000, 56));
+    match (s.material, glass) {
+        // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。
+        (UiMaterial::Glass, true) => {
+            body = body
+                .backdrop_blur(frost_blur)
+                .fill(frost_fill)
+                .gradient(frost_top, frost_bottom)
+                .border(1.0 * scale, rgba(0xffffff, 0.14))
+                .shadow(8.0 * scale, 22.0 * scale, rgba(0x000000, 0.35));
+        }
+        // 白瓷:不透明暖象牙胎,釉面竖向明暗 + 瓷缘描边 + 柔影;不捕背板。
+        (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::White => {
+            body = body
+                .gradient(rgb(0xf6f0e6), rgb(0xe4ddd0))
+                .border(1.0 * scale, rgb(palette.border))
+                .shadow(2.0 * scale, 16.0 * scale, rgba(0x3a3020, 0.30));
+        }
+        // 黑瓷:不透明暖黑胎,同构釉面。
+        (UiMaterial::Ceramic, _) => {
+            body = body
+                .gradient(rgb(0x363029), rgb(0x28241d))
+                .border(1.0 * scale, rgb(palette.border))
+                .shadow(2.0 * scale, 16.0 * scale, rgba(0x000000, 0.40));
+        }
+        // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
+        _ => {
+            body = body
+                .fill(rgb(palette.bg))
+                .border(1.0 * scale, rgb(palette.border))
+                .shadow(2.0 * scale, 16.0 * scale, tint(0x000000, 56));
+        }
     }
     let look = Look {
         palette: &palette,

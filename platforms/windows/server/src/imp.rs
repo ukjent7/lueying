@@ -596,14 +596,14 @@ pub(super) fn real_main() {
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
     }
-    // 无桌面会话(CI/服务)没有窗口站,建窗会失败;输入法本身只依赖管道。
+    // 无桌面会话(CI/服务)没有窗口站;界面不建,进程只留管道服务。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {
         loop {
             std::thread::park();
         }
     }
-    // 界面循环单独一条线程(栈与原先各窗口线程相同);候选窗在 Rune 自己
-    // 的事件循环线程上,两边经版本号与共享矩形互通。
+    // 徽标、工具栏、选择面板与消息桥在子线程;候选窗占用主线程——
+    // Rune 的 winit 事件循环只能在主线程起。
     let ui_state = Arc::clone(&state);
     let ui = std::thread::Builder::new()
         .name("lueying-ui".into())
@@ -619,22 +619,21 @@ pub(super) fn real_main() {
     if let Err(error) = ui {
         println!("界面线程启动失败,继续无界面服务: {error}");
     }
+    // 候选窗的 winit 事件循环必须占主线程;崩溃时由 keeper 线程保活进程,
+    // 输入法本身只依赖管道,照常工作。
+    let _keeper = std::thread::spawn(|| {
+        loop {
+            std::thread::park();
+        }
+    });
     let rune_state = Arc::clone(&state);
-    let rune = std::thread::Builder::new()
-        .name("lueying-rune-ui".into())
-        .spawn(move || {
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::ui::rune::run(rune_state);
-            }))
-            .is_err()
-            {
-                println!("Rune 候选窗线程崩溃,输入法照常工作");
-            }
-        });
-    if let Err(error) = rune {
-        println!("Rune 候选窗线程启动失败,继续无界面服务: {error}");
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::ui::rune::run(rune_state);
+    }))
+    .is_err()
+    {
+        println!("Rune 候选窗崩溃,输入法照常工作");
     }
-    // 界面循环意外结束时进程也要留着,否则整个输入法跟着退出。
     loop {
         std::thread::park();
     }

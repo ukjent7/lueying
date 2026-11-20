@@ -72,6 +72,82 @@ impl Region {
     }
 }
 
+/// 候选窗材质。玻璃的通透度由 `ui_glass_frost` 连续可调,陶瓷分黑白两色。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UiMaterial {
+    #[default]
+    Glass,
+    Ceramic,
+}
+
+impl UiMaterial {
+    pub const NAMES: [&'static str; 2] = ["液态玻璃", "陶瓷"];
+
+    /// 设置页分段控件的选项下标转枚举;越界回玻璃。
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Ceramic,
+            _ => Self::Glass,
+        }
+    }
+
+    /// 配置值转枚举;未知值返回 None。旧值 glass-clear/glass-frosted 归玻璃。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "glass" | "glass-clear" | "glass-frosted" => Some(Self::Glass),
+            "ceramic" | "ceramic-black" | "ceramic-white" => Some(Self::Ceramic),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Glass => "glass",
+            Self::Ceramic => "ceramic",
+        }
+    }
+
+    /// 是否玻璃系:活背板与 blur 只对玻璃生效。
+    pub fn is_glass(self) -> bool {
+        self == Self::Glass
+    }
+}
+
+/// 陶瓷的胎色。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UiCeramic {
+    #[default]
+    Black,
+    White,
+}
+
+impl UiCeramic {
+    pub const NAMES: [&'static str; 2] = ["黑瓷", "白瓷"];
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::White,
+            _ => Self::Black,
+        }
+    }
+
+    /// 配置值转枚举;未知值返回 None。
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "black" => Some(Self::Black),
+            "white" => Some(Self::White),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Black => "black",
+            Self::White => "white",
+        }
+    }
+}
+
 /// 候选窗排列。横排候选挤在一行里自动换行,竖排一行一条。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UiLayout {
@@ -259,6 +335,12 @@ pub struct AppConfig {
     pub predict: bool,
     /// 候选窗排列:横排换行或竖排列。
     pub ui_layout: UiLayout,
+    /// 候选窗材质:液态玻璃或陶瓷。
+    pub ui_material: UiMaterial,
+    /// 玻璃的磨砂程度 0..=1:0 是高透,1 是磨砂;陶瓷材质忽略它。
+    pub ui_glass_frost: f32,
+    /// 陶瓷的胎色;玻璃材质忽略它。
+    pub ui_ceramic: UiCeramic,
     /// 候选字号档位。
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
@@ -303,6 +385,9 @@ impl Default for AppConfig {
             typing_log: false,
             predict: true,
             ui_layout: UiLayout::Horizontal,
+            ui_material: UiMaterial::Glass,
+            ui_glass_frost: 0.0,
+            ui_ceramic: UiCeramic::White,
             ui_font: UiFont::Standard,
             ui_accent: 0,
             effects: true,
