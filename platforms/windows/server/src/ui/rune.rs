@@ -19,92 +19,41 @@ use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::color::srgb_decode;
 use rune::{
-    App, AppSpec, Color, Cursor, El, OverlayHandle, OverlayInput, OverlayOptions, OverlayPlacement,
-    OverlaySpec, Pixels, SurfaceFit, TextStyle, Tx, col, el, row, text,
+    App, AppSpec, Color, Cursor, Edge, El, OverlayHandle, OverlayInput, OverlayOptions,
+    OverlayPlacement, OverlaySpec, Pixels, Spring, SurfaceFit, TextStyle, Transition, Tx, col, el,
+    row, text,
 };
 use rune_text::TextSystem;
 
-use lueying_server::config::{UiCeramic, UiMaterial};
+use lueying_server::config::{UiCeramic, UiLayout, UiMaterial};
 
 use crate::imp;
 use crate::ui::place;
 
-/// 淡出/滑动期间的重绘节奏。
-const ANIM_TICK: Duration = Duration::from_millis(5);
-/// 展开形变按 ~60fps 推进:窗口逐帧改高,足够顺滑也省电。
-const EXPAND_TICK: Duration = Duration::from_millis(16);
 /// 活背板的重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
 const LIVE_TICK: Duration = Duration::from_millis(33);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 组合结束后的淡出时长;期间沿用最后一份内容并让鼠标穿透。
 const HIDE_FADE: Duration = Duration::from_millis(90);
-/// 翻页时候选内容横向滑入,90ms 内归位。
-const PAGE_SLIDE: Duration = Duration::from_millis(90);
-/// 停顿重排换了首选时,候选列表轻微变暗再亮起的时长。
-const PROMOTE_FLASH: Duration = Duration::from_millis(160);
-/// 展开/收起的形变时长;弹簧在 300ms 内收敛,与 Apple 的 smooth 预设同量级。
-const EXPAND_MS: Duration = Duration::from_millis(300);
 /// 高透玻璃的模糊强度:40px 条上结构可辨、文字不可读。
 const GLASS_BLUR: f32 = 7.0;
 /// 磨砂玻璃的模糊强度:更重,接近亚克力。
 const FROST_BLUR: f32 = 9.0;
 /// 测宽的内部放大倍数:measure 结果按设备像素取整,放大可拿到亚点精度。
 const MEASURE_SCALE: f32 = 4.0;
+/// CJK 墨迹相对 Rune 行盒的几何,以 Noto Sans SC 17px 实机帧标定,随字号线性。
+/// 行盒钉在容器顶时,墨迹顶距盒顶 3px、墨迹高 0.88em。
+const INK_TOP: f32 = 3.0 / 17.0;
+const INK_HEIGHT: f32 = 15.0 / 17.0;
+/// 横排窗口的逻辑高度:恒等于展开棋盘的高度(条贴光标侧,其余透明穿透)。
+const WRAP_WINDOW_H: f32 = 210.0;
 
 /// 常驻的 overlay 句柄;别的线程靠它改状态、注入鼠标与唤醒。
 static HANDLE: OnceLock<OverlayHandle<Candidate>> = OnceLock::new();
 
 /// 服务端状态的转交点;AppSpec 的 fn 指针从这里取状态。
 static RUNE_STATE: OnceLock<Arc<imp::State>> = OnceLock::new();
-
-/// 展开/收起的形变:同一块玻璃的窗口矩形从旧态长到新态。
-#[derive(Clone, Copy)]
-struct ExpandFx {
-    from: (i32, i32, i32, i32),
-    to: (i32, i32, i32, i32),
-    start: Instant,
-    end: Instant,
-    /// 候选窗在光标上方:底边贴住光标侧不动,向上生长。
-    up: bool,
-}
-
-impl ExpandFx {
-    /// 弹簧进度;「减少动态效果」由调用方直接跳过,不走到这里。
-    fn progress(&self, now: Instant) -> f32 {
-        let total = self.end.saturating_duration_since(self.start).as_secs_f32();
-        if total <= 0.0 {
-            return 1.0;
-        }
-        let t = now.saturating_duration_since(self.start).as_secs_f32() / total;
-        spring_out(t.clamp(0.0, 1.0))
-    }
-
-    /// 当前窗口矩形;高度按进度插值,贴住光标的那条边保持不动。
-    fn rect(&self, now: Instant) -> (i32, i32, i32, i32) {
-        let p = self.progress(now);
-        let lerp = |a: i32, b: i32| (a as f32 + (b - a) as f32 * p).round() as i32;
-        let h = lerp(self.from.3, self.to.3).max(1);
-        let x = lerp(self.from.0, self.to.0);
-        let w = lerp(self.from.2, self.to.2).max(1);
-        let y = if self.up {
-            self.to.1 + self.to.3 - h
-        } else {
-            self.to.1
-        };
-        (x, y, w, h)
-    }
-}
-
-/// 临界阻尼弹簧:起步快、收尾稳,没有可见回弹。归一化到端点 1。
-fn spring_out(t: f32) -> f32 {
-    const K: f32 = 6.0;
-    let curve = |t: f32| {
-        let kt = K * t;
-        1.0 - (1.0 + kt) * (-kt).exp()
-    };
-    curve(t) / curve(1.0)
-}
 
 /// 候选窗的动画与交互状态;全部归 Rune 的事件线程所有。
 #[derive(Default)]
@@ -113,16 +62,10 @@ struct Fx {
     hide: Option<Instant>,
     /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。
     last: Option<SessionView>,
-    /// 正在进行的翻页滑动:方向与截止时刻。
-    slide: Option<(f32, Instant)>,
-    /// 上一帧的页码,用来判断翻页方向。
-    page: Option<usize>,
-    /// 换首选提示的截止时刻。
-    flash: Option<Instant>,
-    /// 展开/收起的窗口形变;静止时为 None。
-    expand: Option<ExpandFx>,
-    /// 上一次看到的换首选次数;变化即触发一次提示。
-    promotions: u32,
+    /// overlay 窗口的屏幕物理矩形;背板捕获与内容偏移用它。
+    window: (i32, i32, i32, i32),
+    /// 翻页方向:条内容从这一侧滑入。Rune 的 push 过渡消费。
+    slide_edge: Option<Edge>,
     /// 本次组合里候选窗在光标上方还是下方;同一次组合内保持不变。
     above: Option<bool>,
     /// 系统「减少动态效果」;开启后全部动效走终态。
@@ -210,8 +153,6 @@ struct Candidate {
     visible: bool,
     /// 光标屏缩放;placement 与内容共用。
     scale: f32,
-    /// 窗口逻辑尺寸(物理/缩放),控件树按它铺满。
-    logical: (f32, f32),
     /// 最近一次摆位算出的几何。
     geom: Option<Geom>,
     sent: Option<lueying_ext::proto::candidate::CandidateState>,
@@ -232,7 +173,6 @@ impl Candidate {
             private: false,
             visible: false,
             scale: 1.0,
-            logical: (480.0, 40.0),
             geom: None,
             sent: None,
         }
@@ -255,14 +195,6 @@ impl Candidate {
     /// 玻璃背板是否启用:动态效果开着且系统没接管外观。
     fn glass_wanted(&self, high_contrast: bool) -> bool {
         !high_contrast && self.effects()
-    }
-
-    /// 动画进行中按动画帧推进;活背板可见时按 LIVE_TICK 推帧。
-    fn busy_animating(&self) -> bool {
-        self.fx.hide.is_some()
-            || self.fx.slide.is_some()
-            || self.fx.flash.is_some()
-            || self.fx.expand.is_some()
     }
 
     fn live_glass(&self, high_contrast: bool) -> bool {
@@ -324,6 +256,12 @@ fn rgba(v: u32, a: f32) -> Color {
 /// 旧画布的 8bit alpha → 0..1。
 fn tint(v: u32, alpha: u8) -> Color {
     rgba(v, f32::from(alpha) / 255.0)
+}
+
+/// 文本在 h 高容器里垂直居中的 y。Rune 的 center_y 居中的是行盒,
+/// CJK 墨迹在行盒里天然偏上;按实机帧标定的墨迹几何补偿。
+fn ink_y(h: f32, size: f32) -> f32 {
+    h * 0.5 - (INK_TOP + INK_HEIGHT * 0.5) * size
 }
 
 /// 液态玻璃的墨色:中性烟熏玻璃配暖白墨,亮暗背板共用一组暖色立住。
@@ -411,7 +349,12 @@ pub(crate) fn run(state: Arc<imp::State>) {
     let _ = RUNE_STATE.set(Arc::clone(&state));
     let spec = AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
-        ..AppSpec::new("lueying-rune-candidate", (480.0, 40.0), no_window, view)
+        ..AppSpec::new(
+            "lueying-rune-candidate",
+            (480.0, WRAP_WINDOW_H),
+            no_window,
+            view,
+        )
     };
     let app = App::new(spec).windowless().keep_running();
     // windowless 也会构建应用级状态;App::init 允许捕获闭包,把真实状态递进去。
@@ -419,7 +362,7 @@ pub(crate) fn run(state: Arc<imp::State>) {
     let mut app = app.init(move || Candidate::with_state(app_state));
     // overlay 的窗口标题用独立名,把「lueying-candidate」让给界面线程的
     // 消息桥;TSF 宿主按标题找窗,同名会找到置顶的候选窗本体。
-    let mut overlay = OverlaySpec::new("lueying-rune-candidate", (480.0, 40.0), view);
+    let mut overlay = OverlaySpec::new("lueying-rune-candidate", (480.0, WRAP_WINDOW_H), view);
     overlay.interactive = true;
     let (x, y) = place::park_point();
     let ((ox, oy), ps) = primary_basis();
@@ -430,10 +373,11 @@ pub(crate) fn run(state: Arc<imp::State>) {
                     x: (x - ox) as f32 / ps,
                     y: (y - oy) as f32 / ps,
                     width: 480.0,
-                    height: 40.0,
+                    height: WRAP_WINDOW_H,
                 }),
                 keys: rune::KeyPolicy::None,
-                input: OverlayInput::All,
+                // 只有标了 hit 的面板区域拦指针;条外透明区原生穿透给宿主。
+                input: OverlayInput::Regions,
                 exclude_from_capture: capture_exclusion(),
                 prewarm: true,
                 ..Default::default()
@@ -473,7 +417,7 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
     }
 }
 
-/// 每帧开头跑一次:补丁、版本、动画、活背板,并决定下一次唤醒。
+/// 每帧开头跑一次:补丁、版本、摆位、活背板,并决定下一次唤醒。
 fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
@@ -496,30 +440,27 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         s.frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
         s.ceramic = cfg.ui_ceramic;
         drop(cfg);
-        place(s);
+        place(s, tx);
         changed = true;
     }
-    if s.busy_animating() {
-        animate(s);
-        changed = true;
-    } else if s.live_glass(high_contrast) {
+    // 淡出到期停靠;摆位时已排好这一次唤醒。
+    if s.fx.hide.is_some_and(|end| Instant::now() >= end) {
+        s.fx.clear();
+        park(s);
+        return true;
+    }
+    if s.live_glass(high_contrast) {
         capture_backdrop(s, high_contrast);
         changed = true;
-    }
-    if s.fx.expand.is_some() {
-        tx.wake_after(EXPAND_TICK);
-    } else if s.busy_animating() {
-        tx.wake_after(ANIM_TICK);
-    } else if s.live_glass(high_contrast) {
         tx.wake_after(LIVE_TICK);
     }
     changed
 }
 
 /// 一轮摆位:脚本补丁到了就应用;版本变了就摆位与出内容。
-fn place(s: &mut Candidate) {
+fn place(s: &mut Candidate, tx: &mut Tx) {
     let Some(snap) = place::snapshot(&s.state) else {
-        // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由动画帧停靠。
+        // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由轮询停靠。
         if s.fx.reduce || s.fx.last.is_none() {
             s.fx.clear();
             park(s);
@@ -527,8 +468,6 @@ fn place(s: &mut Candidate) {
         }
         if s.fx.hide.is_none() {
             s.fx.hide = Some(Instant::now() + HIDE_FADE);
-            s.fx.slide = None;
-            s.fx.expand = None;
             s.fx.menu = None;
             s.fx.menu_hover = None;
             s.fx.hover = None;
@@ -537,6 +476,7 @@ fn place(s: &mut Candidate) {
                 handle.set_input(OverlayInput::None);
                 handle.fade_out(HIDE_FADE);
             }
+            tx.wake_after(HIDE_FADE + Duration::from_millis(40));
         }
         publish_state(s, None);
         return;
@@ -547,9 +487,7 @@ fn place(s: &mut Candidate) {
     if fresh {
         // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
         s.fx.above = None;
-        s.fx.slide = None;
-        s.fx.expand = None;
-        s.fx.page = None;
+        s.fx.slide_edge = None;
         s.fx.menu = None;
         s.fx.menu_hover = None;
         s.fx.hover = None;
@@ -557,71 +495,56 @@ fn place(s: &mut Candidate) {
         s.fx.since = Some(Instant::now());
     }
     s.fx.hide = None;
-    let rect = caret_rect(s, &view);
+    let (window, rect) = caret_rect(s, &view);
     if rect.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合出现,不会接着上一次的状态。
         s.fx.hide = None;
-        s.fx.slide = None;
-        s.fx.expand = None;
         s.fx.last = None;
         park(s);
         return;
     }
-    let now = Instant::now();
+    // 展开/收起:面板矩形在这一提交里变化,交给 Rune 的布局弹簧;
+    // 手搓的逐帧改高整套删除。
     let toggled = !fresh
         && s.fx
             .last
             .as_ref()
             .is_some_and(|last| last.expanded != view.expanded);
-    if toggled && !s.fx.reduce && s.effects() {
-        // 从当前窗口矩形(形变中就是当前帧)长到目标矩形。
-        let from = s.fx.expand.map(|a| a.rect(now)).unwrap_or(s.fx.rest);
-        let up = s.fx.above == Some(true);
-        // 翻边(从光标下方跳到上方)不做高度形变:那会读成窗口瞬移。
-        let same_side = if up {
-            from.1 + from.3 == rect.1 + rect.3
-        } else {
-            from.1 == rect.1
-        };
-        s.fx.expand = (from.2 > 0 && from.3 > 0 && same_side).then(|| ExpandFx {
-            from,
-            to: rect,
-            start: now,
-            end: now + EXPAND_MS,
-            up,
-        });
+    if toggled {
+        tx.animated();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
-    } else if let Some(mut anim) = s.fx.expand {
-        // 形变中内容变了:目标矩形跟上,动画继续走完。
-        anim.to = rect;
-        anim.up = s.fx.above == Some(true);
-        s.fx.expand = Some(anim);
     }
     // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。
-    if !s.fx.reduce
-        && s.effects()
+    if s.effects()
         && !view.expanded
-        && s.fx.page.is_some_and(|page| page != view.page)
+        && s.fx
+            .last
+            .as_ref()
+            .is_some_and(|last| last.page != view.page)
     {
-        let previous = s.fx.page.unwrap_or(view.page);
-        let direction = if view.page > previous { 1.0 } else { -1.0 };
-        s.fx.slide = Some((direction, now + PAGE_SLIDE));
+        let previous = s.fx.last.as_ref().map_or(view.page, |last| last.page);
+        s.fx.slide_edge = Some(if view.page > previous {
+            Edge::Trailing
+        } else {
+            Edge::Leading
+        });
+        tx.animated();
         s.fx.hover = None;
         s.fx.chev = false;
-    }
-    s.fx.page = Some(view.page);
-    if view.promotions != s.fx.promotions {
-        s.fx.promotions = view.promotions;
-        if !s.fx.reduce && s.effects() {
-            s.fx.flash = Some(now + PROMOTE_FLASH);
-        }
+    } else if view.expanded {
+        s.fx.slide_edge = None;
     }
     s.fx.rest = rect;
-    let laid = s.fx.expand.map(|a| a.rect(now)).unwrap_or(rect);
-    layout(s, laid);
+    s.fx.window = window;
+    // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
+    *s.state
+        .candidate_rect
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(rect);
+    layout(s, window);
     // 先落内容再出帧;淡出期间用的就是这份冻结内容。
     s.fx.last = Some(view.clone());
     s.geom = Some(geom_of(s, &view));
@@ -629,18 +552,23 @@ fn place(s: &mut Candidate) {
     publish_state(s, Some(&view));
     show(s);
     if let Some(handle) = HANDLE.get() {
-        handle.set_input(OverlayInput::All);
+        handle.set_input(OverlayInput::Regions);
     }
 }
 
-/// 光标位置算出的候选窗矩形(x, y, 宽, 高);宽为 0 表示这次不弹。
-fn caret_rect(s: &mut Candidate, view: &SessionView) -> (i32, i32, i32, i32) {
+/// 摆位矩形:(窗口, 面板),屏幕物理像素。
+type Placement = ((i32, i32, i32, i32), (i32, i32, i32, i32));
+
+/// 光标位置算出的摆位;宽为 0 表示这次不弹。
+/// 横排窗口恒为展开棋盘的尺寸,条贴光标侧,其余区域透明且指针穿透;
+/// 竖排窗口与面板同矩形。
+fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
     let (layout, ui_font, _) = place::ui_options(&s.state);
     let host_pid = (s.state.active.load(Ordering::Relaxed) >> 32) as u32;
     let Some((l, t, r, b)) = view.caret else {
         s.fx.above = None;
         s.state.candidate_above.store(false, Ordering::Relaxed);
-        return (0, 0, 0, 0);
+        return ((0, 0, 0, 0), (0, 0, 0, 0));
     };
     let left = l.min(r);
     // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
@@ -658,30 +586,59 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> (i32, i32, i32, i32) {
     let h = panel::panel_height(&spec, &metrics, s) as i32;
     let work = place::work_area_at(left, b);
     w = w.min((work.right - work.left).max(1));
-    // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
-    // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
     let gap = (place::CARET_GAP * scale) as i32;
-    let below = b + gap;
-    let over = t - h - gap;
-    let fits_below = below + h <= work.bottom;
-    let fits_above = over >= work.top;
-    let prefer_above = match s.fx.above {
-        Some(previous) if previous && fits_above => true,
-        Some(previous) if !previous && fits_below => false,
-        _ => !fits_below && fits_above,
-    };
-    s.fx.above = Some(prefer_above);
-    // 徽标据此躲到候选窗的另一侧,两者不互相遮挡。
-    s.state
-        .candidate_above
-        .store(prefer_above, Ordering::Relaxed);
-    let y =
-        (if prefer_above { over } else { below }).clamp(work.top, (work.bottom - h).max(work.top));
-    let x = left.clamp(work.left, (work.right - w).max(work.left));
     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
     let hidden = place::foreground_fullscreen_at(left, b, host_pid);
-    let w = if hidden { 0 } else { w };
-    (x, y, w, h)
+    if hidden {
+        return ((0, 0, 0, 0), (0, 0, 0, 0));
+    }
+    let horizontal = matches!(layout, UiLayout::Horizontal);
+    let (window, body) = if horizontal {
+        // 横排:窗口恒为棋盘高度;条贴光标侧,展开向上/向下长满整窗。
+        let h_win = (WRAP_WINDOW_H * ui_font.factor() * scale) as i32;
+        let below = b + gap;
+        let above = t - gap - h_win;
+        // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
+        // 副屏可以位于主屏上方,`top` 是负数,不能直接 `.max(0)`。
+        let fits_below = below + h_win <= work.bottom;
+        let fits_above = above >= work.top;
+        let prefer_above = match s.fx.above {
+            Some(previous) if previous && fits_above => true,
+            Some(previous) if !previous && fits_below => false,
+            _ => !fits_below && fits_above,
+        };
+        s.fx.above = Some(prefer_above);
+        // 徽标据此躲到候选窗的另一侧,两者不互相遮挡。
+        s.state
+            .candidate_above
+            .store(prefer_above, Ordering::Relaxed);
+        let y = (if prefer_above { above } else { below })
+            .clamp(work.top, (work.bottom - h_win).max(work.top));
+        let x = left.clamp(work.left, (work.right - w).max(work.left));
+        let body_y = if prefer_above { y + h_win - h } else { y };
+        ((x, y, w, h_win), (x, body_y, w, h))
+    } else {
+        // 竖排:窗口与面板同矩形,自然高度随行数。
+        let below = b + gap;
+        let over = t - h - gap;
+        let fits_below = below + h <= work.bottom;
+        let fits_above = over >= work.top;
+        let prefer_above = match s.fx.above {
+            Some(previous) if previous && fits_above => true,
+            Some(previous) if !previous && fits_below => false,
+            _ => !fits_below && fits_above,
+        };
+        s.fx.above = Some(prefer_above);
+        s.state
+            .candidate_above
+            .store(prefer_above, Ordering::Relaxed);
+        let y = (if prefer_above { over } else { below })
+            .clamp(work.top, (work.bottom - h).max(work.top));
+        let x = left.clamp(work.left, (work.right - w).max(work.left));
+        let rect = (x, y, w, h);
+        (rect, rect)
+    };
+    (window, body)
 }
 
 /// 当前视图的绘制几何;命中测试与控件树共用。
@@ -708,11 +665,6 @@ fn layout(s: &mut Candidate, rect: (i32, i32, i32, i32)) {
     if let Some(handle) = HANDLE.get() {
         handle.set_placement(Some(placement_rect(rect, s.scale)));
     }
-    s.logical = (rect.2 as f32 / s.scale, rect.3 as f32 / s.scale);
-    *s.state
-        .candidate_rect
-        .lock()
-        .unwrap_or_else(|p| p.into_inner()) = Some(rect);
 }
 
 /// 物理矩形 → placement 的主屏本地逻辑坐标。
@@ -736,7 +688,10 @@ fn park(s: &mut Candidate) {
     s.visible = false;
     let (x, y) = place::park_point();
     if let Some(handle) = HANDLE.get() {
-        handle.set_placement(Some(placement_rect((x, y, 480, 40), s.scale)));
+        handle.set_placement(Some(placement_rect(
+            (x, y, 480, WRAP_WINDOW_H as i32),
+            s.scale,
+        )));
     }
     *s.state
         .candidate_rect
@@ -757,39 +712,15 @@ fn show(s: &mut Candidate) {
     s.visible = true;
 }
 
-/// 动画帧:淡出/滑动/换首选提示推进中重绘;淡出到期停靠,其余到期走终态。
-fn animate(s: &mut Candidate) {
-    let now = Instant::now();
-    if s.fx.hide.is_some_and(|end| now >= end) {
-        s.fx.clear();
-        park(s);
-        return;
-    }
-    // 展开形变:窗口高度逐帧弹簧推进;到期落到精确目标矩形。
-    if let Some(anim) = s.fx.expand {
-        let rect = if now >= anim.end {
-            s.fx.expand = None;
-            anim.to
-        } else {
-            anim.rect(now)
-        };
-        layout(s, rect);
-    }
-    if s.fx.slide.is_some_and(|(_, end)| now >= end) {
-        s.fx.slide = None;
-    }
-    if s.fx.flash.is_some_and(|end| now >= end) {
-        s.fx.flash = None;
-    }
-}
-
 /// 抓取窗口区的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
+/// 捕获覆盖整个 overlay 窗口:面板外的区域 1:1 显示桌面像素,
+/// 等价于那里没有窗口;玻璃本体只占面板圆角矩形。
 fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
     if !s.material.is_glass() || !s.glass_wanted(high_contrast) {
         s.backdrop = None;
         return;
     }
-    let (x, y, w, h) = s.fx.rest;
+    let (x, y, w, h) = s.fx.window;
     if w <= 0 || h <= 0 {
         return;
     }
@@ -875,7 +806,9 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     };
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
-    let glass = s.material.is_glass() && s.glass_wanted(high_contrast) && s.backdrop.is_some();
+    // 材质判定与背板是否就位解耦:第一帧没背板也只是少一层模糊,
+    // 墨色与选中胶囊从头到尾是同一套,不会闪变材质。
+    let glass = s.material.is_glass() && s.glass_wanted(high_contrast);
     // 高透到磨砂的连续插值:压光与模糊同步加重。
     let frost = s.frost.clamp(0.0, 1.0);
     let frost_blur = GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * frost;
@@ -884,19 +817,23 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let frost_bottom = rgba(0x000000, 0.22 + 0.08 * frost);
     let (_, _, accent) = place::ui_options(&s.state);
     let palette = palette_of(s, accent, high_contrast);
-    let now = Instant::now();
-    let (dx, opacity) = list_fx(s, now);
     let scale = geom.metrics.scale();
-    let (w, h) = s.logical;
     let mut root = el().w_full().h_full();
     if glass && let Some(pixels) = &s.backdrop {
-        // 活背板:窗口区的桌面像素,blur 在其上出磨砂玻璃。
+        // 活背板:整个 overlay 窗口的桌面像素。面板内被 blur 出玻璃,
+        // 面板外 1:1 透出桌面,等价于那里没有窗口。
         root = root.child(el().w_full().h_full().pixels_fit(pixels, SurfaceFit::Fill));
     }
+    // 面板矩形是窗口内的一块:条贴光标侧,展开时铺满。矩形变化交给
+    // 布局弹簧,展开/收起的形变由 Rune 原生推进。
+    let bx = (s.fx.rest.0 - s.fx.window.0) as f32 / scale;
+    let by = (s.fx.rest.1 - s.fx.window.1) as f32 / scale;
     let mut body = col()
-        .absolute(0.0, 0.0)
-        .w(w)
-        .h(h)
+        .absolute(bx, by)
+        .w(s.fx.rest.2 as f32 / scale)
+        .h(s.fx.rest.3 as f32 / scale)
+        .hit()
+        .motion(Spring::smooth(0.3, 0.0))
         .radius(panel::PANEL_RADIUS * scale)
         .continuous_corners()
         .clip_rounded(panel::PANEL_RADIUS * scale)
@@ -912,38 +849,34 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
                 .backdrop_blur(frost_blur)
                 .fill(frost_fill)
                 .gradient(frost_top, frost_bottom)
-                .border(1.0 * scale, rgba(0xffffff, 0.14))
-                .shadow(8.0 * scale, 22.0 * scale, rgba(0x000000, 0.35));
+                .border(1.0 * scale, rgba(0xffffff, 0.14));
         }
-        // 白瓷:不透明暖象牙胎,釉面竖向明暗 + 瓷缘描边 + 柔影;不捕背板。
+        // 白瓷:不透明暖象牙胎,釉面竖向明暗 + 瓷缘描边;不捕背板。
         (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::White => {
             body = body
                 .gradient(rgb(0xf6f0e6), rgb(0xe4ddd0))
-                .border(1.0 * scale, rgb(palette.border))
-                .shadow(2.0 * scale, 16.0 * scale, rgba(0x3a3020, 0.30));
+                .border(1.0 * scale, rgb(palette.border));
         }
         // 黑瓷:不透明暖黑胎,同构釉面。
         (UiMaterial::Ceramic, _) => {
             body = body
                 .gradient(rgb(0x363029), rgb(0x28241d))
-                .border(1.0 * scale, rgb(palette.border))
-                .shadow(2.0 * scale, 16.0 * scale, rgba(0x000000, 0.40));
+                .border(1.0 * scale, rgb(palette.border));
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {
             body = body
                 .fill(rgb(palette.bg))
-                .border(1.0 * scale, rgb(palette.border))
-                .shadow(2.0 * scale, 16.0 * scale, tint(0x000000, 56));
+                .border(1.0 * scale, rgb(palette.border));
         }
     }
     let look = Look {
         palette: &palette,
         glass,
     };
-    body = body.child(content(s, geom, &look, dx, opacity));
+    body = body.child(content(s, geom, &look));
     root = root.child(body);
-    if let Some((slot, _, text)) = s.fx.menu.as_ref().filter(|_| s.fx.expand.is_none())
+    if let Some((slot, _, text)) = s.fx.menu.as_ref()
         && geom
             .spec
             .items
@@ -954,15 +887,14 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
             palette: &palette,
             glass,
         };
-        root = root.child(menu_tree(s, geom, &look, *slot));
+        root = root.child(menu_tree(s, geom, &look, *slot, bx, by));
     }
     root
 }
 
 /// 面板内容:固定条或展开棋盘,加右侧控制轨与条尾箭头。
-fn content(s: &Candidate, geom: &Geom, look: &Look, dx: f32, opacity: f32) -> El {
+fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
-    let scale = geom.metrics.scale();
     let mut layer = el().w_full().h_full();
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
@@ -979,13 +911,17 @@ fn content(s: &Candidate, geom: &Geom, look: &Look, dx: f32, opacity: f32) -> El
             ));
         }
     } else {
-        // 固定条:自然宽度候选从左排到右;翻页滑动套在整层上。
+        // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
+        // 旧页向反侧滑出,由 Rune 的过渡原生推进。
+        let edge = s.fx.slide_edge.unwrap_or(Edge::Trailing);
+        let page = s.fx.last.as_ref().map_or(0, |view| view.page);
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
         let mut strip = el()
-            .absolute(dx, 0.0)
+            .key(format!("strip-page-{page}"))
+            .absolute(0.0, 0.0)
             .w(geom.width)
             .h(geom.height)
-            .opacity(opacity);
+            .transition(Transition::push(edge));
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             strip = strip.child(item_el(
                 s,
@@ -996,25 +932,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look, dx: f32, opacity: f32) -> El
                 index,
                 s.fx.hover == Some(index),
             ));
-        }
-        let grid = panel::grid_rects(&geom.spec, &geom.metrics, meas);
-        for (candidate, rect) in geom.spec.grid.iter().zip(&grid) {
-            let budget = rect.width() - 8.0 * scale;
-            let shown = panel::ellipsize(&candidate.text, budget.max(1.0), geom.metrics.text, meas);
-            strip = strip.child(
-                row()
-                    .absolute(rect.left, rect.top)
-                    .w(rect.width())
-                    .h(rect.height())
-                    .center_y()
-                    .child(el().grow(1.0))
-                    .child(
-                        text(shown)
-                            .font(TextStyle::new(geom.metrics.text, 400.0))
-                            .color(rgb(look.palette.text)),
-                    )
-                    .child(el().grow(1.0)),
-            );
         }
         layer = layer.child(strip);
     }
@@ -1066,7 +983,6 @@ fn item_el(
         .w(rect.width())
         .h(rect.height())
         .radius(rect.height() * 0.5)
-        .center_y()
         .cursor(Cursor::Pointer)
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
@@ -1085,17 +1001,23 @@ fn item_el(
     };
     cell = cell
         .child(
-            el().absolute(panel::ITEM_PAD * scale, 0.0)
-                .w(20.0 * scale)
-                .center_y()
-                .child(
-                    text(format!("{}", index + 1))
-                        .font(TextStyle::new(geom.metrics.small, 400.0))
-                        .color(rgb(index_ink)),
-                ),
+            el().absolute(
+                panel::ITEM_PAD * scale,
+                ink_y(rect.height(), geom.metrics.small),
+            )
+            .w(20.0 * scale)
+            .child(
+                text(format!("{}", index + 1))
+                    .font(TextStyle::new(geom.metrics.small, 400.0))
+                    .color(rgb(index_ink)),
+            ),
         )
         .child(
-            el().absolute(panel::TEXT_X * scale, 0.0).center_y().child(
+            el().absolute(
+                panel::TEXT_X * scale,
+                ink_y(rect.height(), geom.metrics.text),
+            )
+            .child(
                 text(ellipsized(s, geom, &item.text))
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(rgb(if item.selected {
@@ -1109,9 +1031,8 @@ fn item_el(
         let shown = ellipsized(s, geom, &item.text);
         let hint_x = panel::TEXT_X * scale + s.text_width(&shown, geom.metrics.text) + 4.0 * scale;
         cell = cell.child(
-            el().absolute(hint_x, 0.0)
+            el().absolute(hint_x, ink_y(rect.height(), geom.metrics.small))
                 .w(100.0 * scale)
-                .center_y()
                 .child(
                     text(item.hint.clone())
                         .font(TextStyle::new(geom.metrics.small, 400.0))
@@ -1153,11 +1074,13 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 .on_drag(|s: &mut Candidate, drag, _| match drag.phase {
                     rune::Phase::Down => {
                         let [x, y] = drag.window_point();
-                        s.scroll_grab_at(x, y);
+                        let (px, py) = s.window_to_panel(x, y);
+                        s.scroll_grab_at(px, py);
                     }
                     rune::Phase::Move => {
                         let [_, y] = drag.window_point();
-                        s.scroll_drag_to(y);
+                        let (_, py) = s.window_to_panel(0.0, y);
+                        s.scroll_drag_to(py);
                     }
                     rune::Phase::Up => s.fx.scroll_drag = None,
                 }),
@@ -1240,10 +1163,16 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
         } else {
             0.0
         };
+        // 点位是面板坐标;线段是容器(圆钮)的子元素,要换算进容器内。
         let [a, b, c] = panel::chevron_points_turn(glyph, turn, scale);
+        let (a, b, c) = (
+            (a.x - rect.left, a.y - rect.top),
+            (b.x - rect.left, b.y - rect.top),
+            (c.x - rect.left, c.y - rect.top),
+        );
         chev = chev
-            .child(segment_el((a.x, a.y), (b.x, b.y), width, color))
-            .child(segment_el((b.x, b.y), (c.x, c.y), width, color));
+            .child(segment_el(a, b, width, color))
+            .child(segment_el(b, c, width, color));
         layer = layer.child(chev);
     }
     layer
@@ -1265,14 +1194,15 @@ fn segment_el(a: (f32, f32), b: (f32, f32), width: f32, color: Color) -> El {
 }
 
 /// 右键菜单:固定形状,外层 10px、行内缩 4px;玻璃上也用实底。
-fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize) -> El {
+fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: f32) -> El {
     let meas: &dyn Measure = s;
     let (mx, my) = menu_origin(slot, &geom.spec, &geom.metrics, meas);
     let scale = geom.metrics.scale();
     let w = 116.0 * scale;
     let h = panel::menu_height(&geom.metrics);
     let mut card = col()
-        .absolute(mx, my)
+        .absolute(mx + bx, my + by)
+        .hit()
         .w(w)
         .h(h)
         .radius(10.0 * scale)
@@ -1287,7 +1217,6 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize) -> El {
             .h(26.0 * scale)
             .radius(panel::concentric_radius(10.0 * scale, 4.0 * scale, 0.0))
             .px(4.0 * scale)
-            .center_y()
             .cursor(Cursor::Pointer)
             .on_hover_change(move |s: &mut Candidate, inside, _| {
                 s.fx.menu_hover = inside.then_some(index);
@@ -1299,13 +1228,15 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize) -> El {
         }
         card = card.child(
             row.child(
-                text((*label).to_string())
-                    .font(TextStyle::new(12.0 * scale, 400.0))
-                    .color(rgb(if hovered {
-                        look.palette.text
-                    } else {
-                        look.palette.text_secondary
-                    })),
+                el().absolute(0.0, ink_y(26.0 * scale, 12.0 * scale)).child(
+                    text((*label).to_string())
+                        .font(TextStyle::new(12.0 * scale, 400.0))
+                        .color(rgb(if hovered {
+                            look.palette.text
+                        } else {
+                            look.palette.text_secondary
+                        })),
+                ),
             ),
         );
     }
@@ -1336,30 +1267,20 @@ fn menu_origin(
     (8.0 * scale, top)
 }
 
-/// 翻页滑动与换首选提示的列表动效:(横向偏移, 透明度)。
-fn list_fx(s: &Candidate, now: Instant) -> (f32, f32) {
-    let scale = s.geom.as_ref().map_or(1.0, |geom| geom.metrics.scale());
-    match (s.fx.slide, s.fx.flash) {
-        (Some((direction, end)), _) if now < end => {
-            let delta = ease_out_quint(progress(PAGE_SLIDE, end, now));
-            (
-                direction * 10.0 * scale * (1.0 - delta),
-                0.55 + 0.45 * delta,
-            )
-        }
-        (_, Some(end)) if now < end => {
-            let delta = ease_out_quint(progress(PROMOTE_FLASH, end, now));
-            (0.0, 0.72 + 0.28 * delta)
-        }
-        _ => (0.0, 1.0),
-    }
-}
-
 impl Candidate {
     /// 发一条服务端请求;回落宿主没有 TSF 的 Sync,点完当场注入。
     fn request(&self, req: Request) {
         let _ = imp::handle(&self.state, req);
         imp::fallback::flush(&self.state);
+    }
+
+    /// 窗口物理像素 → 面板逻辑点;拖动滚动条等窗口坐标回调用。
+    fn window_to_panel(&self, x: f32, y: f32) -> (f32, f32) {
+        let scale = self.geom.as_ref().map_or(1.0, |geom| geom.metrics.scale());
+        (
+            (x - self.fx.rest.0 as f32) / scale,
+            (y - self.fx.rest.1 as f32) / scale,
+        )
     }
 
     fn pick_slot(&mut self, slot: usize) {
@@ -1545,15 +1466,10 @@ impl Candidate {
             && geom.spec.scroll.is_some_and(|scroll| {
                 panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y).is_some()
             });
-        let menu_hover = self
-            .fx
-            .menu
-            .as_ref()
-            .filter(|_| self.fx.expand.is_none())
-            .and_then(|(slot, _, _)| {
-                let (mx, my) = menu_origin(*slot, &geom.spec, &geom.metrics, meas);
-                panel::menu_hit(mx, my, &geom.metrics, x, y)
-            });
+        let menu_hover = self.fx.menu.as_ref().and_then(|(slot, _, _)| {
+            let (mx, my) = menu_origin(*slot, &geom.spec, &geom.metrics, meas);
+            panel::menu_hit(mx, my, &geom.metrics, x, y)
+        });
         let hit = if menu_hover.is_some() || scroll_hover {
             panel::Hit::Nothing
         } else {
@@ -1793,7 +1709,6 @@ fn cell_el(
         .w(rect.width())
         .h(rect.height())
         .radius(rect.height() * 0.5)
-        .center_y()
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
         .press_on_down()
@@ -1803,8 +1718,8 @@ fn cell_el(
     }
     cell.child(
         row()
+            .mt(ink_y(rect.height(), geom.metrics.text))
             .w_full()
-            .center_y()
             .child(el().grow(1.0))
             .child(
                 text(shown)
