@@ -19,9 +19,8 @@ use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::color::srgb_decode;
 use rune::{
-    App, AppSpec, Color, Cursor, El, Image, ImageCache, OverlayHandle, OverlayInput,
-    OverlayOptions, OverlayPlacement, OverlaySpec, SurfaceFit, TextStyle, Tx, Waker, col, el, row,
-    text,
+    App, AppSpec, Color, Cursor, El, OverlayHandle, OverlayInput, OverlayOptions, OverlayPlacement,
+    OverlaySpec, Pixels, SurfaceFit, TextStyle, Tx, col, el, row, text,
 };
 use rune_text::TextSystem;
 
@@ -194,9 +193,8 @@ struct Candidate {
     fx: Fx,
     /// 文本测量;候选条的自然宽度在显示前就要量好。
     ink: RefCell<TextSystem>,
-    /// 背板图缓存与最近一次捕获的区域(物理像素);背景没动也逐帧重捕。
-    cache: Option<ImageCache>,
-    backdrop: Option<Image>,
+    /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
+    backdrop: Option<Pixels>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -225,7 +223,6 @@ impl Candidate {
             state,
             fx: Fx::default(),
             ink: RefCell::new(TextSystem::new(&[], ("Noto Sans SC", "Noto Sans SC"))),
-            cache: None,
             backdrop: None,
             script_accent: None,
             version: 0,
@@ -441,7 +438,6 @@ pub(crate) fn run(state: Arc<imp::State>) {
                 prewarm: true,
                 ..Default::default()
             })
-            .setup(setup)
             .poll(poll),
         Candidate::with_state(state),
     );
@@ -452,12 +448,6 @@ pub(crate) fn run(state: Arc<imp::State>) {
 /// App::init 已接管状态构建;这个 fn 指针只是 AppSpec 的必填占位。
 fn no_window() -> Candidate {
     Candidate::with_state(Arc::clone(RUNE_STATE.get().expect("候选窗状态未就绪")))
-}
-
-/// overlay 的状态工厂要一份服务端状态;主进程建好后经它转交。
-/// 真正的状态在 imp.rs 建好,这里只是取走所有权。
-fn setup(s: &mut Candidate, waker: Waker) {
-    s.cache = Some(ImageCache::new(waker));
 }
 
 /// 管道线程要叫醒候选窗时调用;overlay 起来之前是空操作。
@@ -803,11 +793,11 @@ fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
     if w <= 0 || h <= 0 {
         return;
     }
-    let Some(cache) = &s.cache else {
-        return;
-    };
-    if let Some((width, height, pixels)) = capture_rect(x, y, w as u32, h as u32) {
-        s.backdrop = Some(cache.rgba(width, height, pixels));
+    if let Some((width, height, rgba)) = capture_rect(x, y, w as u32, h as u32) {
+        // 流式像素通道:同一张图原地换内容,Rune 唤醒显示它的窗口。
+        // 无解码 worker、无 pending 空帧,同尺寸帧复用图集槽位。
+        let pixels = s.backdrop.get_or_insert_with(Pixels::new);
+        pixels.set(width, height, rgba);
     }
 }
 
@@ -899,13 +889,9 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let scale = geom.metrics.scale();
     let (w, h) = s.logical;
     let mut root = el().w_full().h_full();
-    if glass && let Some(image) = &s.backdrop {
+    if glass && let Some(pixels) = &s.backdrop {
         // 活背板:窗口区的桌面像素,blur 在其上出磨砂玻璃。
-        root = root.child(
-            el().w_full()
-                .h_full()
-                .pixels_fit(image.pixels(), SurfaceFit::Fill),
-        );
+        root = root.child(el().w_full().h_full().pixels_fit(pixels, SurfaceFit::Fill));
     }
     let mut body = col()
         .absolute(0.0, 0.0)
