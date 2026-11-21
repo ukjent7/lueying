@@ -1161,6 +1161,10 @@ fn item_el(
     // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
     // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
     cell = cell
+        // matched 管飞行配对,key 锚定节点跨帧身份——没 key 的话
+        // NodeId 按声明顺序回收,配对查到的起点可能是复用了旧 id
+        // 的另一个节点(比如右侧控制轨),方向就乱飞。
+        .key(format!("cand-{}-{gidx}-{}", s.comp, item.text))
         .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
         // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
         .matched_crop();
@@ -1898,6 +1902,10 @@ fn cell_el(
     // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
     // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
     cell = cell
+        // matched 管飞行配对,key 锚定节点跨帧身份——没 key 的话
+        // NodeId 按声明顺序回收,配对查到的起点可能是复用了旧 id
+        // 的另一个节点(比如右侧控制轨),方向就乱飞。
+        .key(format!("cand-{}-{index}-{candidate}", s.comp))
         .matched(format!("cand-{}-{index}-{candidate}", s.comp))
         // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
         .matched_crop();
