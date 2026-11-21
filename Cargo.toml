@@ -64,16 +64,16 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf", default-features = false, features = ["accessibility"] }
 
 # Rune 的 vendored 依赖不随 git 依赖继承,按其 README 在工作区根打同一 rev 的 patch。
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf" }
 
 [profile.release]
 lto = "thin"

@@ -382,6 +382,9 @@ pub(crate) fn run(state: Arc<imp::State>) {
                 prewarm: true,
                 ..Default::default()
             })
+            // 隐藏时归还 GPU 表面:复显时 surface 重建,首帧必是新内容;
+            // 否则 DComp 视觉层留着上一帧,会闪上一组句的候选页或展开棋盘。
+            .release_gpu_when_hidden()
             .poll(poll),
         Candidate::with_state(state),
     );
