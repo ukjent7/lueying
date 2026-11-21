@@ -104,8 +104,8 @@ struct Fx {
     presence: Presence,
     /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。
     last: Option<SessionView>,
-    /// overlay 窗口的屏幕物理矩形;背板捕获与内容偏移用它。
-    window: (i32, i32, i32, i32),
+    /// 本次摆位(窗口+面板,屏幕物理像素);总是整体赋值。
+    placement: Placement,
     /// 翻页方向:条内容从这一侧滑入。Rune 的 push 过渡消费。
     slide_edge: Option<Edge>,
     /// 本次组合里候选窗在光标上方还是下方;同一次组合内保持不变。
@@ -124,8 +124,6 @@ struct Fx {
     menu: Menu,
     /// 本次组合的起点;外观扩展的时钟从这儿算。
     since: Option<Instant>,
-    /// 静止位置(屏幕坐标);发布给扩展的矩形用它。
-    rest: (i32, i32, i32, i32),
 }
 
 impl Fx {
@@ -561,8 +559,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.animated();
     }
     s.fx.presence = Presence::Idle;
-    let (window, rect) = caret_rect(s, &view);
-    if rect.2 == 0 {
+    let placement = caret_rect(s, &view);
+    if placement.panel.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合出现,不会接着上一次的状态。
         s.fx.presence = Presence::Idle;
@@ -615,14 +613,13 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     {
         tx.animated();
     }
-    s.fx.rest = rect;
-    s.fx.window = window;
+    s.fx.placement = placement;
     // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
     *s.state
         .candidate_rect
         .lock()
-        .unwrap_or_else(|p| p.into_inner()) = Some(rect);
-    layout(s, window);
+        .unwrap_or_else(|p| p.into_inner()) = Some(placement.panel);
+    layout(s, placement.window);
     // 先落内容再出帧;淡出期间用的就是这份冻结内容。
     s.fx.last = Some(view.clone());
     s.geom = Some(geom_of(s, &view));
@@ -634,8 +631,15 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     }
 }
 
-/// 摆位矩形:(窗口, 面板),屏幕物理像素。
-type Placement = ((i32, i32, i32, i32), (i32, i32, i32, i32));
+/// 一次摆位:overlay 窗口与面板内容各自的屏幕物理矩形。
+/// 同属一次摆放,只整体赋值;拆成两个字段的旧写法在移动瞬间会错位。
+#[derive(Clone, Copy, Debug, Default)]
+struct Placement {
+    /// overlay 窗口矩形;背板捕获与内容偏移用它。
+    window: (i32, i32, i32, i32),
+    /// 面板内容矩形;回落点击转发与扩展发布的矩形用它。
+    panel: (i32, i32, i32, i32),
+}
 
 /// 光标位置算出的摆位;宽为 0 表示这次不弹。
 /// 横排窗口恒为展开棋盘的尺寸,条贴光标侧,其余区域透明且指针穿透;
@@ -646,7 +650,7 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
     let Some((l, t, r, b)) = view.caret else {
         s.fx.above = None;
         s.state.candidate_above.store(false, Ordering::Relaxed);
-        return ((0, 0, 0, 0), (0, 0, 0, 0));
+        return Placement::default();
     };
     let left = l.min(r);
     // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
@@ -668,7 +672,7 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
     let hidden = place::foreground_fullscreen_at(left, b, host_pid);
     if hidden {
-        return ((0, 0, 0, 0), (0, 0, 0, 0));
+        return Placement::default();
     }
     let horizontal = matches!(layout, UiLayout::Horizontal);
     let (window, body) = if horizontal {
@@ -694,7 +698,10 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
             .clamp(work.top, (work.bottom - h_win).max(work.top));
         let x = left.clamp(work.left, (work.right - w).max(work.left));
         let body_y = if prefer_above { y + h_win - h } else { y };
-        ((x, y, w, h_win), (x, body_y, w, h))
+        Placement {
+            window: (x, y, w, h_win),
+            panel: (x, body_y, w, h),
+        }
     } else {
         // 竖排:窗口与面板同矩形,自然高度随行数。
         let below = b + gap;
@@ -714,9 +721,15 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
             .clamp(work.top, (work.bottom - h).max(work.top));
         let x = left.clamp(work.left, (work.right - w).max(work.left));
         let rect = (x, y, w, h);
-        (rect, rect)
+        Placement {
+            window: rect,
+            panel: rect,
+        }
     };
-    (window, body)
+    Placement {
+        window,
+        panel: body,
+    }
 }
 
 /// 当前视图的绘制几何;命中测试与控件树共用。
@@ -798,7 +811,7 @@ fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
         s.backdrop = None;
         return;
     }
-    let (x, y, w, h) = s.fx.window;
+    let (x, y, w, h) = s.fx.placement.window;
     if w <= 0 || h <= 0 {
         return;
     }
@@ -813,7 +826,7 @@ fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
 /// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
 /// 私密字段的文字在这里就留空,扩展拿不到。
 fn publish_state(s: &mut Candidate, view: Option<&SessionView>) {
-    let (x, y, w, h) = s.fx.rest;
+    let (x, y, w, h) = s.fx.placement.panel;
     let private = s.private;
     let mut state = lueying_ext::proto::candidate::CandidateState {
         visible: s.visible,
@@ -904,12 +917,12 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     }
     // 面板矩形是窗口内的一块:条贴光标侧,展开时铺满。矩形变化交给
     // 布局弹簧,展开/收起的形变由 Rune 原生推进。
-    let bx = (s.fx.rest.0 - s.fx.window.0) as f32 / scale;
-    let by = (s.fx.rest.1 - s.fx.window.1) as f32 / scale;
+    let bx = (s.fx.placement.panel.0 - s.fx.placement.window.0) as f32 / scale;
+    let by = (s.fx.placement.panel.1 - s.fx.placement.window.1) as f32 / scale;
     let mut body = col()
         .absolute(bx, by)
-        .w(s.fx.rest.2 as f32 / scale)
-        .h(s.fx.rest.3 as f32 / scale)
+        .w(s.fx.placement.panel.2 as f32 / scale)
+        .h(s.fx.placement.panel.3 as f32 / scale)
         .hit()
         // 入场:从光标侧滑入并淡入;挂载过渡只在 animated 提交里播,
         // fresh 路径显式打 tx.animated()。顺带盖住复显首帧的透明空窗。
@@ -1402,8 +1415,8 @@ impl Candidate {
     fn window_to_panel(&self, x: f32, y: f32) -> (f32, f32) {
         let scale = self.geom.as_ref().map_or(1.0, |geom| geom.metrics.scale());
         (
-            (x - self.fx.rest.0 as f32) / scale,
-            (y - self.fx.rest.1 as f32) / scale,
+            (x - self.fx.placement.panel.0 as f32) / scale,
+            (y - self.fx.placement.panel.1 as f32) / scale,
         )
     }
 
@@ -1510,7 +1523,10 @@ impl Candidate {
 
     /// 回落钩子注入的鼠标事件;屏幕物理像素转客户区后走同一路径。
     fn on_fallback(&mut self, event: FallbackMouse, _tx: &mut Tx) {
-        let (ox, oy) = (self.fx.rest.0 as f32, self.fx.rest.1 as f32);
+        let (ox, oy) = (
+            self.fx.placement.panel.0 as f32,
+            self.fx.placement.panel.1 as f32,
+        );
         match event {
             FallbackMouse::Move(x, y) => self.fallback_move(x - ox, y - oy),
             FallbackMouse::Down(x, y) => self.fallback_down(x - ox, y - oy),
