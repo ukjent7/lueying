@@ -1144,6 +1144,9 @@ fn item_el(
         .cursor(Cursor::Pointer)
         // 与棋盘格共享 id:全局序号定身份,同文字的不同候选不撞 id。
         .matched(format!("cand-{gidx}-{}", item.text))
+        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
+        // 不上的退出+淡入就退化成"先消失后浮现"。
+        .motion(Spring::smooth(0.2, 0.0))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
         })
@@ -1878,6 +1881,9 @@ fn cell_el(
         .cursor(Cursor::Pointer)
         // 与固定条候选共享 id:全局序号定身份,同文字的不同候选不撞 id。
         .matched(format!("cand-{index}-{candidate}"))
+        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
+        // 不上的退出+淡入就退化成"先消失后浮现"。
+        .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     cell.child(
