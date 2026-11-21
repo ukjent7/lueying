@@ -674,7 +674,7 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
         return Placement::default();
     }
     let horizontal = matches!(layout, UiLayout::Horizontal);
-    let (window, body) = if horizontal {
+    if horizontal {
         // 横排:窗口恒为棋盘高度;条贴光标侧,展开向上/向下长满整窗。
         let h_win = (WRAP_WINDOW_H * ui_font.factor() * scale) as i32;
         let below = b + gap;
@@ -724,10 +724,6 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
             window: rect,
             panel: rect,
         }
-    };
-    Placement {
-        window,
-        panel: body,
     }
 }
 
