@@ -1160,14 +1160,12 @@ fn item_el(
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_slot(index));
     // 与棋盘格共享 id:组合序号+全局序号定身份,只在同一次组合内
-    // 配对。被选中项不飞——它和拉伸的胶囊同一条路线,字就钉在槽位
-    // 上,由生长中的胶囊包住它;其他候选照常在槽位间位移。
-    if !item.selected {
-        cell = cell
-            .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-            // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
-            .matched_crop();
-    }
+    // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
+    // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
+    cell = cell
+        .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
+        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
+        .matched_crop();
     if hovered && !item.selected {
         cell = cell.fill(look.tint(look.palette.hover, 0x66));
     }
@@ -1899,14 +1897,12 @@ fn cell_el(
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     // 与固定条候选共享 id:组合序号+全局序号定身份,只在同一次组合内
-    // 配对。被选中格不飞——它和拉伸的胶囊同一条路线,字就钉在槽位
-    // 上,由生长中的胶囊包住它;其他候选照常在槽位间位移。
-    if !selected {
-        cell = cell
-            .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-            // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
-            .matched_crop();
-    }
+    // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
+    // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
+    cell = cell
+        .matched(format!("cand-{}-{index}-{candidate}", s.comp))
+        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
+        .matched_crop();
     cell.child(
         row()
             .mt(ink_y(rect.height(), geom.metrics.text))
