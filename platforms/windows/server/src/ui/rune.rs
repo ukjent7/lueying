@@ -1298,24 +1298,6 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .on_hover_change(|s: &mut Candidate, inside, _| {
                 s.fx.chev = inside;
                 s.fx.scroll_hover = inside;
-            })
-            // 命中顶帽=收起/展开,命中轨道=拖滚;Down 阶段即判定。
-            .on_drag(move |s: &mut Candidate, drag, _| match drag.phase {
-                rune::Phase::Down => {
-                    let [x, y] = drag.window_point();
-                    let (px, py) = s.window_to_panel(x, y);
-                    if px >= cap.left && px <= cap.left + cap.width() && py >= cap.top && py <= cap.top + cap.height() {
-                        s.expand_toggle();
-                    } else {
-                        s.scroll_grab_at(px, py);
-                    }
-                }
-                rune::Phase::Move => {
-                    let [_, y] = drag.window_point();
-                    let (_, py) = s.window_to_panel(0.0, y);
-                    s.scroll_drag_to(py);
-                }
-                rune::Phase::Up => s.fx.scroll_drag = None,
             });
         if is_rail {
             chev = chev

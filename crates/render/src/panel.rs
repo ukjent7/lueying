@@ -53,7 +53,7 @@ pub const SCROLLBAR_HOVER: f32 = 7.0;
 /// 右侧控制轨与棋盘之间的间距;收起钮和滚动条共用这一条竖线。
 const RAIL_GAP: f32 = 2.0;
 /// 滚动条轨道距面板底缘的留白。
-const RAIL_BOTTOM: f32 = 6.0;
+const RAIL_BOTTOM: f32 = 10.0;
 /// 控制轨距窗口右缘的留白,与候选列表的上下留白一致。
 
 /// 候选排列:横排挤一行自动换行,竖排一行一条。
