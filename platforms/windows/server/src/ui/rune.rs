@@ -1046,10 +1046,8 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     } else {
         // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
         // 旧页向反侧滑出,由 Rune 的过渡原生推进。
-        let page = s.fx.last.as_ref().map_or(0, |view| view.page);
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
         let mut strip = el()
-            .key(format!("strip-page-{page}"))
             .absolute(0.0, 0.0)
             .w(geom.width)
             .h(geom.height)
