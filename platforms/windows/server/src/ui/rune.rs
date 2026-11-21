@@ -21,7 +21,7 @@ use rune::color::srgb_decode;
 use rune::{
     App, AppSpec, Color, Cursor, Edge, El, OverlayHandle, OverlayInput, OverlayOptions,
     OverlayPlacement, OverlaySpec, Pixels, Spring, SurfaceFit, TextStyle, Transition, Tx, col, el,
-    row, text,
+    text,
 };
 use rune_text::TextSystem;
 
