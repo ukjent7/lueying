@@ -193,6 +193,9 @@ struct Candidate {
     /// 最近一次摆位算出的几何。
     geom: Option<Geom>,
     sent: Option<lueying_ext::proto::candidate::CandidateState>,
+    /// 组合序号:每次新组合 +1,编进 matched id——匹配只在同一
+    /// 次组合内成立,上一次组合里还活着的元素拿不到它的飞行起点。
+    comp: u64,
 }
 
 impl Candidate {
@@ -212,6 +215,7 @@ impl Candidate {
             scale: 1.0,
             geom: None,
             sent: None,
+            comp: 0,
         }
     }
 
@@ -547,6 +551,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     s.private = snap.private;
     let fresh = s.fx.last.is_none() || s.fx.fading();
     if fresh {
+        s.comp = s.comp.wrapping_add(1);
         // 新组合撞上进半路的淡出:handle.show 取消排队中的 Hide 请求。
         // 不取消的话,s.visible 仍为真、show() 提前返回,fade_out
         // 照常跑完——这一条组合的候选窗从头到尾不会出现。
@@ -1148,8 +1153,9 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
-        // 与棋盘格共享 id:全局序号定身份,同文字的不同候选不撞 id。
-        .matched(format!("cand-{gidx}-{}", item.text))
+        // 与棋盘格共享 id:组合序号+全局序号定身份——匹配只在同一
+        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
+        .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
         // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
         // 不上的退出+淡入就退化成"先消失后浮现"。
         .motion(Spring::smooth(0.2, 0.0))
@@ -1885,8 +1891,9 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
-        // 与固定条候选共享 id:全局序号定身份,同文字的不同候选不撞 id。
-        .matched(format!("cand-{index}-{candidate}"))
+        // 与固定条候选共享 id:组合序号+全局序号定身份——匹配只在同一
+        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
+        .matched(format!("cand-{}-{index}-{candidate}", s.comp))
         // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
         // 不上的退出+淡入就退化成"先消失后浮现"。
         .motion(Spring::smooth(0.2, 0.0))
