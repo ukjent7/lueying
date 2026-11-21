@@ -1429,15 +1429,6 @@ impl Candidate {
         imp::fallback::flush(&self.state);
     }
 
-    /// 窗口物理像素 → 面板逻辑点;拖动滚动条等窗口坐标回调用。
-    fn window_to_panel(&self, x: f32, y: f32) -> (f32, f32) {
-        let scale = self.geom.as_ref().map_or(1.0, |geom| geom.metrics.scale());
-        (
-            (x - self.fx.placement.panel.0 as f32) / scale,
-            (y - self.fx.placement.panel.1 as f32) / scale,
-        )
-    }
-
     fn pick_slot(&mut self, slot: usize) {
         if !self.interactive() {
             return;
