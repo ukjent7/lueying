@@ -193,9 +193,6 @@ struct Candidate {
     /// 最近一次摆位算出的几何。
     geom: Option<Geom>,
     sent: Option<lueying_ext::proto::candidate::CandidateState>,
-    /// 组合序号:每次新组合 +1,编进 matched id——匹配只在同一
-    /// 次组合内成立,上一次组合里还活着的元素拿不到它的飞行起点。
-    comp: u64,
 }
 
 impl Candidate {
@@ -215,7 +212,6 @@ impl Candidate {
             scale: 1.0,
             geom: None,
             sent: None,
-            comp: 0,
         }
     }
 
@@ -551,7 +547,6 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     s.private = snap.private;
     let fresh = s.fx.last.is_none() || s.fx.fading();
     if fresh {
-        s.comp = s.comp.wrapping_add(1);
         // 新组合撞上进半路的淡出:handle.show 取消排队中的 Hide 请求。
         // 不取消的话,s.visible 仍为真、show() 提前返回,fade_out
         // 照常跑完——这一条组合的候选窗从头到尾不会出现。
@@ -589,9 +584,6 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .is_some_and(|last| last.expanded != view.expanded);
     if toggled {
         tx.animated();
-        // 飞行元素要画出 body 的圆角裁剪之外:格子向"将来棋盘"
-        // 的区域飞时被 clip_rounded 裁掉就看不见,等面板长成才浮现。
-        tx.unclipped_flights();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
@@ -1066,9 +1058,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         {
             strip = strip.child(sel_marker(rect, look, geom.metrics.scale()));
         }
-        let page_start = s.fx.last.as_ref().map_or(0, |view| {
-            panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
-        });
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             strip = strip.child(item_el(
                 s,
@@ -1077,7 +1066,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 item,
                 *rect,
                 index,
-                page_start + index,
                 s.fx.hover == Some(index),
             ));
         }
@@ -1143,7 +1131,6 @@ fn item_el(
     item: &Item,
     rect: Rect,
     index: usize,
-    gidx: usize,
     hovered: bool,
 ) -> El {
     let scale = geom.metrics.scale();
@@ -1153,11 +1140,9 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
-        // 与棋盘格共享 id:组合序号+全局序号定身份——匹配只在同一
-        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
-        .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
-        // 不上的退出+淡入就退化成"先消失后浮现"。
+        // 不配 matched:候选字不做共享元素飞行。胶囊拉伸、面板长大,
+        // 字在棋盘槽位被生长中的面板揭出来——飞行只会带来起点错乱、
+        // glyph 缩放闪帧和残影。
         .motion(Spring::smooth(0.2, 0.0))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
@@ -1891,11 +1876,9 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
-        // 与固定条候选共享 id:组合序号+全局序号定身份——匹配只在同一
-        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
-        .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
-        // 不上的退出+淡入就退化成"先消失后浮现"。
+        // 不配 matched:候选字不做共享元素飞行。胶囊拉伸、面板长大,
+        // 字在棋盘槽位被生长中的面板揭出来——飞行只会带来起点错乱、
+        // glyph 缩放闪帧和残影。
         .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
