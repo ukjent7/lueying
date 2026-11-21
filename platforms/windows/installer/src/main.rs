@@ -97,15 +97,21 @@ mod imp {
             }
             Some("--start-server") => {
                 // 带 uiAccess 清单的 server 只能由普通过滤令牌拉起;本辅助
-                // 程序以原用户身份运行,正是合格令牌;提权进程降级拉起会被
-                // 系统以 740 拒绝。与 TSF 按需拉起走同一条 spawn_detached。
+                // 程序在提权安装器里被调用时自身也是提权令牌,ShellExecuteEx
+                // 拉起会把提权身份带给 server——管道属主落成 Administrators,
+                // 普通应用的按键全被 ACCESS_DENIED 挡在门外(唯有 AppContainer
+                // 宿主能连)。让 explorer 代拉:桌面 shell 是用户中完整性进程,
+                // 经它起的子进程一定是合格的普通过滤令牌。
                 match app_dir() {
                     Ok(dir) => {
                         let exe = dir.join("lueying-server.exe");
-                        if let Err(error) = lueying_protocol::spawn_detached(&exe, None) {
-                            trace(&format!("start_server: 失败: {error}"));
-                        } else {
-                            trace("start_server: done");
+                        let spawned = std::process::Command::new("explorer.exe")
+                            .arg(&exe)
+                            .spawn()
+                            .map_err(|e| e.to_string());
+                        match spawned {
+                            Err(error) => trace(&format!("start_server: 失败: {error}")),
+                            Ok(_) => trace("start_server: done"),
                         }
                     }
                     Err(error) => trace(&format!("start_server: {error}")),
