@@ -95,6 +95,22 @@ mod imp {
                 stop_server();
                 trace("stop_server: done");
             }
+            Some("--start-server") => {
+                // 带 uiAccess 清单的 server 只能由普通过滤令牌拉起;本辅助
+                // 程序以原用户身份运行,正是合格令牌;提权进程降级拉起会被
+                // 系统以 740 拒绝。与 TSF 按需拉起走同一条 spawn_detached。
+                match app_dir() {
+                    Ok(dir) => {
+                        let exe = dir.join("lueying-server.exe");
+                        if let Err(error) = lueying_protocol::spawn_detached(&exe, None) {
+                            trace(&format!("start_server: 失败: {error}"));
+                        } else {
+                            trace("start_server: done");
+                        }
+                    }
+                    Err(error) => trace(&format!("start_server: {error}")),
+                }
+            }
             Some("--prune") => prune(),
             _ => {
                 trace(&format!("helper: 未知参数 {args:?}"));

@@ -111,10 +111,11 @@ Filename: "{app}\lueying-user.exe"; Parameters: "--install"; \
 ; 进程退出码,所以 prune 失败不会中断安装。
 Filename: "{app}\lueying-user.exe"; Parameters: "--prune"; \
     Flags: runhidden waituntilterminated
-; PrepareToInstall 停了常驻服务,装完按原用户令牌直接拉起:不是管理
-; 员替身,普通进程的身份校验不拦;不再依赖用户切到掠影敲键才按需拉起。
-Filename: "{app}\lueying-server.exe"; \
-    Flags: runasoriginaluser runhidden nowait
+; PrepareToInstall 停了常驻服务,装完按原用户令牌拉起:uiAccess 程序
+; 不接受提权进程降级(CreateProcessAsUser 740),要由普通过滤令牌经
+; lueying-user 中转,与 TSF 按需拉起同机制;不再依赖用户切换才拉起。
+Filename: "{app}\lueying-user.exe"; Parameters: "--start-server"; \
+    Flags: runasoriginaluser runhidden waituntilterminated
 
 [UninstallRun]
 Filename: "{app}\lueying-user.exe"; Parameters: "--uninstall"; \

@@ -1843,7 +1843,7 @@ fn cell_el(
     let meas: &dyn Measure = s;
     let budget = (rect.width() - 16.0 * scale).max(1.0);
     let shown = panel::ellipsize(candidate, budget, geom.metrics.text, meas);
-    let mut cell = col()
+    let cell = col()
         .absolute(rect.left, rect.top)
         .w(rect.width())
         .h(rect.height())
