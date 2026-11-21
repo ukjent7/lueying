@@ -52,6 +52,8 @@ pub const SCROLLBAR_IDLE: f32 = 3.0;
 pub const SCROLLBAR_HOVER: f32 = 7.0;
 /// 右侧控制轨与棋盘之间的间距;收起钮和滚动条共用这一条竖线。
 const RAIL_GAP: f32 = 2.0;
+/// 滚动条轨道距面板底缘的留白。
+const RAIL_BOTTOM: f32 = 6.0;
 /// 控制轨距窗口右缘的留白,与候选列表的上下留白一致。
 
 /// 候选排列:横排挤一行自动换行,竖排一行一条。
@@ -507,7 +509,8 @@ pub fn scrollbar_rects(
         SCROLLBAR_IDLE
     } * s;
     let top = rail_top(metrics);
-    let bottom = height - PAD_Y * s;
+    // 底部再留一截,不贴面板底缘——滚动条在 rail 里有上下层级。
+    let bottom = height - PAD_Y * s - RAIL_BOTTOM * s;
     let track = Rect::from_xywh(
         rail_center(width, s) - bar_w * 0.5,
         top,
