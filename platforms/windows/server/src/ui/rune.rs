@@ -1018,6 +1018,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
 /// 面板内容:固定条或展开棋盘,加右侧控制轨与条尾箭头。
 fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
+    let scale = geom.metrics.scale();
     let mut layer = el().w_full().h_full();
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
