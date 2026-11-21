@@ -1101,8 +1101,9 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     // key+持久身份:条↔棋盘同一节点,矩形走 motion 渐变拉伸。
     // 不用 matched:胶囊飞行走 launches 通道,会盖住同路径 top1
     // 的字("猛沉")——持久形变照常拉伸,且永远画在飞行层下面。
+    // 不配 transition:重挂载时的淡入淡出会顶掉形变,看着像胶囊
+    // 消失重冒而不是拉伸。
     .key("sel")
-    .transition(Transition::opacity())
     .motion(Spring::smooth(0.2, 0.0))
 }
 
