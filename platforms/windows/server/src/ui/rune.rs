@@ -1157,17 +1157,7 @@ fn item_el(
         })
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_slot(index));
-    // 与棋盘格共享 id:组合序号+全局序号定身份,只在同一次组合内
-    // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
-    // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
-    cell = cell
-        // matched 管飞行配对,key 锚定节点跨帧身份——没 key 的话
-        // NodeId 按声明顺序回收,配对查到的起点可能是复用了旧 id
-        // 的另一个节点(比如右侧控制轨),方向就乱飞。
-        .key(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-        .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
-        .matched_crop();
+    // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
     if hovered && !item.selected {
         cell = cell.fill(look.tint(look.palette.hover, 0x66));
     }
@@ -1195,7 +1185,13 @@ fn item_el(
                 ink_y(rect.height(), geom.metrics.text),
             )
             .child(
+                // 字自己的 key+matched 成对:matched 配对飞行,key 锚定
+                // 节点身份。字以自己的文本框从旧位置滑到新位置——真正
+                // 的"哪来回哪去"。matched_crop 保证内容不放大铺满。
                 text(ellipsized(s, geom, &item.text))
+                    .key(format!("cand-{}-{gidx}-{}", s.comp, item.text))
+                    .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
+                    .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(rgb(if item.selected {
                         look.palette.selected_text
@@ -1888,7 +1884,7 @@ fn cell_el(
     let meas: &dyn Measure = s;
     let budget = (rect.width() - 16.0 * scale).max(1.0);
     let shown = panel::ellipsize(candidate, budget, geom.metrics.text, meas);
-    let mut cell = col()
+    let cell = col()
         .absolute(rect.left, rect.top)
         .w(rect.width())
         .h(rect.height())
@@ -1898,24 +1894,20 @@ fn cell_el(
         .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
-    // 与固定条候选共享 id:组合序号+全局序号定身份,只在同一次组合内
-    // 配对。飞行 pass 按树序排在 sel 之后,选中候选的字会画在
-    // 拉伸中的胶囊上面——"胶囊长大、字跟着位移居中"的语义。
-    cell = cell
-        // matched 管飞行配对,key 锚定节点跨帧身份——没 key 的话
-        // NodeId 按声明顺序回收,配对查到的起点可能是复用了旧 id
-        // 的另一个节点(比如右侧控制轨),方向就乱飞。
-        .key(format!("cand-{}-{index}-{candidate}", s.comp))
-        .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
-        .matched_crop();
+    // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
     cell.child(
         row()
             .mt(ink_y(rect.height(), geom.metrics.text))
             .w_full()
             .child(el().grow(1.0))
             .child(
+                // 字自己的 key+matched 成对:matched 配对飞行,key 锚定
+                // 节点身份。字以自己的文本框从旧位置滑到新位置——真正
+                // 的"哪来回哪去"。matched_crop 保证内容不放大铺满。
                 text(shown)
+                    .key(format!("cand-{}-{index}-{candidate}", s.comp))
+                    .matched(format!("cand-{}-{index}-{candidate}", s.comp))
+                    .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(rgb(if selected {
                         look.palette.selected_text
