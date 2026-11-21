@@ -55,11 +55,53 @@ static HANDLE: OnceLock<OverlayHandle<Candidate>> = OnceLock::new();
 /// 服务端状态的转交点;AppSpec 的 fn 指针从这里取状态。
 static RUNE_STATE: OnceLock<Arc<imp::State>> = OnceLock::new();
 
+/// 候选窗的存在状态;截止时刻只在淡出中有效。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Presence {
+    /// 无淡出挂起;显示与否由窗口可见性与冻结内容决定。
+    #[default]
+    Idle,
+    /// 原生 alpha 淡出进行中,到期停靠;期间沿用冻结内容并让鼠标穿透。
+    FadingOut(Instant),
+}
+
+/// 右键菜单状态;悬停槽位只在打开时有效。
+#[derive(Clone, Debug, Default, PartialEq)]
+enum Menu {
+    #[default]
+    Closed,
+    /// (页内槽位, 占位, 悬停项, 行文本)。行文本变了菜单自动失效。
+    Open {
+        slot: usize,
+        y: f32,
+        text: String,
+        hover: Option<usize>,
+    },
+}
+
+impl Menu {
+    /// 打开中的悬停菜单项;关闭时恒为 None。
+    fn hover(&self) -> Option<usize> {
+        if let Menu::Open { hover, .. } = self {
+            *hover
+        } else {
+            None
+        }
+    }
+
+    /// 打开中才生效的悬停更新。
+    fn set_hover(&mut self, v: Option<usize>) {
+        if let Menu::Open { hover, .. } = self {
+            *hover = v;
+        }
+    }
+}
+
 /// 候选窗的动画与交互状态;全部归 Rune 的事件线程所有。
 #[derive(Default)]
 struct Fx {
-    /// 淡出截止时刻;期间沿用最后一份内容并让鼠标穿透。
-    hide: Option<Instant>,
+    /// 淡出状态;期间沿用最后一份内容并让鼠标穿透。
+    presence: Presence,
     /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。
     last: Option<SessionView>,
     /// overlay 窗口的屏幕物理矩形;背板捕获与内容偏移用它。
@@ -78,10 +120,8 @@ struct Fx {
     scroll_hover: bool,
     /// 拖动滚动条时鼠标相对滑块顶部的偏移(逻辑点)。
     scroll_drag: Option<f32>,
-    /// 打开的右键菜单:(页内槽位, 占位, 行文本)。行文本变了菜单自动失效。
-    menu: Option<(usize, f32, String)>,
-    /// 悬停的菜单项。
-    menu_hover: Option<usize>,
+    /// 右键菜单状态。
+    menu: Menu,
     /// 本次组合的起点;外观扩展的时钟从这儿算。
     since: Option<Instant>,
     /// 静止位置(屏幕坐标);发布给扩展的矩形用它。
@@ -94,7 +134,7 @@ impl Fx {
     }
 
     fn fading(&self) -> bool {
-        self.hide.is_some()
+        matches!(self.presence, Presence::FadingOut(_))
     }
 }
 
@@ -216,9 +256,10 @@ impl Candidate {
 
     /// 淡出分支的进度;静止恒为 1。
     fn anim(&self, now: Instant) -> f32 {
-        self.fx.hide.map_or(1.0, |end| {
-            ease_out_quint(progress(HIDE_FADE, end, now)).max(0.001)
-        })
+        match self.fx.presence {
+            Presence::FadingOut(end) => ease_out_quint(progress(HIDE_FADE, end, now)).max(0.001),
+            Presence::Idle => 1.0,
+        }
     }
 
     /// 量一段文字在给定字号下的宽(逻辑点)。
@@ -469,7 +510,7 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
     // 淡出到期停靠;摆位时已排好这一次唤醒。
-    if s.fx.hide.is_some_and(|end| Instant::now() >= end) {
+    if matches!(s.fx.presence, Presence::FadingOut(end) if Instant::now() >= end) {
         s.fx.clear();
         park(s);
         return true;
@@ -491,10 +532,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             park(s);
             return;
         }
-        if s.fx.hide.is_none() {
-            s.fx.hide = Some(Instant::now() + HIDE_FADE);
-            s.fx.menu = None;
-            s.fx.menu_hover = None;
+        if !s.fx.fading() {
+            s.fx.presence = Presence::FadingOut(Instant::now() + HIDE_FADE);
+            s.fx.menu = Menu::Closed;
             s.fx.hover = None;
             s.fx.chev = false;
             if let Some(handle) = HANDLE.get() {
@@ -513,20 +553,19 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
         s.fx.above = None;
         s.fx.slide_edge = None;
-        s.fx.menu = None;
-        s.fx.menu_hover = None;
+        s.fx.menu = Menu::Closed;
         s.fx.hover = None;
         s.fx.chev = false;
         s.fx.since = Some(Instant::now());
         // 入场过渡只在 animated 提交里播;这一条提交把它打出来。
         tx.animated();
     }
-    s.fx.hide = None;
+    s.fx.presence = Presence::Idle;
     let (window, rect) = caret_rect(s, &view);
     if rect.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合出现,不会接着上一次的状态。
-        s.fx.hide = None;
+        s.fx.presence = Presence::Idle;
         s.fx.last = None;
         park(s);
         return;
@@ -924,7 +963,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     };
     body = body.child(content(s, geom, &look));
     root = root.child(body);
-    if let Some((slot, _, text)) = s.fx.menu.as_ref()
+    if let Menu::Open { slot, text, .. } = &s.fx.menu
         && geom
             .spec
             .items
@@ -1295,7 +1334,7 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
         .border(1.0 * scale, rgb(look.palette.border));
     for (index, label) in panel::MENU_ITEMS.iter().enumerate() {
         let y = (4.0 + index as f32 * 28.0) * scale;
-        let hovered = s.fx.menu_hover == Some(index);
+        let hovered = s.fx.menu.hover() == Some(index);
         let mut row = el()
             .absolute(4.0 * scale, y)
             .w((w - 8.0 * scale).max(0.0))
@@ -1304,7 +1343,7 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
             .px(4.0 * scale)
             .cursor(Cursor::Pointer)
             .on_hover_change(move |s: &mut Candidate, inside, _| {
-                s.fx.menu_hover = inside.then_some(index);
+                s.fx.menu.set_hover(inside.then_some(index));
             })
             .press_on_down()
             .on_press(move |s: &mut Candidate| s.menu_click(slot, index));
@@ -1403,8 +1442,7 @@ impl Candidate {
             Request::Demote { session, slot }
         };
         self.request(req);
-        self.fx.menu = None;
-        self.fx.menu_hover = None;
+        self.fx.menu = Menu::Closed;
     }
 
     fn scroll_to(&mut self, offset: usize) {
@@ -1462,8 +1500,12 @@ impl Candidate {
             let session = self.state.active.load(Ordering::Relaxed);
             let _ = imp::handle(&self.state, Request::Expand { session });
         }
-        self.fx.menu = Some((slot, 0.0, item.text.clone()));
-        self.fx.menu_hover = None;
+        self.fx.menu = Menu::Open {
+            slot,
+            y: 0.0,
+            text: item.text.clone(),
+            hover: None,
+        };
     }
 
     /// 回落钩子注入的鼠标事件;屏幕物理像素转客户区后走同一路径。
@@ -1492,12 +1534,12 @@ impl Candidate {
         let (item, chev, scroll_hover, menu_hover) = self.hover_hit(x, y);
         if item != self.fx.hover
             || chev != self.fx.chev
-            || menu_hover != self.fx.menu_hover
+            || menu_hover != self.fx.menu.hover()
             || scroll_hover != self.fx.scroll_hover
         {
             self.fx.hover = item;
             self.fx.chev = chev;
-            self.fx.menu_hover = menu_hover;
+            self.fx.menu.set_hover(menu_hover);
             self.fx.scroll_hover = scroll_hover;
         }
     }
@@ -1512,7 +1554,7 @@ impl Candidate {
             return;
         }
         // 菜单项优先于候选行。
-        if let (true, Some((slot, _, _))) = (self.fx.menu.is_some(), self.fx.menu.as_ref())
+        if let Menu::Open { slot, .. } = &self.fx.menu
             && let Some(geom) = &self.geom
         {
             let meas: &dyn Measure = self;
@@ -1551,10 +1593,12 @@ impl Candidate {
             && geom.spec.scroll.is_some_and(|scroll| {
                 panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y).is_some()
             });
-        let menu_hover = self.fx.menu.as_ref().and_then(|(slot, _, _)| {
+        let menu_hover = if let Menu::Open { slot, .. } = &self.fx.menu {
             let (mx, my) = menu_origin(*slot, &geom.spec, &geom.metrics, meas);
             panel::menu_hit(mx, my, &geom.metrics, x, y)
-        });
+        } else {
+            None
+        };
         let hit = if menu_hover.is_some() || scroll_hover {
             panel::Hit::Nothing
         } else {
