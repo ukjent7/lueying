@@ -1308,7 +1308,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 裁剪边盖住,后半段在面板定型后继续可见地拉伸——按钮
             // 延迟着长成滚动条。
             .key("chev")
-            .motion(Spring::smooth(0.55, 0.0))
+            .motion(Spring::snappy(0.5, 0.2))
             .transition(Transition::none())
             .on_hover_change(|s: &mut Candidate, inside, _| {
                 s.fx.chev = inside;
