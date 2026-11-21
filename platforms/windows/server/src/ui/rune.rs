@@ -1095,9 +1095,10 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
         look,
         scale,
     )
-    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到
-    // 新槽,而不是新胶囊在原地生硬出现。
-    .matched("sel")
+    // 胶囊不配 matched:它和首候选同一条飞行路线,不透明的胶囊
+    // 飞行压在同路径的文字飞行上,展开期间 top1 会整段看不见。
+    // 让它随面板形变就地淡入,字的飞行让路优先。
+    .transition(Transition::opacity())
     .motion(Spring::smooth(0.2, 0.0))
 }
 
