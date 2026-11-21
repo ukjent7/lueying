@@ -1151,6 +1151,10 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
+        // key 持久身份:无 key 的格子 id 会被回收,撞上退出中节点的
+        // id 就继承它在途的动画位置(日志实测 486)——整个格子带字从
+        // 右边滑回来。同 key 让条↔棋盘是同一节点,矩形直接渐变。
+        .key(format!("cell-{}-{gidx}-{}", s.comp, item.text))
         .motion(Spring::smooth(0.2, 0.0))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
@@ -1892,6 +1896,10 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
+        // key 持久身份:无 key 的格子 id 会被回收,撞上退出中节点的
+        // id 就继承它在途的动画位置(日志实测 486)——整个格子带字从
+        // 右边滑回来。同 key 让条↔棋盘是同一节点,矩形直接渐变。
+        .key(format!("cell-{}-{index}-{candidate}", s.comp))
         .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
