@@ -21,7 +21,7 @@ use rune::color::srgb_decode;
 use rune::{
     App, AppSpec, Color, Cursor, Edge, El, OverlayHandle, OverlayInput, OverlayOptions,
     OverlayPlacement, OverlaySpec, Pixels, Spring, SurfaceFit, TextStyle, Transition, Tx, col, el,
-    row, text,
+    text,
 };
 use rune_text::TextSystem;
 
@@ -589,9 +589,6 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .is_some_and(|last| last.expanded != view.expanded);
     if toggled {
         tx.animated();
-        // 飞行元素要画出 body 的圆角裁剪之外:格子向"将来棋盘"
-        // 的区域飞时被 clip_rounded 裁掉就看不见,等面板长成才浮现。
-        tx.unclipped_flights();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
@@ -1098,9 +1095,9 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
         look,
         scale,
     )
-    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到
-    // 新槽。被选中候选本身不飞,胶囊的飞行不会压住任何字的轨迹。
-    .matched("sel")
+    // key 给持久身份:条↔棋盘它是同一节点,矩形从旧槽拉伸到新槽
+    // 走 motion 弹簧渐变——不走飞行管线,没有遮挡、裁剪、双轨迹。
+    .key("sel")
     .transition(Transition::opacity())
     .motion(Spring::smooth(0.2, 0.0))
 }
@@ -1151,6 +1148,9 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
+        // key 持久身份:条↔棋盘同一节点,格子矩形走 motion 渐变;
+        // 包装层的本地坐标在渐变中的格子内保持插值正确。
+        .key(format!("cell-{}-{gidx}-{}", s.comp, item.text))
         .motion(Spring::smooth(0.2, 0.0))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
@@ -1180,19 +1180,16 @@ fn item_el(
             ),
         )
         .child(
+            // key+持久身份挂在 absolute 包装层:两侧都以格子空间定位,
+            // 同一节点矩形位移走 motion 渐变——字的 A→B,不靠飞行管线。
             el().absolute(
                 panel::TEXT_X * scale,
                 ink_y(rect.height(), geom.metrics.text),
             )
+            .key(format!("cand-{}-{gidx}-{}", s.comp, item.text))
+            .motion(Spring::smooth(0.2, 0.0))
             .child(
-                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
-                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
-                // 查 from 不会命中错节点),而不同 key 不算同一节点,
-                // matched 照常配对飞行。
                 text(ellipsized(s, geom, &item.text))
-                    .key(format!("s{}-{gidx}-{}", s.comp, item.text))
-                    .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-                    .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(rgb(if item.selected {
                         look.palette.selected_text
@@ -1892,31 +1889,27 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
+        // key 持久身份:条↔棋盘同一节点,格子矩形走 motion 渐变;
+        // 包装层的本地坐标在渐变中的格子内保持插值正确。
+        .key(format!("cell-{}-{index}-{candidate}", s.comp))
         .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
-    // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
+    // key+持久身份挂在 absolute 包装层:两侧都以格子空间定位,
+    // 同一节点矩形位移走 motion 渐变——字的 A→B,不靠飞行管线。
+    let text_x = ((rect.width() - s.text_width(&shown, geom.metrics.text)) * 0.5).max(0.0);
     cell.child(
-        row()
-            .mt(ink_y(rect.height(), geom.metrics.text))
-            .w_full()
-            .child(el().grow(1.0))
+        el().absolute(text_x, ink_y(rect.height(), geom.metrics.text))
+            .key(format!("cand-{}-{index}-{candidate}", s.comp))
+            .motion(Spring::smooth(0.2, 0.0))
             .child(
-                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
-                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
-                // 查 from 不会命中错节点),而不同 key 不算同一节点,
-                // matched 照常配对飞行。
                 text(shown)
-                    .key(format!("g{}-{index}-{candidate}", s.comp))
-                    .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-                    .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(rgb(if selected {
                         look.palette.selected_text
                     } else {
                         look.palette.text
                     })),
-            )
-            .child(el().grow(1.0)),
+            ),
     )
 }
