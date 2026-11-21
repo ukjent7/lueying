@@ -53,7 +53,6 @@ pub const SCROLLBAR_HOVER: f32 = 7.0;
 /// 右侧控制轨与棋盘之间的间距;收起钮和滚动条共用这一条竖线。
 const RAIL_GAP: f32 = 2.0;
 /// 控制轨距窗口右缘的留白,与候选列表的上下留白一致。
-const RAIL_INSET: f32 = PAD_X;
 
 /// 候选排列:横排挤一行自动换行,竖排一行一条。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -627,7 +626,9 @@ fn strip_rects(
 
 /// 右侧控制轨的左侧 x:棋盘到此为止,收起钮与滚动条都落在轨内。
 fn rail_left(width: f32, s: f32) -> f32 {
-    width - (RAIL_INSET + CHEVRON) * s
+    // 与收起态按钮共用 CHEVRON_INSET:rail 圆心与条上箭头圆心重合,
+    // 形变前后不跳位。
+    width - (CHEVRON_INSET + CHEVRON) * s
 }
 
 /// 控制轨中心 x;收起钮圆心与滚动条中线共用。
