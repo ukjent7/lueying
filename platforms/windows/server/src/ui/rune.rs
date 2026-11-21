@@ -1185,10 +1185,12 @@ fn item_el(
                 ink_y(rect.height(), geom.metrics.text),
             )
             .child(
-                // 字自己的 matched 飞行:以自己的文本框从旧位置滑到新
-                // 位置——真正的"哪来回哪去"。不配 key:keyed 文本会触
-                // 发 Rune 的文本飞行再画一份,和元素飞行叠出两条轨迹。
+                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
+                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
+                // 查 from 不会命中错节点),而不同 key 不算同一节点,
+                // matched 照常配对飞行。
                 text(ellipsized(s, geom, &item.text))
+                    .key(format!("s{}-{gidx}-{}", s.comp, item.text))
                     .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
                     .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
@@ -1900,10 +1902,12 @@ fn cell_el(
             .w_full()
             .child(el().grow(1.0))
             .child(
-                // 字自己的 matched 飞行:以自己的文本框从旧位置滑到新
-                // 位置——真正的"哪来回哪去"。不配 key:keyed 文本会触
-                // 发 Rune 的文本飞行再画一份,和元素飞行叠出两条轨迹。
+                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
+                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
+                // 查 from 不会命中错节点),而不同 key 不算同一节点,
+                // matched 照常配对飞行。
                 text(shown)
+                    .key(format!("g{}-{index}-{candidate}", s.comp))
                     .matched(format!("cand-{}-{index}-{candidate}", s.comp))
                     .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
