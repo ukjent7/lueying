@@ -1022,22 +1022,15 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
         let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
-        if let Some((cand, rect)) = geom.spec.grid.iter().zip(&cells).find(|(c, _)| c.selected) {
-            let rect = *rect;
-            // 选中格的字挂进胶囊:它随胶囊飞行居中,格子里不再重画。
-            let budget = (rect.width() - 16.0 * scale).max(1.0);
-            let shown = panel::ellipsize(&cand.text, budget, geom.metrics.text, meas);
-            let sel_text = row()
-                .mt(ink_y(rect.height(), geom.metrics.text))
-                .w_full()
-                .child(el().grow(1.0))
-                .child(
-                    text(shown)
-                        .font(TextStyle::new(geom.metrics.text, 400.0))
-                        .color(rgb(look.palette.selected_text)),
-                )
-                .child(el().grow(1.0));
-            layer = layer.child(sel_marker(rect, look, scale, Some(sel_text)));
+        if let Some(rect) = geom
+            .spec
+            .grid
+            .iter()
+            .zip(&cells)
+            .find(|(c, _)| c.selected)
+            .map(|(_, r)| *r)
+        {
+            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
         }
         for (candidate, rect) in geom.spec.grid.iter().zip(&cells) {
             layer = layer.child(cell_el(
@@ -1063,20 +1056,15 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
             // 否则会与面板入场过渡叠着闪。
             .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
-        if let Some((item, rect)) = geom.spec.items.iter().zip(&rects).find(|(i, _)| i.selected) {
-            let rect = *rect;
-            // 选中项的字挂进胶囊:它随胶囊飞行,条目里不再重画。
-            let sel_text = el()
-                .absolute(
-                    panel::TEXT_X * scale,
-                    ink_y(rect.height(), geom.metrics.text),
-                )
-                .child(
-                    text(ellipsized(s, geom, &item.text))
-                        .font(TextStyle::new(geom.metrics.text, 400.0))
-                        .color(rgb(look.palette.selected_text)),
-                );
-            strip = strip.child(sel_marker(rect, look, scale, Some(sel_text)));
+        if let Some(rect) = geom
+            .spec
+            .items
+            .iter()
+            .zip(&rects)
+            .find(|(i, _)| i.selected)
+            .map(|(_, r)| *r)
+        {
+            strip = strip.child(sel_marker(rect, look, geom.metrics.scale()));
         }
         let page_start = s.fx.last.as_ref().map_or(0, |view| {
             panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
@@ -1102,8 +1090,8 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
 /// 选中迁移=同一元素的矩形变化,由 `.motion` 弹簧在 animated 提交里跟随;
 /// 翻页时它随 strip 整棵重挂在目标位,不飞。
-fn sel_marker(rect: Rect, look: &Look, scale: f32, content: Option<El>) -> El {
-    let mut sel = selection_pill(
+fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
+    selection_pill(
         el().absolute(rect.left, rect.top)
             .w(rect.width())
             .h(rect.height())
@@ -1112,17 +1100,11 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32, content: Option<El>) -> El {
         look,
         scale,
     )
-    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到新槽。
-    // 选中候选的字是它的子节点,搭飞行的顺风车——子节点按最终布局
-    // 居中(matched_crop),胶囊拉伸字跟着居中,不单独飞就永不消失。
+    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到
+    // 新槽。被选中候选本身不飞,胶囊的飞行不会压住任何字的轨迹。
     .matched("sel")
-    .matched_crop()
     .transition(Transition::opacity())
-    .motion(Spring::smooth(0.2, 0.0));
-    if let Some(content) = content {
-        sel = sel.child(content);
-    }
-    sel
+    .motion(Spring::smooth(0.2, 0.0))
 }
 
 /// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面与釉根。
@@ -1205,21 +1187,21 @@ fn item_el(
                     .color(rgb(index_ink)),
             ),
         )
-        .child({
-            // 选中项的字画在胶囊里(随胶囊飞行),这里只画非选中项的。
-            let mut t = el().absolute(
+        .child(
+            el().absolute(
                 panel::TEXT_X * scale,
                 ink_y(rect.height(), geom.metrics.text),
-            );
-            if !item.selected {
-                t = t.child(
-                    text(ellipsized(s, geom, &item.text))
-                        .font(TextStyle::new(geom.metrics.text, 400.0))
-                        .color(rgb(look.palette.text)),
-                );
-            }
-            t
-        });
+            )
+            .child(
+                text(ellipsized(s, geom, &item.text))
+                    .font(TextStyle::new(geom.metrics.text, 400.0))
+                    .color(rgb(if item.selected {
+                        look.palette.selected_text
+                    } else {
+                        look.palette.text
+                    })),
+            ),
+        );
     if !geom.spec.is_strip() && !item.hint.is_empty() {
         let shown = ellipsized(s, geom, &item.text);
         let hint_x = panel::TEXT_X * scale + s.text_width(&shown, geom.metrics.text) + 4.0 * scale;
@@ -1921,20 +1903,20 @@ fn cell_el(
         .matched(format!("cand-{}-{index}-{candidate}", s.comp))
         // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
         .matched_crop();
-    // 选中格的字画在胶囊里(随胶囊飞行),这里只画非选中格的。
-    if !selected {
-        cell = cell.child(
-            row()
-                .mt(ink_y(rect.height(), geom.metrics.text))
-                .w_full()
-                .child(el().grow(1.0))
-                .child(
-                    text(shown)
-                        .font(TextStyle::new(geom.metrics.text, 400.0))
-                        .color(rgb(look.palette.text)),
-                )
-                .child(el().grow(1.0)),
-        );
-    }
-    cell
+    cell.child(
+        row()
+            .mt(ink_y(rect.height(), geom.metrics.text))
+            .w_full()
+            .child(el().grow(1.0))
+            .child(
+                text(shown)
+                    .font(TextStyle::new(geom.metrics.text, 400.0))
+                    .color(rgb(if selected {
+                        look.palette.selected_text
+                    } else {
+                        look.palette.text
+                    })),
+            )
+            .child(el().grow(1.0)),
+    )
 }
