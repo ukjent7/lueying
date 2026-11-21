@@ -798,15 +798,15 @@ fn show(s: &mut Candidate) {
     s.visible = true;
 }
 
-/// 抓取窗口区的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
-/// 捕获覆盖整个 overlay 窗口:面板外的区域 1:1 显示桌面像素,
-/// 等价于那里没有窗口;玻璃本体只占面板圆角矩形。
+/// 抓取面板矩形的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
+/// 只捕面板区:它是 backdrop_blur 的唯一底图,面板外的空带不铺
+/// 像素,直接透出真桌面,任何捕获残影都到不了那儿。
 fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
     if !s.material.is_glass() || !s.glass_wanted(high_contrast) {
         s.backdrop = None;
         return;
     }
-    let (x, y, w, h) = s.fx.placement.window;
+    let (x, y, w, h) = s.fx.placement.panel;
     if w <= 0 || h <= 0 {
         return;
     }
@@ -905,15 +905,21 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let palette = palette_of(s, accent, high_contrast);
     let scale = geom.metrics.scale();
     let mut root = el().w_full().h_full();
-    if glass && let Some(pixels) = &s.backdrop {
-        // 活背板:整个 overlay 窗口的桌面像素。面板内被 blur 出玻璃,
-        // 面板外 1:1 透出桌面,等价于那里没有窗口。
-        root = root.child(el().w_full().h_full().pixels_fit(pixels, SurfaceFit::Fill));
-    }
     // 面板矩形是窗口内的一块:条贴光标侧,展开时铺满。矩形变化交给
     // 布局弹簧,展开/收起的形变由 Rune 原生推进。
     let bx = (s.fx.placement.panel.0 - s.fx.placement.window.0) as f32 / scale;
     let by = (s.fx.placement.panel.1 - s.fx.placement.window.1) as f32 / scale;
+    if glass && let Some(pixels) = &s.backdrop {
+        // 活背板只铺面板矩形:它只给玻璃的 backdrop_blur 当底图。
+        // 面板外的空带不画任何东西,alpha=0 直接透出真桌面——铺整张
+        // 捕获图反而会把错位的残影留在候选页即将展开的位置。
+        root = root.child(
+            el().absolute(bx, by)
+                .w(s.fx.placement.panel.2 as f32 / scale)
+                .h(s.fx.placement.panel.3 as f32 / scale)
+                .pixels_fit(pixels, SurfaceFit::Fill),
+        );
+    }
     let mut body = col()
         .absolute(bx, by)
         .w(s.fx.placement.panel.2 as f32 / scale)
