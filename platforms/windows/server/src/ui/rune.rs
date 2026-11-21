@@ -946,6 +946,9 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         .absolute(bx, by)
         .w(s.fx.placement.panel.2 as f32 / scale)
         .h(s.fx.placement.panel.3 as f32 / scale)
+        // key 锚定 key 路径:sel/格子的 keyed 祖先两侧一致,条↔棋盘
+        // 是同一节点——sel 才能持久化做矩形渐变拉伸。
+        .key("body")
         .hit()
         // 入场:从光标侧滑入并淡入;挂载过渡只在 animated 提交里播,
         // fresh 路径显式打 tx.animated()。顺带盖住复显首帧的透明空窗。
