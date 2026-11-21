@@ -1052,6 +1052,9 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         {
             strip = strip.child(sel_marker(rect, look, geom.metrics.scale()));
         }
+        let page_start = s.fx.last.as_ref().map_or(0, |view| {
+            panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
+        });
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             strip = strip.child(item_el(
                 s,
@@ -1060,6 +1063,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 item,
                 *rect,
                 index,
+                page_start + index,
                 s.fx.hover == Some(index),
             ));
         }
@@ -1121,6 +1125,7 @@ fn item_el(
     item: &Item,
     rect: Rect,
     index: usize,
+    gidx: usize,
     hovered: bool,
 ) -> El {
     let scale = geom.metrics.scale();
@@ -1130,8 +1135,8 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
-        // 与棋盘格共享 id:条↔棋盘切换时同一候选在两树间飞行。
-        .matched(format!("cand-{}", item.text))
+        // 与棋盘格共享 id:全局序号定身份,同文字的不同候选不撞 id。
+        .matched(format!("cand-{gidx}-{}", item.text))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
         })
@@ -1864,8 +1869,8 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
-        // 与固定条候选共享 id:展开/收起时同一候选在槽位间飞行。
-        .matched(format!("cand-{}", candidate))
+        // 与固定条候选共享 id:全局序号定身份,同文字的不同候选不撞 id。
+        .matched(format!("cand-{index}-{candidate}"))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     cell.child(
