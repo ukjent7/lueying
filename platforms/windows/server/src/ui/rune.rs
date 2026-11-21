@@ -1255,7 +1255,11 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 .border(1.0 * scale, tint(0xffffff, 0x14))
                 // 和条上的箭头共享 matched:展开时箭头形变成滚动条,
                 // 收起时滚动条形变回箭头——同一元素的跨树形变。
+                // matched_crop:内容保持原尺寸裁进变形框,不放大;
+                // key:稳定 id,配对不会被 NodeId 回收跳掉。
                 .matched("chev")
+                .matched_crop()
+                .key("rail")
                 .on_hover_change(|s: &mut Candidate, inside, _| {
                     s.fx.scroll_hover = inside;
                 })
@@ -1319,10 +1323,13 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .on_hover_change(|s: &mut Candidate, inside, _| s.fx.chev = inside)
             .press_on_down()
             .on_press(|s: &mut Candidate| s.expand_toggle());
-        // 收起态的箭头 = 滚动条的前身:matched 配对,展开时形变成 rail。
-        // 展开态箭头是收起按钮,不占这个 id——配对是元素对元素的唯一。
+        // 收起态的箭头 = 滚动条的前身:matched 配对,展开时形变成 rail;
+        // matched_crop 让箭头保持原尺寸裁进变形框;key 稳 id 防回收跳配。
+        // 展开态箭头是收起按钮,不占 matched,只给 key 保身份。
         if !expanded {
-            chev = chev.matched("chev");
+            chev = chev.matched("chev").matched_crop().key("s-chev");
+        } else {
+            chev = chev.key("g-chev");
         }
         if expanded && scrollable {
             if s.fx.chev {
