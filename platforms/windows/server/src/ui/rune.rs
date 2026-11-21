@@ -1288,10 +1288,11 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .h(track.height())
             .cursor(Cursor::Pointer)
             // 同一 key 持久节点:rect 从按钮形变到 rail 走 motion;
-            // 无 transition 不淡入淡出;形变部分被生长的 body 裁剪边
-            // 同步揭出——按钮随面板展开长成滚动条。
+            // 无 transition 不淡入淡出。慢弹簧:前半段被生长的 body
+            // 裁剪边盖住,后半段在面板定型后继续可见地拉伸——按钮
+            // 延迟着长成滚动条。
             .key("chev")
-            .motion(Spring::smooth(0.2, 0.0))
+            .motion(Spring::smooth(0.55, 0.0))
             .transition(Transition::none())
             .on_hover_change(|s: &mut Candidate, inside, _| {
                 s.fx.chev = inside;
