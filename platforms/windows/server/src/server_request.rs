@@ -555,10 +555,30 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 if s.engine.revision() != before {
                     crate::sync_rerank::schedule(state, session, s);
                 }
+                refresh_view(s);
+                let commits: Vec<String> = events
+                    .iter()
+                    .filter_map(|e| match e {
+                        Event::Commit(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if !commits.is_empty() {
+                    let chinese = s.view.chinese;
+                    let fullwidth = s.view.fullwidth;
+                    let pending = s.ui_reply.get_or_insert_with(|| Reply {
+                        chinese,
+                        fullwidth,
+                        ..Reply::default()
+                    });
+                    pending.commits.extend(commits);
+                    pending.preedit = s.view.preedit.clone();
+                    pending.chinese = chinese;
+                    pending.fullwidth = fullwidth;
+                }
                 // 宿主自绘候选时由 TSF 直接收走上屏文本并写进文档,
                 // 不走候选窗的 Sync 队列。
                 let mut reply = reply_from(s, &events);
-                refresh_view(s);
                 fill_view(&mut reply, &s.view);
                 crate::settle::schedule(state, session, s);
                 reply
