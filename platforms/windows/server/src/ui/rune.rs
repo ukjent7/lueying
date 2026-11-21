@@ -584,6 +584,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .is_some_and(|last| last.expanded != view.expanded);
     if toggled {
         tx.animated();
+        // 飞行元素要画出 body 的圆角裁剪之外:格子向"将来棋盘"
+        // 的区域飞时被 clip_rounded 裁掉就看不见,等面板长成才浮现。
+        tx.unclipped_flights();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
@@ -929,6 +932,8 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
                 .h(s.fx.placement.panel.3 as f32 / scale)
                 .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
                 .motion(Spring::smooth(0.3, 0.0))
+                // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
+                .clip_rounded(panel::PANEL_RADIUS * scale)
                 .pixels_fit(pixels, SurfaceFit::Fill),
         );
     }
