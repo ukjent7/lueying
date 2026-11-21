@@ -1050,13 +1050,8 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
         // 旧页向反侧滑出,由 Rune 的过渡原生推进。
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
-        let mut strip = el()
-            .absolute(0.0, 0.0)
-            .w(geom.width)
-            .h(geom.height)
-            // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
-            // 否则会与面板入场过渡叠着闪。
-            .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
+        // sel 直接挂 layer 下,和棋盘同父——key 路径两侧一致才持久
+        // 渐变;放 strip 里父节点不同,展开收起就走重挂载淡入淡出。
         if let Some(rect) = geom
             .spec
             .items
@@ -1065,8 +1060,15 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .find(|(i, _)| i.selected)
             .map(|(_, r)| *r)
         {
-            strip = strip.child(sel_marker(rect, look, geom.metrics.scale()));
+            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
         }
+        let mut strip = el()
+            .absolute(0.0, 0.0)
+            .w(geom.width)
+            .h(geom.height)
+            // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
+            // 否则会与面板入场过渡叠着闪。
+            .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
         let page_start = s.fx.last.as_ref().map_or(0, |view| {
             panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
         });
