@@ -564,6 +564,18 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     } else if view.expanded {
         s.fx.slide_edge = None;
     }
+    // 同形态、同页内选中迁移:animated 提交让选中指示器弹簧跟过去;
+    // 页变走推入、形态变走形变,各自已 animated。
+    if s.effects()
+        && !fresh
+        && s.fx.last.as_ref().is_some_and(|last| {
+            last.highlight != view.highlight
+                && last.page == view.page
+                && last.expanded == view.expanded
+        })
+    {
+        tx.animated();
+    }
     s.fx.rest = rect;
     s.fx.window = window;
     // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
@@ -935,6 +947,16 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
         let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
+        if let Some(rect) = geom
+            .spec
+            .grid
+            .iter()
+            .zip(&cells)
+            .find(|(c, _)| c.selected)
+            .map(|(_, r)| *r)
+        {
+            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+        }
         for (candidate, rect) in geom.spec.grid.iter().zip(&cells) {
             layer = layer.child(cell_el(
                 s,
@@ -959,6 +981,16 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
             // 否则会与面板入场过渡叠着闪。
             .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
+        if let Some(rect) = geom
+            .spec
+            .items
+            .iter()
+            .zip(&rects)
+            .find(|(i, _)| i.selected)
+            .map(|(_, r)| *r)
+        {
+            strip = strip.child(sel_marker(rect, look, geom.metrics.scale()));
+        }
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             strip = strip.child(item_el(
                 s,
@@ -974,6 +1006,22 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     }
     layer = layer.child(control_tree(s, geom, look));
     layer
+}
+
+/// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
+/// 选中迁移=同一元素的矩形变化,由 `.motion` 弹簧在 animated 提交里跟随;
+/// 翻页时它随 strip 整棵重挂在目标位,不飞。
+fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
+    selection_pill(
+        el().absolute(rect.left, rect.top)
+            .w(rect.width())
+            .h(rect.height())
+            .radius(rect.height() * 0.5),
+        rect,
+        look,
+        scale,
+    )
+    .motion(Spring::smooth(0.2, 0.0))
 }
 
 /// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面与釉根。
@@ -1028,9 +1076,7 @@ fn item_el(
         })
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_slot(index));
-    if item.selected {
-        cell = selection_pill(cell, rect, look, scale);
-    } else if hovered {
+    if hovered && !item.selected {
         cell = cell.fill(look.tint(look.palette.hover, 0x66));
     }
     let index_ink = if item.selected {
@@ -1754,9 +1800,6 @@ fn cell_el(
         .matched(format!("cand-{}", candidate))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
-    if selected {
-        cell = selection_pill(cell, rect, look, scale);
-    }
     cell.child(
         row()
             .mt(ink_y(rect.height(), geom.metrics.text))
