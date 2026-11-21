@@ -424,7 +424,7 @@ fn frost_set(cfg: &mut AppConfig, value: f32) {
 }
 
 fn ceramic_get(cfg: &AppConfig) -> usize {
-    usize::from(cfg.ui_ceramic == UiCeramic::White)
+    cfg.ui_ceramic.index()
 }
 
 fn ceramic_set(cfg: &mut AppConfig, index: usize) {
@@ -564,6 +564,10 @@ const CERAMIC_CHOICES: &[Choice] = &[
     Choice {
         value: "white",
         label: "白瓷",
+    },
+    Choice {
+        value: "blue",
+        label: "青花瓷",
     },
 ];
 const FONT_VALUES: [UiFont; 3] = [UiFont::Small, UiFont::Standard, UiFont::Large];
@@ -863,12 +867,12 @@ pub static SETTINGS: &[SettingDef] = &[
     SettingDef {
         key: "ui_ceramic",
         title: "陶瓷胎色",
-        detail: "黑瓷沉稳,白瓷温润",
-        value: ValueType::Enum(&["black", "white"]),
+        detail: "黑瓷沉稳,白瓷温润,青花藏青墨配钴蓝釉",
+        value: ValueType::Enum(&["black", "white", "blue"]),
         default: DefaultValue::Text("white"),
         ui: Some(UiDef {
             page: PageId::Candidate,
-            keywords: "陶瓷 黑瓷 白瓷 胎色 材质",
+            keywords: "陶瓷 黑瓷 白瓷 青花瓷 胎色 材质",
             control: segment(
                 ids::CERAMIC,
                 CERAMIC_CHOICES,

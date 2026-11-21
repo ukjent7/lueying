@@ -72,7 +72,7 @@ impl Region {
     }
 }
 
-/// 候选窗材质。玻璃的通透度由 `ui_glass_frost` 连续可调,陶瓷分黑白两色。
+/// 候选窗材质。玻璃的通透度由 `ui_glass_frost` 连续可调,陶瓷分黑/白/青花三胎。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UiMaterial {
     #[default]
@@ -119,15 +119,26 @@ pub enum UiCeramic {
     #[default]
     Black,
     White,
+    Blue,
 }
 
 impl UiCeramic {
-    pub const NAMES: [&'static str; 2] = ["黑瓷", "白瓷"];
+    pub const NAMES: [&'static str; 3] = ["黑瓷", "白瓷", "青花瓷"];
 
     pub fn from_index(index: usize) -> Self {
         match index {
             1 => Self::White,
+            2 => Self::Blue,
             _ => Self::Black,
+        }
+    }
+
+    /// 枚举对应的选项下标;与 `from_index` 互逆。
+    pub fn index(self) -> usize {
+        match self {
+            Self::Black => 0,
+            Self::White => 1,
+            Self::Blue => 2,
         }
     }
 
@@ -136,6 +147,7 @@ impl UiCeramic {
         match value.trim().to_ascii_lowercase().as_str() {
             "black" => Some(Self::Black),
             "white" => Some(Self::White),
+            "blue" | "qinghua" => Some(Self::Blue),
             _ => None,
         }
     }
@@ -144,6 +156,7 @@ impl UiCeramic {
         match self {
             Self::Black => "black",
             Self::White => "white",
+            Self::Blue => "blue",
         }
     }
 }

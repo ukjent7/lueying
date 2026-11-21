@@ -299,6 +299,25 @@ fn ceramic_white_ink(mut p: panel::Palette) -> panel::Palette {
     p
 }
 
+/// 青花瓷的墨色:不透明卵白胎微泛青,藏青墨配钴蓝釉;选中槽是青花蓝。
+fn ceramic_blue_ink(mut p: panel::Palette) -> panel::Palette {
+    p.bg = 0xf2f6f3;
+    p.window_bg = 0xf2f6f3;
+    p.surface_alt = 0xe8eeeb;
+    p.border = 0xc3d2d8;
+    p.border_strong = 0xafc3cc;
+    p.text = 0x1d3a5f;
+    p.text_secondary = 0x4a6385;
+    p.text_tertiary = 0x7d92ac;
+    p.hover = 0x1d3a5f;
+    p.accent = 0x2e5da0;
+    p.on_accent = 0xf5f8f6;
+    p.selected_bg = 0x2e5da0;
+    p.selected_text = 0xf5f8f6;
+    p.accent_text = 0x1d4a85;
+    p
+}
+
 /// 黑瓷的墨色:不透明暖黑胎配暖白墨,与玻璃同墨不同底。
 fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
     p.bg = 0x2e2a24;
@@ -321,7 +340,9 @@ fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
 /// 当前帧的调色板:玻璃固定暖墨烟熏,实底跟系统主题。
 fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palette {
     let look = match (s.material, s.ceramic) {
-        (UiMaterial::Ceramic, UiCeramic::White) => lueying_server::theme::Appearance::Light,
+        (UiMaterial::Ceramic, UiCeramic::White | UiCeramic::Blue) => {
+            lueying_server::theme::Appearance::Light
+        }
         _ => lueying_server::theme::Appearance::Dark,
     };
     let colors = match s.script_accent {
@@ -331,6 +352,7 @@ fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palet
     let palette = lueying_server::theme::palette(colors);
     match (s.material, s.ceramic) {
         (UiMaterial::Ceramic, UiCeramic::White) => ceramic_white_ink(palette),
+        (UiMaterial::Ceramic, UiCeramic::Blue) => ceramic_blue_ink(palette),
         (UiMaterial::Ceramic, UiCeramic::Black) => ceramic_black_ink(palette),
         _ => glass_ink(palette),
     }
@@ -863,6 +885,12 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::White => {
             body = body
                 .gradient(rgb(0xf6f0e6), rgb(0xe4ddd0))
+                .border(1.0 * scale, rgb(palette.border));
+        }
+        // 青花瓷:不透明卵白胎泛青,釉面同构,瓷缘描边带蓝灰。
+        (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::Blue => {
+            body = body
+                .gradient(rgb(0xf8fbf9), rgb(0xe7eeeb))
                 .border(1.0 * scale, rgb(palette.border));
         }
         // 黑瓷:不透明暖黑胎,同构釉面。
