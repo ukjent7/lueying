@@ -1298,6 +1298,23 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .on_hover_change(|s: &mut Candidate, inside, _| {
                 s.fx.chev = inside;
                 s.fx.scroll_hover = inside;
+            })
+            // 命中顶帽=收起/展开,命中轨道=拖滚;Down 即判定。
+            // 正常会话真实输入直达元素,不走 fallback。
+            .on_drag(move |s: &mut Candidate, drag, _| match drag.phase {
+                rune::Phase::Down => {
+                    let [x, y] = drag.window_point();
+                    if x >= cap.left && x <= cap.left + cap.width() && y >= cap.top && y <= cap.top + cap.height() {
+                        s.expand_toggle();
+                    } else {
+                        s.scroll_grab_at(x, y);
+                    }
+                }
+                rune::Phase::Move => {
+                    let [_, y] = drag.window_point();
+                    s.scroll_drag_to(y);
+                }
+                rune::Phase::Up => s.fx.scroll_drag = None,
             });
         if is_rail {
             chev = chev
@@ -1569,12 +1586,14 @@ impl Candidate {
     }
 
     fn fallback_down(&mut self, x: f32, y: f32) {
-        if !self.interactive() {
+        let inter = self.interactive();
+        if !inter {
             return;
         }
         let raw = self.raw_hit(x, y);
         // 滚动条优先:滑块直接拖,轨道空白处跳转后继续拖;⌄ 区域除外。
-        if !matches!(raw, panel::Hit::Expand) && self.scroll_grab_at(x, y) {
+        let grabbed = !matches!(raw, panel::Hit::Expand) && self.scroll_grab_at(x, y);
+        if grabbed {
             return;
         }
         // 菜单项优先于候选行。
@@ -1641,7 +1660,8 @@ impl Candidate {
     fn scroll_grab_at(&mut self, x: f32, y: f32) -> bool {
         let plan = self.geom.as_ref().and_then(|geom| {
             let scroll = geom.spec.scroll?;
-            let hit = panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y)?;
+            let hit = panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y);
+            let hit = hit?;
             let (_, thumb) =
                 panel::scrollbar_rects(scroll, geom.width, geom.height, &geom.metrics, true)?;
             Some(match hit {
