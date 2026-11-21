@@ -1253,6 +1253,9 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 .radius(rail.width() * 0.5)
                 .fill(tint(0x000000, 0x34))
                 .border(1.0 * scale, tint(0xffffff, 0x14))
+                // 和条上的箭头共享 matched:展开时箭头形变成滚动条,
+                // 收起时滚动条形变回箭头——同一元素的跨树形变。
+                .matched("chev")
                 .on_hover_change(|s: &mut Candidate, inside, _| {
                     s.fx.scroll_hover = inside;
                 })
@@ -1316,6 +1319,11 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .on_hover_change(|s: &mut Candidate, inside, _| s.fx.chev = inside)
             .press_on_down()
             .on_press(|s: &mut Candidate| s.expand_toggle());
+        // 收起态的箭头 = 滚动条的前身:matched 配对,展开时形变成 rail。
+        // 展开态箭头是收起按钮,不占这个 id——配对是元素对元素的唯一。
+        if !expanded {
+            chev = chev.matched("chev");
+        }
         if expanded && scrollable {
             if s.fx.chev {
                 chev = chev.fill(look.tint(look.palette.border, 0x66));
