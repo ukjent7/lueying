@@ -36,6 +36,9 @@ const LIVE_TICK: Duration = Duration::from_millis(33);
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 组合结束后的淡出时长;期间沿用最后一份内容并让鼠标穿透。
 const HIDE_FADE: Duration = Duration::from_millis(90);
+
+/// 滚动条形变的延迟:翻展提交后等面板落定再动。
+const RAIL_DELAY: Duration = Duration::from_millis(180);
 /// 高透玻璃的模糊强度:40px 条上结构可辨、文字不可读。
 const GLASS_BLUR: f32 = 7.0;
 /// 磨砂玻璃的模糊强度:更重,接近亚克力。
@@ -111,6 +114,8 @@ struct Fx {
     above: Option<bool>,
     /// 系统「减少动态效果」;开启后全部动效走终态。
     reduce: bool,
+    /// 本次展开/收起提交的落点时刻;滚动条形变延后这一拍再动。
+    expand_at: Option<Instant>,
     /// 页内悬停候选。
     hover: Option<usize>,
     /// 悬停的 ⌄ 展开按钮。
@@ -592,6 +597,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 飞行元素要画出 body 的圆角裁剪之外:格子向"将来棋盘"
         // 的区域飞时被 clip_rounded 裁掉就看不见,等面板长成才浮现。
         tx.unclipped_flights();
+        // 滚动条形变迟一拍:翻展时刻记下来,到点由 wake 重提交。
+        s.fx.expand_at = Some(Instant::now());
+        tx.wake_after(RAIL_DELAY);
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
@@ -1278,10 +1286,18 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
     }
     if let Some(cap) = panel::chevron_rect(&geom.spec, &geom.metrics, meas) {
         let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
-        // 箭头和 rail 是同一元素:展开+可滚时它的矩形就是整条 rail,
-        // matched 飞行把按钮形变成滚动条;否则它只是个圆钮。
-        let track = rail.unwrap_or(cap);
-        let is_rail = expanded && rail.is_some();
+        // 箭头和 rail 是同一元素:展开+可滚时它的矩形就是整条 rail。
+        // 迟一拍:expand_at 未到期时停在 rail 顶的钮高细条,到期才
+        // 换整条——持久节点 motion 把细条拉成轨道,延迟形变。
+        let ready = !expanded
+            || rail.is_none()
+            || s.fx.expand_at.is_none_or(|t| t.elapsed() >= RAIL_DELAY);
+        let track = match (rail, ready) {
+            (Some(r), true) => r,
+            (Some(r), false) => Rect::from_xywh(r.left, r.top, r.width(), cap.height()),
+            (None, _) => cap,
+        };
+        let is_rail = expanded && ready && rail.is_some();
         let mut chev = el()
             .absolute(track.left, track.top)
             .w(track.width())
