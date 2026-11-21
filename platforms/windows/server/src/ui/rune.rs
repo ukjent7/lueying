@@ -1090,6 +1090,9 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
         look,
         scale,
     )
+    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到
+    // 新槽,而不是新胶囊在原地生硬出现。
+    .matched("sel")
     .motion(Spring::smooth(0.2, 0.0))
 }
 
