@@ -39,6 +39,7 @@ rune.workspace = true
 rune-text = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf", default-features = false }
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
+libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 # D2D 变换矩阵与浮点向量;windows 绑定按裸类型引用,要直连依赖。
 windows-numerics = "0.3.1"
 # 运行期 Wasm 扩展:组件沙箱与每扩展 worker,只改候选窗外观或执行命令。

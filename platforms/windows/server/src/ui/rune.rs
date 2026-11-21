@@ -783,6 +783,9 @@ fn placement_rect(rect: (i32, i32, i32, i32), scale: f32) -> OverlayPlacement {
 
 /// 挪到屏幕外并隐藏;停靠点按当前虚拟桌面算。
 fn park(s: &mut Candidate) {
+    // mimalloc 的缓存页默认留着不还 OS;候选窗收起即输入间歇,
+    // 趁空闲把本线程堆的空闲段还给系统,压住常驻内存水位。
+    unsafe { libmimalloc_sys::mi_collect(true) };
     if s.visible
         && let Some(handle) = HANDLE.get()
     {
