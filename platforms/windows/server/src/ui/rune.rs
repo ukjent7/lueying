@@ -547,6 +547,14 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     s.private = snap.private;
     let fresh = s.fx.last.is_none() || s.fx.fading();
     if fresh {
+        // 新组合撞上进半路的淡出:handle.show 取消排队中的 Hide 请求。
+        // 不取消的话,s.visible 仍为真、show() 提前返回,fade_out
+        // 照常跑完——这一条组合的候选窗从头到尾不会出现。
+        if s.fx.fading()
+            && let Some(handle) = HANDLE.get()
+        {
+            handle.show();
+        }
         // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
         s.fx.above = None;
         s.fx.slide_edge = None;
