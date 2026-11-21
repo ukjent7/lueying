@@ -70,10 +70,9 @@ enum Presence {
 enum Menu {
     #[default]
     Closed,
-    /// (页内槽位, 占位, 悬停项, 行文本)。行文本变了菜单自动失效。
+    /// (页内槽位, 悬停项, 行文本)。行文本变了菜单自动失效。
     Open {
         slot: usize,
-        y: f32,
         text: String,
         hover: Option<usize>,
     },
@@ -1515,7 +1514,6 @@ impl Candidate {
         }
         self.fx.menu = Menu::Open {
             slot,
-            y: 0.0,
             text: item.text.clone(),
             hover: None,
         };
