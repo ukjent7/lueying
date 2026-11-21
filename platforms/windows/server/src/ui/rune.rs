@@ -496,6 +496,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.hover = None;
         s.fx.chev = false;
         s.fx.since = Some(Instant::now());
+        // 入场过渡只在 animated 提交里播;这一条提交把它打出来。
+        tx.animated();
     }
     s.fx.hide = None;
     let (window, rect) = caret_rect(s, &view);
@@ -836,6 +838,9 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         .w(s.fx.rest.2 as f32 / scale)
         .h(s.fx.rest.3 as f32 / scale)
         .hit()
+        // 入场:从光标侧滑入并淡入;挂载过渡只在 animated 提交里播,
+        // fresh 路径显式打 tx.animated()。顺带盖住复显首帧的透明空窗。
+        .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
         .motion(Spring::smooth(0.3, 0.0))
         .radius(panel::PANEL_RADIUS * scale)
         .continuous_corners()
@@ -916,7 +921,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     } else {
         // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
         // 旧页向反侧滑出,由 Rune 的过渡原生推进。
-        let edge = s.fx.slide_edge.unwrap_or(Edge::Trailing);
         let page = s.fx.last.as_ref().map_or(0, |view| view.page);
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
         let mut strip = el()
@@ -924,7 +928,9 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .absolute(0.0, 0.0)
             .w(geom.width)
             .h(geom.height)
-            .transition(Transition::push(edge));
+            // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
+            // 否则会与面板入场过渡叠着闪。
+            .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             strip = strip.child(item_el(
                 s,
@@ -987,6 +993,8 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
+        // 与棋盘格共享 id:条↔棋盘切换时同一候选在两树间飞行。
+        .matched(format!("cand-{}", item.text))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
         })
@@ -1714,6 +1722,8 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
+        // 与固定条候选共享 id:展开/收起时同一候选在槽位间飞行。
+        .matched(format!("cand-{}", candidate))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     if selected {
