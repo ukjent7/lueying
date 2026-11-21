@@ -1100,9 +1100,9 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
         look,
         scale,
     )
-    // 胶囊不配 matched:它和首候选同一条飞行路线,不透明的胶囊
-    // 飞行压在同路径的文字飞行上,展开期间 top1 会整段看不见。
-    // 让它随面板形变就地淡入,字的飞行让路优先。
+    // 条↔棋盘共享一个选中胶囊:展开/收起时它从旧槽拉伸变形到
+    // 新槽。被选中候选本身不飞,胶囊的飞行不会压住任何字的轨迹。
+    .matched("sel")
     .transition(Transition::opacity())
     .motion(Spring::smooth(0.2, 0.0))
 }
@@ -1153,20 +1153,21 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
-        // 与棋盘格共享 id:组合序号+全局序号定身份——匹配只在同一
-        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
-        .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满——
-        // 否则条上窄格飞进棋盘宽格,字会被按尺寸比放大几帧。
-        .matched_crop()
-        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
-        // 不上的退出+淡入就退化成"先消失后浮现"。
         .motion(Spring::smooth(0.2, 0.0))
         .on_hover_change(move |s: &mut Candidate, inside, _| {
             s.fx.hover = inside.then_some(index);
         })
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_slot(index));
+    // 与棋盘格共享 id:组合序号+全局序号定身份,只在同一次组合内
+    // 配对。被选中项不飞——它和拉伸的胶囊同一条路线,字就钉在槽位
+    // 上,由生长中的胶囊包住它;其他候选照常在槽位间位移。
+    if !item.selected {
+        cell = cell
+            .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
+            // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
+            .matched_crop();
+    }
     if hovered && !item.selected {
         cell = cell.fill(look.tint(look.palette.hover, 0x66));
     }
@@ -1887,24 +1888,25 @@ fn cell_el(
     let meas: &dyn Measure = s;
     let budget = (rect.width() - 16.0 * scale).max(1.0);
     let shown = panel::ellipsize(candidate, budget, geom.metrics.text, meas);
-    let cell = col()
+    let mut cell = col()
         .absolute(rect.left, rect.top)
         .w(rect.width())
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
-        // 与固定条候选共享 id:组合序号+全局序号定身份——匹配只在同一
-        // 次组合内成立,同文字的不同候选、跨组合的陈年元素都不撞。
-        .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-        // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满——
-        // 否则条上窄格飞进棋盘宽格,字会被按尺寸比放大几帧。
-        .matched_crop()
-        // matched 飞行需要元素自己的弹簧才动得起来;没有它配对
-        // 不上的退出+淡入就退化成"先消失后浮现"。
         .motion(Spring::smooth(0.2, 0.0))
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
+    // 与固定条候选共享 id:组合序号+全局序号定身份,只在同一次组合内
+    // 配对。被选中格不飞——它和拉伸的胶囊同一条路线,字就钉在槽位
+    // 上,由生长中的胶囊包住它;其他候选照常在槽位间位移。
+    if !selected {
+        cell = cell
+            .matched(format!("cand-{}-{index}-{candidate}", s.comp))
+            // 宽窄槽间飞行时内容保持原尺寸从前导边裁入,不放大铺满。
+            .matched_crop();
+    }
     cell.child(
         row()
             .mt(ink_y(rect.height(), geom.metrics.text))
