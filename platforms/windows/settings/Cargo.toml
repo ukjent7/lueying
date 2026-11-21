@@ -39,7 +39,7 @@ encoding_rs = "0.8"
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 # 设置窗界面层:Rune 普通窗口 + 控件库(与候选窗同一框架)。
 rune.workspace = true
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "eff95e80c328943deeeef0355485c06c3d71ecf0", default-features = false }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_System_Console",
