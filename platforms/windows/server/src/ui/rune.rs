@@ -1245,39 +1245,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
     let scale = geom.metrics.scale();
     let mut layer = el().w_full().h_full();
-    if let Some(rail) = panel::rail_rect(&geom.spec, &geom.metrics, meas, geom.height) {
-        layer = layer.child(
-            el().absolute(rail.left, rail.top)
-                .w(rail.width())
-                .h(rail.height())
-                .radius(rail.width() * 0.5)
-                .fill(tint(0x000000, 0x34))
-                .border(1.0 * scale, tint(0xffffff, 0x14))
-                // 和条上的箭头共享 matched:展开时箭头形变成滚动条,
-                // 收起时滚动条形变回箭头——同一元素的跨树形变。
-                // matched_crop:内容保持原尺寸裁进变形框,不放大;
-                // key:稳定 id,配对不会被 NodeId 回收跳掉。
-                .matched("chev")
-                .matched_crop()
-                .key("rail")
-                .on_hover_change(|s: &mut Candidate, inside, _| {
-                    s.fx.scroll_hover = inside;
-                })
-                .on_drag(|s: &mut Candidate, drag, _| match drag.phase {
-                    rune::Phase::Down => {
-                        let [x, y] = drag.window_point();
-                        let (px, py) = s.window_to_panel(x, y);
-                        s.scroll_grab_at(px, py);
-                    }
-                    rune::Phase::Move => {
-                        let [_, y] = drag.window_point();
-                        let (_, py) = s.window_to_panel(0.0, y);
-                        s.scroll_drag_to(py);
-                    }
-                    rune::Phase::Up => s.fx.scroll_drag = None,
-                }),
-        );
-    }
+    let rail = panel::rail_rect(&geom.spec, &geom.metrics, meas, geom.height);
     if let Some(scroll) = geom.spec.scroll
         && let Some((track, thumb)) = panel::scrollbar_rects(
             scroll,
@@ -1308,68 +1276,69 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     .fill(look.tint(look.palette.text_tertiary, thumb_a)),
             );
     }
-    if let Some(rect) = panel::chevron_rect(&geom.spec, &geom.metrics, meas) {
+    if let Some(cap) = panel::chevron_rect(&geom.spec, &geom.metrics, meas) {
         let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
-        let scrollable = geom
-            .spec
-            .scroll
-            .is_some_and(|scroll| scroll.cap > 0 && scroll.len > scroll.cap);
+        // 箭头和 rail 是同一元素:展开+可滚时它的矩形就是整条 rail,
+        // matched 飞行把按钮形变成滚动条;否则它只是个圆钮。
+        let track = rail.unwrap_or(cap);
+        let is_rail = expanded && rail.is_some();
         let mut chev = el()
-            .absolute(rect.left, rect.top)
-            .w(rect.width())
-            .h(rect.height())
-            .radius(rect.height() * 0.5)
+            .absolute(track.left, track.top)
+            .w(track.width())
+            .h(track.height())
             .cursor(Cursor::Pointer)
-            .on_hover_change(|s: &mut Candidate, inside, _| s.fx.chev = inside)
-            .press_on_down()
-            .on_press(|s: &mut Candidate| s.expand_toggle());
-        // 收起态的箭头 = 滚动条的前身:matched 配对,展开时形变成 rail;
-        // matched_crop 让箭头保持原尺寸裁进变形框;key 稳 id 防回收跳配。
-        // 展开态箭头是收起按钮,不占 matched,只给 key 保身份。
-        if !expanded {
-            chev = chev.matched("chev").matched_crop().key("s-chev");
+            // 不同 key:两侧各是独立节点,matched 配对照常触发。
+            .key(if expanded { "g-chev" } else { "s-chev" })
+            .matched("chev")
+            .matched_crop()
+            .on_hover_change(|s: &mut Candidate, inside, _| {
+                s.fx.chev = inside;
+                s.fx.scroll_hover = inside;
+            })
+            // 命中顶帽=收起/展开,命中轨道=拖滚;Down 阶段即判定。
+            .on_drag(move |s: &mut Candidate, drag, _| match drag.phase {
+                rune::Phase::Down => {
+                    let [x, y] = drag.window_point();
+                    let (px, py) = s.window_to_panel(x, y);
+                    if px >= cap.left && px <= cap.left + cap.width() && py >= cap.top && py <= cap.top + cap.height() {
+                        s.expand_toggle();
+                    } else {
+                        s.scroll_grab_at(px, py);
+                    }
+                }
+                rune::Phase::Move => {
+                    let [_, y] = drag.window_point();
+                    let (_, py) = s.window_to_panel(0.0, y);
+                    s.scroll_drag_to(py);
+                }
+                rune::Phase::Up => s.fx.scroll_drag = None,
+            });
+        if is_rail {
+            chev = chev
+                .radius(track.width() * 0.5)
+                .fill(tint(0x000000, 0x34))
+                .border(1.0 * scale, tint(0xffffff, 0x14));
         } else {
-            chev = chev.key("g-chev");
-        }
-        if expanded && scrollable {
-            if s.fx.chev {
-                chev = chev.fill(look.tint(look.palette.border, 0x66));
+            chev = chev.radius(track.height() * 0.5);
+            let alpha = match (expanded, s.fx.chev) {
+                (true, true) => 0x66,
+                (true, false) => 0x38,
+                (false, true) => 0x4d,
+                (false, false) => 0x00,
+            };
+            if alpha > 0 {
+                chev = chev.fill(look.tint(look.palette.border, alpha));
             }
-        } else if expanded {
-            let alpha = if s.fx.chev { 0x66 } else { 0x38 };
-            chev = chev.fill(look.tint(look.palette.border, alpha));
-        } else if s.fx.chev {
-            chev = chev.fill(look.tint(look.palette.border, 0x4d));
         }
-        let glyph = if expanded && scrollable {
-            let size = 14.0 * scale;
-            Rect::from_xywh(
-                rect.center_x() - size * 0.5,
-                rect.center_y() - size * 0.5,
-                size,
-                size,
-            )
-        } else {
-            rect
-        };
-        let alpha = if expanded && scrollable && !s.fx.chev {
-            0x8c
-        } else {
-            0xff
-        };
-        let (color, width) = (look.tint(look.palette.text_secondary, alpha), 1.6 * scale);
-        let turn = if geom.spec.expand {
-            std::f32::consts::PI
-        } else {
-            0.0
-        };
-        // 点位是面板坐标;线段是容器(圆钮)的子元素,要换算进容器内。
-        let [a, b, c] = panel::chevron_points_turn(glyph, turn, scale);
+        // 箭头折线钉在顶帽(cap)内,再换算进元素(track)本地坐标。
+        let turn = if geom.spec.expand { std::f32::consts::PI } else { 0.0 };
+        let [a, b, c] = panel::chevron_points_turn(cap, turn, scale);
         let (a, b, c) = (
-            (a.x - rect.left, a.y - rect.top),
-            (b.x - rect.left, b.y - rect.top),
-            (c.x - rect.left, c.y - rect.top),
+            (a.x - track.left, a.y - track.top),
+            (b.x - track.left, b.y - track.top),
+            (c.x - track.left, c.y - track.top),
         );
+        let (color, width) = (look.tint(look.palette.text_secondary, 0xff), 1.6 * scale);
         chev = chev
             .child(segment_el(a, b, width, color))
             .child(segment_el(b, c, width, color));
