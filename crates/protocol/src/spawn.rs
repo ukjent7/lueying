@@ -21,10 +21,11 @@ pub fn spawn_detached_args(exe: &Path, args: &[&str], dir: Option<&Path>) -> Res
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        CreateProcessW, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTUPINFOW,
+    use windows::Win32::UI::Shell::{
+        SEE_MASK_FLAG_NO_UI, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
     };
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+    use windows::core::{PCWSTR, w};
 
     fn wide(path: &Path) -> Vec<u16> {
         path.as_os_str()
@@ -34,40 +35,37 @@ pub fn spawn_detached_args(exe: &Path, args: &[&str], dir: Option<&Path>) -> Res
     }
 
     let exe_wide = wide(exe);
-    let mut line = format!("\"{}\"", exe.display());
-    for arg in args {
-        line.push(' ');
-        line.push_str(arg);
+    let mut params = String::new();
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            params.push(' ');
+        }
+        params.push_str(arg);
     }
-    // CreateProcessW 会就地改写命令行,必须给可写缓冲。
-    let mut command: Vec<u16> = line.encode_utf16().chain(std::iter::once(0)).collect();
+    let params_wide: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
     let dir_wide = dir.map(wide);
-    let dir_ptr = PCWSTR(
-        dir_wide
-            .as_ref()
-            .map_or(std::ptr::null(), |dir| dir.as_ptr()),
-    );
-    let startup = STARTUPINFOW {
-        cb: size_of::<STARTUPINFOW>() as u32,
+    // uiAccess 程序只认 ShellExecute 的拉起路径:普通过滤令牌 CreateProcessW
+    // 会被系统以 740(需要提升)拒掉,ShellExecuteEx 走 Shell 代行不触发
+    // 该校验——输入法宿主与安装辅助程序都是普通过滤令牌,必须走这条路。
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
+        lpVerb: w!("open"),
+        lpFile: PCWSTR(exe_wide.as_ptr()),
+        lpParameters: PCWSTR(if params.is_empty() {
+            std::ptr::null()
+        } else {
+            params_wide.as_ptr()
+        }),
+        lpDirectory: PCWSTR(dir_wide.as_ref().map_or(std::ptr::null(), |d| d.as_ptr())),
+        nShow: SW_HIDE.0,
         ..Default::default()
     };
-    let mut process = PROCESS_INFORMATION::default();
     unsafe {
-        CreateProcessW(
-            PCWSTR(exe_wide.as_ptr()),
-            Some(PWSTR(command.as_mut_ptr())),
-            None,
-            None,
-            false,
-            PROCESS_CREATION_FLAGS(0),
-            None,
-            dir_ptr,
-            &startup,
-            &mut process,
-        )
-        .map_err(|error| format!("启动 {}: {error}", exe.display()))?;
-        let _ = CloseHandle(process.hProcess);
-        let _ = CloseHandle(process.hThread);
+        ShellExecuteExW(&mut info).map_err(|error| format!("启动 {}: {error}", exe.display()))?;
+        if !info.hProcess.is_invalid() {
+            let _ = CloseHandle(info.hProcess);
+        }
     }
     Ok(())
 }
