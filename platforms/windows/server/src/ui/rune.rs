@@ -921,10 +921,14 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         // 活背板只铺面板矩形:它只给玻璃的 backdrop_blur 当底图。
         // 面板外的空带不画任何东西,alpha=0 直接透出真桌面——铺整张
         // 捕获图反而会把错位的残影留在候选页即将展开的位置。
+        // transition/motion 与 body 同款:展开/收起与入场时跟面板走同一条
+        // 轨迹,否则方角补丁会在圆角面板外闪一下。
         root = root.child(
             el().absolute(bx, by)
                 .w(s.fx.placement.panel.2 as f32 / scale)
                 .h(s.fx.placement.panel.3 as f32 / scale)
+                .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
+                .motion(Spring::smooth(0.3, 0.0))
                 .pixels_fit(pixels, SurfaceFit::Fill),
         );
     }
