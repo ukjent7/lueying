@@ -64,16 +64,16 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547", default-features = false, features = ["accessibility"] }
 
 # Rune vendored patches must be pinned to the same fork revision as Rune.
 [patch.crates-io]
-winit = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
-sctk-adwaita = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
-parley_engine = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
-wgpu-hal = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
-accesskit_windows = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
-accesskit_macos = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+winit = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
+sctk-adwaita = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
+parley_engine = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
+wgpu-hal = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
+accesskit_windows = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
+accesskit_macos = { git = "https://github.com/ukjent7/rune", rev = "a896a7ee254ea7aff4421fa8b585e17bba9ef547" }
 
 [profile.release]
 lto = "thin"
