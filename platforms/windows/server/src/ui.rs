@@ -1,17 +1,17 @@
-//! 界面:模式徽标、工具栏、宿主选择面板与回落消息桥,共用一条线程与一个消息循环。
+//! 界面:工具栏、宿主选择面板与回落消息桥,共用一条线程与一个消息循环。
 //!
-//! 循环只做两件事:等(窗口消息、唤醒事件或最近的动画截止时间)、逐个窗口
+//! 循环只做两件事:等(窗口消息或唤醒事件)、逐个窗口
 //! 处理自己的脏标记。窗口过程仍在各自的模块里。某个窗口处理时崩了只停用
 //! 它,其余窗口照常工作;输入法本身只依赖管道,与界面无关。
 //!
-//! 候选窗在独立线程上(`ui::candidate`);这里只留
-//! 一个隐形消息窗口,替 TSF 宿主接收「回落宿主激活/失活」的广播。
+//! 候选窗与模式徽标在独立线程上(`ui::rune` 的 Rune App + `ui::badge`);
+//! 这里只留一个隐形消息窗口,替 TSF 宿主接收「回落宿主激活/失活」的广播。
 
+mod badge;
 pub(crate) mod candidate;
 mod candidate_chrome;
 mod candidate_light;
 mod candidate_material;
-mod hud;
 pub(crate) mod picker;
 mod place;
 mod rune;
@@ -82,7 +82,7 @@ pub(super) fn run(state: Arc<State>) {
     let mut ui = Ui::new(&state);
     ui.tick(&state);
     loop {
-        wait(Some(state.wake_ui), ui.timeout());
+        wait(Some(state.wake_ui), None);
         pump_messages();
         ui.tick(&state);
     }
@@ -90,7 +90,6 @@ pub(super) fn run(state: Arc<State>) {
 
 /// 界面线程上的窗口。窗口建不出来时为 `None`,其余窗口照常。
 struct Ui {
-    hud: Option<hud::Badge>,
     toolbar: Option<toolbar::Bar>,
     picker: Option<picker::Panel>,
 }
@@ -99,7 +98,6 @@ impl Ui {
     fn new(state: &Arc<State>) -> Self {
         bridge_window(state);
         Self {
-            hud: hud::init(state),
             toolbar: toolbar::init(state),
             picker: Some(picker::init(state, state.wake_ui)),
         }
@@ -109,13 +107,7 @@ impl Ui {
         guard(&mut self.picker, "宿主选择面板", |window| {
             window.tick(state)
         });
-        guard(&mut self.hud, "模式徽标", |window| window.tick(state));
         guard(&mut self.toolbar, "工具栏", |window| window.tick());
-    }
-
-    /// 下一次该醒来的时间:各窗口动画截止时间里最近的一个;都静止时为空。
-    fn timeout(&self) -> Option<Duration> {
-        self.hud.as_ref().and_then(hud::Badge::timeout)
     }
 }
 

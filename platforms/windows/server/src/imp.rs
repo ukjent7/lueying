@@ -330,6 +330,8 @@ pub(super) fn touch_view(state: &State) {
 pub(super) fn touch_hud(state: &State) {
     state.hud_serial.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
+    // 徽标已迁到候选窗的 Rune 线程:同一个 kick 顺带唤醒它的 poll。
+    crate::ui::kick_candidate();
 }
 
 /// 把三个标准句柄接到 NUL。进程被无控制台、无句柄继承的方式拉起时,

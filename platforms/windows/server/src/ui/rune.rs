@@ -434,8 +434,10 @@ pub(crate) fn run(state: Arc<imp::State>) {
         // 五分钟,复显只等几毫秒,不触发管线重建。
         .release_gpu_when_hidden()
         .poll(poll);
-    let handle = app.overlay(overlay, Candidate::with_state(state));
+    let handle = app.overlay(overlay, Candidate::with_state(state.clone()));
     let _ = HANDLE.set(handle);
+    // 模式徽标:同一 App 的第二个 overlay,隐藏期不占窗口与表面。
+    super::badge::register(&mut app, state);
     app.run();
 }
 
@@ -763,8 +765,8 @@ fn layout(s: &mut Candidate, rect: (i32, i32, i32, i32)) {
     }
 }
 
-/// 物理矩形 → placement 的主屏本地逻辑坐标。
-fn placement_rect(rect: (i32, i32, i32, i32), scale: f32) -> OverlayPlacement {
+/// 物理矩形 → placement 的主屏本地逻辑坐标;徽标与候选窗共用。
+pub(super) fn placement_rect(rect: (i32, i32, i32, i32), scale: f32) -> OverlayPlacement {
     let ((ox, oy), ps) = primary_basis();
     OverlayPlacement::Rect {
         x: (rect.0 - ox) as f32 / ps,
