@@ -8,10 +8,10 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use lueying_protocol::Request;
-use rune::color::srgb_decode;
+use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cursor, Cx, El, KeyEvent, ScrollSpec, TextEdit, TextStyle, col,
-    el, row, text,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, Drag, El, KeyEvent, Phase, ScrollSpec, TextEdit,
+    TextStyle, col, el, row, text,
 };
 use rune_kit::{
     Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Switch,
@@ -199,15 +199,9 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     scene(s, cx.system_dark())
 }
 
-/// 0xRRGGBB 转线性 sRGB 颜色(Rune 在 sRGB 空间合成)。
+/// 0xRRGGBB 转线性 sRGB 颜色;转换共享一份,见 `lueying_server::theme::srgb`。
 fn color(rgb: u32) -> Color {
-    let channel = |shift: u32| srgb_decode(((rgb >> shift) & 0xff) as f32 / 255.0);
-    Color {
-        r: channel(16),
-        g: channel(8),
-        b: channel(0),
-        a: 1.0,
-    }
+    theme::srgb(rgb)
 }
 
 /// 页面需要的提示色与主题色选项,顺序同 `ACCENTS`。
@@ -379,6 +373,8 @@ fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors) -> El {
         .w_full()
         .px(14.0)
         .pb(14.0)
+        // 滚动边缘渐隐,官方 settings 示例的内容列同款:提示还有没滚到的卡片。
+        .clip_fade(0.0, 8.0, 0.0, 16.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
@@ -479,7 +475,7 @@ fn setting_row(row_data: &model::Row, kit: &Kit, colors: &Colors) -> El {
             .gap(12.0)
             .center_y()
             .child(info())
-            .child(control_el(&row_data.control, kit, colors)),
+            .child(control_el(&row_data.control, kit, colors, &row_data.label)),
     }
 }
 
@@ -530,7 +526,7 @@ fn candidate_preview(style: &model::CandidatePreview, colors: &Colors) -> El {
         .child(candidates)
 }
 
-fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
+fn control_el(control: &Control, kit: &Kit, colors: &Colors, label: &str) -> El {
     match control {
         Control::Toggle { id, on } => {
             let base = id.base.clone();
@@ -552,10 +548,14 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
                 None => group.fit(),
             };
             group
-                .on_pick(move |s: &mut State, index, _| activate(s, base.clone(), index))
+                .on_pick(move |s: &mut State, index, tx| {
+                    // 主题色这类分段切换会让整页换色;官方主题变化用 CALM 弹簧渐变。
+                    tx.color_motion(motion::CALM);
+                    activate(s, base.clone(), index)
+                })
                 .build(kit)
         }
-        Control::Slider { id, value } => slider_el(id, *value, colors),
+        Control::Slider { id, value } => slider_el(id, label, *value, colors),
         Control::Buttons { items } => buttons_el(items, kit),
         Control::ButtonsToggle {
             items,
@@ -580,24 +580,67 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
 }
 
 /// 滑杆:轨道 + 左侧强调色高亮段 + 圆形拇指;拖动即改值。
-/// 取值 0..=1,保存按钮把整份配置落盘。
-fn slider_el(id: &model::Id, value: f32, colors: &Colors) -> El {
+/// 取值 0..=1,保存按钮把整份配置落盘。写法对齐官方 settings 示例的滑杆:
+/// a11y 走 role/range_value/on_step(方向键 0.05 步进),按下记值、Esc 取消恢复,
+/// 点在轨道远处用弹簧滑过去,拖动中 tx.instant() 让拇指严格跟手。
+fn slider_el(id: &model::Id, label: &str, value: f32, colors: &Colors) -> El {
     const TRACK_W: f32 = 180.0;
     const TRACK_H: f32 = 4.0;
     const THUMB: f32 = 20.0;
     const TRAVEL: f32 = TRACK_W - THUMB;
+    const STEP: f64 = 0.05;
     let base = id.base.clone();
     let value = value.clamp(0.0, 1.0);
+    let to_value = |x: f32| ((x - THUMB * 0.5) / TRAVEL).clamp(0.0, 1.0);
     row()
         .key(format!("slider-{}", id.base))
         .w(TRACK_W)
         .h(THUMB)
         .center_y()
         .cursor(Cursor::Pointer)
-        .on_drag(move |s: &mut State, drag, _| {
-            let x = drag.window_point()[0] - THUMB * 0.5;
-            let value = (x / TRAVEL).clamp(0.0, 1.0);
-            s.core.settings.set_slider(&base, value);
+        .role("slider")
+        .label(label.to_string())
+        .range_value(f64::from(value), 0.0, 1.0)
+        .range_step(STEP)
+        .a11y_value(format!("{:.0}%", value * 100.0))
+        .on_step({
+            let base = base.clone();
+            move |s: &mut State, steps, _| {
+                let current = s.core.settings.slider_value(&base);
+                s.core.settings.set_slider(
+                    &base,
+                    (current + steps as f32 * STEP as f32).clamp(0.0, 1.0),
+                );
+            }
+        })
+        .motion(motion::SNAPPY)
+        .on_drag(move |s: &mut State, drag: &mut Drag, tx| {
+            let current = s.core.settings.slider_value(&base);
+            match drag.phase {
+                Phase::Down => {
+                    drag.data = current;
+                    let knob = THUMB * 0.5 + current * TRAVEL;
+                    if (drag.x - knob).abs() > THUMB * 0.5 + 2.0 {
+                        // 点在轨道上:拇指用弹簧滑过去。
+                        s.core.settings.set_slider(&base, to_value(drag.x));
+                    }
+                }
+                Phase::Move => {
+                    let knob = THUMB * 0.5 + drag.data * TRAVEL;
+                    let grab = if (drag.start_x - knob).abs() <= THUMB * 0.5 + 2.0 {
+                        drag.start_x - knob
+                    } else {
+                        0.0
+                    };
+                    s.core.settings.set_slider(&base, to_value(drag.x - grab));
+                    tx.instant();
+                }
+                Phase::Up => {
+                    if drag.cancelled() {
+                        s.core.settings.set_slider(&base, drag.data);
+                    }
+                }
+            }
         })
         .child(
             el().absolute(0.0, (THUMB - TRACK_H) * 0.5)
@@ -605,6 +648,7 @@ fn slider_el(id: &model::Id, value: f32, colors: &Colors) -> El {
                 .h(TRACK_H)
                 .radius(TRACK_H * 0.5)
                 .fill(color(colors.border))
+                .a11y_hidden()
                 .child(
                     el().absolute(0.0, 0.0)
                         .w(TRAVEL * value + THUMB * 0.5)
@@ -620,7 +664,8 @@ fn slider_el(id: &model::Id, value: f32, colors: &Colors) -> El {
                 .radius(THUMB * 0.5)
                 .fill(color(colors.bg))
                 .border(1.0, color(colors.border))
-                .shadow(0.0, 5.0, Color::BLACK.alpha(0.22)),
+                .shadow(0.0, 5.0, Color::BLACK.alpha(0.22))
+                .a11y_hidden(),
         )
 }
 
