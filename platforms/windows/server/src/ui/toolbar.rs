@@ -7,6 +7,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use lueying_protocol::Request;
 use lueying_render::panel::Rect;
@@ -15,8 +16,8 @@ use lueying_server::config;
 use lueying_server::theme;
 use rune::tok::motion;
 use rune::{
-    Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions, OverlaySpec,
-    Phase, TextStyle, Tx, el, text,
+    Color, Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions,
+    OverlaySpec, Phase, Shape, TextStyle, Tx, canvas, el, text,
 };
 use windows::Win32::Foundation::RECT;
 
@@ -35,6 +36,8 @@ pub(super) struct BarHud {
     version: u64,
     /// 上次见到的状态字;变了才重跑 view。
     status: Status,
+    /// 月相 0=弯月 1=满月;形变期间由 poll 里的弹簧推进,canvas 路径按它重建。
+    phase: f32,
     /// 外观与主题色下标按 poll 取一次:系统主题切得很慢,每帧读注册表纯属浪费。
     appearance: theme::Appearance,
     accent: usize,
@@ -46,8 +49,11 @@ pub(super) struct BarHud {
 
 impl BarHud {
     fn new(state: Arc<State>, bar: Toolbar) -> Self {
+        let status = status_of(&state);
         Self {
-            status: status_of(&state),
+            // 启动即落在当前月相,首帧不播形变。
+            phase: if status.fullwidth { 1.0 } else { 0.0 },
+            status,
             appearance: theme::Appearance::of_system(),
             accent: place::ui_options(&state).2,
             state,
@@ -127,7 +133,24 @@ fn toolbar_poll(s: &mut BarHud, _now: f64, tx: &mut Tx) -> bool {
     let status = status_of(&s.state);
     if status != s.status {
         s.status = status;
+        // 全/半切换是月亮的形变:下面的月相弹簧把暗面侵蚀到位。
         tx.animated();
+        changed = true;
+    }
+    // 月相弹簧:0=弯月,1=满月;形变期间每 16ms 推进一步并叫醒下一拍,
+    // 到位即停(shapes 示例的 poll 驱动同款)。系统关掉动画效果就直落。
+    let target = if s.status.fullwidth { 1.0 } else { 0.0 };
+    if (s.phase - target).abs() > 0.005 {
+        if theme::client_area_animation() {
+            s.phase += (target - s.phase) * 0.2;
+        } else {
+            s.phase = target;
+        }
+        if (s.phase - target).abs() <= 0.005 {
+            s.phase = target;
+        } else {
+            tx.wake_after(Duration::from_millis(16));
+        }
         changed = true;
     }
     let appearance = theme::Appearance::of_system();
@@ -226,15 +249,191 @@ fn button_el(s: &BarHud, button: Button, index: usize, x: f32, y: f32, size: f32
         })
         .press_on_down()
         .on_press(move |s: &mut BarHud| s.act(button));
-    cell = cell.child(
-        text(toolbar::label(button, s.status))
-            .font(TextStyle::new(toolbar::FONT * t, 400.0))
-            .color(theme::srgb(palette.text)),
-    );
+    cell = if button == Button::FullWidth {
+        cell.a11y_value(if s.status.fullwidth {
+            "全角"
+        } else {
+            "半角"
+        })
+        .child(moon_el(s, size, hovered))
+    } else {
+        cell.child(
+            text(toolbar::label(button, s.status))
+                .font(TextStyle::new(toolbar::FONT * t, 400.0))
+                .color(theme::srgb(palette.text)),
+        )
+    };
     if hovered {
         cell = cell.fill(theme::srgb_alpha(palette.hover, 0.66));
     }
     cell
+}
+
+/// 全半角按钮的月亮:固定的暖黄光源,不跟主题色走——候选窗的胶囊灯管
+/// 才跟主题色,月亮是自己的天体。凸起=radial_gradient 的偏心高光
+/// (高光在右下,与亮弧同向,边缘沉向左上深黄),月坑=亮区三粒半透明
+/// 深琥珀圆。全角=满月,半角=弯月:亮弧贴左下缘,与 🌙 同向。
+/// 暗面是「影」:月盘与影圆的交集,canvas 路径一次画成(影圆弧+月盘弧
+/// 在两交点闭合)。月相 0→1 时影圆沿左上对角线远去,交集被亮区逐渐
+/// 侵蚀到消失——终止线扫过月盘=真月相形变,暗面永远含在月盘内,没有
+/// 任何元素飞出按钮。影圆比月盘大 1.5px,静止弯月与定稿的亮弧粗细一致;
+/// 月盘弧比盘缘大半像素画,压住盘缘与路径各自抗锯齿对不齐的黄边(实机
+/// 翻过车),超出的部分都是按钮底色,看不出来。
+/// `hovered` 时影色与按钮底一样混上悬停亮底,缺角不显色差圆。
+fn moon_el(s: &BarHud, box_size: f32, hovered: bool) -> El {
+    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+    let d = box_size * 0.62;
+    let r = d / 2.0;
+    let at = (box_size - d) / 2.0;
+    let yellow = theme::srgb(0xfac738);
+    // 盘:偏心径向渐变,左下高光到右上深黄边缘,再垫一层平面黄兜底。
+    let disc = el()
+        .absolute(at, at)
+        .w(d)
+        .h(d)
+        .radius(r)
+        .fill(yellow)
+        .radial_gradient(
+            [0.64, 0.68],
+            d,
+            [
+                (0.0, theme::srgb(0xffe9a0)),
+                (0.38, yellow),
+                (1.0, theme::srgb(0xc1871e)),
+            ],
+        )
+        .key("moon-disc");
+    let mut moon = el().w_full().h_full().child(disc);
+    // 月坑:右下亮区三粒,弯月时亮区也能看见两粒。
+    for (index, (fx, fy, fd)) in [(0.66, 0.70, 0.17), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)]
+        .into_iter()
+        .enumerate()
+    {
+        moon = moon.child(
+            el().absolute((fx - fd / 2.0) * d, (fy - fd / 2.0) * d)
+                .w(fd * d)
+                .h(fd * d)
+                .radius(fd * d / 2.0)
+                .fill(theme::srgb_alpha(0x9a6b12, 0.32))
+                .key(format!("crater-{index}")),
+        );
+    }
+    // 影:月相值驱动(见函数注释)。
+    let p = s.phase.clamp(0.0, 1.0);
+    let shadow = if hovered {
+        theme::srgb(theme::blend(palette.bg, palette.hover, 0.66))
+    } else {
+        theme::srgb(palette.bg)
+    };
+    let dist = (0.622 + 1.7 * p) * r;
+    let sr = r + 1.5;
+    let rd = r + 0.75;
+    let sx = -0.707 * dist;
+    let sy = -0.707 * dist;
+    let dsq = sx * sx + sy * sy;
+    let intersects = dist > 1e-4 && dist < sr + rd && dist > (sr - rd).abs();
+    let mut shadow_el = el();
+    if intersects {
+        let a = (dsq + rd * rd - sr * sr) / (2.0 * dist);
+        let h = (rd * rd - a * a).sqrt();
+        let ux = sx / dist;
+        let uy = sy / dist;
+        let mx = ux * a;
+        let my = uy * a;
+        let px = -uy;
+        let py = ux;
+        // 画布比月盘大一圈,路径原点随之偏移,放大的月盘弧才有地方画;
+        // 交点以月心为原点推得,落进画布要加 o。
+        let o = [d / 2.0 + 1.0, d / 2.0 + 1.0];
+        let h1 = [o[0] + mx + px * h, o[1] + my + py * h];
+        let h2 = [o[0] + mx - px * h, o[1] + my - py * h];
+        let s1 = [o[0] + sx, o[1] + sy];
+        let shape = shadow_arc_path(o, rd, s1, sr, h1, h2, shadow);
+        shadow_el = canvas(shape)
+            .absolute(at - 1.0, at - 1.0)
+            .w(d + 2.0)
+            .h(d + 2.0)
+            .key("moon-shadow")
+            .a11y_hidden();
+    }
+    // 光:以月亮为中心的光晕,几何固定;亮度随月相 0→1 增强,差异全在
+    // 渐变色标的 alpha 上,与暗面的侵蚀同步。盖在最上层:同距同光,缺角
+    // 与周边条底永远一致,黑盘对比无从产生。
+    let glow_stops = [
+        (0.0, theme::srgb_alpha(0xfac738, 0.10 + 0.18 * p)),
+        (0.5, theme::srgb_alpha(0xfac738, 0.05 + 0.09 * p)),
+        (1.0, theme::srgb_alpha(0xfac738, 0.0)),
+    ];
+    let glow = el()
+        .absolute(at + d / 2.0 - d * 1.6, at + d / 2.0 - d * 1.6)
+        .w(d * 3.2)
+        .h(d * 3.2)
+        .radial_gradient([0.5, 0.5], d * 1.6, glow_stops)
+        .key("moon-glow")
+        .a11y_hidden();
+    moon.child(shadow_el).child(glow)
+}
+
+/// 暗面路径:影圆弧(h1→h2,过近月心点)+ 月盘弧(h2→h1,过影圆方向),
+/// 折线近似圆弧(16 段),1x 下足够圆滑。
+fn shadow_arc_path(
+    o: [f32; 2],
+    r: f32,
+    s: [f32; 2],
+    sr: f32,
+    h1: [f32; 2],
+    h2: [f32; 2],
+    color: Color,
+) -> Shape {
+    let mut path = rune::Path::new().move_to(h1);
+    let a1 = (h1[1] - s[1]).atan2(h1[0] - s[0]);
+    let a2 = (h2[1] - s[1]).atan2(h2[0] - s[0]);
+    let via1 = (o[1] - s[1]).atan2(o[0] - s[0]);
+    let sweep1 = sweep_dir(a1, a2, via1);
+    for i in 1..=16 {
+        let f = i as f32 / 16.0;
+        let t = interp_angle(a1, a2, sweep1, f);
+        path = path.line_to([s[0] + sr * t.cos(), s[1] + sr * t.sin()]);
+    }
+    let b1 = (h2[1] - o[1]).atan2(h2[0] - o[0]);
+    let b2 = (h1[1] - o[1]).atan2(h1[0] - o[0]);
+    let via2 = (s[1] - o[1]).atan2(s[0] - o[0]);
+    let sweep2 = sweep_dir(b1, b2, via2);
+    for i in 1..=16 {
+        let f = i as f32 / 16.0;
+        let t = interp_angle(b1, b2, sweep2, f);
+        path = path.line_to([o[0] + r * t.cos(), o[1] + r * t.sin()]);
+    }
+    Shape::new().fill_path(&path, color)
+}
+
+/// 角插值方向:选经过 via 侧的弧。
+fn sweep_dir(a: f32, b: f32, via: f32) -> i32 {
+    let tau = std::f32::consts::TAU;
+    let norm = |x: f32| {
+        let mut x = x % tau;
+        if x < 0.0 {
+            x += tau;
+        }
+        x
+    };
+    let (a, b, via) = (norm(a), norm(b), norm(via));
+    let cw = norm(b - a);
+    let via_cw = norm(via - a);
+    if via_cw <= cw { 1 } else { -1 }
+}
+
+fn interp_angle(a: f32, b: f32, dir: i32, f: f32) -> f32 {
+    let tau = std::f32::consts::TAU;
+    let mut delta = (b - a) % tau;
+    if dir > 0 {
+        if delta < 0.0 {
+            delta += tau;
+        }
+    } else if delta > 0.0 {
+        delta -= tau;
+    }
+    a + delta * f
 }
 
 /// 拖动:按下非按钮处抓住,移动跟手并夹在屏幕内,松开写回配置。

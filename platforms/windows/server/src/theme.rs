@@ -245,7 +245,8 @@ pub fn colors_with_accent(appearance: Appearance, accent: u32) -> Colors {
 }
 
 /// 按权重把 `tint` 混进 `base`;0 保留底色,1 取满主题色。
-fn blend(base: u32, tint: u32, weight: f32) -> u32 {
+/// 工具栏月亮的悬停合成与主题派生共用。
+pub fn blend(base: u32, tint: u32, weight: f32) -> u32 {
     let mix = |shift: u32| {
         let base = ((base >> shift) & 0xff) as f32;
         let tint = ((tint >> shift) & 0xff) as f32;
