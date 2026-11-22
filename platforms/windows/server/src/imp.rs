@@ -177,11 +177,6 @@ impl Wake {
             let _ = SetEvent(self.0);
         }
     }
-
-    /// 裸句柄;`MsgWaitForMultipleObjectsEx` 要按数组等。
-    pub(super) fn raw(self) -> HANDLE {
-        self.0
-    }
 }
 
 pub(super) struct State {
@@ -600,7 +595,8 @@ pub(super) fn real_main() {
     let pipe = pipe_name();
     println!("lueying-server 监听 {pipe}");
     {
-        // 管道服务在后台线程;主线程跑界面循环(候选窗、徽标、工具栏、选择面板)。
+        // 管道服务在后台线程;主线程跑 Rune App(候选窗、徽标、工具栏
+        // 与宿主选择面板全在这一个事件循环里)。
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
     }
@@ -610,7 +606,7 @@ pub(super) fn real_main() {
             std::thread::park();
         }
     }
-    // 徽标、工具栏、选择面板与消息桥在子线程;候选窗合成器在主线程。
+    // 回落广播的消息桥在子线程;候选窗合成器在主线程。
     let ui_state = Arc::clone(&state);
     let ui = std::thread::Builder::new()
         .name("lueying-ui".into())
@@ -913,6 +909,9 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
     }
     state.prediction.set_enabled(predict);
     state.script.set_script(script);
+    // 工具栏的状态字(标点/简繁)与倍率都从配置对读;有会话时下面的
+    // touch_view 也会叫醒它,这里补上无会话的场景。
+    crate::ui::kick_toolbar();
     let mut touched = false;
     for (_, handle) in state.all_sessions() {
         let mut s = handle.lock();

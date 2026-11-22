@@ -1,126 +1,284 @@
-//! 输入法工具栏:一排常用按钮的悬浮条,默认在屏幕右下角,可以拖动。
+//! 输入法工具栏:一排常用按钮的悬浮条,Rune overlay 承载。
 //!
-//! 画法与模式徽标一样:分层窗口 + Direct2D + UpdateLayeredWindow。窗口不带穿透样式,
-//! 所以能接收鼠标;按钮的动作复用服务端已有的请求处理。位置、大小与按钮的模型在
-//! `lueying_render::toolbar`。
+//! 与候选窗、徽标同一 App、同一条线程;模式状态字(中英/全半/标点/简繁)
+//! 在 poll 里对读全局状态与配置,有变化才重跑 view。位置与倍率持久化在
+//! 配置里,拖动结束写回。按钮动作复用服务端已有的请求处理。位置、大小
+//! 与按钮的模型在 `lueying_render::toolbar`,这里只负责窗口与交互。
 
-use std::cell::RefCell;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 
 use lueying_protocol::Request;
 use lueying_render::panel::Rect;
 use lueying_render::toolbar::{self, Action, Button, Status, Toolbar};
+use lueying_server::config;
 use lueying_server::theme;
-use lueying_server::ui_surface::Surface;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, ShowWindow,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+use rune::tok::motion;
+use rune::{
+    Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions, OverlaySpec,
+    Phase, TextStyle, Tx, el, text,
 };
-use windows::core::w;
+use windows::Win32::Foundation::RECT;
 
 use crate::imp::{State, handle};
 use crate::ui::place;
-use lueying_server::config;
 
-/// 鼠标左键按住时的标志(`MK_LBUTTON`)。
-const MK_LBUTTON: usize = 0x0001;
+/// 常驻的 overlay 句柄;别的线程靠它叫醒本线程。
+static HANDLE: OnceLock<OverlayHandle<BarHud>> = OnceLock::new();
 
-/// 界面线程独占的状态:工具栏模型、窗口左上角的屏幕坐标、按钮交互。
-struct Ctx {
+/// 工具栏 overlay 的状态;Rune 每帧从它重建控件树。
+pub(super) struct BarHud {
     state: Arc<State>,
-    hwnd: HWND,
+    /// 工具栏模型:可见性、倍率与位置;拖动数学也在里面。
     bar: Toolbar,
-    screen: Rect,
-    /// 窗口左上角(屏幕坐标);鼠标坐标要加上它。
-    origin: (f32, f32),
-    /// 按下时落在哪个按钮上。
-    pressed: Option<Button>,
-    /// 按下后是否真的拖动过;拖动过就不算点击。
-    moved: bool,
-    dirty: bool,
+    /// 上次见到的配置版本;变了才重读倍率。
+    version: u64,
+    /// 上次见到的状态字;变了才重跑 view。
+    status: Status,
+    /// 外观与主题色下标按 poll 取一次:系统主题切得很慢,每帧读注册表纯属浪费。
+    appearance: theme::Appearance,
+    accent: usize,
+    hover: Option<Button>,
+    /// overlay 已显示;隐藏后 show 只在 poll 里发生。
+    shown: bool,
+    drag_moved: bool,
 }
 
-thread_local! {
-    static CTX: RefCell<Option<Ctx>> = const { RefCell::new(None) };
-}
-
-/// 工具栏:右下角可拖动的一排按钮。窗口过程与绘制共用线程局部的 `CTX`。
-pub(super) struct Bar {
-    surface: Surface,
-}
-
-/// 建工具栏窗口。建不出来只写日志并返回 `None`;候选窗的 GPU 管线起不来时它照样显示。
-pub(super) fn init(state: &Arc<State>) -> Option<Bar> {
-    let screen = to_rect(place::primary_work_area());
-    let bar = saved_bar(state, screen);
-    let hwnd = match create_window(&bar) {
-        Ok(hwnd) => hwnd,
-        Err(e) => {
-            println!("工具栏建窗失败: {e}");
-            return None;
-        }
-    };
-    let surface = if super::use_composition_candidate() {
-        Surface::new()
-    } else {
-        Surface::new_aux()
-    };
-    let surface = match surface {
-        Ok(surface) => surface,
-        Err(e) => {
-            println!("工具栏建表面失败: {e}");
-            return None;
-        }
-    };
-    CTX.with(|cell| {
-        *cell.borrow_mut() = Some(Ctx {
-            state: Arc::clone(state),
-            hwnd,
+impl BarHud {
+    fn new(state: Arc<State>, bar: Toolbar) -> Self {
+        Self {
+            status: status_of(&state),
+            appearance: theme::Appearance::of_system(),
+            accent: place::ui_options(&state).2,
+            state,
             bar,
-            screen,
-            origin: (0.0, 0.0),
-            pressed: None,
-            moved: false,
-            dirty: true,
-        });
-    });
-    Some(Bar { surface })
-}
+            version: 0,
+            hover: None,
+            shown: false,
+            drag_moved: false,
+        }
+    }
 
-impl Bar {
-    /// 有待重画的内容(鼠标交互或配置变化置了脏标记)时画一次。
-    pub(super) fn tick(&mut self) {
-        let dirty = CTX.with(|cell| {
-            cell.borrow_mut()
-                .as_mut()
-                .map(|ctx| std::mem::take(&mut ctx.dirty))
-                .unwrap_or(false)
-        });
-        if dirty {
-            CTX.with(|cell| {
-                if let Some(ctx) = cell.borrow_mut().as_mut() {
-                    redraw(ctx, &mut self.surface);
+    /// 按钮的动作。模式、全半角、标点复用服务端的请求处理;简繁写配置;
+    /// 设置与收起直接处理。
+    fn act(&mut self, button: Button) {
+        match button.action() {
+            Action::ToggleMode => {
+                let session = self.state.active.load(Ordering::Relaxed);
+                if session != 0 {
+                    let _ = handle(&self.state, Request::ToggleMode { session });
                 }
-            });
+            }
+            Action::ToggleFullWidth => {
+                let session = self.state.active.load(Ordering::Relaxed);
+                if session != 0 {
+                    let _ = handle(&self.state, Request::ToggleFullwidth { session });
+                }
+            }
+            Action::TogglePunct => {
+                let _ = handle(&self.state, Request::TogglePunct);
+            }
+            Action::ToggleScript => toggle_traditional(&self.state),
+            Action::OpenSettings => open_settings(),
+            Action::Hide => self.bar.visible = false,
         }
     }
 }
 
-/// 上次保存的大小与位置;没有就用默认的右下角。位置夹在屏幕内。
-fn saved_bar(state: &State, screen: Rect) -> Toolbar {
+/// 装进候选窗 App:第三个 overlay,隐藏期不占窗口与表面。
+pub(super) fn register<T: 'static>(app: &mut rune::App<T>, state: Arc<State>) {
+    let bar = saved_bar(&state);
+    let spec = OverlaySpec::new("lueying-toolbar", bar.size(), toolbar_view)
+        .options(OverlayOptions {
+            // 不吃按键;只有标了 hit 的条体拦指针,圆角外原生穿透。
+            keys: KeyPolicy::None,
+            input: OverlayInput::Regions,
+            ..Default::default()
+        })
+        .release_gpu_when_hidden()
+        .poll(toolbar_poll);
+    let handle = app.overlay(spec, BarHud::new(state, bar));
+    let _ = HANDLE.set(handle);
+}
+
+/// 配置或模式状态变了就叫醒工具栏;overlay 起来之前是空操作。
+pub(super) fn kick() {
+    if let Some(handle) = HANDLE.get() {
+        handle.update(|_: &mut BarHud, _| {});
+    }
+}
+
+/// 每帧开头跑一次:配置倍率、状态字、外观与可见性;有变化才让 view 重跑。
+fn toolbar_poll(s: &mut BarHud, _now: f64, tx: &mut Tx) -> bool {
+    let mut changed = false;
+    let version = s.state.version.load(Ordering::Acquire);
+    if version != s.version {
+        s.version = version;
+        let scale = {
+            let cfg = s.state.config.read().unwrap_or_else(|p| p.into_inner());
+            cfg.toolbar_scale
+        };
+        if (scale - s.bar.scale).abs() > f32::EPSILON {
+            let work = place::work_area_at(s.bar.x as i32, s.bar.y as i32);
+            s.bar = s.bar.with_scale(scale, to_rect(work));
+            changed = true;
+        }
+    }
+    let status = status_of(&s.state);
+    if status != s.status {
+        s.status = status;
+        tx.animated();
+        changed = true;
+    }
+    let appearance = theme::Appearance::of_system();
+    let accent = place::ui_options(&s.state).2;
+    if appearance != s.appearance || accent != s.accent {
+        s.appearance = appearance;
+        s.accent = accent;
+        // 主题色与外观变化走官方的主题变化弹簧,颜色渐变过去。
+        tx.color_motion(motion::CALM);
+        changed = true;
+    }
+    if s.bar.visible {
+        // 显示与任何几何变化都重新摆位;拖动自己也会即时摆位。
+        if !s.shown || changed {
+            place_bar(s);
+        }
+        if !s.shown {
+            if let Some(handle) = HANDLE.get() {
+                handle.show();
+            }
+            s.shown = true;
+            changed = true;
+        }
+    } else if s.shown {
+        if let Some(handle) = HANDLE.get() {
+            handle.hide();
+        }
+        s.shown = false;
+        changed = true;
+    }
+    changed
+}
+
+/// 摆位:模型的屏幕物理坐标换成 overlay placement(主屏本地逻辑坐标)。
+fn place_bar(s: &BarHud) {
+    let (w, h) = s.bar.size();
+    let (x, y) = (s.bar.x as i32, s.bar.y as i32);
+    let scale = place::scale_at(x, y);
+    let rect = (x, y, (w * scale) as i32, (h * scale) as i32);
+    if let Some(handle) = HANDLE.get() {
+        handle.set_placement(Some(super::rune::placement_rect(rect, scale)));
+    }
+}
+
+/// 一帧控件树:圆角条 + 一排按钮。
+fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
+    // 系统关掉"动画效果"时,框架把过渡降级为淡出。
+    cx.reduced_motion(!theme::client_area_animation());
+    if !s.bar.visible {
+        return el();
+    }
+    let t = toolbar::clamp_scale(s.bar.scale);
+    let (w, h) = s.bar.size();
+    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+    let mut bar = el()
+        .w(w)
+        .h(h)
+        .radius(toolbar::RADIUS * t)
+        .fill(theme::srgb(palette.bg))
+        .border(1.0, theme::srgb(palette.border))
+        // 条体是命中区:按下非按钮处开始拖动。
+        .hit()
+        .on_drag(|s: &mut BarHud, drag, _| on_bar_drag(s, drag));
+    let size = toolbar::BUTTON * t;
+    let gap = toolbar::GAP * t;
+    for (index, button) in toolbar::BUTTONS.into_iter().enumerate() {
+        bar = bar.child(button_el(
+            s,
+            button,
+            index,
+            gap + index as f32 * (size + gap),
+            gap,
+            size,
+            t,
+        ));
+    }
+    bar
+}
+
+/// 一个按钮:居中状态字,悬停亮底,按下执行动作。全半角按钮是月亮。
+fn button_el(s: &BarHud, button: Button, index: usize, x: f32, y: f32, size: f32, t: f32) -> El {
+    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+    let hovered = s.hover == Some(button);
+    let mut cell = el()
+        .absolute(x, y)
+        .w(size)
+        .h(size)
+        .radius(size * 0.5)
+        .center()
+        .cursor(Cursor::Pointer)
+        .role("button")
+        .label(a11y_label(button))
+        .key(format!("toolbar-{index}"))
+        .on_hover_change(move |s: &mut BarHud, inside, _| {
+            s.hover = inside.then_some(button);
+        })
+        .press_on_down()
+        .on_press(move |s: &mut BarHud| s.act(button));
+    cell = cell.child(
+        text(toolbar::label(button, s.status))
+            .font(TextStyle::new(toolbar::FONT * t, 400.0))
+            .color(theme::srgb(palette.text)),
+    );
+    if hovered {
+        cell = cell.fill(theme::srgb_alpha(palette.hover, 0.66));
+    }
+    cell
+}
+
+/// 拖动:按下非按钮处抓住,移动跟手并夹在屏幕内,松开写回配置。
+/// 屏幕坐标用 `Drag::screen_point`(桌面物理像素),与模型、配置一致。
+fn on_bar_drag(s: &mut BarHud, drag: &Drag) {
+    let Some((sx, sy)) = drag.screen_point() else {
+        return;
+    };
+    match drag.phase {
+        Phase::Down => {
+            s.bar.press(sx as f32, sy as f32);
+            s.drag_moved = false;
+        }
+        Phase::Move => {
+            let before = (s.bar.x, s.bar.y);
+            let work = place::work_area_at(sx, sy);
+            s.bar.drag(sx as f32, sy as f32, to_rect(work));
+            if (s.bar.x, s.bar.y) != before {
+                s.drag_moved = true;
+                place_bar(s);
+            }
+        }
+        Phase::Up => {
+            s.bar.release();
+            if s.drag_moved {
+                save_position(&s.state, s.bar.x as i32, s.bar.y as i32);
+            }
+            s.drag_moved = false;
+        }
+    }
+}
+
+/// 上次保存的大小与位置;没有就用默认的右下角。位置夹在所在屏幕内。
+fn saved_bar(state: &State) -> Toolbar {
     let (scale, pos) = {
         let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
         (cfg.toolbar_scale, cfg.toolbar_pos)
     };
+    let screen = to_rect(place::primary_work_area());
     let mut bar = Toolbar::at_default(screen).with_scale(scale, screen);
     if let Some((x, y)) = pos {
         bar.x = x as f32;
         bar.y = y as f32;
-        bar = bar.clamped(screen);
+        bar = bar.clamped(to_rect(place::work_area_at(x, y)));
     }
     bar
 }
@@ -133,63 +291,10 @@ fn save_position(state: &Arc<State>, x: i32, y: i32) {
         cfg.toolbar_pos = Some((x, y));
         (before, cfg.clone())
     };
-    if let Some(path) = &state.config_path {
-        if let Err(e) = config::save(path, &before, &cfg) {
-            println!("保存工具栏位置 {} 失败: {e}", path.display());
-        }
-    }
-}
-
-/// 重画并上屏:按模型定窗口位置与大小;不可见时隐藏窗口。
-fn redraw(ctx: &mut Ctx, surface: &mut Surface) {
-    if !ctx.bar.visible {
-        unsafe {
-            let _ = ShowWindow(ctx.hwnd, SW_HIDE);
-        }
-        return;
-    }
-    // 设置页改了大小:跟着配置走,位置保持不变。
-    let configured = ctx
-        .state
-        .config
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .toolbar_scale;
-    if (configured - ctx.bar.scale).abs() > f32::EPSILON {
-        ctx.bar = ctx.bar.with_scale(configured, ctx.screen);
-    }
-    let rect = ctx.bar.rect();
-    ctx.origin = (rect.left, rect.top);
-    let (w, h) = (
-        (rect.right - rect.left).max(1.0),
-        (rect.bottom - rect.top).max(1.0),
-    );
-    let palette = theme::palette(theme::colors_with(
-        theme::Appearance::of_system(),
-        place::ui_options(&ctx.state).2,
-    ));
-    let scene = toolbar::Scene {
-        toolbar: &ctx.bar,
-        origin: (rect.left, rect.top),
-        palette: &palette,
-        status: status_of(&ctx.state),
-    };
-    match surface.begin(w as u32, h as u32) {
-        Ok(canvas) => toolbar::paint(canvas, &scene),
-        Err(e) => println!("工具栏表面失败: {e}"),
-    }
-    if let Err(e) = surface.present(
-        ctx.hwnd,
-        rect.left as i32,
-        rect.top as i32,
-        w as i32,
-        h as i32,
-    ) {
-        println!("工具栏上屏失败: {e}");
-    } else {
-        unsafe {
-            let _ = ShowWindow(ctx.hwnd, SW_SHOWNOACTIVATE);
-        }
+    if let Some(path) = &state.config_path
+        && let Err(e) = config::save(path, &before, &cfg)
+    {
+        println!("保存工具栏位置 {} 失败: {e}", path.display());
     }
 }
 
@@ -205,103 +310,6 @@ fn status_of(state: &State) -> Status {
         punct,
         traditional,
     }
-}
-
-fn point(lparam: LPARAM) -> (f32, f32) {
-    let x = (lparam.0 & 0xFFFF) as i16 as i32;
-    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-    (x as f32, y as f32)
-}
-
-fn on_down(lparam: LPARAM) {
-    let (cx, cy) = point(lparam);
-    CTX.with(|cell| {
-        if let Some(ctx) = cell.borrow_mut().as_mut() {
-            let (sx, sy) = (cx + ctx.origin.0, cy + ctx.origin.1);
-            ctx.pressed = ctx.bar.hit(sx, sy);
-            ctx.moved = false;
-            ctx.bar.press(sx, sy);
-        }
-    });
-}
-
-fn on_move(wparam: WPARAM, lparam: LPARAM) {
-    if wparam.0 & MK_LBUTTON == 0 {
-        return;
-    }
-    let (cx, cy) = point(lparam);
-    CTX.with(|cell| {
-        if let Some(ctx) = cell.borrow_mut().as_mut() {
-            let (sx, sy) = (cx + ctx.origin.0, cy + ctx.origin.1);
-            let before = (ctx.bar.x, ctx.bar.y);
-            ctx.bar.drag(sx, sy, ctx.screen);
-            if (ctx.bar.x, ctx.bar.y) != before {
-                ctx.moved = true;
-                ctx.dirty = true;
-            }
-        }
-    });
-}
-
-fn on_up(lparam: LPARAM) {
-    let (cx, cy) = point(lparam);
-    let mut dragged = None;
-    let action = CTX.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        let ctx = guard.as_mut()?;
-        let (sx, sy) = (cx + ctx.origin.0, cy + ctx.origin.1);
-        ctx.bar.release();
-        let pressed = ctx.pressed.take();
-        let released_on = ctx.bar.hit(sx, sy);
-        ctx.dirty = true;
-        if ctx.moved {
-            dragged = Some((ctx.bar.x as i32, ctx.bar.y as i32, ctx.state.clone()));
-            return None;
-        }
-        match (pressed, released_on) {
-            (Some(p), Some(r)) if p == r => Some((p.action(), ctx.state.clone())),
-            _ => None,
-        }
-    });
-    if let Some((x, y, state)) = dragged {
-        save_position(&state, x, y);
-    }
-    if let Some((action, state)) = action {
-        run_action(&state, action);
-    }
-}
-
-/// 按钮的动作。模式、全半角、标点复用服务端的请求处理;简繁写配置;设置与收起直接处理。
-fn run_action(state: &Arc<State>, action: Action) {
-    match action {
-        Action::ToggleMode => {
-            let session = state.active.load(Ordering::Relaxed);
-            if session != 0 {
-                let _ = handle(state, Request::ToggleMode { session });
-            }
-        }
-        Action::ToggleFullWidth => {
-            let session = state.active.load(Ordering::Relaxed);
-            if session != 0 {
-                let _ = handle(state, Request::ToggleFullwidth { session });
-            }
-        }
-        Action::TogglePunct => {
-            let _ = handle(state, Request::TogglePunct);
-        }
-        Action::ToggleScript => toggle_traditional(state),
-        Action::OpenSettings => open_settings(),
-        Action::Hide => CTX.with(|cell| {
-            if let Some(ctx) = cell.borrow_mut().as_mut() {
-                ctx.bar.visible = false;
-            }
-        }),
-    }
-    CTX.with(|cell| {
-        if let Some(ctx) = cell.borrow_mut().as_mut() {
-            ctx.dirty = true;
-        }
-    });
 }
 
 /// 简繁切换:写进配置并保存,然后应用。和标点切换走同一条路。
@@ -336,6 +344,18 @@ fn open_settings() {
     }
 }
 
+/// 无障碍名:按钮只有状态字,读屏需要完整的动作说明。
+fn a11y_label(button: Button) -> &'static str {
+    match button {
+        Button::Mode => "中英切换",
+        Button::FullWidth => "全半角切换",
+        Button::Punct => "中英文标点",
+        Button::Script => "简繁切换",
+        Button::Settings => "打开设置",
+        Button::Hide => "收起工具栏",
+    }
+}
+
 fn to_rect(r: RECT) -> Rect {
     Rect {
         left: r.left as f32,
@@ -343,62 +363,4 @@ fn to_rect(r: RECT) -> Rect {
         right: r.right as f32,
         bottom: r.bottom as f32,
     }
-}
-
-/// 无焦点置顶、接收鼠标的分层窗口。
-fn create_window(bar: &Toolbar) -> Result<HWND, String> {
-    unsafe {
-        let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
-        ensure_class(HINSTANCE(hmodule.0))?;
-        let rect = bar.rect();
-        let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            w!("lueying-toolbar"),
-            w!("lueying-toolbar"),
-            WS_POPUP,
-            rect.left as i32,
-            rect.top as i32,
-            (rect.right - rect.left) as i32,
-            (rect.bottom - rect.top) as i32,
-            None,
-            None,
-            Some(HINSTANCE(hmodule.0)),
-            None,
-        )
-        .map_err(|e| format!("CreateWindowExW: {e}"))?;
-        Ok(hwnd)
-    }
-}
-
-/// 窗口类进程内只注册一次。
-fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    let mut result = Ok(());
-    ONCE.call_once(|| unsafe {
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc),
-            hInstance: hinstance,
-            lpszClassName: w!("lueying-toolbar"),
-            ..Default::default()
-        };
-        if RegisterClassW(&wc) == 0 {
-            result = Err("RegisterClassW 失败".into());
-        }
-    });
-    result
-}
-
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match msg {
-        WM_LBUTTONDOWN => on_down(lparam),
-        WM_MOUSEMOVE => on_move(wparam, lparam),
-        WM_LBUTTONUP => on_up(lparam),
-        _ => {}
-    }
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }

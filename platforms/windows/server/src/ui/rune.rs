@@ -346,7 +346,8 @@ fn tint(v: u32, alpha: u8) -> Color {
 
 /// 文本在 h 高容器里垂直居中的 y。Rune 的 center_y 居中的是行盒,
 /// CJK 墨迹在行盒里天然偏上;按实机帧标定的墨迹几何补偿。
-fn ink_y(h: f32, size: f32) -> f32 {
+/// 工具栏与选择面板同一套 CJK 基准,共用这里。
+pub(super) fn ink_y(h: f32, size: f32) -> f32 {
     h * 0.5 - (INK_TOP + INK_HEIGHT * 0.5) * size
 }
 
@@ -438,7 +439,13 @@ pub(crate) fn run(state: Arc<imp::State>) {
     let handle = app.overlay(overlay, Candidate::with_state(state.clone()));
     let _ = HANDLE.set(handle);
     // 模式徽标:同一 App 的第二个 overlay,隐藏期不占窗口与表面。
-    super::badge::register(&mut app, state);
+    super::badge::register(&mut app, Arc::clone(&state));
+    // 工具栏:第三个 overlay;宿主选择面板:普通窗口,按需打开。
+    // 两者的状态字与请求都经各自的 poll 读取,管道线程只管叫醒。
+    super::toolbar::register(&mut app, Arc::clone(&state));
+    let picker_jobs = super::picker::install(&state);
+    let (picker_app, picker_window) = app.window(super::picker::window_spec(picker_jobs));
+    super::picker::attach(picker_app, picker_window);
     app.run();
 }
 
@@ -1141,10 +1148,12 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 geom,
                 look,
                 item,
-                *rect,
-                index,
-                page_start + index,
-                s.fx.hover == Some(index),
+                &Cell {
+                    rect: *rect,
+                    index,
+                    gidx: page_start + index,
+                    hovered: s.fx.hover == Some(index),
+                },
             ));
         }
         layer = layer.child(strip);
@@ -1186,17 +1195,23 @@ fn selection_pill(cell: El, look: &Look, scale: f32) -> El {
         .shadow(0.0, 26.0 * scale, look.glow.core_bottom.alpha(0.16))
 }
 
-/// 固定条的一条候选:序号、文字与注音;选中垫发光胶囊,灯色跟主题色。
-fn item_el(
-    s: &Candidate,
-    geom: &Geom,
-    look: &Look,
-    item: &Item,
+/// 一个候选格的布局事实:矩形、页内序号、全列表序号与悬停态。
+#[derive(Clone, Copy)]
+struct Cell {
     rect: Rect,
     index: usize,
     gidx: usize,
     hovered: bool,
-) -> El {
+}
+
+/// 固定条的一条候选:序号、文字与注音;选中垫发光胶囊,灯色跟主题色。
+fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> El {
+    let Cell {
+        rect,
+        index,
+        gidx,
+        hovered,
+    } = *at;
     let scale = geom.metrics.scale();
     let mut cell = col()
         .absolute(rect.left, rect.top)

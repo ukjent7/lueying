@@ -17,9 +17,10 @@ pub const FOOTER_H: f32 = 28.0;
 /// 一屏最多显示多少条。
 pub const MAX_ROWS: usize = 8;
 /// 左右内边距。
-const PAD: f32 = 16.0;
-/// 行内圆角。
-const RADIUS: f32 = 6.0;
+/// 左右内边距;窗口层的标题与页脚对齐它。
+pub const PAD: f32 = 16.0;
+/// 行内圆角;窗口层的选中胶囊与命中共用。
+pub const RADIUS: f32 = 6.0;
 
 /// 一帧的输入数据。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -161,7 +161,7 @@ fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         && x < (rect.0 + rect.2) as f32
         && y >= rect.1 as f32
         && y < (rect.1 + rect.3) as f32;
-    use crate::ui::{candidate::FallbackMouse, forward_candidate_mouse};
+    use crate::ui::{forward_candidate_mouse, rune::FallbackMouse};
     match message {
         WM_LBUTTONDOWN if inside => {
             forward_candidate_mouse(FallbackMouse::Down(x, y));

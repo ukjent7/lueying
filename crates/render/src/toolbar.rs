@@ -4,8 +4,7 @@
 //! 大小用倍率表示,按钮与间距一起缩放,倍率只能在 [`SCALE_MIN`, `SCALE_MAX`] 之间,
 //! 不会被设成无限大或无限小。
 
-use crate::paint::{Canvas, Color};
-use crate::panel::{Palette, Rect};
+use crate::panel::Rect;
 
 /// 按钮的边长(倍率 1.0 时,逻辑像素)。
 pub const BUTTON: f32 = 28.0;
@@ -214,45 +213,9 @@ pub fn label(button: Button, status: Status) -> &'static str {
     }
 }
 
-/// 圆角半径与字号(倍率 1.0 时)。
-const RADIUS: f32 = 9.0;
-const FONT: f32 = 14.0;
-
-/// 一帧工具栏的绘制输入。坐标都是屏幕坐标,`origin` 是窗口左上角,画的时候要减去它。
-pub struct Scene<'a> {
-    pub toolbar: &'a Toolbar,
-    pub origin: (f32, f32),
-    pub palette: &'a Palette,
-    pub status: Status,
-}
-
-/// 画一帧:背景与按钮。
-pub fn paint(canvas: &mut dyn Canvas, scene: &Scene) {
-    let scale = scene.toolbar.scale;
-    let bar = local(scene.toolbar.rect(), scene.origin);
-    canvas.fill_rrect(bar, RADIUS * scale, Color::opaque(scene.palette.bg));
-    canvas.stroke_rrect(
-        bar,
-        RADIUS * scale,
-        1.0,
-        Color::opaque(scene.palette.border),
-    );
-    for (button, rect) in scene.toolbar.buttons() {
-        let text = label(button, scene.status);
-        let color = Color::opaque(scene.palette.text);
-        canvas.text_centered(text, local(rect, scene.origin), FONT * scale, color);
-    }
-}
-
-/// 屏幕坐标换成窗口内的局部坐标。
-fn local(rect: Rect, origin: (f32, f32)) -> Rect {
-    Rect {
-        left: rect.left - origin.0,
-        top: rect.top - origin.1,
-        right: rect.right - origin.0,
-        bottom: rect.bottom - origin.1,
-    }
-}
+/// 圆角半径与字号(倍率 1.0 时);窗口层与绘制共用。
+pub const RADIUS: f32 = 9.0;
+pub const FONT: f32 = 14.0;
 
 fn inside(rect: Rect, px: f32, py: f32) -> bool {
     px >= rect.left && px < rect.right && py >= rect.top && py < rect.bottom

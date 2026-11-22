@@ -20,9 +20,6 @@ mod config_file;
 pub mod host_panel;
 
 #[cfg(windows)]
-pub mod ui_surface;
-
-#[cfg(windows)]
 pub mod services;
 
 #[cfg(windows)]

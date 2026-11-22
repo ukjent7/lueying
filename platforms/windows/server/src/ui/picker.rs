@@ -1,9 +1,11 @@
-//! 宿主选择面板窗口:可获焦的原生窗 + Direct2D 绘制 + GDI 贴图。
+//! 宿主选择面板:Rune 窗口承载,可获焦,键盘与鼠标选择。
 //!
-//! 扩展 `panel.show({title, items})` 经 PanelProvider 投递到这里;界面线程
-//! 一次只显示一单,键盘/鼠标选择后把下标经完成队列回传,取消回传
-//! `null`。关闭时把焦点还给唤出前的窗口。
+//! 扩展 `panel.show({title, items})` 经 PanelProvider 投递,投递叫醒
+//! 面板窗口的 poll(窗口隐藏时 poll 也会跑),显示一单;键盘/鼠标选择后
+//! 把下标经 Done 回传,取消回传 `null`。关闭时把焦点还给唤出前的窗口。
+//! 面板与候选窗、徽标、工具栏同在一个 Rune App、同一条主线程。
 
+use std::sync::OnceLock;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -13,232 +15,119 @@ use lueying_render::picker;
 use lueying_server::host_panel::{HostPanel, HostPanelView};
 use lueying_server::services::PanelJob;
 use lueying_server::theme;
-use lueying_server::ui_surface::Surface;
+use rune::tok::motion;
+use rune::{
+    App, AppHandle, AppSpec, Cursor, Cx, El, Key, KeyEvent, TextStyle, Transition, Tx,
+    WindowHandle, WindowOptions, WindowSpec, col, el, text,
+};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, HDC, InvalidateRect, PAINTSTRUCT};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::Ime::{HIMC, ImmAssociateContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, SetFocus, VIRTUAL_KEY, VK_DOWN, VK_END,
-    VK_ESCAPE, VK_HOME, VK_NEXT, VK_PRIOR, VK_RETURN, VK_UP,
+    INPUT, INPUT_KEYBOARD, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_RETURN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClassNameW, GetCursorPos,
-    GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindow,
-    LoadCursorW, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
-    WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetCursorPos, GetForegroundWindow, GetWindowRect,
+    GetWindowTextW, IsWindow, RegisterClassW, SW_SHOW, SetForegroundWindow, ShowWindow,
+    WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::w;
 
-use crate::imp::{State, Wake};
 use crate::ui::place;
 
-/// 窗口类名;自检按它确认面板已拿到前台。
-const CLASS: windows::core::PCWSTR = w!("lueying-host-panel");
+/// 面板窗口的应用句柄;投递端靠它叫醒隐藏中的 poll。
+static APP: OnceLock<AppHandle<Picker>> = OnceLock::new();
+/// 面板窗口句柄;显示、收起与摆位都走它。
+static WINDOW: OnceLock<WindowHandle> = OnceLock::new();
+/// 安装时读下的主题色下标;面板窗口的状态构建要用。
+static PICKER_ACCENT: OnceLock<usize> = OnceLock::new();
 /// 请求通道容量:面板开着时再来的请求直接回「正忙」。
 const QUEUE: usize = 1;
+/// 卡片圆角;行内圆角沿用 render 模型的 6。
+const CARD_RADIUS: f32 = 8.0;
 
-/// 宿主选择面板:一次显示一单,窗口在第一次请求时才建。请求经通道进来,
-/// 显示期间不阻塞界面线程;收起后在循环里把选择回传给请求方。
-pub(super) struct Panel {
+/// 面板窗口的状态;Rune 每帧从它重建控件树。
+pub(super) struct Picker {
+    /// 请求通道:panel.show 的投递端,由 PanelProvider 持有。
     jobs: Receiver<PanelJob>,
-    window: Option<Box<HostWindow>>,
-    /// 正在显示的那一单的完成句柄;收起后用它回传选择。
-    current: Option<Done>,
-}
-
-/// 装上请求通道:扩展 `panel.show` 投递后经 `wake` 叫醒界面线程。
-pub(super) fn init(state: &State, wake: Wake) -> Panel {
-    let (tx, rx) = mpsc::sync_channel::<PanelJob>(QUEUE);
-    state.panel_service.install(tx, move || wake.set());
-    Panel {
-        jobs: rx,
-        window: None,
-        current: None,
-    }
-}
-
-impl Panel {
-    /// 面板开着就等它收起;收起了就回传选择,接着处理排队的下一单。
-    pub(super) fn tick(&mut self, state: &State) {
-        if self.current.is_some() {
-            if !self.window.as_ref().is_some_and(|window| window.hidden) {
-                return;
-            }
-            let selected = self
-                .window
-                .as_mut()
-                .and_then(|window| window.selected.take());
-            if let Some(done) = self.current.take() {
-                done.complete(Ok(serde_json::json!({ "selected": selected }).to_string()));
-            }
-        }
-        while let Ok(job) = self.jobs.try_recv() {
-            if self.start(state, job) {
-                return;
-            }
-        }
-    }
-
-    /// 显示一单;建窗或显示失败时直接回传错误,返回 `false` 接着处理下一单。
-    fn start(&mut self, state: &State, job: PanelJob) -> bool {
-        let PanelJob { panel, done } = job;
-        if self.window.is_none() {
-            let accent = state
-                .config
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .ui_accent;
-            match HostWindow::create(accent) {
-                Ok(created) => self.window = Some(created),
-                Err(error) => {
-                    println!("宿主选择面板建窗失败: {error}");
-                    done.complete(Err(error));
-                    return false;
-                }
-            }
-        }
-        let Some(window) = self.window.as_mut() else {
-            done.complete(Err("宿主选择面板不可用".into()));
-            return false;
-        };
-        let restore = unsafe { GetForegroundWindow() };
-        if let Err(error) = window.show(panel, restore) {
-            println!("宿主选择面板显示失败: {error}");
-            done.complete(Err(error));
-            return false;
-        }
-        self.current = Some(done);
-        true
-    }
-}
-
-/// 面板窗口状态;由窗口的 USERDATA 指向,生命周期与界面线程一致。
-struct HostWindow {
-    hwnd: HWND,
-    surface: Surface,
-    palette: Palette,
+    /// 主题色下标;安装时读一次,与旧窗口行为一致。
     accent: usize,
-    scale: f32,
-    size: (i32, i32),
+    appearance: theme::Appearance,
     panel: Option<HostPanel>,
+    /// 视图与几何:行矩形以逻辑点给出,控件树按它绝对定位。
     spec: picker::Spec,
     layout: picker::Layout,
-    /// 唤出前的前台窗口;关闭时把焦点还给它。
-    restore: Option<HWND>,
+    /// 正在显示的一单的完成句柄;收起时回传选择。
+    current: Option<Done>,
+    /// 显示期间到达的下一单;收起后立刻显示。
+    pending: Option<PanelJob>,
+    /// 唤出前的前台窗口(裸句柄值);关闭时把焦点还给它。
+    restore: isize,
     visible: bool,
-    hidden: bool,
-    /// 选中的条目下标;由内层消息循环取走。
+    hover: Option<usize>,
     selected: Option<u32>,
 }
 
-impl HostWindow {
-    /// 建一个隐藏的面板窗口;内容在每次请求时换。
-    fn create(accent: usize) -> Result<Box<Self>, String> {
-        let mut window = Box::new(Self {
-            hwnd: HWND::default(),
-            surface: Surface::new()?,
-            palette: theme::palette(theme::colors_with(theme::Appearance::of_system(), accent)),
+impl Picker {
+    fn new(jobs: Receiver<PanelJob>, accent: usize) -> Self {
+        Self {
+            appearance: theme::Appearance::of_system(),
+            jobs,
             accent,
-            scale: 1.0,
-            size: (0, 0),
             panel: None,
             spec: picker::Spec::default(),
             layout: picker::Layout::default(),
-            restore: None,
+            current: None,
+            pending: None,
+            restore: 0,
             visible: false,
-            hidden: true,
+            hover: None,
             selected: None,
-        });
-        let hwnd = create_window()?;
-        window.hwnd = hwnd;
-        window.scale = dpi_of(hwnd);
-        // 面板自己不输入文字,不要让系统输入法在这里起组合。
-        unsafe {
-            ImmAssociateContext(hwnd, HIMC::default());
         }
-        window.reflow();
-        unsafe {
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&mut *window as *mut Self) as isize);
-        }
-        Ok(window)
     }
 
-    /// 显示面板;`restore` 是唤出前的前台窗口,关闭时归还焦点。
-    fn show(&mut self, panel: HostPanel, restore: HWND) -> Result<(), String> {
-        self.restore = (!restore.is_invalid() && restore != self.hwnd).then_some(restore);
+    /// 显示一单:记下唤出时的前台窗口,摆位并打开(打开即激活取焦点)。
+    fn show(&mut self, job: PanelJob) {
+        let PanelJob { panel, done } = job;
+        self.restore = foreground();
         self.panel = Some(panel);
+        self.current = Some(done);
         self.selected = None;
-        self.visible = true;
-        self.hidden = false;
-        self.palette = theme::palette(theme::colors_with(
-            theme::Appearance::of_system(),
-            self.accent,
-        ));
-        self.reflow();
-        let (w, h) = self.size;
-        let (x, y) = self.position();
-        unsafe {
-            SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_SHOWWINDOW)
-                .map_err(|e| format!("SetWindowPos: {e}"))?;
-            let _ = SetForegroundWindow(self.hwnd);
-            let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(self.hwnd));
-            let _ = InvalidateRect(Some(self.hwnd), None, false);
+        self.hover = None;
+        self.refresh();
+        self.place();
+        if let Some(window) = WINDOW.get() {
+            window.open();
         }
-        Ok(())
+        self.visible = true;
     }
 
-    /// 按当前模型重算视图、行几何与窗口尺寸。
-    fn reflow(&mut self) {
+    /// 按当前模型重算视图与行几何;可见时尺寸变了才重新摆位。
+    fn refresh(&mut self) {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
-        let view = panel.view(picker::MAX_ROWS);
-        self.spec = spec_of(&view);
-        self.layout = picker::layout(&self.spec, self.scale);
-        let (w, h) = self.layout.size;
-        let (w, h) = (w.round() as i32, h.round() as i32);
-        if (w, h) != self.size {
-            self.size = (w, h);
-            unsafe {
-                let _ = SetWindowPos(
-                    self.hwnd,
-                    None,
-                    0,
-                    0,
-                    w,
-                    h,
-                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-                );
-            }
+        self.spec = spec_of(&panel.view(picker::MAX_ROWS));
+        let before = self.layout.size;
+        self.layout = picker::layout(&self.spec, 1.0);
+        if self.visible && self.layout.size != before {
+            self.place();
         }
     }
 
-    /// 选中变化后重排并重绘;保持焦点,窗口跟着新尺寸重新居中。
-    fn changed(&mut self) {
-        self.reflow();
-        let (w, h) = self.size;
-        let (x, y) = self.position();
-        unsafe {
-            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
-            let _ = InvalidateRect(Some(self.hwnd), None, false);
-        }
-    }
-
-    /// 面板在还原窗口所在显示器的上半部居中。
-    fn position(&self) -> (i32, i32) {
-        let (w, h) = self.size;
-        let anchor = self
-            .restore
-            .and_then(|hwnd| {
-                let mut rect = RECT::default();
-                unsafe { GetWindowRect(hwnd, &mut rect) }.ok()?;
-                Some(((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2))
+    /// 面板在唤出窗口所在显示器的上半部居中;位置用物理像素,
+    /// 尺寸用逻辑点(`resize_instant`),缩放由 Rune 按所在屏换算。
+    fn place(&self) {
+        let Some(window) = WINDOW.get() else {
+            return;
+        };
+        let (w, h) = (
+            self.layout.size.0.round() as i32,
+            self.layout.size.1.round() as i32,
+        );
+        let anchor = (self.restore != 0)
+            .then(|| {
+                let rect = window_rect(HWND(self.restore as *mut _));
+                ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2)
             })
             .or_else(|| {
                 let mut point = POINT::default();
@@ -248,151 +137,409 @@ impl HostWindow {
         let work = anchor
             .and_then(|(x, y)| place::monitor_info_at(x, y))
             .map_or_else(place::primary_work_area, |info| info.rcWork);
+        let scale = anchor.map_or(1.0, |(x, y)| place::scale_at(x, y));
         let width = work.right - work.left;
         let height = work.bottom - work.top;
-        (
-            work.left + ((width - w) / 2).max(0),
-            work.top + ((height - h) / 4).max(0),
-        )
-    }
-
-    /// 画一帧:Direct2D 画进位图,再贴到客户区。
-    fn paint(&mut self, hdc: HDC) {
-        let (w, h) = self.size;
-        if w <= 0 || h <= 0 {
-            return;
-        }
-        let Ok(canvas) = self.surface.begin(w as u32, h as u32) else {
-            return;
-        };
-        picker::draw(canvas, &self.spec, &self.layout, &self.palette, self.scale);
-        let _ = self.surface.blit(hdc, w, h);
-    }
-
-    /// 关闭面板;`restore` 为真时把焦点还给唤出前的窗口。
-    fn hide(&mut self, hwnd: HWND, restore: bool) {
-        if !self.visible {
-            return;
-        }
-        self.visible = false;
-        self.hidden = true;
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
-        if !restore {
-            self.restore = None;
-            return;
-        }
-        let Some(target) = self.restore.take() else {
-            return;
-        };
-        unsafe {
-            if IsWindow(Some(target)).as_bool() {
-                let _ = SetForegroundWindow(target);
-            }
-        }
+        let x = work.left + (((width - (w as f32 * scale) as i32) / 2).max(0));
+        let y = work.top + (((height - (h as f32 * scale) as i32) / 4).max(0));
+        window.set_position((x, y));
+        window.resize_instant(self.layout.size);
     }
 
     /// 选中当前行并收起。
-    fn choose_selected(&mut self, hwnd: HWND) {
+    fn choose(&mut self) {
         let Some(panel) = self.panel.as_ref() else {
             return;
         };
         self.selected = Some(panel.selected_index() as u32);
-        self.hide(hwnd, true);
+        self.hide(true);
     }
 
-    /// 点到某行就选中那一行并收起。
-    fn click(&mut self, hwnd: HWND, x: f32, y: f32) {
-        let picker::Hit::Row(index) = picker::hit(&self.layout, &self.spec, x, y) else {
-            return;
-        };
+    /// 点到某行就选中那一行并收起;行下标与选中差即绝对移动量。
+    fn click(&mut self, index: usize) {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
         let delta = index as isize - self.spec.selected as isize;
         panel.move_by(delta);
-        self.choose_selected(hwnd);
+        self.choose();
     }
 
-    /// 方向键/Tab 移动选中行;视图卷动跟着走。
+    /// 方向键/滚轮移动选中行;视图卷动跟着走。
     fn move_selection(&mut self, delta: isize) {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
         if panel.move_by(delta) {
-            self.changed();
+            self.refresh();
         }
     }
 
-    /// 窗口消息;返回 `LRESULT`。
-    fn handle(&mut self, hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        match msg {
-            WM_PAINT => {
-                let mut paint = PAINTSTRUCT::default();
-                let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
-                self.paint(hdc);
-                let _ = unsafe { EndPaint(hwnd, &paint) };
-                LRESULT(0)
-            }
-            WM_ERASEBKGND => LRESULT(1),
-            WM_KEYDOWN => {
-                let key = wparam.0 as u16;
-                match key {
-                    k if k == VK_UP.0 => self.move_selection(-1),
-                    k if k == VK_DOWN.0 => self.move_selection(1),
-                    k if k == VK_PRIOR.0 => self.move_selection(-(picker::MAX_ROWS as isize)),
-                    k if k == VK_NEXT.0 => self.move_selection(picker::MAX_ROWS as isize),
-                    k if k == VK_HOME.0 => self.move_selection(isize::MIN / 2),
-                    k if k == VK_END.0 => self.move_selection(isize::MAX / 2),
-                    k if k == VK_RETURN.0 => self.choose_selected(hwnd),
-                    k if k == VK_ESCAPE.0 => self.hide(hwnd, true),
-                    _ => {}
+    /// 收起面板;`restore` 为真时把焦点还给唤出前的窗口。
+    /// 选择立即经 Done 回传(null 表示取消),排队的下一单接着显示。
+    fn hide(&mut self, restore: bool) {
+        if !self.visible {
+            return;
+        }
+        self.visible = false;
+        if let Some(done) = self.current.take() {
+            let selected = self.selected.take();
+            done.complete(Ok(serde_json::json!({ "selected": selected }).to_string()));
+        }
+        self.panel = None;
+        if let Some(window) = WINDOW.get() {
+            window.hide();
+        }
+        if restore {
+            let target = std::mem::replace(&mut self.restore, 0);
+            if target != 0 {
+                let hwnd = HWND(target as *mut _);
+                if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+                    let _ = unsafe { SetForegroundWindow(hwnd) };
                 }
-                LRESULT(0)
             }
-            WM_LBUTTONDOWN => {
-                let x = low_word(lparam) as f32;
-                let y = high_word(lparam) as f32;
-                self.click(hwnd, x, y);
-                LRESULT(0)
-            }
-            WM_MOUSEWHEEL => {
-                let delta = ((wparam.0 >> 16) & 0xffff) as i16 as i32;
-                self.move_selection(-(delta / 120 * 3) as isize);
-                LRESULT(0)
-            }
-            WM_ACTIVATE => {
-                if (wparam.0 & 0xffff) as u32 == WA_INACTIVE && self.visible {
-                    self.hide(hwnd, false);
-                }
-                LRESULT(0)
-            }
-            WM_DPICHANGED => {
-                self.scale = dpi_of(hwnd);
-                self.changed();
-                LRESULT(0)
-            }
-            WM_CLOSE => {
-                self.hide(hwnd, true);
-                LRESULT(0)
-            }
-            WM_DESTROY => {
-                unsafe { PostQuitMessage(0) };
-                LRESULT(0)
-            }
-            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        } else {
+            self.restore = 0;
+        }
+        if let Some(job) = self.pending.take() {
+            self.show(job);
         }
     }
 }
 
-/// 自检专用:显示期间排干消息直到面板收起,取回选中的下标。
-fn pump_until_hidden(hwnd: HWND) -> Option<u32> {
-    while !state_of(hwnd).is_some_and(|window| window.hidden) {
-        crate::ui::wait(None, Some(Duration::from_millis(10)));
-        crate::ui::pump_messages();
+/// 装上请求通道:扩展 `panel.show` 投递后叫醒面板窗口的 poll。
+/// 返回接收端,交给面板窗口的状态;窗口起来之前投递会在通道里排队。
+pub(super) fn install(state: &crate::imp::State) -> Receiver<PanelJob> {
+    let (tx, rx) = mpsc::sync_channel::<PanelJob>(QUEUE);
+    let accent = {
+        let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
+        cfg.ui_accent
+    };
+    PICKER_ACCENT.set(accent).ok();
+    state.panel_service.install(tx, || {
+        // 隐藏中的窗口 poll 也会跑;没起来时投递在通道里等。
+        if let Some(app) = APP.get() {
+            app.wake();
+        }
+    });
+    rx
+}
+
+/// 面板窗口的规格:隐藏创建、无边框置顶、不可缩放;
+/// poll 排请求,键盘在窗口级 on_key,行与滚轮在控件树上。
+pub(super) fn window_spec(jobs: Receiver<PanelJob>) -> WindowSpec<Picker> {
+    let accent = *PICKER_ACCENT.get_or_init(|| 0);
+    let spec = AppSpec {
+        families: ("Noto Sans SC", "Noto Sans SC"),
+        on_key: Some(picker_key),
+        poll: Some(picker_poll),
+        ..AppSpec::new(
+            "掠影选择面板",
+            (picker::WIDTH, 160.0),
+            placeholder,
+            picker_view,
+        )
+    };
+    WindowSpec::from_app(
+        "picker",
+        App::new(spec).init(move || Picker::new(jobs, accent)),
+    )
+    .options(WindowOptions {
+        transparent: true,
+        borderless: true,
+        always_on_top: true,
+        visible: false,
+        resizable: false,
+        min_size: Some((0.0, 0.0)),
+        ..Default::default()
+    })
+}
+
+/// 把窗口句柄存进静态;install 的投递端靠它们叫醒与摆位。
+pub(super) fn attach(app: AppHandle<Picker>, window: WindowHandle) {
+    let _ = APP.set(app);
+    let _ = WINDOW.set(window);
+}
+
+/// App::init 已接管状态构建;这个 fn 指针只是 AppSpec 的必填占位。
+fn placeholder() -> Picker {
+    Picker::new(mpsc::channel().1, 0)
+}
+
+/// 每帧开头跑一次:排干请求通道。显示中的面板继续显示,排队的下一单
+/// 在收起后显示;再多就以「正忙」回绝(与旧窗口的容量 1 一致)。
+fn picker_poll(s: &mut Picker, _now: f64, _tx: &mut Tx) -> bool {
+    let mut changed = false;
+    while let Ok(job) = s.jobs.try_recv() {
+        if s.panel.is_none() {
+            s.show(job);
+            changed = true;
+        } else if s.pending.is_none() {
+            s.pending = Some(job);
+        } else {
+            job.done.complete(Err("宿主面板正忙".into()));
+        }
     }
-    state_of(hwnd).and_then(|window| window.selected.take())
+    changed
+}
+
+/// 窗口级键盘:树里没有可聚焦控件,所有键都到这里。
+fn picker_key(s: &mut Picker, event: &KeyEvent, _tx: &mut Tx) -> bool {
+    if !s.visible {
+        return false;
+    }
+    match event.key {
+        Key::Up => s.move_selection(-1),
+        Key::Down => s.move_selection(1),
+        Key::PageUp => s.move_selection(-(picker::MAX_ROWS as isize)),
+        Key::PageDown => s.move_selection(picker::MAX_ROWS as isize),
+        Key::Home => s.move_selection(isize::MIN / 2),
+        Key::End => s.move_selection(isize::MAX / 2),
+        Key::Enter => s.choose(),
+        Key::Escape => s.hide(true),
+        _ => return false,
+    }
+    true
+}
+
+/// 一帧控件树:圆角卡片、标题分隔线、行列表与页脚。
+fn picker_view(s: &Picker, cx: &mut Cx<Picker>) -> El {
+    // 系统关掉"动画效果"时,框架把过渡降级为淡出。
+    cx.reduced_motion(!theme::client_area_animation());
+    if !s.visible {
+        return el();
+    }
+    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+    let (w, h) = s.layout.size;
+    col()
+        .w(w)
+        .h(h)
+        .radius(CARD_RADIUS)
+        .clip_rounded(CARD_RADIUS)
+        .fill(theme::srgb(palette.bg))
+        .border(1.0, theme::srgb(palette.border))
+        .key("panel")
+        .transition(Transition::offset(0.0, 4.0).combined(Transition::opacity()))
+        .motion(motion::SETTLE)
+        .child(title_el(&s.spec, &s.layout, &palette))
+        .child(rows_el(s, &palette))
+        .child(footer_el(&s.spec, &s.layout, &palette))
+}
+
+/// 标题行:标题左,条目总数右,底部 1px 分隔线。
+fn title_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> El {
+    let pad = picker::PAD;
+    let title = layout.title;
+    let count = format!("{} 项", spec.total);
+    let title_budget = title.width() - 3.0 * pad;
+    col()
+        .w_full()
+        .h(title.height())
+        .child(
+            el().absolute(pad, super::rune::ink_y(title.height(), 15.0))
+                .w(title_budget)
+                .child(
+                    text(ellipsize(&spec.title, title_budget, 15.0))
+                        .font(TextStyle::new(15.0, 400.0))
+                        .color(theme::srgb(palette.text)),
+                ),
+        )
+        .child(
+            el().absolute(
+                title.width() - pad - 60.0,
+                super::rune::ink_y(title.height(), 11.0),
+            )
+            .w(60.0)
+            .child(
+                text(count)
+                    .font(TextStyle::new(11.0, 400.0))
+                    .color(theme::srgb(palette.text_tertiary))
+                    .a11y_hidden(),
+            ),
+        )
+        .child(
+            el().absolute(pad, title.height() - 1.0)
+                .w(title.width() - 2.0 * pad)
+                .h(1.0)
+                .fill(theme::srgb(palette.border))
+                .a11y_hidden(),
+        )
+}
+
+/// 行列表:选中行是主题色胶囊,悬停亮底;滚轮翻动。
+fn rows_el(s: &Picker, palette: &Palette) -> El {
+    let list = s.layout.list;
+    let mut rows = col()
+        .absolute(0.0, list.top)
+        .w(list.width())
+        .h(list.height())
+        .on_wheel(|s: &mut Picker, e, _| {
+            // dy>0 是向下滚,向前翻三条,与候选窗的滚动方向一致。
+            s.move_selection((e.dy.signum() * 3.0) as isize);
+            true
+        });
+    if s.spec.rows.is_empty() {
+        rows = rows.child(
+            el().w_full().h_full().center().child(
+                text("没有可选项")
+                    .font(TextStyle::new(14.0, 400.0))
+                    .color(theme::srgb(palette.text_secondary))
+                    .a11y_hidden(),
+            ),
+        );
+        return rows;
+    }
+    for (index, row) in s.spec.rows.iter().enumerate() {
+        rows = rows.child(row_el(s, index, row.clone(), palette));
+    }
+    if s.spec.above > 0 || s.spec.below > 0 {
+        rows = rows.child(scroll_hints_el(s, palette));
+    }
+    rows
+}
+
+/// 一行:绝对定位在行矩形上,选中是主题色胶囊(纵向收进 2px,与行
+/// 留出呼吸,与旧画法一致),悬停亮底,点击选中并收起。
+fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
+    let Some(rect) = s.layout.rows.get(index) else {
+        return el();
+    };
+    let rect = *rect;
+    let selected = index == s.spec.selected;
+    let hovered = s.hover == Some(index);
+    let (top, height) = if selected {
+        (rect.top + 2.0, rect.height() - 4.0)
+    } else {
+        (rect.top, rect.height())
+    };
+    let mut cell = el()
+        .absolute(rect.left, top)
+        .w(rect.width())
+        .h(height)
+        .cursor(Cursor::Pointer)
+        .role("button")
+        .label(row.clone())
+        .key(format!("row-{}", s.spec.above + index))
+        .on_hover_change(move |s: &mut Picker, inside, _| {
+            s.hover = inside.then_some(index);
+        })
+        .press_on_down()
+        .on_press(move |s: &mut Picker| s.click(index))
+        .child(
+            el().absolute(picker::PAD, super::rune::ink_y(height, 14.0))
+                .w(rect.width() - 2.0 * picker::PAD)
+                .child(
+                    text(ellipsize(&row, rect.width() - 2.0 * picker::PAD, 14.0))
+                        .font(TextStyle::new(14.0, 400.0))
+                        .color(theme::srgb(if selected {
+                            palette.selected_text
+                        } else {
+                            palette.text
+                        }))
+                        .a11y_hidden(),
+                ),
+        );
+    if selected {
+        cell = cell
+            .radius(picker::RADIUS)
+            .fill(theme::srgb(palette.selected_bg));
+    } else if hovered {
+        cell = cell
+            .radius(picker::RADIUS)
+            .fill(theme::srgb_alpha(palette.hover, 0.66));
+    }
+    cell
+}
+
+/// 卷动提示:上下还有内容时在列表右缘画小箭头。
+fn scroll_hints_el(s: &Picker, palette: &Palette) -> El {
+    let list = s.layout.list;
+    let mut hints = el().w_full().h_full().a11y_hidden();
+    if s.spec.above > 0 {
+        hints = hints.child(
+            el().absolute(list.width() - 16.0, 5.0).child(
+                text("▲")
+                    .font(TextStyle::new(10.0, 400.0))
+                    .color(theme::srgb(palette.text_tertiary))
+                    .a11y_hidden(),
+            ),
+        );
+    }
+    if s.spec.below > 0 {
+        hints = hints.child(
+            el().absolute(list.width() - 16.0, list.height() - 15.0)
+                .child(
+                    text("▼")
+                        .font(TextStyle::new(10.0, 400.0))
+                        .color(theme::srgb(palette.text_tertiary))
+                        .a11y_hidden(),
+                ),
+        );
+    }
+    hints
+}
+
+/// 页脚:操作提示左,当前位置右。
+fn footer_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> El {
+    let pad = picker::PAD;
+    let footer = layout.footer;
+    let position = if spec.total == 0 {
+        String::new()
+    } else {
+        format!("{}/{}", spec.above + spec.selected + 1, spec.total)
+    };
+    el().absolute(0.0, footer.top)
+        .w(footer.width())
+        .h(footer.height())
+        .child(
+            el().absolute(pad, super::rune::ink_y(footer.height(), 11.0))
+                .w(footer.width() - 2.0 * pad)
+                .child(
+                    text("↑↓ 选择 · Enter 确认 · Esc 取消")
+                        .font(TextStyle::new(11.0, 400.0))
+                        .color(theme::srgb(palette.text_tertiary))
+                        .a11y_hidden(),
+                ),
+        )
+        .child(
+            el().absolute(
+                footer.width() - pad - 40.0,
+                super::rune::ink_y(footer.height(), 11.0),
+            )
+            .w(40.0)
+            .child(
+                text(position)
+                    .font(TextStyle::new(11.0, 400.0))
+                    .color(theme::srgb(palette.text_tertiary))
+                    .a11y_hidden(),
+            ),
+        )
+}
+
+/// 文本按可宽截断;行宽以内用省略号。CJK 记 1em、其余记 0.55em 的
+/// 粗估足够,不值得为面板引入一套文本测量。
+fn ellipsize(text: &str, budget: f32, size: f32) -> String {
+    if budget <= 0.0 {
+        return String::new();
+    }
+    let width_of = |c: char| if c as u32 > 0x2e80 { size } else { size * 0.55 };
+    let width: f32 = text.chars().map(width_of).sum();
+    if width <= budget {
+        return text.to_string();
+    }
+    let budget = budget - size;
+    let mut used = 0.0;
+    let mut out = String::new();
+    for c in text.chars() {
+        let w = width_of(c);
+        if used + w > budget {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 /// 视图转渲染输入。
@@ -407,204 +554,78 @@ fn spec_of(view: &HostPanelView) -> picker::Spec {
     }
 }
 
-/// 窗口的 USERDATA 指向面板状态;未挂上时返回 `None`。
-fn state_of(hwnd: HWND) -> Option<&'static mut HostWindow> {
-    unsafe {
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut HostWindow;
-        ptr.as_mut()
+/// 唤出时的前台窗口(裸句柄值);没有就退到光标位置定位。
+fn foreground() -> isize {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_invalid() {
+        0
+    } else {
+        hwnd.0 as isize
     }
 }
 
-/// 建隐藏窗口;类进程内只注册一次。
-fn create_window() -> Result<HWND, String> {
-    unsafe {
-        let hmodule = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
-        let hinstance = HINSTANCE(hmodule.0);
-        ensure_class(hinstance)?;
-        CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            CLASS,
-            w!("掠影选择面板"),
-            WS_POPUP,
-            0,
-            0,
-            1,
-            1,
-            None,
-            None,
-            Some(hinstance),
-            None,
-        )
-        .map_err(|e| format!("CreateWindowExW: {e}"))
+/// 窗口矩形;取不到给空矩形兜底(定位退到光标)。
+fn window_rect(hwnd: HWND) -> RECT {
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+        rect = RECT::default();
     }
+    rect
 }
 
-fn ensure_class(hinstance: HINSTANCE) -> Result<(), String> {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    let mut result = Ok(());
-    ONCE.call_once(|| unsafe {
-        let cursor = match LoadCursorW(None, IDC_ARROW) {
-            Ok(cursor) => cursor,
-            Err(e) => {
-                result = Err(format!("LoadCursorW: {e}"));
-                return;
+/// 自检:`lueying-server.exe --panel-selftest <报告>`。独立进程:主线程跑
+/// 一个只含面板窗口的 Rune App,助手线程投递两单(方向键选中、Esc 取消)、
+/// 注入按键并断言焦点归还;结论写文件供 win-e2e 断言。不碰单实例锁、
+/// 管道与 TSF。
+pub(crate) fn selftest(report: &std::path::Path) -> Result<(), String> {
+    match selftest_run(report) {
+        // 成功路径在助手线程里写报告并退出进程,这里不会返回。
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let mut lines = vec!["宿主选择面板自检".to_string()];
+            lines.push(format!("结果:失败 — {e}"));
+            if let Some(dir) = report.parent() {
+                let _ = std::fs::create_dir_all(dir);
             }
-        };
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(wnd_proc),
-            hInstance: hinstance,
-            hCursor: cursor,
-            lpszClassName: CLASS,
-            ..Default::default()
-        };
-        if RegisterClassW(&wc) == 0 {
-            result = Err("RegisterClassW(宿主选择面板) 失败".into());
-        }
-    });
-    result
-}
-
-/// 窗口的 DPI 缩放。
-fn dpi_of(hwnd: HWND) -> f32 {
-    unsafe { GetDpiForWindow(hwnd).max(96) as f32 / 96.0 }
-}
-
-fn low_word(lparam: LPARAM) -> i32 {
-    (lparam.0 & 0xffff) as i16 as i32
-}
-
-fn high_word(lparam: LPARAM) -> i32 {
-    ((lparam.0 >> 16) & 0xffff) as i16 as i32
-}
-
-/// 窗口过程。
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    unsafe {
-        match state_of(hwnd) {
-            Some(window) => window.handle(hwnd, msg, wparam, lparam),
-            None => DefWindowProcW(hwnd, msg, wparam, lparam),
+            let _ = std::fs::write(report, lines.join("\n"));
+            Err(e)
         }
     }
 }
 
-/// 自检:方向键 + Enter 选中第二项,Esc 取消,焦点归还。
-fn picker_checks(host: HWND, lines: &mut Vec<String>) -> Result<(), String> {
-    let panel = HostPanel::parse(r#"{"title":"选择语言","items":["中文","English","日本語"]}"#)?;
-    let first = round(panel.clone(), &[Key::Down, Key::Enter])?;
-    if first != Some(1) {
-        return Err(format!("方向键选择回传 {first:?},期望 Some(1)"));
+/// 自检的一轮:投递一单、等面板拿到前台、注入按键、取选择结果。
+fn round(
+    tx: &mpsc::SyncSender<PanelJob>,
+    panel: HostPanel,
+    keys: &[TestKey],
+) -> Result<Option<u32>, String> {
+    let (done, done_rx) = Done::channel();
+    tx.try_send(PanelJob { panel, done })
+        .map_err(|_| "投递面板请求失败".to_string())?;
+    if let Some(app) = APP.get() {
+        app.wake();
     }
-    wait_foreground(host, Duration::from_secs(2))?;
-    lines.push("宿主选择面板:方向键 + Enter 选中第二项,焦点已归还".into());
-
-    let second = round(panel, &[Key::Esc])?;
-    if second.is_some() {
-        return Err(format!("Esc 仍回传 {second:?}"));
-    }
-    wait_foreground(host, Duration::from_secs(2))?;
-    lines.push("宿主选择面板:Esc 取消,焦点已归还".into());
-    Ok(())
-}
-
-/// 自检的一轮:起窗口线程、等它拿到前台、注入按键、取选择结果。
-fn round(panel: HostPanel, keys: &[Key]) -> Result<Option<u32>, String> {
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
-    let (done_tx, done_rx) = mpsc::channel::<Option<u32>>();
-    let spawned = std::thread::Builder::new()
-        .name("host-panel-selftest".into())
-        .spawn(move || {
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            }
-            let outcome = (|| -> Result<Option<u32>, String> {
-                let mut window = HostWindow::create(0)?;
-                let restore = unsafe { GetForegroundWindow() };
-                window.show(panel, restore)?;
-                let _ = ready_tx.send(Ok(()));
-                let selected = pump_until_hidden(window.hwnd);
-                unsafe {
-                    let _ = DestroyWindow(window.hwnd);
-                }
-                Ok(selected)
-            })();
-            match outcome {
-                Ok(selected) => {
-                    let _ = done_tx.send(selected);
-                }
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error));
-                    let _ = done_tx.send(None);
-                }
-            }
-        })
-        .map_err(|e| format!("起宿主面板自检线程: {e}"))?;
-    let ready = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| "宿主面板线程 10 秒内没有就绪".to_string())?;
-    ready?;
-    wait_panel_foreground(Duration::from_secs(3))?;
+    // 等面板拿到前台;进程自己持有宿主的前台权,被拒重试必成。
+    wait_picker_foreground(Duration::from_secs(3))?;
     std::thread::sleep(Duration::from_millis(80));
     for key in keys {
         match key {
-            Key::Enter => send_vk(VK_RETURN),
-            Key::Esc => send_vk(VK_ESCAPE),
-            Key::Down => send_vk(VK_DOWN),
+            TestKey::Enter => send_vk(VK_RETURN),
+            TestKey::Esc => send_vk(VK_ESCAPE),
+            TestKey::Down => send_vk(VK_DOWN),
         }
     }
-    let selected = done_rx
+    let out = done_rx
         .recv_timeout(Duration::from_secs(10))
         .map_err(|_| "宿主面板 10 秒内没有收起".to_string())?;
-    let _ = spawned.join();
+    let out = out.map_err(|e| format!("面板回传错误: {e}"))?;
+    let selected = serde_json::from_str::<serde_json::Value>(&out)
+        .ok()
+        .and_then(|value| value.get("selected")?.as_u64().map(|v| v as u32));
     Ok(selected)
 }
 
-/// 等宿主选择面板成为前台。
-fn wait_panel_foreground(timeout: Duration) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if foreground_class() == "lueying-host-panel" {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    Err("宿主选择面板没有拿到前台".into())
-}
-
-fn foreground_class() -> String {
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_invalid() {
-        return String::new();
-    }
-    let mut buf = [0u16; 64];
-    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
-}
-
-/// 自检入口:`lueying-server.exe --panel-selftest <报告>`。独立进程建窗、注入按键,
-/// 结论写文件供 win-e2e 断言;不碰单实例锁、管道与 TSF。
-pub(crate) fn selftest(report: &std::path::Path) -> Result<(), String> {
-    let mut lines = vec!["宿主选择面板自检".to_string()];
-    let result = selftest_run(&mut lines);
-    match &result {
-        Ok(()) => lines.push("结果:通过".to_string()),
-        Err(e) => lines.push(format!("结果:失败 — {e}")),
-    }
-    if let Some(dir) = report.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(report, lines.join("\n"));
-    result
-}
-
-fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+fn selftest_run(report: &std::path::Path) -> Result<(), String> {
     let host = create_host_window()?;
     unsafe {
         let _ = ShowWindow(host, SW_SHOW);
@@ -617,23 +638,84 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         }
         unsafe {
             let _ = SetForegroundWindow(host);
-            let _ = SetFocus(Some(host));
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let result = picker_checks(host, lines);
-    unsafe {
-        let _ = DestroyWindow(host);
-    }
-    result
+    let (tx, rx) = mpsc::sync_channel::<PanelJob>(QUEUE);
+    let report = report.to_path_buf();
+    // HWND 不跨线程:裸句柄值传给助手线程,用的时候再包回来。
+    let host_handle = host.0 as isize;
+    // 助手线程:投递、注键、核对结果;写完报告退出进程(事件循环不返回)。
+    std::thread::Builder::new()
+        .name("panel-selftest".into())
+        .spawn(move || {
+            let host = HWND(host_handle as *mut _);
+            let mut lines: Vec<String> = Vec::new();
+            let outcome = (|| -> Result<(), String> {
+                let panel = || {
+                    HostPanel::parse(r#"{"title":"选择语言","items":["中文","English","日本語"]}"#)
+                };
+                let first = round(&tx, panel()?, &[TestKey::Down, TestKey::Enter])?;
+                if first != Some(1) {
+                    return Err(format!("方向键选择回传 {first:?},期望 Some(1)"));
+                }
+                wait_foreground(host, Duration::from_secs(2))?;
+                lines.push("宿主选择面板:方向键 + Enter 选中第二项,焦点已归还".into());
+                let second = round(&tx, panel()?, &[TestKey::Esc])?;
+                if second.is_some() {
+                    return Err(format!("Esc 仍回传 {second:?}"));
+                }
+                wait_foreground(host, Duration::from_secs(2))?;
+                lines.push("宿主选择面板:Esc 取消,焦点已归还".into());
+                Ok(())
+            })();
+            match &outcome {
+                Ok(()) => lines.push("结果:通过".to_string()),
+                Err(e) => lines.push(format!("结果:失败 — {e}")),
+            }
+            let _ = std::fs::write(&report, lines.join("\n"));
+            std::process::exit(if outcome.is_ok() { 0 } else { 1 });
+        })
+        .map_err(|e| format!("起面板自检线程: {e}"))?;
+    // 主线程:只含面板窗口的 Rune App;面板在第一次投递时打开。
+    let mut app = App::new(AppSpec::new(
+        "lueying-panel-selftest",
+        (100.0, 100.0),
+        placeholder,
+        empty_view,
+    ))
+    .windowless();
+    let (picker_app, picker_window) = app.window(window_spec(rx));
+    attach(picker_app, picker_window);
+    app.run();
+    Ok(())
 }
 
-/// 自检用按键。
-#[derive(Clone, Copy)]
-enum Key {
-    Enter,
-    Esc,
-    Down,
+/// 只含面板窗口的自检宿主没有画面;这个 view 恒空。
+fn empty_view(_: &Picker, _: &mut Cx<Picker>) -> El {
+    el()
+}
+
+/// 等宿主选择面板成为前台(按窗口标题认)。
+fn wait_picker_foreground(timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if foreground_title() == "掠影选择面板" {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Err("宿主选择面板没有拿到前台".into())
+}
+
+fn foreground_title() -> String {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_invalid() {
+        return String::new();
+    }
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
 /// 等焦点回到指定窗口。
@@ -648,14 +730,30 @@ fn wait_foreground(target: HWND, timeout: Duration) -> Result<(), String> {
     Err("焦点没有归还给前台窗口".into())
 }
 
-/// 自检宿主的窗口过程;`DefWindowProcW` 是 Rust ABI,不能直接当 `WNDPROC`。
-unsafe extern "system" fn host_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+/// 自检用按键。
+#[derive(Clone, Copy)]
+enum TestKey {
+    Enter,
+    Esc,
+    Down,
+}
+
+/// 注入一个命名键。
+fn send_vk(vk: VIRTUAL_KEY) {
+    let mut down = INPUT {
+        r#type: INPUT_KEYBOARD,
+        ..Default::default()
+    };
+    down.Anonymous.ki.wVk = vk;
+    let mut up = INPUT {
+        r#type: INPUT_KEYBOARD,
+        ..Default::default()
+    };
+    up.Anonymous.ki.wVk = vk;
+    up.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
+    unsafe {
+        SendInput(&[down, up], std::mem::size_of::<INPUT>() as i32);
+    }
 }
 
 /// 自检宿主窗口:面板要把焦点还到这里。
@@ -681,7 +779,7 @@ fn create_host_window() -> Result<HWND, String> {
             WINDOW_EX_STYLE(0),
             w!("lueying-panel-selftest-host"),
             w!("掠影面板自检"),
-            windows::Win32::UI::WindowsAndMessaging::WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW,
             100,
             100,
             360,
@@ -695,16 +793,12 @@ fn create_host_window() -> Result<HWND, String> {
     }
 }
 
-/// 注入一个命名键。
-fn send_vk(vk: VIRTUAL_KEY) {
-    let mut down = INPUT::default();
-    down.r#type = INPUT_KEYBOARD;
-    down.Anonymous.ki.wVk = vk;
-    let mut up = INPUT::default();
-    up.r#type = INPUT_KEYBOARD;
-    up.Anonymous.ki.wVk = vk;
-    up.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
-    unsafe {
-        SendInput(&[down, up], std::mem::size_of::<INPUT>() as i32);
-    }
+/// 自检宿主的窗口过程;`DefWindowProcW` 是 Rust ABI,不能直接当 `WNDPROC`。
+unsafe extern "system" fn host_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
