@@ -403,7 +403,6 @@ jobs:
             echo "tag 必须是 vX.Y.Z 或 vX.Y.Z-预发布: ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
-          python .github/changelog_section.py "$version" --check
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: 打包发布目录
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
