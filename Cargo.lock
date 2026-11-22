@@ -2263,7 +2263,6 @@ dependencies = [
 name = "lueying-server"
 version = "0.1.0"
 dependencies = [
- "getrandom 0.4.3",
  "libmimalloc-sys",
  "lueying-core",
  "lueying-dict",

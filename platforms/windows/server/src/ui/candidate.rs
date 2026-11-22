@@ -106,20 +106,6 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
     }
 }
 
-pub(crate) fn reduce_motion() -> bool {
-    let mut enabled = BOOL::default();
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            Some((&mut enabled as *mut BOOL).cast()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    }
-    .is_ok();
-    ok && !enabled.as_bool()
-}
-
 fn xy(value: LPARAM) -> (i32, i32) {
     (value.0 as i16 as i32, (value.0 >> 16) as i16 as i32)
 }
@@ -980,7 +966,7 @@ impl Layout {
         let y = (if above { t - h - gap } else { b + gap })
             .clamp(area.top, (area.bottom - h).max(area.top));
         let cfg = state.config.read().unwrap_or_else(|p| p.into_inner());
-        let effects = cfg.effects && !reduce_motion();
+        let effects = cfg.effects && !lueying_server::theme::client_area_animation();
         use lueying_server::{
             config::UiMaterial,
             theme::{self, Appearance},
@@ -1500,7 +1486,7 @@ fn publish(state: &State, frame: Option<(&Layout, &place::Snapshot)>) {
         accent: layout.palette.accent,
         dark: appearance == lueying_server::theme::Appearance::Dark,
         high_contrast: appearance == lueying_server::theme::Appearance::HighContrast,
-        reduce_motion: reduce_motion(),
+        reduce_motion: !lueying_server::theme::client_area_animation(),
         private: snap.private,
         ..Default::default()
     });

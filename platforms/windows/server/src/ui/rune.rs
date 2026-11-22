@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
-use rune::color::srgb_decode;
+use rune::tok::motion;
 use rune::{
     App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput, OverlayOptions,
     OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle, Transition, Tx,
@@ -217,6 +217,8 @@ struct Candidate {
     material: UiMaterial,
     /// 玻璃磨砂程度 0..=1;高透到磨砂连续可调。
     frost: f32,
+    /// 配置里的主题色下标;变化时让调色板用弹簧渐变过去。
+    accent: usize,
     /// 私密字段标记;只影响扩展发布,绘制照常。
     private: bool,
     visible: bool,
@@ -242,6 +244,7 @@ impl Candidate {
             version: 0,
             material: UiMaterial::Glass,
             frost: 0.0,
+            accent: 0,
             private: false,
             visible: false,
             scale: 1.0,
@@ -314,22 +317,14 @@ impl Measure for Candidate {
     }
 }
 
-/// 0xRRGGBB → Rune 颜色(线性 sRGB)。
+/// 0xRRGGBB → Rune 颜色(线性 sRGB);转换共享一份,见 theme::srgb。
 fn rgb(v: u32) -> Color {
-    let channel = |shift: u32| srgb_decode(((v >> shift) & 0xff) as f32 / 255.0);
-    Color {
-        r: channel(16),
-        g: channel(8),
-        b: channel(0),
-        a: 1.0,
-    }
+    lueying_server::theme::srgb(v)
 }
 
 /// 0xRRGGBB + 线性透明度。
 fn rgba(v: u32, a: f32) -> Color {
-    let mut color = rgb(v);
-    color.a = a;
-    color
+    lueying_server::theme::srgb_alpha(v, a)
 }
 
 /// 旧画布的 8bit alpha → 0..1。
@@ -473,24 +468,33 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
-    // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘。
+    // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘,颜色用弹簧渐变过去。
     if let Some((seq, patch)) = s.state.ext.take_patch()
         && seq >= s.state.ext.scene_seq()
     {
         let accent = patch.and_then(|patch| patch.accent);
         if accent != s.script_accent {
             s.script_accent = accent;
+            tx.color_motion(motion::CALM);
         }
     }
     let mut changed = false;
     let version = s.state.version.load(Ordering::Acquire);
     if version != s.version {
         s.version = version;
-        s.fx.reduce = reduce_motion();
+        s.fx.reduce = !lueying_server::theme::client_area_animation();
         let cfg = s.state.config.read().unwrap_or_else(|p| p.into_inner());
-        s.material = cfg.ui_material;
-        s.frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
+        let material = cfg.ui_material;
+        let frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
+        let accent = cfg.ui_accent;
         drop(cfg);
+        // 配置换了外观:调色板与材质参数走官方的主题变化弹簧渐变过去。
+        if s.material != material || s.frost != frost || s.accent != accent {
+            s.material = material;
+            s.frost = frost;
+            s.accent = accent;
+            tx.color_motion(motion::CALM);
+        }
         place(s, tx);
         // The standalone measurer is not driven by Runtime's layout commits.
         s.ink.get_mut().end_commit();
@@ -937,7 +941,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .w(s.fx.placement.panel.2 as f32 / scale)
                 .h(s.fx.placement.panel.3 as f32 / scale)
                 .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
-                .motion(Spring::new(0.3, 0.0))
+                .motion(motion::SETTLE)
                 // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
                 .clip_rounded(panel::PANEL_RADIUS * scale)
                 .pixels_fit(&backdrop.pixels, SurfaceFit::Fill),
@@ -954,7 +958,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         // 入场:从光标侧滑入并淡入;挂载过渡只在 animated 提交里播,
         // fresh 路径显式打 tx.animated()。顺带盖住复显首帧的透明空窗。
         .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
-        .motion(Spring::new(0.3, 0.0))
+        .motion(motion::SETTLE)
         .radius(panel::PANEL_RADIUS * scale)
         .continuous_corners()
         .clip_rounded(panel::PANEL_RADIUS * scale)
@@ -1110,7 +1114,7 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     // 不配 transition:重挂载时的淡入淡出会顶掉形变,看着像胶囊
     // 消失重冒而不是拉伸。
     .key("sel")
-    .motion(Spring::new(0.2, 0.0))
+    .motion(motion::SNAP)
 }
 
 /// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面与釉根。
@@ -1159,6 +1163,8 @@ fn item_el(
         .h(rect.height())
         .radius(rect.height() * 0.5)
         .cursor(Cursor::Pointer)
+        .role("button")
+        .label(item.text.clone())
         // key 持久身份:无 key 的格子 id 会被回收,撞上退出中节点的
         // id 就继承它在途的动画位置(日志实测 486)——整个格子带字从
         // 右边滑回来。同 key 让条↔棋盘是同一节点。不配 motion:格
@@ -1188,7 +1194,8 @@ fn item_el(
             .child(
                 text(format!("{}", index + 1))
                     .font(TextStyle::new(geom.metrics.small, 400.0))
-                    .color(rgb(index_ink)),
+                    .color(rgb(index_ink))
+                    .a11y_hidden(),
             ),
         )
         .child(
@@ -1210,7 +1217,8 @@ fn item_el(
                         look.palette.selected_text
                     } else {
                         look.palette.text
-                    })),
+                    }))
+                    .a11y_hidden(),
             ),
         );
     if !geom.spec.is_strip() && !item.hint.is_empty() {
@@ -1288,6 +1296,12 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .w(track.width())
             .h(track.height())
             .cursor(Cursor::Pointer)
+            .role("button")
+            .label(if expanded {
+                "收起候选窗"
+            } else {
+                "展开候选窗"
+            })
             // 同一 key 持久节点:rect 从按钮形变到 rail 走 motion;
             // 无 transition 不淡入淡出。慢弹簧:前半段被生长的 body
             // 裁剪边盖住,后半段在面板定型后继续可见地拉伸——按钮
@@ -1402,6 +1416,8 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
             .radius(panel::concentric_radius(10.0 * scale, 4.0 * scale, 0.0))
             .px(4.0 * scale)
             .cursor(Cursor::Pointer)
+            .role("button")
+            .label((*label).to_string())
             .on_hover_change(move |s: &mut Candidate, inside, _| {
                 s.fx.menu.set_hover(inside.then_some(index));
             })
@@ -1419,7 +1435,8 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
                             look.palette.text
                         } else {
                             look.palette.text_secondary
-                        })),
+                        }))
+                        .a11y_hidden(),
                 ),
             ),
         );
@@ -1849,32 +1866,6 @@ fn primary_basis() -> ((i32, i32), f32) {
     ((0, 0), 1.0)
 }
 
-/// 系统「减少动态效果」;开启后动效全部走终态。查询失败按可用处理。
-#[cfg(windows)]
-pub(crate) fn reduce_motion() -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
-    };
-    use windows::core::BOOL;
-
-    let mut enabled = BOOL::default();
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            Some((&mut enabled as *mut BOOL).cast()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        )
-    }
-    .is_ok();
-    ok && !enabled.as_bool()
-}
-
-#[cfg(not(windows))]
-fn reduce_motion() -> bool {
-    false
-}
-
 /// 棋盘的一格:选中时垫同款黄釉胶囊,文字在格内居中。
 fn cell_el(
     s: &Candidate,
@@ -1896,6 +1887,8 @@ fn cell_el(
         .radius(rect.height() * 0.5)
         .px(8.0 * scale)
         .cursor(Cursor::Pointer)
+        .role("button")
+        .label(candidate.to_string())
         // key 持久身份:无 key 的格子 id 会被回收,撞上退出中节点的
         // id 就继承它在途的动画位置(日志实测 486)——整个格子带字从
         // 右边滑回来。同 key 让条↔棋盘是同一节点。不配 motion:格
@@ -1923,7 +1916,8 @@ fn cell_el(
                         look.palette.selected_text
                     } else {
                         look.palette.text
-                    })),
+                    }))
+                    .a11y_hidden(),
             )
             .child(el().grow(1.0)),
     )

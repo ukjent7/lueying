@@ -5,16 +5,15 @@
 use lueying_protocol::SessionView;
 use lueying_render::panel::{self, GridItem, Item, Layout, Measure, Metrics, PanelSpec};
 use lueying_server::config::{UiFont, UiLayout};
-use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
     MonitorFromPoint,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST,
-    IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOSIZE,
-    SetWindowPos,
+    GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId,
+    IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 
 use crate::imp::State;
@@ -52,21 +51,6 @@ pub(super) fn in_composition(state: &State) -> bool {
     state
         .active_published()
         .is_some_and(|published| published.composing)
-}
-
-/// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。
-pub(super) fn park(hwnd: HWND, x: i32, y: i32) {
-    unsafe {
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            x,
-            y,
-            0,
-            0,
-            SWP_NOACTIVATE | SWP_NOSIZE,
-        );
-    }
 }
 
 /// 虚拟桌面左缘之外的停靠点。固定负坐标会落在左侧副屏上,露出空白候选窗。

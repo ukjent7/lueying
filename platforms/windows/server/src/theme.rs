@@ -2,9 +2,12 @@
 //! 候选窗、设置窗与模式徽标共用同一套颜色,避免三处各写一份后走样。
 
 use std::ffi::c_void;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use lueying_render::panel::Palette;
+use rune::Color;
+use rune::color::srgb_decode;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::Graphics::Gdi::{
     COLOR_3DFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
@@ -40,6 +43,24 @@ pub fn client_area_animation() -> bool {
     })
 }
 
+/// 0xRRGGBB → Rune 颜色(线性 sRGB)。候选窗、模式徽标与设置窗共用一份转换。
+pub fn srgb(v: u32) -> Color {
+    let channel = |shift: u32| srgb_decode(((v >> shift) & 0xff) as f32 / 255.0);
+    Color {
+        r: channel(16),
+        g: channel(8),
+        b: channel(0),
+        a: 1.0,
+    }
+}
+
+/// 0xRRGGBB + 线性透明度。
+pub fn srgb_alpha(v: u32, a: f32) -> Color {
+    let mut color = srgb(v);
+    color.a = a;
+    color
+}
+
 /// 当前窗口使用的外观。高对比度优先于深浅色。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Appearance {
@@ -50,15 +71,25 @@ pub enum Appearance {
 
 impl Appearance {
     /// 读系统外观:注册表读浅色/深色,读不到按浅色。
-    /// 高对比度的判定与系统设置一致。
+    /// 高对比度的判定与系统设置一致。候选窗与设置窗每帧都查,
+    /// 1 秒内复用上次结果,免掉每帧的注册表与系统调用。
     pub fn of_system() -> Self {
-        if high_contrast() {
+        static CACHE: Mutex<Option<(Instant, Appearance)>> = Mutex::new(None);
+        let mut cached = CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((at, appearance)) = *cached
+            && at.elapsed() < Duration::from_secs(1)
+        {
+            return appearance;
+        }
+        let appearance = if high_contrast() {
             Self::HighContrast
         } else if apps_use_light() {
             Self::Light
         } else {
             Self::Dark
-        }
+        };
+        *cached = Some((Instant::now(), appearance));
+        appearance
     }
 }
 
