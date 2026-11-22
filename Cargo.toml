@@ -30,7 +30,6 @@ members = [
     "extensions/ppocr",
     "xtask",
 ]
-exclude = ["vendor/rune"]
 
 [workspace.package]
 edition = "2024"
@@ -65,16 +64,16 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { path = "vendor/rune/crates/rune", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3", default-features = false, features = ["accessibility"] }
 
-# Rune 的 vendored 依赖不随 git 依赖继承,按其 README 在工作区根打同一 rev 的 patch。
+# Rune vendored patches must be pinned to the same fork revision as Rune.
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+winit = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+sctk-adwaita = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+parley_engine = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+wgpu-hal = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+accesskit_windows = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
+accesskit_macos = { git = "https://github.com/ukjent7/rune", rev = "03651c4f107b29adda08d212e980fdcde2ff8da3" }
 
 [profile.release]
 lto = "thin"

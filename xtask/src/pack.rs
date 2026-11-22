@@ -124,32 +124,24 @@ pub(crate) fn pack(args: PackArgs) -> Result<(), String> {
     if let Some(path) = model_notice {
         copy_file(&path, &licenses, "NOTICE", &mut files)?;
     }
-    for (source, dest) in [
-        ("vendor/rune/LICENSE", "Rune-MIT.txt"),
-        (
-            "vendor/rune/THIRD_PARTY_NOTICES.md",
-            "Rune-THIRD-PARTY-NOTICES.md",
-        ),
-        (
-            "vendor/rune/crates/rune/assets/Inter-LICENSE.txt",
-            "Rune-Inter-LICENSE.txt",
-        ),
-        (
-            "vendor/rune/crates/rune/assets/IBMPlexMono-LICENSE.txt",
-            "Rune-IBM-Plex-Mono-LICENSE.txt",
-        ),
+    for name in [
+        "Rune-MIT.txt",
+        "Rune-THIRD-PARTY-NOTICES.md",
+        "Rune-Inter-LICENSE.txt",
+        "Rune-IBM-Plex-Mono-LICENSE.txt",
     ] {
         copy_file(
-            &root.join(source),
+            &root.join("licenses").join(name),
             &args.out,
-            &format!("licenses/{dest}"),
+            &format!("licenses/{name}"),
             &mut files,
         )?;
     }
+
     let notice = "\
 # 随包第三方许可与署名
 
-- Rune UI 框架(候选窗与设置窗界面层):MIT,vendor/rune;全文见 Rune-MIT.txt 与 Rune-THIRD-PARTY-NOTICES.md。
+- Rune UI 框架(候选窗与设置窗界面层):MIT,https://github.com/ukjent7/rune;全文见 Rune-MIT.txt 与 Rune-THIRD-PARTY-NOTICES.md。
 
 - 掠影词典:GPL-3.0-or-later,https://github.com/ukjent7/lueying-dict;\
 词频来自 Ultra-FineWeb(Apache-2.0)、FineWeb-2(ODC-By)、LCCC(MIT)与 Common Crawl,\
