@@ -18,24 +18,15 @@
 
 ## 基本操作
 
-空格上屏首选，数字键选字，`-` / `=` 翻页，单击 <kbd>Shift</kbd> 切换中英文。完整键位与快捷输入见[使用指南](docs/usage.md)。
+空格上屏首选，数字键选字，`-` / `=` 翻页，单击 <kbd>Shift</kbd> 切换中英文。
 
 ## 配置
 
-在开始菜单打开「掠影设置」。配置文件位于 `%APPDATA%\lueying\config.toml`，字段说明见[设置](docs/settings.md)。
+在开始菜单打开「掠影设置」。配置文件位于 `%APPDATA%\lueying\config.toml`。
 
 ## 平台
 
 Windows 是主要平台。
-
-## 文档
-
-- [文档索引](docs/README.md)
-- [故障排查](docs/troubleshooting.md)
-
-## 贡献与安全
-
-参与开发见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
 ## 许可证
 
