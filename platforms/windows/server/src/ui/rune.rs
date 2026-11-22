@@ -429,9 +429,10 @@ pub(crate) fn run(state: Arc<imp::State>) {
             prewarm: true,
             ..Default::default()
         })
-        // 隐藏时归还 GPU 表面:复显时 surface 重建,首帧必是新内容;
-        // 否则 DComp 视觉层留着上一帧,会闪上一组句的候选页或展开棋盘。
-        .release_gpu_after(Duration::from_secs(2))
+        // 隐藏即归还 GPU 表面(上游 release_gpu_when_hidden):复显时 surface 重建,
+        // 首帧必是新内容,不闪上一组句的候选页或展开棋盘;device 仍按上游策略保留
+        // 五分钟,复显只等几毫秒,不触发管线重建。
+        .release_gpu_when_hidden()
         .poll(poll);
     let handle = app.overlay(overlay, Candidate::with_state(state));
     let _ = HANDLE.set(handle);
@@ -932,7 +933,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
                 .w(s.fx.placement.panel.2 as f32 / scale)
                 .h(s.fx.placement.panel.3 as f32 / scale)
                 .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
-                .motion(Spring::smooth(0.3, 0.0))
+                .motion(Spring::new(0.3, 0.0))
                 // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
                 .clip_rounded(panel::PANEL_RADIUS * scale)
                 .pixels_fit(&backdrop.pixels, SurfaceFit::Fill),
@@ -949,7 +950,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         // 入场:从光标侧滑入并淡入;挂载过渡只在 animated 提交里播,
         // fresh 路径显式打 tx.animated()。顺带盖住复显首帧的透明空窗。
         .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
-        .motion(Spring::smooth(0.3, 0.0))
+        .motion(Spring::new(0.3, 0.0))
         .radius(panel::PANEL_RADIUS * scale)
         .continuous_corners()
         .clip_rounded(panel::PANEL_RADIUS * scale)
@@ -1093,7 +1094,7 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     // 不配 transition:重挂载时的淡入淡出会顶掉形变,看着像胶囊
     // 消失重冒而不是拉伸。
     .key("sel")
-    .motion(Spring::smooth(0.2, 0.0))
+    .motion(Spring::new(0.2, 0.0))
 }
 
 /// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面与釉根。
@@ -1276,7 +1277,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 裁剪边盖住,后半段在面板定型后继续可见地拉伸——按钮
             // 延迟着长成滚动条。
             .key("chev")
-            .motion(Spring::snappy(0.5, 0.2))
+            .motion(Spring::new(0.5, 0.35))
             .transition(Transition::none())
             .on_hover_change(|s: &mut Candidate, inside, _| {
                 s.fx.chev = inside;
