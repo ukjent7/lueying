@@ -168,6 +168,38 @@ struct Geom {
     height: f32,
 }
 
+/// 保留一帧原始像素,不为内容相同的背板唤醒 Rune。
+struct Backdrop {
+    pixels: Pixels,
+    last: Option<((u32, u32), Vec<u8>)>,
+}
+
+impl Default for Backdrop {
+    fn default() -> Self {
+        Self {
+            pixels: Pixels::new(),
+            last: None,
+        }
+    }
+}
+
+impl Backdrop {
+    fn publish(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> bool {
+        let size = (width, height);
+        if self
+            .last
+            .as_ref()
+            .is_some_and(|(previous_size, previous)| *previous_size == size && *previous == rgba)
+        {
+            return false;
+        }
+        const MAX_RETAINED_BYTES: usize = 512 * 1024;
+        self.last = (rgba.len() <= MAX_RETAINED_BYTES).then(|| (size, rgba.clone()));
+        self.pixels.set(width, height, rgba);
+        true
+    }
+}
+
 /// 候选窗 overlay 的状态;Rune 每帧从它重建控件树。
 struct Candidate {
     state: Arc<imp::State>,
@@ -175,7 +207,7 @@ struct Candidate {
     /// 文本测量;候选条的自然宽度在显示前就要量好。
     ink: RefCell<TextSystem>,
     /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
-    backdrop: Option<Pixels>,
+    backdrop: Option<Backdrop>,
     backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
@@ -793,8 +825,8 @@ fn capture_backdrop(s: &mut Candidate) -> bool {
         // 无解码 worker、无 pending 空帧,同尺寸帧复用图集槽位。
         return s
             .backdrop
-            .get_or_insert_with(Pixels::new)
-            .set_if_changed(width, height, rgba);
+            .get_or_insert_with(Backdrop::default)
+            .publish(width, height, rgba);
     }
     false
 }
@@ -890,7 +922,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     // 布局弹簧,展开/收起的形变由 Rune 原生推进。
     let bx = (s.fx.placement.panel.0 - s.fx.placement.window.0) as f32 / scale;
     let by = (s.fx.placement.panel.1 - s.fx.placement.window.1) as f32 / scale;
-    if glass && let Some(pixels) = &s.backdrop {
+    if glass && let Some(backdrop) = &s.backdrop {
         // 活背板只铺面板矩形:它只给玻璃的 backdrop_blur 当底图。
         // 面板外的空带不画任何东西,alpha=0 直接透出真桌面——铺整张
         // 捕获图反而会把错位的残影留在候选页即将展开的位置。
@@ -904,7 +936,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
                 .motion(Spring::smooth(0.3, 0.0))
                 // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
                 .clip_rounded(panel::PANEL_RADIUS * scale)
-                .pixels_fit(pixels, SurfaceFit::Fill),
+                .pixels_fit(&backdrop.pixels, SurfaceFit::Fill),
         );
     }
     let mut body = col()
