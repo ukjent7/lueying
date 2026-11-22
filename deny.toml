@@ -49,7 +49,7 @@ allow = ["BlueOak-1.0.0"]
 # crates.io 是默认唯一允许的注册源;git 依赖只放行 Rune(0.0.1 未发版,rev 锁定)。
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = ["https://github.com/ukjent7/rune"]
+allow-git = ["https://github.com/anomalyco/rune"]
 
 [bans]
 multiple-versions = "warn"
