@@ -90,6 +90,27 @@ pub fn glaze_from_ambient(above: Color, below: Color) -> Glaze {
     }
 }
 
+/// 发光胶囊的灯色:选中胶囊自己是面板的光源。灯芯上白热下饱和,
+/// 亮芯上的字墨是灯色的深色同源——光越亮,字越深,同出一源。
+#[derive(Clone, Copy, PartialEq)]
+pub struct Glow {
+    /// 灯芯上端:accent 混白的白热。
+    pub core_top: Color,
+    /// 灯芯下端:饱和 accent。
+    pub core_bottom: Color,
+    /// 亮芯上的字墨:accent 混黑的深色同源。
+    pub ink: Color,
+}
+
+/// 由 accent 算灯色;混白混黑与调色板同一空间(sRGB)。
+pub fn glow_of(accent: u32) -> Glow {
+    Glow {
+        core_top: srgb(blend(accent, 0xffffff, 0.5)),
+        core_bottom: srgb(accent),
+        ink: srgb(blend(accent, 0x000000, 0.8)),
+    }
+}
+
 /// 瓷的固定暖黑配色:候选窗与设置窗共用;琥珀釉是瓷的身份色,
 /// 不随主题色预设走。高对比度让位系统色,调用方负责分流。
 pub fn ceramic_colors() -> Colors {

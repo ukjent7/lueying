@@ -149,10 +149,14 @@ fn ease_out_quint(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(5)
 }
 
-/// 一帧的视觉参数:调色板与是否玻璃;控件树的各构件共用。
+/// 一帧的视觉参数:调色板、灯色与高对比度;控件树的各构件共用。
 struct Look<'a> {
     palette: &'a panel::Palette,
-    glass: bool,
+    /// 选中胶囊的灯色:胶囊自己是面板的光源,灯色跟主题色走。
+    glow: lueying_server::theme::Glow,
+    /// 亮芯上选中文字的墨:高对比度用系统选中字色,其余用灯色的深色同源。
+    selected_ink: Color,
+    high_contrast: bool,
 }
 
 impl Look<'_> {
@@ -346,19 +350,14 @@ fn ink_y(h: f32, size: f32) -> f32 {
     h * 0.5 - (INK_TOP + INK_HEIGHT * 0.5) * size
 }
 
-/// 液态玻璃的墨色:中性烟熏玻璃配暖白墨,亮暗背板共用一组暖色立住。
-/// 选中槽是探针配方的平涂亮黄胶囊,深墨字、深琥珀序号。
+/// 液态玻璃的中性面:烟熏玻璃配暖白墨与暖边框。强调族(灯色/序号/
+/// 选中)跟主题色走,胶囊是光源,不在墨里固定颜色。
 fn glass_ink(mut p: panel::Palette) -> panel::Palette {
     p.text = 0xece7df;
     p.text_secondary = 0xe3ddd2;
     p.text_tertiary = 0xd4cec3;
     p.border = 0x4a4238;
     p.hover = 0x3a332a;
-    p.accent = 0xd9a92e;
-    p.on_accent = 0x2b2110;
-    p.selected_bg = 0xfac738;
-    p.selected_text = 0x2b2110;
-    p.accent_text = 0x7a5608;
     p
 }
 
@@ -372,12 +371,26 @@ fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palet
     };
     let palette = lueying_server::theme::palette(colors);
     match s.material {
-        UiMaterial::Ceramic if !high_contrast => {
-            lueying_server::theme::palette(lueying_server::theme::ceramic_colors())
-        }
+        // 瓷:固定暖黑胎,强调族跟主题色;高对比度让位系统色。
+        UiMaterial::Ceramic if !high_contrast => ceramic_ink(palette),
         UiMaterial::Glass if !high_contrast => glass_ink(palette),
         _ => palette,
     }
+}
+
+/// 黑瓷的中性面:暖黑胎配暖白墨。强调族(灯色/序号/选中)跟主题色,
+/// 胶囊是光源,不在墨里固定颜色。
+fn ceramic_ink(mut p: panel::Palette) -> panel::Palette {
+    p.bg = 0x2e2a24;
+    p.window_bg = 0x2e2a24;
+    p.surface_alt = 0x262220;
+    p.border = 0x4a4238;
+    p.border_strong = 0x554c3e;
+    p.text = 0xece7df;
+    p.text_secondary = 0xe3ddd2;
+    p.text_tertiary = 0xd4cec3;
+    p.hover = 0x3a332a;
+    p
 }
 
 /// 入口:建 Rune 应用与 overlay;事件循环不返回。
@@ -1024,9 +1037,17 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .border(1.0 * scale, rgb(palette.border));
         }
     }
+    let glow = lueying_server::theme::glow_of(palette.accent);
+    let selected_ink = if high_contrast {
+        rgb(palette.selected_text)
+    } else {
+        glow.ink
+    };
     let look = Look {
         palette: &palette,
-        glass,
+        glow,
+        selected_ink,
+        high_contrast,
     };
     body = body.child(content(s, geom, &look));
     root = root.child(body);
@@ -1039,7 +1060,9 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
     {
         let look = Look {
             palette: &palette,
-            glass,
+            glow,
+            selected_ink,
+            high_contrast,
         };
         root = root.child(menu_tree(s, geom, &look, *slot, bx, by));
     }
@@ -1139,7 +1162,6 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
             .w(rect.width())
             .h(rect.height())
             .radius(rect.height() * 0.5),
-        rect,
         look,
         scale,
     )
@@ -1152,35 +1174,19 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     .motion(motion::SNAP)
 }
 
-/// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面与釉根。
-fn selection_pill(cell: El, rect: Rect, look: &Look, scale: f32) -> El {
-    let (top, bottom) = panel::selection_stops(look.palette.selected_bg, look.glass);
-    let (shine, root) = if look.glass {
-        (0xfff3cf, 0x6b4300)
-    } else {
-        (0xffffff, 0x000000)
-    };
-    let line = |y: f32, rgb_v: u32, alpha: u8| {
-        let inset = panel::capsule_inset(rect, rect.top + y) + scale;
-        el().absolute(inset, y)
-            .w((rect.width() - 2.0 * inset).max(0.0))
-            .h((1.0 * scale).max(1.0))
-            .fill(tint(rgb_v, alpha))
-    };
-    cell.gradient(rgb(top), rgb(bottom))
-        .child(line(
-            1.5 * scale,
-            shine,
-            if look.glass { 0x66 } else { 0x2e },
-        ))
-        .child(line(
-            rect.height() - 1.5 * scale,
-            root,
-            if look.glass { 0x4d } else { 0x26 },
-        ))
+/// 选中槽:发光胶囊。它自己是面板的光源:灯芯上白热下饱和,双层光晕
+/// 落在胎上——玻璃读作磨砂下的透光,瓷读作照亮黑瓷。灯色跟主题色走。
+/// 高对比度回归系统选中色的平涂:光源是装饰语义。
+fn selection_pill(cell: El, look: &Look, scale: f32) -> El {
+    if look.high_contrast {
+        return cell.fill(rgb(look.palette.selected_bg));
+    }
+    cell.gradient(look.glow.core_top, look.glow.core_bottom)
+        .shadow(0.0, 14.0 * scale, look.glow.core_bottom.alpha(0.30))
+        .shadow(0.0, 26.0 * scale, look.glow.core_bottom.alpha(0.16))
 }
 
-/// 固定条的一条候选:序号、文字与注音;选中垫黄釉胶囊。
+/// 固定条的一条候选:序号、文字与注音;选中垫发光胶囊,灯色跟主题色。
 fn item_el(
     s: &Candidate,
     geom: &Geom,
@@ -1248,11 +1254,11 @@ fn item_el(
                     .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
                     .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
-                    .color(rgb(if item.selected {
-                        look.palette.selected_text
+                    .color(if item.selected {
+                        look.selected_ink
                     } else {
-                        look.palette.text
-                    }))
+                        rgb(look.palette.text)
+                    })
                     .a11y_hidden(),
             ),
         );
@@ -2001,11 +2007,11 @@ fn cell_el(
                     .matched(format!("cand-{}-{index}-{candidate}", s.comp))
                     .matched_crop()
                     .font(TextStyle::new(geom.metrics.text, 400.0))
-                    .color(rgb(if selected {
-                        look.palette.selected_text
+                    .color(if selected {
+                        look.selected_ink
                     } else {
-                        look.palette.text
-                    }))
+                        rgb(look.palette.text)
+                    })
                     .a11y_hidden(),
             )
             .child(el().grow(1.0)),
