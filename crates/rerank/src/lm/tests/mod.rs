@@ -50,6 +50,32 @@ fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
 }
 
 #[test]
+fn packed_weights_preserve_keystroke_scoring_bits() {
+    let mut model = std::sync::Arc::into_inner(cache_test_model()).unwrap();
+    model.token.inner = super::Tensor::Quantized {
+        values: (-16i8..16).collect::<Vec<_>>().into(),
+        scales: vec![0.012_345; 8],
+    };
+    model.segment = Some(vec![0.1, -0.013, 0.000_04, 1.05]);
+    model.variant.window = 3;
+    model.variant.gelu_tanh = true;
+    model.variant.self_normalized = true;
+    let vocab = ["<pad>", "<unk>", "<bos>", "你", "好", "吗", "我", "很"].map(str::to_owned);
+    let mut packed = Vec::new();
+    model.pack(&vocab, &mut packed).unwrap();
+    let reopened = super::SentenceModel::load(&packed).unwrap();
+    let score = |m: &super::SentenceModel, context| {
+        m.score(context, &["你好", "我很好", "很"])
+            .into_iter()
+            .map(f32::to_bits)
+            .collect::<Vec<_>>()
+    };
+    for context in ["", "你好吗我很好"] {
+        assert_eq!(score(&reopened, context), score(&model, context));
+    }
+}
+
+#[test]
 fn cold_batch_shares_forward_positions_and_completed_runs() {
     let mut reranker = super::Reranker::new(cache_test_model());
     let positions = || super::FORWARD_POSITIONS.with(std::cell::Cell::get);

@@ -1,0 +1,15 @@
+[package]
+name = "rune-mermaid"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+description = "Native Mermaid diagrams for Rune: flowcharts, sequence diagrams and state diagrams, drawn with Rune shapes and text."
+
+[dependencies]
+rune = { workspace = true }
+
+[dev-dependencies]
+rune = { workspace = true, default-features = true }
+
+[lints]
+workspace = true

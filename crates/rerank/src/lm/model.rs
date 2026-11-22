@@ -3,14 +3,14 @@
 //! 逐层前向与批式评分在 [`crate::lm::forward`],数值内核在 [`crate::lm::math`];
 //! 这里只负责把权重文件变成模型,再把模型用到候选上。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::lm::ModelError;
 #[cfg(test)]
 use crate::lm::forward::Prefix;
 use crate::lm::forward::{BatchContext, BatchRow, HiddenState};
 use crate::lm::math::{LinearScratch, Matrix, dot, dot_i8};
-use crate::lm::weights::{Tensor, Weights};
+use crate::lm::weights::{PACKED_FORMAT, Pack, Tensor, Weights};
 #[cfg(test)]
 use crate::lm::{
     FORWARD_POSITIONS, LAST_ENCODED_LENGTH, LAST_ENCODED_POINTER, VOCABULARY_PROJECTIONS,
@@ -18,7 +18,7 @@ use crate::lm::{
 const UNK: u32 = 1;
 pub(crate) const BOS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Config {
     pub(crate) vocab: usize,
     pub(crate) n_layer: usize,
@@ -92,8 +92,22 @@ impl std::fmt::Debug for SentenceModel {
 
 impl SentenceModel {
     pub fn load(bytes: &[u8]) -> Result<Self, ModelError> {
-        let mut weights = Weights::parse(bytes)?;
-        let config: Config = serde_json::from_str(weights.metadata("config")?)
+        Self::load_weights(Weights::parse(bytes)?)
+    }
+
+    pub(crate) fn load_weights(mut weights: Weights) -> Result<Self, ModelError> {
+        #[derive(serde::Deserialize)]
+        struct VariantConfig {
+            context_chars: Option<usize>,
+            #[serde(default)]
+            gelu_tanh: bool,
+            #[serde(default)]
+            self_normalized: bool,
+        }
+        let config_json = weights.metadata("config")?;
+        let config: Config = serde_json::from_str(config_json)
+            .map_err(|error| ModelError::Header(error.to_string()))?;
+        let variant: VariantConfig = serde_json::from_str(config_json)
             .map_err(|error| ModelError::Header(error.to_string()))?;
         let vocabulary: Vec<String> = serde_json::from_str(weights.metadata("vocab")?)
             .map_err(|error| ModelError::Header(error.to_string()))?;
@@ -181,13 +195,71 @@ impl SentenceModel {
             blocks,
             final_weight: weights.take("ln_f.weight")?,
             final_bias: weights.take("ln_f.bias")?,
-            segment: None,
-            variant: Variant::default(),
+            segment: weights.take_optional("segment.weight")?,
+            variant: Variant {
+                window: variant.context_chars.unwrap_or(0),
+                gelu_tanh: variant.gelu_tanh,
+                self_normalized: variant.self_normalized,
+            },
             attribution,
             license,
         };
         model.check_geometry()?;
         Ok(model)
+    }
+
+    pub(crate) fn pack(
+        &self,
+        vocab: &[String],
+        out: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        let width = self.config.n_embd;
+        let mut pack = Pack::default();
+        pack.matrix("tok.weight", [self.config.vocab, width], &self.token.inner);
+        pack.float("pos.weight", &[self.config.context, width], &self.position);
+        if let Some(segment) = &self.segment {
+            // Folding this into positions would change the order of f32 additions.
+            pack.float("segment.weight", &[width], segment);
+        }
+        pack.float("ln_f.weight", &[width], &self.final_weight);
+        pack.float("ln_f.bias", &[width], &self.final_bias);
+        for (layer, block) in self.blocks.iter().enumerate() {
+            let name = |suffix| format!("blocks.{layer}.{suffix}");
+            for (suffix, values) in [
+                ("ln1.weight", &block.ln1_weight),
+                ("ln1.bias", &block.ln1_bias),
+                ("ln2.weight", &block.ln2_weight),
+                ("ln2.bias", &block.ln2_bias),
+                ("qkv.bias", &block.qkv_bias),
+                ("proj.bias", &block.proj_bias),
+                ("fc.bias", &block.fc_bias),
+                ("out.bias", &block.out_bias),
+            ] {
+                pack.float(&name(suffix), &[values.len()], values);
+            }
+            for (suffix, shape, matrix) in [
+                ("qkv.weight", [3 * width, width], &block.qkv_weight),
+                ("proj.weight", [width, width], &block.proj_weight),
+                ("fc.weight", [4 * width, width], &block.fc_weight),
+                ("out.weight", [width, 4 * width], &block.out_weight),
+            ] {
+                pack.matrix(&name(suffix), shape, &matrix.inner);
+            }
+        }
+        let mut config = serde_json::to_value(self.config)?;
+        config["context_chars"] = serde_json::json!(self.variant.window);
+        config["gelu_tanh"] = serde_json::json!(self.variant.gelu_tanh);
+        config["self_normalized"] = serde_json::json!(self.variant.self_normalized);
+        pack.write(
+            out,
+            BTreeMap::from([
+                ("format", PACKED_FORMAT.into()),
+                ("config", config.to_string()),
+                ("vocab", serde_json::to_string(vocab)?),
+                ("attribution", self.attribution.clone()),
+                ("license", self.license.clone()),
+            ]),
+        )
     }
 
     pub(crate) fn check_geometry(&self) -> Result<(), ModelError> {
@@ -202,6 +274,14 @@ impl SentenceModel {
                 ModelError::Geometry(format!("{name} holds {actual}, wanted {wanted}"))
             })
         };
+        if context == 0 || vocab == 0 || self.variant.window > context {
+            return Err(ModelError::Geometry(
+                "invalid vocabulary or context window".into(),
+            ));
+        }
+        if let Some(segment) = &self.segment {
+            expect("segment.weight", segment.len(), n_embd)?;
+        }
         let expect_matrix = |name: &str, matrix: &Matrix, rows: usize, columns: usize| {
             expect(name, matrix.len(), rows * columns)?;
             if let Tensor::Quantized { scales, .. } = &matrix.inner {
@@ -337,7 +417,9 @@ impl SentenceModel {
                 path
             })
             .collect();
-        let hidden = self.run_batch(&[BatchContext::of(&prefix)], &rows).hidden;
+        let hidden = self
+            .run_batch(&prefix, &[BatchContext::default()], &rows)
+            .hidden;
         let mut normalizers = Vec::with_capacity(rows.len());
         self.log_normalizers_into(&hidden, &mut normalizers);
 

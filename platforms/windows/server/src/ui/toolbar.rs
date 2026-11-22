@@ -64,7 +64,12 @@ pub(super) fn init(state: &Arc<State>) -> Option<Bar> {
             return None;
         }
     };
-    let surface = match Surface::new() {
+    let surface = if super::use_composition_candidate() {
+        Surface::new()
+    } else {
+        Surface::new_aux()
+    };
+    let surface = match surface {
         Ok(surface) => surface,
         Err(e) => {
             println!("工具栏建表面失败: {e}");

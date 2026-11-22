@@ -4,13 +4,17 @@
 //! 处理自己的脏标记。窗口过程仍在各自的模块里。某个窗口处理时崩了只停用
 //! 它,其余窗口照常工作;输入法本身只依赖管道,与界面无关。
 //!
-//! 候选窗在独立线程上(`ui::rune`),Rune 拥有自己的事件循环;这里只留
+//! 候选窗在独立线程上(`ui::candidate`);这里只留
 //! 一个隐形消息窗口,替 TSF 宿主接收「回落宿主激活/失活」的广播。
 
+pub(crate) mod candidate;
+mod candidate_chrome;
+mod candidate_light;
+mod candidate_material;
 mod hud;
 pub(crate) mod picker;
 mod place;
-pub(crate) mod rune;
+mod rune;
 mod toolbar;
 
 use std::sync::Arc;
@@ -25,6 +29,47 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::imp::{State, Wake};
+
+/// 候选窗后端:默认 CPU/Rune;LUEYING_CANDIDATE_COMPOSITION=1 回到原生 Composition。
+pub(crate) fn use_composition_candidate() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("LUEYING_CANDIDATE_COMPOSITION").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+    })
+}
+
+pub(crate) fn kick_candidate() {
+    if use_composition_candidate() {
+        candidate::kick();
+    } else {
+        rune::kick();
+    }
+}
+
+pub(crate) fn run_candidate(state: Arc<State>) {
+    if use_composition_candidate() {
+        candidate::run(state);
+    } else {
+        rune::run(state);
+    }
+}
+
+pub(crate) fn forward_candidate_mouse(event: candidate::FallbackMouse) {
+    if use_composition_candidate() {
+        candidate::forward_mouse(event);
+    } else {
+        use candidate::FallbackMouse as Native;
+        use rune::FallbackMouse as Rune;
+        rune::forward_mouse(match event {
+            Native::Down(x, y) => Rune::Down(x, y),
+            Native::Up => Rune::Up,
+            Native::Right(x, y) => Rune::Right(x, y),
+            Native::Wheel(d) => Rune::Wheel(d),
+            Native::Move(x, y) => Rune::Move(x, y),
+        });
+    }
+}
 
 /// 界面线程入口。窗口都建在这条线程上,循环不返回。
 pub(super) fn run(state: Arc<State>) {
@@ -75,7 +120,7 @@ impl Ui {
 }
 
 /// 隐形消息窗:顶替候选窗接收 TSF 宿主的「回落宿主激活」广播。
-/// 候选窗本体在 Rune 的事件循环里,收不了跨进程窗口消息。
+/// 候选窗本体在独立消息循环里。
 fn bridge_window(state: &Arc<State>) {
     use std::sync::OnceLock;
 

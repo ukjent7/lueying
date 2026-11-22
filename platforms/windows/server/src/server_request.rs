@@ -66,27 +66,12 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     ..SessionView::default()
                 },
                 ui_reply: None,
-                sync_rerank: state.sync_model.as_ref().map(|model| {
-                    Arc::new(Mutex::new(Rerank::with_metrics(
-                        model,
-                        Arc::clone(&state.rerank_sync_metrics),
-                    )))
-                }),
-                settled_rerank: state
-                    .settled_model
-                    .as_ref()
-                    .or(state.sync_model.as_ref())
-                    .map(|model| {
-                        Arc::new(Mutex::new(Rerank::with_metrics(
-                            model,
-                            Arc::clone(&state.rerank_settle_metrics),
-                        )))
-                    }),
                 host_draws: false,
                 private: false,
                 context_epoch: 0,
                 context_seq: 0,
                 settle_pick: None,
+                skip_25m_at: None,
             });
             state
                 .sessions
@@ -751,7 +736,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                     dict_source: state.dict_source.to_string(),
                     gram: state.gram.is_some(),
                     rerank8m: state.sync_model.is_some(),
-                    rerank25m: state.settled_model.is_some(),
+                    rerank25m: state.settled_resident.load(Ordering::Relaxed),
                     rerank_sync: RerankLatency {
                         count: sync_latency.count,
                         p50_us: sync_latency.p50_us,

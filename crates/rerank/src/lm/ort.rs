@@ -8,18 +8,18 @@ use std::collections::BTreeMap;
 
 use crate::lm::ModelError;
 
-pub(crate) enum OrtTensor {
+pub(crate) enum OrtTensor<'a> {
     Float(Vec<f32>),
-    Uint8(Vec<u8>),
+    Uint8(&'a [u8]),
 }
 
-pub(crate) struct OrtWeight {
+pub(crate) struct OrtWeight<'a> {
     pub shape: Vec<usize>,
-    pub data: OrtTensor,
+    pub data: OrtTensor<'a>,
 }
 
-pub(crate) struct OrtModel {
-    pub weights: BTreeMap<String, OrtWeight>,
+pub(crate) struct OrtModel<'a> {
+    pub weights: BTreeMap<String, OrtWeight<'a>>,
     /// 偏置张量名 → 动态量化矩阵的基名(不含 `_quantized`)。
     ///
     /// 图的节点里,`DynamicQuantizeMatMul` 的第五个输入是偏置,名字稳定地
@@ -193,8 +193,8 @@ impl<'a> Table<'a> {
     }
 }
 
-impl OrtModel {
-    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, ModelError> {
+impl<'a> OrtModel<'a> {
+    pub(crate) fn parse(bytes: &'a [u8]) -> Result<Self, ModelError> {
         if bytes.get(4..8) != Some(&b"ORTM"[..]) {
             return Err(bad("not an ORT flatbuffer"));
         }
@@ -249,7 +249,7 @@ impl OrtModel {
                         )
                     }
                     // 2 = UINT8
-                    2 => OrtTensor::Uint8(raw.bytes(0, count)?.to_vec()),
+                    2 => OrtTensor::Uint8(raw.bytes(0, count)?),
                     // int64 常量与推理无关。
                     _ => continue,
                 };
@@ -290,7 +290,7 @@ impl OrtModel {
         })
     }
 
-    pub(crate) fn weight(&self, name: &str) -> Result<&OrtWeight, ModelError> {
+    pub(crate) fn weight(&self, name: &str) -> Result<&OrtWeight<'a>, ModelError> {
         self.weights
             .get(name)
             .ok_or_else(|| ModelError::MissingTensor(name.to_owned()))

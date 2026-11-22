@@ -870,6 +870,8 @@ pub enum Surface {
     Solid,
     /// 材质背板:宿主提供底色,本文件只画内容。
     Glass,
+    /// 宿主已经画了实底和轮廓;控件仍按不透明材质绘制。
+    Painted,
 }
 
 /// 一帧候选面板的绘制输入。
@@ -891,6 +893,18 @@ pub struct Frame<'a> {
 /// 这是跨平台画布的基准视觉,macOS 直接使用;Windows 的 D2D 路径另有
 /// 动效与合成,不经过这里。布局与命中仍共用本文件的几何函数。
 pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
+    draw_with_items(canvas, frame, measure, true, true, true);
+}
+
+/// Allows a host to draw transitioning candidate cells separately.
+pub fn draw_with_items(
+    canvas: &mut dyn Canvas,
+    frame: &Frame<'_>,
+    measure: &dyn Measure,
+    items: bool,
+    arrow: bool,
+    rail: bool,
+) {
     let s = frame.metrics.scale();
     let width = panel_width(frame.spec, &frame.metrics, measure);
     let height = panel_height(frame.spec, &frame.metrics, measure);
@@ -912,7 +926,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
             s,
             tint(frame.palette.border_strong, 0x4d),
         );
-    } else {
+    } else if frame.surface == Surface::Solid {
         canvas.shadow_rrect(
             Rect::from_xywh(2.0 * s, 3.0 * s, width - 4.0 * s, height - 6.0 * s),
             (PANEL_RADIUS - 1.0) * s,
@@ -933,7 +947,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
         );
     }
 
-    if frame.spec.expand && matches!(frame.spec.layout, Layout::Wrap) {
+    if items && frame.spec.expand && matches!(frame.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;收起按钮浮在首行右端。
         let cells = grid_cells(frame.spec, &frame.metrics, measure);
         for (index, (item, rect)) in frame.spec.items.iter().zip(&cells).enumerate() {
@@ -948,11 +962,12 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
                 glass,
             );
         }
-        for (cell, rect) in frame
+        for (index, (cell, rect)) in frame
             .spec
             .grid
             .iter()
             .zip(cells.iter().skip(frame.spec.items.len()))
+            .enumerate()
         {
             draw_cell(
                 canvas,
@@ -961,11 +976,11 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
                 &cell.text,
                 *rect,
                 cell.selected,
-                false,
+                frame.hover == Some(frame.spec.items.len() + index),
                 glass,
             );
         }
-    } else {
+    } else if items {
         let rects = item_rects(frame.spec, &frame.metrics, measure);
         for (index, (item, rect)) in frame.spec.items.iter().zip(&rects).enumerate() {
             draw_item(canvas, frame, measure, item, *rect, index, glass);
@@ -990,7 +1005,7 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
     }
 
     // 右侧控制轨:一条很淡的竖槽把收起钮和滚动条收进同一件控件。
-    if let Some(rail) = rail_rect(frame.spec, &frame.metrics, measure, height) {
+    if rail && let Some(rail) = rail_rect(frame.spec, &frame.metrics, measure, height) {
         canvas.fill_rrect(rail, rail.width() * 0.5, Color::with_alpha(0x000000, 0x34));
         canvas.stroke_rrect(
             rail,
@@ -999,7 +1014,8 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
             Color::with_alpha(0xffffff, 0x14),
         );
     }
-    if let Some(scroll) = frame.spec.scroll
+    if rail
+        && let Some(scroll) = frame.spec.scroll
         && let Some((track, thumb)) =
             scrollbar_rects(scroll, width, height, &frame.metrics, frame.scroll_hover)
     {
@@ -1021,7 +1037,9 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
             .spec
             .scroll
             .is_some_and(|scroll| scroll.cap > 0 && scroll.len > scroll.cap);
-        if expanded && scrollable {
+        if !rail {
+            // The host supplies the button surface as part of its retained rail.
+        } else if expanded && scrollable {
             if frame.chev {
                 canvas.fill_rrect(
                     rect,
@@ -1037,6 +1055,9 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
             );
         } else if frame.chev {
             canvas.fill_rrect(rect, rect.height() * 0.5, tint(frame.palette.border, 0x4d));
+        }
+        if !arrow {
+            return;
         }
         let glyph = if expanded && scrollable {
             let size = 14.0 * s;
@@ -1072,10 +1093,34 @@ pub fn draw(canvas: &mut dyn Canvas, frame: &Frame<'_>, measure: &dyn Measure) {
 /// 选中槽:整行高的胶囊,上亮下深的釉面 + 贴边镜面 + 底缘釉根。
 /// 固定条、竖排与棋盘共用;形状与平台无关,材质由 glass 决定。
 fn draw_selection(canvas: &mut dyn Canvas, frame: &Frame<'_>, rect: Rect, glass: bool) {
-    let s = frame.metrics.scale();
+    draw_selection_capsule(
+        canvas,
+        rect,
+        frame.metrics.scale(),
+        frame.palette.selected_bg,
+        glass,
+        255,
+    );
+}
+
+/// The same finish is used at rest and while the selected capsule is in flight.
+pub fn draw_selection_capsule(
+    canvas: &mut dyn Canvas,
+    rect: Rect,
+    s: f32,
+    selected_bg: u32,
+    glass: bool,
+    alpha: u8,
+) {
+    let fade = |a: u8| (u16::from(a) * u16::from(alpha) / 255) as u8;
     let radius = rect.height() * 0.5;
-    let (top, bottom) = selection_stops(frame.palette.selected_bg, glass);
-    canvas.fill_rrect_vertical(rect, radius, Color::opaque(top), Color::opaque(bottom));
+    let (top, bottom) = selection_stops(selected_bg, glass);
+    canvas.fill_rrect_vertical(
+        rect,
+        radius,
+        Color::with_alpha(top, alpha),
+        Color::with_alpha(bottom, alpha),
+    );
     let (shine, root) = if glass {
         (0xfff3cf, 0x6b4300)
     } else {
@@ -1087,7 +1132,7 @@ fn draw_selection(canvas: &mut dyn Canvas, frame: &Frame<'_>, rect: Rect, glass:
         Point::new(rect.left + inset, top_y),
         Point::new(rect.right - inset, top_y),
         s,
-        Color::with_alpha(shine, if glass { 0x66 } else { 0x2e }),
+        Color::with_alpha(shine, fade(if glass { 0x66 } else { 0x2e })),
     );
     let bottom_y = rect.bottom - 1.5 * s;
     let inset = capsule_inset(rect, bottom_y) + s;
@@ -1095,7 +1140,7 @@ fn draw_selection(canvas: &mut dyn Canvas, frame: &Frame<'_>, rect: Rect, glass:
         Point::new(rect.left + inset, bottom_y),
         Point::new(rect.right - inset, bottom_y),
         s,
-        Color::with_alpha(root, if glass { 0x4d } else { 0x26 }),
+        Color::with_alpha(root, fade(if glass { 0x4d } else { 0x26 })),
     );
 }
 

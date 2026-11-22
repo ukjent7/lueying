@@ -226,7 +226,10 @@ impl Engine {
                 )
             }
             Key::Enter => {
-                let raw = self.comp.take().map(|c| c.raw).unwrap_or_default();
+                let raw = self
+                    .take_finished_composition()
+                    .map(|c| c.raw)
+                    .unwrap_or_default();
                 self.comp_committed = false;
                 self.phrase = None;
                 self.cands.clear();

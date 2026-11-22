@@ -19,13 +19,13 @@ use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::color::srgb_decode;
 use rune::{
-    App, AppSpec, Color, Cursor, Edge, El, OverlayHandle, OverlayInput, OverlayOptions,
-    OverlayPlacement, OverlaySpec, Pixels, Spring, SurfaceFit, TextStyle, Transition, Tx, col, el,
-    row, text,
+    App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput, OverlayOptions,
+    OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle, Transition, Tx,
+    col, el, row, text,
 };
 use rune_text::TextSystem;
 
-use lueying_server::config::{UiCeramic, UiLayout, UiMaterial};
+use lueying_server::config::{UiLayout, UiMaterial};
 
 use crate::imp;
 use crate::ui::place;
@@ -176,6 +176,7 @@ struct Candidate {
     ink: RefCell<TextSystem>,
     /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
     backdrop: Option<Pixels>,
+    backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -184,8 +185,6 @@ struct Candidate {
     material: UiMaterial,
     /// 玻璃磨砂程度 0..=1;高透到磨砂连续可调。
     frost: f32,
-    /// 陶瓷胎色;玻璃材质忽略它。
-    ceramic: UiCeramic,
     /// 私密字段标记;只影响扩展发布,绘制照常。
     private: bool,
     visible: bool,
@@ -206,11 +205,11 @@ impl Candidate {
             fx: Fx::default(),
             ink: RefCell::new(TextSystem::new(&[], ("Noto Sans SC", "Noto Sans SC"))),
             backdrop: None,
+            backdrop_read: None,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
             frost: 0.0,
-            ceramic: UiCeramic::White,
             private: false,
             visible: false,
             scale: 1.0,
@@ -222,7 +221,11 @@ impl Candidate {
 
     /// 命中交互是否可用:激活会话且候选窗在显示。
     fn interactive(&self) -> bool {
-        self.state.active.load(Ordering::Relaxed) != 0 && place::composing(&self.state)
+        self.state.active.load(Ordering::Relaxed) != 0
+            && self
+                .state
+                .active_published()
+                .is_some_and(|published| published.composing && !published.host_draws)
     }
 
     /// 弹性动效开关;配置重载后立即生效。
@@ -240,7 +243,8 @@ impl Candidate {
     }
 
     fn live_glass(&self, high_contrast: bool) -> bool {
-        self.material.is_glass()
+        !self.private
+            && self.material.is_glass()
             && self.visible
             && !self.fx.fading()
             && self.glass_wanted(high_contrast)
@@ -323,44 +327,6 @@ fn glass_ink(mut p: panel::Palette) -> panel::Palette {
     p
 }
 
-/// 白瓷的墨色:不透明暖象牙胎配深墨,选中槽同一枚平涂亮黄。
-fn ceramic_white_ink(mut p: panel::Palette) -> panel::Palette {
-    p.bg = 0xefe9dd;
-    p.window_bg = 0xefe9dd;
-    p.surface_alt = 0xe6dfd0;
-    p.border = 0xd6cdbb;
-    p.border_strong = 0xc4bba8;
-    p.text = 0x3a352c;
-    p.text_secondary = 0x6b6355;
-    p.text_tertiary = 0x8a8172;
-    p.hover = 0x3a352c;
-    p.accent = 0xd9a92e;
-    p.on_accent = 0x2b2110;
-    p.selected_bg = 0xfac738;
-    p.selected_text = 0x2b2110;
-    p.accent_text = 0x7a5608;
-    p
-}
-
-/// 青花瓷的墨色:不透明卵白胎微泛青,藏青墨配钴蓝釉;选中槽是青花蓝。
-fn ceramic_blue_ink(mut p: panel::Palette) -> panel::Palette {
-    p.bg = 0xf2f6f3;
-    p.window_bg = 0xf2f6f3;
-    p.surface_alt = 0xe8eeeb;
-    p.border = 0xc3d2d8;
-    p.border_strong = 0xafc3cc;
-    p.text = 0x1d3a5f;
-    p.text_secondary = 0x4a6385;
-    p.text_tertiary = 0x7d92ac;
-    p.hover = 0x1d3a5f;
-    p.accent = 0x2e5da0;
-    p.on_accent = 0xf5f8f6;
-    p.selected_bg = 0x2e5da0;
-    p.selected_text = 0xf5f8f6;
-    p.accent_text = 0x1d4a85;
-    p
-}
-
 /// 黑瓷的墨色:不透明暖黑胎配暖白墨,与玻璃同墨不同底。
 fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
     p.bg = 0x2e2a24;
@@ -382,31 +348,16 @@ fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
 
 /// 当前帧的调色板:玻璃固定暖墨烟熏,实底跟系统主题。
 fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palette {
-    let look = match (s.material, s.ceramic) {
-        (UiMaterial::Ceramic, UiCeramic::White | UiCeramic::Blue) => {
-            lueying_server::theme::Appearance::Light
-        }
-        _ => lueying_server::theme::Appearance::Dark,
-    };
+    let look = lueying_server::theme::Appearance::Dark;
     let colors = match s.script_accent {
         Some(v) if !high_contrast => lueying_server::theme::colors_with_accent(look, v),
         _ => lueying_server::theme::colors_with(look, accent),
     };
     let palette = lueying_server::theme::palette(colors);
-    match (s.material, s.ceramic) {
-        (UiMaterial::Ceramic, UiCeramic::White) => ceramic_white_ink(palette),
-        (UiMaterial::Ceramic, UiCeramic::Blue) => ceramic_blue_ink(palette),
-        (UiMaterial::Ceramic, UiCeramic::Black) => ceramic_black_ink(palette),
-        _ => glass_ink(palette),
+    match s.material {
+        UiMaterial::Ceramic => ceramic_black_ink(palette),
+        UiMaterial::Glass => glass_ink(palette),
     }
-}
-
-/// 取证开关:%TEMP% 里有这个文件就关掉「排除捕获」,截图能看到候选窗;
-/// 平时不建文件,录屏/截图里候选窗照旧隐身。
-fn capture_exclusion() -> bool {
-    !std::env::temp_dir()
-        .join("lueying-rune-capture-off")
-        .exists()
 }
 
 /// 入口:建 Rune 应用与 overlay;事件循环不返回。
@@ -431,28 +382,27 @@ pub(crate) fn run(state: Arc<imp::State>) {
     overlay.interactive = true;
     let (x, y) = place::park_point();
     let ((ox, oy), ps) = primary_basis();
-    let handle = app.overlay(
-        overlay
-            .options(OverlayOptions {
-                placement: Some(OverlayPlacement::Rect {
-                    x: (x - ox) as f32 / ps,
-                    y: (y - oy) as f32 / ps,
-                    width: 480.0,
-                    height: WRAP_WINDOW_H,
-                }),
-                keys: rune::KeyPolicy::None,
-                // 只有标了 hit 的面板区域拦指针;条外透明区原生穿透给宿主。
-                input: OverlayInput::Regions,
-                exclude_from_capture: capture_exclusion(),
-                prewarm: true,
-                ..Default::default()
-            })
-            // 隐藏时归还 GPU 表面:复显时 surface 重建,首帧必是新内容;
-            // 否则 DComp 视觉层留着上一帧,会闪上一组句的候选页或展开棋盘。
-            .release_gpu_when_hidden()
-            .poll(poll),
-        Candidate::with_state(state),
-    );
+    let overlay = overlay
+        .options(OverlayOptions {
+            placement: Some(OverlayPlacement::Rect {
+                x: (x - ox) as f32 / ps,
+                y: (y - oy) as f32 / ps,
+                width: 480.0,
+                height: WRAP_WINDOW_H,
+            }),
+            keys: rune::KeyPolicy::None,
+            // 只有标了 hit 的面板区域拦指针;条外透明区原生穿透给宿主。
+            input: OverlayInput::Regions,
+            exclude_from_capture: true,
+            prewarm: true,
+            ..Default::default()
+        })
+        // 隐藏时归还 GPU 表面:复显时 surface 重建,首帧必是新内容;
+        // 否则 DComp 视觉层留着上一帧,会闪上一组句的候选页或展开棋盘。
+        .release_gpu_after(Duration::from_secs(2))
+        .poll(poll)
+        .cpu_only();
+    let handle = app.overlay(overlay, Candidate::with_state(state));
     let _ = HANDLE.set(handle);
     app.run();
 }
@@ -506,9 +456,10 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         let cfg = s.state.config.read().unwrap_or_else(|p| p.into_inner());
         s.material = cfg.ui_material;
         s.frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
-        s.ceramic = cfg.ui_ceramic;
         drop(cfg);
         place(s, tx);
+        // The standalone measurer is not driven by Runtime's layout commits.
+        s.ink.get_mut().end_commit();
         changed = true;
     }
     // 淡出到期停靠;摆位时已排好这一次唤醒。
@@ -518,9 +469,19 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         return true;
     }
     if s.live_glass(high_contrast) {
-        capture_backdrop(s, high_contrast);
-        changed = true;
-        tx.wake_after(LIVE_TICK);
+        let now = Instant::now();
+        let rect = s.fx.placement.panel;
+        if s.backdrop_read
+            .is_none_or(|(last, area)| area != rect || now.duration_since(last) >= LIVE_TICK)
+        {
+            s.backdrop_read = Some((now, rect));
+            changed |= capture_backdrop(s);
+        }
+        let (last, _) = s.backdrop_read.unwrap();
+        tx.wake_after((last + LIVE_TICK).saturating_duration_since(Instant::now()));
+    } else if s.private || !s.glass_wanted(high_contrast) || !s.material.is_glass() {
+        s.backdrop_read = None;
+        changed |= s.backdrop.take().is_some();
     }
     changed
 }
@@ -804,6 +765,7 @@ fn park(s: &mut Candidate) {
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = None;
     s.backdrop = None;
+    s.backdrop_read = None;
     publish_state(s, None);
 }
 
@@ -821,21 +783,20 @@ fn show(s: &mut Candidate) {
 /// 抓取面板矩形的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
 /// 只捕面板区:它是 backdrop_blur 的唯一底图,面板外的空带不铺
 /// 像素,直接透出真桌面,任何捕获残影都到不了那儿。
-fn capture_backdrop(s: &mut Candidate, high_contrast: bool) {
-    if !s.material.is_glass() || !s.glass_wanted(high_contrast) {
-        s.backdrop = None;
-        return;
-    }
+fn capture_backdrop(s: &mut Candidate) -> bool {
     let (x, y, w, h) = s.fx.placement.panel;
     if w <= 0 || h <= 0 {
-        return;
+        return false;
     }
     if let Some((width, height, rgba)) = capture_rect(x, y, w as u32, h as u32) {
         // 流式像素通道:同一张图原地换内容,Rune 唤醒显示它的窗口。
         // 无解码 worker、无 pending 空帧,同尺寸帧复用图集槽位。
-        let pixels = s.backdrop.get_or_insert_with(Pixels::new);
-        pixels.set(width, height, rgba);
+        return s
+            .backdrop
+            .get_or_insert_with(Pixels::new)
+            .set_if_changed(width, height, rgba);
     }
+    false
 }
 
 /// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
@@ -914,7 +875,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 材质判定与背板是否就位解耦:第一帧没背板也只是少一层模糊,
     // 墨色与选中胶囊从头到尾是同一套,不会闪变材质。
-    let glass = s.material.is_glass() && s.glass_wanted(high_contrast);
+    let glass = !s.private && s.material.is_glass() && s.glass_wanted(high_contrast);
     // 高透到磨砂的连续插值:压光与模糊同步加重。
     let frost = s.frost.clamp(0.0, 1.0);
     let frost_blur = GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * frost;
@@ -974,18 +935,6 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
                 .fill(frost_fill)
                 .gradient(frost_top, frost_bottom)
                 .border(1.0 * scale, rgba(0xffffff, 0.14));
-        }
-        // 白瓷:不透明暖象牙胎,釉面竖向明暗 + 瓷缘描边;不捕背板。
-        (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::White => {
-            body = body
-                .gradient(rgb(0xf6f0e6), rgb(0xe4ddd0))
-                .border(1.0 * scale, rgb(palette.border));
-        }
-        // 青花瓷:不透明卵白胎泛青,釉面同构,瓷缘描边带蓝灰。
-        (UiMaterial::Ceramic, _) if s.ceramic == UiCeramic::Blue => {
-            body = body
-                .gradient(rgb(0xf8fbf9), rgb(0xe7eeeb))
-                .border(1.0 * scale, rgb(palette.border));
         }
         // 黑瓷:不透明暖黑胎,同构釉面。
         (UiMaterial::Ceramic, _) => {
@@ -1307,7 +1256,11 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .on_drag(move |s: &mut Candidate, drag, _| match drag.phase {
                 rune::Phase::Down => {
                     let [x, y] = drag.window_point();
-                    if x >= cap.left && x <= cap.left + cap.width() && y >= cap.top && y <= cap.top + cap.height() {
+                    if x >= cap.left
+                        && x <= cap.left + cap.width()
+                        && y >= cap.top
+                        && y <= cap.top + cap.height()
+                    {
                         s.expand_toggle();
                     } else {
                         s.scroll_grab_at(x, y);
@@ -1337,7 +1290,11 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             }
         }
         // 箭头折线钉在顶帽(cap)内,再换算进元素(track)本地坐标。
-        let turn = if geom.spec.expand { std::f32::consts::PI } else { 0.0 };
+        let turn = if geom.spec.expand {
+            std::f32::consts::PI
+        } else {
+            0.0
+        };
         let [a, b, c] = panel::chevron_points_turn(cap, turn, scale);
         let (a, b, c) = (
             (a.x - track.left, a.y - track.top),
@@ -1345,27 +1302,31 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             (c.x - track.left, c.y - track.top),
         );
         let (color, width) = (look.tint(look.palette.text_secondary, 0xff), 1.6 * scale);
-        chev = chev
-            .child(segment_el(a, b, width, color))
-            .child(segment_el(b, c, width, color));
+        chev = chev.shape(chevron_segment(
+            chevron_segment(Shape::new(), a, b, width, color),
+            b,
+            c,
+            width,
+            color,
+        ));
         layer = layer.child(chev);
     }
     layer
 }
 
-/// 两点之间的一段圆帽线;Rune 没有裸线原语,用细圆角矩形旋转到位。
-fn segment_el(a: (f32, f32), b: (f32, f32), width: f32, color: Color) -> El {
+/// Preserve the former rotated capsule's outer endpoints with the vector stroke's round caps.
+fn chevron_segment(shape: Shape, a: (f32, f32), b: (f32, f32), width: f32, color: Color) -> Shape {
     let dx = b.0 - a.0;
     let dy = b.1 - a.1;
     let len = (dx * dx + dy * dy).sqrt().max(0.001);
-    let cx = (a.0 + b.0) * 0.5;
-    let cy = (a.1 + b.1) * 0.5;
-    el().absolute(cx - len * 0.5, cy - width * 0.5)
-        .w(len)
-        .h(width)
-        .radius(width * 0.5)
-        .fill(color)
-        .rotate(dy.atan2(dx))
+    let t = (width * 0.5 / len).min(0.49);
+    shape.line(
+        [a.0 + dx * t, a.1 + dy * t],
+        [b.0 - dx * t, b.1 - dy * t],
+        width,
+        LineCap::Round,
+        color,
+    )
 }
 
 /// 右键菜单:固定形状,外层 10px、行内缩 4px;玻璃上也用实底。

@@ -7,6 +7,7 @@
 use lueying_ext::manifest::metrics::ExtMetrics;
 use lueying_protocol::EngineStatus;
 
+use crate::settings::ext;
 use crate::settings::model::Id;
 use crate::settings::schema::ControlDef;
 use lueying_server::config::AppConfig;
@@ -32,7 +33,6 @@ pub mod ids {
     pub const LAYOUT: &str = "layout";
     pub const MATERIAL: &str = "material";
     pub const FROST: &str = "glass-frost";
-    pub const CERAMIC: &str = "ceramic";
     pub const FONT: &str = "font";
     pub const ACCENT: &str = "accent";
     pub const EFFECTS_TOGGLE: &str = "effects-toggle";
@@ -42,6 +42,8 @@ pub mod ids {
     pub const IMPORT_LUEXT: &str = "ext-import";
     pub const CONSENT: &str = "consent";
     pub const EXT_METRICS: &str = "ext-metrics";
+    pub const EXT_STORE: &str = "ext-store";
+    pub const EXT_INSTALLED: &str = "ext-installed";
     pub const OCR: &str = "ocr";
     pub const OCR_DIR: &str = "ocr-dir";
     pub const PREDICT: &str = "predict";
@@ -59,8 +61,6 @@ pub mod ids {
     pub const CHANNEL: &str = "channel";
     pub const CLOSE: &str = "close";
     pub const SAVE: &str = "save";
-    /// 扩展声明式设置最多渲染多少个字段。
-    pub const EXT_FIELDS: usize = 16;
     /// 已安装扩展列表最多渲染多少项。
     pub const SCRIPT_SLOTS: usize = 16;
 
@@ -151,27 +151,15 @@ pub mod ids {
         (slot < APP_SLOTS).then_some(slot)
     }
 
-    /// 第 `slot` 个扩展设置字段的控件前缀。
-    pub fn ext_field(slot: usize) -> &'static str {
-        match slot {
-            0 => "ext-0",
-            1 => "ext-1",
-            2 => "ext-2",
-            3 => "ext-3",
-            4 => "ext-4",
-            5 => "ext-5",
-            6 => "ext-6",
-            7 => "ext-7",
-            8 => "ext-8",
-            9 => "ext-9",
-            10 => "ext-10",
-            11 => "ext-11",
-            12 => "ext-12",
-            13 => "ext-13",
-            14 => "ext-14",
-            15 => "ext-15",
-            _ => "ext-0",
-        }
+    const EXT_FIELD_PREFIX: &str = "ext:";
+
+    /// 清单的扩展 id 与设置键都不含 `:`，两者一起标识卡片上的控件。
+    pub fn ext_field(id: &str, key: &str) -> String {
+        format!("{EXT_FIELD_PREFIX}{id}:{key}")
+    }
+
+    pub(crate) fn ext_field_parts(base: &str) -> Option<(&str, &str)> {
+        base.strip_prefix(EXT_FIELD_PREFIX)?.split_once(':')
     }
 }
 
@@ -233,6 +221,7 @@ pub enum Action {
     ImportLuext,
     ApproveExtension,
     RefreshExtMetrics,
+    OpenExtension(String),
     OpenOcrModels,
     /// 编辑扩展密钥:扩展 id、设置键、显示标题。
     EditSecret(String, String, String),
@@ -370,27 +359,9 @@ impl Settings {
             return None;
         }
         if let Some(slot) = ids::script_slot(&id.base) {
-            let script = self.scripts.get(slot)?;
-            let script_id = script.id.clone();
-            if let Some(index) = self
-                .cfg
-                .extensions
-                .iter()
-                .position(|candidate| candidate == &script_id)
-            {
-                self.cfg.extensions.remove(index);
-                self.clear_notice();
-            } else {
-                let displaced = self.displace_same_category(&script_id);
-                self.cfg.extensions.push(script_id);
-                self.clear_notice();
-                if !displaced.is_empty() {
-                    self.say(
-                        Notice::Info,
-                        format!("已停用同类扩展:{}", displaced.join("、")),
-                    );
-                }
-            }
+            let script_id = self.scripts.get(slot)?.id.clone();
+            let enabled = self.cfg.extensions.contains(&script_id);
+            self.set_extension_enabled(&script_id, !enabled);
             return None;
         }
         if let Some(slot) = ids::app_punct_slot(&id.base) {
@@ -432,24 +403,27 @@ impl Settings {
             self.clear_notice();
             return None;
         }
-        if let Some(slot) = crate::settings::ext::slot(&id.base) {
-            let field = self
-                .ext_fields()
-                .into_iter()
-                .find(|field| field.slot == slot)?;
-            if field.is_secret() {
+        if let Some(field) = ext::Field::find(&self.scripts, &id.base) {
+            if field.setting.is_secret() {
                 return Some(Action::EditSecret(
-                    field.ext.clone(),
-                    field.key.clone(),
-                    field.title.clone(),
+                    field.script.id.clone(),
+                    field.setting.key.clone(),
+                    field.setting.title.clone(),
                 ));
             }
-            if crate::settings::ext::apply(&mut self.cfg, &field, id.index) {
+            if field.apply(&mut self.cfg, id.index) {
                 self.clear_notice();
             }
             return None;
         }
         match id.base.as_str() {
+            ids::EXT_STORE => crate::ext_store::OFFICIAL
+                .get(id.index)
+                .map(|entry| Action::OpenExtension(entry.id.to_string())),
+            ids::EXT_INSTALLED => self
+                .scripts
+                .get(id.index)
+                .map(|entry| Action::OpenExtension(entry.id.clone())),
             ids::OCR_DIR => Some(Action::OpenOcrModels),
             ids::UPDATE => Some(Action::CheckUpdate),
             ids::SCRIPTS => Some(Action::ChooseScript),
@@ -474,6 +448,26 @@ impl Settings {
         }
     }
 
+    pub(crate) fn set_extension_enabled(&mut self, id: &str, enabled: bool) {
+        if !self.scripts.iter().any(|script| script.id == id) {
+            return;
+        }
+        if !enabled {
+            self.cfg.extensions.retain(|candidate| candidate != id);
+            self.clear_notice();
+        } else if !self.cfg.extensions.iter().any(|candidate| candidate == id) {
+            let displaced = self.displace_same_category(id);
+            self.cfg.extensions.push(id.to_string());
+            self.clear_notice();
+            if !displaced.is_empty() {
+                self.say(
+                    Notice::Info,
+                    format!("已停用同类扩展:{}", displaced.join("、")),
+                );
+            }
+        }
+    }
+
     /// 左右键改分段组的值;返回有没有改成。
     pub fn shift(&mut self, id: &Id, delta: isize) -> bool {
         if let Some(def) = crate::settings::schema::find(&id.base) {
@@ -491,22 +485,14 @@ impl Settings {
             self.activate(&Id::new(id.base.clone(), next));
             return true;
         }
-        if let Some(slot) = crate::settings::ext::slot(&id.base) {
-            let Some(field) = self
-                .ext_fields()
-                .into_iter()
-                .find(|field| field.slot == slot)
-            else {
-                return false;
-            };
-            let crate::settings::ext::Kind::Choice { options, selected } = &field.kind else {
-                return false;
-            };
-            if options.is_empty() {
+        if let Some(field) = ext::Field::find(&self.scripts, &id.base) {
+            let count = field.setting.options().len();
+            if count == 0 {
                 return false;
             }
-            let next = (*selected as isize + delta).rem_euclid(options.len() as isize) as usize;
-            crate::settings::ext::apply(&mut self.cfg, &field, next);
+            let next =
+                (field.selected(&self.cfg) as isize + delta).rem_euclid(count as isize) as usize;
+            field.apply(&mut self.cfg, next);
             self.clear_notice();
             return true;
         }
@@ -542,13 +528,13 @@ impl Settings {
             .unwrap_or(0.0)
     }
 
-    /// 这个前缀是不是分段组。
+    /// 这个前缀是否可走左右键切换;扩展字段的实际类型由 `shift` 查清单。
     pub fn is_segment(base: &str) -> bool {
         crate::settings::schema::find(base).is_some_and(|def| {
             def.ui
                 .as_ref()
                 .is_some_and(|ui| matches!(&ui.control, ControlDef::Segment { .. }))
-        }) || crate::settings::ext::slot(base).is_some()
+        }) || ids::ext_field_parts(base).is_some()
     }
 
     /// 分段组当前选中的是第几格。
@@ -560,14 +546,7 @@ impl Settings {
                 ControlDef::Slider { .. } => return 0,
             }
         }
-        if let Some(slot) = crate::settings::ext::slot(base) {
-            return self
-                .ext_fields()
-                .into_iter()
-                .find(|field| field.slot == slot)
-                .map_or(0, |field| field.selected());
-        }
-        0
+        ext::Field::find(&self.scripts, base).map_or(0, |field| field.selected(&self.cfg))
     }
 
     /// 切到左栏的某一页;搜索状态随之清空。

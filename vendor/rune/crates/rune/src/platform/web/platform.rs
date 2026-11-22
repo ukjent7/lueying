@@ -1,0 +1,32 @@
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(module = "/src/platform/web/platform.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = writeClipboard)]
+    pub(crate) fn write_clipboard(text: &str, html: &str, png: &[u8]) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = readClipboard)]
+    pub(crate) fn read_clipboard(rich: bool, image: bool, max_image: u32) -> js_sys::Promise;
+    #[wasm_bindgen(catch, js_name = openLink)]
+    pub(crate) fn open_link(url: &str) -> Result<(), JsValue>;
+    /// `[absolute href, on this page's origin]`.
+    #[wasm_bindgen(catch, js_name = resolveLink)]
+    pub(crate) fn resolve_link(url: &str) -> Result<js_sys::Array, JsValue>;
+    #[wasm_bindgen(catch, js_name = assignLink)]
+    pub(crate) fn assign_link(href: &str) -> Result<(), JsValue>;
+    /// Resolves to the `Uint8Array` body of `url`, relative to the page.
+    #[wasm_bindgen(js_name = fetchBytes)]
+    pub(crate) fn fetch_bytes(url: &str) -> js_sys::Promise;
+    /// `url` resolved against `base`.
+    #[wasm_bindgen(js_name = resolveUrl)]
+    pub(crate) fn resolve_url(url: &str, base: &str) -> String;
+    #[wasm_bindgen(js_name = objectUrl)]
+    pub(crate) fn object_url(bytes: &[u8], kind: &str) -> String;
+    #[wasm_bindgen(js_name = revokeUrl)]
+    pub(crate) fn revoke_url(url: &str);
+    /// Sets the canvas's CSS `cursor`, or clears it when `css` is empty.
+    #[wasm_bindgen(js_name = setCursor)]
+    pub(crate) fn set_cursor(canvas: &web_sys::HtmlCanvasElement, css: &str);
+    #[wasm_bindgen(js_name = nextIdle)]
+    pub(crate) fn next_idle(timeout: u32) -> js_sys::Promise;
+    pub(super) fn viewport(canvas: &web_sys::HtmlCanvasElement, callback: &js_sys::Function, embedded: bool) -> js_sys::Function;
+}

@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::model::Id;
+use crate::settings::model::{Control, Id};
 use crate::settings::schema::PageId;
 use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
 use lueying_server::config::OcrBackend;
@@ -220,30 +220,35 @@ fn app_override_buttons_cycle_three_states() {
 
 #[test]
 fn secret_extension_field_opens_editor() {
-    use lueying_ext::manifest::Setting;
+    use lueying_ext::manifest::{Setting, SettingValue};
     let mut script = ScriptEntry::new("demo", "演示");
     script.settings = vec![Setting {
         key: "token".to_string(),
         title: "访问令牌".to_string(),
         detail: "只保存在本机".to_string(),
         kind: "secureText".to_string(),
-        default: None,
+        default: Some(SettingValue::Text("unused-default".into())),
         options: Vec::new(),
     }];
     let mut settings = Settings {
         scripts: vec![script],
         ..Settings::default()
     };
-    settings.cfg.extensions = vec!["demo".to_string()];
-    settings.set_page(PageId::Extensions);
+    let groups = settings.extension_settings("demo");
+    assert!(!format!("{groups:?}").contains("unused-default"));
+    let Control::Buttons { items } = &groups[0].rows[0].control else {
+        panic!("应显示密钥编辑按钮");
+    };
     assert_eq!(
-        settings.activate(&Id::new(ids::ext_field(0), 0)),
+        settings.activate(&items[0].id),
         Some(Action::EditSecret(
             "demo".to_string(),
             "token".to_string(),
             "访问令牌".to_string()
         ))
     );
+    assert!(settings.cfg.ext_settings.is_empty());
+    assert!(settings.cfg.extensions.is_empty());
 }
 
 fn ext_entry() -> ScriptEntry {
@@ -278,28 +283,107 @@ fn extension_settings_render_and_activate() {
     };
     settings.cfg.extensions = vec!["shot".to_string()];
     settings.set_page(PageId::Extensions);
-    let toggle = ids::ext_field(0);
-    let choice = ids::ext_field(1);
-    assert!(Settings::is_segment(toggle));
-    assert_eq!(settings.selected(choice), 1);
+    let groups = settings.extension_settings("shot");
+    let rows = &groups[0].rows;
+    let Control::Toggle { id: toggle, .. } = &rows[0].control else {
+        panic!("通知应为开关");
+    };
+    let Control::Segment { id: choice, .. } = &rows[1].control else {
+        panic!("识别质量应为单选");
+    };
+    assert!(Settings::is_segment(&choice.base));
+    assert_eq!(settings.selected(&choice.base), 1);
 
-    assert_eq!(settings.activate(&Id::new(toggle, 0)), None);
+    assert_eq!(settings.activate(toggle), None);
     assert_eq!(
         settings.cfg.ext_settings["shot"]["notify"],
         serde_json::json!(false)
     );
-    settings.activate(&Id::new(choice, 0));
+    settings.activate(choice);
     assert_eq!(
         settings.cfg.ext_settings["shot"]["quality"],
         serde_json::json!("fast")
     );
-    assert!(settings.shift(&Id::new(choice, 0), 1));
+    assert!(settings.shift(choice, 1));
     assert_eq!(
         settings.cfg.ext_settings["shot"]["quality"],
         serde_json::json!("high"),
         "左右键在选项里绕回"
     );
-    assert!(!settings.shift(&Id::new(toggle, 0), 1), "开关不吃左右键");
+    assert!(!settings.shift(toggle, 1), "开关不吃左右键");
+}
+
+#[test]
+fn installed_cards_keep_all_fields_and_edit_only_their_own_keys() {
+    use lueying_ext::manifest::{EXT_API, Manifest};
+    use serde_json::json;
+
+    fn installed(id: &str) -> ScriptEntry {
+        let fields: Vec<_> = (0..32)
+            .map(|n| {
+                json!({
+                    "key": format!("mode-{n}"), "title": format!("{id} {n}"),
+                    "type": "choice", "options": ["auto", "manual"]
+                })
+            })
+            .collect();
+        let manifest = json!({
+            "api": EXT_API, "id": id, "name": id, "version": "1.0.0",
+            "wasm": "extension.wasm", "settings": fields,
+        });
+        let manifest = Manifest::parse(manifest.to_string().as_bytes()).unwrap();
+        let mut script = ScriptEntry::new(manifest.id, manifest.name);
+        script.settings = manifest.settings;
+        script
+    }
+
+    let mut settings = Settings {
+        scripts: vec![installed("first"), installed("second")],
+        ..Settings::default()
+    };
+    settings.cfg.extensions = vec!["first".into(), "second".into()];
+    let last = |settings: &Settings, id: &str| {
+        let groups = settings.extension_settings(id);
+        let [group] = groups.as_slice() else {
+            panic!("{id} 应有一组设置");
+        };
+        assert_eq!(group.rows.len(), 32);
+        assert_eq!(group.rows[31].label, format!("{id} 31"));
+        let Control::Segment { id, .. } = &group.rows[31].control else {
+            panic!("模式应为单选");
+        };
+        id.clone()
+    };
+    let first = last(&settings, "first");
+    let second = last(&settings, "second");
+    assert_ne!(first, second);
+
+    settings.cfg.extensions.pop();
+    settings.scripts[1].consent = ConsentState::Missing;
+    assert_eq!(last(&settings, "second"), second);
+    settings.scripts.reverse();
+    settings.scripts[0].settings.reverse();
+    assert_eq!(settings.activate(&Id::new(second.base.clone(), 1)), None);
+    assert_eq!(settings.selected(&first.base), 0);
+    assert_eq!(settings.selected(&second.base), 1);
+    assert_eq!(
+        settings.cfg.ext_settings["second"]["mode-31"],
+        json!("manual")
+    );
+    assert!(settings.shift(&second, 1));
+    let values = &settings.cfg.ext_settings;
+    assert_eq!(values.len(), 1);
+    assert_eq!(values["second"]["mode-31"], json!("auto"));
+    assert_eq!(settings.cfg.extensions, ["first"]);
+    assert_eq!(settings.scripts[0].consent, ConsentState::Missing);
+
+    // 卸载后收到旧卡片的点击,不能退到另一张卡片的同名字段。
+    let before = values.clone();
+    settings.scripts.remove(0);
+    assert!(settings.extension_settings("second").is_empty());
+    assert_eq!(settings.activate(&second), None);
+    assert!(!settings.shift(&second, 1));
+    assert_eq!(settings.cfg.ext_settings, before);
 }
 
 #[test]
@@ -336,4 +420,46 @@ fn uncategorised_extensions_never_displace_each_other() {
     settings.cfg.extensions = vec!["first".to_string()];
     settings.activate(&Id::new(ids::script_toggle(1), 0));
     assert_eq!(settings.cfg.extensions, vec!["first", "second"]);
+}
+
+#[test]
+fn store_is_opt_in_and_only_opens_the_selected_extension() {
+    let mut settings = Settings::default();
+    settings.set_page(PageId::Extensions);
+    let page = settings.page(&PageColors::default());
+    let rows: Vec<_> = page.groups.iter().flat_map(|group| &group.rows).collect();
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.detail.contains("可选下载"))
+            .count(),
+        3
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.label == "识别模型" || row.detail.contains("PP-OCR"))
+    );
+    assert_eq!(
+        settings.activate(&Id::new(ids::EXT_STORE, 0)),
+        Some(Action::OpenExtension("shot-ocr".into()))
+    );
+    assert!(settings.cfg.extensions.is_empty());
+
+    let mut shot = ext_entry();
+    shot.id = "shot-ocr".into();
+    settings.scripts = vec![shot, entry("local", "本地扩展")];
+    settings.set_extension_enabled("shot-ocr", true);
+    assert!(!settings.extension_settings("shot-ocr").is_empty());
+    assert!(settings.extension_settings("local").is_empty());
+    let page = settings.page(&PageColors::default());
+    assert!(
+        page.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .any(|row| { row.label == "截图识别" && row.detail.starts_with("已启用") })
+    );
+    assert_eq!(
+        settings.activate(&Id::new(ids::EXT_INSTALLED, 1)),
+        Some(Action::OpenExtension("local".into()))
+    );
 }

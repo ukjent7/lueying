@@ -92,8 +92,8 @@ pub enum Control {
         id: Id,
         options: Vec<SegmentOption>,
         selected: usize,
-        /// 每格宽度(逻辑像素)。
-        width: f32,
+        /// 扩展选项数量和字数可很大;固定每格宽度防止挤出设置页。
+        cell_width: Option<f32>,
     },
     /// 一排按钮。
     Buttons { items: Vec<Button> },

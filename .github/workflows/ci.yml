@@ -38,7 +38,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Format 校验
-        run: cargo fmt --all --check
+        shell: bash
+        run: |
+          # --all also formats path dependencies; leave vendored Rune in upstream style.
+          members=$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.workspace_members as $members | .packages[] | select(.id as $id | $members | index($id)) | .name')
+          packages=()
+          while IFS= read -r member; do packages+=(-p "$member"); done <<< "$members"
+          cargo fmt --check "${packages[@]}"
 
   # 改动分级:核心路径(引擎、词典、会话、特征、输入方案与词典数据)动了,才在 push 到 main 时
   # 调用 quality.yml。手动触发一律跑全量;PR 与其余改动只跑上面的基本检查。

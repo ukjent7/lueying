@@ -79,6 +79,15 @@ fn choices_match_runtime_enums() {
     for (choice, name) in LAYOUT_CHOICES.iter().zip(UiLayout::NAMES) {
         assert_eq!(choice.label, name);
     }
+    assert_eq!(MATERIAL_CHOICES.len(), UiMaterial::NAMES.len());
+    for (index, (choice, name)) in MATERIAL_CHOICES.iter().zip(UiMaterial::NAMES).enumerate() {
+        assert_eq!(choice.label, name);
+        assert_eq!(
+            UiMaterial::parse(choice.value),
+            Some(UiMaterial::from_index(index))
+        );
+        assert_eq!(UiMaterial::from_index(index).index(), index);
+    }
     for (choice, name) in OCR_CHOICES.iter().zip(OcrBackend::NAMES) {
         assert_eq!(choice.label, name);
     }

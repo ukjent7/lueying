@@ -5,7 +5,9 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::lm::forward::{BatchContext, BatchRow, HiddenState, Prefix, TailRun, TerminalState};
+use crate::lm::forward::{
+    BatchContext, BatchRow, BatchScratch, HiddenState, Prefix, TailRun, TerminalState,
+};
 use crate::lm::model::SentenceModel;
 use crate::lm::{CandidateFacts, DICTIONARY_SOURCES};
 /// How many comparable candidates are scored. The engine rarely returns more than a handful that
@@ -75,6 +77,7 @@ pub struct Reranker {
     /// `best_where` only needs scores until it has chosen an index; keep that short result buffer
     /// between keystrokes instead of allocating it for every decision.
     pub(crate) scores_scratch: Vec<f32>,
+    scratch: BatchScratch,
 }
 
 impl Reranker {
@@ -85,7 +88,14 @@ impl Reranker {
             resume: Vec::new(),
             resume_scratch: Vec::new(),
             scores_scratch: Vec::new(),
+            scratch: BatchScratch::default(),
         }
+    }
+
+    pub(crate) fn clear_history(&mut self) {
+        self.cached = None;
+        self.resume.clear();
+        self.resume_scratch.clear();
     }
 
     pub fn model(&self) -> &SentenceModel {
@@ -210,7 +220,10 @@ impl Reranker {
             .as_ref()
             .is_some_and(|(cached, _)| *cached == tokens);
         if !matched {
-            let prefix = self.model.run_prefix(&tokens);
+            self.clear_history();
+            let prefix = self
+                .model
+                .run_prefix_reusing(&tokens, &mut self.scratch.feed_forward);
             self.cached = Some((tokens, prefix));
         }
         let (_, prefix) = self.cached.as_ref().expect("prefix was just computed");
@@ -218,10 +231,6 @@ impl Reranker {
         let mut previous =
             std::mem::replace(&mut self.resume, std::mem::take(&mut self.resume_scratch));
         self.resume.clear();
-        // Every resume point hangs off the old prefix and means nothing against a new one.
-        if !matched {
-            previous.clear();
-        }
         scores.clear();
         scores.reserve_exact(capacity);
         let limit = self
@@ -289,7 +298,7 @@ impl Reranker {
 
         let model = &*self.model;
         let mut batch = Batch {
-            contexts: vec![BatchContext::of(prefix)],
+            contexts: vec![BatchContext::default()],
             rows: Vec::new(),
             runs,
             previous_terminals: vec![None; previous.len()],
@@ -314,7 +323,8 @@ impl Reranker {
                 batch.runs[run].rows.push(batch.rows.len() - 1);
             }
         }
-        let states = model.run_batch(&batch.contexts, &batch.rows);
+        let states =
+            model.run_batch_reusing(prefix, &batch.contexts, &batch.rows, &mut self.scratch);
         let n_embd = model.config.n_embd;
         let hidden: Vec<Arc<HiddenState>> = states
             .hidden
@@ -383,13 +393,14 @@ impl Reranker {
             };
             let width = (context.length() + chain.len()) * n_embd;
             let copy = |stored: &[Vec<f32>], computed: &[Vec<f32>], last: Option<&[Vec<f32>]>| {
-                stored
+                computed
                     .iter()
-                    .zip(computed)
                     .enumerate()
-                    .map(|(layer, (stored, computed))| {
+                    .map(|(layer, computed)| {
                         let mut out = Vec::with_capacity(width);
-                        out.extend_from_slice(&stored[..context.stored * n_embd]);
+                        if context.stored != 0 {
+                            out.extend_from_slice(&stored[layer][..context.stored * n_embd]);
+                        }
                         if let Some(last) = last {
                             out.extend_from_slice(&last[layer]);
                         }
@@ -432,6 +443,7 @@ impl Reranker {
             }
             let tail_run = match source {
                 None => TailRun {
+                    #[cfg(test)]
                     base: prefix.length,
                     keys,
                     values,
@@ -452,6 +464,7 @@ impl Reranker {
                         )
                     });
                     TailRun {
+                        #[cfg(test)]
                         base: source.base,
                         keys,
                         values,
@@ -593,19 +606,18 @@ impl<'a> Batch<'a> {
                     terminal,
                 };
                 if agreed <= run.hidden.len() {
-                    self.contexts.push(context(run.base + agreed, None));
+                    self.contexts.push(context(agreed, None));
                     return (self.contexts.len() - 1, None, 0);
                 }
                 if let Some(terminal) = run.terminal.get() {
                     self.contexts
-                        .push(context(run.base + run.hidden.len(), Some(terminal)));
+                        .push(context(run.hidden.len(), Some(terminal)));
                     return (self.contexts.len() - 1, None, 0);
                 }
                 let row = match self.previous_terminals[index] {
                     Some(row) => row,
                     None => {
-                        self.contexts
-                            .push(context(run.base + run.hidden.len(), None));
+                        self.contexts.push(context(run.hidden.len(), None));
                         self.rows.push(BatchRow {
                             token: run.pending,
                             parent: None,

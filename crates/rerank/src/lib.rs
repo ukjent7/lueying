@@ -34,6 +34,42 @@ impl Model {
         })
     }
 
+    /// Compiles the existing ORT execution weights to a self-contained safetensors file.
+    pub fn pack_keystroke_dir(
+        dir: &std::path::Path,
+        stem: &str,
+        out: &mut impl std::io::Write,
+    ) -> Result<(), String> {
+        let model = Self::load_keystroke_dir(dir, stem)?;
+        let vocab = std::fs::read_to_string(dir.join(format!("{stem}.vocab.json")))
+            .map_err(|error| error.to_string())?;
+        #[derive(serde::Deserialize)]
+        struct Vocabulary {
+            tokens: Vec<String>,
+        }
+        let vocab: Vocabulary = serde_json::from_str(&vocab).map_err(|error| error.to_string())?;
+        model
+            .inner
+            .pack(&vocab.tokens, out)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Maps an immutable, locally prepacked keystroke model directly into inference.
+    #[cfg(windows)]
+    pub fn load_packed_file(path: &std::path::Path) -> Result<Self, String> {
+        use lm::weights::{Mapping, PACKED_FORMAT, Weights};
+        let map = Mapping::open(path).map_err(|error| error.to_string())?;
+        let weights = Weights::parse_mapped(&map).map_err(|error| error.to_string())?;
+        if weights.metadata("format").ok() != Some(PACKED_FORMAT) {
+            return Err("not a Lueying prepacked keystroke model".into());
+        }
+        let model = SentenceModel::load_weights(weights).map_err(|error| error.to_string())?;
+        Mapping::warm(&map);
+        Ok(Self {
+            inner: Arc::new(model),
+        })
+    }
+
     /// 加载上游按键重排模型:`.ort` 图加同目录的 `model.json`、`vocab.json`。
     pub fn load_keystroke(
         ort: &[u8],
@@ -129,6 +165,13 @@ pub struct Rerank {
     metrics: Arc<LatencyMetrics>,
 }
 
+/// The scored candidate slots and the score gap between the first two.
+#[derive(Default)]
+pub struct ContextRank {
+    pub order: Vec<usize>,
+    pub gap: Option<f32>,
+}
+
 impl Rerank {
     pub fn new(model: &Model) -> Self {
         Self::with_metrics(model, Arc::new(LatencyMetrics::default()))
@@ -145,6 +188,11 @@ impl Rerank {
     /// 当前会话上报的延迟分布。
     pub fn metrics(&self) -> Arc<LatencyMetrics> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Forget the previous session without reallocating the inference workspace.
+    pub fn clear_history(&mut self) {
+        self.inner.clear_history();
     }
 
     /// 返回模型建议移到首位的候选下标;`None` 表示保持引擎顺序。
@@ -186,6 +234,50 @@ impl Rerank {
         texts: &[&str],
         facts: &[Fact],
     ) -> Option<usize> {
+        let (indices, scores) = self.context_scores(context, texts, facts, false)?;
+        let best = (0..indices.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b]))?;
+        (best != 0).then_some(indices[best])
+    }
+
+    /// Reorder the scored slots using the same batch and objective as head-only promotion.
+    /// Returns their original candidate indices in descending score order.
+    pub fn rank_in_context(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Vec<usize> {
+        self.rank_in_context_with_gap(context, texts, facts).order
+    }
+
+    /// Expose the top gap from the same pass, without running the model again.
+    pub fn rank_in_context_with_gap(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+    ) -> ContextRank {
+        if context.is_empty() {
+            return ContextRank::default();
+        }
+        let started = Instant::now();
+        let result = self
+            .context_scores(context, texts, facts, true)
+            .map_or_else(ContextRank::default, |(indices, scores)| {
+                let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
+                order.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+                let gap = order.get(1).map(|second| order[0].1 - second.1);
+                ContextRank {
+                    order: order.into_iter().map(|(index, _)| index).collect(),
+                    gap,
+                }
+            });
+        self.metrics.record(started.elapsed());
+        result
+    }
+
+    fn context_scores(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        keep_locked: bool,
+    ) -> Option<(Vec<usize>, Vec<f32>)> {
         if texts.len() != facts.len() {
             return None;
         }
@@ -196,7 +288,7 @@ impl Rerank {
         let mut budget = COMPARED_CHARS;
         let mut compared: Vec<usize> = Vec::with_capacity(COMPARED_MAX);
         for (index, (text, fact)) in texts.iter().zip(facts).enumerate() {
-            if !fact.answers_key {
+            if !fact.answers_key || (keep_locked && fact.locked) {
                 continue;
             }
             let chars = text.chars().count();
@@ -210,21 +302,20 @@ impl Rerank {
             return None;
         }
         let batch: Vec<&str> = compared.iter().map(|&index| texts[index]).collect();
-        let means = self.inner.log_probabilities(context, &batch);
-        if means.len() != compared.len() {
+        let mut scores = self.inner.log_probabilities(context, &batch);
+        if scores.len() != compared.len() {
             return None;
         }
-        let objective = |at: usize| {
+        for (at, score) in scores.iter_mut().enumerate() {
             let fact = &facts[compared[at]];
-            let total = means[at] * batch[at].chars().count() as f32;
+            let total = *score * batch[at].chars().count() as f32;
             let leading = if at == 0 { LEADER_BONUS } else { 0.0 };
-            total + ENGINE_WEIGHT * (fact.score + fact.channel - fact.personal)
+            *score = total + ENGINE_WEIGHT * (fact.score + fact.channel - fact.personal)
                 - CHANNEL_WEIGHT * fact.channel
                 + PERSONAL_WEIGHT * fact.personal
-                + leading
-        };
-        let best = (0..compared.len()).max_by(|&a, &b| objective(a).total_cmp(&objective(b)))?;
-        (best != 0).then_some(compared[best])
+                + leading;
+        }
+        Some((compared, scores))
     }
 
     fn decide_inner_with_margin(

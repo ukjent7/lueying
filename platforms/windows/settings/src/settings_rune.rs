@@ -28,6 +28,9 @@ use lueying_server::accents::ACCENTS;
 use lueying_server::config::{self, AppConfig};
 use lueying_server::theme::{self, Colors};
 
+#[path = "extension_store_view.rs"]
+mod store;
+
 /// 窗口状态:配置与平台侧数据;每次控件回调直接改它,下一帧自动反映。
 #[derive(Default)]
 struct Core {
@@ -40,6 +43,7 @@ struct Core {
 enum Overlay {
     #[default]
     None,
+    Extension(String),
     Picker {
         title: String,
         items: Vec<String>,
@@ -117,6 +121,7 @@ struct State {
     secret: TextEdit,
     text: TextEdit,
     overlay: Overlay,
+    downloading_extension: Option<&'static str>,
 }
 
 thread_local! {
@@ -355,7 +360,7 @@ fn scene(s: &State, dark: bool) -> El {
         .child(footer);
 
     let mut layers = Vec::new();
-    overlay_scene(s, &s.overlay, &kit, &colors, &mut layers);
+    overlay_scene(s, &s.overlay, &kit, &colors, &page_colors, &mut layers);
     root(base, layers)
 }
 
@@ -379,15 +384,39 @@ fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors) -> El {
 }
 
 fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
+    let extension = match group.rows.as_slice() {
+        [
+            model::Row {
+                control: Control::Buttons { items },
+                ..
+            },
+        ] => items.first().filter(|button| {
+            matches!(
+                button.id.base.as_str(),
+                crate::settings::view::ids::EXT_STORE | crate::settings::view::ids::EXT_INSTALLED
+            )
+        }),
+        _ => None,
+    };
+    let key = extension.map_or_else(
+        || group.title.clone(),
+        |button| format!("{}-{}", button.id.base, button.id.index),
+    );
     let mut card = col()
-        .key(format!("group-{}", group.title))
+        .key(format!("group-{key}"))
         .w_full()
         .padding(10.0)
         .radius(12.0)
         .fill(color(colors.surface))
         .border(1.0, color(colors.border));
+    if let Some(button) = extension {
+        let id = button.id.clone();
+        card = card
+            .cursor(Cursor::Pointer)
+            .on_press(move |s: &mut State| activate(s, id.base.clone(), id.index));
+    }
     for (i, row_data) in group.rows.iter().enumerate() {
-        card = card.child(setting_row(row_data, kit, colors));
+        card = card.child(setting_row(row_data, kit, colors).key(format!("row-{i}")));
         if i + 1 < group.rows.len() {
             card = card.child(
                 el().h(1.0)
@@ -398,7 +427,7 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
         }
     }
     col()
-        .key(format!("section-{}", group.title))
+        .key(format!("section-{key}"))
         .w_full()
         .gap(6.0)
         .child(
@@ -415,6 +444,7 @@ fn setting_row(row_data: &model::Row, kit: &Kit, colors: &Colors) -> El {
         col()
             .key("info")
             .grow(1.0)
+            .min_w(0.0)
             .gap(2.0)
             .child(
                 text(row_data.label.clone())
@@ -510,12 +540,16 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors) -> El {
             id,
             options,
             selected,
-            width,
+            cell_width,
         } => {
             let labels: Vec<String> = options.iter().map(|option| option.text.clone()).collect();
             let base = id.base.clone();
-            SegmentedControl::new(&labels, Some(*selected))
-                .width(Some(*width))
+            let group = SegmentedControl::new(&labels, Some(*selected));
+            let group = match cell_width {
+                Some(width) => group.width(Some(*width * labels.len() as f32)),
+                None => group.fit(),
+            };
+            group
                 .on_pick(move |s: &mut State, index, _| activate(s, base.clone(), index))
                 .build(kit)
         }
@@ -638,6 +672,10 @@ fn dispatch(s: &mut State, action: Action) {
         Action::ImportLuext => actions::import_luext(&mut s.core.settings),
         Action::ApproveExtension => actions::approve_extension(&mut s.core.settings),
         Action::RefreshExtMetrics => actions::refresh_ext_metrics(&mut s.core.settings),
+        Action::OpenExtension(id) => {
+            s.core.settings.clear_notice();
+            s.overlay = Overlay::Extension(id);
+        }
         Action::OpenOcrModels => actions::open_ocr_models(&mut s.core.settings),
         Action::OpenApps => actions::open_apps(&mut s.core.settings),
         Action::BackupExport => actions::backup_export(&mut s.core.settings),
@@ -956,9 +994,20 @@ fn start_model_fetch(handle: AppHandle<State>) {
     }
 }
 /// 主窗内的弹层:全窗 scrim + 居中卡片,四种弹层共用。
-fn overlay_scene(s: &State, overlay: &Overlay, kit: &Kit, colors: &Colors, layers: &mut Vec<El>) {
+fn overlay_scene(
+    s: &State,
+    overlay: &Overlay,
+    kit: &Kit,
+    colors: &Colors,
+    prefs: &PageColors,
+    layers: &mut Vec<El>,
+) {
     let (key, title, body): (&str, String, Vec<El>) = match overlay {
         Overlay::None => return,
+        Overlay::Extension(id) => {
+            store::detail(s, id, kit, colors, prefs, layers);
+            return;
+        }
         Overlay::Picker {
             title,
             items,
@@ -1042,7 +1091,7 @@ fn overlay_actions(kit: &Kit, overlay: &Overlay) -> El {
         .on_press(|s: &mut State| s.overlay = Overlay::None)
         .build(kit);
     let confirm = match overlay {
-        Overlay::Picker { .. } | Overlay::None => el(),
+        Overlay::Picker { .. } | Overlay::Extension(_) | Overlay::None => el(),
         Overlay::Confirm { action, .. } => {
             let label = match action {
                 ConfirmAction::Install => "安装",
@@ -1202,7 +1251,8 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     ));
     let state = State::default();
     let _ = scene(&state, false);
-    lines.push("主场景与弹层控件树构造成功".to_string());
+    store::selftest()?;
+    lines.push("扩展商店:点卡片、查看权限、启用与快捷键通过".to_string());
     Ok(())
 }
 

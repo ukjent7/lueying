@@ -30,6 +30,15 @@ pub fn install_luext_bytes(bytes: &[u8], root: &Path) -> Result<String, String> 
 /// 先写临时目录再改名换位,任何一步失败旧目录都保持原样。替换
 /// 后包内容变了,同意记录对不上哈希,扩展自动挂起等用户重新确认。
 pub fn install_files(files: &Files, root: &Path) -> Result<(Manifest, PathBuf), String> {
+    install(files, root, true)
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn install_new_files(files: &Files, root: &Path) -> Result<(Manifest, PathBuf), String> {
+    install(files, root, false)
+}
+
+fn install(files: &Files, root: &Path, replace: bool) -> Result<(Manifest, PathBuf), String> {
     let Some((_, manifest_bytes)) = files.iter().find(|(name, _)| name == "manifest.json") else {
         return Err("包里没有 manifest.json".to_string());
     };
@@ -38,11 +47,29 @@ pub fn install_files(files: &Files, root: &Path) -> Result<(Manifest, PathBuf), 
     if !payload.is_empty() && !files.iter().any(|(name, _)| *name == payload) {
         return Err(format!("包里缺少 {payload}"));
     }
-    let staging = root.join(format!(".import-{}", manifest.id));
     let target = root.join(&manifest.id);
+    if !replace && target.exists() {
+        return Err(format!("{} 已安装，没有覆盖现有扩展", manifest.name));
+    }
     let backup = root.join(format!(".backup-{}", manifest.id));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).map_err(|e| format!("建临时目录失败: {e}"))?;
+    let staging = if replace {
+        let dir = root.join(format!(".import-{}", manifest.id));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败: {e}"))?;
+        dir
+    } else {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = root.join(format!(
+            ".store-{}-{}-{}",
+            manifest.id,
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root).map_err(|e| format!("建扩展目录失败: {e}"))?;
+        std::fs::create_dir(&dir).map_err(|e| format!("建临时目录失败: {e}"))?;
+        dir
+    };
     for (name, content) in files {
         let path = staging.join(name);
         if let Some(parent) = path.parent()
@@ -55,6 +82,13 @@ pub fn install_files(files: &Files, root: &Path) -> Result<(Manifest, PathBuf), 
             let _ = std::fs::remove_dir_all(&staging);
             return Err(format!("写 {name} 失败: {error}"));
         }
+    }
+    if !replace {
+        if let Err(error) = std::fs::rename(&staging, &target) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(format!("安装失败，没有覆盖现有扩展: {error}"));
+        }
+        return Ok((manifest, target));
     }
     if target.exists() && std::fs::rename(&target, &backup).is_err() {
         let _ = std::fs::remove_dir_all(&staging);
@@ -97,5 +131,16 @@ mod tests {
         assert_eq!(target, root.join("demo"));
         assert!(!target.join("stale.txt").exists(), "旧目录整体替换");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn store_installs_once_without_replacing_local_package() {
+        let root = std::env::temp_dir().join(format!("lueying-store-test-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        install_new_files(&package("1.0.0"), &root).unwrap();
+        assert!(install_new_files(&package("2.0.0"), &root).is_err());
+        let raw = std::fs::read(root.join("demo/manifest.json")).unwrap();
+        assert_eq!(Manifest::parse(&raw).unwrap().version, "1.0.0");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

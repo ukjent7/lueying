@@ -110,8 +110,15 @@ fn bounded_encoding_preserves_each_rounds_score_bits_and_cache_order() {
                     assert_eq!(tokens, prior);
                     assert_eq!(run.base, old_run.base);
                     assert_eq!(run.pending, old_run.pending);
-                    assert_eq!(run.keys, old_run.keys);
-                    assert_eq!(run.values, old_run.values);
+                    let prefix = run.base * model.config.n_embd;
+                    for (actual, old) in run
+                        .keys
+                        .iter()
+                        .chain(&run.values)
+                        .zip(old_run.keys.iter().chain(&old_run.values))
+                    {
+                        assert_eq!(actual, &old[prefix..]);
+                    }
                     assert_eq!(run.cumulative, old_run.cumulative);
                 }
             }

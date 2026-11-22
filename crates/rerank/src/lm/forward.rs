@@ -58,8 +58,10 @@ pub(crate) struct TerminalState {
 /// Everything one candidate's run passed through, so that a later run agreeing with part of it can
 /// start from where they stop agreeing instead of from the beginning.
 pub(crate) struct TailRun {
-    /// 上文占用的绝对位置数；KV 仅包含上文及已前向的位置，比累计分少一个候选位置。
+    /// 旧串行参考实现保留上文与候选的完整 KV,用于核对批式路径。
+    #[cfg(test)]
     pub(crate) base: usize,
+    /// 批式路径只存候选自己的 KV;上文从模型的共享 Prefix 读取。
     pub(crate) keys: Vec<Vec<f32>>,
     pub(crate) values: Vec<Vec<f32>>,
     /// 已计算位置预测下一字的隐藏状态；末 token 只在续跑经过它时前向。
@@ -165,14 +167,21 @@ impl TailRun {
 impl SentenceModel {
     /// Runs the prefix and keeps every layer's keys and values.
     pub(crate) fn run_prefix(&self, tokens: &[u32]) -> Prefix<'static> {
+        self.run_prefix_reusing(tokens, &mut FeedForwardScratch::default())
+    }
+
+    pub(crate) fn run_prefix_reusing(
+        &self,
+        tokens: &[u32],
+        feed_forward: &mut FeedForwardScratch,
+    ) -> Prefix<'static> {
         let n_embd = self.config.n_embd;
         let mut x = self.embed(tokens, 0);
-        let mut feed_forward = FeedForwardScratch::default();
         let mut keys = Vec::with_capacity(self.blocks.len());
         let mut values = Vec::with_capacity(self.blocks.len());
         for (layer, block) in self.blocks.iter().enumerate() {
-            self.normalize_attention_into(&x, block, &mut feed_forward);
-            self.qkv_into(block, &mut feed_forward);
+            self.normalize_attention_into(&x, block, feed_forward);
+            self.qkv_into(block, feed_forward);
             let (k, v) = split_qkv_with_suffix_into(
                 &feed_forward.hidden,
                 tokens.len(),
@@ -196,11 +205,11 @@ impl SentenceModel {
                 tokens.len() - first,
                 first,
             );
-            self.project_attention_into(&attended, block, &mut feed_forward);
+            self.project_attention_into(&attended, block, feed_forward);
             for (slot, &value) in x[start..].iter_mut().zip(&feed_forward.normalized) {
                 *slot += value;
             }
-            self.feed_forward(&mut x[start..], block, &mut feed_forward);
+            self.feed_forward(&mut x[start..], block, feed_forward);
             keys.push(k);
             values.push(v);
         }
@@ -213,7 +222,7 @@ impl SentenceModel {
             n_embd,
             &mut feed_forward.normalized,
         );
-        let last_hidden = Arc::new(HiddenState::new(feed_forward.normalized));
+        let last_hidden = Arc::new(HiddenState::new(feed_forward.normalized.to_vec()));
         Prefix {
             length: tokens.len(),
             keys: Cow::Owned(keys),
@@ -353,43 +362,71 @@ impl SentenceModel {
     /// the matrix products see every row of the decision together and can use the blocked kernel.
     pub(crate) fn run_batch(
         &self,
+        prefix: &Prefix<'_>,
         contexts: &[BatchContext<'_>],
         rows: &[BatchRow],
     ) -> BatchStates {
+        let mut scratch = BatchScratch::default();
+        self.run_batch_reusing(prefix, contexts, rows, &mut scratch);
+        scratch.states
+    }
+
+    pub(crate) fn run_batch_reusing<'a>(
+        &self,
+        prefix: &Prefix<'_>,
+        contexts: &[BatchContext<'_>],
+        rows: &[BatchRow],
+        scratch: &'a mut BatchScratch,
+    ) -> &'a BatchStates {
+        let BatchScratch {
+            feed_forward,
+            x,
+            attended,
+            scores,
+            states,
+        } = scratch;
+        let BatchStates {
+            keys,
+            values,
+            hidden,
+            chains,
+        } = states;
         let n_embd = self.config.n_embd;
+        debug_assert!(prefix.terminal.is_none());
+        let base = prefix.length;
+        keys.resize_with(self.blocks.len(), Vec::new);
+        values.resize_with(self.blocks.len(), Vec::new);
+        chains.resize_with(rows.len(), Vec::new);
         if rows.is_empty() {
-            return BatchStates {
-                keys: vec![Vec::new(); self.blocks.len()],
-                values: vec![Vec::new(); self.blocks.len()],
-                hidden: Vec::new(),
-                chains: Vec::new(),
-            };
+            keys.iter_mut()
+                .chain(values.iter_mut())
+                .for_each(Vec::clear);
+            hidden.clear();
+            return states;
         }
         #[cfg(test)]
         FORWARD_POSITIONS.with(|count| count.set(count.get() + rows.len()));
         // Every row's chain of batch rows, root first. Parents always come earlier in the batch.
-        let mut chains: Vec<Vec<usize>> = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
-            let mut chain = match row.parent {
-                Some(parent) => {
-                    debug_assert!(parent < index && rows[parent].depth + 1 == row.depth);
-                    debug_assert_eq!(rows[parent].context, row.context);
-                    chains[parent].clone()
-                }
-                None => {
-                    debug_assert_eq!(row.depth, 0);
-                    Vec::new()
-                }
-            };
+            let (previous, rest) = chains.split_at_mut(index);
+            let chain = &mut rest[0];
+            chain.clear();
+            if let Some(parent) = row.parent {
+                debug_assert!(parent < index && rows[parent].depth + 1 == row.depth);
+                debug_assert_eq!(rows[parent].context, row.context);
+                chain.extend_from_slice(&previous[parent]);
+            } else {
+                debug_assert_eq!(row.depth, 0);
+            }
             chain.push(index);
-            chains.push(chain);
         }
 
-        let mut x = vec![0.0; rows.len() * n_embd];
+        let elements = rows.len() * n_embd;
+        x.resize(elements, 0.0);
         for (row, slot) in rows.iter().zip(x.chunks_exact_mut(n_embd)) {
             let token = (row.token as usize).min(self.config.vocab - 1);
             let position =
-                (contexts[row.context].length() + row.depth).min(self.config.context - 1);
+                (base + contexts[row.context].length() + row.depth).min(self.config.context - 1);
             let position_row = &self.position[position * n_embd..(position + 1) * n_embd];
             self.token.embed_row(token, position_row, slot);
             if let Some(segment) = &self.segment {
@@ -399,21 +436,23 @@ impl SentenceModel {
             }
         }
 
-        let mut feed_forward = FeedForwardScratch::default();
-        let mut keys = Vec::with_capacity(self.blocks.len());
-        let mut values = Vec::with_capacity(self.blocks.len());
-        let mut attended = vec![0.0; rows.len() * n_embd];
-        let longest = rows
-            .iter()
-            .map(|row| contexts[row.context].length() + row.depth + 1)
-            .max()
-            .unwrap_or(0);
-        let mut scores = vec![0.0; longest];
+        attended.resize(elements, 0.0);
+        let longest = base
+            + rows
+                .iter()
+                .map(|row| contexts[row.context].length() + row.depth + 1)
+                .max()
+                .unwrap_or(0);
+        scores.resize(longest, 0.0);
         for (layer, block) in self.blocks.iter().enumerate() {
-            self.normalize_attention_into(&x, block, &mut feed_forward);
-            self.qkv_into(block, &mut feed_forward);
-            let mut layer_keys = Vec::with_capacity(rows.len() * n_embd);
-            let mut layer_values = Vec::with_capacity(rows.len() * n_embd);
+            self.normalize_attention_into(x, block, feed_forward);
+            self.qkv_into(block, feed_forward);
+            let layer_keys = &mut keys[layer];
+            let layer_values = &mut values[layer];
+            layer_keys.clear();
+            layer_values.clear();
+            layer_keys.reserve_exact(elements);
+            layer_values.reserve_exact(elements);
             for qkv in feed_forward.hidden.chunks_exact(3 * n_embd) {
                 layer_keys.extend_from_slice(&qkv[n_embd..2 * n_embd]);
                 layer_values.extend_from_slice(&qkv[2 * n_embd..]);
@@ -424,16 +463,17 @@ impl SentenceModel {
             for (((index, row), chain), target) in rows
                 .iter()
                 .enumerate()
-                .zip(&chains)
+                .zip(chains.iter())
                 .zip(attended.chunks_exact_mut(n_embd))
             {
                 let context = contexts[row.context];
-                let length = context.length();
+                let length = base + context.length();
                 let terminal = context
                     .terminal
                     .map(|last| (last.keys[layer].as_slice(), last.values[layer].as_slice()));
                 let query = &feed_forward.hidden[index * 3 * n_embd..index * 3 * n_embd + n_embd];
                 let sequence = Sequence {
+                    base,
                     stored: context.stored,
                     length,
                     chain,
@@ -445,45 +485,34 @@ impl SentenceModel {
                     |step| {
                         sequence.row(
                             step,
-                            &layer_keys,
-                            &context.keys[layer],
+                            &prefix.keys[layer],
+                            layer_keys,
+                            context.keys.get(layer).map_or(&[], Vec::as_slice),
                             terminal.map(|(key, _)| key),
                         )
                     },
                     |step| {
                         sequence.row(
                             step,
-                            &layer_values,
-                            &context.values[layer],
+                            &prefix.values[layer],
+                            layer_values,
+                            context.values.get(layer).map_or(&[], Vec::as_slice),
                             terminal.map(|(_, value)| value),
                         )
                     },
-                    &mut scores,
+                    scores,
                     target,
                 );
             }
-            keys.push(layer_keys);
-            values.push(layer_values);
-            self.project_attention_into(&attended, block, &mut feed_forward);
+            self.project_attention_into(attended, block, feed_forward);
             for (slot, &value) in x.iter_mut().zip(&feed_forward.normalized) {
                 *slot += value;
             }
-            self.feed_forward(&mut x, block, &mut feed_forward);
+            self.feed_forward(x, block, feed_forward);
         }
-        let mut hidden = vec![0.0; x.len()];
-        layer_norm_into(
-            &x,
-            &self.final_weight,
-            &self.final_bias,
-            n_embd,
-            &mut hidden,
-        );
-        BatchStates {
-            keys,
-            values,
-            hidden,
-            chains,
-        }
+        hidden.resize(elements, 0.0);
+        layer_norm_into(x, &self.final_weight, &self.final_bias, n_embd, hidden);
+        states
     }
 
     /// The log normalizer `project` computes, for every row of `hidden` (`rows × n_embd`).
@@ -723,9 +752,8 @@ pub(crate) struct BatchRow {
     pub(crate) context: usize,
 }
 
-/// What a batch row attends to before its own chain of rows: the first `stored` rows of a run's
-/// keys and values, then that run's terminal row when it has one.
-#[derive(Clone, Copy)]
+/// A candidate's borrowed KV after the common prefix, possibly followed by its terminal row.
+#[derive(Clone, Copy, Default)]
 pub(crate) struct BatchContext<'a> {
     pub(crate) keys: &'a [Vec<f32>],
     pub(crate) values: &'a [Vec<f32>],
@@ -734,23 +762,14 @@ pub(crate) struct BatchContext<'a> {
 }
 
 impl<'a> BatchContext<'a> {
-    pub(crate) fn of(prefix: &'a Prefix<'_>) -> Self {
-        Self {
-            keys: &prefix.keys,
-            values: &prefix.values,
-            stored: prefix.length - usize::from(prefix.terminal.is_some()),
-            terminal: prefix.terminal,
-        }
-    }
-
     pub(crate) fn length(&self) -> usize {
         self.stored + usize::from(self.terminal.is_some())
     }
 }
 
-/// The positions one batch row attends to, in order: its context's stored rows, the context's
-/// terminal row, then the row's own chain in the batch.
+/// Attention walks the common prefix, the candidate's stored rows and terminal, then this batch.
 struct Sequence<'c> {
+    base: usize,
     pub(crate) stored: usize,
     length: usize,
     chain: &'c [usize],
@@ -761,6 +780,7 @@ impl Sequence<'_> {
     fn row<'s>(
         &self,
         step: usize,
+        prefix: &'s [f32],
         batch: &'s [f32],
         stored: &'s [f32],
         terminal: Option<&'s [f32]>,
@@ -769,8 +789,11 @@ impl Sequence<'_> {
         if step >= self.length {
             let row = self.chain[step - self.length];
             &batch[row * width..(row + 1) * width]
-        } else if step < self.stored {
-            &stored[step * width..(step + 1) * width]
+        } else if step < self.base {
+            &prefix[step * width..(step + 1) * width]
+        } else if step - self.base < self.stored {
+            let row = step - self.base;
+            &stored[row * width..(row + 1) * width]
         } else {
             terminal.expect("a terminal row follows the stored rows")
         }
@@ -779,9 +802,19 @@ impl Sequence<'_> {
 
 /// What `run_batch` computed: each layer's keys and values for every row (`rows × n_embd`), every
 /// row's final normalized state, and every row's chain of batch rows, root first.
+#[derive(Default)]
 pub(crate) struct BatchStates {
     pub(crate) keys: Vec<Vec<f32>>,
     pub(crate) values: Vec<Vec<f32>>,
     pub(crate) hidden: Vec<f32>,
     pub(crate) chains: Vec<Vec<usize>>,
+}
+
+#[derive(Default)]
+pub(crate) struct BatchScratch {
+    pub(crate) feed_forward: FeedForwardScratch,
+    x: Vec<f32>,
+    attended: Vec<f32>,
+    scores: Vec<f32>,
+    states: BatchStates,
 }

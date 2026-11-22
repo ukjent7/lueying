@@ -4,17 +4,13 @@
 //! 文本怎么写回去;会话里"引擎状态怎么变成候选视图""重排要拿什么输入"
 //! "两档模型怎么决策"三件事两边一样,放在这里共用。
 //!
-//! 重排推理要跑在后台线程上,所以 [`decide_sync`] 与 [`decide_settled`] 只
-//! 吃一把锁:调用方先把 [`snapshot`] 拿到的输入复制出来,推理时不必占着
-//! 会话锁。
+//! 后台线程用独立的推理状态处理 [`snapshot`] 复制出的快照,无需持有会话锁。
 
 #![deny(missing_docs)]
 
-use std::sync::Mutex;
-
 use crate::{Engine, Mode};
 use lueying_protocol::SessionView;
-use lueying_rerank::{Fact, Rerank};
+use lueying_rerank::{ContextRank, Fact, Rerank};
 
 /// 光标附近保留的字符数;更长的拼音串只留这一段。
 const WINDOW: usize = 12;
@@ -98,7 +94,7 @@ pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
         facts: candidates
             .iter()
             .map(|c| Fact {
-                answers_key: c.full,
+                answers_key: c.full && !c.rejected && !c.no_learn,
                 trusted_dictionary_hit: c.trusted,
                 score: c.score as f32,
                 channel: c.channel as f32,
@@ -125,25 +121,35 @@ pub fn sync_worthwhile(snapshot: &Snapshot) -> bool {
     !snapshot.context.is_empty()
 }
 
-/// 8M 按键重排:返回要提到首位的候选下标。
-pub fn decide_sync(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize> {
-    if !sync_worthwhile(snapshot) {
-        return None;
-    }
+/// 有上文时用一次前向重排多个候选,不挪动未参与比较的槽位。
+pub fn rank_context(rerank: &mut Rerank, snapshot: &Snapshot) -> Vec<usize> {
+    rank_context_with_gap(rerank, snapshot).order
+}
+
+/// 同次重排附带前两名分差;缺少可比候选时不报告置信度。
+pub fn rank_context_with_gap(rerank: &mut Rerank, snapshot: &Snapshot) -> ContextRank {
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    rerank
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .decide(&snapshot.context, &texts, &snapshot.facts)
+    rerank.rank_in_context_with_gap(&snapshot.context, &texts, &snapshot.facts)
+}
+
+/// 双模型的选择性停顿门槛。没有有效分差时仍允许原来的 25M 回退。
+pub fn can_skip_25m(snapshot: &Snapshot, ranking: &ContextRank) -> bool {
+    const AMBIGUOUS_GAP: f32 = 2.0;
+    ranking.gap.is_some_and(|gap| {
+        gap.is_finite()
+            && (gap > AMBIGUOUS_GAP
+                || !ranking
+                    .order
+                    .iter()
+                    .take(3)
+                    .any(|&i| snapshot.facts[i].edited))
+    })
 }
 
 /// 25M 停顿重排:模型直接给出最终顺序,没有上下文也能用。
-pub fn decide_settled(rerank: &Mutex<Rerank>, snapshot: &Snapshot) -> Option<usize> {
+pub fn decide_settled(rerank: &mut Rerank, snapshot: &Snapshot) -> Option<usize> {
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    rerank
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .decide_settled(&snapshot.context, &texts, &snapshot.facts)
+    rerank.decide_settled(&snapshot.context, &texts, &snapshot.facts)
 }
 
 #[cfg(test)]
@@ -209,7 +215,55 @@ mod tests {
     }
 
     #[test]
+    fn selective_25m_requires_both_a_close_score_and_a_likely_correction() {
+        let mut snap = Snapshot {
+            facts: vec![Fact::default(); 4],
+            ..Snapshot::default()
+        };
+        snap.facts[3].edited = true;
+        let mut rank = ContextRank {
+            order: vec![0, 1, 2, 3],
+            gap: Some(2.0),
+        };
+        assert!(can_skip_25m(&snap, &rank));
+        rank.order.swap(2, 3);
+        assert!(!can_skip_25m(&snap, &rank));
+        rank.gap = Some(2.01);
+        assert!(can_skip_25m(&snap, &rank));
+        for gap in [None, Some(f32::NAN)] {
+            rank.gap = gap;
+            assert!(!can_skip_25m(&snap, &rank));
+        }
+    }
+
+    #[test]
     fn plain_composition_has_no_pinned_candidate() {
         assert!(!pinned_candidates(&composed()));
+    }
+
+    #[test]
+    fn reorder_moves_only_scored_slots_and_space_commits_the_new_head() {
+        let mut engine = composed();
+        let mut fixed = crate::query::Candidate::whole(5, "固定", 0.0);
+        fixed.no_learn = true;
+        engine.cands = vec![
+            crate::query::Candidate::whole(5, "甲", 0.0),
+            fixed,
+            crate::query::Candidate::whole(5, "乙", 0.0),
+            crate::query::Candidate::whole(5, "丙", 0.0),
+        ];
+        let before = engine.revision();
+        assert!(!engine.reorder_candidates(&[2, 1, 0]));
+        assert!(!engine.reorder_candidates(&[2, 0, 0]));
+        assert_eq!(engine.revision(), before);
+        assert!(engine.reorder_candidates(&[3, 0, 2]));
+        assert_eq!(engine.candidates(), ["丙", "固定", "甲", "乙"]);
+        assert_ne!(engine.revision(), before);
+        assert!(
+            engine
+                .process(Key::Space)
+                .into_iter()
+                .any(|event| matches!(event, crate::Event::Commit(text) if text == "丙"))
+        );
     }
 }

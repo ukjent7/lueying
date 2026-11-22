@@ -7,12 +7,15 @@
 //! outside the ones the workspace already carries.
 
 use std::collections::BTreeMap;
+use std::ops::Deref;
+#[cfg(windows)]
+use std::{fs::File, ops::Range, sync::Arc};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::lm::ModelError;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct Entry {
     dtype: String,
     shape: Vec<usize>,
@@ -28,7 +31,70 @@ struct Entry {
 /// extension, where expanding a 4.5 MB file to 24.5 MB resident is most of the process budget.
 pub enum Tensor {
     Float(Vec<f32>),
-    Quantized { values: Vec<i8>, scales: Vec<f32> },
+    Quantized { values: Int8, scales: Vec<f32> },
+}
+
+pub enum Int8 {
+    Owned(Vec<i8>),
+    #[cfg(windows)]
+    Mapped(Arc<Mapping>, Range<usize>),
+}
+
+impl From<Vec<i8>> for Int8 {
+    fn from(values: Vec<i8>) -> Self {
+        Self::Owned(values)
+    }
+}
+
+impl Deref for Int8 {
+    type Target = [i8];
+
+    #[allow(unsafe_code)]
+    fn deref(&self) -> &[i8] {
+        match self {
+            Self::Owned(values) => values,
+            #[cfg(windows)]
+            Self::Mapped(map, range) => {
+                let bytes = &map.bytes[range.clone()];
+                // i8 and u8 have identical alignment and admit every byte pattern.
+                unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
+            }
+        }
+    }
+}
+
+pub(crate) const PACKED_FORMAT: &str = "lueying-rerank-packed-v1";
+
+#[cfg(windows)]
+pub(crate) struct Mapping {
+    bytes: memmap2::Mmap,
+    _file: File,
+}
+
+#[cfg(windows)]
+impl Mapping {
+    #[allow(unsafe_code)]
+    pub(crate) fn open(path: &std::path::Path) -> std::io::Result<Arc<Self>> {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // Deny writers for the entire life of the view. Updates can replace the file by rename.
+        const FILE_SHARE_READ_DELETE: u32 = 0x1 | 0x4;
+        let file = File::options()
+            .read(true)
+            .share_mode(FILE_SHARE_READ_DELETE)
+            .open(path)?;
+        let bytes = unsafe { memmap2::Mmap::map(&file)? };
+        Ok(Arc::new(Self { bytes, _file: file }))
+    }
+
+    pub(crate) fn warm(&self) {
+        let sum = self
+            .bytes
+            .iter()
+            .step_by(4096)
+            .fold(0usize, |sum, &byte| sum + usize::from(byte));
+        std::hint::black_box(sum);
+    }
 }
 
 impl Tensor {
@@ -48,6 +114,19 @@ pub struct Weights {
 
 impl Weights {
     pub fn parse(bytes: &[u8]) -> Result<Self, ModelError> {
+        Self::parse_source(bytes, None)
+    }
+
+    #[cfg(windows)]
+    pub fn parse_mapped(map: &Arc<Mapping>) -> Result<Self, ModelError> {
+        Self::parse_source(&map.bytes, Some(map))
+    }
+
+    fn parse_source(
+        bytes: &[u8],
+        #[cfg(windows)] map: Option<&Arc<Mapping>>,
+        #[cfg(not(windows))] _map: Option<()>,
+    ) -> Result<Self, ModelError> {
         let length_bytes: [u8; 8] = bytes
             .get(..8)
             .ok_or(ModelError::Truncated)?
@@ -92,7 +171,17 @@ impl Weights {
                         .get(&format!("{name}.scale"))
                         .ok_or_else(|| ModelError::Header(format!("{name}: missing scale")))?;
                     let scales = read_f32(data, scale_entry)?;
-                    read_i8(data, entry, scales)?
+                    read_i8(data, entry, scales, |bytes| {
+                        #[cfg(windows)]
+                        if let Some(map) = map {
+                            let [start, end] = entry.data_offsets;
+                            return Int8::Mapped(
+                                Arc::clone(map),
+                                header_end + start..header_end + end,
+                            );
+                        }
+                        Int8::Owned(bytes.iter().map(|&byte| byte as i8).collect())
+                    })?
                 }
                 other => return Err(ModelError::Header(format!("{name}: dtype {other}"))),
             };
@@ -133,11 +222,78 @@ impl Weights {
             .ok_or_else(|| ModelError::MissingTensor(name.to_owned()))
     }
 
+    pub fn take_optional(&mut self, name: &str) -> Result<Option<Vec<f32>>, ModelError> {
+        self.tensors
+            .contains_key(name)
+            .then(|| self.take(name))
+            .transpose()
+    }
+
     pub fn metadata(&self, key: &str) -> Result<&str, ModelError> {
         self.metadata
             .get(key)
             .map(String::as_str)
             .ok_or_else(|| ModelError::MissingMetadata(key.to_owned()))
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Pack {
+    header: BTreeMap<String, serde_json::Value>,
+    data: Vec<u8>,
+}
+
+impl Pack {
+    fn tensor(
+        &mut self,
+        name: &str,
+        dtype: &str,
+        shape: &[usize],
+        bytes: impl Iterator<Item = u8>,
+    ) {
+        let start = self.data.len();
+        self.data.extend(bytes);
+        self.header.insert(
+            name.into(),
+            serde_json::json!(Entry {
+                dtype: dtype.into(),
+                shape: shape.to_vec(),
+                data_offsets: [start, self.data.len()],
+            }),
+        );
+    }
+
+    pub(crate) fn float(&mut self, name: &str, shape: &[usize], values: &[f32]) {
+        self.tensor(
+            name,
+            "F32",
+            shape,
+            values.iter().flat_map(|v| v.to_le_bytes()),
+        );
+    }
+
+    pub(crate) fn matrix(&mut self, name: &str, shape: [usize; 2], tensor: &Tensor) {
+        match tensor {
+            Tensor::Float(values) => self.float(name, &shape, values),
+            Tensor::Quantized { values, scales } => {
+                self.tensor(name, "I8", &shape, values.iter().map(|&v| v as u8));
+                self.float(&format!("{name}.scale"), &[scales.len()], scales);
+            }
+        }
+    }
+
+    pub(crate) fn write(
+        mut self,
+        out: &mut impl std::io::Write,
+        metadata: BTreeMap<&str, String>,
+    ) -> std::io::Result<()> {
+        self.header
+            .insert("__metadata__".into(), serde_json::json!(metadata));
+        let mut header = serde_json::to_vec(&self.header)?;
+        header.resize(header.len().next_multiple_of(8), b' ');
+        out.write_all(&(header.len() as u64).to_le_bytes())?;
+        out.write_all(&header)?;
+        out.write_all(&self.data)
     }
 }
 
@@ -147,7 +303,11 @@ fn slice<'a>(data: &'a [u8], entry: &Entry) -> Result<&'a [u8], ModelError> {
 }
 
 fn read_f32(data: &[u8], entry: &Entry) -> Result<Vec<f32>, ModelError> {
-    Ok(slice(data, entry)?
+    let bytes = slice(data, entry)?;
+    if entry.dtype != "F32" || !bytes.len().is_multiple_of(4) {
+        return Err(ModelError::Header("invalid float32 tensor".into()));
+    }
+    Ok(bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect())
@@ -161,7 +321,12 @@ fn read_f16(data: &[u8], entry: &Entry) -> Result<Vec<f32>, ModelError> {
 }
 
 /// Quantization is symmetric and per output row, so the scale index is the row index.
-fn read_i8(data: &[u8], entry: &Entry, scales: Vec<f32>) -> Result<Tensor, ModelError> {
+fn read_i8(
+    data: &[u8],
+    entry: &Entry,
+    scales: Vec<f32>,
+    store: impl FnOnce(&[u8]) -> Int8,
+) -> Result<Tensor, ModelError> {
     let bytes = slice(data, entry)?;
     let rows = *entry.shape.first().unwrap_or(&1);
     if rows == 0 || scales.len() != rows {
@@ -170,7 +335,7 @@ fn read_i8(data: &[u8], entry: &Entry, scales: Vec<f32>) -> Result<Tensor, Model
         ));
     }
     Ok(Tensor::Quantized {
-        values: bytes.iter().map(|&byte| byte as i8).collect(),
+        values: store(bytes),
         scales,
     })
 }

@@ -14,6 +14,57 @@ fn load_text(_name: &str, text: &str) -> AppConfig {
 }
 
 #[test]
+fn retired_candidate_materials_load_and_save_as_supported_choices() {
+    for (index, (old_material, old_ceramic, expected)) in [
+        ("milk-glass", "white", UiMaterial::Glass),
+        ("ceramic", "white", UiMaterial::Ceramic),
+        ("ceramic", "blue", UiMaterial::Ceramic),
+        ("ceramic-white", "white", UiMaterial::Ceramic),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = temp(&format!("retired-material-{index}.toml"));
+        std::fs::write(
+            &path,
+            format!("ui_material = '{old_material}'\nui_ceramic = '{old_ceramic}'\nui_glass_frost = 0.7\n"),
+        )
+        .unwrap();
+        let cfg = load(&path);
+        assert!(cfg.config_issues.is_empty(), "{:?}", cfg.config_issues);
+        assert_eq!(cfg.ui_material, expected);
+        save(&path, &cfg, &cfg).unwrap();
+        let table: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert!(!table.contains_key("ui_ceramic"));
+        assert_eq!(table["ui_material"].as_str(), Some(expected.as_str()));
+        assert_eq!(table["ui_glass_frost"].as_float(), Some(0.7));
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn rerank_models_survives_a_config_save_and_unknown_values_keep_the_default() {
+    let cfg = load_text(
+        "model-profile",
+        "rerank_models = \"25m\"\nrerank_25m_idle_secs = 30\n",
+    );
+    assert_eq!(cfg.rerank_models, RerankModels::Only25M);
+    let path = temp("model-profile.toml");
+    save(&path, &AppConfig::default(), &cfg).expect("write configuration");
+    let saved = load(&path);
+    assert_eq!(saved.rerank_models, RerankModels::Only25M);
+    assert_eq!(saved.rerank_25m_idle_secs, 30);
+    std::fs::remove_file(path).expect("remove test configuration");
+    let cfg = load_text(
+        "invalid-model-profile",
+        "rerank_models = \"wrong\"\nrerank_25m_idle_secs = -1\npage_size = 7",
+    );
+    assert_eq!(cfg.rerank_models, RerankModels::Dual);
+    assert_eq!(cfg.rerank_25m_idle_secs, 0);
+    assert_eq!(cfg.page_size, 7);
+}
+
+#[test]
 fn extensions_key_accepts_valid_id() {
     let cfg = load_text("valid", "extensions = [\"my-pack_1\"]\n");
     assert_eq!(cfg.extensions, vec!["my-pack_1"]);

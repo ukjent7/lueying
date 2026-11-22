@@ -29,7 +29,8 @@ fn fixture(width: usize, vocab: usize, quantized: bool) -> (SentenceModel, Vec<f
         Tensor::Quantized {
             values: (0..vocab * width)
                 .map(|index| ((index * 29 + 7) % 255) as i16 as i8)
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             scales: (0..vocab)
                 .map(|index| ((index % 11) as f32 + 1.0) / 128.0)
                 .collect(),

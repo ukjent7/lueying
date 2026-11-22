@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::settings::view::ids;
 use lueying_core::schemes::SchemeId;
 use lueying_server::config::{
-    AppConfig, Channel, OcrBackend, Region, UiCeramic, UiFont, UiLayout, UiMaterial,
+    AppConfig, Channel, OcrBackend, Region, UiFont, UiLayout, UiMaterial,
 };
 
 /// 设置窗左栏的页面。
@@ -41,7 +41,7 @@ impl PageId {
         match self {
             Self::Input => "输入",
             Self::Candidate => "候选",
-            Self::Extensions => "扩展",
+            Self::Extensions => "扩展商店",
             Self::Dictionary => "词库",
             Self::About => "关于",
         }
@@ -104,8 +104,6 @@ pub enum ControlDef {
     Segment {
         id: &'static str,
         choices: &'static [Choice],
-        /// 每格宽度(逻辑像素)。
-        width: f32,
         /// 主题色一列要把预设色画在文字上。
         tinted: bool,
         get: fn(&AppConfig) -> usize,
@@ -408,7 +406,7 @@ fn font_set(cfg: &mut AppConfig, index: usize) {
 }
 
 fn material_get(cfg: &AppConfig) -> usize {
-    usize::from(cfg.ui_material == UiMaterial::Ceramic)
+    cfg.ui_material.index()
 }
 
 fn material_set(cfg: &mut AppConfig, index: usize) {
@@ -423,22 +421,9 @@ fn frost_set(cfg: &mut AppConfig, value: f32) {
     cfg.ui_glass_frost = value.clamp(0.0, 1.0);
 }
 
-fn ceramic_get(cfg: &AppConfig) -> usize {
-    cfg.ui_ceramic.index()
-}
-
-fn ceramic_set(cfg: &mut AppConfig, index: usize) {
-    cfg.ui_ceramic = UiCeramic::from_index(index);
-}
-
 /// 玻璃材质才显示磨砂滑杆。
 fn glass_only(cfg: &AppConfig) -> bool {
     cfg.ui_material == UiMaterial::Glass
-}
-
-/// 陶瓷材质才显示胎色分段。
-fn ceramic_only(cfg: &AppConfig) -> bool {
-    cfg.ui_material == UiMaterial::Ceramic
 }
 
 const fn slider(
@@ -553,21 +538,7 @@ const MATERIAL_CHOICES: &[Choice] = &[
     },
     Choice {
         value: "ceramic",
-        label: "陶瓷",
-    },
-];
-const CERAMIC_CHOICES: &[Choice] = &[
-    Choice {
-        value: "black",
         label: "黑瓷",
-    },
-    Choice {
-        value: "white",
-        label: "白瓷",
-    },
-    Choice {
-        value: "blue",
-        label: "青花瓷",
     },
 ];
 const FONT_VALUES: [UiFont; 3] = [UiFont::Small, UiFont::Standard, UiFont::Large];
@@ -643,7 +614,6 @@ const fn toggle(
 const fn segment(
     id: &'static str,
     choices: &'static [Choice],
-    width: f32,
     tinted: bool,
     get: fn(&AppConfig) -> usize,
     set: fn(&mut AppConfig, usize),
@@ -651,7 +621,6 @@ const fn segment(
     ControlDef::Segment {
         id,
         choices,
-        width,
         tinted,
         get,
         set,
@@ -669,14 +638,7 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Input,
             keywords: "拼音 全拼 双拼 小鹤 自然码 微软 搜狗",
-            control: segment(
-                ids::SCHEME,
-                SCHEME_CHOICES,
-                44.0,
-                false,
-                scheme_get,
-                scheme_set,
-            ),
+            control: segment(ids::SCHEME, SCHEME_CHOICES, false, scheme_get, scheme_set),
             visible: always,
         }),
     },
@@ -754,14 +716,7 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Input,
             keywords: "繁体 字形 台湾 香港",
-            control: segment(
-                ids::REGION,
-                REGION_CHOICES,
-                44.0,
-                false,
-                region_get,
-                region_set,
-            ),
+            control: segment(ids::REGION, REGION_CHOICES, false, region_get, region_set),
             visible: when_traditional,
         }),
     },
@@ -780,7 +735,6 @@ pub static SETTINGS: &[SettingDef] = &[
             control: segment(
                 ids::PAGE_SIZE,
                 PAGE_SIZE_CHOICES,
-                34.0,
                 false,
                 page_size_get,
                 page_size_set,
@@ -800,7 +754,6 @@ pub static SETTINGS: &[SettingDef] = &[
             control: segment(
                 ids::TOOLBAR_SCALE,
                 TOOLBAR_SCALE_CHOICES,
-                44.0,
                 false,
                 toolbar_scale_get,
                 toolbar_scale_set,
@@ -817,21 +770,14 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Candidate,
             keywords: "候选 横排 竖排 排列",
-            control: segment(
-                ids::LAYOUT,
-                LAYOUT_CHOICES,
-                44.0,
-                false,
-                layout_get,
-                layout_set,
-            ),
+            control: segment(ids::LAYOUT, LAYOUT_CHOICES, false, layout_get, layout_set),
             visible: always,
         }),
     },
     SettingDef {
         key: "ui_material",
         title: "候选窗材质",
-        detail: "液态玻璃通透可调,陶瓷温润不透明",
+        detail: "液态玻璃通透可调,黑瓷保留不透明胎体和环境反光",
         value: ValueType::Enum(&["glass", "ceramic"]),
         default: DefaultValue::Text("glass"),
         ui: Some(UiDef {
@@ -840,7 +786,6 @@ pub static SETTINGS: &[SettingDef] = &[
             control: segment(
                 ids::MATERIAL,
                 MATERIAL_CHOICES,
-                60.0,
                 false,
                 material_get,
                 material_set,
@@ -865,26 +810,6 @@ pub static SETTINGS: &[SettingDef] = &[
         }),
     },
     SettingDef {
-        key: "ui_ceramic",
-        title: "陶瓷胎色",
-        detail: "黑瓷沉稳,白瓷温润,青花藏青墨配钴蓝釉",
-        value: ValueType::Enum(&["black", "white", "blue"]),
-        default: DefaultValue::Text("white"),
-        ui: Some(UiDef {
-            page: PageId::Candidate,
-            keywords: "陶瓷 黑瓷 白瓷 青花瓷 胎色 材质",
-            control: segment(
-                ids::CERAMIC,
-                CERAMIC_CHOICES,
-                44.0,
-                false,
-                ceramic_get,
-                ceramic_set,
-            ),
-            visible: ceramic_only,
-        }),
-    },
-    SettingDef {
         key: "ui_font",
         title: "候选字号",
         detail: "只缩放候选行,拼音行不变",
@@ -893,7 +818,7 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Candidate,
             keywords: "候选 字体 字号 大小",
-            control: segment(ids::FONT, FONT_CHOICES, 44.0, false, font_get, font_set),
+            control: segment(ids::FONT, FONT_CHOICES, false, font_get, font_set),
             visible: always,
         }),
     },
@@ -906,14 +831,7 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Candidate,
             keywords: "主题 颜色 强调色 外观",
-            control: segment(
-                ids::ACCENT,
-                ACCENT_CHOICES,
-                34.0,
-                true,
-                accent_get,
-                accent_set,
-            ),
+            control: segment(ids::ACCENT, ACCENT_CHOICES, true, accent_get, accent_set),
             visible: always,
         }),
     },
@@ -932,8 +850,8 @@ pub static SETTINGS: &[SettingDef] = &[
     },
     SettingDef {
         key: "settled_promote",
-        title: "停顿后换首选",
-        detail: "输入停顿后允许高精度模型调整首选;关闭后首选只随按键变化",
+        title: "停顿后重排",
+        detail: "输入停顿后允许已启用的模型调整候选顺序",
         value: ValueType::Bool,
         default: DefaultValue::Bool(true),
         ui: Some(UiDef {
@@ -969,7 +887,7 @@ pub static SETTINGS: &[SettingDef] = &[
         ui: Some(UiDef {
             page: PageId::Extensions,
             keywords: "OCR 截图 识别 模型",
-            control: segment(ids::OCR, OCR_CHOICES, 60.0, false, ocr_get, ocr_set),
+            control: segment(ids::OCR, OCR_CHOICES, false, ocr_get, ocr_set),
             visible: always,
         }),
     },
@@ -985,7 +903,6 @@ pub static SETTINGS: &[SettingDef] = &[
             control: segment(
                 ids::CHANNEL,
                 CHANNEL_CHOICES,
-                44.0,
                 false,
                 channel_get,
                 channel_set,

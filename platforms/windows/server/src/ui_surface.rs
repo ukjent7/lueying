@@ -17,8 +17,9 @@ use windows::Win32::Graphics::Direct2D::Common::{
 use windows::Win32::Graphics::Direct2D::{
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_EXTEND_MODE_CLAMP,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_GAMMA_2_2,
-    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE, D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory,
     ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
@@ -55,6 +56,7 @@ pub struct Surface {
     dwrite: IDWriteFactory,
     /// 绑到 `mem_dc` 的绘制目标;删 GDI 资源前先置空。
     target: Option<ID2D1DCRenderTarget>,
+    external: Option<windows::Win32::Graphics::Direct2D::ID2D1RenderTarget>,
     brush: ID2D1SolidColorBrush,
     mem_dc: HDC,
     dib: Option<HBITMAP>,
@@ -67,17 +69,20 @@ pub struct Surface {
 impl Surface {
     /// 建一块内存 DC 与 Direct2D 工厂;没有桌面会话时返回错误。
     pub fn new() -> Result<Self, String> {
+        Self::with_type(D2D1_RENDER_TARGET_TYPE_DEFAULT)
+    }
+
+    /// 徽标与工具栏的软件渲染面:软件目标建不出来时回落默认渲染。
+    pub fn new_aux() -> Result<Self, String> {
+        Self::with_type(D2D1_RENDER_TARGET_TYPE_SOFTWARE).or_else(|_| Self::new())
+    }
+
+    fn with_type(target_type: D2D1_RENDER_TARGET_TYPE) -> Result<Self, String> {
         unsafe {
-            let screen = GetDC(None);
-            let mem_dc = CreateCompatibleDC(Some(screen));
-            let _ = ReleaseDC(None, screen);
-            if mem_dc.is_invalid() {
-                return Err("CreateCompatibleDC 失败".into());
-            }
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)
                 .map_err(|e| format!("D2D1CreateFactory: {e}"))?;
             let properties = D2D1_RENDER_TARGET_PROPERTIES {
-                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                r#type: target_type,
                 pixelFormat: D2D1_PIXEL_FORMAT {
                     format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
@@ -98,9 +103,16 @@ impl Surface {
                 .map_err(|e| format!("CreateSolidColorBrush: {e}"))?;
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)
                 .map_err(|e| format!("DWriteCreateFactory: {e}"))?;
+            let screen = GetDC(None);
+            let mem_dc = CreateCompatibleDC(Some(screen));
+            let _ = ReleaseDC(None, screen);
+            if mem_dc.is_invalid() {
+                return Err("CreateCompatibleDC 失败".into());
+            }
             Ok(Self {
                 dwrite,
                 target: Some(target),
+                external: None,
                 brush,
                 mem_dc,
                 dib: None,
@@ -164,10 +176,28 @@ impl Surface {
     }
 
     /// 借出绘制目标的克隆;COM 引用计数加一,调用方拿得住,也不挡住画刷的可变借用。
-    fn target(&self) -> Result<ID2D1DCRenderTarget, String> {
-        self.target
+    fn target(&self) -> Result<windows::Win32::Graphics::Direct2D::ID2D1RenderTarget, String> {
+        self.external
             .clone()
+            .or_else(|| self.target.as_ref().map(|target| (**target).clone()))
             .ok_or_else(|| "绘制目标已释放".to_string())
+    }
+
+    pub fn draw_on(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1DeviceContext,
+        paint: impl FnOnce(&mut Self),
+    ) -> windows::core::Result<()> {
+        let target = windows::core::Interface::cast::<
+            windows::Win32::Graphics::Direct2D::ID2D1RenderTarget,
+        >(target)?;
+        let brush = unsafe { target.CreateSolidColorBrush(&D2D1_COLOR_F::default(), None)? };
+        let previous = std::mem::replace(&mut self.brush, brush);
+        self.external = Some(target);
+        paint(self);
+        self.external = None;
+        self.brush = previous;
+        Ok(())
     }
 
     fn end(&mut self) {
@@ -217,7 +247,9 @@ impl Surface {
                 right: w as i32,
                 bottom: h as i32,
             };
-            self.target()?
+            self.target
+                .as_ref()
+                .ok_or("no D2D DC target")?
                 .BindDC(self.mem_dc, &rect)
                 .map_err(|e| format!("BindDC: {e}"))?;
         }
@@ -299,6 +331,47 @@ fn rrect(rect: Rect, radius: f32) -> D2D1_ROUNDED_RECT {
     }
 }
 
+impl Surface {
+    fn gradient(&mut self, rect: Rect, radius: f32, stops: &[(f32, Color)], flat: Color) {
+        let Ok(target) = self.target() else { return };
+        let mut storage = [D2D1_GRADIENT_STOP::default(); 8];
+        let Some(native) = storage.get_mut(..stops.len()) else {
+            self.fill_rrect(rect, radius, flat);
+            return;
+        };
+        for (stop, &(position, color)) in native.iter_mut().zip(stops) {
+            *stop = D2D1_GRADIENT_STOP {
+                position,
+                color: d2d_color(color),
+            };
+        }
+        unsafe {
+            let brush = target
+                .CreateGradientStopCollection(native, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+                .and_then(|collection| {
+                    target.CreateLinearGradientBrush(
+                        &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                            startPoint: Vector2 {
+                                X: rect.left,
+                                Y: rect.top,
+                            },
+                            endPoint: Vector2 {
+                                X: rect.left,
+                                Y: rect.bottom,
+                            },
+                        },
+                        None,
+                        &collection,
+                    )
+                });
+            match brush {
+                Ok(brush) => target.FillRoundedRectangle(&rrect(rect, radius), &brush),
+                Err(_) => self.fill_rrect(rect, radius, flat),
+            }
+        }
+    }
+}
+
 impl Canvas for Surface {
     fn fill_rect(&mut self, rect: Rect, color: Color) {
         let Ok(target) = self.target() else {
@@ -336,9 +409,6 @@ impl Canvas for Surface {
     }
 
     fn fill_rrect_vertical(&mut self, rect: Rect, radius: f32, top: Color, bottom: Color) {
-        let Ok(target) = self.target() else {
-            return;
-        };
         let mix = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
         let channel = |shift: u32| {
             mix(
@@ -350,43 +420,49 @@ impl Canvas for Surface {
             (u32::from(channel(16)) << 16) | (u32::from(channel(8)) << 8) | u32::from(channel(0)),
             mix(top.alpha, bottom.alpha),
         );
+        self.gradient(rect, radius, &[(0.0, top), (1.0, bottom)], flat);
+    }
+
+    fn light_rrect(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        center: Point,
+        extent: Point,
+        stops: &[(f32, Color)],
+    ) {
+        let Ok(target) = self.target() else { return };
+        let mut storage = [D2D1_GRADIENT_STOP::default(); 8];
+        let Some(native) = storage.get_mut(..stops.len()) else {
+            return;
+        };
+        for (stop, &(position, color)) in native.iter_mut().zip(stops) {
+            *stop = D2D1_GRADIENT_STOP {
+                position,
+                color: d2d_color(color),
+            };
+        }
         unsafe {
-            let stops = [
-                D2D1_GRADIENT_STOP {
-                    position: 0.0,
-                    color: d2d_color(top),
-                },
-                D2D1_GRADIENT_STOP {
-                    position: 1.0,
-                    color: d2d_color(bottom),
-                },
-            ];
-            let Ok(collection) =
-                target.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
-            else {
-                self.brush.SetColor(&d2d_color(flat));
-                target.FillRoundedRectangle(&rrect(rect, radius), &self.brush);
-                return;
-            };
-            let Ok(brush) = target.CreateLinearGradientBrush(
-                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                    startPoint: Vector2 {
-                        X: rect.left,
-                        Y: rect.top,
-                    },
-                    endPoint: Vector2 {
-                        X: rect.left,
-                        Y: rect.bottom,
-                    },
-                },
-                None,
-                &collection,
-            ) else {
-                self.brush.SetColor(&d2d_color(flat));
-                target.FillRoundedRectangle(&rrect(rect, radius), &self.brush);
-                return;
-            };
-            target.FillRoundedRectangle(&rrect(rect, radius), &brush);
+            let brush = target
+                .CreateGradientStopCollection(native, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)
+                .and_then(|collection| {
+                    target.CreateRadialGradientBrush(
+                        &D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
+                            center: Vector2 {
+                                X: center.x,
+                                Y: center.y,
+                            },
+                            gradientOriginOffset: Vector2::default(),
+                            radiusX: extent.x,
+                            radiusY: extent.y,
+                        },
+                        None,
+                        &collection,
+                    )
+                });
+            if let Ok(brush) = brush {
+                target.FillRoundedRectangle(&rrect(rect, radius), &brush);
+            }
         }
     }
 
@@ -404,7 +480,6 @@ impl Canvas for Surface {
             );
         }
     }
-
     fn shadow_rrect(&mut self, rect: Rect, radius: f32, blur: f32, color: Color) {
         // 位图表面拿不到 Direct2D 特效图;向外叠几层淡圆角矩形近似高斯阴影。
         if color.alpha == 0 {

@@ -29,7 +29,7 @@ impl Engine {
     pub(crate) fn commit_highlighted(&mut self) -> Option<String> {
         self.comp.as_ref()?;
         if self.cands.is_empty() {
-            let raw = self.comp.take().map(|c| c.raw);
+            let raw = self.take_finished_composition().map(|c| c.raw);
             self.clear_comp();
             return raw;
         }
@@ -191,7 +191,7 @@ impl Engine {
                 // `note_events` 据此跳过这条提交,不再把繁体显示写进上下文。
                 self.context_handled += 1;
             }
-            self.comp = None;
+            drop(self.take_finished_composition());
             self.comp_committed = false;
             self.cands.clear();
             self.hl = 0;

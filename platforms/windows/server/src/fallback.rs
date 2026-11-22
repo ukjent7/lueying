@@ -151,7 +151,7 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
 }
 
 /// 候选窗在浮层下面,真实点击到不了它;把落在候选窗矩形里的鼠标事件
-/// 经 Rune 候选窗的注入口转过去,原事件吞掉。候选窗不用激活,搜索框保持焦点。
+/// 经候选窗的注入口转过去,原事件吞掉。候选窗不用激活,搜索框保持焦点。
 fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
     let message = wparam.0 as u32;
@@ -161,33 +161,33 @@ fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         && x < (rect.0 + rect.2) as f32
         && y >= rect.1 as f32
         && y < (rect.1 + rect.3) as f32;
-    use crate::ui::rune::FallbackMouse;
+    use crate::ui::{candidate::FallbackMouse, forward_candidate_mouse};
     match message {
         WM_LBUTTONDOWN if inside => {
-            crate::ui::rune::forward_mouse(FallbackMouse::Down(x, y));
+            forward_candidate_mouse(FallbackMouse::Down(x, y));
             MOUSE_CAPTURED.with(|captured| captured.set(true));
             Some(LRESULT(1))
         }
         WM_LBUTTONUP if MOUSE_CAPTURED.with(std::cell::Cell::get) => {
             MOUSE_CAPTURED.with(|captured| captured.set(false));
-            crate::ui::rune::forward_mouse(FallbackMouse::Up);
+            forward_candidate_mouse(FallbackMouse::Up);
             Some(LRESULT(1))
         }
         WM_RBUTTONDOWN if inside => {
-            crate::ui::rune::forward_mouse(FallbackMouse::Right(x, y));
+            forward_candidate_mouse(FallbackMouse::Right(x, y));
             Some(LRESULT(1))
         }
         WM_MOUSEWHEEL if inside => {
             // WM_MOUSEWHEEL 的键状态在高 16 位;坐标按屏幕坐标给。
             let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
-            crate::ui::rune::forward_mouse(FallbackMouse::Wheel(delta));
+            forward_candidate_mouse(FallbackMouse::Wheel(delta));
             Some(LRESULT(1))
         }
-        WM_MOUSEMOVE if inside => {
+        WM_MOUSEMOVE if inside || MOUSE_CAPTURED.with(std::cell::Cell::get) => {
             // 只转发悬停,不吞移动;同一点不重复发。
             if LAST_MOVE.with(|last| last.replace((info.pt.x, info.pt.y))) != (info.pt.x, info.pt.y)
             {
-                crate::ui::rune::forward_mouse(FallbackMouse::Move(x, y));
+                forward_candidate_mouse(FallbackMouse::Move(x, y));
             }
             None
         }

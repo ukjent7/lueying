@@ -24,6 +24,13 @@
 - `main.pyd`、`collocation.bin`
 - `rerank-8m.*`、`rerank-25m.*`（每组三个文件）
 
+Windows 可在同一模型目录放置 `rerank-8m.packed.safetensors` 或
+`rerank-25m.packed.safetensors`。服务优先只读映射预打包文件，缺失或无法解析时读取同目录的 ORT 文件。现有安装和下载流程仍提供 ORT；预打包文件是可选项，不要把未经转换的上游权重改名放进去。
+
+```sh
+cargo run --release -p lueying-rerank --example pack-model -- data/rerank rerank-25m data/rerank/rerank-25m.packed.safetensors
+```
+
 缺失时重新安装即可修复。
 
 ## 日志

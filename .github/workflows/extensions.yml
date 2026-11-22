@@ -4,7 +4,7 @@ name: extensions
 
 on:
   push:
-    tags: ["ppocr-v*"]
+    tags: ["ppocr-v*", "shot-ocr-v*", "clipboard-history-v*", "voice-asr-v*"]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +19,7 @@ env:
 
 jobs:
   ppocr:
+    if: startsWith(github.ref_name, 'ppocr-v') || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch')
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -32,7 +33,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $manifest = Get-Content extensions/ppocr/manifest.json -Raw | ConvertFrom-Json
-          $tag = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "ppocr-v$($manifest.version)" }
+          $tag = "ppocr-v$($manifest.version)"
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -cne $tag) {
+            throw "标签 $env:GITHUB_REF_NAME 与清单版本不匹配，应为 $tag"
+          }
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/release/ppocr.exe dist/lueying-ppocr.exe
           gh release view $tag 2>$null | Out-Null
@@ -46,3 +50,35 @@ jobs:
         with:
           name: lueying-ppocr
           path: dist/lueying-ppocr.exe
+
+  official:
+    if: github.event_name == 'push' && !startsWith(github.ref_name, 'ppocr-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: wasm-tools
+      - name: Build optional store package
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            shot-ocr-v*) id=shot-ocr ;;
+            clipboard-history-v*) id=clipboard-history ;;
+            voice-asr-v*) id=voice-asr ;;
+            *) exit 1 ;;
+          esac
+          test "$(jq -r .id "extensions/$id/manifest.json")" = "$id"
+          test "$GITHUB_REF_NAME" = "$id-v$(jq -r .version "extensions/$id/manifest.json")"
+          rustup target add wasm32-unknown-unknown
+          cargo build --release --locked -p "$id" --target wasm32-unknown-unknown
+          wasm-tools component new "target/wasm32-unknown-unknown/release/${id//-/_}.wasm" -o "extensions/$id/extension.wasm"
+          cargo run -p lueying-cli --release --locked -- ext pack "extensions/$id" --out "$id.luext"
+          echo "PACKAGE=$id.luext" >> "$GITHUB_ENV"
+      - name: Publish separate extension release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release create "$GITHUB_REF_NAME" "$PACKAGE" --verify-tag --latest=false --title "$GITHUB_REF_NAME" --notes "Optional official extension"

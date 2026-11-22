@@ -33,10 +33,8 @@ getrandom = "0.4"
 winresource = "0.1"
 
 [target."cfg(windows)".dependencies]
-# 候选窗界面层:Rune overlay(GPU 玻璃材质);布局与命中仍来自 lueying-render。
 rune.workspace = true
-# 候选条自然宽度排版在显示前就要量好(容量喂给引擎分页);TextSystem 直接量。
-rune-text = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf", default-features = false }
+rune-text = { path = "../../../vendor/rune/crates/rune-text", default-features = false }
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
@@ -46,6 +44,10 @@ windows-numerics = "0.3.1"
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
 windows = { version = "0.62.2", features = [
     "Foundation",
+    "Foundation_Numerics",
+    "Graphics_DirectX",
+    "System",
+    "UI_Composition_Desktop",
     "Globalization",
     "Graphics_Imaging",
     "Media_Ocr",
@@ -76,6 +78,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_System_WinRT_Composition",
     "Win32_Storage_FileSystem",
     "Win32_UI_Accessibility",
     "Win32_UI_Controls_Dialogs",

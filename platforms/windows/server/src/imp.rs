@@ -10,7 +10,7 @@ pub(crate) mod request;
 mod ext;
 
 #[path = "server_assets.rs"]
-mod assets;
+pub(super) mod assets;
 
 /// TSF 不覆盖的宿主的回落输入通道(低层钩子)。
 #[path = "fallback.rs"]
@@ -32,7 +32,7 @@ use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_ext::host::{Done, Provider};
 use lueying_protocol::{KeyMsg, Reply, Request, SessionView, pipe_name};
-use lueying_rerank::{LatencyMetrics, Model, Rerank};
+use lueying_rerank::{LatencyMetrics, Model};
 use lueying_server::config::{self, AppConfig};
 use lueying_server::ext_link::{ExtLink, Handler, Replier, Request as ExtRequest};
 use lueying_server::services::{OutputProvider, PanelProvider};
@@ -62,14 +62,12 @@ fn local_time() -> CivilTime {
 pub(super) struct Session {
     pub(super) engine: Engine,
     pub(super) view: SessionView,
-    /// 停顿重排算出、等下一次 `Sync` 生效的首选。
+    /// 停顿重排算出、等下一次 `Sync` 生效的候选顺序。
     pub(super) settle_pick: Option<crate::settle::SettlePick>,
+    /// 8M 判断无需 25M 的候选版本与上下文代次。
+    pub(super) skip_25m_at: Option<(u64, u64)>,
     /// 候选窗鼠标点选/翻页产生的待写回内容,TSF 的 `Sync` 取走。
     pub(super) ui_reply: Option<Reply>,
-    /// 8M 每键重排:后台线程独占推理,前缀缓存随会话存活。
-    pub(super) sync_rerank: Option<Arc<Mutex<Rerank>>>,
-    /// 25M 停顿重排,异步线程在锁内推理,不占 `sessions` 锁。
-    pub(super) settled_rerank: Option<Arc<Mutex<Rerank>>>,
     /// 宿主已接管候选绘制;候选窗让位给宿主/读屏。
     pub(super) host_draws: bool,
     /// 候选窗展开网格;编辑组合的键把它收回去。
@@ -209,14 +207,15 @@ pub(super) struct State {
     /// 三档降级后实际生效的主词典来源:`pyd`、`tsv` 或 `builtin`。
     pub(super) dict_source: &'static str,
     pub(super) sync_model: Option<Model>,
-    pub(super) settled_model: Option<Model>,
+    pub(super) settled_model: Option<crate::settle::ModelSource>,
+    pub(super) settled_resident: AtomicBool,
     /// 8M 按键重排的作业通道;按键只发快照,推理在后台。
     pub(super) sync_tx: Option<mpsc::SyncSender<crate::sync_rerank::Job>>,
     /// 8M 按键同步重排的延迟分布;所有会话共享一份。
     pub(super) rerank_sync_metrics: Arc<LatencyMetrics>,
     /// 25M 停顿重排的延迟分布;所有会话共享一份。
     pub(super) rerank_settle_metrics: Arc<LatencyMetrics>,
-    pub(super) settle_tx: Option<mpsc::Sender<crate::settle::SettleMessage>>,
+    pub(super) settle_queue: Option<crate::settle::Queue>,
     /// TSF 读不到左邻文本时交给 UIA 线程补读;队列满时丢新任务。
     pub(super) uia_tx: Option<mpsc::SyncSender<crate::uia::Work>>,
     /// 回落宿主的候选窗锚点查询;独立线程,不排在上下文读取后面。
@@ -313,11 +312,11 @@ impl State {
     }
 }
 
-/// 候选窗的数据变了:版本号自增并叫醒界面线程与 Rune 候选窗。
+/// 候选窗的数据变了:版本号自增并叫醒界面线程与候选窗。
 pub(super) fn touch_view(state: &State) {
     state.version.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
-    crate::ui::rune::kick();
+    crate::ui::kick_candidate();
     // 输入上下文跟着视图走:隐私门禁与热键的 when 判断在宿主侧用它。
     let active = state.active_published();
     state.ext.set_context(lueying_ext::proto::link::Context {
@@ -475,9 +474,25 @@ pub(super) fn real_main() {
     });
     // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
     let _ = dict.total_weight();
-    // 两档神经重排都是可选数据:缺失/损坏就只保留词频候选。
-    let sync_model = load_model("rerank-8m");
-    let settled_model = load_model("rerank-25m");
+    let config_path = config::path();
+    let app_config = config_path
+        .as_ref()
+        .map_or_else(AppConfig::default, |path| config::load(path));
+    if let Some(path) = &config_path {
+        println!("配置 ← {}", path.display());
+    }
+    // 单模型档不读取另一组文件;缺失或损坏时保留词频候选。
+    use config::RerankModels::{Only8M, Only25M};
+    let sync_model = (app_config.rerank_models != Only25M)
+        .then(|| load_model("rerank-8m"))
+        .flatten();
+    let settled_model = (app_config.rerank_models != Only8M)
+        .then(|| crate::settle::ModelSource::open(app_config.rerank_25m_idle_secs))
+        .flatten();
+    let settled_resident = AtomicBool::new(matches!(
+        settled_model,
+        Some(crate::settle::ModelSource::Preloaded(_))
+    ));
     let settle_available = settled_model.is_some() || sync_model.is_some();
     // 用户词库是可选数据:读不到就从空开始,坏行跳过。
     let user_path = crate::user_store::path();
@@ -490,14 +505,6 @@ pub(super) fn real_main() {
     }));
     if let Some(path) = user_path {
         crate::user_store::spawn(Arc::clone(&user), path);
-    }
-    // 用户配置:缺失或坏行就用默认值。
-    let config_path = config::path();
-    let app_config = config_path
-        .as_ref()
-        .map_or_else(AppConfig::default, |path| config::load(path));
-    if let Some(path) = &config_path {
-        println!("配置 ← {}", path.display());
     }
     // 自定义短语是可选用户数据:缺失时写一份带注释的模板,读不到就空表。
     let phrases = config::phrases_path().map(|path| {
@@ -512,8 +519,7 @@ pub(super) fn real_main() {
     let scheme = lueying_core::schemes::scheme(app_config.scheme, app_config.aux);
     let prediction = Arc::new(Prediction::with_enabled(app_config.predict));
     let script = Arc::new(ScriptModule::new(app_config.script()));
-    let (settle_tx, settle_rx) = mpsc::channel();
-    let settle_tx = settle_available.then_some(settle_tx);
+    let settle_queue = settle_available.then(crate::settle::Queue::new);
     let (sync_tx, sync_rx) = mpsc::sync_channel(1);
     let sync_tx = sync_model.as_ref().map(|_| sync_tx);
     let (uia_tx, uia_rx) = mpsc::sync_channel::<crate::uia::Work>(4);
@@ -546,10 +552,11 @@ pub(super) fn real_main() {
         active: AtomicU64::new(0),
         sync_model,
         settled_model,
+        settled_resident,
         rerank_sync_metrics: Arc::new(LatencyMetrics::default()),
         rerank_settle_metrics: Arc::new(LatencyMetrics::default()),
         sync_tx,
-        settle_tx,
+        settle_queue,
         uia_tx: Some(uia_tx),
         anchor_tx: Some(anchor_tx),
         fallback_active: Mutex::new(HashMap::new()),
@@ -577,12 +584,12 @@ pub(super) fn real_main() {
         state.ext.on_patch(move || {
             if let Some(state) = weak.upgrade() {
                 state.wake_ui.set();
-                crate::ui::rune::kick();
+                crate::ui::kick_candidate();
             }
         });
     }
-    if state.settle_tx.is_some() {
-        crate::settle::spawn(Arc::clone(&state), settle_rx);
+    if state.settle_queue.is_some() {
+        crate::settle::spawn(Arc::clone(&state));
     }
     if state.sync_tx.is_some() {
         crate::sync_rerank::spawn(Arc::clone(&state), sync_rx);
@@ -602,8 +609,7 @@ pub(super) fn real_main() {
             std::thread::park();
         }
     }
-    // 徽标、工具栏、选择面板与消息桥在子线程;候选窗占用主线程——
-    // Rune 的 winit 事件循环只能在主线程起。
+    // 徽标、工具栏、选择面板与消息桥在子线程;候选窗合成器在主线程。
     let ui_state = Arc::clone(&state);
     let ui = std::thread::Builder::new()
         .name("lueying-ui".into())
@@ -619,20 +625,12 @@ pub(super) fn real_main() {
     if let Err(error) = ui {
         println!("界面线程启动失败,继续无界面服务: {error}");
     }
-    // 候选窗的 winit 事件循环必须占主线程;崩溃时由 keeper 线程保活进程,
-    // 输入法本身只依赖管道,照常工作。
-    let _keeper = std::thread::spawn(|| {
-        loop {
-            std::thread::park();
-        }
-    });
-    let rune_state = Arc::clone(&state);
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::ui::rune::run(rune_state);
+        crate::ui::run_candidate(state);
     }))
     .is_err()
     {
-        println!("Rune 候选窗崩溃,输入法照常工作");
+        println!("候选窗崩溃,输入法照常工作");
     }
     loop {
         std::thread::park();

@@ -26,7 +26,7 @@ pub(super) fn dict_path(name: &str) -> Option<std::path::PathBuf> {
     path.exists().then_some(path)
 }
 
-pub(super) fn load_model(stem: &str) -> Option<Model> {
+fn model_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(dir) = config::models_dir() {
         dirs.push(dir);
@@ -36,7 +36,30 @@ pub(super) fn load_model(stem: &str) -> Option<Model> {
     {
         dirs.push(dir.to_path_buf());
     }
-    for dir in dirs {
+    dirs
+}
+
+pub(crate) fn model_exists(stem: &str) -> bool {
+    model_dirs().iter().any(|dir| {
+        dir.join(format!("{stem}.packed.safetensors")).is_file()
+            || [".ort", ".model.json", ".vocab.json"]
+                .iter()
+                .all(|suffix| dir.join(format!("{stem}{suffix}")).is_file())
+    })
+}
+
+pub(crate) fn load_model(stem: &str) -> Option<Model> {
+    for dir in model_dirs() {
+        let packed = dir.join(format!("{stem}.packed.safetensors"));
+        if packed.is_file() {
+            match Model::load_packed_file(&packed) {
+                Ok(model) => {
+                    println!("重排模型 {stem} mmap ← {}", packed.display());
+                    return Some(model);
+                }
+                Err(error) => println!("重排模型 {stem} 预打包文件不可用: {error}"),
+            }
+        }
         if !dir.join(format!("{stem}.ort")).is_file() {
             continue;
         }

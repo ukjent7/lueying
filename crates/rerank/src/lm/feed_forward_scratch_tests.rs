@@ -188,7 +188,8 @@ fn matrix(rows: usize, width: usize, quantized: bool, salt: usize) -> Matrix {
             Tensor::Quantized {
                 values: (0..rows * width)
                     .map(|i| ((i * 7 + salt) % 23) as i8 - 11)
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into(),
                 scales: (0..rows).map(|i| ((i % 7 + 1) as f32) / 128.0).collect(),
             }
         } else {

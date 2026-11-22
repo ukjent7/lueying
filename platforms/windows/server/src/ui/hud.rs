@@ -73,7 +73,12 @@ pub(super) fn init(state: &Arc<State>) -> Option<Badge> {
             return None;
         }
     };
-    let surface = match Surface::new() {
+    let surface = if super::use_composition_candidate() {
+        Surface::new()
+    } else {
+        Surface::new_aux()
+    };
+    let surface = match surface {
         Ok(surface) => surface,
         Err(e) => {
             println!("模式徽标建表面失败: {e}");
@@ -111,7 +116,7 @@ impl Badge {
             self.current = hud_view(state);
             self.appearance = theme::Appearance::of_system();
             self.accent = accent_of(state);
-            self.reduce = crate::ui::rune::reduce_motion();
+            self.reduce = crate::ui::candidate::reduce_motion();
         }
         if self
             .current

@@ -173,7 +173,7 @@ impl SentenceModel {
     }
 }
 
-fn plain(model: &OrtModel, name: &str) -> Result<Vec<f32>, ModelError> {
+fn plain(model: &OrtModel<'_>, name: &str) -> Result<Vec<f32>, ModelError> {
     match &model.weight(name)?.data {
         OrtTensor::Float(values) => Ok(values.clone()),
         OrtTensor::Uint8(_) => Err(ModelError::Header(format!("{name} 应为 float32"))),
@@ -185,7 +185,7 @@ fn plain(model: &OrtModel, name: &str) -> Result<Vec<f32>, ModelError> {
 ///
 /// 量化阵在 ORT 里按 `[输入, 输出]` 存放,转置成线性层要求的 `[输出, 输入]` 行。
 fn int8_transposed(
-    model: &OrtModel,
+    model: &OrtModel<'_>,
     base: &str,
     outputs: usize,
     inputs: usize,
@@ -197,7 +197,7 @@ fn int8_transposed(
 }
 
 /// 词向量表按 `[词表, 宽度]` 存放,每个词一行。
-fn int8_token(model: &OrtModel, rows: usize, columns: usize) -> Result<Tensor, ModelError> {
+fn int8_token(model: &OrtModel<'_>, rows: usize, columns: usize) -> Result<Tensor, ModelError> {
     let base = "model.chars.weight";
     let source = uint8_source(
         model,
@@ -218,7 +218,7 @@ struct Uint8Source<'a> {
 }
 
 fn uint8_source<'a>(
-    model: &'a OrtModel,
+    model: &OrtModel<'a>,
     base: &str,
     shape: &[usize],
     scale_name: &str,
@@ -230,7 +230,7 @@ fn uint8_source<'a>(
             quantized.shape
         )));
     }
-    let OrtTensor::Uint8(codes) = &quantized.data else {
+    let OrtTensor::Uint8(codes) = quantized.data else {
         return Err(ModelError::Header(format!("{base} 不是 uint8")));
     };
     Ok(Uint8Source {
@@ -250,11 +250,13 @@ fn int8_rows(
 ) -> Tensor {
     let mut values = Vec::with_capacity(rows * columns);
     let mut scales = Vec::with_capacity(rows);
+    let mut codes = vec![0.0f32; columns];
     for row in 0..rows {
-        let codes: Vec<f32> = (0..columns)
-            .map(|column| f32::from(source.codes[at(row, column)]) - source.zero)
-            .collect();
-        let largest = codes.iter().fold(0.0f32, |most, code| most.max(code.abs()));
+        let mut largest = 0.0f32;
+        for (column, slot) in codes.iter_mut().enumerate() {
+            *slot = f32::from(source.codes[at(row, column)]) - source.zero;
+            largest = largest.max(slot.abs());
+        }
         if largest == 0.0 {
             scales.push(source.scale);
             values.extend(std::iter::repeat_n(0i8, columns));
@@ -267,11 +269,14 @@ fn int8_rows(
             );
         }
     }
-    Tensor::Quantized { values, scales }
+    Tensor::Quantized {
+        values: values.into(),
+        scales,
+    }
 }
 
 /// 位置表保持 f32:它是加在词向量上的偏置,不进矩阵乘。
-fn positions(model: &OrtModel, rows: usize, columns: usize) -> Result<Vec<f32>, ModelError> {
+fn positions(model: &OrtModel<'_>, rows: usize, columns: usize) -> Result<Vec<f32>, ModelError> {
     let base = "model.positions.weight";
     let source = uint8_source(
         model,
@@ -287,7 +292,7 @@ fn positions(model: &OrtModel, rows: usize, columns: usize) -> Result<Vec<f32>, 
 }
 
 /// 优先用与权重量化张量同名的 `_scale`;25M 的字表复用输出投影的缩放。
-fn dequant_scale_name(model: &OrtModel, base: &str) -> String {
+fn dequant_scale_name(model: &OrtModel<'_>, base: &str) -> String {
     let direct = format!("{base}_scale");
     if model.weights.contains_key(&direct) {
         return direct;
@@ -299,7 +304,7 @@ fn dequant_scale_name(model: &OrtModel, base: &str) -> String {
         .unwrap_or(direct)
 }
 
-fn scalar_f32(model: &OrtModel, name: &str) -> Result<f32, ModelError> {
+fn scalar_f32(model: &OrtModel<'_>, name: &str) -> Result<f32, ModelError> {
     match &model.weight(name)?.data {
         OrtTensor::Float(values) => values
             .first()
@@ -309,7 +314,7 @@ fn scalar_f32(model: &OrtModel, name: &str) -> Result<f32, ModelError> {
     }
 }
 
-fn scalar_u8(model: &OrtModel, name: &str) -> Result<f32, ModelError> {
+fn scalar_u8(model: &OrtModel<'_>, name: &str) -> Result<f32, ModelError> {
     match &model.weight(name)?.data {
         OrtTensor::Uint8(values) => values
             .first()
@@ -338,7 +343,7 @@ mod tests {
         else {
             panic!("keystroke matrices must stay quantized");
         };
-        assert_eq!(values, vec![0, 127, -127, 0, 0, 0]);
+        assert_eq!(&*values, &[0, 127, -127, 0, 0, 0]);
         assert_eq!(scales, vec![0.5, 0.5, 0.5]);
     }
 }

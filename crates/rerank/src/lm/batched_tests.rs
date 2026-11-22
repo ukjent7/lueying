@@ -42,7 +42,8 @@ fn matrix(stream: &mut Stream, rows: usize, inputs: usize, quantized: bool) -> M
             Tensor::Quantized {
                 values: (0..rows * inputs)
                     .map(|_| (stream.next() % 255) as u8 as i8)
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into(),
                 scales: (0..rows)
                     .map(|_| (stream.below(15) + 1) as f32 / 512.0)
                     .collect(),
@@ -317,7 +318,7 @@ impl Reranker {
     }
 }
 
-fn same_run(actual: &TailRun, expected: &TailRun) {
+fn same_run(actual: &TailRun, expected: &TailRun, width: usize) {
     assert_eq!(actual.base, expected.base);
     assert_eq!(actual.pending, expected.pending);
     assert_eq!(bits(&actual.cumulative), bits(&expected.cumulative));
@@ -327,11 +328,11 @@ fn same_run(actual: &TailRun, expected: &TailRun) {
         .chain(&actual.values)
         .zip(expected.keys.iter().chain(&expected.values))
     {
-        assert_eq!(bits(left), bits(right));
+        assert_eq!(bits(left), bits(&right[actual.base * width..]));
         assert_eq!(
             left.capacity(),
-            right.capacity(),
-            "retained KV capacity changed"
+            left.len(),
+            "candidate KV capacity must not retain the shared prefix"
         );
     }
     assert_eq!(actual.hidden.len(), expected.hidden.len());
@@ -394,7 +395,7 @@ fn compare_decisions(model: &Arc<SentenceModel>, decisions: &[(String, Vec<Strin
         assert_eq!(batched.resume.len(), sequential.resume.len());
         for ((tokens, run), (prior, other)) in batched.resume.iter().zip(&sequential.resume) {
             assert_eq!(tokens, prior);
-            same_run(run, other);
+            same_run(run, other, model.config.n_embd);
         }
         // Runs shared between candidates stay shared, so a later continuation finds one terminal.
         for left in 0..batched.resume.len() {

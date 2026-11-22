@@ -114,7 +114,7 @@ fn safe_token(token: &str) -> bool {
 }
 
 /// 一个 GET;2xx 的响应体按上限读回,超限即错。
-fn download(url: &str, limit: u64) -> Result<Vec<u8>, String> {
+pub(crate) fn download(url: &str, limit: u64) -> Result<Vec<u8>, String> {
     let agent = net::agent(url, API_TIMEOUT)?;
     let mut response = agent
         .get(url)

@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::config::{
-    AppConfig, AppOverride, Channel, ConfigIssue, OcrBackend, Region, UiCeramic, UiFont, UiLayout,
-    UiMaterial, accent_by_name, valid_script_id,
+    AppConfig, AppOverride, Channel, ConfigIssue, OcrBackend, Region, RerankModels, UiFont,
+    UiLayout, UiMaterial, accent_by_name, valid_script_id,
 };
 
 /// 用户配置文件 schema。字段都是可选层,合并时只覆盖写了的项。
@@ -25,6 +25,9 @@ pub struct FileConfig {
     pub bracket_page: Option<serde::de::IgnoredAny>,
     pub chinese_punct: Option<bool>,
     pub settled_promote: Option<bool>,
+    pub selective_25m: Option<bool>,
+    pub rerank_25m_idle_secs: Option<i64>,
+    pub rerank_models: Option<String>,
     pub toolbar_scale: Option<f32>,
     pub toolbar_x: Option<i32>,
     pub toolbar_y: Option<i32>,
@@ -40,7 +43,8 @@ pub struct FileConfig {
     pub ui_layout: Option<String>,
     pub ui_material: Option<String>,
     pub ui_glass_frost: Option<f32>,
-    pub ui_ceramic: Option<String>,
+    /// 旧陶瓷胎色:现在只有黑瓷,为兼容旧文件继续接受。
+    pub ui_ceramic: Option<serde::de::IgnoredAny>,
     pub ui_font: Option<String>,
     pub ui_accent: Option<AccentValue>,
     pub effects: Option<bool>,
@@ -111,6 +115,24 @@ pub fn apply(
     if let Some(on) = file.settled_promote {
         cfg.settled_promote = on;
     }
+    if let Some(on) = file.selective_25m {
+        cfg.selective_25m = on;
+    }
+    if let Some(secs) = file.rerank_25m_idle_secs {
+        if secs == 0 || (5..=600).contains(&secs) {
+            cfg.rerank_25m_idle_secs = secs as u64;
+        } else {
+            note(format!(
+                "rerank_25m_idle_secs={secs} 超出 0 或 5–600,已忽略"
+            ));
+        }
+    }
+    if let Some(value) = file.rerank_models {
+        match RerankModels::parse(&value) {
+            Some(models) => cfg.rerank_models = models,
+            None => note(format!("rerank_models={value} 不合法,已忽略")),
+        }
+    }
     // 模糊音已取消、始终开启;旧配置里的 fuzzy 键不再生效。
     let _ = file.fuzzy;
     // 中括号翻页已取消,候选浏览改成纯展开;旧键读到即忽略。
@@ -158,12 +180,6 @@ pub fn apply(
     }
     if let Some(value) = file.ui_glass_frost {
         cfg.ui_glass_frost = value.clamp(0.0, 1.0);
-    }
-    if let Some(value) = file.ui_ceramic {
-        match UiCeramic::parse(&value) {
-            Some(ceramic) => cfg.ui_ceramic = ceramic,
-            None => note(format!("ui_ceramic={value} 不合法")),
-        }
     }
     if let Some(value) = file.ui_font {
         match UiFont::parse(&value) {
@@ -327,6 +343,9 @@ pub fn table(cfg: &AppConfig) -> Result<toml::Table, String> {
         page_size: cfg.page_size,
         chinese_punct: cfg.chinese_punct,
         settled_promote: cfg.settled_promote,
+        selective_25m: cfg.selective_25m,
+        rerank_25m_idle_secs: cfg.rerank_25m_idle_secs,
+        rerank_models: cfg.rerank_models.as_str(),
         toolbar_scale: cfg.toolbar_scale,
         toolbar_x: cfg.toolbar_pos.map(|pos| pos.0),
         toolbar_y: cfg.toolbar_pos.map(|pos| pos.1),
@@ -340,7 +359,6 @@ pub fn table(cfg: &AppConfig) -> Result<toml::Table, String> {
         ui_layout: cfg.ui_layout.as_str(),
         ui_material: cfg.ui_material.as_str(),
         ui_glass_frost: cfg.ui_glass_frost.clamp(0.0, 1.0),
-        ui_ceramic: cfg.ui_ceramic.as_str(),
         ui_font: cfg.ui_font.as_str(),
         ui_accent: cfg.ui_accent,
         effects: cfg.effects,
@@ -359,6 +377,9 @@ struct SaveFile<'a> {
     page_size: usize,
     chinese_punct: bool,
     settled_promote: bool,
+    selective_25m: bool,
+    rerank_25m_idle_secs: u64,
+    rerank_models: &'static str,
     toolbar_scale: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     toolbar_x: Option<i32>,
@@ -374,7 +395,6 @@ struct SaveFile<'a> {
     ui_layout: &'static str,
     ui_material: &'static str,
     ui_glass_frost: f32,
-    ui_ceramic: &'static str,
     ui_font: &'static str,
     ui_accent: usize,
     effects: bool,

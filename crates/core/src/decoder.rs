@@ -689,6 +689,17 @@ pub(crate) struct Charts {
 }
 
 impl Charts {
+    fn clear_entries(&mut self) {
+        self.charts.clear();
+        self.hits.clear();
+    }
+
+    pub(crate) fn discard_old_revision(&mut self, revision: u64) {
+        if self.user.0 != revision {
+            self.clear_entries();
+        }
+    }
+
     /// 上文、用户词库修订或模糊配置变了,前缀图与词命中缓存整体作废。
     fn sync(&mut self, context: &str, user: (u64, u64), fuzzy: Fuzzy) {
         // 上文一直不变时(私密输入、宿主不给上文)命中缓存只增不减,超过上限就丢掉重填。
@@ -696,8 +707,7 @@ impl Charts {
             self.hits.clear();
         }
         if self.user != user || self.fuzzy != Some(fuzzy) || self.context != context {
-            self.charts.clear();
-            self.hits.clear();
+            self.clear_entries();
             self.context.clear();
             self.context.push_str(context);
             self.user = user;
@@ -1129,6 +1139,10 @@ fn protect_exact(cands: &mut [Candidate]) {
         cands[..=index].rotate_right(1);
     }
 }
+
+#[cfg(test)]
+#[path = "decoder_finish_tests.rs"]
+mod finish_tests;
 
 #[cfg(test)]
 mod tests {

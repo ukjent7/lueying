@@ -1,7 +1,6 @@
 //! 候选窗与模式徽标共用的 Win32 摆位、DPI 与会话快照助手。
 //!
-//! 候选窗(`ui::d2d.rs`)与模式徽标(`ui::hud.rs`)共用同一套停靠点、
-//! 逐显示器 DPI、工作区夹取与全屏避让;"画什么"由会话快照决定。
+//! 候选窗与模式徽标共用逐显示器 DPI、工作区夹取与全屏避让。
 
 use lueying_protocol::SessionView;
 use lueying_render::panel::{self, GridItem, Item, Layout, Measure, Metrics, PanelSpec};
@@ -53,13 +52,6 @@ pub(super) fn in_composition(state: &State) -> bool {
     state
         .active_published()
         .is_some_and(|published| published.composing)
-}
-
-/// 服务端候选窗在显示;宿主接管绘制时让位。
-pub(super) fn composing(state: &State) -> bool {
-    state
-        .active_published()
-        .is_some_and(|published| published.composing && !published.host_draws)
 }
 
 /// 把窗口挪出虚拟桌面并收起,避免在任务栏/Alt+Tab 里露出空窗。

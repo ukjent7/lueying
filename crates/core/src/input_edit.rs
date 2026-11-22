@@ -63,7 +63,7 @@ impl Engine {
             comp.raw.remove(comp.cursor);
         }
         if comp.raw.is_empty() {
-            self.comp = None;
+            drop(self.take_finished_composition());
             self.comp_committed = false;
             self.phrase = None;
             self.cands.clear();
@@ -170,8 +170,21 @@ impl Engine {
         self.recompute();
     }
 
+    pub(crate) fn take_finished_composition(&mut self) -> Option<Composition> {
+        let comp = self.comp.take()?;
+        // 宿主可能恢复先前的左邻文本,但已推进的学习修订不会倒退。
+        // 先放开共享读锁,再析构失效的束和词命中。
+        let revision = self
+            .user
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .revision();
+        self.charts.discard_old_revision(revision);
+        Some(comp)
+    }
+
     pub(crate) fn clear_comp(&mut self) {
-        self.comp = None;
+        drop(self.take_finished_composition());
         self.comp_committed = false;
         self.phrase = None;
         self.cands.clear();

@@ -72,7 +72,7 @@ impl Region {
     }
 }
 
-/// 候选窗材质。玻璃的通透度由 `ui_glass_frost` 连续可调,陶瓷分黑/白/青花三胎。
+/// 候选窗材质。玻璃的通透度由 `ui_glass_frost` 连续可调。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UiMaterial {
     #[default]
@@ -81,7 +81,7 @@ pub enum UiMaterial {
 }
 
 impl UiMaterial {
-    pub const NAMES: [&'static str; 2] = ["液态玻璃", "陶瓷"];
+    pub const NAMES: [&'static str; 2] = ["液态玻璃", "黑瓷"];
 
     /// 设置页分段控件的选项下标转枚举;越界回玻璃。
     pub fn from_index(index: usize) -> Self {
@@ -91,10 +91,17 @@ impl UiMaterial {
         }
     }
 
+    pub fn index(self) -> usize {
+        match self {
+            Self::Glass => 0,
+            Self::Ceramic => 1,
+        }
+    }
+
     /// 配置值转枚举;未知值返回 None。旧值 glass-clear/glass-frosted 归玻璃。
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "glass" | "glass-clear" | "glass-frosted" => Some(Self::Glass),
+            "glass" | "glass-clear" | "glass-frosted" | "milk-glass" => Some(Self::Glass),
             "ceramic" | "ceramic-black" | "ceramic-white" => Some(Self::Ceramic),
             _ => None,
         }
@@ -110,54 +117,6 @@ impl UiMaterial {
     /// 是否玻璃系:活背板与 blur 只对玻璃生效。
     pub fn is_glass(self) -> bool {
         self == Self::Glass
-    }
-}
-
-/// 陶瓷的胎色。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum UiCeramic {
-    #[default]
-    Black,
-    White,
-    Blue,
-}
-
-impl UiCeramic {
-    pub const NAMES: [&'static str; 3] = ["黑瓷", "白瓷", "青花瓷"];
-
-    pub fn from_index(index: usize) -> Self {
-        match index {
-            1 => Self::White,
-            2 => Self::Blue,
-            _ => Self::Black,
-        }
-    }
-
-    /// 枚举对应的选项下标;与 `from_index` 互逆。
-    pub fn index(self) -> usize {
-        match self {
-            Self::Black => 0,
-            Self::White => 1,
-            Self::Blue => 2,
-        }
-    }
-
-    /// 配置值转枚举;未知值返回 None。
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "black" => Some(Self::Black),
-            "white" => Some(Self::White),
-            "blue" | "qinghua" => Some(Self::Blue),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Black => "black",
-            Self::White => "white",
-            Self::Blue => "blue",
-        }
     }
 }
 
@@ -323,13 +282,47 @@ pub struct AppOverride {
     pub learning: Option<bool>,
 }
 
+/// 常驻服务启动时选择加载哪些重排模型。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RerankModels {
+    #[default]
+    Dual,
+    Only8M,
+    Only25M,
+}
+
+impl RerankModels {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "dual" => Some(Self::Dual),
+            "8m" => Some(Self::Only8M),
+            "25m" => Some(Self::Only25M),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Dual => "dual",
+            Self::Only8M => "8m",
+            Self::Only25M => "25m",
+        }
+    }
+}
+
 /// 运行时配置。引擎只关心其中若干项,`shift_toggle` 由 Server 处理。
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppConfig {
     pub page_size: usize,
     pub chinese_punct: bool,
-    /// 停顿后 25M 重排是否允许换首选;关闭后首选只随按键变化。
+    /// 停顿重排是否允许换首选;关闭后首选只随按键变化。
     pub settled_promote: bool,
+    /// 双模型时允许根据 8M 的分差跳过部分 25M 待办。
+    pub selective_25m: bool,
+    /// 25M 空闲释放秒数;0 表示启动预载并常驻。
+    pub rerank_25m_idle_secs: u64,
+    /// 启动时选择加载的模型;修改后重启常驻服务生效。
+    pub rerank_models: RerankModels,
     /// 工具栏大小倍率,限定在 0.75–1.5。
     pub toolbar_scale: f32,
     /// 工具栏上次拖到的位置(屏幕坐标);没有就停在右下角。
@@ -352,8 +345,6 @@ pub struct AppConfig {
     pub ui_material: UiMaterial,
     /// 玻璃的磨砂程度 0..=1:0 是高透,1 是磨砂;陶瓷材质忽略它。
     pub ui_glass_frost: f32,
-    /// 陶瓷的胎色;玻璃材质忽略它。
-    pub ui_ceramic: UiCeramic,
     /// 候选字号档位。
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
@@ -386,6 +377,9 @@ impl Default for AppConfig {
             page_size: 5,
             chinese_punct: true,
             settled_promote: true,
+            selective_25m: false,
+            rerank_25m_idle_secs: 0,
+            rerank_models: RerankModels::default(),
             toolbar_scale: 1.0,
             toolbar_pos: None,
             // 零配置:模糊音默认自动召回,设置页不再逐项开关。
@@ -400,7 +394,6 @@ impl Default for AppConfig {
             ui_layout: UiLayout::Horizontal,
             ui_material: UiMaterial::Glass,
             ui_glass_frost: 0.0,
-            ui_ceramic: UiCeramic::White,
             ui_font: UiFont::Standard,
             ui_accent: 0,
             effects: true,
@@ -711,6 +704,13 @@ pub fn save(path: &Path, before: &AppConfig, after: &AppConfig) -> std::io::Resu
             .and_then(|text| text.parse().ok())
             .unwrap_or_default();
         merge(&mut disk, &before, &after);
+        disk.remove("ui_ceramic");
+        if let Some(value) = disk.get("ui_material").and_then(toml::Value::as_str)
+            && let Some(material) = UiMaterial::parse(value)
+            && value != material.as_str()
+        {
+            disk.insert("ui_material".into(), material.as_str().into());
+        }
         let body = toml::to_string_pretty(&disk).map_err(|error| invalid(error.to_string()))?;
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, format!("{}{body}", crate::config_file::HEADER))?;

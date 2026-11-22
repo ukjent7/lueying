@@ -58,7 +58,7 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "设置左栏分类齐全",
-        nav == ["输入", "候选", "扩展", "词库", "关于"]
+        nav == ["输入", "候选", "扩展商店", "词库", "关于"]
             && page.active_nav == 0
             && page
                 .groups
@@ -115,15 +115,16 @@ pub fn run(report: &mut String) -> usize {
 
     // 运行期扩展行:未启用时给提示,启用后显示名字与 id;「选择」开菜单,
     // 「目录」交给平台侧;模型本身负责切换与关闭。
-    let idle = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
+    let local_group = "本地扩展与诊断";
+    let idle = row_detail(&settings, PageId::Extensions, local_group, "运行期扩展");
     settings.cfg.extensions = vec!["demo-pack".to_string()];
-    let active = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
+    let active = row_detail(&settings, PageId::Extensions, local_group, "运行期扩展");
     let choose = settings.activate(&Id::new(ids::SCRIPTS, 0));
     let open = settings.activate(&Id::new(ids::SCRIPTS_DIR, 0));
     let import = settings.activate(&Id::new(ids::IMPORT_LUEXT, 0));
     let consent = settings.activate(&Id::new(ids::CONSENT, 0));
     let metrics = settings.activate(&Id::new(ids::EXT_METRICS, 0));
-    let consent_row = row_detail(&settings, PageId::Extensions, "扩展", "扩展授权");
+    let consent_row = row_detail(&settings, PageId::Extensions, local_group, "扩展授权");
     let stat = ExtStat {
         id: "demo-pack".to_string(),
         name: "演示包".to_string(),
@@ -135,12 +136,12 @@ pub fn run(report: &mut String) -> usize {
         extensions: vec![stat],
         ..ExtMetrics::default()
     });
-    let metrics_row = row_detail(&settings, PageId::Extensions, "扩展", "扩展运行");
+    let metrics_row = row_detail(&settings, PageId::Extensions, local_group, "扩展运行");
     settings.select_script(Some(1));
     let switched = settings.cfg.extensions == vec!["other-pack"];
     settings.select_script(None);
     settings.cfg.extensions = vec!["gone".to_string()];
-    let missing = row_detail(&settings, PageId::Extensions, "扩展", "运行期扩展");
+    let missing = row_detail(&settings, PageId::Extensions, local_group, "运行期扩展");
     settings.select_script(None);
     push(
         &mut checks,
@@ -301,25 +302,24 @@ pub fn run(report: &mut String) -> usize {
         scripts: vec![ext_script],
         ..Settings::default()
     };
-    ext_settings.cfg.extensions = vec!["shot-ocr".to_string()];
     ext_settings.set_page(PageId::Extensions);
-    let ext_page = ext_settings.page(&colors());
-    let ext_group = ext_page
-        .groups
+    let extension_groups = ext_settings.extension_settings("shot-ocr");
+    let ext_group = extension_groups
         .iter()
         .find(|group| group.title == "扩展 · 截图 OCR");
-    let rows: Vec<&str> = ext_group
-        .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
-        .unwrap_or_default();
-    let toggle = ids::ext_field(0);
-    let choice = ids::ext_field(1);
-    ext_settings.activate(&Id::new(toggle, 0));
-    ext_settings.activate(&Id::new(choice, 0));
+    let mut rows = Vec::new();
+    for row in ext_group.into_iter().flat_map(|group| &group.rows) {
+        rows.push(row.label.as_str());
+        if let ui::Control::Toggle { id, .. } | ui::Control::Segment { id, .. } = &row.control {
+            ext_settings.activate(id);
+        }
+    }
     let values = ext_settings.cfg.ext_settings.get("shot-ocr");
     push(
         &mut checks,
         "扩展声明式设置",
-        rows == ["完成后通知", "识别质量"]
+        ext_settings.cfg.extensions.is_empty()
+            && rows == ["完成后通知", "识别质量"]
             && values.is_some_and(|table| {
                 table.get("notify") == Some(&serde_json::json!(false))
                     && table.get("quality") == Some(&serde_json::json!("fast"))

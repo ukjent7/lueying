@@ -42,7 +42,7 @@ fn fixture(width: usize, quantized: bool) -> SentenceModel {
         .collect();
     let inner = if quantized {
         Tensor::Quantized {
-            values: integers,
+            values: integers.into(),
             scales: (0..config.vocab).map(|i| (i + 1) as f32 / 1301.0).collect(),
         }
     } else {

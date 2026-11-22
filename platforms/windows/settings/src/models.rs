@@ -63,6 +63,19 @@ const ASSETS: &[Asset] = &[
     },
 ];
 
+/// 后台任务把本地已验证的权重预打包成自包含 safetensors;ORT 原文件保留不删。
+#[cfg(windows)]
+const PACKED_MODELS: [(&str, &str); 2] = [
+    (
+        "rerank-8m",
+        "896b21eefbf94118a99fa84d8469a28a60e3728869fbe0e705a4d96b82eb158e",
+    ),
+    (
+        "rerank-25m",
+        "bccf14f5b4ac16176db9d18111c15aa87e542d5648348c43f2a578af0c95e1fb",
+    ),
+];
+
 /// 模型目录;与服务端 `load_model` 的首查目录同一个。
 pub fn dir() -> Option<PathBuf> {
     config::models_dir()
@@ -104,7 +117,41 @@ pub fn ensure() -> Result<usize, String> {
         fetch(asset, &target)?;
         placed += 1;
     }
+    #[cfg(windows)]
+    for (stem, digest) in PACKED_MODELS {
+        if let Err(error) = ensure_packed(&dir, stem, digest) {
+            eprintln!("重排模型 {stem} 预打包失败，保留原模型: {error}");
+        }
+    }
     Ok(placed)
+}
+
+/// 把同目录已验证的 ORT 三件套编译成 `{stem}.packed.safetensors`;只打包不下载,
+/// 写到 `.part` 校验后再就位,失败不留半截文件也不动原权重。
+#[cfg(windows)]
+fn ensure_packed(dir: &Path, stem: &str, digest: &str) -> Result<(), String> {
+    let target = dir.join(format!("{stem}.packed.safetensors"));
+    if matches(&target, digest) {
+        return Ok(());
+    }
+    let part = target.with_extension(format!("safetensors.{}.part", std::process::id()));
+    let mut file = std::fs::File::create_new(&part)
+        .map_err(|error| format!("创建 {}: {error}", part.display()))?;
+    let packed = lueying_rerank::Model::pack_keystroke_dir(dir, stem, &mut file)
+        .and_then(|()| file.flush().map_err(|error| error.to_string()));
+    drop(file);
+    let result = packed.and_then(|()| {
+        if !matches(&part, digest) {
+            return Err("SHA-256 校验失败".into());
+        }
+        match std::fs::rename(&part, &target) {
+            Ok(()) => Ok(()),
+            Err(_) if matches(&target, digest) => Ok(()),
+            Err(error) => Err(format!("就位 {}: {error}", target.display())),
+        }
+    });
+    let _ = std::fs::remove_file(&part);
+    result
 }
 
 /// 哈希对得上才算就绪;算不动(文件损坏/占用)按未就绪处理,交给下载覆盖。

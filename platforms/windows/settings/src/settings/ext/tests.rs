@@ -31,50 +31,56 @@ fn script() -> ScriptEntry {
 }
 
 #[test]
-fn fields_resolve_defaults_and_stored_values() {
-    let scripts = vec![script()];
-    let extensions = vec!["shot-ocr".to_string()];
-    let cfg = AppConfig::default();
-    let resolved = fields(&extensions, &scripts, &cfg);
-    assert_eq!(resolved.len(), 2);
-    assert_eq!(resolved[0].slot, 0);
-    assert!(matches!(resolved[0].kind, Kind::Toggle { on: true }));
-    assert_eq!(
-        resolved[1].kind,
-        Kind::Choice {
-            options: vec!["fast".to_string(), "high".to_string()],
-            selected: 1
-        }
-    );
-    assert_eq!(resolved[1].detail, "慢一点更准");
-
+fn rows_resolve_defaults_and_stored_values() {
+    let script = script();
     let mut cfg = AppConfig::default();
+    let rows = group(&script, &cfg).rows;
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(rows[0].control, Control::Toggle { on: true, .. }));
+    let Control::Segment {
+        options, selected, ..
+    } = &rows[1].control
+    else {
+        panic!("识别质量应为单选");
+    };
+    assert_eq!(
+        options
+            .iter()
+            .map(|option| option.text.as_str())
+            .collect::<Vec<_>>(),
+        ["fast", "high"]
+    );
+    assert_eq!(*selected, 1);
+    assert_eq!(rows[1].detail, "慢一点更准");
+
     cfg.ext_settings
         .entry("shot-ocr".to_string())
         .or_default()
         .insert("quality".to_string(), Value::String("fast".to_string()));
-    let stored = fields(&extensions, &scripts, &cfg);
-    assert_eq!(stored[1].selected(), 0);
+    assert!(matches!(
+        group(&script, &cfg).rows[1].control,
+        Control::Segment { selected: 0, .. }
+    ));
 }
 
 #[test]
 fn apply_writes_toggle_and_choice() {
-    let scripts = vec![script()];
-    let cfg = AppConfig::default();
-    let fields = fields(&["shot-ocr".to_string()], &scripts, &cfg);
-    let mut cfg = cfg;
-    assert!(apply(&mut cfg, &fields[0], 0));
+    let scripts = [script()];
+    let field = |key| Field::find(&scripts, &ids::ext_field("shot-ocr", key)).unwrap();
+    let mut cfg = AppConfig::default();
+    assert!(!field("quality").apply(&mut cfg, 9), "越界选项不写");
+    assert!(cfg.ext_settings.is_empty());
+    assert!(field("notify").apply(&mut cfg, 0));
     assert_eq!(
         cfg.ext_settings["shot-ocr"]["notify"],
         Value::Bool(false),
         "开关点击是翻转"
     );
-    assert!(apply(&mut cfg, &fields[1], 0));
+    assert!(field("quality").apply(&mut cfg, 0));
     assert_eq!(
         cfg.ext_settings["shot-ocr"]["quality"],
         Value::String("fast".to_string())
     );
-    assert!(!apply(&mut cfg, &fields[1], 9), "越界选项不写");
 }
 
 #[test]
@@ -93,9 +99,9 @@ fn normalize_drops_unknown_and_bad_values() {
 }
 
 #[test]
-fn slots_match_static_prefixes() {
-    assert_eq!(slot("ext-0"), Some(0));
-    assert_eq!(slot("ext-15"), Some(15));
-    assert_eq!(slot("ext-16"), None);
-    assert_eq!(slot("ocr"), None);
+fn lookup_requires_an_installed_extension_and_its_declared_key() {
+    let scripts = [script()];
+    for base in ["ext-0", "ocr", "ext:other:notify", "ext:shot-ocr:missing"] {
+        assert!(Field::find(&scripts, base).is_none());
+    }
 }

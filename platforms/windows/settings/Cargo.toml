@@ -37,9 +37,11 @@ encoding_rs = "0.8"
 [target."cfg(windows)".dependencies]
 # 扩展宿主模块:同意记录的读写与设置页的扩展列表,只在 Windows 设置窗里用。
 lueying-ext = { workspace = true, default-features = false, features = ["host"] }
+# 本地已验证权重预打包成自包含 safetensors 的推理内核,与常驻 Server 同一个 crate。
+lueying-rerank.workspace = true
 # 设置窗界面层:Rune 普通窗口 + 控件库(与候选窗同一框架)。
 rune.workspace = true
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "44920b1fdfe6d1b7156d80b90f0ca0d96080d2bf", default-features = false }
+rune-kit = { path = "../../../vendor/rune/crates/rune-kit", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_System_Console",

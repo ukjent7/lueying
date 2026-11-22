@@ -93,26 +93,15 @@ impl Settings {
                 }]
             }
             PageId::Extensions => {
-                let mut groups = Vec::new();
-                if !self.scripts.is_empty() {
-                    groups.push(Group {
-                        title: "已安装扩展".to_string(),
-                        rows: self.installed_extension_rows(),
-                    });
-                }
-                let mut rows = vec![
-                    self.script_row(),
-                    self.consent_row(),
-                    self.ext_metrics_row(),
-                ];
-                rows.extend(self.setting_rows(PageId::Extensions, colors));
-                rows.push(self.ocr_dir_row());
+                let mut groups = self.extension_cards();
                 groups.push(Group {
-                    title: PageId::Extensions.title().to_string(),
-                    rows,
+                    title: "本地扩展与诊断".to_string(),
+                    rows: vec![
+                        self.script_row(),
+                        self.consent_row(),
+                        self.ext_metrics_row(),
+                    ],
                 });
-                // 声明式扩展设置紧跟在「扩展」分组后面。
-                groups.extend(self.ext_setting_groups());
                 groups
             }
             PageId::Dictionary => vec![
@@ -219,7 +208,6 @@ impl Settings {
             ControlDef::Segment {
                 id,
                 choices,
-                width,
                 tinted,
                 get,
                 ..
@@ -238,7 +226,7 @@ impl Settings {
                     })
                     .collect(),
                 selected: get(&self.cfg),
-                width: *width,
+                cell_width: None,
             },
         };
         Row {
@@ -251,39 +239,58 @@ impl Settings {
         }
     }
 
-    /// 已安装扩展:一行一个开关;权限状态写在说明里。
-    fn installed_extension_rows(&self) -> Vec<Row> {
-        self.scripts
+    fn extension_cards(&self) -> Vec<Group> {
+        let card = |title: &str, name: &str, detail: String, installed, id| Group {
+            title: title.into(),
+            rows: vec![Row {
+                label: name.into(),
+                detail,
+                control: Control::Buttons {
+                    items: vec![Button {
+                        id,
+                        text: if installed { "打开" } else { "查看" }.into(),
+                        kind: ButtonKind::Secondary,
+                        enabled: true,
+                    }],
+                },
+            }],
+        };
+        let mut cards: Vec<_> = crate::ext_store::OFFICIAL
             .iter()
-            .take(ids::SCRIPT_SLOTS)
             .enumerate()
-            .map(|(slot, script)| {
-                let enabled = self.cfg.extensions.iter().any(|id| id == &script.id);
-                let consent = match &script.consent {
-                    ConsentState::Approved => "已授权",
-                    ConsentState::Missing => "待同意",
-                    ConsentState::Changed { .. } => "需重新同意",
+            .map(|(index, item)| {
+                let script = self.scripts.iter().find(|script| script.id == item.id);
+                let status = match script {
+                    None => "可选下载",
+                    Some(script) if script.consent != ConsentState::Approved => "待授权",
+                    Some(_) if self.cfg.extensions.iter().any(|id| id == item.id) => "已启用",
+                    Some(_) => "已安装",
                 };
-                Row {
-                    label: script.name.clone(),
-                    detail: format!(
-                        "{}{} · {} · {consent}",
-                        if script.native {
-                            "原生扩展 · "
-                        } else {
-                            ""
-                        },
-                        script.id,
-                        if enabled { "已启用" } else { "未启用" }
-                    ),
-                    control: Control::ButtonsToggle {
-                        items: Vec::new(),
-                        toggle: Id::new(ids::script_toggle(slot), 0),
-                        toggle_on: enabled,
-                    },
-                }
+                card(
+                    "官方扩展",
+                    item.name,
+                    format!("{status} · {}", item.detail),
+                    script.is_some(),
+                    Id::new(ids::EXT_STORE, index),
+                )
             })
-            .collect()
+            .collect();
+        cards.extend(
+            self.scripts
+                .iter()
+                .enumerate()
+                .filter(|(_, script)| crate::ext_store::find(&script.id).is_none())
+                .map(|(index, script)| {
+                    card(
+                        "本地扩展",
+                        &script.name,
+                        format!("已安装 · {}", script.id),
+                        true,
+                        Id::new(ids::EXT_INSTALLED, index),
+                    )
+                }),
+        );
+        cards
     }
 
     fn action_row(&self, label: &str, detail: String, buttons: Vec<Button>) -> Row {
@@ -336,14 +343,6 @@ impl Settings {
             "扩展运行",
             self.ext_metrics_detail(),
             vec![Self::secondary(ids::EXT_METRICS, "刷新", true)],
-        )
-    }
-
-    fn ocr_dir_row(&self) -> Row {
-        self.action_row(
-            "识别模型",
-            "PP-OCRv6 模型缺失时可用系统 OCR".to_string(),
-            vec![Self::secondary(ids::OCR_DIR, "目录", true)],
         )
     }
 
@@ -443,14 +442,21 @@ impl Settings {
         )
     }
 
-    /// 扩展声明式设置展开成的分组。
-    fn ext_setting_groups(&self) -> Vec<Group> {
-        crate::settings::ext::groups(&self.cfg.extensions, &self.scripts, &self.cfg)
+    /// 打开的已安装卡片按自己的清单渲染;编辑本地配置不要求启用扩展。
+    pub fn extension_settings(&self, id: &str) -> Vec<Group> {
+        self.scripts
+            .iter()
+            .find(|script| script.id == id)
+            .filter(|script| !script.settings.is_empty())
+            .map_or_else(Vec::new, |script| vec![ext::group(script, &self.cfg)])
     }
 
-    /// 当前页面上实际渲染的扩展字段。
-    pub(crate) fn ext_fields(&self) -> Vec<crate::settings::ext::Field> {
-        crate::settings::ext::fields(&self.cfg.extensions, &self.scripts, &self.cfg)
+    #[cfg(windows)]
+    pub(crate) fn extension_ocr_rows(&self, id: &str, colors: &PageColors) -> Vec<Row> {
+        if id != "shot-ocr" || !self.ppocr_ready {
+            return Vec::new();
+        }
+        schema::find(ids::OCR).map_or_else(Vec::new, |def| vec![self.setting_row(def, colors)])
     }
 
     /// 头部右侧的更新按钮。

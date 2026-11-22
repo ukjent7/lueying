@@ -227,6 +227,34 @@ impl Engine {
         true
     }
 
+    /// Reorder only the listed slots. Reject stale/invalid permutations before moving anything.
+    pub fn reorder_candidates(&mut self, order: &[usize]) -> bool {
+        if order.len() < 2 || order.is_sorted() || self.page != 0 || self.hl != 0 {
+            return false;
+        }
+        if !order.iter().all(|&index| {
+            self.cands.get(index).is_some_and(|c| {
+                c.full && !c.rejected && !c.quick && !c.no_learn && !c.pinned && !c.learned_enough()
+            })
+        }) {
+            return false;
+        }
+        let mut slots = order.to_vec();
+        slots.sort_unstable();
+        if slots.windows(2).any(|pair| pair[0] == pair[1]) {
+            return false;
+        }
+        let mut current = slots.clone();
+        for (dest, &original) in order.iter().enumerate() {
+            let source = current[dest..].iter().position(|&i| i == original).unwrap() + dest;
+            self.cands.swap(slots[dest], slots[source]);
+            current.swap(dest, source);
+        }
+        self.sync_spans();
+        self.rev = self.rev.wrapping_add(1);
+        true
+    }
+
     pub fn highlight(&self) -> usize {
         self.hl
     }
@@ -392,7 +420,7 @@ impl Engine {
     /// 宿主要求原样落定内联拼音原文(搜索框按 Enter):不补全剩余拼音,
     /// 也不改选候选。返回上屏文本。
     pub fn finalize_raw(&mut self) -> Option<String> {
-        let comp = self.comp.take()?;
+        let comp = self.take_finished_composition()?;
         let mut text = comp.raw;
         if !self.modules.is_empty() {
             let ctx = module::CommitContext {

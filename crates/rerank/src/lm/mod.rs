@@ -36,7 +36,7 @@ mod math;
 mod model;
 mod ort;
 mod reranker;
-mod weights;
+pub(crate) mod weights;
 
 pub use model::SentenceModel;
 pub use reranker::{Reranker, should_rerank};

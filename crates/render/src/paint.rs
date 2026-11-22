@@ -71,6 +71,17 @@ pub trait Canvas {
         );
     }
 
+    /// Optional elliptical light, clipped to the rounded surface. The base is painted separately.
+    fn light_rrect(
+        &mut self,
+        _rect: Rect,
+        _radius: f32,
+        _center: Point,
+        _extent: Point,
+        _stops: &[(f32, Color)],
+    ) {
+    }
+
     /// 圆角矩形描边。
     fn stroke_rrect(&mut self, rect: Rect, radius: f32, width: f32, color: Color);
 
