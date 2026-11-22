@@ -2274,6 +2274,7 @@ dependencies = [
  "lueying-win-keys",
  "mimalloc",
  "rune",
+ "rune-kit",
  "rune-text",
  "serde",
  "serde_json",
