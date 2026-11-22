@@ -61,8 +61,7 @@ pub fn add(source: &str) -> Result<String, String> {
             let bytes = source_tarball(owner, repo, rev).map_err(|error| {
                 format!(
                     "Release 里没有 .luext 资产,源码包路径也失败:{error}\n\
-                     作者侧修法:发布时附上 .luext 资产,或在仓库里提交构建好的组件 \
-                     (见 docs/extensions/catalog.md)"
+                     作者侧修法:发布时附上 .luext 资产,或在仓库里提交构建好的组件"
                 )
             })?;
             let unpacked = unpack_tarball(&bytes, &temp.0)?;

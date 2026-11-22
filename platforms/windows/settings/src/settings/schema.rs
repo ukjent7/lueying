@@ -1,7 +1,7 @@
 //! 设置项的单一来源:配置键、类型、默认值、页面与控件。
 //!
-//! 设置窗的行、`lueying-settings --dump-config-schema` 输出的 JSON Schema
-//! 与 `docs/settings.md` 的说明都从这里取元数据。新增设置先加一条
+//! 设置窗的行与 `lueying-settings --dump-config-schema` 输出的 JSON Schema
+//! 都从这里取元数据。新增设置先加一条
 //! [`SettingDef`],再决定是否给它一个 [`UiDef`];这样配置解析、界面文案与
 //! AI/脚本读取的 schema 不会各写一份。
 //!
