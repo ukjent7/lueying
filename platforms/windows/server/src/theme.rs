@@ -61,6 +61,63 @@ pub fn srgb_alpha(v: u32, a: f32) -> Color {
     color
 }
 
+/// 瓷釉的光:每一点光都有来源——上缘反射元素上方的环境色(加亮),
+/// 下缘是被环境压出的釉根(压暗)。候选窗的环境是面板上下实采的桌面
+/// 像素,设置窗的环境是自己的窗底;环境暗则釉暗,没有凭空的光。
+#[derive(Clone, Copy, PartialEq)]
+pub struct Glaze {
+    /// 顶部光泽渐变的起点,到面板半高渐隐为同色透明。
+    pub sheen_top: Color,
+    /// 上缘 1px 釉线:胎的圆缘接住环境光。
+    pub edge_top: Color,
+    /// 下缘 1px 釉根:贴着环境的遮蔽。
+    pub edge_bottom: Color,
+}
+
+/// 由环境色算釉光。加亮倍数是釉面的反射率,压暗倍数是遮蔽率。
+pub fn glaze_from_ambient(above: Color, below: Color) -> Glaze {
+    let tint = |mut color: Color, factor: f32, a: f32| {
+        color.r = (color.r * factor).min(1.0);
+        color.g = (color.g * factor).min(1.0);
+        color.b = (color.b * factor).min(1.0);
+        color.a = a;
+        color
+    };
+    Glaze {
+        sheen_top: tint(above, 1.4, 0.10),
+        edge_top: tint(above, 1.9, 0.9),
+        edge_bottom: tint(below, 0.22, 0.8),
+    }
+}
+
+/// 瓷的固定暖黑配色:候选窗与设置窗共用;琥珀釉是瓷的身份色,
+/// 不随主题色预设走。高对比度让位系统色,调用方负责分流。
+pub fn ceramic_colors() -> Colors {
+    Colors {
+        bg: 0x262220,
+        surface: 0x2e2a24,
+        surface_alt: 0x352f27,
+        segment: 0x3e362c,
+        border: 0x4a4238,
+        border_strong: 0x554c3e,
+        text: 0xece7df,
+        text_secondary: 0xe3ddd2,
+        text_tertiary: 0xd4cec3,
+        accent: 0xd9a92e,
+        accent_hover: 0xc49726,
+        accent_text: 0x7a5608,
+        on_accent: 0x2b2110,
+        hover: 0x3a332a,
+        off_bg: 0x443c30,
+        knob_off: 0xffffff,
+        success: 0x81c995,
+        danger: 0xf28b82,
+        danger_soft: 0x3a2424,
+        selected_bg: 0xfac738,
+        selected_text: 0x2b2110,
+    }
+}
+
 /// 当前窗口使用的外观。高对比度优先于深浅色。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Appearance {

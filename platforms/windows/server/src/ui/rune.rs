@@ -2,7 +2,8 @@
 //! 仍来自 `lueying_render::panel`,摆位共用 `ui::place`。
 //!
 //! 玻璃走自捕获背板:逐帧 BitBlt 窗口区的桌面像素作为背景图,面板
-//! `backdrop_blur` 出磨砂玻璃;「动态效果」关掉时回退实底主题。窗口
+//! `backdrop_blur` 出磨砂玻璃;瓷面不透明、不抓背板,釉光来自面板
+//! 上下窄带的环境采样。「动态效果」关掉时回退实底主题。窗口
 //! 移动、隐藏与淡出全走 Rune 的 OverlayHandle;管道线程经版本号 +
 //! `kick()` 唤醒本线程,鼠标回落事件经 `forward_mouse` 注入同一队列。
 //!
@@ -32,6 +33,8 @@ use crate::ui::place;
 
 /// 活背板的重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
 const LIVE_TICK: Duration = Duration::from_millis(33);
+/// 瓷釉环境采样的重采节奏:周边变了釉光跟着变,又不必像玻璃那样逐帧跟。
+const AMBIENT_TICK: Duration = Duration::from_millis(500);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 组合结束后的淡出时长;期间沿用最后一份内容并让鼠标穿透。
@@ -209,6 +212,9 @@ struct Candidate {
     /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
     backdrop: Option<Backdrop>,
     backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
+    /// 瓷釉的环境光:面板上下窄带的桌面实采均值,没有来源就不上光。
+    glaze: Option<lueying_server::theme::Glaze>,
+    glaze_read: Option<(Instant, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -240,6 +246,8 @@ impl Candidate {
             ink: RefCell::new(TextSystem::new(&[], ("Noto Sans SC", "Noto Sans SC"))),
             backdrop: None,
             backdrop_read: None,
+            glaze: None,
+            glaze_read: None,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
@@ -354,26 +362,8 @@ fn glass_ink(mut p: panel::Palette) -> panel::Palette {
     p
 }
 
-/// 黑瓷的墨色:不透明暖黑胎配暖白墨,与玻璃同墨不同底。
-fn ceramic_black_ink(mut p: panel::Palette) -> panel::Palette {
-    p.bg = 0x2e2a24;
-    p.window_bg = 0x2e2a24;
-    p.surface_alt = 0x262220;
-    p.border = 0x4a4238;
-    p.border_strong = 0x554c3e;
-    p.text = 0xece7df;
-    p.text_secondary = 0xe3ddd2;
-    p.text_tertiary = 0xd4cec3;
-    p.hover = 0x3a332a;
-    p.accent = 0xd9a92e;
-    p.on_accent = 0x2b2110;
-    p.selected_bg = 0xfac738;
-    p.selected_text = 0x2b2110;
-    p.accent_text = 0x7a5608;
-    p
-}
-
-/// 当前帧的调色板:玻璃固定暖墨烟熏,实底跟系统主题。
+/// 当前帧的调色板:玻璃固定暖墨烟熏,瓷走共享的暖黑釉,实底跟系统主题。
+/// 高对比度一律让位系统色,材质的墨色覆盖全部跳过。
 fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palette {
     let look = lueying_server::theme::Appearance::Dark;
     let colors = match s.script_accent {
@@ -382,8 +372,11 @@ fn palette_of(s: &Candidate, accent: usize, high_contrast: bool) -> panel::Palet
     };
     let palette = lueying_server::theme::palette(colors);
     match s.material {
-        UiMaterial::Ceramic => ceramic_black_ink(palette),
-        UiMaterial::Glass => glass_ink(palette),
+        UiMaterial::Ceramic if !high_contrast => {
+            lueying_server::theme::palette(lueying_server::theme::ceramic_colors())
+        }
+        UiMaterial::Glass if !high_contrast => glass_ink(palette),
+        _ => palette,
     }
 }
 
@@ -520,6 +513,23 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     } else if s.private || !s.glass_wanted(high_contrast) || !s.material.is_glass() {
         s.backdrop_read = None;
         changed |= s.backdrop.take().is_some();
+    }
+    // 瓷釉的环境光:面板上下窄带低频实采,周边变了釉光跟着变。
+    // 淡出期保留釉光,冻结内容里釉面不能闪变;停靠由 park 清。
+    if matches!(s.material, UiMaterial::Ceramic) && !high_contrast && s.visible {
+        let now = Instant::now();
+        let rect = s.fx.placement.panel;
+        if s.glaze_read
+            .is_none_or(|(last, area)| area != rect || now.duration_since(last) >= AMBIENT_TICK)
+        {
+            s.glaze_read = Some((now, rect));
+            changed |= capture_glaze(s);
+        }
+        if let Some((last, _)) = s.glaze_read {
+            tx.wake_after((last + AMBIENT_TICK).saturating_duration_since(Instant::now()));
+        }
+    } else {
+        changed |= s.glaze.take().is_some();
     }
     changed
 }
@@ -804,6 +814,8 @@ fn park(s: &mut Candidate) {
         .unwrap_or_else(|p| p.into_inner()) = None;
     s.backdrop = None;
     s.backdrop_read = None;
+    s.glaze = None;
+    s.glaze_read = None;
     publish_state(s, None);
 }
 
@@ -976,11 +988,34 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .gradient(frost_top, frost_bottom)
                 .border(1.0 * scale, rgba(0xffffff, 0.14));
         }
-        // 黑瓷:不透明暖黑胎,同构釉面。
-        (UiMaterial::Ceramic, _) => {
+        // 黑瓷:不透明暖黑胎,同构釉面。釉面的光全部来自环境采样:
+        // 面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。
+        (UiMaterial::Ceramic, _) if !high_contrast => {
             body = body
                 .gradient(rgb(0x363029), rgb(0x28241d))
                 .border(1.0 * scale, rgb(palette.border));
+            if let Some(glaze) = &s.glaze {
+                let h = s.fx.placement.panel.3 as f32 / scale;
+                body = body
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .w_full()
+                            .h(h * 0.45)
+                            .gradient(glaze.sheen_top, glaze.sheen_top.alpha(0.0)),
+                    )
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .w_full()
+                            .h(1.0 * scale)
+                            .fill(glaze.edge_top),
+                    )
+                    .child(
+                        el().absolute(0.0, (h - 1.0 * scale).max(0.0))
+                            .w_full()
+                            .h(1.0 * scale)
+                            .fill(glaze.edge_bottom),
+                    );
+            }
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {
@@ -1744,6 +1779,60 @@ impl Candidate {
             self.scroll_to(offset);
         }
     }
+}
+
+/// 采样面板上下两条窄带的桌面像素均值,算出釉光的环境色;贴屏边
+/// 采不到的带子用另一条补,两条都没有就哑光(釉光清空)。
+#[cfg(windows)]
+fn capture_glaze(s: &mut Candidate) -> bool {
+    const BAND: i32 = 6;
+    let (x, y, w, h) = s.fx.placement.panel;
+    if w <= 0 || h <= 0 {
+        return false;
+    }
+    let average = |pixels: Option<(u32, u32, Vec<u8>)>| -> Option<u32> {
+        let rgba = pixels?.2;
+        let count = rgba.len() / 4;
+        if count == 0 {
+            return None;
+        }
+        let (mut r, mut g, mut b) = (0u64, 0u64, 0u64);
+        for pixel in rgba.as_chunks::<4>().0 {
+            r += u64::from(pixel[0]);
+            g += u64::from(pixel[1]);
+            b += u64::from(pixel[2]);
+        }
+        let (r, g, b) = (
+            (r / count as u64) as u32,
+            (g / count as u64) as u32,
+            (b / count as u64) as u32,
+        );
+        Some((r << 16) | (g << 8) | b)
+    };
+    let work = place::work_area_at(x, y + h);
+    let above = (y - BAND >= work.top)
+        .then(|| average(capture_rect(x, y - BAND, w as u32, BAND as u32)))
+        .flatten();
+    let below = (y + h + BAND <= work.bottom)
+        .then(|| average(capture_rect(x, y + h, w as u32, BAND as u32)))
+        .flatten();
+    let (above, below) = match (above, below) {
+        (Some(top), Some(bottom)) => (top, bottom),
+        (Some(one), None) | (None, Some(one)) => (one, one),
+        (None, None) => return s.glaze.take().is_some(),
+    };
+    let glaze = lueying_server::theme::glaze_from_ambient(
+        lueying_server::theme::srgb(above),
+        lueying_server::theme::srgb(below),
+    );
+    let changed = s.glaze != Some(glaze);
+    s.glaze = Some(glaze);
+    changed
+}
+
+#[cfg(not(windows))]
+fn capture_glaze(_: &mut Candidate) -> bool {
+    false
 }
 
 /// 抓取一块屏幕区域的桌面像素(RGBA,straight alpha)。

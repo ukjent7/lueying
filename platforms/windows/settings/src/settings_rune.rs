@@ -196,7 +196,7 @@ fn load_core() -> Core {
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出。
     cx.reduced_motion(!theme::client_area_animation());
-    scene(s, cx.system_dark())
+    scene(s)
 }
 
 /// 0xRRGGBB 转线性 sRGB 颜色;转换共享一份,见 `lueying_server::theme::srgb`。
@@ -220,17 +220,14 @@ fn page_colors(c: &Colors, appearance: theme::Appearance) -> PageColors {
     }
 }
 
-fn scene(s: &State, dark: bool) -> El {
-    let mut appearance = theme::Appearance::of_system();
-    if !matches!(appearance, theme::Appearance::HighContrast) {
-        appearance = if dark {
-            theme::Appearance::Dark
-        } else {
-            theme::Appearance::Light
-        };
-    }
-    let accent = s.core.settings.cfg.ui_accent.min(ACCENTS.len() - 1);
-    let colors = theme::colors_with(appearance, accent);
+fn scene(s: &State) -> El {
+    let appearance = theme::Appearance::of_system();
+    // 固定暖黑瓷:瓷是身份材质,不跟系统深浅走;高对比度让位系统色。
+    let colors = if matches!(appearance, theme::Appearance::HighContrast) {
+        theme::colors_with(appearance, 0)
+    } else {
+        theme::ceramic_colors()
+    };
     let kit = Kit::from_palette(PaletteSeed {
         bg: color(colors.bg),
         fg: color(colors.text),
@@ -400,10 +397,11 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
         || group.title.clone(),
         |button| format!("{}-{}", button.id.base, button.id.index),
     );
+    // 卡片铺在窗底上:上下缘的釉光从窗底色算出,环境亮则缘亮,没有凭空的光。
+    let glaze = theme::glaze_from_ambient(color(colors.bg), color(colors.bg));
     let mut card = col()
         .key(format!("group-{key}"))
         .w_full()
-        .padding(10.0)
         .radius(12.0)
         .fill(color(colors.surface))
         .border(1.0, color(colors.border));
@@ -413,10 +411,24 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
             .cursor(Cursor::Pointer)
             .on_press(move |s: &mut State| activate(s, id.base.clone(), id.index));
     }
+    card = card
+        .child(
+            el().pin(Some(0.0), Some(0.0), Some(0.0), None)
+                .h(1.0)
+                .fill(glaze.edge_top)
+                .a11y_hidden(),
+        )
+        .child(
+            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                .h(1.0)
+                .fill(glaze.edge_bottom)
+                .a11y_hidden(),
+        );
+    let mut inner = col().w_full().padding(10.0);
     for (i, row_data) in group.rows.iter().enumerate() {
-        card = card.child(setting_row(row_data, kit, colors).key(format!("row-{i}")));
+        inner = inner.child(setting_row(row_data, kit, colors).key(format!("row-{i}")));
         if i + 1 < group.rows.len() {
-            card = card.child(
+            inner = inner.child(
                 el().h(1.0)
                     .ml(10.0)
                     .fill(color(colors.border))
@@ -424,6 +436,7 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
             );
         }
     }
+    card = card.child(inner);
     col()
         .key(format!("section-{key}"))
         .w_full()
@@ -1297,7 +1310,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         13
     ));
     let state = State::default();
-    let _ = scene(&state, false);
+    let _ = scene(&state);
     store::selftest()?;
     lines.push("扩展商店:点卡片、查看权限、启用与快捷键通过".to_string());
     Ok(())
