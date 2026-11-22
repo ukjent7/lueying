@@ -34,7 +34,8 @@ winresource = "0.1"
 
 [target."cfg(windows)".dependencies]
 rune.workspace = true
-rune-text = { git = "https://github.com/ukjent7/rune", rev = "6b986137e42633602e7ad45f18224bc47015fb2b", default-features = false }
+rune-text = { git = "https://github.com/ukjent7/rune", rev = "7f49c10420ebce34f254ffa2fdc8b5e708942b31", default-features = false }
+image = { version = "0.25.10", default-features = false }
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }

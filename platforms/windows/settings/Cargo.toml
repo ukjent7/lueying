@@ -41,7 +41,7 @@ lueying-ext = { workspace = true, default-features = false, features = ["host"] 
 lueying-rerank.workspace = true
 # 设置窗界面层:Rune 普通窗口 + 控件库(与候选窗同一框架)。
 rune.workspace = true
-rune-kit = { git = "https://github.com/ukjent7/rune", rev = "6b986137e42633602e7ad45f18224bc47015fb2b", default-features = false }
+rune-kit = { git = "https://github.com/ukjent7/rune", rev = "7f49c10420ebce34f254ffa2fdc8b5e708942b31", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_System_Console",

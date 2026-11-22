@@ -1,8 +1,8 @@
 //! 候选窗:Rune overlay 承载窗口、玻璃与输入;布局、命中与分页语义
 //! 仍来自 `lueying_render::panel`,摆位共用 `ui::place`。
 //!
-//! 玻璃走自捕获背板:逐帧 BitBlt 窗口区的桌面像素作为背景图,面板
-//! `backdrop_blur` 出磨砂玻璃;「动态效果」关掉时回退实底主题。窗口
+//! 玻璃定时用 BitBlt 抓取面板下的桌面像素,模糊后经像素流发布;
+//! 「动态效果」关掉时回退实底主题。窗口
 //! 移动、隐藏与淡出全走 Rune 的 OverlayHandle;管道线程经版本号 +
 //! `kick()` 唤醒本线程,鼠标回落事件经 `forward_mouse` 注入同一队列。
 //!
@@ -30,7 +30,7 @@ use lueying_server::config::{UiLayout, UiMaterial};
 use crate::imp;
 use crate::ui::place;
 
-/// 活背板的重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
+/// 活背板的重捕节奏(~30fps),独立于候选动画帧率。
 const LIVE_TICK: Duration = Duration::from_millis(33);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
 const MAX_TEXT_WIDTH: f32 = 490.0;
@@ -171,7 +171,7 @@ struct Geom {
 /// 保留一帧原始像素,不为内容相同的背板唤醒 Rune。
 struct Backdrop {
     pixels: Pixels,
-    last: Option<((u32, u32), Vec<u8>)>,
+    last: Option<((u32, u32), u32, Vec<u8>)>,
 }
 
 impl Default for Backdrop {
@@ -184,18 +184,26 @@ impl Default for Backdrop {
 }
 
 impl Backdrop {
-    fn publish(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> bool {
+    fn publish(&mut self, width: u32, height: u32, rgba: Vec<u8>, sigma: f32) -> bool {
         let size = (width, height);
+        let blur = sigma.to_bits();
         if self
             .last
             .as_ref()
-            .is_some_and(|(previous_size, previous)| *previous_size == size && *previous == rgba)
+            .is_some_and(|(previous_size, previous_blur, previous)| {
+                *previous_size == size && *previous_blur == blur && *previous == rgba
+            })
         {
             return false;
         }
         const MAX_RETAINED_BYTES: usize = 512 * 1024;
-        self.last = (rgba.len() <= MAX_RETAINED_BYTES).then(|| (size, rgba.clone()));
-        self.pixels.set(width, height, rgba);
+        let Some(image) = image::RgbaImage::from_raw(width, height, rgba) else {
+            return false;
+        };
+        let output = image::imageops::fast_blur(&image, sigma).into_raw();
+        let rgba = image.into_raw();
+        self.last = (rgba.len() <= MAX_RETAINED_BYTES).then_some((size, blur, rgba));
+        self.pixels.set(width, height, output);
         true
     }
 }
@@ -206,7 +214,7 @@ struct Candidate {
     fx: Fx,
     /// 文本测量;候选条的自然宽度在显示前就要量好。
     ink: RefCell<TextSystem>,
-    /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
+    /// 玻璃背板:流式像素通道,一次分配;发布前在本地模糊,再 `set` 原地换桌面像素。
     backdrop: Option<Backdrop>,
     backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
@@ -812,21 +820,22 @@ fn show(s: &mut Candidate) {
     s.visible = true;
 }
 
-/// 抓取面板矩形的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
-/// 只捕面板区:它是 backdrop_blur 的唯一底图,面板外的空带不铺
+/// 定时抓取面板矩形的桌面像素,模糊后用作玻璃背板。
+/// 只捕面板区:它是玻璃背景的唯一底图,面板外的空带不铺
 /// 像素,直接透出真桌面,任何捕获残影都到不了那儿。
 fn capture_backdrop(s: &mut Candidate) -> bool {
     let (x, y, w, h) = s.fx.placement.panel;
     if w <= 0 || h <= 0 {
         return false;
     }
+    let sigma = (GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * s.frost.clamp(0.0, 1.0)) * s.scale;
     if let Some((width, height, rgba)) = capture_rect(x, y, w as u32, h as u32) {
-        // 流式像素通道:同一张图原地换内容,Rune 唤醒显示它的窗口。
+        // 流式像素通道:同一张图原地换内容;发布前先模糊,Rune 唤醒显示它的窗口。
         // 无解码 worker、无 pending 空帧,同尺寸帧复用图集槽位。
         return s
             .backdrop
             .get_or_insert_with(Backdrop::default)
-            .publish(width, height, rgba);
+            .publish(width, height, rgba, sigma);
     }
     false
 }
@@ -910,7 +919,6 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let glass = !s.private && s.material.is_glass() && s.glass_wanted(high_contrast);
     // 高透到磨砂的连续插值:压光与模糊同步加重。
     let frost = s.frost.clamp(0.0, 1.0);
-    let frost_blur = GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * frost;
     let frost_fill = rgba(0x262624, 0.40 + 0.22 * frost);
     let frost_top = rgba(0x000000, 0.06 + 0.04 * frost);
     let frost_bottom = rgba(0x000000, 0.22 + 0.08 * frost);
@@ -923,7 +931,7 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
     let bx = (s.fx.placement.panel.0 - s.fx.placement.window.0) as f32 / scale;
     let by = (s.fx.placement.panel.1 - s.fx.placement.window.1) as f32 / scale;
     if glass && let Some(backdrop) = &s.backdrop {
-        // 活背板只铺面板矩形:它只给玻璃的 backdrop_blur 当底图。
+        // 预模糊的背板只铺面板矩形。
         // 面板外的空带不画任何东西,alpha=0 直接透出真桌面——铺整张
         // 捕获图反而会把错位的残影留在候选页即将展开的位置。
         // transition/motion 与 body 同款:展开/收起与入场时跟面板走同一条
@@ -963,7 +971,6 @@ fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
         // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。
         (UiMaterial::Glass, true) => {
             body = body
-                .backdrop_blur(frost_blur)
                 .fill(frost_fill)
                 .gradient(frost_top, frost_bottom)
                 .border(1.0 * scale, rgba(0xffffff, 0.14));
