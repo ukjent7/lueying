@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use lueying_render::badge;
 use lueying_server::theme;
-use rune::color::srgb_decode;
 use rune::{
     Color, Cx, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions, OverlaySpec, Transition,
     Tx, el,
@@ -149,9 +148,20 @@ pub(super) fn register<T: 'static>(app: &mut rune::App<T>, state: Arc<State>) {
     let _ = HANDLE.set(handle);
 }
 
+/// 管道线程叫醒徽标:切换序号变了,徽标自己的 poll 会读到并重绘。
+/// 徽标是候选窗 App 里的独立 overlay,候选窗的 kick 到不了它。
+pub(super) fn kick() {
+    if let Some(handle) = HANDLE.get() {
+        handle.update(|_: &mut BadgeHud, _| {});
+    }
+}
+
 /// 切换序号变了就重读徽标;保持期结束撤下内容,退场淡出播完再停靠。
+/// poll 返回 true 才会让 view 重跑(上游契约:false 即不重跑、不重绘),
+/// 所以序号变化与撤下内容都必须返回 true。
 fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
     let serial = s.state.hud_serial.load(Ordering::Acquire);
+    let mut changed = false;
     if serial != s.serial {
         s.serial = serial;
         let source = s.state.mode_hud.lock().unwrap_or_else(|p| p.into_inner());
@@ -163,6 +173,7 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
         s.kit = kit(s.appearance, s.accent);
         s.shown = false;
         s.exit = false;
+        changed = true;
     }
     let elapsed = Instant::now().saturating_duration_since(s.at);
     if elapsed >= HOLD + EXIT {
@@ -173,14 +184,14 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
         if let Some(handle) = HANDLE.get() {
             handle.hide();
         }
-        return false;
+        return changed;
     }
     if !s.shown {
         let Some(rect) = place(&s.state, s.caret) else {
             // 前台全屏:这份不弹,等下一份。
             s.label = None;
             s.caret = None;
-            return false;
+            return changed;
         };
         if let Some(handle) = HANDLE.get() {
             handle.set_placement(Some(super::rune::placement_rect(
@@ -190,19 +201,22 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
             handle.show();
         }
         s.shown = true;
+        changed = true;
     }
     if elapsed < HOLD {
         tx.wake_after(HOLD - elapsed);
-        return false;
+        return changed;
     }
     if !s.exit {
-        // 保持期结束:撤下内容,移除过渡接管退场淡出,播完再停靠。
+        // 保持期结束:撤下内容。返回 true 让 view 重跑,徽标元素卸载,
+        // 移除过渡接管退场淡出,播完等 EXIT 到期由上面的分支停靠。
         s.label = None;
         s.caret = None;
         s.exit = true;
         tx.wake_after(EXIT);
+        return true;
     }
-    false
+    changed
 }
 
 /// 一枚徽标:kit 的 Badge 组件居中在透明 overlay 里;每份一个 key,重挂载重播入场。
@@ -227,18 +241,7 @@ fn badge_view(s: &BadgeHud, cx: &mut Cx<BadgeHud>) -> El {
         .transition(Transition::opacity())
 }
 
-/// 减少动效的系统开关(与候选窗、设置窗共用一份)。
-fn reduce_motion() -> bool {
-    !lueying_server::theme::client_area_animation()
-}
-
-/// 0xRRGGBB → Rune 颜色(线性 sRGB)。
+/// 0xRRGGBB → Rune 颜色(线性 sRGB);转换共享一份,见 theme::srgb。
 fn rgb(v: u32) -> Color {
-    let channel = |shift: u32| srgb_decode(((v >> shift) & 0xff) as f32 / 255.0);
-    Color {
-        r: channel(16),
-        g: channel(8),
-        b: channel(0),
-        a: 1.0,
-    }
+    theme::srgb(v)
 }

@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::context::ContextProvider;
 use assets::{dict_path, load_dict, load_model, single_instance};
@@ -151,7 +151,6 @@ pub(super) struct ModeHud {
     pub(super) label: &'static str,
     /// 切换时的宿主光标矩形(物理像素);没有可用光标时退到主屏。
     pub(super) caret: Option<(i32, i32, i32, i32)>,
-    pub(super) at: Instant,
 }
 
 /// 界面线程的唤醒事件:请求线程改了候选、徽标或选择面板的数据后触发它,
@@ -330,8 +329,8 @@ pub(super) fn touch_view(state: &State) {
 pub(super) fn touch_hud(state: &State) {
     state.hud_serial.fetch_add(1, Ordering::Release);
     state.wake_ui.set();
-    // 徽标已迁到候选窗的 Rune 线程:同一个 kick 顺带唤醒它的 poll。
-    crate::ui::kick_candidate();
+    // 候选窗与徽标是独立 overlay,各自要叫醒。
+    crate::ui::kick_hud();
 }
 
 /// 把三个标准句柄接到 NUL。进程被无控制台、无句柄继承的方式拉起时,
@@ -791,11 +790,7 @@ fn set_global_mode(state: &State, chinese: bool) {
 /// 让模式徽标在光标旁短暂显示一个标记。
 fn show_hud(state: &State, label: &'static str, caret: Option<(i32, i32, i32, i32)>) {
     let caret = caret.or_else(|| state.active_published().and_then(|p| p.view.caret));
-    *state.mode_hud.lock().unwrap_or_else(|p| p.into_inner()) = Some(ModeHud {
-        label,
-        caret,
-        at: Instant::now(),
-    });
+    *state.mode_hud.lock().unwrap_or_else(|p| p.into_inner()) = Some(ModeHud { label, caret });
     touch_hud(state);
 }
 

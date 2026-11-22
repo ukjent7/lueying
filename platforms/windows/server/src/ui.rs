@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::imp::{State, Wake};
 
-/// 候选窗后端:默认 CPU/Rune;LUEYING_CANDIDATE_COMPOSITION=1 回到原生 Composition。
+/// 候选窗后端:默认 Rune;LUEYING_CANDIDATE_COMPOSITION=1 回到原生 Composition。
 pub(crate) fn use_composition_candidate() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -45,6 +45,13 @@ pub(crate) fn kick_candidate() {
     } else {
         rune::kick();
     }
+}
+
+/// 叫醒候选窗与模式徽标:两者是同一 App 里相互独立的 overlay,
+/// 徽标自己的 poll 只有它自己的句柄 update 才够得着。
+pub(crate) fn kick_hud() {
+    kick_candidate();
+    badge::kick();
 }
 
 pub(crate) fn run_candidate(state: Arc<State>) {
