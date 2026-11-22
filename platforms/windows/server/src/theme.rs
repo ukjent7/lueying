@@ -2,6 +2,7 @@
 //! 候选窗、设置窗与模式徽标共用同一套颜色,避免三处各写一份后走样。
 
 use std::ffi::c_void;
+use std::sync::OnceLock;
 
 use lueying_render::panel::Palette;
 use windows::Win32::Foundation::ERROR_SUCCESS;
@@ -15,9 +16,29 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SystemParametersInfoW,
 };
-use windows::core::{HSTRING, PCWSTR};
+use windows::core::{BOOL, HSTRING, PCWSTR};
+
+/// 客户区动画的系统开关(设置 → 辅助功能 → 视觉效果 → 动画效果)。
+/// 关掉时 Rune 把弹簧动效降级为淡出;进程内缓存,改系统设置后重启生效。
+pub fn client_area_animation() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let mut on = BOOL(0);
+        unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some((&mut on as *mut BOOL).cast::<c_void>()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .is_ok()
+            && on.as_bool()
+    })
+}
 
 /// 当前窗口使用的外观。高对比度优先于深浅色。
 #[derive(Clone, Copy, PartialEq, Eq)]

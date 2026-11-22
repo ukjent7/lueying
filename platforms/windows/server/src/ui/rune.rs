@@ -896,7 +896,9 @@ fn submit_scene(s: &Candidate, view: &SessionView) {
 }
 
 /// 每帧重建候选窗的控件树;几何全部来自 panel.rs,所指即所画。
-fn view(s: &Candidate, _cx: &mut rune::Cx<Candidate>) -> El {
+fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
+    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出。
+    cx.reduced_motion(!lueying_server::theme::client_area_animation());
     if s.fx.last.is_none() {
         return el();
     }
@@ -1010,6 +1012,14 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
         let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
+        // 纵向滚动的视口:上下边缘线性渐隐(clip_fade_linear 的文档场景:
+        // "a transcript fading into the top of a composer"),提示还有内容没滚到。
+        let mut viewport = el().w_full().h_full().clip_fade_linear(
+            0.0,
+            16.0 * geom.metrics.scale(),
+            0.0,
+            16.0 * geom.metrics.scale(),
+        );
         if let Some(rect) = geom
             .spec
             .grid
@@ -1018,10 +1028,10 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .find(|(c, _)| c.selected)
             .map(|(_, r)| *r)
         {
-            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+            viewport = viewport.child(sel_marker(rect, look, geom.metrics.scale()));
         }
         for (candidate, rect) in geom.spec.grid.iter().zip(&cells) {
-            layer = layer.child(cell_el(
+            viewport = viewport.child(cell_el(
                 s,
                 geom,
                 look,
@@ -1031,6 +1041,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 candidate.index,
             ));
         }
+        layer = layer.child(viewport);
     } else {
         // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
         // 旧页向反侧滑出,由 Rune 的过渡原生推进。
@@ -1053,7 +1064,10 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .h(geom.height)
             // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
             // 否则会与面板入场过渡叠着闪。
-            .transition(s.fx.slide_edge.map_or(Transition::none(), Transition::push));
+            .transition(s.fx.slide_edge.map_or(Transition::none(), |edge| {
+                // 推入叠加官方 blur_replace(整块模糊替换 + 轻缩放),翻页更软。
+                Transition::push(edge).combined(Transition::blur_replace())
+            }));
         let page_start = s.fx.last.as_ref().map_or(0, |view| {
             panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
         });

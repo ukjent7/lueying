@@ -194,6 +194,8 @@ fn load_core() -> Core {
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
+    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出。
+    cx.reduced_motion(!theme::client_area_animation());
     scene(s, cx.system_dark())
 }
 
