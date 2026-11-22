@@ -146,8 +146,10 @@ fn deliver_units(text: &str) -> Vec<u16> {
 
 /// 一个 Unicode 键事件;`up` 决定按下还是抬起。
 fn unicode_input(unit: u16, up: bool) -> INPUT {
-    let mut input = INPUT::default();
-    input.r#type = INPUT_KEYBOARD;
+    let mut input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        ..Default::default()
+    };
     input.Anonymous.ki.wScan = unit;
     input.Anonymous.ki.dwFlags = if up {
         KEYEVENTF_UNICODE | KEYEVENTF_KEYUP

@@ -44,14 +44,13 @@ pub(super) struct Job {
 /// 重定向只覆盖 runner 亲手拉起的那一份。
 pub(crate) fn say(message: &str) {
     println!("{message}");
-    if std::env::var_os("LUEYING_DEBUG_UIA").is_some() {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
+    if std::env::var_os("LUEYING_DEBUG_UIA").is_some()
+        && let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(std::env::temp_dir().join("lueying-uia.log"))
-        {
-            let _ = writeln!(file, "{message}");
-        }
+    {
+        let _ = writeln!(file, "{message}");
     }
 }
 

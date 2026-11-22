@@ -6,7 +6,8 @@ license.workspace = true
 description = "Windows 虚拟键到协议键的映射:TSF 宿主的键汇与常驻 Server 的回落通道共用"
 
 [dependencies]
-lueying-protocol = { workspace = true }
 
 [target."cfg(windows)".dependencies]
+# 协议键类型:整个 crate 都是 Windows 代码。
+lueying-protocol = { workspace = true }
 windows = { version = "0.62.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }

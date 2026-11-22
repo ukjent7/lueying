@@ -10,9 +10,10 @@ name = "lueying-user"
 path = "src/main.rs"
 
 [dependencies]
-lueying-protocol = { path = "../../../crates/protocol" }
 
 [target."cfg(windows)".dependencies]
+# 停服与拉起经协议管道;整个辅助程序都是 Windows 代码。
+lueying-protocol = { path = "../../../crates/protocol" }
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

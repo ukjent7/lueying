@@ -11,4 +11,3 @@ crate-type = ["cdylib"]
 [dependencies]
 lueying-ext = { workspace = true, default-features = false, features = ["guest"] }
 serde_json = "1"
-wit-bindgen = "0.63"

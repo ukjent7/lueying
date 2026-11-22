@@ -10,13 +10,13 @@ name = "lueying-win-e2e"
 path = "src/main.rs"
 
 [dependencies]
+
+[target."cfg(windows)".dependencies]
 # 官方扩展装进隔离 APPDATA 后直接写入同意记录,与服务端共用同一份格式。
 lueying-ext = { workspace = true, default-features = false }
 # 管道授权门断言:直接说协议,验证未授权客户端拿不到用户词库。
 lueying-protocol = { path = "../../../crates/protocol" }
 serde_json = "1"
-
-[target."cfg(windows)".dependencies]
 # `#[implement]` 宏展开引用 `::windows_core`,要直接依赖
 windows-core = "0.62.2"
 windows = { version = "0.62.2", features = [

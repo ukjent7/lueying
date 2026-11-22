@@ -48,13 +48,10 @@ pub(super) fn listen(name: &str, state: Arc<State>) -> ! {
         match create_instance(&wide, first) {
             Ok(stream) => {
                 first = false;
-                match wait_client(stream) {
-                    Ok(file) => {
-                        let state = Arc::clone(&state);
-                        std::thread::spawn(move || serve(file, state));
-                    }
-                    // 客户端在等待中消失;句柄随 File 释放,循环重建实例。
-                    Err(_) => {}
+                // 客户端在等待中消失;句柄随 File 释放,循环重建实例。
+                if let Ok(file) = wait_client(stream) {
+                    let state = Arc::clone(&state);
+                    std::thread::spawn(move || serve(file, state));
                 }
             }
             Err(error) if first => {
@@ -243,13 +240,9 @@ fn serve(file: File, state: Arc<State>) {
     let mut reader = BufReader::new(file);
     let conn = NEXT_CONN.fetch_add(1, Ordering::Relaxed);
     let mut session = None;
-    loop {
-        // 单帧上限:对端不发完整帧也不能把内存撑爆;半帧不能当成下一条
-        // 请求,直接断线。
-        let body = match lueying_protocol::read_frame(&mut reader) {
-            Ok(body) => body,
-            Err(_) => break,
-        };
+    // 单帧上限:对端不发完整帧也不能把内存撑爆;半帧不能当成下一条
+    // 请求,直接断线。
+    while let Ok(body) = lueying_protocol::read_frame(&mut reader) {
         let request = lueying_protocol::decode::<Request>(&body).ok();
         // 变体名留作慢请求日志;request 马上要被 handle 消费掉。
         let kind = request.as_ref().map(|req| req.kind());
