@@ -249,6 +249,8 @@ pub struct Settings {
     pub groups: Vec<(String, u32)>,
     /// 引擎资源状态;服务未运行时是 None。
     pub status: Option<EngineStatus>,
+    /// 后台正在读取引擎状态;首屏与刷新期间不把 None 说成服务未运行。
+    pub status_loading: bool,
     /// 页脚那行提示文字。
     pub message: String,
     pub notice: Notice,
@@ -275,6 +277,7 @@ impl Default for Settings {
             path: None,
             groups: Vec::new(),
             status: None,
+            status_loading: false,
             message: String::new(),
             notice: Notice::None,
             current: String::new(),

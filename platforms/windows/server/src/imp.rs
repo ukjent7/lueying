@@ -942,7 +942,6 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
     // 工具栏的状态字(标点/简繁)与倍率都从配置对读;有会话时下面的
     // touch_view 也会叫醒它,这里补上无会话的场景。
     crate::ui::kick_toolbar();
-    let mut touched = false;
     for (_, handle) in state.all_sessions() {
         let mut s = handle.lock();
         if let Some(scheme) = &scheme {
@@ -959,11 +958,11 @@ pub(crate) fn apply_config(state: &State, cfg: AppConfig) {
             pending.chinese = chinese;
             pending.fullwidth = fullwidth;
         }
-        touched |= handle.publish(&s);
+        let _ = handle.publish(&s);
     }
-    if touched {
-        touch_view(state);
-    }
+    // 纯材质/主题配置不会改变会话发布内容,候选窗也必须收到一次 touch:
+    // 全部 session 先发布完再递增版本,组字中与无候选两种情况下都能对齐。
+    touch_view(state);
 }
 
 /// 应用一条左邻文本;组合已建立时排一次同步重排。

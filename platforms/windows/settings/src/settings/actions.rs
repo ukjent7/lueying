@@ -470,15 +470,15 @@ pub fn export_user(settings: &mut Settings) {
 }
 
 /// 从文件导入用户词库:本机导出的原生格式、标准 TSV 词表与纯汉字词表都能读。
-pub fn import_user(settings: &mut Settings) {
+pub fn import_user(settings: &mut Settings) -> bool {
     let Some(path) = choose_user_file(false) else {
-        return;
+        return false;
     };
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(e) => {
             settings.say(Notice::Error, format!("读取失败: {e}"));
-            return;
+            return false;
         }
     };
     let mut report = dict_import::parse(&dict_import::decode(&bytes));
@@ -501,7 +501,7 @@ pub fn import_user(settings: &mut Settings) {
             }
             None => {
                 settings.say(Notice::Error, "输入法服务未运行,启动后再试");
-                return;
+                return false;
             }
         }
     }
@@ -517,6 +517,7 @@ pub fn import_user(settings: &mut Settings) {
         text.push_str(&format!(",词库现有 {entries} 条"));
     }
     settings.say(Notice::Success, text);
+    true
 }
 
 /// 导出诊断报告:版本、配置、模糊组统计与服务日志末尾。

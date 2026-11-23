@@ -106,26 +106,44 @@ fn place(state: &State, caret: Option<(i32, i32, i32, i32)>) -> Option<(i32, i32
     // 候选窗在哪一侧,徽标就去另一侧。
     let composing = place::in_composition(state);
     let candidate_above = state.candidate_above.load(Ordering::Relaxed);
-    let prefer_below = !composing || !candidate_above;
+    // 候选在光标上方时徽标去下方,反之亦然;不在组合中走正常的下方。
+    let prefer_below = !composing || candidate_above;
+    let candidate = *state
+        .candidate_rect
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let candidate = candidate.map(normalized);
     let x = (anchor_x - w / 2).clamp(work.left, (work.right - w).max(work.left));
     let y = (match caret {
         Some((_, t, _, b)) => {
             let below = b + gap;
             let above = t - h - gap;
-            if prefer_below && below + h <= work.bottom {
-                below
-            } else if !prefer_below && above >= work.top {
-                above
-            } else if below + h <= work.bottom {
-                below
+            let clear = |y: i32| candidate.is_none_or(|rect| !overlaps((x, y, w, h), rect));
+            let (first, second) = if prefer_below {
+                (below, above)
             } else {
-                above
-            }
+                (above, below)
+            };
+            // 优先侧与备用侧都必须同时满足工作区与候选矩形;两侧都
+            // 放不下就宁可不弹,不能用 clamp 把徽标压进候选。
+            [first, second]
+                .into_iter()
+                .find(|y| *y >= work.top && *y + h <= work.bottom && clear(*y))?
         }
         None => anchor_y - h / 2,
     })
     .clamp(work.top, (work.bottom - h).max(work.top));
     Some((x, y, w, h))
+}
+
+fn normalized((x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {
+    let (left, right) = (x.min(x + w), x.max(x + w));
+    let (top, bottom) = (y.min(y + h), y.max(y + h));
+    (left, top, right - left, bottom - top)
+}
+
+fn overlaps(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
+    a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
 }
 
 /// 把徽标 overlay 注册进候选窗的 App;窗口在首次 show 时才建。
@@ -189,10 +207,14 @@ fn badge_poll(s: &mut BadgeHud, now: f64, tx: &mut Tx) -> bool {
     }
     if !s.shown {
         let Some(rect) = place(&s.state, s.caret) else {
-            // 前台全屏:这份不弹,等下一份。
+            // 全屏或两侧都放不下:这份不弹。上一次的原生窗口可能仍
+            // 显示旧内容,先收起;内容撤下要提交,否则会留空 overlay。
+            if let Some(handle) = HANDLE.get() {
+                handle.hide();
+            }
             s.label = None;
             s.caret = None;
-            return changed;
+            return true;
         };
         if let Some(handle) = HANDLE.get() {
             handle.set_placement(Some(super::rune::placement_rect(

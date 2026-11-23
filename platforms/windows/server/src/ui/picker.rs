@@ -87,6 +87,9 @@ impl Picker {
     fn show(&mut self, job: PanelJob) {
         let PanelJob { panel, done } = job;
         self.restore = foreground();
+        // 每次新开面板都取最新系统外观;显示期间的后续变化由 poll
+        // 按同一份缓存复查。
+        self.appearance = theme::Appearance::of_system();
         self.panel = Some(panel);
         self.current = Some(done);
         self.selected = None;
@@ -272,7 +275,7 @@ fn placeholder() -> Picker {
 
 /// 每帧开头跑一次:排干请求通道。显示中的面板继续显示,排队的下一单
 /// 在收起后显示;再多就以「正忙」回绝(与旧窗口的容量 1 一致)。
-fn picker_poll(s: &mut Picker, _now: f64, _tx: &mut Tx) -> bool {
+fn picker_poll(s: &mut Picker, _now: f64, tx: &mut Tx) -> bool {
     let mut changed = false;
     while let Ok(job) = s.jobs.try_recv() {
         if s.panel.is_none() {
@@ -283,6 +286,16 @@ fn picker_poll(s: &mut Picker, _now: f64, _tx: &mut Tx) -> bool {
         } else {
             job.done.complete(Err("宿主面板正忙".into()));
         }
+    }
+    // 已可见时用同一份约 1 秒缓存复查外观;最多每秒自唤醒一次,
+    // 不改焦点、位置与取消语义。
+    if s.visible {
+        let appearance = theme::Appearance::of_system();
+        if appearance != s.appearance {
+            s.appearance = appearance;
+            changed = true;
+        }
+        tx.wake_after(Duration::from_secs(1));
     }
     changed
 }

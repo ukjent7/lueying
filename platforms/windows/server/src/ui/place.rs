@@ -163,12 +163,18 @@ pub(super) fn spec_of(
     let horizontal = matches!(layout, UiLayout::Horizontal);
     let expand = view.expanded && horizontal;
     let len = view.candidates.len();
-    let widths = view
-        .candidates
-        .iter()
-        .map(|text| measure.width(text, metrics.text));
-    let fit = panel::strip_capacity(widths, metrics);
-    let page_size = if horizontal { fit } else { view.page_size };
+    // 只有横排固定条按自然宽计算本页容量;竖排直接跟引擎页大小,
+    // 不必为一次用不上的容量遍历逐条测宽。
+    let page_size = if horizontal {
+        panel::strip_capacity(
+            view.candidates
+                .iter()
+                .map(|text| measure.width(text, metrics.text)),
+            metrics,
+        )
+    } else {
+        view.page_size
+    };
     let page = panel::page_bounds(view.page, view.page_size, len);
     let (items, grid, scroll) = if horizontal && !expand {
         // 条只画当前页;页号来自引擎,翻页后候选必须跟着换。
@@ -227,29 +233,4 @@ pub(super) fn spec_of(
         },
     };
     (spec, page_size)
-}
-
-/// 全组合候选都参与估宽;翻页时窗口宽度保持一致,不会来回跳。
-/// 直接按条目文本测宽,不为估宽克隆一份候选列表。
-pub(super) fn measure_width(
-    view: &SessionView,
-    layout: UiLayout,
-    metrics: &Metrics,
-    measure: &dyn Measure,
-) -> f32 {
-    let (mut spec, _) = spec_of(view, layout, metrics, measure);
-    // 横排/棋盘宽度固定;只有竖排要按全量候选的自然宽定窗口宽。
-    if matches!(spec.layout, panel::Layout::Column) {
-        spec.width = panel::measure_items_width(
-            view.candidates.iter().enumerate().map(|(index, text)| {
-                (
-                    text.as_str(),
-                    view.hints.get(index).map_or("", String::as_str),
-                )
-            }),
-            metrics,
-            measure,
-        );
-    }
-    panel::panel_width(&spec, metrics, measure)
 }

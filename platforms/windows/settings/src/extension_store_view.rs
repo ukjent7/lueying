@@ -7,6 +7,7 @@ pub(super) fn detail(
     kit: &Kit,
     colors: &Colors,
     prefs: &PageColors,
+    appearance: theme::Appearance,
     layers: &mut Vec<El>,
 ) {
     let settings = &s.core.settings;
@@ -95,8 +96,9 @@ pub(super) fn detail(
             .flat_map(|group| group.rows)
             .chain(settings.extension_ocr_rows(id, prefs));
         for (index, setting) in rows.enumerate() {
-            content =
-                content.child(setting_row(&setting, kit, colors).key(format!("prefs-{index}")));
+            content = content.child(
+                setting_row(&setting, kit, colors, appearance).key(format!("prefs-{index}")),
+            );
         }
     } else if let Some(item) = official {
         let downloading = s.downloading_extension == Some(item.id);
@@ -136,7 +138,12 @@ pub(super) fn detail(
         })
         .child(content);
     let card = dialog_card("extension", name, vec![body], buttons, colors);
-    mount_overlay("extension", card, layers);
+    let scrim = if matches!(appearance, theme::Appearance::HighContrast) {
+        color(colors.bg)
+    } else {
+        Color::BLACK.alpha(0.42)
+    };
+    mount_overlay("extension", card, layers, scrim);
 }
 
 fn bind_shortcut(settings: &mut Settings, item: Official) {

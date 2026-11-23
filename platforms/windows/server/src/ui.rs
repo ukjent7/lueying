@@ -6,6 +6,7 @@
 //! 兜底会话的点击与失活检测退化为轮询,输入照常。
 
 pub(crate) mod badge;
+pub(crate) mod material;
 pub(crate) mod picker;
 pub(crate) mod place;
 pub(crate) mod rune;

@@ -20,6 +20,10 @@ fn main() {
 // 液体玻璃的背板光学:纯函数,非门控宿主也能跑单测。
 mod liquid;
 
+// 候选窗选中胶囊的物理运动:纯模型,Windows 与单测共用。
+#[cfg(any(windows, test))]
+mod selection_motion;
+
 #[cfg(windows)]
 mod context;
 

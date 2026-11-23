@@ -6,12 +6,13 @@
 
 use std::cell::RefCell;
 use std::path::Path;
+use std::time::Duration;
 
 use lueying_protocol::Request;
 use rune::tok::motion;
 use rune::{
     App, AppHandle, AppSpec, Color, Cursor, Cx, Drag, El, Phase, ScrollSpec, TextEdit, TextStyle,
-    col, el, row, text,
+    Tx, col, el, row, text,
 };
 use rune_kit::{
     Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Switch,
@@ -115,6 +116,12 @@ impl TextKind {
 #[derive(Default)]
 struct State {
     core: Core,
+    /// 系统外观缓存;None 时视图回退到即时读取(测试/未初始化)。
+    appearance: Option<theme::Appearance>,
+    /// 系统「减少动态效果」缓存;None 时视图回退到框架快照。
+    reduced_motion: Option<bool>,
+    /// 启动统计尚未落地;用户先导入词库时置 false,迟到的启动值不再覆盖。
+    initial_groups_pending: bool,
     /// 搜索框编辑器;文字变化直接写回 `settings.search`。
     search: TextEdit,
     /// 密钥与文本编辑弹层共用的编辑器。
@@ -135,23 +142,33 @@ fn ui_handle() -> Option<AppHandle<State>> {
 
 /// 打开设置窗并跑事件循环;窗口关掉才返回。
 pub fn run() {
-    let state = State {
+    let mut state = State {
         core: load_core(),
         ..State::default()
     };
+    // 真实窗口先填系统偏好;测试/缺省状态仍回退到框架快照。
+    state.appearance = Some(theme::Appearance::of_system());
+    state.reduced_motion = Some(!theme::client_area_animation());
+    state.initial_groups_pending = true;
     let spec = AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
         min_size: Some((760.0, 480.0)),
         // 弹层全靠 rune 原生机制:卡片是 `.modal(...)`(Esc 关、点外关、焦点圈住),
         // 选择器是 `listbox` 焦点组(方向键巡游、回车/空格确认),无需 on_key。
         on_key: None,
+        poll: Some(settings_poll),
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
     let app = App::new(spec).init(move || state);
     let handle = app.handle();
     HANDLE.with(|slot| *slot.borrow_mut() = Some(handle.clone()));
-    // 重排模型不随安装包分发;打开设置窗时后台补齐,已就绪则不发请求。
-    start_model_fetch(handle);
+    // 首帧后再跑引擎状态与重排模型,首屏不被管道请求阻塞;Option 保证只一次。
+    let mut startup = Some(handle);
+    let app = app.on_ready(move |_| {
+        if let Some(handle) = startup.take() {
+            start_startup_load(handle);
+        }
+    });
     app.run();
 }
 
@@ -174,10 +191,8 @@ fn load_core() -> Core {
         );
     }
     settings.path = path;
-    settings.groups = actions::call(&Request::FuzzyStats)
-        .map(|reply| reply.groups)
-        .unwrap_or_default();
-    settings.status = actions::call(&Request::Status).and_then(|reply| reply.status);
+    // 引擎状态由首帧后的后台线程读取,首屏不为两条管道请求阻塞。
+    settings.status_loading = true;
     settings.current = update::current_version();
     settings.scripts = actions::installed_scripts();
     settings.ppocr_ready = actions::ppocr_ready();
@@ -189,10 +204,34 @@ fn load_core() -> Core {
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出;上游宿主喂的
-    // 就是同一个 SPI,不重复读注册表。
-    cx.reduced_motion(cx.system_reduced_motion());
+    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出;真实窗口用
+    // poll 缓存的运行时值,默认/测试状态回退到宿主快照。
+    let reduced = s
+        .reduced_motion
+        .unwrap_or_else(|| cx.system_reduced_motion());
+    cx.reduced_motion(reduced);
     scene(s)
+}
+
+/// 前台每秒复查系统外观与「减少动态效果」;隐藏时不读注册表,也不
+/// 常驻唤醒。缓存值真的变了才返回 true,不改焦点、弹层或黑瓷身份。
+fn settings_poll(s: &mut State, _now: f64, tx: &mut Tx) -> bool {
+    if !tx.window_visible() {
+        return false;
+    }
+    let appearance = theme::Appearance::of_system();
+    let reduced = !theme::client_area_animation();
+    let mut changed = false;
+    if s.appearance != Some(appearance) {
+        s.appearance = Some(appearance);
+        changed = true;
+    }
+    if s.reduced_motion != Some(reduced) {
+        s.reduced_motion = Some(reduced);
+        changed = true;
+    }
+    tx.wake_after(Duration::from_secs(1));
+    changed
 }
 
 /// 0xRRGGBB 转线性 sRGB 颜色;转换共享一份,见 `lueying_server::theme::srgb`。
@@ -200,7 +239,8 @@ fn color(rgb: u32) -> Color {
     theme::srgb(rgb)
 }
 
-/// 页面需要的提示色与主题色选项,顺序同 `ACCENTS`。
+/// 页面需要的提示色与主题色选项,顺序同 `ACCENTS`。设置窗固定黑瓷:
+/// 普通外观下列出与黑瓷配套的 dark 预设;系统高对比时用系统 accent。
 fn page_colors(c: &Colors, appearance: theme::Appearance) -> PageColors {
     PageColors {
         notice_info: c.text_secondary,
@@ -209,16 +249,18 @@ fn page_colors(c: &Colors, appearance: theme::Appearance) -> PageColors {
         accents: ACCENTS
             .iter()
             .map(|accent| match appearance {
-                theme::Appearance::Dark => accent.dark[0],
-                _ => accent.light[0],
+                theme::Appearance::HighContrast => c.accent,
+                _ => accent.dark[0],
             })
             .collect(),
     }
 }
 
 fn scene(s: &State) -> El {
-    let appearance = theme::Appearance::of_system();
-    // 固定暖黑瓷:瓷是身份材质,不跟系统深浅走;高对比度让位系统色。
+    // 外观由 poll 缓存;高对比度让位系统色,普通深浅仍固定中性黑瓷。
+    let appearance = s.appearance.unwrap_or_else(theme::Appearance::of_system);
+    // 固定中性黑瓷:瓷是身份材质,不跟系统深浅或候选窗材质走;
+    // 高对比度让位系统色。
     let colors = if matches!(appearance, theme::Appearance::HighContrast) {
         theme::colors_with(appearance, 0)
     } else {
@@ -319,7 +361,7 @@ fn scene(s: &State) -> El {
                     text(item.text.clone())
                         .font(TextStyle::new(13.0, if selected { 500.0 } else { 400.0 }))
                         .color(color(if selected {
-                            colors.accent_text
+                            colors.selected_text
                         } else {
                             colors.text
                         })),
@@ -333,7 +375,7 @@ fn scene(s: &State) -> El {
         .grow(1.0)
         .min_h(0.0)
         .child(nav)
-        .child(page_scene(&page, &kit, &colors));
+        .child(page_scene(&page, &kit, &colors, appearance));
 
     let mut footer = row()
         .key("footer")
@@ -365,15 +407,23 @@ fn scene(s: &State) -> El {
         .child(footer);
 
     let mut layers = Vec::new();
-    overlay_scene(s, &s.overlay, &kit, &colors, &page_colors, &mut layers);
+    overlay_scene(
+        s,
+        &s.overlay,
+        &kit,
+        &colors,
+        &page_colors,
+        appearance,
+        &mut layers,
+    );
     root(base, layers)
 }
 
 /// 右栏:滚动的卡片流。
-fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors) -> El {
+fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors, appearance: theme::Appearance) -> El {
     let mut cards = col().key("cards").w_full().gap(12.0);
     for group in &page.groups {
-        cards = cards.child(group_card(group, kit, colors));
+        cards = cards.child(group_card(group, kit, colors, appearance));
     }
     col()
         .key("page")
@@ -390,7 +440,12 @@ fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors) -> El {
         .child(cards)
 }
 
-fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
+fn group_card(
+    group: &model::Group,
+    kit: &Kit,
+    colors: &Colors,
+    appearance: theme::Appearance,
+) -> El {
     let extension = match group.rows.as_slice() {
         [
             model::Row {
@@ -409,8 +464,8 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
         || group.title.clone(),
         |button| format!("{}-{}", button.id.base, button.id.index),
     );
-    // 卡片铺在窗底上:上下缘的釉光从窗底色算出,环境亮则缘亮,没有凭空的光。
-    let glaze = theme::glaze_from_ambient(color(colors.bg), color(colors.bg));
+    // 卡片铺在不透黑瓷窗底上:层级由表面色与结构描边承担,不再从
+    // 窗底色伪造一层环境釉光;真实光只来自界面发光体本身。
     let mut card = col()
         .key(format!("group-{key}"))
         .w_full()
@@ -423,22 +478,9 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
             .cursor(Cursor::Pointer)
             .on_press(move |s: &mut State| activate(s, id.base.clone(), id.index));
     }
-    card = card
-        .child(
-            el().pin(Some(0.0), Some(0.0), Some(0.0), None)
-                .h(1.0)
-                .fill(glaze.edge_top)
-                .a11y_hidden(),
-        )
-        .child(
-            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                .h(1.0)
-                .fill(glaze.edge_bottom)
-                .a11y_hidden(),
-        );
     let mut inner = col().w_full().padding(10.0);
     for (i, row_data) in group.rows.iter().enumerate() {
-        inner = inner.child(setting_row(row_data, kit, colors).key(format!("row-{i}")));
+        inner = inner.child(setting_row(row_data, kit, colors, appearance).key(format!("row-{i}")));
         if i + 1 < group.rows.len() {
             inner = inner.child(
                 el().h(1.0)
@@ -462,7 +504,12 @@ fn group_card(group: &model::Group, kit: &Kit, colors: &Colors) -> El {
         .child(card)
 }
 
-fn setting_row(row_data: &model::Row, kit: &Kit, colors: &Colors) -> El {
+fn setting_row(
+    row_data: &model::Row,
+    kit: &Kit,
+    colors: &Colors,
+    appearance: theme::Appearance,
+) -> El {
     let info = || {
         col()
             .key("info")
@@ -490,7 +537,7 @@ fn setting_row(row_data: &model::Row, kit: &Kit, colors: &Colors) -> El {
             .px(10.0)
             .py(8.0)
             .child(info())
-            .child(candidate_preview(style, colors)),
+            .child(candidate_preview(style, colors, appearance)),
         _ => row()
             .key("setting-row")
             .w_full()
@@ -500,13 +547,34 @@ fn setting_row(row_data: &model::Row, kit: &Kit, colors: &Colors) -> El {
             .gap(12.0)
             .center_y()
             .child(info())
-            .child(control_el(&row_data.control, kit, colors, &row_data.label)),
+            .child(control_el(
+                &row_data.control,
+                kit,
+                colors,
+                &row_data.label,
+                appearance,
+            )),
     }
 }
 
-/// 候选窗预览:直接画拼音与胶囊候选,选中项用强调色。
-fn candidate_preview(style: &model::CandidatePreview, colors: &Colors) -> El {
+/// 候选窗预览:直接画拼音与胶囊候选。高对比明确用系统选中实底/字色;
+/// 普通主题与运行时胶囊同一份暗胎渐变,选中字取该主题的 dark[2],
+/// 预设里找不到就退回黑瓷正文色。预览只示意,不伪造环境光。
+fn candidate_preview(
+    style: &model::CandidatePreview,
+    colors: &Colors,
+    appearance: theme::Appearance,
+) -> El {
     let font = TextStyle::new(12.0 * style.font_scale, 400.0);
+    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+    let selected_text = if high_contrast {
+        colors.selected_text
+    } else {
+        ACCENTS
+            .iter()
+            .find(|accent| accent.dark[0] == style.accent)
+            .map_or(colors.text, |accent| accent.dark[2])
+    };
     let mut candidates = if style.vertical { col() } else { row() };
     candidates = candidates.key("candidates").gap(4.0);
     for (i, candidate) in style
@@ -516,23 +584,28 @@ fn candidate_preview(style: &model::CandidatePreview, colors: &Colors) -> El {
         .enumerate()
     {
         let selected = i == 0;
-        candidates = candidates.child(
-            row()
-                .key(format!("candidate-{i}"))
-                .px(9.0)
-                .py(3.0)
-                .radius(6.0)
-                .fill(if selected {
-                    color(style.accent)
-                } else {
-                    color(colors.surface_alt)
-                })
-                .child(text(candidate.clone()).font(font).color(color(if selected {
-                    colors.on_accent
-                } else {
-                    colors.text
-                }))),
-        );
+        let mut cell = row()
+            .key(format!("candidate-{i}"))
+            .px(9.0)
+            .py(3.0)
+            .radius(6.0);
+        cell = if selected {
+            if high_contrast {
+                cell.fill(color(colors.selected_bg))
+            } else {
+                let (top, bottom) = theme::capsule_fill(colors.bg, style.accent);
+                cell.gradient(top, bottom)
+            }
+        } else {
+            cell.fill(color(colors.surface_alt))
+        };
+        candidates = candidates.child(cell.child(
+            text(candidate.clone()).font(font).color(color(if selected {
+                selected_text
+            } else {
+                colors.text
+            })),
+        ));
     }
     col()
         .key("candidate-preview")
@@ -551,11 +624,19 @@ fn candidate_preview(style: &model::CandidatePreview, colors: &Colors) -> El {
         .child(candidates)
 }
 
-fn control_el(control: &Control, kit: &Kit, colors: &Colors, label: &str) -> El {
+fn control_el(
+    control: &Control,
+    kit: &Kit,
+    colors: &Colors,
+    label: &str,
+    appearance: theme::Appearance,
+) -> El {
     match control {
         Control::Toggle { id, on } => {
             let base = id.base.clone();
             Switch::new(*on)
+                .label(label)
+                .hide_label()
                 .on_toggle(move |s: &mut State| activate(s, base.clone(), 0))
                 .build(kit)
         }
@@ -567,7 +648,7 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors, label: &str) -> El 
         } => {
             let labels: Vec<String> = options.iter().map(|option| option.text.clone()).collect();
             let base = id.base.clone();
-            let group = SegmentedControl::new(&labels, Some(*selected));
+            let group = SegmentedControl::new(&labels, Some(*selected)).label(label);
             let group = match cell_width {
                 Some(width) => group.width(Some(*width * labels.len() as f32)),
                 None => group.fit(),
@@ -595,11 +676,13 @@ fn control_el(control: &Control, kit: &Kit, colors: &Colors, label: &str) -> El 
                 .child(buttons_el(items, kit))
                 .child(
                     Switch::new(*toggle_on)
+                        .label(label)
+                        .hide_label()
                         .on_toggle(move |s: &mut State| activate(s, base.clone(), 0))
                         .build(kit),
                 )
         }
-        Control::Preview { style, .. } => candidate_preview(style, colors),
+        Control::Preview { style, .. } => candidate_preview(style, colors, appearance),
         Control::None => el(),
     }
 }
@@ -752,7 +835,11 @@ fn dispatch(s: &mut State, action: Action) {
         Action::OpenApps => actions::open_apps(&mut s.core.settings),
         Action::BackupExport => actions::backup_export(&mut s.core.settings),
         Action::BackupImport => actions::backup_import(&mut s.core.settings),
-        Action::ImportUser => actions::import_user(&mut s.core.settings),
+        Action::ImportUser => {
+            if actions::import_user(&mut s.core.settings) {
+                s.initial_groups_pending = false;
+            }
+        }
         Action::ExportUser => actions::export_user(&mut s.core.settings),
         Action::Diagnostics => actions::export_diagnostics(&mut s.core.settings),
         Action::ChooseScript => choose_script(s),
@@ -1050,18 +1137,33 @@ fn confirm_install(s: &mut State) {
     };
 }
 
-/// 启动时后台补齐重排模型;真下到了才让常驻服务带新模型重启。
-fn start_model_fetch(handle: AppHandle<State>) {
+/// 首帧后的后台加载:先读引擎状态与模糊组,再补齐重排模型,最后再读
+/// 一次状态。管道请求全在工作线程完成,两个 update 只搬数据,保持
+/// 初始/刷新顺序,不覆盖用户已改的配置、页面或搜索。
+fn start_startup_load(handle: AppHandle<State>) {
+    let fallback = handle.clone();
     let spawned = std::thread::Builder::new()
-        .name("settings-models".into())
+        .name("settings-startup".into())
         .spawn(move || {
+            let groups = actions::call(&Request::FuzzyStats)
+                .map(|reply| reply.groups)
+                .unwrap_or_default();
+            let status = actions::call(&Request::Status).and_then(|reply| reply.status);
+            handle.update(move |s: &mut State, _| {
+                if std::mem::take(&mut s.initial_groups_pending) {
+                    s.core.settings.groups = groups;
+                }
+                s.core.settings.status = status;
+                s.core.settings.status_loading = false;
+            });
+
             let result = crate::models::ensure();
             if result.as_ref().is_ok_and(|&count| count > 0) {
                 actions::restart_server();
             }
+            let status = actions::call(&Request::Status).and_then(|reply| reply.status);
             handle.update(move |s: &mut State, _| {
-                s.core.settings.status =
-                    actions::call(&Request::Status).and_then(|reply| reply.status);
+                s.core.settings.status = status;
                 match result {
                     Ok(0) => {}
                     Ok(count) => s.core.settings.say(
@@ -1076,7 +1178,11 @@ fn start_model_fetch(handle: AppHandle<State>) {
             });
         });
     if let Err(error) = spawned {
-        eprintln!("补齐重排模型的线程启动失败: {error}");
+        eprintln!("设置后台加载线程启动失败: {error}");
+        fallback.update(|s: &mut State, _| {
+            s.initial_groups_pending = false;
+            s.core.settings.status_loading = false;
+        });
     }
 }
 /// 主窗内的弹层:全窗 scrim + 居中卡片,四种弹层共用。
@@ -1086,12 +1192,13 @@ fn overlay_scene(
     kit: &Kit,
     colors: &Colors,
     prefs: &PageColors,
+    appearance: theme::Appearance,
     layers: &mut Vec<El>,
 ) {
     let (key, title, body): (&str, String, Vec<El>) = match overlay {
         Overlay::None => return,
         Overlay::Extension(id) => {
-            store::detail(s, id, kit, colors, prefs, layers);
+            store::detail(s, id, kit, colors, prefs, appearance, layers);
             return;
         }
         Overlay::Picker {
@@ -1180,7 +1287,13 @@ fn overlay_scene(
         ),
     };
     let card = dialog_card(key, &title, body, overlay_actions(kit, overlay), colors);
-    mount_overlay(key, card, layers);
+    // 高对比用不透明系统窗口色遮住背景,普通黑瓷保留原遮挡层。
+    let scrim = if matches!(appearance, theme::Appearance::HighContrast) {
+        color(colors.bg)
+    } else {
+        Color::BLACK.alpha(0.42)
+    };
+    mount_overlay(key, card, layers, scrim);
 }
 
 /// 弹层底部的取消与确认/保存按钮。
@@ -1252,13 +1365,13 @@ fn dialog_card(key: &str, title: &str, body: Vec<El>, actions: El, colors: &Colo
     card.child(actions)
 }
 
-fn mount_overlay(key: &str, card: El, layers: &mut Vec<El>) {
+fn mount_overlay(key: &str, card: El, layers: &mut Vec<El>, scrim: Color) {
     layers.push(
         el().key(format!("{key}-scrim"))
             .absolute(0.0, 0.0)
             .w_full()
             .h_full()
-            .fill(Color::BLACK.alpha(0.42))
+            .fill(scrim)
             .a11y_hidden(),
     );
     layers.push(
@@ -1289,8 +1402,9 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         current: update::current_version(),
         ..Settings::default()
     };
-    let appearance = theme::Appearance::Light;
-    let colors = theme::colors_with(appearance, 0);
+    // 自检按实际设置窗材质构建:固定中性黑瓷,不跟系统深浅走。
+    let appearance = theme::Appearance::Dark;
+    let colors = theme::ceramic_colors();
     let pc = page_colors(&colors, appearance);
     let kit = Kit::from_palette(PaletteSeed {
         bg: color(colors.bg),
@@ -1321,7 +1435,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
             }
         }
         // 每页构造一次控件树;panic 即视为链路断了。
-        let _ = page_scene(&view, &kit, &colors);
+        let _ = page_scene(&view, &kit, &colors, appearance);
         lines.push(format!("页面 {:?}: {rows} 行,控件树构造成功", page));
     }
     for want in [
@@ -1365,5 +1479,67 @@ fn control_ids(control: &Control, ids: &mut Vec<String>) {
             ids.extend(items.iter().map(|button| button.id.base.clone()));
         }
         Control::None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune::{Env, Runtime};
+
+    /// 行标题由设置行渲染;开关与分段组只把它作为无障碍标签,不再画第二份。
+    fn view(_: &State, _: &mut Cx<State>) -> El {
+        let colors = theme::ceramic_colors();
+        let kit = Kit::from_palette(PaletteSeed {
+            bg: color(colors.bg),
+            fg: color(colors.text),
+            accent: color(colors.accent),
+        });
+        let toggle = Control::Toggle {
+            id: model::Id::new("fixture-toggle", 0),
+            on: true,
+        };
+        let segment = Control::Segment {
+            id: model::Id::new("fixture-segment", 0),
+            options: vec![
+                model::SegmentOption::new("标准"),
+                model::SegmentOption::new("紧凑"),
+            ],
+            selected: 0,
+            cell_width: None,
+        };
+        col()
+            .gap(8.0)
+            .child(control_el(
+                &toggle,
+                &kit,
+                &colors,
+                "候选窗动画",
+                theme::Appearance::Dark,
+            ))
+            .child(control_el(
+                &segment,
+                &kit,
+                &colors,
+                "候选窗排列",
+                theme::Appearance::Dark,
+            ))
+    }
+
+    #[test]
+    fn switch_and_segment_nodes_carry_the_row_label() {
+        let mut rt = Runtime::new(State::default(), view, (480.0, 160.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let switch = elements
+            .iter()
+            .find(|element| element.role == "switch")
+            .expect("开关节点");
+        assert_eq!(switch.label.as_deref(), Some("候选窗动画"));
+        let group = elements
+            .iter()
+            .find(|element| element.role == "radiogroup")
+            .expect("分段组节点");
+        assert_eq!(group.label.as_deref(), Some("候选窗排列"));
     }
 }

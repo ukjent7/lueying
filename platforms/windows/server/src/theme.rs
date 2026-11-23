@@ -2,7 +2,7 @@
 //! 候选窗、设置窗与模式徽标共用同一套颜色,避免三处各写一份后走样。
 
 use std::ffi::c_void;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use lueying_render::panel::Palette;
@@ -25,22 +25,44 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, HSTRING, PCWSTR};
 
 /// 客户区动画的系统开关(设置 → 辅助功能 → 视觉效果 → 动画效果)。
-/// 关掉时 Rune 把弹簧动效降级为淡出;进程内缓存,改系统设置后重启生效。
+/// 关掉时 Rune 把弹簧动效降级为淡出。运行中可响应:约 1 秒缓存,
+/// 可见窗口的 poll 每秒复查一次。
 pub fn client_area_animation() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    *CACHE.get_or_init(|| {
-        let mut on = BOOL(0);
-        unsafe {
-            SystemParametersInfoW(
-                SPI_GETCLIENTAREAANIMATION,
-                0,
-                Some((&mut on as *mut BOOL).cast::<c_void>()),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-            )
-        }
-        .is_ok()
-            && on.as_bool()
-    })
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut cached = CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((at, animation)) = *cached
+        && at.elapsed() < Duration::from_secs(1)
+    {
+        return animation;
+    }
+    let mut on = BOOL(0);
+    let animation = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some((&mut on as *mut BOOL).cast::<c_void>()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .is_ok()
+        && on.as_bool();
+    *cached = Some((Instant::now(), animation));
+    animation
+}
+
+/// 系统是否允许窗口透明(设置 → 个性化 → 颜色 → 透明效果)。
+/// 关闭时玻璃不采桌面、退实底;黑瓷与显式光源不受影响。约 1 秒缓存。
+pub fn transparency_enabled() -> bool {
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut cached = CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((at, transparency)) = *cached
+        && at.elapsed() < Duration::from_secs(1)
+    {
+        return transparency;
+    }
+    let transparency = personalize_dword("EnableTransparency").is_none_or(|value| value != 0);
+    *cached = Some((Instant::now(), transparency));
+    transparency
 }
 
 /// 0xRRGGBB → Rune 颜色(线性 sRGB)。候选窗、模式徽标与设置窗共用一份转换。
@@ -62,8 +84,8 @@ pub fn srgb_alpha(v: u32, a: f32) -> Color {
 }
 
 /// 瓷釉的光:每一点光都有来源——上缘反射元素上方的环境色(加亮),
-/// 下缘是被环境压出的釉根(压暗)。候选窗的环境是面板上下实采的桌面
-/// 像素,设置窗的环境是自己的窗底;环境暗则釉暗,没有凭空的光。
+/// 下缘是被环境压出的釉根(压暗)。候选窗与工具栏的环境是面板上下
+/// 实采的桌面像素;采不到就保持哑光,没有凭空的光。
 #[derive(Clone, Copy, PartialEq)]
 pub struct Glaze {
     /// 顶部光泽渐变的起点,到面板半高渐隐为同色透明。
@@ -111,31 +133,49 @@ pub fn glow_of(accent: u32) -> Glow {
     }
 }
 
-/// 瓷的固定暖黑配色:候选窗与设置窗共用;琥珀釉是瓷的身份色,
-/// 不随主题色预设走。高对比度让位系统色,调用方负责分流。
+/// 选中胶囊的暗胎渐变:底色里只混一点灯色上/下端,正文继续留在
+/// 深色表面上。亮底主题略加重混色,保证胶囊仍可辨。运行时候选窗与
+/// 设置窗预览共用这一份,预览不另造光。
+pub fn capsule_fill(base: u32, accent: u32) -> (Color, Color) {
+    let base = srgb(base);
+    let glow = glow_of(accent);
+    let (top, bottom) = if base.luminance() < 0.2 {
+        (0.03, 0.09)
+    } else {
+        (0.07, 0.14)
+    };
+    (
+        base.mix(glow.core_top, top),
+        base.mix(glow.core_bottom, bottom),
+    )
+}
+
+/// 共享黑瓷的中性石墨配色:候选窗与工具栏共用胎体色,设置窗固定使用。
+/// 强调色与语义成功/错误各自有来源,不靠瓷胎本身发光。高对比度让位
+/// 系统色,调用方负责分流。
 pub fn ceramic_colors() -> Colors {
     Colors {
-        bg: 0x262220,
-        surface: 0x2e2a24,
-        surface_alt: 0x352f27,
-        segment: 0x3e362c,
-        border: 0x4a4238,
-        border_strong: 0x554c3e,
-        text: 0xece7df,
-        text_secondary: 0xe3ddd2,
-        text_tertiary: 0xd4cec3,
-        accent: 0xd9a92e,
-        accent_hover: 0xc49726,
-        accent_text: 0x7a5608,
-        on_accent: 0x2b2110,
-        hover: 0x3a332a,
-        off_bg: 0x443c30,
-        knob_off: 0xffffff,
+        bg: 0x131418,
+        surface: 0x1b1c20,
+        surface_alt: 0x222328,
+        segment: 0x2b2d33,
+        border: 0x32343a,
+        border_strong: 0x464951,
+        text: 0xedeef1,
+        text_secondary: 0xc7c9cf,
+        text_tertiary: 0xa3a7b0,
+        accent: 0xaab4c4,
+        accent_hover: 0xb9c2cf,
+        accent_text: 0xdce3ed,
+        on_accent: 0x181a1f,
+        hover: 0x282a30,
+        off_bg: 0x34363d,
+        knob_off: 0xf1f2f4,
         success: 0x81c995,
         danger: 0xf28b82,
         danger_soft: 0x3a2424,
-        selected_bg: 0xfac738,
-        selected_text: 0x2b2110,
+        selected_bg: 0x30333b,
+        selected_text: 0xf1f3f6,
     }
 }
 
@@ -173,6 +213,12 @@ impl Appearance {
 
 /// `AppsUseLightTheme`:0 表示系统应用走深色;键或值读不到时按浅色处理。
 fn apps_use_light() -> bool {
+    personalize_dword("AppsUseLightTheme").is_none_or(|value| value != 0)
+}
+
+/// 读 HKCU Personalize 下的一个 DWORD;键或值不存在、类型不符都返回
+/// None。外观、动画与透明偏好共用同一处注册表访问。
+fn personalize_dword(name: &str) -> Option<u32> {
     let path = HSTRING::from("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
     let mut key = HKEY::default();
     if unsafe {
@@ -185,9 +231,9 @@ fn apps_use_light() -> bool {
         )
     } != ERROR_SUCCESS
     {
-        return true;
+        return None;
     }
-    let name = HSTRING::from("AppsUseLightTheme");
+    let name = HSTRING::from(name);
     let mut kind = REG_VALUE_TYPE::default();
     let mut data = 0u32;
     let mut size = std::mem::size_of::<u32>() as u32;
@@ -202,7 +248,7 @@ fn apps_use_light() -> bool {
         )
     };
     let _ = unsafe { RegCloseKey(key) };
-    queried == ERROR_SUCCESS && kind == REG_DWORD && data != 0
+    (queried == ERROR_SUCCESS && kind == REG_DWORD).then_some(data)
 }
 
 /// 候选窗主题色预设在 `accents` 里;这里只转出,免得调用方改 import。
@@ -419,4 +465,32 @@ pub fn palette(colors: Colors) -> Palette {
         selected_text: colors.selected_text,
         hover: colors.hover,
     }
+}
+
+/// 把一套主题调色板换到共享黑瓷胎体上:只覆盖中性大面积与文字层,
+/// 强调色、选中底色与灯色保留调用方来源。候选窗和工具栏都从这里取
+/// 同一个瓷胎,不各自调一份暖色。
+pub fn ceramic_panel_palette(mut p: Palette) -> Palette {
+    let ceramic = palette(ceramic_colors());
+    p.bg = ceramic.bg;
+    p.window_bg = ceramic.window_bg;
+    p.surface_alt = ceramic.surface_alt;
+    p.border = ceramic.border;
+    p.border_strong = ceramic.border_strong;
+    p.text = ceramic.text;
+    p.text_secondary = ceramic.text_secondary;
+    p.text_tertiary = ceramic.text_tertiary;
+    p.hover = ceramic.hover;
+    p
+}
+
+/// 候选窗的烟熏玻璃墨色:中性玻璃面配暖白字与暖边框。强调族仍来自
+/// 用户主题;工具栏玻璃复用同一配方。
+pub fn glass_panel_palette(mut p: Palette) -> Palette {
+    p.text = 0xece7df;
+    p.text_secondary = 0xe3ddd2;
+    p.text_tertiary = 0xd4cec3;
+    p.border = 0x4a4238;
+    p.hover = 0x3a332a;
+    p
 }

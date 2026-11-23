@@ -124,7 +124,11 @@ impl Settings {
                 rows: vec![
                     Row {
                         label: "引擎状态".to_string(),
-                        detail: status_detail(&self.status),
+                        detail: if self.status_loading {
+                            "正在读取引擎状态…".to_string()
+                        } else {
+                            status_detail(&self.status)
+                        },
                         control: Control::None,
                     },
                     self.setting_row(

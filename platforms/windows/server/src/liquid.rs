@@ -13,13 +13,16 @@
 /// 拉距倍率:采样点最远拉出带宽的倍数(光学核心的默认值,调参变体
 /// 各自带倍率)。σ4.5-9 的模糊会吃掉一倍带宽的位移,拉距要盖过模糊
 /// 才看得见棱缘折弯。无头参数扫描(拉距 1.4/1.8/2.4 × σ7/4 对照图)
-/// 定的值:1.8 起可见,2.4 偏闹。
+/// 定的值:1.8 起可见,2.4 偏闹。产品路径由 `GlassVariant::pull` 传入,
+/// 这份常量只给单元测试当默认拉距。
+#[cfg(test)]
 const PULL: f32 = 2.2;
 
-/// 背板捕获的外扩量(物理像素):盖住最大拉距,棱缘采样才有原生
-/// 桌面可采,不落到钳制边上。
+/// 背板捕获的外扩量(物理像素):盖住最大拉距与色散,棱缘采样才有
+/// 原生桌面可采,不落到钳制边上。R 通道比采样点更靠外 1+DISPERSION,
+/// 取最远那一路,不是平均拉距。
 pub(super) fn capture_pad(band: f32, pull: f32, scale: f32) -> i32 {
-    (band * pull * scale).ceil() as i32 + 2
+    ((band * scale).max(1.0) * pull * (1.0 + DISPERSION)).ceil() as i32 + 2
 }
 
 /// 临时调参变体(用户在 config.toml 的 `ui_glass_variant` 里选
@@ -89,6 +92,8 @@ pub(super) const GRAIN: u8 = 2;
 /// `raw` 是 (w + 2·pad) × (h + 2·pad) 的 RGBA8;`band`、`radius` 都
 /// 是物理像素。输出与输入逐位确定:背板静止时结果不变,调用方的
 /// 逐帧去重不失效。
+/// 测试用的光学入口:按默认拉距 `PULL` 走完整处理链。
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process(
     raw: &[u8],
@@ -103,7 +108,7 @@ pub(super) fn process(
     process_with_pull(raw, raw_w, raw_h, pad, w, h, band, radius, PULL)
 }
 
-/// 光学核心;拉距倍率作参数,无头调参探针按它扫描,产品走 [`PULL`]。
+/// 光学核心;拉距倍率作参数,产品按配置变体传入,无头调参探针可按它扫描。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn process_with_pull(
     raw: &[u8],
@@ -169,6 +174,54 @@ pub(super) fn process_with_pull(
         }
     }
     out
+}
+
+/// 玻璃背板的高光肩部:在模糊前把过亮的桌面压进连续的可读范围,
+/// 暗部与纹理、alpha 原样保留。每个 RGB8 先按标准 sRGB 解码到线性,
+/// 取 Rec.709 亮度 L;L ≤ K 不动,否则 L 经软肩到 M:
+/// L′ = K + (M−K)·d/(d+M−K), d=L−K。三通道同乘 L′/L 再编码,颜色
+/// 比例不变,不做阈值切墨或第二遍桌面抓取。
+pub(super) fn prepare_glass_backdrop(rgba: &mut [u8]) {
+    const K: f32 = 0.065;
+    const M: f32 = 0.12;
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        let linear = [
+            srgb_decode(pixel[0]),
+            srgb_decode(pixel[1]),
+            srgb_decode(pixel[2]),
+        ];
+        let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+        if luminance <= K {
+            continue;
+        }
+        let d = luminance - K;
+        let shoulder = K + (M - K) * d / (d + M - K);
+        let scale = shoulder / luminance;
+        for (channel, value) in pixel[..3].iter_mut().zip(linear) {
+            *channel = srgb_encode(value * scale);
+        }
+    }
+}
+
+/// 标准 sRGB 传输函数:8-bit 码值到线性光。
+fn srgb_decode(value: u8) -> f32 {
+    let c = value as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// 线性光回到 8-bit sRGB,四舍五入并夹到合法码值。
+fn srgb_encode(value: f32) -> u8 {
+    let c = value.clamp(0.0, 1.0);
+    let encoded = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// 面板尺寸的固定颗粒图:白与黑各半的低 alpha 抖动,垫在模糊层上
@@ -350,6 +403,55 @@ mod tests {
         for pixel in a.as_chunks::<4>().0 {
             assert!(pixel[3] >= 1 && pixel[3] <= GRAIN);
             assert!(pixel[0] == pixel[1] && pixel[1] == pixel[2]);
+        }
+    }
+
+    fn luminance(rgb: [u8; 3]) -> f32 {
+        0.2126 * srgb_decode(rgb[0]) + 0.7152 * srgb_decode(rgb[1]) + 0.0722 * srgb_decode(rgb[2])
+    }
+
+    #[test]
+    fn highlight_shoulder_caps_white_and_bright_colors_near_linear_012() {
+        let cases = [[255, 255, 255], [255, 64, 0], [0, 255, 0], [255, 0, 255]];
+        for rgb in cases {
+            let mut rgba = [rgb[0], rgb[1], rgb[2], 173];
+            prepare_glass_backdrop(&mut rgba);
+            assert_eq!(rgba[3], 173, "alpha 必须原样保留");
+            let lit = luminance([rgba[0], rgba[1], rgba[2]]);
+            assert!(lit <= 0.12 + 0.002, "{rgb:?} 压肩后亮度 {lit} 仍高于目标");
+        }
+        let mut white = [255, 255, 255, 255];
+        prepare_glass_backdrop(&mut white);
+        assert!(
+            luminance([white[0], white[1], white[2]]) > 0.11,
+            "白色应保留在肩部附近,不能整块压黑"
+        );
+    }
+
+    #[test]
+    fn shadow_colors_are_untouched() {
+        let mut rgba = [10, 12, 14, 37];
+        prepare_glass_backdrop(&mut rgba);
+        assert_eq!(rgba, [10, 12, 14, 37]);
+        let mut mid = [48, 50, 52, 200];
+        let original = mid;
+        prepare_glass_backdrop(&mut mid);
+        assert_eq!(mid, original);
+    }
+
+    #[test]
+    fn capture_pad_covers_the_farthest_dispersed_tap() {
+        for (band, pull, scale) in [
+            (8.0_f32, 2.2_f32, 1.0_f32),
+            (12.0, 3.0, 1.25),
+            (1.0, 2.2, 2.0),
+        ] {
+            let farthest = (band * scale).max(1.0) * pull * (1.0 + DISPERSION);
+            let pad = capture_pad(band, pull, scale) as f32;
+            assert!(
+                pad >= farthest,
+                "pad {pad} 没盖住最远位移 {farthest} (band {band}, pull {pull}, scale {scale})"
+            );
         }
     }
 }

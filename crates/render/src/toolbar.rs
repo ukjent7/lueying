@@ -217,6 +217,71 @@ pub fn label(button: Button, status: Status) -> &'static str {
 pub const RADIUS: f32 = 9.0;
 pub const FONT: f32 = 14.0;
 
+/// 月相几何沿右下/左上对角线的单位分量。月盘、影圆与暖光共用这一份,
+/// 避免三处各写一个 0.707。
+pub const FRAC_1_SQRT_2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// 一份月相的影圆与受光几何。`shadow_distance`/`shadow_radius` 供
+/// `cutout_circle` 挖出真透明的缺月;`emitting_area_ratio` 是可见亮区
+/// 占整盘的面积比,`centroid_offset` 是亮区质心沿右下轴线离盘心的距离。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoonIllumination {
+    pub shadow_distance: f32,
+    pub shadow_radius: f32,
+    pub emitting_area_ratio: f32,
+    pub centroid_offset: f32,
+}
+
+/// 由盘半径与月相(0=弯月,1=满月)算影圆和亮区几何。
+///
+/// 分条中点积分 N=32:沿右下轴线把盘切成横截条,亮弦是盘弦与被挖
+/// 影圆弦之差;面积比按整盘弦积分归一,质心按亮弦的 x 一阶矩求。
+/// 微小的 N 不是精密测量,只用于同一定时下的受光中心与相对亮度。
+pub fn moon_illumination(radius: f32, phase: f32) -> MoonIllumination {
+    let r = radius.max(0.0);
+    let p = if phase.is_nan() {
+        0.0
+    } else {
+        phase.clamp(0.0, 1.0)
+    };
+    let sr = r + 1.5;
+    let dist = 0.622 * r + ((r + sr) - 0.622 * r) * p;
+    if p >= 1.0 {
+        return MoonIllumination {
+            shadow_distance: dist,
+            shadow_radius: sr,
+            emitting_area_ratio: 1.0,
+            centroid_offset: 0.0,
+        };
+    }
+    const N: usize = 32;
+    let step = 2.0 * r / N as f32;
+    let (mut lit_area, mut full_area, mut moment) = (0.0, 0.0, 0.0);
+    for index in 0..N {
+        let x = -r + (index as f32 + 0.5) * step;
+        let disc = (r * r - x * x).max(0.0).sqrt();
+        let shadow = (sr * sr - (x + dist) * (x + dist)).max(0.0).sqrt();
+        let lit_chord = 2.0 * (disc - shadow).max(0.0);
+        full_area += 2.0 * disc * step;
+        lit_area += lit_chord * step;
+        moment += x * lit_chord * step;
+    }
+    MoonIllumination {
+        shadow_distance: dist,
+        shadow_radius: sr,
+        emitting_area_ratio: if full_area > 0.0 {
+            (lit_area / full_area).clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
+        centroid_offset: if lit_area > 0.0 {
+            moment / lit_area
+        } else {
+            0.0
+        },
+    }
+}
+
 fn inside(rect: Rect, px: f32, py: f32) -> bool {
     px >= rect.left && px < rect.right && py >= rect.top && py < rect.bottom
 }
@@ -335,5 +400,53 @@ mod tests {
         let fixed = bar.clamped(small);
         assert!(fixed.rect().right <= 800.0 + 0.001);
         assert!(fixed.rect().bottom <= 600.0 + 0.001);
+    }
+
+    #[test]
+    fn crescent_keeps_a_lit_sliver_smaller_than_the_full_moon() {
+        let r = 10.0;
+        let crescent = moon_illumination(r, 0.0);
+        let full = moon_illumination(r, 1.0);
+        assert!(crescent.emitting_area_ratio > 0.0);
+        assert!(crescent.emitting_area_ratio < full.emitting_area_ratio);
+        assert_eq!(full.emitting_area_ratio, 1.0);
+        assert_eq!(full.centroid_offset, 0.0);
+    }
+
+    #[test]
+    fn crescent_centroid_sits_inside_the_disc_toward_the_lit_corner() {
+        let r = 10.0;
+        for p in [0.0, 0.25, 0.5, 0.75] {
+            let moon = moon_illumination(r, p);
+            assert!(
+                moon.centroid_offset > 0.0 && moon.centroid_offset < r,
+                "phase {p}: centroid {} should lie inside the disc",
+                moon.centroid_offset
+            );
+        }
+    }
+
+    #[test]
+    fn emitting_area_grows_with_phase() {
+        let r = 10.0;
+        let mut previous = -1.0;
+        for p in [0.0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.95, 1.0] {
+            let ratio = moon_illumination(r, p).emitting_area_ratio;
+            assert!(
+                ratio > previous,
+                "phase {p}: area {ratio} should exceed {previous}"
+            );
+            previous = ratio;
+        }
+    }
+
+    #[test]
+    fn shadow_geometry_moves_from_waning_to_full_along_the_diagonal() {
+        let r = 10.0;
+        let crescent = moon_illumination(r, 0.0);
+        let full = moon_illumination(r, 1.0);
+        assert!((crescent.shadow_radius - (r + 1.5)).abs() < f32::EPSILON);
+        assert!((crescent.shadow_distance - 0.622 * r).abs() < 0.001);
+        assert!((full.shadow_distance - (r + full.shadow_radius)).abs() < 0.001);
     }
 }
