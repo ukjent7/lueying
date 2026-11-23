@@ -135,24 +135,28 @@ struct Fx {
     thumb: Option<ThumbFx>,
 }
 
-/// 棋盘滑块的橡皮物理:欠阻尼弹簧追 `scroll.offset` 的目标位;快速
-/// 滚动冲到轨端时过冲转成压缩,回弹复原。几何/容量变了整体重吸附。
+/// 棋盘滑块的橡皮物理:欠阻尼弹簧追 `scroll.offset` 的目标位;位置
+/// 存轨道的归一化分数(0 顶 1 底,可越界),几何与容量变化不瞬移。
+/// 压缩由撞端瞬间的速度驱动:快滚撞得狠,慢滚几乎不压。
 struct ThumbFx {
-    /// (候选总数, 一屏条数, 轨顶, 轨高, 块高) — 任一变了就重吸附。
-    key: (usize, usize, f32, f32, f32),
-    /// 滑块顶沿位置与速度(逻辑点)。
+    /// 滑块顶沿的归一化位置与速度(单位:行程/秒)。
     pos: f32,
     vel: f32,
+    /// 撞端那瞬记下的压缩量(逻辑点),随后快速衰减。
+    squash: f32,
     /// 上一次积分的时刻。
     at: Instant,
 }
 
-/// 橡皮常数:ω≈13、ζ≈0.5,过冲约 16% 再回弹;积分步长 1/240s 抗跳帧。
-const THUMB_K: f32 = 170.0;
+/// 橡皮常数:ω≈15、ζ≈0.43,过冲约 22% 再回弹;积分步长 1/240s 抗跳帧。
+const THUMB_K: f32 = 230.0;
 const THUMB_C: f32 = 13.0;
 const THUMB_STEP: f32 = 1.0 / 240.0;
-/// 过冲换压缩的比例上限:滑块最多压掉一半高度。
-const THUMB_SQUASH: f32 = 0.5;
+/// 撞端速度换压缩:行程速度(px/s)× 增益,上限滑块高的 55%。
+const THUMB_HIT: f32 = 0.08;
+const THUMB_SQUASH_MAX: f32 = 0.55;
+/// 压缩衰减率:约 80ms 减半,回弹干脆。
+const THUMB_RELAX: f32 = 12.0;
 
 impl Fx {
     fn clear(&mut self) {
@@ -667,84 +671,81 @@ fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
         s.fx.thumb = None;
         return false;
     };
-    let key = (
-        spec_scroll.len,
-        spec_scroll.cap,
-        track.top,
-        track.height(),
-        thumb.height(),
-    );
+    let travel = track.height() - thumb.height();
+    if travel <= 0.0 {
+        s.fx.thumb = None;
+        return false;
+    }
+    let target = ((thumb.top - track.top) / travel).clamp(0.0, 1.0);
     if s.fx.reduce || s.fx.scroll_drag.is_some() {
         s.fx.thumb = Some(ThumbFx {
-            key,
-            pos: thumb.top,
+            pos: target,
             vel: 0.0,
+            squash: 0.0,
             at: now,
         });
         return false;
     }
     let fx = s.fx.thumb.get_or_insert(ThumbFx {
-        key,
-        pos: thumb.top,
+        pos: target,
         vel: 0.0,
+        squash: 0.0,
         at: now,
     });
-    if fx.key != key {
-        *fx = ThumbFx {
-            key,
-            pos: thumb.top,
-            vel: 0.0,
-            at: now,
-        };
-        return false;
-    }
     let mut remaining = now.duration_since(fx.at).as_secs_f32().min(0.1);
     fx.at = now;
-    let moved = fx.pos != thumb.top || fx.vel != 0.0;
+    let moved = fx.pos != target || fx.vel != 0.0 || fx.squash > 0.0;
     while remaining > 0.0 {
         let dt = remaining.min(THUMB_STEP);
         remaining -= dt;
-        let acc = THUMB_K * (thumb.top - fx.pos) - THUMB_C * fx.vel;
+        let acc = THUMB_K * (target - fx.pos) - THUMB_C * fx.vel;
         fx.vel += acc * dt;
         fx.pos += fx.vel * dt;
+        // 出端点:把当时的行进速度换成压缩量,只记最狠的一次。
+        if fx.pos > 1.0 || fx.pos < 0.0 {
+            let squash = (fx.vel.abs() * travel * THUMB_HIT).min(thumb.height() * THUMB_SQUASH_MAX);
+            fx.squash = fx.squash.max(squash);
+        }
+        // 压缩在弹簧之外单独衰减,回弹干脆不粘滞。
+        fx.squash *= (-THUMB_RELAX * dt).exp();
     }
     // 到点停稳:吸附目标位,不再续醒;这一帧仍标 changed 画终态。
-    if (fx.pos - thumb.top).abs() < 0.05 && fx.vel.abs() < 2.0 {
-        fx.pos = thumb.top;
+    if (fx.pos - target).abs() < 0.003 && fx.vel.abs() < 0.02 && fx.squash < 0.5 {
+        fx.pos = target;
         fx.vel = 0.0;
+        fx.squash = 0.0;
         return moved;
     }
     tx.wake_after(Duration::from_millis(8));
     moved
 }
 
-/// 视图实际画的滑块:模拟位在轨道内就用它,冲出端点时压扁贴边。
+/// 视图实际画的滑块:模拟位(归一化)折算成轨内坐标,端点外钳到
+/// 轨道;压缩按 `squash` 记下的量缩短高度,贴撞击的那条边。
 fn drawn_thumb(s: &Candidate, track: Rect, thumb: Rect) -> Rect {
     let Some(fx) = &s.fx.thumb else { return thumb };
     let travel = (track.height() - thumb.height()).max(0.0);
-    let over_top = (track.top - fx.pos).max(0.0);
-    let over_bottom = (fx.pos - (track.top + travel)).max(0.0);
-    if over_top == 0.0 && over_bottom == 0.0 {
-        return Rect::from_xywh(thumb.left, fx.pos, thumb.width(), thumb.height());
-    }
-    let squash = (over_top.max(over_bottom) * THUMB_SQUASH).min(thumb.height() * 0.5);
-    if over_top > 0.0 {
-        // 顶冲:顶沿贴轨顶,从下往上压。
-        Rect::from_xywh(
+    let pos = track.top + fx.pos * travel;
+    let squash = fx.squash.min(thumb.height() * THUMB_SQUASH_MAX);
+    if fx.pos <= 0.0 {
+        // 顶侧:顶沿贴轨顶,从下往上压。
+        return Rect::from_xywh(
             thumb.left,
             track.top,
             thumb.width(),
             thumb.height() - squash,
-        )
-    } else {
-        // 底冲:底沿贴轨底,从上往下压。
-        Rect::from_xywh(
+        );
+    }
+    if fx.pos >= 1.0 {
+        // 底侧:底沿贴轨底,从上往下压。
+        return Rect::from_xywh(
             thumb.left,
             track.top + travel - (thumb.height() - squash),
             thumb.width(),
             thumb.height() - squash,
-        )
+        );
     }
+    Rect::from_xywh(thumb.left, pos, thumb.width(), thumb.height())
 }
 
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
