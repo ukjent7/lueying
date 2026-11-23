@@ -43,6 +43,8 @@ pub struct FileConfig {
     pub ui_layout: Option<String>,
     pub ui_material: Option<String>,
     pub ui_glass_frost: Option<f32>,
+    pub ui_glass_variant: Option<String>,
+    pub ui_glass_band: Option<f32>,
     /// 旧陶瓷胎色:现在只有黑瓷,为兼容旧文件继续接受。
     pub ui_ceramic: Option<serde::de::IgnoredAny>,
     pub ui_font: Option<String>,
@@ -180,6 +182,18 @@ pub fn apply(
     }
     if let Some(value) = file.ui_glass_frost {
         cfg.ui_glass_frost = value.clamp(0.0, 1.0);
+    }
+    if let Some(value) = file.ui_glass_variant {
+        // 临时调参键:只认 A/B/C/D,不合法保持默认并不入库面提示。
+        if matches!(value.as_str(), "A" | "B" | "C" | "D") {
+            cfg.ui_glass_variant = value;
+        } else {
+            note(format!("ui_glass_variant={value} 不合法"));
+        }
+    }
+    if let Some(value) = file.ui_glass_band {
+        // 临时调参键:0 跟随变体;带宽上限受捕获外扩与短边约束。
+        cfg.ui_glass_band = value.clamp(2.0, 30.0);
     }
     if let Some(value) = file.ui_font {
         match UiFont::parse(&value) {

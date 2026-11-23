@@ -471,6 +471,7 @@ pub(super) fn real_main() {
     // 首次整句解码要算词频总和;放在启动时空转一次,别让首键承担。
     let _ = dict.total_weight();
     let config_path = config::path();
+    let watch_path = config_path.clone();
     let app_config = config_path
         .as_ref()
         .map_or_else(AppConfig::default, |path| config::load(path));
@@ -599,6 +600,35 @@ pub(super) fn real_main() {
         // 与宿主选择面板全在这一个事件循环里)。
         let state = Arc::clone(&state);
         std::thread::spawn(move || crate::pipe::listen(&pipe, state));
+    }
+    // 配置文件热重载:设置窗的保存走请求路径,手改 config.toml 也要
+    // 生效(临时调参键靠它)。mtime 轮询足够:保存是低频事件。
+    if let Some(path) = watch_path {
+        let state = Arc::clone(&state);
+        std::thread::spawn(move || {
+            let mut last = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let current = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                if current.is_some() && current != last {
+                    last = current;
+                    let cfg = config::load(&path);
+                    // 解析失败(未知键、语法错)时整份文件都是默认值:
+                    // 保留现配置别把用户设置冲掉,错误打进 server.log。
+                    let broken = cfg.config_issues.iter().any(|issue| {
+                        issue.layer == "config.toml" && issue.message.contains("TOML 解析失败")
+                    });
+                    if broken {
+                        for issue in &cfg.config_issues {
+                            println!("配置问题({}): {}", issue.layer, issue.message);
+                        }
+                        println!("config.toml 解析失败,保留当前配置");
+                    } else {
+                        apply_config(&state, cfg);
+                    }
+                }
+            }
+        });
     }
     // 无桌面会话(CI/服务)没有窗口站;界面不建,进程只留管道服务。
     if std::env::var_os("LUEYING_SERVER_NO_UI").is_some() {

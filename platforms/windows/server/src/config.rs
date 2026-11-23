@@ -345,6 +345,10 @@ pub struct AppConfig {
     pub ui_material: UiMaterial,
     /// 玻璃的磨砂程度 0..=1:0 是高透,1 是磨砂;陶瓷材质忽略它。
     pub ui_glass_frost: f32,
+    /// 临时调参:玻璃变体 A/B/C/D,选定后落常数并移除本字段。
+    pub ui_glass_variant: String,
+    /// 临时调参:折射带宽覆盖值(逻辑像素);0 表示跟随变体默认。
+    pub ui_glass_band: f32,
     /// 候选字号档位。
     pub ui_font: UiFont,
     /// 主题色预设下标(`theme::ACCENTS`);高对比度主题忽略它。
@@ -394,6 +398,8 @@ impl Default for AppConfig {
             ui_layout: UiLayout::Horizontal,
             ui_material: UiMaterial::Glass,
             ui_glass_frost: 0.0,
+            ui_glass_variant: "A".to_string(),
+            ui_glass_band: 0.0,
             ui_font: UiFont::Standard,
             ui_accent: 0,
             effects: true,
