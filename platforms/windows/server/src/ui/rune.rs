@@ -889,13 +889,16 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.hover = None;
         s.fx.chev = false;
     }
-    // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。
+    // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。上一帧也得是
+    // 固定条:展开→收起那拍页码常变,武装了只会在收起后的重挂载里
+    // 回放。武装单拍有效:下一提交页码没再变就清掉,不然残留期间
+    // 任何视口重挂载(液块水珠增减都会顶动它)都把推入再播一遍,
+    // 读作元素突然从右缘飞回——收起收尾时的「右飞」就是这个。
     if s.effects()
         && !view.expanded
-        && s.fx
-            .last
-            .as_ref()
-            .is_some_and(|last| last.view.page != view.page)
+        && s.fx.last.as_ref().is_some_and(|last| {
+            !last.view.expanded && last.view.page != view.page
+        })
     {
         let previous = s.fx.last.as_ref().map_or(view.page, |last| last.view.page);
         s.fx.slide_edge = Some(if view.page > previous {
@@ -906,7 +909,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.animated();
         s.fx.hover = None;
         s.fx.chev = false;
-    } else if view.expanded {
+    } else {
         s.fx.slide_edge = None;
     }
     // 同形态、同页内选中迁移:液桥取代元素弹簧(上面已按矩形变化
@@ -1476,7 +1479,10 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     }
     // 翻页推入挂在视口上:只在翻页滑动时播;挂在条自己的包装层会断开
     // 格子两侧的父路径。fresh 的 animated 提交里挂载不重演,否则会与
-    // 面板入场过渡叠着闪。
+    // 面板入场过渡叠着闪。key 钉住视口身份:液块水珠/选中标记在它
+    // 前面来去,没 key 时它的父内 index 跟着挪=每帧重挂载,武装过
+    // 的推入被反复回放,元素看着从右缘一次次飞入。
+    viewport = viewport.key("viewport");
     viewport = viewport.transition(s.fx.slide_edge.map_or(Transition::none(), |edge| {
         // 推入叠加官方 blur_replace(整块模糊替换 + 轻缩放),翻页更软。
         Transition::push(edge).combined(Transition::blur_replace())
