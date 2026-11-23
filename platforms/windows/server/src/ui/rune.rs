@@ -1587,46 +1587,22 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 已变形时那块蓝色残块就是它;液桥活着,下一帧正常矩形
             // 照样接得上,不画这一帧没有损失。
             if !bad {
-                // 拉得够长就是水滴:头还是那颗渐变胶囊灯,钉在领先端;
-                // 尾是实心多边形,尖端钉滞后缘,两条贝塞尔侧边切进头
-                // 圆被它盖住,读作一颗头圆尾尖的液滴而非压扁的条。
-                // 短行程退回原胶囊:拉长不足时尖头反而像残次品。
+                // 拉得够长就是水滴:sel 本体换成一条完整轮廓——滞后缘
+                // 收成尖、领先端是整圆,一根 path 包完,不做「胶囊再
+                // 套尾巴」的两件叠加(接缝一眼假)。渐变沿主轴拆上下
+                // 两条填充伪造,光晕用同轮廓描边晕。短行程退回原胶囊:
+                // 拉长不足时尖头反而像残次品。
                 let main_len = if axis_x { w2 } else { h2 };
-                let head_d = if axis_x { goo.to.height() } else { goo.to.width() };
+                let head_d = if axis_x { h2 } else { w2 };
                 if main_len > head_d * 2.0 {
-                    let head_u = if fwd > 0.0 { u_hi - head_d } else { u_lo };
-                    let (tail_rect, head_rect) = if axis_x {
-                        (
-                            Rect::from_xywh(l2, n_c - head_d * 0.5, w2, head_d),
-                            Rect::from_xywh(head_u, n_c - head_d * 0.5, head_d, head_d),
-                        )
-                    } else {
-                        (
-                            Rect::from_xywh(n_c - head_d * 0.5, t2, head_d, h2),
-                            Rect::from_xywh(n_c - head_d * 0.5, head_u, head_d, head_d),
-                        )
-                    };
-                    let drop_color = if look.high_contrast {
-                        rgb(look.palette.selected_bg)
-                    } else {
-                        look.glow.core_bottom
-                    };
-                    layer = layer.child(
-                        el().absolute(tail_rect.left, tail_rect.top)
-                            .w(tail_rect.width())
-                            .h(tail_rect.height())
-                            .shape(drop_tail_shape(
-                                tail_rect.width(),
-                                tail_rect.height(),
-                                axis_x,
-                                fwd,
-                                drop_color,
-                            )),
-                    );
-                    layer = layer.child(sel_marker(
-                        wobbled(s.fx.sel_wobble, s.fx.now, head_rect),
+                    layer = layer.child(goo_drop_marker(
+                        main_len,
+                        head_d,
+                        axis_x,
+                        fwd,
                         look,
                         geom.metrics.scale(),
+                        Rect::from_xywh(l2, t2, w2, h2),
                     ));
                 } else {
                     layer = layer.child(sel_marker(
@@ -1717,25 +1693,55 @@ fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
     )
 }
 
-/// 水滴尾:实心多边形,尖端钉滞后缘(u=0),两条三次贝塞尔侧边鼓向
-/// 头圆(u=W 处直径 H 的圆)。头胶囊盖在 (W-H)..W 上,连接段全埋在
-/// 圆内,外轮廓只剩「尖→鼓」这一条边,读作三体水滴。坐标在归一化
-/// 空间 (u,n):u 主轴 0→W 指向领先端,n 侧轴;axis_y 转置,fwd<0
-/// 沿主轴镜像。
-fn drop_tail_shape(w_main: f32, h_cross: f32, axis_x: bool, fwd: f32, color: Color) -> Shape {
-    let (w, h) = (w_main, h_cross);
-    let p = |(u, n): (f32, f32)| -> [f32; 2] {
+/// 液滴轮廓:滞后缘(u=0)一个尖,领先端(u=W 处)直径 H 的整圆,
+/// 上下两条三次贝塞尔从尖对称鼓进圆的左右切点。一条封闭 path 包完
+/// 整颗水滴,不留「胶囊+尾巴」的叠加接缝。坐标在归一化 (u,n):u
+/// 主轴 0→W 指领先端,n 侧轴;axis_y 转置,fwd<0 沿主轴镜像。
+/// drop=true 收尖,drop=false 退化为两端半圆(胶囊)供她上层复用。
+fn drop_path(w: f32, h: f32, map: impl Fn(f32, f32) -> [f32; 2]) -> Path {
+    let r = h * 0.5;
+    Path::new()
+        .move_to(map(0.0, r))
+        // 尖→上切点:贝塞尔把侧边往圆外鼓,圆的切线方向接得上。
+        .cubic_to(map(w * 0.36, h * 0.42), map(w * 0.80, h * 0.02), map(w - r, 0.0))
+        // 领先端半圆(两截 quadratic)。
+        .quad_to(map(w, 0.0), map(w, r))
+        .quad_to(map(w, h), map(w - r, h))
+        // 下切点→尖:与上侧镜像。
+        .cubic_to(map(w * 0.80, h * 0.98), map(w * 0.36, h * 0.58), map(0.0, r))
+        .close()
+}
+
+/// 拉伸态选中液滴:单个元素、单条轮廓,与静止胶囊同一盏灯。
+/// 主轴渐变拆成「上亮下暗」两条内部填充;外圈描边晕替胶囊的投影。
+fn goo_drop_marker(w: f32, h: f32, axis_x: bool, fwd: f32, look: &Look, scale: f32, rect: Rect) -> El {
+    let m = |u: f32, n: f32| -> [f32; 2] {
         let u = if fwd < 0.0 { w - u } else { u };
         if axis_x { [u, n] } else { [n, u] }
     };
-    let path = Path::new()
-        .move_to(p((0.0, h * 0.5)))
-        .cubic_to(p((w * 0.36, h * 0.44)), p((w * 0.82, h * 0.02)), p((w - h * 0.5, 0.0)))
-        .line_to(p((w, h * 0.5)))
-        .line_to(p((w - h * 0.5, h)))
-        .cubic_to(p((w * 0.82, h * 0.98)), p((w * 0.36, h * 0.56)), p((0.0, h * 0.5)))
+    let el = el()
+        .absolute(rect.left, rect.top)
+        .w(rect.width())
+        .h(rect.height())
+        .key("sel");
+    if look.high_contrast {
+        return el.shape(Shape::new().fill_path(&drop_path(w, h, m), rgb(look.palette.selected_bg)));
+    }
+    let body = drop_path(w, h, m);
+    // 高光层:上 0..0.52H 的子轮廓,底部水平收口,模拟顶亮。
+    let sheen = Path::new()
+        .move_to(m(w * 0.10, h * 0.50))
+        .cubic_to(m(w * 0.36, h * 0.42), m(w * 0.80, h * 0.02), m(w - h * 0.5, 0.0))
+        .quad_to(m(w, 0.0), m(w, h * 0.5))
+        .line_to(m(w * 0.94, h * 0.52))
+        .cubic_to(m(w * 0.70, h * 0.50), m(w * 0.30, h * 0.52), m(w * 0.10, h * 0.50))
         .close();
-    Shape::new().fill_path(&path, color)
+    el.shape(
+        Shape::new()
+            .stroke_path(&body, 7.0 * scale, LineCap::Round, look.glow.core_bottom.alpha(0.16))
+            .fill_path(&body, look.glow.core_bottom)
+            .fill_path(&sheen, look.glow.core_top.alpha(0.80)),
+    )
 }
 
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
