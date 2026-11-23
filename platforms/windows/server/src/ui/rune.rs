@@ -1510,7 +1510,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 goo.to.height()
             };
             let u_near = u_hi - w_drop;
-            let squash = (1.0 - v_lead * 0.0012).clamp(0.6, 1.0);
+            let squash = (1.0 - v_lead * 0.0008).clamp(0.7, 1.0);
             let (l2, t2, w2, h2) = if axis_x {
                 let (a, b) = (u_near / fwd, u_hi / fwd);
                 let h = (n_b - n_a) * squash;
@@ -1534,14 +1534,14 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             let map = move |u: f32, n: f32| -> [f32; 2] {
                 if axis_x { [u / fwd, n] } else { [n, u / fwd] }
             };
-            if let Some(tail) = goo_tail_path(u_lo, u_near, n_c, r_cap, &map) {
+            if let Some((tail, alpha)) = goo_tail(u_lo, u_near, n_c, r_cap, &map) {
                 let ink = if look.high_contrast {
                     rgb(look.palette.selected_bg)
                 } else {
                     look.glow.core_bottom
                 };
                 layer = layer.child(
-                    canvas(Shape::new().fill_path(&tail, ink))
+                    canvas(Shape::new().fill_path(&tail, ink.alpha(alpha)))
                         .absolute(0.0, 0.0)
                         .w_full()
                         .h_full(),
@@ -1677,27 +1677,38 @@ fn arc_to(
 /// 残滴 + 锥形桥(行进正方向):从后缘水珠到成形端近帽,外切线加
 /// 捏腰;桥舌伸进成形端内,同色叠加天然融为一体。坐标是 forward-u
 /// (行进为正)与 n(垂直轴),调用方负责映射回 x/y。
-fn goo_tail_path(
+///
+/// 两个收敛手段(探针逐帧验证):残滴滞后封顶 6×半高,再远就丢——
+/// 连续输入重触发不会攒出横贯条带的亮线;透明度随拉伸淡出,拉丝
+/// 在变成细线前先蒸发。
+fn goo_tail(
     u_lo: f32,
     u_near: f32,
     n_c: f32,
     r_cap: f32,
     map: &impl Fn(f32, f32) -> [f32; 2],
-) -> Option<Path> {
+) -> Option<(Path, f32)> {
+    // 残滴滞后上限:6×半高(~90px),超出视作断开跟随。
+    let max_tail = r_cap * 6.0;
+    let u_lo = u_lo.max(u_near - max_tail);
     let gap = u_near - u_lo;
     if gap <= 0.5 {
         return None;
     }
     // 水珠半径:满贴随拉伸缩到小点(量程 2.5 倍半高)。
     let t = (gap / (r_cap * 2.5)).clamp(0.0, 1.0);
-    let r_t = (r_cap * (1.0 - 0.9 * t)).max(3.5);
+    let r_t = (r_cap * (1.0 - 0.9 * t)).max(5.0);
+    let alpha = (1.0 - t * 0.85).max(0.15);
     let tc = u_lo + r_t;
     let rc = u_near + r_cap;
     let d = rc - tc;
     if d <= 0.5 {
         // 水珠贴着成形端:只画水珠。
         let p = Path::new().move_to(map(tc + r_t, n_c));
-        return Some(arc_to(p, [tc, n_c], r_t, 0.0, core::f32::consts::TAU, 1.0, map).close());
+        return Some((
+            arc_to(p, [tc, n_c], r_t, 0.0, core::f32::consts::TAU, 1.0, map).close(),
+            alpha,
+        ));
     }
     let k = ((r_t - r_cap) / d).clamp(-0.95, 0.95);
     let s = (1.0 - k * k).max(0.0).sqrt();
@@ -1706,7 +1717,7 @@ fn goo_tail_path(
     let rt = map(rc + r_cap * k, n_c - r_cap * s);
     let rb = map(rc + r_cap * k, n_c + r_cap * s);
     let stretch = (d / (r_cap * 2.0)).clamp(0.0, 6.0);
-    let pinch = (r_t.min(r_cap) * s * (0.5 + 0.5 * (stretch / 6.0).min(1.0))).max(2.5);
+    let pinch = (r_t.min(r_cap) * s * (0.5 + 0.5 * (stretch / 6.0).min(1.0))).max(3.0);
     let a_t = (-s).atan2(k);
     let a_b = s.atan2(k);
     let mut p = Path::new().move_to(lt);
@@ -1719,7 +1730,7 @@ fn goo_tail_path(
     p = arc_to(p, [rc, n_c], r_cap, a_b, a_t, 1.0, map);
     // 上桥捏腰。
     p = p.quad_to(map((lc + rcx) / 2.0, n_c - r_t * s + pinch), lt);
-    Some(p.close())
+    Some((p.close(), alpha))
 }
 
 /// 选中槽:发光胶囊。它自己是面板的光源:灯芯上白热下饱和,双层光晕
