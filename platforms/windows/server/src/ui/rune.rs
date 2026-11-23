@@ -1573,6 +1573,30 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 let w = (n_b - n_a) * squash;
                 (n_c - w / 2.0, a.min(b), w, (a - b).abs())
             };
+            // 几何 sanity:液块只允许长成「拖尾胶囊」——长边最多到格
+            // 子主轴尺寸+封顶,两轴都不许超过面板。重采样接力出异常几
+            // 何(实机见过整盘蓝块)钳回格子大小,不会盖住面板;顺手
+            // 打日志,复现后能把真实数字捞出来。
+            let (pw, ph) = (geom.width, geom.height);
+            let bad = !(l2.is_finite() && t2.is_finite() && w2.is_finite() && h2.is_finite())
+                || l2 < 0.0
+                || t2 < 0.0
+                || l2 + w2 > pw
+                || t2 + h2 > ph;
+            if bad {
+                eprintln!(
+                    "sel_goo 几何越界 l2={l2:.0} t2={t2:.0} w2={w2:.0} h2={h2:.0} \
+                     pw={pw:.0} ph={ph:.0} u_lo={u_lo:.0} u_hi={u_hi:.0} \
+                     w_drop={w_drop:.0} r_cap={r_cap:.0} axis_x={axis_x} heat={} \
+                     to={:?}",
+                    goo.heat, goo.to
+                );
+            }
+            let (l2, t2, w2, h2) = if bad {
+                (goo.to.left, goo.to.top, goo.to.width(), goo.to.height())
+            } else {
+                (l2, t2, w2, h2)
+            };
             layer = layer.child(sel_marker(
                 wobbled(s.fx.sel_wobble, Rect::from_xywh(l2, t2, w2, h2)),
                 look,
@@ -1590,13 +1614,22 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 for k in 1..=n_drop {
                     let f = k as f32 / (n_drop + 1) as f32; // 0→1 珠带远端往胶囊
                     let du = (u_far - reach) + reach * f;
-                    let d_r = r_cap * (0.42 + 0.36 * f); // 越靠胶囊越大
+                    let d_r = (r_cap * (0.42 + 0.36 * f)).min(20.0); // 越靠胶囊越大
                     let d_a = 0.45 + 0.50 * f; // 越靠胶囊越实
                     let (dx2, dy2) = if axis_x {
                         (du / fwd, n_c)
                     } else {
                         (n_c, du / fwd)
                     };
+                    // 水珠也限在面板内,越界直接不画。
+                    if !(dx2.is_finite() && dy2.is_finite())
+                        || dx2 - d_r < 0.0
+                        || dy2 - d_r < 0.0
+                        || dx2 + d_r > geom.width
+                        || dy2 + d_r > geom.height
+                    {
+                        continue;
+                    }
                     let mut bead = el()
                         .absolute(dx2 - d_r, dy2 - d_r)
                         .w(d_r * 2.0)
