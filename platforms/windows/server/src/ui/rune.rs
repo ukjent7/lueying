@@ -22,7 +22,7 @@ use rune::tok::motion;
 use rune::{
     App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput, OverlayOptions,
     OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle, Transition, Tx,
-    col, el, row, text,
+    canvas, col, el, text,
 };
 use rune_text::TextSystem;
 
@@ -39,6 +39,8 @@ const AMBIENT_TICK: Duration = Duration::from_millis(500);
 const MAX_TEXT_WIDTH: f32 = 490.0;
 /// 组合结束后的淡出时长;期间沿用最后一份内容并让鼠标穿透。
 const HIDE_FADE: Duration = Duration::from_millis(90);
+/// 可疑左移光标的复核窗口:盖过两帧,期间有更新的报告就作废。
+const CARET_HOLD: Duration = Duration::from_millis(40);
 
 /// 高透玻璃的模糊强度:40px 条上结构可辨、文字不可读。
 const GLASS_BLUR: f32 = 7.0;
@@ -127,6 +129,8 @@ struct Fx {
     menu: Menu,
     /// 本次组合的起点;外观扩展的时钟从这儿算。
     since: Option<Instant>,
+    /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
+    caret_hold: Option<CaretHold>,
 }
 
 impl Fx {
@@ -554,31 +558,43 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     changed
 }
 
+/// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
+/// 到期由轮询停靠。后续键补上内容时,fresh 会取消排队中的 Hide。
+fn retract(s: &mut Candidate, tx: &mut Tx) {
+    if s.fx.reduce || s.fx.last.is_none() {
+        s.fx.clear();
+        park(s);
+        return;
+    }
+    if !s.fx.fading() {
+        s.fx.presence = Presence::FadingOut(Instant::now() + HIDE_FADE);
+        s.fx.menu = Menu::Closed;
+        s.fx.hover = None;
+        s.fx.chev = false;
+        if let Some(handle) = HANDLE.get() {
+            handle.set_input(OverlayInput::None);
+            handle.fade_out(HIDE_FADE);
+        }
+        tx.wake_after(HIDE_FADE + Duration::from_millis(40));
+    }
+    publish_state(s, None);
+}
+
 /// 一轮摆位:脚本补丁到了就应用;版本变了就摆位与出内容。
 fn place(s: &mut Candidate, tx: &mut Tx) {
     let Some(snap) = place::snapshot(&s.state) else {
-        // 组合结束:reduce 直接停靠;否则窗口留在原地淡出,到期由轮询停靠。
-        if s.fx.reduce || s.fx.last.is_none() {
-            s.fx.clear();
-            park(s);
-            return;
-        }
-        if !s.fx.fading() {
-            s.fx.presence = Presence::FadingOut(Instant::now() + HIDE_FADE);
-            s.fx.menu = Menu::Closed;
-            s.fx.hover = None;
-            s.fx.chev = false;
-            if let Some(handle) = HANDLE.get() {
-                handle.set_input(OverlayInput::None);
-                handle.fade_out(HIDE_FADE);
-            }
-            tx.wake_after(HIDE_FADE + Duration::from_millis(40));
-        }
-        publish_state(s, None);
+        retract(s, tx);
         return;
     };
     let view = snap.view;
     s.private = snap.private;
+    // 组合在但没有候选可画(裸 v/u 的表达式与问字空档、v1x 打到运算
+    // 符还没出结果):空条渲染出来就是一根牙签。按组合结束同一条路径
+    // 收起;键补上候选时 fresh 取消排队中的 Hide,候选窗正常出现。
+    if view.candidates.is_empty() {
+        retract(s, tx);
+        return;
+    }
     let fresh = s.fx.last.is_none() || s.fx.fading();
     if fresh {
         s.comp = s.comp.wrapping_add(1);
@@ -593,6 +609,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 新一次组合重新判断候选窗朝向;候选行数变化时不会上下翻跳。
         s.fx.above = None;
         s.fx.slide_edge = None;
+        s.fx.caret_hold = None;
         s.fx.menu = Menu::Closed;
         s.fx.hover = None;
         s.fx.chev = false;
@@ -601,7 +618,53 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.animated();
     }
     s.fx.presence = Presence::Idle;
-    let placement = caret_rect(s, &view);
+    // 挂起中的可疑光标:被更新的报告顶掉就作废;复核到期仍是同一份,
+    // 说明是持久移动(折行、滚动),放行走常规摆位。
+    let mut holding = s.fx.caret_hold.take();
+    let mut released = false;
+    if let Some(hold) = holding {
+        if view.caret != Some(hold.rect) {
+            holding = None;
+        } else if hold.at.elapsed() >= CARET_HOLD {
+            holding = None;
+            released = true;
+        }
+    }
+    // 组合没变短而锚点左移:多半是宿主排版中途的陈旧测量,退化宿主还
+    // 会落到组合行框或视图左缘,直接上屏就是打字时偶发的一帧左抽。挂
+    // 起一拍:期间更新的报告照常覆盖;没人覆盖就按持久移动放行。
+    let mut fresh_hold = None;
+    if holding.is_none()
+        && !released
+        && !fresh
+        && let Some(new) = view.caret
+        && let Some((old, old_len)) =
+            s.fx.last
+                .as_ref()
+                .and_then(|last| last.caret.map(|caret| (caret, last.raw.len())))
+        && new.0.min(new.2) < old.0.min(old.2)
+        && view.raw.len() >= old_len
+    {
+        println!(
+            "光标左移挂起复核: {}->{} raw {}->{}",
+            old.0.min(old.2),
+            new.0.min(new.2),
+            old_len,
+            view.raw.len(),
+        );
+        fresh_hold = Some(CaretHold {
+            rect: new,
+            at: Instant::now(),
+        });
+        tx.wake_after(CARET_HOLD);
+    }
+    s.fx.caret_hold = fresh_hold.or(holding);
+    let placement = if s.fx.caret_hold.is_some() {
+        // 挂起回合:沿用上一回合摆位,内容照常更新,到期复核再挪。
+        s.fx.placement
+    } else {
+        caret_rect(s, &view)
+    };
     if placement.panel.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
         // 下一次组合按新组合出现,不会接着上一次的状态。
@@ -619,9 +682,6 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .is_some_and(|last| last.expanded != view.expanded);
     if toggled {
         tx.animated();
-        // 飞行元素要画出 body 的圆角裁剪之外:格子向"将来棋盘"
-        // 的区域飞时被 clip_rounded 裁掉就看不见,等面板长成才浮现。
-        tx.unclipped_flights();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
@@ -684,6 +744,13 @@ struct Placement {
     window: (i32, i32, i32, i32),
     /// 面板内容矩形;回落点击转发与扩展发布的矩形用它。
     panel: (i32, i32, i32, i32),
+}
+
+/// 一份待复核的光标矩形(屏幕物理像素)与挂起起点。
+#[derive(Clone, Copy)]
+struct CaretHold {
+    rect: (i32, i32, i32, i32),
+    at: Instant,
 }
 
 /// 光标位置算出的摆位;宽为 0 表示这次不弹。
@@ -1079,28 +1146,39 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
 /// 面板内容:固定条或展开棋盘,加右侧控制轨与条尾箭头。
 fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
-    let mut layer = el().w_full().h_full();
-    if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
+    // 条与棋盘共用同一层视口:格子与字的父路径两侧一致,key 才能跨翻转
+    // 持久(父节点一变就走重挂载,滑行动画全断;当年 sel 同理)。字的
+    // 滑行=持久节点的布局弹簧,天然从当前视觉位置出发,「哪来回哪去」
+    // 由构造保证,不受翻转打断影响。
+    let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
+    let scale = geom.metrics.scale();
+    let sel_rect: Option<Rect>;
+    // 视口与控制层都是 absolute(0,0) 覆盖:el() 的子节点纵向排流,
+    // 流内的第二个全尺寸子节点会被推到面板外——控制轨(箭头/滚动条)
+    // 消失就是这个原因;全部改覆盖层,不留流内兄弟。
+    let mut viewport = el().absolute(0.0, 0.0).w_full().h_full();
+    if expanded {
+        // 棋盘:上下边缘线性渐隐(clip_fade_linear 的文档场景:
+        // "a transcript fading into the top of a composer"),提示还有内容没滚到。
+        viewport = viewport.clip_fade_linear(0.0, 16.0 * scale, 0.0, 16.0 * scale);
+    }
+    // 翻页推入挂在视口上:只在翻页滑动时播;挂在条自己的包装层会断开
+    // 格子两侧的父路径。fresh 的 animated 提交里挂载不重演,否则会与
+    // 面板入场过渡叠着闪。
+    viewport = viewport.transition(s.fx.slide_edge.map_or(Transition::none(), |edge| {
+        // 推入叠加官方 blur_replace(整块模糊替换 + 轻缩放),翻页更软。
+        Transition::push(edge).combined(Transition::blur_replace())
+    }));
+    if expanded {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
         let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
-        // 纵向滚动的视口:上下边缘线性渐隐(clip_fade_linear 的文档场景:
-        // "a transcript fading into the top of a composer"),提示还有内容没滚到。
-        let mut viewport = el().w_full().h_full().clip_fade_linear(
-            0.0,
-            16.0 * geom.metrics.scale(),
-            0.0,
-            16.0 * geom.metrics.scale(),
-        );
-        if let Some(rect) = geom
+        sel_rect = geom
             .spec
             .grid
             .iter()
             .zip(&cells)
             .find(|(c, _)| c.selected)
-            .map(|(_, r)| *r)
-        {
-            viewport = viewport.child(sel_marker(rect, look, geom.metrics.scale()));
-        }
+            .map(|(_, r)| *r);
         for (candidate, rect) in geom.spec.grid.iter().zip(&cells) {
             viewport = viewport.child(cell_el(
                 s,
@@ -1112,38 +1190,21 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 candidate.index,
             ));
         }
-        layer = layer.child(viewport);
     } else {
-        // 固定条:自然宽度候选从左排到右;翻页时整条从页号方向滑入,
-        // 旧页向反侧滑出,由 Rune 的过渡原生推进。
+        // 固定条:自然宽度候选从左排到右。
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
-        // sel 直接挂 layer 下,和棋盘同父——key 路径两侧一致才持久
-        // 渐变;放 strip 里父节点不同,展开收起就走重挂载淡入淡出。
-        if let Some(rect) = geom
+        sel_rect = geom
             .spec
             .items
             .iter()
             .zip(&rects)
             .find(|(i, _)| i.selected)
-            .map(|(_, r)| *r)
-        {
-            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
-        }
-        let mut strip = el()
-            .absolute(0.0, 0.0)
-            .w(geom.width)
-            .h(geom.height)
-            // 只在翻页滑动时播推入;fresh 的 animated 提交里挂载不重演,
-            // 否则会与面板入场过渡叠着闪。
-            .transition(s.fx.slide_edge.map_or(Transition::none(), |edge| {
-                // 推入叠加官方 blur_replace(整块模糊替换 + 轻缩放),翻页更软。
-                Transition::push(edge).combined(Transition::blur_replace())
-            }));
+            .map(|(_, r)| *r);
         let page_start = s.fx.last.as_ref().map_or(0, |view| {
             panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
         });
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
-            strip = strip.child(item_el(
+            viewport = viewport.child(item_el(
                 s,
                 geom,
                 look,
@@ -1156,8 +1217,13 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 },
             ));
         }
-        layer = layer.child(strip);
     }
+    // sel 垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
+    let mut layer = el().w_full().h_full();
+    if let Some(rect) = sel_rect {
+        layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+    }
+    layer = layer.child(viewport);
     layer = layer.child(control_tree(s, geom, look));
     layer
 }
@@ -1236,9 +1302,12 @@ fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> E
         cell = cell.fill(look.tint(look.palette.hover, 0x66));
     }
     let index_ink = if item.selected {
-        look.palette.accent_text
+        // 亮芯上的数字与选中文字同一墨:灯色的深色同源(光越亮字越深)。
+        // accent_text 是深底上的浅色主题字(如 0x7aa7ff),落在浅色灯芯
+        // 上根本看不清。
+        look.selected_ink
     } else {
-        look.palette.text_tertiary
+        rgb(look.palette.text_tertiary)
     };
     cell = cell
         .child(
@@ -1250,7 +1319,7 @@ fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> E
             .child(
                 text(format!("{}", index + 1))
                     .font(TextStyle::new(geom.metrics.small, 400.0))
-                    .color(rgb(index_ink))
+                    .color(index_ink)
                     .a11y_hidden(),
             ),
         )
@@ -1260,14 +1329,14 @@ fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> E
                 ink_y(rect.height(), geom.metrics.text),
             )
             .child(
-                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
-                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
-                // 查 from 不会命中错节点),而不同 key 不算同一节点,
-                // matched 照常配对飞行。
+                // 字的持久节点:条与棋盘两侧同一个 key,翻转时节点不重挂,
+                // 布局弹簧原生把它从当前视觉位置滑到新位置——「哪来回哪去」
+                // 由构造保证。曾用两侧不同 key + El::matched 配对飞行,实测
+                // 两种翻车:matched 起点读旧节点的布局矩形、无视它在途的
+                // travel 偏移,飞行到一半再翻转就跳回旧布局位置重飞;翻转
+                // 几次后 NodeId 回收的场景残留又让配对起点失真。
                 text(ellipsized(s, geom, &item.text))
-                    .key(format!("s{}-{gidx}-{}", s.comp, item.text))
-                    .matched(format!("cand-{}-{gidx}-{}", s.comp, item.text))
-                    .matched_crop()
+                    .key(format!("word-{}-{gidx}-{}", s.comp, item.text))
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(if item.selected {
                         look.selected_ink
@@ -1309,8 +1378,10 @@ fn ellipsized(s: &Candidate, geom: &Geom, text: &str) -> String {
 fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
     let scale = geom.metrics.scale();
-    let mut layer = el().w_full().h_full();
+    // absolute 覆盖层:流内的全尺寸层会被前面的视口挤到面板外。
+    let mut layer = el().absolute(0.0, 0.0).w_full().h_full();
     let rail = panel::rail_rect(&geom.spec, &geom.metrics, meas, geom.height);
+    let cap = panel::chevron_rect(&geom.spec, &geom.metrics, meas);
     if let Some(scroll) = geom.spec.scroll
         && let Some((track, thumb)) = panel::scrollbar_rects(
             scroll,
@@ -1341,7 +1412,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     .fill(look.tint(look.palette.text_tertiary, thumb_a)),
             );
     }
-    if let Some(cap) = panel::chevron_rect(&geom.spec, &geom.metrics, meas) {
+    if let Some(cap) = cap {
         let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
         // 箭头和 rail 是同一元素:展开+可滚时它的矩形就是整条 rail,
         // 持久节点 motion 把按钮弹着拉伸成轨道。
@@ -1420,13 +1491,19 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             (c.x - track.left, c.y - track.top),
         );
         let (color, width) = (look.tint(look.palette.text_secondary, 0xff), 1.6 * scale);
-        chev = chev.shape(chevron_segment(
-            chevron_segment(Shape::new(), a, b, width, color),
-            b,
-            c,
-            width,
-            color,
-        ));
+        // 折线画成 canvas 子元素:交互元素自己挂 shape 不渲染(探针对照
+        // 实锤,非交互才画);canvas 子节点不受影响,坐标同是 track 本地。
+        chev = chev.child(
+            canvas(chevron_segment(
+                chevron_segment(Shape::new(), a, b, width, color),
+                b,
+                c,
+                width,
+                color,
+            ))
+            .w(track.width())
+            .h(track.height()),
+        );
         layer = layer.child(chev);
     }
     layer
@@ -2007,20 +2084,16 @@ fn cell_el(
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
+    // 与条侧同一结构(cell > 绝对定位包装 > 字):文字 key 两侧一致,
+    // 节点跨翻转持久,布局弹簧把它从当前位置滑到棋盘位。居中用实测
+    // 宽度,不走 row 的 grow——行内文字的纵向会瞬时到位,飞不全。
+    let shown_w = s.text_width(&shown, geom.metrics.text);
+    let text_x = (((rect.width() - shown_w) / 2.0).max(8.0 * scale)).floor();
     cell.child(
-        row()
-            .mt(ink_y(rect.height(), geom.metrics.text))
-            .w_full()
-            .child(el().grow(1.0))
+        el().absolute(text_x, ink_y(rect.height(), geom.metrics.text))
             .child(
-                // 字的 matched 飞行:以自己的文本框从旧位置滑到新位置。
-                // key 用两侧不同的值——key 让 NodeId 稳定不被回收(配对
-                // 查 from 不会命中错节点),而不同 key 不算同一节点,
-                // matched 照常配对飞行。
                 text(shown)
-                    .key(format!("g{}-{index}-{candidate}", s.comp))
-                    .matched(format!("cand-{}-{index}-{candidate}", s.comp))
-                    .matched_crop()
+                    .key(format!("word-{}-{index}-{candidate}", s.comp))
                     .font(TextStyle::new(geom.metrics.text, 400.0))
                     .color(if selected {
                         look.selected_ink
@@ -2028,7 +2101,6 @@ fn cell_el(
                         rgb(look.palette.text)
                     })
                     .a11y_hidden(),
-            )
-            .child(el().grow(1.0)),
+            ),
     )
 }
