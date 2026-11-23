@@ -25,9 +25,10 @@ pub(super) fn desktop_capture_ready<T: 'static>(handle: Option<&OverlayHandle<T>
     })
 }
 
-/// 更新玻璃背板图像。同尺寸已挂载时只 `Pixels::set` 原地流式换像素,
-/// 不需要重跑 view,故返回 false;首次挂载或尺寸变化仍要重建,返回 true。
-pub(super) fn set_backdrop(slot: &mut Option<Pixels>, size: (u32, u32), rgba: Vec<u8>) -> bool {
+/// 更新一路 RGBA 像素流(背板或环境棱缘)。同尺寸已挂载时只
+/// `Pixels::set` 原地流式换像素,不需要重跑 view,故返回 false;首次
+/// 挂载或尺寸变化仍要重建,返回 true。
+pub(super) fn set_stream(slot: &mut Option<Pixels>, size: (u32, u32), rgba: Vec<u8>) -> bool {
     let mounted = slot.as_ref().is_some_and(|pixels| pixels.size() == size);
     slot.get_or_insert_with(Pixels::new)
         .set(size.0, size.1, rgba);
@@ -79,24 +80,6 @@ pub(super) fn glass_grain(face: El, grain: &Pixels, above: bool) -> El {
             .surface_unscaled(true)
             .surface_anchor(Align::Start, if above { Align::End } else { Align::Start }),
     )
-}
-
-/// 环境光在玻璃棱缘的 1px 釉线;没有真实采样就什么都不加(哑光)。
-pub(super) fn glass_rim(face: El, glaze: Option<&Glaze>, stroke: f32) -> El {
-    if let Some(glaze) = glaze {
-        face.child(
-            el().pin(Some(0.0), Some(0.0), Some(0.0), None)
-                .h(1.0 * stroke)
-                .fill(glaze.edge_top),
-        )
-        .child(
-            el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                .h(1.0 * stroke)
-                .fill(glaze.edge_bottom),
-        )
-    } else {
-        face
-    }
 }
 
 /// 黑瓷面:不透的共享石墨胎体配结构描边;釉光只来自真实环境采样,
@@ -281,17 +264,17 @@ mod tests {
     #[test]
     fn backdrop_streams_same_size_and_remounts_on_first_or_size_change() {
         let mut slot = None;
-        assert!(set_backdrop(&mut slot, (4, 2), vec![1; 4 * 2 * 4]));
+        assert!(set_stream(&mut slot, (4, 2), vec![1; 4 * 2 * 4]));
         assert_eq!(slot.as_ref().unwrap().rgba()[0], 1);
 
-        assert!(!set_backdrop(&mut slot, (4, 2), vec![2; 4 * 2 * 4]));
+        assert!(!set_stream(&mut slot, (4, 2), vec![2; 4 * 2 * 4]));
         assert_eq!(
             slot.as_ref().unwrap().rgba()[0],
             2,
             "same-size set still feeds the mounted pixels"
         );
 
-        assert!(set_backdrop(&mut slot, (2, 4), vec![3; 2 * 4 * 4]));
+        assert!(set_stream(&mut slot, (2, 4), vec![3; 2 * 4 * 4]));
         assert_eq!(slot.as_ref().unwrap().size(), (2, 4));
         assert_eq!(slot.as_ref().unwrap().rgba()[0], 3);
     }

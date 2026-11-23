@@ -223,6 +223,8 @@ struct Candidate {
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
     backdrop_raw: Option<((u32, u32), Vec<u8>)>,
+    /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
+    rim: Option<Pixels>,
     /// 亚克力颗粒:面板尺寸的固定噪点图;随尺寸重生成。
     grain: Option<Pixels>,
     grain_size: Option<(u32, u32)>,
@@ -271,6 +273,7 @@ impl Candidate {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
+            rim: None,
             grain: None,
             grain_size: None,
             glaze: None,
@@ -318,14 +321,14 @@ impl Candidate {
     }
 
     /// 釉面环境采样是否会被画:高对比度让位系统色;关闭动态效果与
-    /// 私密会话都不采桌面。玻璃在透明关闭时已退实底,不做无用的窄带
-    /// 采样;黑瓷的实采釉光照常。瓷胎采不到时仍是哑光。
+    /// 私密会话都不采桌面。窄带釉光只服务黑瓷;玻璃的棱缘改由背板
+    /// 原图算出的环境棱缘流提供,不再额外采屏。瓷胎采不到时仍是哑光。
     fn glaze_wanted(&self, high_contrast: bool) -> bool {
         if high_contrast || self.private || !self.effects() {
             return false;
         }
         match self.material {
-            UiMaterial::Glass => self.transparency,
+            UiMaterial::Glass => false,
             UiMaterial::Ceramic => true,
         }
     }
@@ -342,6 +345,7 @@ impl Candidate {
     fn drop_backdrop(&mut self) -> bool {
         let mut changed = self.backdrop.take().is_some();
         changed |= self.backdrop_raw.take().is_some();
+        changed |= self.rim.take().is_some();
         changed |= self.grain.take().is_some();
         self.grain_size = None;
         changed
@@ -1092,6 +1096,7 @@ fn park(s: &mut Candidate) {
     s.backdrop = None;
     s.backdrop_read = None;
     s.backdrop_raw = None;
+    s.rim = None;
     s.grain = None;
     s.grain_size = None;
     s.glaze = None;
@@ -1148,8 +1153,10 @@ fn capture_backdrop(s: &mut Candidate) -> bool {
         s.glass.pull,
     );
     liquid::prepare_glass_backdrop(&mut optics);
+    let rim = liquid::environment_rim(&raw, raw_w, raw_h, pad, w as u32, h as u32, radius, scale);
     let size = (w as u32, h as u32);
-    let changed = super::material::set_backdrop(&mut s.backdrop, size, optics);
+    let changed = super::material::set_stream(&mut s.backdrop, size, optics);
+    let rim_changed = super::material::set_stream(&mut s.rim, size, rim);
     s.backdrop_raw = Some(((raw_w, raw_h), raw));
     let grain_changed = s.grain_size != Some(size);
     if grain_changed {
@@ -1158,7 +1165,7 @@ fn capture_backdrop(s: &mut Candidate) -> bool {
         s.grain = Some(pixels);
         s.grain_size = Some(size);
     }
-    changed || grain_changed
+    changed || rim_changed || grain_changed
 }
 
 /// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
@@ -1315,10 +1322,11 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             if let Some(grain) = &s.grain {
                 body = super::material::glass_grain(body, grain, s.fx.above == Some(true));
             }
-            // 环境感知的棱缘 rim:上下 1px 釉线随环境光亮暗,玻璃的
-            // Fresnel 边光近似;「光必有来源」与瓷釉同一套纪律。下缘
-            // pin 底边,形变期间跟着动画中的底缘走。
-            body = super::material::glass_rim(body, s.glaze.as_ref(), scale);
+            // 环境棱缘作为面板自身的图像填充:由 body 的四边尺寸界定,
+            // 形变时随 body 一起缩放;纹理只是目标几何那次采样。
+            if let Some(rim) = &s.rim {
+                body = body.pixels(rim);
+            }
         }
         // 黑瓷:不透的共享石墨胎体,同构釉面。釉面的光全部来自环境
         // 采样:面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。

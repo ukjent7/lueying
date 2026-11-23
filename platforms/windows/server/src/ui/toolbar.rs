@@ -114,6 +114,8 @@ pub(super) struct BarHud {
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
     backdrop_raw: Option<((u32, u32), Vec<u8>)>,
+    /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
+    rim: Option<Pixels>,
     /// 亚克力颗粒:条体物理尺寸的固定噪点图;随尺寸重生成。
     grain: Option<Pixels>,
     grain_size: Option<(u32, u32)>,
@@ -156,6 +158,7 @@ impl BarHud {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
+            rim: None,
             grain: None,
             grain_size: None,
             glaze: None,
@@ -194,6 +197,7 @@ impl BarHud {
         let mut changed = false;
         changed |= self.backdrop.take().is_some();
         changed |= self.backdrop_raw.take().is_some();
+        changed |= self.rim.take().is_some();
         changed |= self.grain.take().is_some();
         self.grain_size = None;
         changed
@@ -452,13 +456,9 @@ fn toolbar_poll(s: &mut BarHud, now: f64, tx: &mut Tx) -> bool {
         changed |= s.clear_backdrop();
     }
 
-    // 玻璃棱缘与黑瓷釉光:实际窄带采样;采不到就是哑光。玻璃在透明
-    // 关闭时已退实底,不再做无用的采样;黑瓷釉光照常。
-    let glaze_live = shown
-        && s.effects
-        && !s.private
-        && !high_contrast
-        && (!s.material.is_glass() || s.transparency);
+    // 窄带釉光只服务黑瓷:实际采样,采不到就是哑光。玻璃棱缘改由
+    // 背板原图算出的环境棱缘流提供,不再额外采屏。
+    let glaze_live = shown && s.effects && !s.private && !high_contrast && !s.material.is_glass();
     if glaze_live {
         let due = s
             .glaze_read
@@ -551,8 +551,10 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
         s.glass.pull,
     );
     liquid::prepare_glass_backdrop(&mut optics);
+    let rim = liquid::environment_rim(&raw, raw_w, raw_h, pad, w as u32, h as u32, radius, dpi);
     let size = (w as u32, h as u32);
-    let changed = material::set_backdrop(&mut s.backdrop, size, optics);
+    let changed = material::set_stream(&mut s.backdrop, size, optics);
+    let rim_changed = material::set_stream(&mut s.rim, size, rim);
     s.backdrop_raw = Some(((raw_w, raw_h), raw));
     let grain_changed = s.grain_size != Some(size);
     if grain_changed {
@@ -561,7 +563,7 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
         s.grain = Some(grain);
         s.grain_size = Some(size);
     }
-    changed || grain_changed
+    changed || rim_changed || grain_changed
 }
 
 /// 一帧控件树:圆角条 + 共同材质 + 一排按钮。
@@ -626,7 +628,11 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
             if let Some(grain) = &s.grain {
                 bar = material::glass_grain(bar, grain, false);
             }
-            bar = material::glass_rim(bar, s.glaze.as_ref(), t);
+            // 环境棱缘作为条体自身的图像填充:条体已显式给出宽高,
+            // 纹理铺满整块面板并随条体缩放,垫在按钮与月光之下。
+            if let Some(rim) = &s.rim {
+                bar = bar.pixels(rim);
+            }
         }
         // 黑瓷:不透的共享石墨胎体;釉光只跟真实窄带采样。
         (UiMaterial::Ceramic, _) if !high_contrast => {
