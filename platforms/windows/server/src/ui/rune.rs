@@ -21,8 +21,8 @@ use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rec
 use rune::tok::motion;
 use rune::{
     Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
-    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle,
-    Transition, Tx, canvas, col, el, text,
+    OverlayOptions, OverlayPlacement, OverlaySpec, Path, Pixels, Shape, Spring, SurfaceFit,
+    TextStyle, Transition, Tx, canvas, col, el, text,
 };
 use rune_text::TextSystem;
 
@@ -131,6 +131,11 @@ struct Fx {
     since: Option<Instant>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
+    /// 选中胶囊的液桥动画:目标矩形变化时在旧位残一滴、拉出桥再收编。
+    sel_goo: Option<SelGoo>,
+    /// 上一份内容的 sel 矩形(逻辑点,面板本地);比 view 数据可靠——
+    /// 「我→我们」这类纯文字替换也会让胶囊变宽,view.highlight 不变。
+    sel_rect: Option<Rect>,
 }
 
 /// 棋盘滑块的果冻弹簧:后缘(相对行进方向,下行是上沿)走更慢的
@@ -141,6 +146,14 @@ struct Fx {
 /// 的定时器唤醒上。
 const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
 const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
+
+/// 选中胶囊的液桥弹簧:前缘(行进方向侧)走快的临界阻尼先到位,
+/// 后缘走慢的欠阻尼——它滞后拉出的就是桥与拖尾残滴,追上即复圆。
+/// 拖尾 0.42s 是「看得出液体」与「选中不拖泥」的折中(探针实测:
+/// 0.3s 拉丝一闪而过,0.55s 又太拖)。行进中不压缩;后缘过冲就是
+/// 到达瞬间的撞扁,与滑块同一物理语言。
+const GOO_LEAD: rune::Spring = rune::Spring::new(0.18, 0.0);
+const GOO_TRAIL: rune::Spring = rune::Spring::new(0.42, 0.20);
 
 impl Fx {
     fn clear(&mut self) {
@@ -542,6 +555,16 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 
 /// 每帧开头跑一次:补丁、版本、摆位、活背板,并决定下一次唤醒。
 fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
+    // 液桥步进:动画期间每帧采样重绘,停稳即摘。
+    if s.fx.sel_goo.is_some() {
+        let (_, _, _, _, _, done) = s.fx.sel_goo.as_ref().unwrap().sample(Instant::now());
+        if done {
+            s.fx.sel_goo = None;
+        }
+        // 活跃期保证下一帧还轮得到(overlay 的 poll 每帧跑,这行是保险)。
+        tx.wake_after(Duration::from_millis(0));
+        return true;
+    }
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘,颜色用弹簧渐变过去。
@@ -741,6 +764,72 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.scale = place::scale_at(l.min(r), b);
     }
     let geom = geom_of(s, view);
+    // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):不押
+    // tx.animated() 的元素弹簧,改走液桥——后缘滞后成残滴与桥,
+    // 追上复圆。页变/形态变各有推入与形变,goo 不掺和。
+    let cur_sel = sel_rect_of(s, &geom);
+    let prev_sel = s.fx.sel_rect;
+    if s.effects()
+        && !fresh
+        && s.fx.scroll_drag.is_none()
+        && let (Some(prev), Some(cur)) = (prev_sel, cur_sel)
+        && prev != cur
+        && s.fx
+            .last
+            .as_ref()
+            .is_some_and(|last| last.view.page == view.page && last.view.expanded == view.expanded)
+    {
+        // 起点取在途位置:已有 goo 在飞就先采样它,无缝接力。
+        let now = Instant::now();
+        let (l0, r0, t0, b0, vl, vr, vt, vb) = if let Some(g) = &s.fx.sel_goo {
+            let t = now.duration_since(g.t0).as_secs_f32();
+            let run = |e: &GooEdge, lead: bool| {
+                let sp = if lead { GOO_LEAD } else { GOO_TRAIL };
+                sp.sample(e.x0, e.v0, e.target, t)
+            };
+            let (l, vl) = run(&g.x_l, g.axis_x && g.forward < 0.0);
+            let (r, vr) = run(&g.x_r, g.axis_x && g.forward > 0.0);
+            let (tp, vt) = run(&g.y_t, !g.axis_x && g.forward < 0.0);
+            let (bt, vb) = run(&g.y_b, !g.axis_x && g.forward > 0.0);
+            (l, r, tp, bt, vl, vr, vt, vb)
+        } else {
+            (
+                prev.left,
+                prev.right,
+                prev.top,
+                prev.bottom,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            )
+        };
+        // 主轴=两端中心位移大的那轴;方向取主轴符号,纯宽变(中心
+        // 不动)默认向右:后缘钉左,前缘向右,像从左边倒出液体。
+        let dx = (cur.left + cur.width() / 2.0) - (prev.left + prev.width() / 2.0);
+        let dy = (cur.top + cur.height() / 2.0) - (prev.top + prev.height() / 2.0);
+        let axis_x = dx.abs() >= dy.abs();
+        let forward = {
+            let d = if axis_x { dx } else { dy };
+            if d < 0.0 { -1.0 } else { 1.0 }
+        };
+        let edge = |e: f32, v: f32, t: f32| GooEdge {
+            x0: e,
+            v0: v,
+            target: t,
+        };
+        s.fx.sel_goo = Some(SelGoo {
+            x_l: edge(l0, vl, cur.left),
+            x_r: edge(r0, vr, cur.right),
+            y_t: edge(t0, vt, cur.top),
+            y_b: edge(b0, vb, cur.bottom),
+            t0: now,
+            axis_x,
+            forward,
+            to: cur,
+        });
+    }
+    s.fx.sel_rect = cur_sel;
     let placement = if s.fx.caret_hold.is_some() {
         // 挂起回合:沿用上一回合摆位,内容照常更新,到期复核再挪。
         s.fx.placement
@@ -788,18 +877,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     } else if view.expanded {
         s.fx.slide_edge = None;
     }
-    // 同形态、同页内选中迁移:animated 提交让选中指示器弹簧跟过去;
-    // 页变走推入、形态变走形变,各自已 animated。
-    if s.effects()
-        && !fresh
-        && s.fx.last.as_ref().is_some_and(|last| {
-            last.view.highlight != view.highlight
-                && last.view.page == view.page
-                && last.view.expanded == view.expanded
-        })
-    {
-        tx.animated();
-    }
+    // 同形态、同页内选中迁移:液桥取代元素弹簧(上面已按矩形变化
+    // 起 goo);页变走推入、形态变走形变,各自已 animated。
     // 棋盘滚动起点变化:animated 提交让滑块沿布局弹簧行进去——行进
     // 时后缘欠阻尼,撞端过冲即压缩、回弹复原。poll 引发的提交默认
     // 全部即时落地,必须显式要动画,否则滑块瞬移而原生果冻不播。
@@ -1327,6 +1406,29 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
     root
 }
 
+/// 选中槽的目标矩形(面板本地逻辑点);place() 与 content() 共用一份
+/// 计算——液桥的起点/终点与它严格同源。
+fn sel_rect_of(s: &Candidate, geom: &Geom) -> Option<Rect> {
+    let meas: &dyn Measure = s;
+    if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
+        let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
+        geom.spec
+            .grid
+            .iter()
+            .zip(&cells)
+            .find(|(c, _)| c.selected)
+            .map(|(_, r)| *r)
+    } else {
+        let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
+        geom.spec
+            .items
+            .iter()
+            .zip(&rects)
+            .find(|(i, _)| i.selected)
+            .map(|(_, r)| *r)
+    }
+}
+
 /// 面板内容:固定条或展开棋盘,加右侧控制轨与条尾箭头。
 fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
@@ -1336,7 +1438,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     // 由构造保证,不受翻转打断影响。
     let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
     let scale = geom.metrics.scale();
-    let sel_rect: Option<Rect>;
+    let sel_rect = sel_rect_of(s, geom);
     // 视口与控制层都是 absolute(0,0) 覆盖:el() 的子节点纵向排流,
     // 流内的第二个全尺寸子节点会被推到面板外——控制轨(箭头/滚动条)
     // 消失就是这个原因;全部改覆盖层,不留流内兄弟。
@@ -1356,13 +1458,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     if expanded {
         // 棋盘:所有候选一样大,文字居中;控制轨收在最右。
         let cells = panel::grid_cells(&geom.spec, &geom.metrics, meas);
-        sel_rect = geom
-            .spec
-            .grid
-            .iter()
-            .zip(&cells)
-            .find(|(c, _)| c.selected)
-            .map(|(_, r)| *r);
         for (candidate, rect) in geom.spec.grid.iter().zip(&cells) {
             viewport = viewport.child(cell_el(
                 s,
@@ -1377,13 +1472,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     } else {
         // 固定条:自然宽度候选从左排到右。
         let rects = panel::item_rects(&geom.spec, &geom.metrics, meas);
-        sel_rect = geom
-            .spec
-            .items
-            .iter()
-            .zip(&rects)
-            .find(|(i, _)| i.selected)
-            .map(|(_, r)| *r);
         let page_start = s.page_start();
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             viewport = viewport.child(item_el(
@@ -1403,7 +1491,65 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     // sel 垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
     let mut layer = el().w_full().h_full();
     if let Some(rect) = sel_rect {
-        layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+        if let Some(goo) = &s.fx.sel_goo {
+            let (l, r, tp, bt, v_lead, _) = goo.sample(Instant::now());
+            // 行进主轴的 forward-u 边与垂直轴 n 边。
+            let (axis_x, fwd) = (goo.axis_x, goo.forward);
+            let (u_t, u_l) = if axis_x {
+                (fwd * l, fwd * r)
+            } else {
+                (fwd * tp, fwd * bt)
+            };
+            let (u_lo, u_hi) = (u_t.min(u_l), u_t.max(u_l));
+            let (n_a, n_b) = if axis_x { (tp, bt) } else { (l, r) };
+            let n_c = (n_a + n_b) * 0.5;
+            // 成形端=动端胶囊,主轴上宽取目标宽,垂直向按速度挤压(液滴)。
+            let w_drop = if axis_x {
+                goo.to.width()
+            } else {
+                goo.to.height()
+            };
+            let u_near = u_hi - w_drop;
+            let squash = (1.0 - v_lead * 0.0012).clamp(0.6, 1.0);
+            let (l2, t2, w2, h2) = if axis_x {
+                let (a, b) = (u_near / fwd, u_hi / fwd);
+                let h = (n_b - n_a) * squash;
+                (a.min(b), n_c - h / 2.0, (a - b).abs(), h)
+            } else {
+                let (a, b) = (u_near / fwd, u_hi / fwd);
+                let w = (n_b - n_a) * squash;
+                (n_c - w / 2.0, a.min(b), w, (a - b).abs())
+            };
+            layer = layer.child(sel_marker(
+                Rect::from_xywh(l2, t2, w2, h2),
+                look,
+                geom.metrics.scale(),
+            ));
+            // 桥与残滴:同色,垫在格子下。
+            let r_cap = if axis_x {
+                goo.to.height()
+            } else {
+                goo.to.width()
+            } / 2.0;
+            let map = move |u: f32, n: f32| -> [f32; 2] {
+                if axis_x { [u / fwd, n] } else { [n, u / fwd] }
+            };
+            if let Some(tail) = goo_tail_path(u_lo, u_near, n_c, r_cap, &map) {
+                let ink = if look.high_contrast {
+                    rgb(look.palette.selected_bg)
+                } else {
+                    look.glow.core_bottom
+                };
+                layer = layer.child(
+                    canvas(Shape::new().fill_path(&tail, ink))
+                        .absolute(0.0, 0.0)
+                        .w_full()
+                        .h_full(),
+                );
+            }
+        } else {
+            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+        }
     }
     layer = layer.child(viewport);
     layer = layer.child(control_tree(s, geom, look));
@@ -1429,6 +1575,151 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     // 消失重冒而不是拉伸。
     .key("sel")
     .motion(motion::SNAP)
+}
+
+/// 液桥的一条边:闭式弹簧的初值与目标;`sample` 采样当前位/速。
+#[derive(Clone, Copy)]
+struct GooEdge {
+    x0: f32,
+    v0: f32,
+    target: f32,
+}
+
+/// 选中迁移中的液桥:四条边各记弹簧初值,行进轴上近端是后缘
+/// (滞后就成残滴与桥),垂直轴两边同跟走。全部世界坐标,绘制时
+/// 才按行进主轴映射——左右行与上下跳同一套数学。
+struct SelGoo {
+    x_l: GooEdge,
+    x_r: GooEdge,
+    y_t: GooEdge,
+    y_b: GooEdge,
+    t0: Instant,
+    /// 行进主轴(true=x);由两端中心位移决定。
+    axis_x: bool,
+    /// 主轴上行进方向(+1 右/下,-1 左/上);映射时镜像成「正向行进」。
+    forward: f32,
+    /// 目标矩形(主轴上的半长与垂直半宽,供成形端与残滴尺寸)。
+    to: Rect,
+}
+
+impl SelGoo {
+    /// 采样四条边的世界当前值,返回 (x_l, x_r, y_t, y_b, 前缘速度, 停稳)。
+    /// 前缘=行进主轴上朝行进方向的那条边;其余三条同走 GOO_LEAD。
+    fn sample(&self, now: Instant) -> (f32, f32, f32, f32, f32, bool) {
+        let t = now.duration_since(self.t0).as_secs_f32();
+        let run = |e: &GooEdge, lead: bool| {
+            let s = if lead { GOO_LEAD } else { GOO_TRAIL };
+            s.sample(e.x0, e.v0, e.target, t)
+        };
+        let (l, vl) = run(&self.x_l, self.axis_x && self.forward < 0.0);
+        let (r, vr) = run(&self.x_r, self.axis_x && self.forward > 0.0);
+        let (tp, vt) = run(&self.y_t, !self.axis_x && self.forward < 0.0);
+        let (bt, vb) = run(&self.y_b, !self.axis_x && self.forward > 0.0);
+        let v_lead = if self.axis_x {
+            (if self.forward > 0.0 { vr } else { vl }) * self.forward
+        } else {
+            (if self.forward > 0.0 { vb } else { vt }) * self.forward
+        };
+        let eps = |e: &GooEdge, p: f32, v: f32| (p - e.target).abs() < 0.3 && v.abs() < 2.0;
+        let done = eps(&self.x_l, l, vl)
+            && eps(&self.x_r, r, vr)
+            && eps(&self.y_t, tp, vt)
+            && eps(&self.y_b, bt, vb);
+        (l, r, tp, bt, v_lead, done)
+    }
+}
+
+/// 圆弧拆成 ≤45° 三次贝塞尔;在 (u,n) 空间算,逐点经 `map` 映射到
+/// 世界坐标。`dir` ±1 为角度增减方向。
+fn arc_to(
+    mut p: Path,
+    c: [f32; 2],
+    r: f32,
+    a0: f32,
+    a1: f32,
+    dir: f32,
+    map: &impl Fn(f32, f32) -> [f32; 2],
+) -> Path {
+    let mut sweep = a1 - a0;
+    if dir > 0.0 {
+        while sweep <= 0.0 {
+            sweep += core::f32::consts::TAU;
+        }
+        while sweep > core::f32::consts::TAU {
+            sweep -= core::f32::consts::TAU;
+        }
+    } else {
+        while sweep >= 0.0 {
+            sweep -= core::f32::consts::TAU;
+        }
+        while sweep < -core::f32::consts::TAU {
+            sweep += core::f32::consts::TAU;
+        }
+    }
+    let segs = (sweep.abs() / core::f32::consts::FRAC_PI_4).ceil().max(1.0) as usize;
+    let step = sweep / segs as f32;
+    let k = 4.0 / 3.0 * (step / 4.0).tan();
+    let mut a = a0;
+    for _ in 0..segs {
+        let b = a + step;
+        let (sa, ca) = a.sin_cos();
+        let (sb, cb) = b.sin_cos();
+        p = p.cubic_to(
+            map(c[0] + r * (ca - k * sa), c[1] + r * (sa + k * ca)),
+            map(c[0] + r * (cb + k * sb), c[1] + r * (sb - k * cb)),
+            map(c[0] + r * cb, c[1] + r * sb),
+        );
+        a = b;
+    }
+    p
+}
+
+/// 残滴 + 锥形桥(行进正方向):从后缘水珠到成形端近帽,外切线加
+/// 捏腰;桥舌伸进成形端内,同色叠加天然融为一体。坐标是 forward-u
+/// (行进为正)与 n(垂直轴),调用方负责映射回 x/y。
+fn goo_tail_path(
+    u_lo: f32,
+    u_near: f32,
+    n_c: f32,
+    r_cap: f32,
+    map: &impl Fn(f32, f32) -> [f32; 2],
+) -> Option<Path> {
+    let gap = u_near - u_lo;
+    if gap <= 0.5 {
+        return None;
+    }
+    // 水珠半径:满贴随拉伸缩到小点(量程 2.5 倍半高)。
+    let t = (gap / (r_cap * 2.5)).clamp(0.0, 1.0);
+    let r_t = (r_cap * (1.0 - 0.9 * t)).max(3.5);
+    let tc = u_lo + r_t;
+    let rc = u_near + r_cap;
+    let d = rc - tc;
+    if d <= 0.5 {
+        // 水珠贴着成形端:只画水珠。
+        let p = Path::new().move_to(map(tc + r_t, n_c));
+        return Some(arc_to(p, [tc, n_c], r_t, 0.0, core::f32::consts::TAU, 1.0, map).close());
+    }
+    let k = ((r_t - r_cap) / d).clamp(-0.95, 0.95);
+    let s = (1.0 - k * k).max(0.0).sqrt();
+    let lt = map(tc + r_t * k, n_c - r_t * s);
+    let lb = map(tc + r_t * k, n_c + r_t * s);
+    let rt = map(rc + r_cap * k, n_c - r_cap * s);
+    let rb = map(rc + r_cap * k, n_c + r_cap * s);
+    let stretch = (d / (r_cap * 2.0)).clamp(0.0, 6.0);
+    let pinch = (r_t.min(r_cap) * s * (0.5 + 0.5 * (stretch / 6.0).min(1.0))).max(2.5);
+    let a_t = (-s).atan2(k);
+    let a_b = s.atan2(k);
+    let mut p = Path::new().move_to(lt);
+    // 水珠:上切点经远侧(-u)到下切点。
+    p = arc_to(p, [tc, n_c], r_t, a_t, a_b, -1.0, map);
+    // 下桥捏腰。
+    let (lc, rcx) = ((lt[0] + lb[0]) / 2.0, (rt[0] + rb[0]) / 2.0);
+    p = p.quad_to(map((lc + rcx) / 2.0, n_c + r_t * s - pinch), rb);
+    // 端帽:下切点经近侧(-u)回上切点(藏在成形端内)。
+    p = arc_to(p, [rc, n_c], r_cap, a_b, a_t, 1.0, map);
+    // 上桥捏腰。
+    p = p.quad_to(map((lc + rcx) / 2.0, n_c - r_t * s + pinch), lt);
+    Some(p.close())
 }
 
 /// 选中槽:发光胶囊。它自己是面板的光源:灯芯上白热下饱和,双层光晕
