@@ -21,7 +21,7 @@ use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rec
 use rune::tok::motion;
 use rune::{
     Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
-    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Side, Spring, SurfaceFit,
+    OverlayOptions, OverlayPlacement, OverlaySpec, Path, Pixels, Shape, Side, Spring, SurfaceFit,
     TextStyle, Transition, Tx, anchor_rect, canvas, col, el, text,
 };
 use rune_text::TextSystem;
@@ -1587,11 +1587,54 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             // 已变形时那块蓝色残块就是它;液桥活着,下一帧正常矩形
             // 照样接得上,不画这一帧没有损失。
             if !bad {
-                layer = layer.child(sel_marker(
-                wobbled(s.fx.sel_wobble, s.fx.now, Rect::from_xywh(l2, t2, w2, h2)),
-                look,
-                geom.metrics.scale(),
-            ));
+                // 拉得够长就是水滴:头还是那颗渐变胶囊灯,钉在领先端;
+                // 尾是实心多边形,尖端钉滞后缘,两条贝塞尔侧边切进头
+                // 圆被它盖住,读作一颗头圆尾尖的液滴而非压扁的条。
+                // 短行程退回原胶囊:拉长不足时尖头反而像残次品。
+                let main_len = if axis_x { w2 } else { h2 };
+                let head_d = if axis_x { goo.to.height() } else { goo.to.width() };
+                if main_len > head_d * 2.0 {
+                    let head_u = if fwd > 0.0 { u_hi - head_d } else { u_lo };
+                    let (tail_rect, head_rect) = if axis_x {
+                        (
+                            Rect::from_xywh(l2, n_c - head_d * 0.5, w2, head_d),
+                            Rect::from_xywh(head_u, n_c - head_d * 0.5, head_d, head_d),
+                        )
+                    } else {
+                        (
+                            Rect::from_xywh(n_c - head_d * 0.5, t2, head_d, h2),
+                            Rect::from_xywh(n_c - head_d * 0.5, head_u, head_d, head_d),
+                        )
+                    };
+                    let drop_color = if look.high_contrast {
+                        rgb(look.palette.selected_bg)
+                    } else {
+                        look.glow.core_bottom
+                    };
+                    layer = layer.child(
+                        el().absolute(tail_rect.left, tail_rect.top)
+                            .w(tail_rect.width())
+                            .h(tail_rect.height())
+                            .shape(drop_tail_shape(
+                                tail_rect.width(),
+                                tail_rect.height(),
+                                axis_x,
+                                fwd,
+                                drop_color,
+                            )),
+                    );
+                    layer = layer.child(sel_marker(
+                        wobbled(s.fx.sel_wobble, s.fx.now, head_rect),
+                        look,
+                        geom.metrics.scale(),
+                    ));
+                } else {
+                    layer = layer.child(sel_marker(
+                        wobbled(s.fx.sel_wobble, s.fx.now, Rect::from_xywh(l2, t2, w2, h2)),
+                        look,
+                        geom.metrics.scale(),
+                    ));
+                }
             // 甩脱的水滴:滞后边被封顶丢在 u_far 之后,珠带撒迷你灯珠
             // ——与胶囊同盏灯(渐变+小光晕),读作液体而非噪点;flat
             // 纯色点实测在真机是"蓝色棋盘状碎片"。只在 heat≥2(真
@@ -1672,6 +1715,27 @@ fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
         r.width() + dw,
         r.height() + dh,
     )
+}
+
+/// 水滴尾:实心多边形,尖端钉滞后缘(u=0),两条三次贝塞尔侧边鼓向
+/// 头圆(u=W 处直径 H 的圆)。头胶囊盖在 (W-H)..W 上,连接段全埋在
+/// 圆内,外轮廓只剩「尖→鼓」这一条边,读作三体水滴。坐标在归一化
+/// 空间 (u,n):u 主轴 0→W 指向领先端,n 侧轴;axis_y 转置,fwd<0
+/// 沿主轴镜像。
+fn drop_tail_shape(w_main: f32, h_cross: f32, axis_x: bool, fwd: f32, color: Color) -> Shape {
+    let (w, h) = (w_main, h_cross);
+    let p = |(u, n): (f32, f32)| -> [f32; 2] {
+        let u = if fwd < 0.0 { w - u } else { u };
+        if axis_x { [u, n] } else { [n, u] }
+    };
+    let path = Path::new()
+        .move_to(p((0.0, h * 0.5)))
+        .cubic_to(p((w * 0.36, h * 0.44)), p((w * 0.82, h * 0.02)), p((w - h * 0.5, 0.0)))
+        .line_to(p((w, h * 0.5)))
+        .line_to(p((w - h * 0.5, h)))
+        .cubic_to(p((w * 0.82, h * 0.98)), p((w * 0.36, h * 0.56)), p((0.0, h * 0.5)))
+        .close();
+    Shape::new().fill_path(&path, color)
 }
 
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
