@@ -21,8 +21,8 @@ use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rec
 use rune::tok::motion;
 use rune::{
     Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
-    OverlayOptions, OverlayPlacement, OverlaySpec, Path, Pixels, Shape, Spring, SurfaceFit,
-    TextStyle, Transition, Tx, canvas, col, el, text,
+    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle,
+    Transition, Tx, canvas, col, el, text,
 };
 use rune_text::TextSystem;
 
@@ -153,7 +153,8 @@ const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 /// 0.3s 拉丝一闪而过,0.55s 又太拖)。行进中不压缩;后缘过冲就是
 /// 到达瞬间的撞扁,与滑块同一物理语言。
 const GOO_LEAD: rune::Spring = rune::Spring::new(0.18, 0.0);
-const GOO_TRAIL: rune::Spring = rune::Spring::new(0.42, 0.20);
+// 后缘欠阻尼快收拢:单步只微微拖尾,远跳仍有拉伸液感(探针逐帧选定)。
+const GOO_TRAIL: rune::Spring = rune::Spring::new(0.30, 0.15);
 
 impl Fx {
     fn clear(&mut self) {
@@ -1503,20 +1504,27 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             let (u_lo, u_hi) = (u_t.min(u_l), u_t.max(u_l));
             let (n_a, n_b) = if axis_x { (tp, bt) } else { (l, r) };
             let n_c = (n_a + n_b) * 0.5;
-            // 成形端=动端胶囊,主轴上宽取目标宽,垂直向按速度挤压(液滴)。
+            // 液块:胶囊本体被物理拉伸成整个 goo 跨度(后缘滞后=拖尾
+            // 长在胶囊自己身上,渐变光晕一体,没有叠加物);封顶 6×半
+            // 高防远跳拖满条带。垂直向按速度挤压(液滴)。
             let w_drop = if axis_x {
                 goo.to.width()
             } else {
                 goo.to.height()
             };
-            let u_near = u_hi - w_drop;
+            let r_cap = if axis_x {
+                goo.to.height()
+            } else {
+                goo.to.width()
+            } / 2.0;
+            let u_far = u_lo.max(u_hi - w_drop - r_cap * 6.0);
             let squash = (1.0 - v_lead * 0.0008).clamp(0.7, 1.0);
             let (l2, t2, w2, h2) = if axis_x {
-                let (a, b) = (u_near / fwd, u_hi / fwd);
+                let (a, b) = (u_far / fwd, u_hi / fwd);
                 let h = (n_b - n_a) * squash;
                 (a.min(b), n_c - h / 2.0, (a - b).abs(), h)
             } else {
-                let (a, b) = (u_near / fwd, u_hi / fwd);
+                let (a, b) = (u_far / fwd, u_hi / fwd);
                 let w = (n_b - n_a) * squash;
                 (n_c - w / 2.0, a.min(b), w, (a - b).abs())
             };
@@ -1525,28 +1533,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 look,
                 geom.metrics.scale(),
             ));
-            // 桥与残滴:同色,垫在格子下。
-            let r_cap = if axis_x {
-                goo.to.height()
-            } else {
-                goo.to.width()
-            } / 2.0;
-            let map = move |u: f32, n: f32| -> [f32; 2] {
-                if axis_x { [u / fwd, n] } else { [n, u / fwd] }
-            };
-            if let Some((tail, alpha)) = goo_tail(u_lo, u_near, n_c, r_cap, &map) {
-                let ink = if look.high_contrast {
-                    rgb(look.palette.selected_bg)
-                } else {
-                    look.glow.core_bottom
-                };
-                layer = layer.child(
-                    canvas(Shape::new().fill_path(&tail, ink.alpha(alpha)))
-                        .absolute(0.0, 0.0)
-                        .w_full()
-                        .h_full(),
-                );
-            }
         } else {
             layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
         }
@@ -1627,110 +1613,6 @@ impl SelGoo {
             && eps(&self.y_b, bt, vb);
         (l, r, tp, bt, v_lead, done)
     }
-}
-
-/// 圆弧拆成 ≤45° 三次贝塞尔;在 (u,n) 空间算,逐点经 `map` 映射到
-/// 世界坐标。`dir` ±1 为角度增减方向。
-fn arc_to(
-    mut p: Path,
-    c: [f32; 2],
-    r: f32,
-    a0: f32,
-    a1: f32,
-    dir: f32,
-    map: &impl Fn(f32, f32) -> [f32; 2],
-) -> Path {
-    let mut sweep = a1 - a0;
-    if dir > 0.0 {
-        while sweep <= 0.0 {
-            sweep += core::f32::consts::TAU;
-        }
-        while sweep > core::f32::consts::TAU {
-            sweep -= core::f32::consts::TAU;
-        }
-    } else {
-        while sweep >= 0.0 {
-            sweep -= core::f32::consts::TAU;
-        }
-        while sweep < -core::f32::consts::TAU {
-            sweep += core::f32::consts::TAU;
-        }
-    }
-    let segs = (sweep.abs() / core::f32::consts::FRAC_PI_4).ceil().max(1.0) as usize;
-    let step = sweep / segs as f32;
-    let k = 4.0 / 3.0 * (step / 4.0).tan();
-    let mut a = a0;
-    for _ in 0..segs {
-        let b = a + step;
-        let (sa, ca) = a.sin_cos();
-        let (sb, cb) = b.sin_cos();
-        p = p.cubic_to(
-            map(c[0] + r * (ca - k * sa), c[1] + r * (sa + k * ca)),
-            map(c[0] + r * (cb + k * sb), c[1] + r * (sb - k * cb)),
-            map(c[0] + r * cb, c[1] + r * sb),
-        );
-        a = b;
-    }
-    p
-}
-
-/// 残滴 + 锥形桥(行进正方向):从后缘水珠到成形端近帽,外切线加
-/// 捏腰;桥舌伸进成形端内,同色叠加天然融为一体。坐标是 forward-u
-/// (行进为正)与 n(垂直轴),调用方负责映射回 x/y。
-///
-/// 两个收敛手段(探针逐帧验证):残滴滞后封顶 6×半高,再远就丢——
-/// 连续输入重触发不会攒出横贯条带的亮线;透明度随拉伸淡出,拉丝
-/// 在变成细线前先蒸发。
-fn goo_tail(
-    u_lo: f32,
-    u_near: f32,
-    n_c: f32,
-    r_cap: f32,
-    map: &impl Fn(f32, f32) -> [f32; 2],
-) -> Option<(Path, f32)> {
-    // 残滴滞后上限:6×半高(~90px),超出视作断开跟随。
-    let max_tail = r_cap * 6.0;
-    let u_lo = u_lo.max(u_near - max_tail);
-    let gap = u_near - u_lo;
-    if gap <= 0.5 {
-        return None;
-    }
-    // 水珠半径:满贴随拉伸缩到小点(量程 2.5 倍半高)。
-    let t = (gap / (r_cap * 2.5)).clamp(0.0, 1.0);
-    let r_t = (r_cap * (1.0 - 0.9 * t)).max(5.0);
-    let alpha = (1.0 - t * 0.85).max(0.15);
-    let tc = u_lo + r_t;
-    let rc = u_near + r_cap;
-    let d = rc - tc;
-    if d <= 0.5 {
-        // 水珠贴着成形端:只画水珠。
-        let p = Path::new().move_to(map(tc + r_t, n_c));
-        return Some((
-            arc_to(p, [tc, n_c], r_t, 0.0, core::f32::consts::TAU, 1.0, map).close(),
-            alpha,
-        ));
-    }
-    let k = ((r_t - r_cap) / d).clamp(-0.95, 0.95);
-    let s = (1.0 - k * k).max(0.0).sqrt();
-    let lt = map(tc + r_t * k, n_c - r_t * s);
-    let lb = map(tc + r_t * k, n_c + r_t * s);
-    let rt = map(rc + r_cap * k, n_c - r_cap * s);
-    let rb = map(rc + r_cap * k, n_c + r_cap * s);
-    let stretch = (d / (r_cap * 2.0)).clamp(0.0, 6.0);
-    let pinch = (r_t.min(r_cap) * s * (0.5 + 0.5 * (stretch / 6.0).min(1.0))).max(3.0);
-    let a_t = (-s).atan2(k);
-    let a_b = s.atan2(k);
-    let mut p = Path::new().move_to(lt);
-    // 水珠:上切点经远侧(-u)到下切点。
-    p = arc_to(p, [tc, n_c], r_t, a_t, a_b, -1.0, map);
-    // 下桥捏腰。
-    let (lc, rcx) = ((lt[0] + lb[0]) / 2.0, (rt[0] + rb[0]) / 2.0);
-    p = p.quad_to(map((lc + rcx) / 2.0, n_c + r_t * s - pinch), rb);
-    // 端帽:下切点经近侧(-u)回上切点(藏在成形端内)。
-    p = arc_to(p, [rc, n_c], r_cap, a_b, a_t, 1.0, map);
-    // 上桥捏腰。
-    p = p.quad_to(map((lc + rcx) / 2.0, n_c - r_t * s + pinch), lt);
-    Some((p.close(), alpha))
 }
 
 /// 选中槽:发光胶囊。它自己是面板的光源:灯芯上白热下饱和,双层光晕
