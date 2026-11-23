@@ -536,6 +536,24 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             });
             Reply::default()
         }
+        Request::PinIndex { session, gidx } => {
+            state.activate(session);
+            let _ = state.with_session(session, |s| {
+                s.engine.pin(gidx);
+                refresh_view(s);
+                crate::settle::schedule(state, session, s);
+            });
+            Reply::default()
+        }
+        Request::DemoteIndex { session, gidx } => {
+            state.activate(session);
+            let _ = state.with_session(session, |s| {
+                s.engine.demote(gidx);
+                refresh_view(s);
+                crate::settle::schedule(state, session, s);
+            });
+            Reply::default()
+        }
         Request::PickIndex { session, index } => {
             state.activate(session);
             let mut reply = Reply::default();

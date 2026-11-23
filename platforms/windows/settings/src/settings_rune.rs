@@ -10,8 +10,8 @@ use std::path::Path;
 use lueying_protocol::Request;
 use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cursor, Cx, Drag, El, KeyEvent, Phase, ScrollSpec, TextEdit,
-    TextStyle, col, el, row, text,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, Drag, El, Phase, ScrollSpec, TextEdit, TextStyle,
+    col, el, row, text,
 };
 use rune_kit::{
     Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Switch,
@@ -142,14 +142,9 @@ pub fn run() {
     let spec = AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
         min_size: Some((760.0, 480.0)),
-        on_key: Some(|s: &mut State, event: &KeyEvent, _: &mut rune::Tx| {
-            if event.key == rune::Key::Escape && !matches!(s.overlay, Overlay::None) {
-                s.overlay = Overlay::None;
-                true
-            } else {
-                false
-            }
-        }),
+        // 弹层全靠 rune 原生机制:卡片是 `.modal(...)`(Esc 关、点外关、焦点圈住),
+        // 选择器是 `listbox` 焦点组(方向键巡游、回车/空格确认),无需 on_key。
+        on_key: None,
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
     let app = App::new(spec).init(move || state);
@@ -284,13 +279,29 @@ fn scene(s: &State) -> El {
                 .map_or_else(el, |button| button_el(button, &kit)),
         );
 
-    let mut nav = col().key("nav").w(148.0).gap(3.0).px(10.0).py(14.0);
+    // 侧栏导航是一个 list 焦点组:Tab 只停一次,方向键在条目间巡游,
+    // 回车/空格激活,选中项即 a11y 的 selected。
+    let n_nav = page.nav.len();
+    let mut nav = col()
+        .key("nav")
+        .role("list")
+        .label("设置分类")
+        .focus_group()
+        .w(148.0)
+        .gap(3.0)
+        .px(10.0)
+        .py(14.0);
     for (i, item) in page.nav.iter().enumerate() {
         let selected = i == page.active_nav;
         let base = item.id.base.clone();
         nav = nav.child(
             row()
                 .key(format!("nav-{}", base))
+                .role("listitem")
+                .label(item.text.clone())
+                .position_in_set(i + 1, n_nav)
+                .focusable(true)
+                .focus_selected(selected)
                 .w_full()
                 .h(34.0)
                 .px(12.0)
@@ -1073,26 +1084,39 @@ fn overlay_scene(
             items,
             action,
         } => {
-            let mut list = col().key("items").w_full().gap(3.0);
+            // 原生 listbox:方向键巡游焦点,回车/空格确认,焦点与悬停共用一处高亮。
+            let n = items.len();
+            let mut list = col()
+                .key("items")
+                .role("listbox")
+                .label(title.clone())
+                .focus_group()
+                .w_full()
+                .gap(3.0);
             for (i, item) in items.iter().enumerate() {
                 let label = item.clone();
                 let picked = *action;
-                list = list.child(
-                    row()
-                        .key(format!("item-{i}"))
-                        .w_full()
-                        .px(10.0)
-                        .py(8.0)
-                        .radius(8.0)
-                        .hover(color(colors.hover))
-                        .on_press_tx(move |s: &mut State, _| pick(s, picked, i))
-                        .child(
-                            text(label)
-                                .font(TextStyle::new(13.0, 400.0))
-                                .color(color(colors.text))
-                                .truncate(),
-                        ),
-                );
+                let row = row()
+                    .key(format!("item-{i}"))
+                    .role("option")
+                    .label(label.clone())
+                    .position_in_set(i + 1, n)
+                    .focusable(true)
+                    .focus_selected(i == 0)
+                    .focus_highlight(color(colors.hover))
+                    .w_full()
+                    .px(10.0)
+                    .py(8.0)
+                    .radius(8.0)
+                    .on_press_tx(move |s: &mut State, _| pick(s, picked, i))
+                    .child(
+                        text(label)
+                            .font(TextStyle::new(13.0, 400.0))
+                            .color(color(colors.text))
+                            .truncate(),
+                    );
+                // 弹层打开先落第一行;无 autofocus 也会落第一个 Tab 停靠点,写上更明确。
+                list = list.child(if i == 0 { row.autofocus() } else { row });
             }
             (
                 "picker",

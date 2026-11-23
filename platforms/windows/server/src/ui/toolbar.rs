@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use lueying_protocol::Request;
-use lueying_render::panel::Rect;
+use lueying_render::panel::{Palette, Rect};
 use lueying_render::toolbar::{self, Action, Button, Status, Toolbar};
 use lueying_server::config;
 use lueying_server::theme;
@@ -219,22 +219,25 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
     let size = toolbar::BUTTON * t;
     let gap = toolbar::GAP * t;
     for (index, button) in toolbar::BUTTONS.into_iter().enumerate() {
-        bar = bar.child(button_el(
-            s,
-            button,
-            index,
-            gap + index as f32 * (size + gap),
-            gap,
-            size,
-            t,
-        ));
+        bar = bar.child(button_el(s, button, index, size, gap, t, palette));
     }
     bar
 }
 
 /// 一个按钮:居中状态字,悬停亮底,按下执行动作。全半角按钮是月亮。
-fn button_el(s: &BarHud, button: Button, index: usize, x: f32, y: f32, size: f32, t: f32) -> El {
-    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+/// `palette` 由 `toolbar_view` 算一次传下来,每个按钮不重复取色;
+/// 位置由 `index`/`gap`/`size` 在函数内推导,不再作参数传入。
+fn button_el(
+    s: &BarHud,
+    button: Button,
+    index: usize,
+    size: f32,
+    gap: f32,
+    t: f32,
+    palette: Palette,
+) -> El {
+    let x = gap + index as f32 * (size + gap);
+    let y = gap;
     let hovered = s.hover == Some(button);
     let mut cell = el()
         .absolute(x, y)
@@ -257,7 +260,7 @@ fn button_el(s: &BarHud, button: Button, index: usize, x: f32, y: f32, size: f32
         } else {
             "半角"
         })
-        .child(moon_el(s, size, hovered))
+        .child(moon_el(s, size, hovered, palette))
     } else {
         cell.child(
             text(toolbar::label(button, s.status))
@@ -282,8 +285,7 @@ fn button_el(s: &BarHud, button: Button, index: usize, x: f32, y: f32, size: f32
 /// 月盘弧比盘缘大半像素画,压住盘缘与路径各自抗锯齿对不齐的黄边(实机
 /// 翻过车),超出的部分都是按钮底色,看不出来。
 /// `hovered` 时影色与按钮底一样混上悬停亮底,缺角不显色差圆。
-fn moon_el(s: &BarHud, box_size: f32, hovered: bool) -> El {
-    let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
+fn moon_el(s: &BarHud, box_size: f32, hovered: bool, palette: Palette) -> El {
     let d = box_size * 0.62;
     let r = d / 2.0;
     let at = (box_size - d) / 2.0;

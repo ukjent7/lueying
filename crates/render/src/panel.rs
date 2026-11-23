@@ -372,12 +372,17 @@ pub const MENU_ITEMS: [&str; 2] = ["置顶", "降权"];
 
 /// 单条候选的估算宽度:左右留白、序号、文字与注音。
 pub fn item_width(item: &Item, metrics: &Metrics, measure: &dyn Measure) -> f32 {
+    item_row_width(&item.text, &item.hint, metrics, measure)
+}
+
+/// `item_width` 的文本形参版:不必为估宽克隆整条候选。
+pub fn item_row_width(text: &str, hint: &str, metrics: &Metrics, measure: &dyn Measure) -> f32 {
     let s = scale_of(metrics);
-    let text_width = measure.width(&item.text, metrics.text);
-    let hint_width = if item.hint.is_empty() {
+    let text_width = measure.width(text, metrics.text);
+    let hint_width = if hint.is_empty() {
         0.0
     } else {
-        4.0 * s + measure.width(&item.hint, metrics.small).min(100.0 * s)
+        4.0 * s + measure.width(hint, metrics.small).min(100.0 * s)
     };
     let hint_gap = if hint_width > 0.0 { 4.0 * s } else { 0.0 };
     // 左留白(10)+序号(12)+间距(4)+候选文字+注音+右留白(10)。
@@ -389,18 +394,18 @@ pub fn ellipsize(text: &str, max_width: f32, size: f32, measure: &dyn Measure) -
     if measure.width(text, size) <= max_width {
         return text.to_string();
     }
-    let ell = '…';
-    let budget = (max_width - measure.width(&ell.to_string(), size)).max(0.0);
-    let mut out = String::new();
-    for c in text.chars() {
-        let mut next = out.clone();
-        next.push(c);
-        if measure.width(&next, size) > budget {
+    let budget = (max_width - measure.width("…", size)).max(0.0);
+    // 逐前缀测宽,找最后一个装得下的字符边界;文本比预算宽,循环外不必
+    // 再测整串,也不必逐字符克隆。
+    let mut end = 0;
+    for (index, _) in text.char_indices().skip(1) {
+        if measure.width(&text[..index], size) > budget {
             break;
         }
-        out = next;
+        end = index;
     }
-    out.push(ell);
+    let mut out = text[..end].to_string();
+    out.push('…');
     out
 }
 
@@ -786,7 +791,7 @@ pub fn panel_width(spec: &PanelSpec, metrics: &Metrics, measure: &dyn Measure) -
     let widest = spec
         .items
         .iter()
-        .map(|item| item_width(item, metrics, measure))
+        .map(|item| item_row_width(&item.text, &item.hint, metrics, measure))
         .fold(0.0, f32::max);
     (widest + 18.0 * s)
         .max(spec.width)
@@ -802,6 +807,20 @@ pub fn panel_height(spec: &PanelSpec, metrics: &Metrics, measure: &dyn Measure) 
         return PAD_Y * 2.0 * s;
     }
     PAD_Y * s + (rows as f32 - 1.0) * metrics.row + metrics.visual_row() + PAD_Y * s
+}
+
+/// 竖排宽度估测:全量候选取最宽一条的自然宽,加面板留白并夹进
+/// [360, 680]。输入是 `(候选, 注音)` 迭代器,调用方不必拼 Item。
+pub fn measure_items_width<'a>(
+    items: impl Iterator<Item = (&'a str, &'a str)>,
+    metrics: &Metrics,
+    measure: &dyn Measure,
+) -> f32 {
+    let s = scale_of(metrics);
+    let widest = items
+        .map(|(text, hint)| item_row_width(text, hint, metrics, measure))
+        .fold(0.0, f32::max);
+    (widest + 18.0 * s).clamp(360.0 * s, 680.0 * s)
 }
 
 /// 候选占几行。固定条恒为一行;竖排一行一条;展开棋盘按格数折算,

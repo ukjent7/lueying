@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use lueying_ext::host::Done;
-use lueying_render::panel::Palette;
+use lueying_render::panel::{self, Palette};
 use lueying_render::picker;
 use lueying_server::host_panel::{HostPanel, HostPanelView};
 use lueying_server::services::PanelJob;
@@ -227,6 +227,7 @@ pub(super) fn install(state: &crate::imp::State) -> Receiver<PanelJob> {
 
 /// 面板窗口的规格:隐藏创建、无边框置顶、不可缩放;
 /// poll 排请求,键盘在窗口级 on_key,行与滚轮在控件树上。
+/// 失焦即按取消收起:输入法选择面板不钉在前台,也别把焦点抢回唤出窗。
 pub(super) fn window_spec(jobs: Receiver<PanelJob>) -> WindowSpec<Picker> {
     let accent = *PICKER_ACCENT.get_or_init(|| 0);
     let spec = AppSpec {
@@ -242,7 +243,13 @@ pub(super) fn window_spec(jobs: Receiver<PanelJob>) -> WindowSpec<Picker> {
     };
     WindowSpec::from_app(
         "picker",
-        App::new(spec).init(move || Picker::new(jobs, accent)),
+        App::new(spec)
+            .init(move || Picker::new(jobs, accent))
+            .on_focus(|s: &mut Picker, focused, _| {
+                if s.visible && !focused {
+                    s.hide(false);
+                }
+            }),
     )
     .options(WindowOptions {
         transparent: true,
@@ -374,6 +381,9 @@ fn rows_el(s: &Picker, palette: &Palette) -> El {
         .w(list.width())
         .h(list.height())
         .on_wheel(|s: &mut Picker, e, _| {
+            if s.spec.rows.is_empty() {
+                return false;
+            }
             // dy>0 是向下滚,向前翻三条,与候选窗的滚动方向一致。
             s.move_selection((e.dy.signum() * 3.0) as isize);
             true
@@ -516,30 +526,11 @@ fn footer_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) ->
         )
 }
 
-/// 文本按可宽截断;行宽以内用省略号。CJK 记 1em、其余记 0.55em 的
-/// 粗估足够,不值得为面板引入一套文本测量。
+/// 文本按可宽截断;行宽以内用省略号。与候选窗同一套估宽截断
+/// (`panel::Estimate`),字符宽近似 ASCII 半角、其余全角,不为面板
+/// 引入一套文本测量。
 fn ellipsize(text: &str, budget: f32, size: f32) -> String {
-    if budget <= 0.0 {
-        return String::new();
-    }
-    let width_of = |c: char| if c as u32 > 0x2e80 { size } else { size * 0.55 };
-    let width: f32 = text.chars().map(width_of).sum();
-    if width <= budget {
-        return text.to_string();
-    }
-    let budget = budget - size;
-    let mut used = 0.0;
-    let mut out = String::new();
-    for c in text.chars() {
-        let w = width_of(c);
-        if used + w > budget {
-            break;
-        }
-        used += w;
-        out.push(c);
-    }
-    out.push('…');
-    out
+    panel::ellipsize(text, budget, size, &panel::Estimate)
 }
 
 /// 视图转渲染输入。

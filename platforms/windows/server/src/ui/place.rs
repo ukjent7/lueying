@@ -16,28 +16,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 
-use crate::imp::State;
+use std::sync::Arc;
+
+use crate::imp::{self, State};
 
 /// 空闲停靠位到虚拟桌面左缘的距离。按虚拟桌面算,左侧副屏也不会露出空窗。
 pub(super) const PARK_GAP: i32 = 2000;
 /// 候选窗与光标之间留一点呼吸,不贴着字形下缘。
 pub(super) const CARET_GAP: f32 = 4.0;
 
-/// 候选窗要画的一帧:会话视图加隐私标记。
-pub(super) struct Snapshot {
-    pub(super) view: SessionView,
-    pub(super) private: bool,
-}
-
 /// 激活会话且在组合中才有窗口内容。宿主接管候选绘制时让位。
 ///
-/// 只读已发布的视图:候选窗出帧不受任何会话的推理拖住。
-pub(super) fn snapshot(state: &State) -> Option<Snapshot> {
+/// 只读已发布的视图:候选窗出帧不受任何会话的推理拖住;返回共享指针,
+/// 渲染端与冻结内容同住一份,不再逐帧克隆候选列表。
+pub(super) fn snapshot(state: &State) -> Option<Arc<imp::Published>> {
     let published = state.active_published()?;
-    (!published.host_draws && published.composing).then(|| Snapshot {
-        view: published.view.clone(),
-        private: published.private,
-    })
+    (!published.host_draws && published.composing).then_some(published)
 }
 
 /// 读取候选窗显示设置(排列、字号、主题色)。
@@ -236,6 +230,7 @@ pub(super) fn spec_of(
 }
 
 /// 全组合候选都参与估宽;翻页时窗口宽度保持一致,不会来回跳。
+/// 直接按条目文本测宽,不为估宽克隆一份候选列表。
 pub(super) fn measure_width(
     view: &SessionView,
     layout: UiLayout,
@@ -243,15 +238,18 @@ pub(super) fn measure_width(
     measure: &dyn Measure,
 ) -> f32 {
     let (mut spec, _) = spec_of(view, layout, metrics, measure);
-    spec.items = view
-        .candidates
-        .iter()
-        .enumerate()
-        .map(|(index, text)| Item {
-            text: text.clone(),
-            hint: view.hints.get(index).cloned().unwrap_or_default(),
-            selected: false,
-        })
-        .collect();
+    // 横排/棋盘宽度固定;只有竖排要按全量候选的自然宽定窗口宽。
+    if matches!(spec.layout, panel::Layout::Column) {
+        spec.width = panel::measure_items_width(
+            view.candidates.iter().enumerate().map(|(index, text)| {
+                (
+                    text.as_str(),
+                    view.hints.get(index).map_or("", String::as_str),
+                )
+            }),
+            metrics,
+            measure,
+        );
+    }
     panel::panel_width(&spec, metrics, measure)
 }

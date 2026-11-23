@@ -277,6 +277,11 @@ pub enum Request {
     Goodbye { session: u64 },
     /// 拖动棋盘滚动条:直接定位到绝对候选序号(编在尾部,旧报文序号不变)。
     ScrollTo { session: u64, offset: usize },
+    /// 候选窗右键置顶(全局候选序号):展开棋盘里页外行也能直达;
+    /// `Pin` 只有页内槽位,按不到它。
+    PinIndex { session: u64, gidx: usize },
+    /// 候选窗右键降权(全局候选序号),与 `PinIndex` 配对。
+    DemoteIndex { session: u64, gidx: usize },
 }
 
 /// 回落宿主 → 常驻服务的窗口消息:宿主线程当前选中的输入法是否为本产品。
@@ -336,6 +341,8 @@ impl Request {
             Self::Ext { .. } => "Ext",
             Self::Goodbye { .. } => "Goodbye",
             Self::ScrollTo { .. } => "ScrollTo",
+            Self::PinIndex { .. } => "PinIndex",
+            Self::DemoteIndex { .. } => "DemoteIndex",
         }
     }
 

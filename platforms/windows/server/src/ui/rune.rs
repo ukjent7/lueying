@@ -75,9 +75,9 @@ enum Presence {
 enum Menu {
     #[default]
     Closed,
-    /// (页内槽位, 悬停项, 行文本)。行文本变了菜单自动失效。
+    /// (全局候选序号, 悬停项, 行文本)。行文本变了菜单自动失效。
     Open {
-        slot: usize,
+        gidx: usize,
         text: String,
         hover: Option<usize>,
     },
@@ -106,8 +106,9 @@ impl Menu {
 struct Fx {
     /// 淡出状态;期间沿用最后一份内容并让鼠标穿透。
     presence: Presence,
-    /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。
-    last: Option<SessionView>,
+    /// 最后一份组合内容;淡出期间冻结,平时跟最新一帧。与引擎的
+    /// 发布队列同住一份 Arc,不逐帧克隆候选列表。
+    last: Option<Arc<imp::Published>>,
     /// 本次摆位(窗口+面板,屏幕物理像素);总是整体赋值。
     placement: Placement,
     /// 翻页方向:条内容从这一侧滑入。Rune 的 push 过渡消费。
@@ -176,6 +177,8 @@ struct Geom {
     /// 布局宽高(逻辑点)。
     width: f32,
     height: f32,
+    /// 固定条按内容自适应放下的条数;变化时回喂引擎当页大小。
+    fit: usize,
 }
 
 /// 保留一帧原始像素,不为内容相同的背板唤醒 Rune。
@@ -309,6 +312,18 @@ impl Candidate {
         !high_contrast && self.effects()
     }
 
+    /// 釉面环境采样是否会被画:高对比度让位系统色;玻璃私密态与实底
+    /// 兜底都不读釉光,瓷与高透玻璃照采。淡出期保留采样不闪变。
+    fn glaze_wanted(&self, high_contrast: bool) -> bool {
+        if high_contrast {
+            return false;
+        }
+        match self.material {
+            UiMaterial::Ceramic => true,
+            UiMaterial::Glass => self.glass_wanted(high_contrast) && !self.private,
+        }
+    }
+
     fn live_glass(&self, high_contrast: bool) -> bool {
         !self.private
             && self.material.is_glass()
@@ -335,12 +350,29 @@ impl Candidate {
         }
     }
 
+    /// 当前页在候选列表里的起点(全局序号);条内槽位与全局序号互算用。
+    fn page_start(&self) -> usize {
+        self.fx.last.as_ref().map_or(0, |last| {
+            panel::page_bounds(
+                last.view.page,
+                last.view.page_size,
+                last.view.candidates.len(),
+            )
+            .start
+        })
+    }
+
     /// 量一段文字在给定字号下的宽(逻辑点)。
     fn text_width(&self, text: &str, size: f32) -> f32 {
         let mut ink = self.ink.borrow_mut();
         ink.measure(text, TextStyle::new(size, 400.0), MEASURE_SCALE)
             .0
     }
+}
+
+/// `Candidate` 作 `Measure` 的借用视图;`self` 不可变借用场景直接用。
+fn meas_of(s: &Candidate) -> &dyn Measure {
+    s
 }
 
 impl Measure for Candidate {
@@ -491,9 +523,11 @@ pub(crate) enum FallbackMouse {
 }
 
 /// 注入一条回落鼠标事件并唤醒事件循环;overlay 起来之前丢弃。
+/// 事件没改任何视图状态时(update_if 契约)不重跑 view,悬停扫过
+/// 已悬停的行不再整树重建。
 pub(crate) fn forward_mouse(event: FallbackMouse) {
     if let Some(handle) = HANDLE.get() {
-        handle.update(move |s: &mut Candidate, tx| s.on_fallback(event, tx));
+        handle.update_if(move |s: &mut Candidate, tx| s.on_fallback(event, tx));
     }
 }
 
@@ -568,16 +602,17 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
             s.backdrop_read = Some((now, rect));
             changed |= capture_backdrop(s);
         }
-        let (last, _) = s.backdrop_read.unwrap();
-        tx.wake_after((last + LIVE_TICK).saturating_duration_since(Instant::now()));
+        if let Some((last, _)) = s.backdrop_read {
+            tx.wake_after((last + LIVE_TICK).saturating_duration_since(Instant::now()));
+        }
     } else if s.private || !s.glass_wanted(high_contrast) || !s.material.is_glass() {
         s.backdrop_read = None;
         changed |= s.backdrop.take().is_some();
     }
     // 釉光的环境光:面板上下窄带低频实采,周边变了光跟着变。瓷釉的
     // 光泽与玻璃的棱缘 rim 都吃这份采样;淡出期保留,冻结内容里不
-    // 闪变;停靠由 park 清。
-    if !high_contrast && s.visible {
+    // 闪变;停靠由 park 清。会被画的材质才采,实底主题与私密玻璃不采。
+    if s.visible && s.glaze_wanted(high_contrast) {
         let now = Instant::now();
         let rect = s.fx.placement.panel;
         if s.glaze_read
@@ -619,12 +654,12 @@ fn retract(s: &mut Candidate, tx: &mut Tx) {
 
 /// 一轮摆位:脚本补丁到了就应用;版本变了就摆位与出内容。
 fn place(s: &mut Candidate, tx: &mut Tx) {
-    let Some(snap) = place::snapshot(&s.state) else {
+    let Some(published) = place::snapshot(&s.state) else {
         retract(s, tx);
         return;
     };
-    let view = snap.view;
-    s.private = snap.private;
+    let view = &published.view;
+    s.private = published.private;
     // 组合在但没有候选可画(裸 v/u 的表达式与问字空档、v1x 打到运算
     // 符还没出结果):空条渲染出来就是一根牙签。按组合结束同一条路径
     // 收起;键补上候选时 fresh 取消排队中的 Hide,候选窗正常出现。
@@ -678,17 +713,10 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         && let Some((old, old_len)) =
             s.fx.last
                 .as_ref()
-                .and_then(|last| last.caret.map(|caret| (caret, last.raw.len())))
+                .and_then(|last| last.view.caret.map(|caret| (caret, last.view.raw.len())))
         && new.0.min(new.2) < old.0.min(old.2)
         && view.raw.len() >= old_len
     {
-        println!(
-            "光标左移挂起复核: {}->{} raw {}->{}",
-            old.0.min(old.2),
-            new.0.min(new.2),
-            old_len,
-            view.raw.len(),
-        );
         fresh_hold = Some(CaretHold {
             rect: new,
             at: Instant::now(),
@@ -696,11 +724,19 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.wake_after(CARET_HOLD);
     }
     s.fx.caret_hold = fresh_hold.or(holding);
+    // 绘制几何只算一份:摆位(宽高)、命中与控件树共用。挂起回合用
+    // 沿用摆位对应的缩放;正常回合先按新光标换缩放再量。
+    if s.fx.caret_hold.is_none()
+        && let Some((l, _, r, b)) = view.caret
+    {
+        s.scale = place::scale_at(l.min(r), b);
+    }
+    let geom = geom_of(s, view);
     let placement = if s.fx.caret_hold.is_some() {
         // 挂起回合:沿用上一回合摆位,内容照常更新,到期复核再挪。
         s.fx.placement
     } else {
-        caret_rect(s, &view)
+        rect_for_caret(s, view, &geom)
     };
     if placement.panel.2 == 0 {
         // 独占全屏或拿不到光标信息:停靠窗口,并清掉冻结内容,
@@ -716,7 +752,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         && s.fx
             .last
             .as_ref()
-            .is_some_and(|last| last.expanded != view.expanded);
+            .is_some_and(|last| last.view.expanded != view.expanded);
     if toggled {
         tx.animated();
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
@@ -729,9 +765,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         && s.fx
             .last
             .as_ref()
-            .is_some_and(|last| last.page != view.page)
+            .is_some_and(|last| last.view.page != view.page)
     {
-        let previous = s.fx.last.as_ref().map_or(view.page, |last| last.page);
+        let previous = s.fx.last.as_ref().map_or(view.page, |last| last.view.page);
         s.fx.slide_edge = Some(if view.page > previous {
             Edge::Trailing
         } else {
@@ -748,9 +784,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     if s.effects()
         && !fresh
         && s.fx.last.as_ref().is_some_and(|last| {
-            last.highlight != view.highlight
-                && last.page == view.page
-                && last.expanded == view.expanded
+            last.view.highlight != view.highlight
+                && last.view.page == view.page
+                && last.view.expanded == view.expanded
         })
     {
         tx.animated();
@@ -762,11 +798,11 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = Some(placement.panel);
     layout(s, placement.window);
-    // 先落内容再出帧;淡出期间用的就是这份冻结内容。
-    s.fx.last = Some(view.clone());
-    s.geom = Some(geom_of(s, &view));
-    submit_scene(s, &view);
-    publish_state(s, Some(&view));
+    submit_scene(s, view);
+    publish_state(s, Some(view));
+    // 先落内容再出帧;淡出期间用的就是这份冻结内容,与发布队列共享一份。
+    s.geom = Some(geom);
+    s.fx.last = Some(published);
     show(s);
     if let Some(handle) = HANDLE.get() {
         handle.set_input(OverlayInput::Regions);
@@ -792,9 +828,10 @@ struct CaretHold {
 
 /// 光标位置算出的摆位;宽为 0 表示这次不弹。
 /// 横排窗口恒为展开棋盘的尺寸,条贴光标侧,其余区域透明且指针穿透;
-/// 竖排窗口与面板同矩形。
-fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
-    let (layout, ui_font, _) = place::ui_options(&s.state);
+/// 竖排窗口与面板同矩形。几何(宽高、自适应条数)取摆位前算好的那
+/// 一份,不再重测。
+fn rect_for_caret(s: &mut Candidate, view: &SessionView, geom: &Geom) -> Placement {
+    let (layout, _, _) = place::ui_options(&s.state);
     let host_pid = (s.state.active.load(Ordering::Relaxed) >> 32) as u32;
     let Some((l, t, r, b)) = view.caret else {
         s.fx.above = None;
@@ -802,22 +839,22 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
         return Placement::default();
     };
     let left = l.min(r);
-    // 按光标所在显示器算 DPI;停靠屏的缩放与本屏无关。
-    let scale = place::scale_at(left, b);
-    s.scale = scale;
-    let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let (mut spec, fit) = place::spec_of(view, layout, &metrics, s);
-    spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
-    spec.width = place::measure_width(view, layout, &metrics, s);
-    if fit != view.page_size {
+    let s_factor = geom.metrics.scale();
+    if geom.fit != view.page_size {
         let session = s.state.active.load(Ordering::Relaxed);
-        let _ = imp::handle(&s.state, Request::SetPageSize { session, size: fit });
+        let _ = imp::handle(
+            &s.state,
+            Request::SetPageSize {
+                session,
+                size: geom.fit,
+            },
+        );
     }
-    let mut w = panel::panel_width(&spec, &metrics, s) as i32;
-    let h = panel::panel_height(&spec, &metrics, s) as i32;
+    let mut w = geom.width as i32;
+    let h = geom.height as i32;
     let work = place::work_area_at(left, b);
     w = w.min((work.right - work.left).max(1));
-    let gap = (place::CARET_GAP * scale) as i32;
+    let gap = (place::CARET_GAP * s_factor) as i32;
     // 独占全屏/无边框全屏里不弹候选窗,否则会盖在游戏画面上。
     let hidden = place::foreground_fullscreen_at(left, b, host_pid);
     if hidden {
@@ -826,7 +863,7 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
     let horizontal = matches!(layout, UiLayout::Horizontal);
     if horizontal {
         // 横排:窗口恒为棋盘高度;条贴光标侧,展开向上/向下长满整窗。
-        let h_win = (WRAP_WINDOW_H * ui_font.factor() * scale) as i32;
+        let h_win = (WRAP_WINDOW_H * s_factor) as i32;
         let below = b + gap;
         let above = t - gap - h_win;
         // 同一次组合内优先留在已选的一侧;只有这一侧放不下才翻边。
@@ -877,12 +914,12 @@ fn caret_rect(s: &mut Candidate, view: &SessionView) -> Placement {
     }
 }
 
-/// 当前视图的绘制几何;命中测试与控件树共用。
+/// 当前视图的绘制几何;摆位、命中测试与控件树共用同一份。
 fn geom_of(s: &mut Candidate, view: &SessionView) -> Geom {
     let (layout, ui_font, _) = place::ui_options(&s.state);
     let scale = s.scale;
     let metrics = Metrics::scaled(ui_font.factor() * scale);
-    let (mut spec, _) = place::spec_of(view, layout, &metrics, s);
+    let (mut spec, fit) = place::spec_of(view, layout, &metrics, s);
     spec.max_text_width = MAX_TEXT_WIDTH * ui_font.factor() * scale;
     spec.width = place::measure_width(view, layout, &metrics, s);
     Geom {
@@ -890,6 +927,7 @@ fn geom_of(s: &mut Candidate, view: &SessionView) -> Geom {
         height: panel::panel_height(&spec, &metrics, s),
         spec,
         metrics,
+        fit,
     }
 }
 
@@ -1133,27 +1171,24 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         .radius(panel::PANEL_RADIUS * scale)
         .continuous_corners()
         .clip_rounded(panel::PANEL_RADIUS * scale)
-        .on_wheel(|s: &mut Candidate, e, _| {
-            s.on_wheel_points(e.dy);
-            true
-        })
+        .on_wheel(|s: &mut Candidate, e, _| s.on_wheel_points(e.dy))
         .on_secondary_press_local(|s: &mut Candidate, p, _| s.on_secondary(p.x, p.y));
     match (s.material, glass) {
         // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。背板是过液体
         // 玻璃光学的桌面像素(棱缘折射 + 色散 + 提饱和),模糊仍由
         // backdrop_blur 做。
         (UiMaterial::Glass, true) => {
-            let height = s.fx.placement.panel.3 as f32 / scale;
             body = body
                 .backdrop_blur(frost_blur)
                 .fill(frost_fill)
                 .gradient(frost_top, frost_bottom)
                 .border(1.0 * scale, rgba(0xffffff, s.glass.border));
             // 加深的 meniscus 内阴影(变体 C/D):贴底的静观玻璃感。
+            // pin 底边:面板形变期间跟着动画中的底缘走,absolute 会钉在
+            // 终态高度上提前脱底。
             if s.glass.meniscus {
                 body = body.child(
-                    el().absolute(0.0, (height - 2.0 * scale).max(0.0))
-                        .w_full()
+                    el().pin(Some(0.0), None, Some(0.0), Some(0.0))
                         .h(2.0 * scale)
                         .fill(rgba(0x000000, 0.28)),
                 );
@@ -1168,19 +1203,17 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 );
             }
             // 环境感知的棱缘 rim:上下 1px 釉线随环境光亮暗,玻璃的
-            // Fresnel 边光近似;「光必有来源」与瓷釉同一套纪律。
+            // Fresnel 边光近似;「光必有来源」与瓷釉同一套纪律。下缘
+            // pin 底边,形变期间跟着动画中的底缘走。
             if let Some(glaze) = &s.glaze {
-                let height = s.fx.placement.panel.3 as f32 / scale;
                 body = body
                     .child(
-                        el().absolute(0.0, 0.0)
-                            .w_full()
+                        el().pin(Some(0.0), Some(0.0), Some(0.0), None)
                             .h(1.0 * scale)
                             .fill(glaze.edge_top),
                     )
                     .child(
-                        el().absolute(0.0, (height - 1.0 * scale).max(0.0))
-                            .w_full()
+                        el().pin(Some(0.0), None, Some(0.0), Some(0.0))
                             .h(1.0 * scale)
                             .fill(glaze.edge_bottom),
                     );
@@ -1193,23 +1226,19 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .gradient(rgb(0x363029), rgb(0x28241d))
                 .border(1.0 * scale, rgb(palette.border));
             if let Some(glaze) = &s.glaze {
-                let h = s.fx.placement.panel.3 as f32 / scale;
                 body = body
                     .child(
-                        el().absolute(0.0, 0.0)
-                            .w_full()
-                            .h(h * 0.45)
+                        el().pin(Some(0.0), Some(0.0), Some(0.0), None)
+                            .h((s.fx.placement.panel.3 as f32 / scale) * 0.45)
                             .gradient(glaze.sheen_top, glaze.sheen_top.alpha(0.0)),
                     )
                     .child(
-                        el().absolute(0.0, 0.0)
-                            .w_full()
+                        el().pin(Some(0.0), Some(0.0), Some(0.0), None)
                             .h(1.0 * scale)
                             .fill(glaze.edge_top),
                     )
                     .child(
-                        el().absolute(0.0, (h - 1.0 * scale).max(0.0))
-                            .w_full()
+                        el().pin(Some(0.0), None, Some(0.0), Some(0.0))
                             .h(1.0 * scale)
                             .fill(glaze.edge_bottom),
                     );
@@ -1236,12 +1265,13 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
     };
     body = body.child(content(s, geom, &look));
     root = root.child(body);
-    if let Menu::Open { slot, text, .. } = &s.fx.menu
-        && geom
-            .spec
-            .items
-            .get(*slot)
-            .is_some_and(|item| &item.text == text)
+    if let Menu::Open { gidx, text, .. } = &s.fx.menu
+        && s.fx
+            .last
+            .as_ref()
+            .is_some_and(|last| last.view.candidates.get(*gidx) == Some(text))
+        && let Some(origin) =
+            menu_origin(*gidx, s.page_start(), &geom.spec, &geom.metrics, meas_of(s))
     {
         let look = Look {
             palette: &palette,
@@ -1249,7 +1279,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             selected_ink,
             high_contrast,
         };
-        root = root.child(menu_tree(s, geom, &look, *slot, bx, by));
+        root = root.child(menu_tree(s, geom, &look, *gidx, origin, bx, by));
     }
     root
 }
@@ -1311,9 +1341,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .zip(&rects)
             .find(|(i, _)| i.selected)
             .map(|(_, r)| *r);
-        let page_start = s.fx.last.as_ref().map_or(0, |view| {
-            panel::page_bounds(view.page, view.page_size, view.candidates.len()).start
-        });
+        let page_start = s.page_start();
         for (index, (item, rect)) in geom.spec.items.iter().zip(&rects).enumerate() {
             viewport = viewport.child(item_el(
                 s,
@@ -1535,7 +1563,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
             .h(track.height())
             .cursor(Cursor::Pointer)
             .role("button")
-            .label(if expanded {
+            .label_static(if expanded {
                 "收起候选窗"
             } else {
                 "展开候选窗"
@@ -1636,9 +1664,16 @@ fn chevron_segment(shape: Shape, a: (f32, f32), b: (f32, f32), width: f32, color
 }
 
 /// 右键菜单:固定形状,外层 10px、行内缩 4px;玻璃上也用实底。
-fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: f32) -> El {
-    let meas: &dyn Measure = s;
-    let (mx, my) = menu_origin(slot, &geom.spec, &geom.metrics, meas);
+fn menu_tree(
+    s: &Candidate,
+    geom: &Geom,
+    look: &Look,
+    gidx: usize,
+    origin: (f32, f32),
+    bx: f32,
+    by: f32,
+) -> El {
+    let (mx, my) = origin;
     let scale = geom.metrics.scale();
     let w = 116.0 * scale;
     let h = panel::menu_height(&geom.metrics);
@@ -1661,19 +1696,19 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
             .px(4.0 * scale)
             .cursor(Cursor::Pointer)
             .role("button")
-            .label((*label).to_string())
+            .label_static(label)
             .on_hover_change(move |s: &mut Candidate, inside, _| {
                 s.fx.menu.set_hover(inside.then_some(index));
             })
             .press_on_down()
-            .on_press(move |s: &mut Candidate| s.menu_click(slot, index));
+            .on_press(move |s: &mut Candidate| s.menu_click(gidx, index));
         if hovered {
             row = row.fill(rgb(look.palette.hover));
         }
         card = card.child(
             row.child(
                 el().absolute(0.0, ink_y(26.0 * scale, 12.0 * scale)).child(
-                    text((*label).to_string())
+                    text(*label)
                         .font(TextStyle::new(12.0 * scale, 400.0))
                         .color(rgb(if hovered {
                             look.palette.text
@@ -1688,28 +1723,43 @@ fn menu_tree(s: &Candidate, geom: &Geom, look: &Look, slot: usize, bx: f32, by: 
     card
 }
 
-/// 菜单锚点:压着指定候选行,画在面板内部;锚不下就贴行顶。
+/// 菜单锚点:压着指定候选,画在面板内部;锚不下就贴行顶。
+/// `gidx` 是全局候选序号:棋盘按 `index` 找格,固定条/竖排减去页起点
+/// 换成槽位;候选已滚出当前可视区时返回 None,菜单随之不画。
 fn menu_origin(
-    slot: usize,
+    gidx: usize,
+    page_start: usize,
     spec: &PanelSpec,
     metrics: &Metrics,
     measure: &dyn Measure,
-) -> (f32, f32) {
+) -> Option<(f32, f32)> {
     let scale = metrics.scale();
     let panel_h = panel::panel_height(spec, metrics, measure);
     let menu_h = panel::menu_height(metrics);
-    let rects = panel::item_rects(spec, metrics, measure);
-    // 菜单只画在面板内部:上界是首行行顶,锚不下就压着行画。
-    let floor = rects.first().map_or(0.0, |first| first.top);
-    let Some(rect) = rects.get(slot).copied() else {
-        return (8.0 * scale, floor);
+    let expanded = spec.expand && matches!(spec.layout, Layout::Wrap);
+    let cells = if expanded {
+        panel::grid_cells(spec, metrics, measure)
+    } else {
+        panel::item_rects(spec, metrics, measure)
     };
+    let rect = if expanded {
+        spec.grid
+            .iter()
+            .zip(&cells)
+            .find(|(cell, _)| cell.index == gidx)
+            .map(|(_, rect)| *rect)
+    } else {
+        cells.get(gidx.checked_sub(page_start)?).copied()
+    };
+    let rect = rect?;
+    // 菜单只画在面板内部:上界是首行行顶,锚不下就压着行画。
+    let floor = cells.first().map_or(0.0, |first| first.top);
     let top = if rect.bottom + menu_h <= panel_h {
         rect.bottom
     } else {
         (rect.top - menu_h).max(floor)
     };
-    (8.0 * scale, top)
+    Some((8.0 * scale, top))
 }
 
 impl Candidate {
@@ -1743,15 +1793,16 @@ impl Candidate {
         self.request(Request::Expand { session });
     }
 
-    fn menu_click(&mut self, slot: usize, item: usize) {
+    /// 菜单项:全局候选序号直达,展开棋盘里的页外行也能置顶/降权。
+    fn menu_click(&mut self, gidx: usize, item: usize) {
         if !self.interactive() {
             return;
         }
         let session = self.state.active.load(Ordering::Relaxed);
         let req = if item == 0 {
-            Request::Pin { session, slot }
+            Request::PinIndex { session, gidx }
         } else {
-            Request::Demote { session, slot }
+            Request::DemoteIndex { session, gidx }
         };
         self.request(req);
         self.fx.menu = Menu::Closed;
@@ -1762,37 +1813,41 @@ impl Candidate {
         let _ = imp::handle(&self.state, Request::ScrollTo { session, offset });
     }
 
-    /// 滚轮一档:固定条上滚轮展开棋盘,棋盘里滚轮翻整页。
-    fn wheel_step(&mut self, step: i32) {
+    /// 滚轮一档:固定条上滚轮展开棋盘,棋盘里滚轮翻整页。返回是否真的
+    /// 消费了这一档:不可交互时让出,事件穿透给宿主。
+    fn wheel_step(&mut self, step: i32) -> bool {
         if !self.interactive() {
-            return;
+            return false;
         }
         let session = self.state.active.load(Ordering::Relaxed);
         let Some(published) = self.state.active_published() else {
-            return;
+            return false;
         };
         let (expanded, len) = (published.view.expanded, published.view.candidates.len());
-        if len > 1 {
-            if expanded {
-                self.request(Request::Page {
-                    session,
-                    delta: step,
-                });
-            } else {
-                self.request(Request::Expand { session });
-            }
+        if len <= 1 {
+            return false;
         }
+        if expanded {
+            self.request(Request::Page {
+                session,
+                delta: step,
+            });
+        } else {
+            self.request(Request::Expand { session });
+        }
+        true
     }
 
     /// Rune 滚轮事件:dy 正是向下滚,翻到下一页。
-    fn on_wheel_points(&mut self, dy: f32) {
+    fn on_wheel_points(&mut self, dy: f32) -> bool {
         if dy == 0.0 {
-            return;
+            return false;
         }
-        self.wheel_step(if dy > 0.0 { 1 } else { -1 });
+        self.wheel_step(if dy > 0.0 { 1 } else { -1 })
     }
 
-    /// 右键:固定条塞不下菜单,先切展开态,菜单一帧后锚在整词行上。
+    /// 右键:固定条塞不下菜单,先切展开态,菜单一帧后锚在整词行上;
+    /// 竖排与已展开的棋盘直接锚在命中行/格。
     fn on_secondary(&mut self, x: f32, y: f32) {
         if !self.interactive() {
             return;
@@ -1801,49 +1856,70 @@ impl Candidate {
             return;
         };
         let meas: &dyn Measure = self;
-        let panel::Hit::Item(slot) = panel::hit_test(&geom.spec, &geom.metrics, meas, x, y) else {
-            return;
-        };
-        let Some(item) = geom.spec.items.get(slot) else {
-            return;
-        };
+        let hit = panel::hit_test(&geom.spec, &geom.metrics, meas, x, y);
         let strip = matches!(geom.spec.layout, panel::Layout::Wrap) && !geom.spec.expand;
+        // 全局候选序号:固定条/竖排按页内槽位加页起点,棋盘命中即全局序号。
+        let gidx = match hit {
+            panel::Hit::Item(slot) => Some(self.page_start() + slot),
+            panel::Hit::GridItem(index) => Some(index),
+            _ => None,
+        };
+        let Some(gidx) = gidx else {
+            return;
+        };
+        let Some(text) = self
+            .fx
+            .last
+            .as_ref()
+            .and_then(|last| last.view.candidates.get(gidx))
+        else {
+            return;
+        };
+        let text = text.clone();
         if strip {
             let session = self.state.active.load(Ordering::Relaxed);
             let _ = imp::handle(&self.state, Request::Expand { session });
         }
         self.fx.menu = Menu::Open {
-            slot,
-            text: item.text.clone(),
+            gidx,
+            text,
             hover: None,
         };
     }
 
     /// 回落钩子注入的鼠标事件;屏幕物理像素转客户区后走同一路径。
-    fn on_fallback(&mut self, event: FallbackMouse, _tx: &mut Tx) {
+    /// 返回值告诉 update_if 视图读到的状态有没有变:没变不重跑 view。
+    fn on_fallback(&mut self, event: FallbackMouse, _tx: &mut Tx) -> bool {
         let (ox, oy) = (
             self.fx.placement.panel.0 as f32,
             self.fx.placement.panel.1 as f32,
         );
         match event {
             FallbackMouse::Move(x, y) => self.fallback_move(x - ox, y - oy),
-            FallbackMouse::Down(x, y) => self.fallback_down(x - ox, y - oy),
-            FallbackMouse::Up => self.fx.scroll_drag = None,
-            FallbackMouse::Right(x, y) => self.on_secondary(x - ox, y - oy),
+            FallbackMouse::Down(x, y) => {
+                self.fallback_down(x - ox, y - oy);
+                true
+            }
+            FallbackMouse::Up => self.fx.scroll_drag.take().is_some(),
+            FallbackMouse::Right(x, y) => {
+                self.on_secondary(x - ox, y - oy);
+                true
+            }
             FallbackMouse::Wheel(delta) => {
                 self.wheel_step(if delta > 0 { -1 } else { 1 });
+                false
             }
         }
     }
 
-    fn fallback_move(&mut self, x: f32, y: f32) {
+    fn fallback_move(&mut self, x: f32, y: f32) -> bool {
         if self.fx.fading() {
-            return;
+            return false;
         }
         // 拖动滚动条:鼠标可能移出窗口,坐标按回落钩子继续喂。
         if self.fx.scroll_drag.is_some() {
             self.scroll_drag_to(y);
-            return;
+            return false;
         }
         let (item, chev, scroll_hover, menu_hover) = self.hover_hit(x, y);
         if item != self.fx.hover
@@ -1855,7 +1931,9 @@ impl Candidate {
             self.fx.chev = chev;
             self.fx.menu.set_hover(menu_hover);
             self.fx.scroll_hover = scroll_hover;
+            return true;
         }
+        false
     }
 
     fn fallback_down(&mut self, x: f32, y: f32) {
@@ -1870,13 +1948,15 @@ impl Candidate {
             return;
         }
         // 菜单项优先于候选行。
-        if let Menu::Open { slot, .. } = &self.fx.menu
+        if let Menu::Open { gidx, .. } = &self.fx.menu
             && let Some(geom) = &self.geom
         {
             let meas: &dyn Measure = self;
-            let (mx, my) = menu_origin(*slot, &geom.spec, &geom.metrics, meas);
-            if let Some(item) = panel::menu_hit(mx, my, &geom.metrics, x, y) {
-                self.menu_click(*slot, item);
+            let origin = menu_origin(*gidx, self.page_start(), &geom.spec, &geom.metrics, meas);
+            if let Some((mx, my)) = origin
+                && let Some(item) = panel::menu_hit(mx, my, &geom.metrics, x, y)
+            {
+                self.menu_click(*gidx, item);
                 return;
             }
         }
@@ -1909,9 +1989,9 @@ impl Candidate {
             && geom.spec.scroll.is_some_and(|scroll| {
                 panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y).is_some()
             });
-        let menu_hover = if let Menu::Open { slot, .. } = &self.fx.menu {
-            let (mx, my) = menu_origin(*slot, &geom.spec, &geom.metrics, meas);
-            panel::menu_hit(mx, my, &geom.metrics, x, y)
+        let menu_hover = if let Menu::Open { gidx, .. } = &self.fx.menu {
+            menu_origin(*gidx, self.page_start(), &geom.spec, &geom.metrics, meas)
+                .and_then(|(mx, my)| panel::menu_hit(mx, my, &geom.metrics, x, y))
         } else {
             None
         };
