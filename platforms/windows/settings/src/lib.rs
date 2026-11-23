@@ -14,6 +14,8 @@ pub mod ext_store;
 pub mod models;
 pub mod net;
 pub mod settings;
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) mod settings_ceramic;
 pub mod update;
 pub mod update_manifest;
 

@@ -396,15 +396,18 @@ fn scene(s: &State) -> El {
         footer = footer.child(button_el(button, &kit));
     }
 
-    let base = col()
+    let mut base = col()
         .key("window")
         .role("window")
         .w_full()
         .h_full()
-        .fill(color(colors.bg))
-        .child(header)
-        .child(body)
-        .child(footer);
+        .fill(color(colors.bg));
+    // 黑瓷外壳的影棚灯棱线:垫在页头/正文/页脚之下,不参与布局、焦点或
+    // 命中;高对比度整层省略,也不连接候选窗/工具栏的材质状态。
+    if !matches!(appearance, theme::Appearance::HighContrast) {
+        base = base.child(crate::settings_ceramic::layer());
+    }
+    base = base.child(header).child(body).child(footer);
 
     let mut layers = Vec::new();
     overlay_scene(
