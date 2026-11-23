@@ -133,12 +133,14 @@ struct Fx {
     caret_hold: Option<CaretHold>,
 }
 
-/// 棋盘滑块的果冻弹簧:行进时后缘(相对行进方向,下行是上沿)
-/// 用欠阻尼弹簧,撞端时它过冲就是单边压缩——撞击端钉在轨道端点,
-/// 另一侧向它压过去再回弹;交给元素布局动画(rt.animating 车道)
-/// 跑,帧必到,不押在会被 overlay 宿主滤掉的定时器唤醒上。
+/// 棋盘滑块的果冻弹簧:后缘(相对行进方向,下行是上沿)走更慢的
+/// 欠阻尼弹簧——行进中它滞后,滑块被拉长;前缘停稳后它才过冲,
+/// 就是撞击那瞬的单边压缩,随后回弹复圆。后缘若比前缘快,行进中
+/// 就会提前过冲,变成「两边往中间挤」。交给元素布局动画
+/// (rt.animating 车道)跑,帧必到,不押在会被 overlay 宿主滤掉
+/// 的定时器唤醒上。
 const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
-const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.42, 0.55);
+const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 
 impl Fx {
     fn clear(&mut self) {
