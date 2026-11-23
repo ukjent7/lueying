@@ -888,6 +888,10 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
+        // 在途液桥一并收:它的起点/主轴/目标全是旧形态坐标,面板
+        // 变形期间继续采样会按旧棋盘几何在胶囊附近画出一块蓝色
+        // 残块——实机「蓝色棋盘」就是它。
+        s.fx.sel_goo = None;
     }
     // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。上一帧也得是
     // 固定条:展开→收起那拍页码常变,武装了只会在收起后的重挂载里
@@ -909,6 +913,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.animated();
         s.fx.hover = None;
         s.fx.chev = false;
+        // 页间格子整批换人,在途液桥的两端都已失效,同上直接收。
+        s.fx.sel_goo = None;
     } else {
         s.fx.slide_edge = None;
     }
@@ -1577,12 +1583,11 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     goo.heat, goo.to
                 );
             }
-            let (l2, t2, w2, h2) = if bad {
-                (goo.to.left, goo.to.top, goo.to.width(), goo.to.height())
-            } else {
-                (l2, t2, w2, h2)
-            };
-            layer = layer.child(sel_marker(
+            // 越界帧不画:钳回 goo.to 是把旧形态坐标原样画上,面板
+            // 已变形时那块蓝色残块就是它;液桥活着,下一帧正常矩形
+            // 照样接得上,不画这一帧没有损失。
+            if !bad {
+                layer = layer.child(sel_marker(
                 wobbled(s.fx.sel_wobble, s.fx.now, Rect::from_xywh(l2, t2, w2, h2)),
                 look,
                 geom.metrics.scale(),
@@ -1633,6 +1638,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     };
                     layer = layer.child(bead);
                 }
+            }
             }
         } else {
             layer = layer.child(sel_marker(
@@ -1892,7 +1898,7 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let meas: &dyn Measure = s;
     let scale = geom.metrics.scale();
     // absolute 覆盖层:流内的全尺寸层会被前面的视口挤到面板外。
-    let mut layer = el().absolute(0.0, 0.0).w_full().h_full();
+    let mut layer = el().absolute(0.0, 0.0).w_full().h_full().key("controls");
     let rail = panel::rail_rect(&geom.spec, &geom.metrics, meas, geom.height);
     let cap = panel::chevron_rect(&geom.spec, &geom.metrics, meas);
     if let Some(scroll) = geom.spec.scroll
