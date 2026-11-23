@@ -1558,11 +1558,10 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             } else {
                 goo.to.height()
             };
-            let r_cap = if axis_x {
-                goo.to.height()
-            } else {
-                goo.to.width()
-            } / 2.0;
+            // 液厚恒取短边一半(液块厚度):纵向跳用宽一半会炸出
+            // 30px 巨珠+280px 珠带,整条面板被蓝色光斑纵贯——实机
+            // 「蓝色棋盘盖住又收回胶囊边缘」就是这个。
+            let r_cap = goo.to.width().min(goo.to.height()) / 2.0;
             let u_far = u_lo.max(u_hi - w_drop - r_cap * goo_cap(goo.heat));
             let squash = (1.0 - v_lead * 0.0008).clamp(0.7, 1.0);
             let (l2, t2, w2, h2) = if axis_x {
