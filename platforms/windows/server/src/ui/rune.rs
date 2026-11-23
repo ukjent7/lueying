@@ -131,8 +131,10 @@ struct Fx {
     since: Option<Instant>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 棋盘滑块的橡皮模拟;无滚动条或几何换过时为 None。
-    thumb: Option<ThumbFx>,
+    /// 棋盘滑块的橡皮模拟;无滚动条时为 None。RefCell:poll 与 view
+    /// 共用同一拍模拟(view 在画之前也推一拍),任何一次重绘都让它
+    /// 往目标走,不会停在半路。
+    thumb: std::cell::RefCell<Option<ThumbFx>>,
 }
 
 /// 棋盘滑块的橡皮物理:欠阻尼弹簧追 `scroll.offset` 的目标位;位置
@@ -656,45 +658,25 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     changed
 }
 
-/// 橡皮模拟推进一拍:还在动就要求再醒,并标 changed 让视图重跑。
-/// 拖动中滑块钉在目标位(跟手),「减少动态效果」直接贴终态。
-fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
-    let now = Instant::now();
-    let Some(spec_scroll) = s.geom.as_ref().and_then(|geom| geom.spec.scroll) else {
-        s.fx.thumb = None;
-        return false;
-    };
-    let Some(geom) = &s.geom else { return false };
-    let Some((track, thumb)) =
-        panel::scrollbar_rects(spec_scroll, geom.width, geom.height, &geom.metrics, true)
-    else {
-        s.fx.thumb = None;
-        return false;
-    };
+/// 滚动条的轨道/滑块/目标位(归一化):poll 与 view 共用同一份判据。
+/// 目标只由 `scroll.offset` 决定;无滚动条或行程不足时返回 None。
+fn thumb_target(s: &Candidate) -> Option<(Rect, Rect, f32, f32)> {
+    let geom = s.geom.as_ref()?;
+    let spec_scroll = geom.spec.scroll?;
+    let (track, thumb) =
+        panel::scrollbar_rects(spec_scroll, geom.width, geom.height, &geom.metrics, true)?;
     let travel = track.height() - thumb.height();
     if travel <= 0.0 {
-        s.fx.thumb = None;
-        return false;
+        return None;
     }
     let target = ((thumb.top - track.top) / travel).clamp(0.0, 1.0);
-    if s.fx.reduce || s.fx.scroll_drag.is_some() {
-        s.fx.thumb = Some(ThumbFx {
-            pos: target,
-            vel: 0.0,
-            squash: 0.0,
-            at: now,
-        });
-        return false;
-    }
-    let fx = s.fx.thumb.get_or_insert(ThumbFx {
-        pos: target,
-        vel: 0.0,
-        squash: 0.0,
-        at: now,
-    });
-    let mut remaining = now.duration_since(fx.at).as_secs_f32().min(0.1);
-    fx.at = now;
-    let moved = fx.pos != target || fx.vel != 0.0 || fx.squash > 0.0;
+    Some((track, thumb, target, travel))
+}
+
+/// 橡皮模拟的一个积分拍:弹簧追目标,出端点把行进速度记成压缩,
+/// 压缩随时间单独衰减。`dt` 是两次推进之间的真实间隔。
+fn fx_step(fx: &mut ThumbFx, target: f32, travel: f32, thumb_h: f32, dt_total: f32) {
+    let mut remaining = dt_total.min(0.1);
     while remaining > 0.0 {
         let dt = remaining.min(THUMB_STEP);
         remaining -= dt;
@@ -703,28 +685,90 @@ fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
         fx.pos += fx.vel * dt;
         // 出端点:把当时的行进速度换成压缩量,只记最狠的一次。
         if fx.pos > 1.0 || fx.pos < 0.0 {
-            let squash = (fx.vel.abs() * travel * THUMB_HIT).min(thumb.height() * THUMB_SQUASH_MAX);
+            let squash = (fx.vel.abs() * travel * THUMB_HIT).min(thumb_h * THUMB_SQUASH_MAX);
             fx.squash = fx.squash.max(squash);
         }
         // 压缩在弹簧之外单独衰减,回弹干脆不粘滞。
         fx.squash *= (-THUMB_RELAX * dt).exp();
     }
-    // 到点停稳:吸附目标位,不再续醒;这一帧仍标 changed 画终态。
-    if (fx.pos - target).abs() < 0.003 && fx.vel.abs() < 0.02 && fx.squash < 0.5 {
+    if !fx.pos.is_finite() {
+        fx.pos = target;
+        fx.vel = 0.0;
+    }
+}
+
+/// 模拟是否还在动;停下就不再续醒。
+fn thumb_settled(fx: &ThumbFx, target: f32) -> bool {
+    (fx.pos - target).abs() < 0.003 && fx.vel.abs() < 0.02 && fx.squash < 0.5
+}
+
+/// 橡皮模拟推进一拍:还在动就要求再醒,并标 changed 让视图重跑。
+/// 拖动中滑块钉在目标位(跟手),「减少动态效果」直接贴终态。
+fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
+    let now = Instant::now();
+    let Some((_, thumb, target, travel)) = thumb_target(s) else {
+        *s.fx.thumb.borrow_mut() = None;
+        return false;
+    };
+    // 不可见时没有画面可动,直接吸到目标位;也让停靠后的 geom 残影
+    // 留不住一个 ZERO 唤醒空转。拖动中钉在目标位(跟手),「减少动态
+    // 效果」直接贴终态。
+    if !s.visible || s.fx.reduce || s.fx.scroll_drag.is_some() {
+        *s.fx.thumb.borrow_mut() = Some(ThumbFx {
+            pos: target,
+            vel: 0.0,
+            squash: 0.0,
+            at: now,
+        });
+        return false;
+    }
+    let mut slot = s.fx.thumb.borrow_mut();
+    let fx = slot.get_or_insert(ThumbFx {
+        pos: target,
+        vel: 0.0,
+        squash: 0.0,
+        at: now,
+    });
+    let dt = now.duration_since(fx.at).as_secs_f32();
+    fx.at = now;
+    fx_step(fx, target, travel, thumb.height(), dt);
+    if thumb_settled(fx, target) {
         fx.pos = target;
         fx.vel = 0.0;
         fx.squash = 0.0;
-        return moved;
+        return false;
     }
-    tx.wake_after(Duration::from_millis(8));
-    moved
+    // 「每帧步进」契约:rune 给自驱动画的 poll 定的就是 wake_after(ZERO)
+    // ——它让宿主的帧循环持续,按显示速率推进。8ms 一类的未来定时器走
+    // timer_deadline 路径,在 overlay 上会被 waits_for_slot/backoff 滤掉,
+    // 链断一次模拟就永远悬在半空。
+    tx.wake_after(Duration::ZERO);
+    true
 }
 
-/// 视图实际画的滑块:模拟位(归一化)折算成轨内坐标,端点外钳到
-/// 轨道;压缩按 `squash` 记下的量缩短高度,贴撞击的那条边。
+/// 视图实际画的滑块:先把模拟推到当前时刻(任何一次重绘都算一拍,
+/// 渲染不依赖唤醒链),再按归一化位折算轨内坐标;端点外钳到轨道,
+/// 压缩缩短高度、贴撞击的那条边。
 fn drawn_thumb(s: &Candidate, track: Rect, thumb: Rect) -> Rect {
-    let Some(fx) = &s.fx.thumb else { return thumb };
-    let travel = (track.height() - thumb.height()).max(0.0);
+    let Some((_, _, target, travel)) = thumb_target(s) else {
+        return thumb;
+    };
+    if s.fx.reduce || s.fx.scroll_drag.is_some() {
+        return thumb;
+    }
+    let mut slot = s.fx.thumb.borrow_mut();
+    let Some(fx) = slot.as_mut() else {
+        return thumb;
+    };
+    let now = Instant::now();
+    let dt = now.duration_since(fx.at).as_secs_f32();
+    fx.at = now;
+    fx_step(fx, target, travel, thumb.height(), dt);
+    if thumb_settled(fx, target) {
+        fx.pos = target;
+        fx.vel = 0.0;
+        fx.squash = 0.0;
+    }
     let pos = track.top + fx.pos * travel;
     let squash = fx.squash.min(thumb.height() * THUMB_SQUASH_MAX);
     if fx.pos <= 0.0 {
