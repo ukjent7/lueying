@@ -1551,8 +1551,8 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             let (n_a, n_b) = if axis_x { (tp, bt) } else { (l, r) };
             let n_c = (n_a + n_b) * 0.5;
             // 液块:胶囊本体被物理拉伸成整个 goo 跨度(后缘滞后=拖尾
-            // 长在胶囊自己身上,渐变光晕一体,没有叠加物);封顶 6×半
-            // 高防远跳拖满条带。垂直向按速度挤压(液滴)。
+            // 长在胶囊自己身上,渐变光晕一体,没有叠加物);封顶随热
+            // 度 ~4×半高,滞后超出即截断回追。垂直向按速度挤压(液滴)。
             let w_drop = if axis_x {
                 goo.to.width()
             } else {
@@ -1579,37 +1579,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 look,
                 geom.metrics.scale(),
             ));
-            // 甩脱的水滴:滞后边被封顶丢在 u_far 之后,空隙里撒一串
-            // 渐小渐淡的小圆点——液体被拽断成水珠追。珠带宽 10×半高
-            // 封顶,超出的远端蒸发(甩太远的珠子追不上就散)。
-            let shed = u_far - u_lo;
-            if shed > r_cap * 1.5 {
-                let reach = shed.min(r_cap * 10.0);
-                let n_drop = ((reach / (r_cap * 2.2)).floor() as usize).clamp(2, 6);
-                let ink = if look.high_contrast {
-                    rgb(look.palette.selected_bg)
-                } else {
-                    look.glow.core_bottom
-                };
-                for k in 1..=n_drop {
-                    let f = k as f32 / (n_drop + 1) as f32; // 0→1 珠带远端往胶囊
-                    let du = (u_far - reach) + reach * f;
-                    let d_r = r_cap * (0.34 + 0.34 * f); // 越靠胶囊越大
-                    let d_a = 0.45 + 0.45 * f; // 越靠胶囊越实
-                    let (dx2, dy2) = if axis_x {
-                        (du / fwd, n_c)
-                    } else {
-                        (n_c, du / fwd)
-                    };
-                    layer = layer.child(
-                        el().absolute(dx2 - d_r, dy2 - d_r)
-                            .w(d_r * 2.0)
-                            .h(d_r * 2.0)
-                            .radius(d_r)
-                            .fill(ink.alpha(d_a)),
-                    );
-                }
-            }
         } else {
             layer = layer.child(sel_marker(
                 wobbled(s.fx.sel_wobble, rect),
