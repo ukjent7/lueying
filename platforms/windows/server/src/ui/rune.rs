@@ -131,34 +131,13 @@ struct Fx {
     since: Option<Instant>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 棋盘滑块的橡皮模拟;无滚动条时为 None。RefCell:poll 与 view
-    /// 共用同一拍模拟(view 在画之前也推一拍),任何一次重绘都让它
-    /// 往目标走,不会停在半路。
-    thumb: std::cell::RefCell<Option<ThumbFx>>,
 }
 
-/// 棋盘滑块的橡皮物理:欠阻尼弹簧追 `scroll.offset` 的目标位;位置
-/// 存轨道的归一化分数(0 顶 1 底,可越界),几何与容量变化不瞬移。
-/// 压缩由撞端瞬间的速度驱动:快滚撞得狠,慢滚几乎不压。
-struct ThumbFx {
-    /// 滑块顶沿的归一化位置与速度(单位:行程/秒)。
-    pos: f32,
-    vel: f32,
-    /// 撞端那瞬记下的压缩量(逻辑点),随后快速衰减。
-    squash: f32,
-    /// 上一次积分的时刻。
-    at: Instant,
-}
-
-/// 橡皮常数:ω≈15、ζ≈0.43,过冲约 22% 再回弹;积分步长 1/240s 抗跳帧。
-const THUMB_K: f32 = 230.0;
-const THUMB_C: f32 = 13.0;
-const THUMB_STEP: f32 = 1.0 / 240.0;
-/// 撞端速度换压缩:行程速度(px/s)× 增益,上限滑块高的 55%。
-const THUMB_HIT: f32 = 0.08;
-const THUMB_SQUASH_MAX: f32 = 0.55;
-/// 压缩衰减率:约 80ms 减半,回弹干脆。
-const THUMB_RELAX: f32 = 12.0;
+/// 棋盘滑块的果冻弹簧:行进时后缘用欠阻尼弹簧,撞端过冲即压缩、
+/// 回弹复原;交给元素布局动画(rt.animating 车道)跑,帧必到,
+/// 不押在会被 overlay 宿主滤掉的定时器唤醒上。
+const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
+const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.35, 0.35);
 
 impl Fx {
     fn clear(&mut self) {
@@ -654,142 +633,7 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     } else {
         changed |= s.glaze.take().is_some();
     }
-    changed |= step_thumb(s, tx);
     changed
-}
-
-/// 滚动条的轨道/滑块/目标位(归一化):poll 与 view 共用同一份判据。
-/// 目标只由 `scroll.offset` 决定;无滚动条或行程不足时返回 None。
-fn thumb_target(s: &Candidate) -> Option<(Rect, Rect, f32, f32)> {
-    let geom = s.geom.as_ref()?;
-    let spec_scroll = geom.spec.scroll?;
-    let (track, thumb) =
-        panel::scrollbar_rects(spec_scroll, geom.width, geom.height, &geom.metrics, true)?;
-    let travel = track.height() - thumb.height();
-    if travel <= 0.0 {
-        return None;
-    }
-    let target = ((thumb.top - track.top) / travel).clamp(0.0, 1.0);
-    Some((track, thumb, target, travel))
-}
-
-/// 橡皮模拟的一个积分拍:弹簧追目标,出端点把行进速度记成压缩,
-/// 压缩随时间单独衰减。`dt` 是两次推进之间的真实间隔。
-fn fx_step(fx: &mut ThumbFx, target: f32, travel: f32, thumb_h: f32, dt_total: f32) {
-    let mut remaining = dt_total.min(0.1);
-    while remaining > 0.0 {
-        let dt = remaining.min(THUMB_STEP);
-        remaining -= dt;
-        let acc = THUMB_K * (target - fx.pos) - THUMB_C * fx.vel;
-        fx.vel += acc * dt;
-        fx.pos += fx.vel * dt;
-        // 出端点:把当时的行进速度换成压缩量,只记最狠的一次。
-        if fx.pos > 1.0 || fx.pos < 0.0 {
-            let squash = (fx.vel.abs() * travel * THUMB_HIT).min(thumb_h * THUMB_SQUASH_MAX);
-            fx.squash = fx.squash.max(squash);
-        }
-        // 压缩在弹簧之外单独衰减,回弹干脆不粘滞。
-        fx.squash *= (-THUMB_RELAX * dt).exp();
-    }
-    if !fx.pos.is_finite() {
-        fx.pos = target;
-        fx.vel = 0.0;
-    }
-}
-
-/// 模拟是否还在动;停下就不再续醒。
-fn thumb_settled(fx: &ThumbFx, target: f32) -> bool {
-    (fx.pos - target).abs() < 0.003 && fx.vel.abs() < 0.02 && fx.squash < 0.5
-}
-
-/// 橡皮模拟推进一拍:还在动就要求再醒,并标 changed 让视图重跑。
-/// 拖动中滑块钉在目标位(跟手),「减少动态效果」直接贴终态。
-fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
-    let now = Instant::now();
-    let Some((_, thumb, target, travel)) = thumb_target(s) else {
-        *s.fx.thumb.borrow_mut() = None;
-        return false;
-    };
-    // 不可见时没有画面可动,直接吸到目标位;也让停靠后的 geom 残影
-    // 留不住一个 ZERO 唤醒空转。拖动中钉在目标位(跟手),「减少动态
-    // 效果」直接贴终态。
-    if !s.visible || s.fx.reduce || s.fx.scroll_drag.is_some() {
-        *s.fx.thumb.borrow_mut() = Some(ThumbFx {
-            pos: target,
-            vel: 0.0,
-            squash: 0.0,
-            at: now,
-        });
-        return false;
-    }
-    let mut slot = s.fx.thumb.borrow_mut();
-    let fx = slot.get_or_insert(ThumbFx {
-        pos: target,
-        vel: 0.0,
-        squash: 0.0,
-        at: now,
-    });
-    let dt = now.duration_since(fx.at).as_secs_f32();
-    fx.at = now;
-    fx_step(fx, target, travel, thumb.height(), dt);
-    if thumb_settled(fx, target) {
-        fx.pos = target;
-        fx.vel = 0.0;
-        fx.squash = 0.0;
-        return false;
-    }
-    // 「每帧步进」契约:rune 给自驱动画的 poll 定的就是 wake_after(ZERO)
-    // ——它让宿主的帧循环持续,按显示速率推进。8ms 一类的未来定时器走
-    // timer_deadline 路径,在 overlay 上会被 waits_for_slot/backoff 滤掉,
-    // 链断一次模拟就永远悬在半空。
-    tx.wake_after(Duration::ZERO);
-    true
-}
-
-/// 视图实际画的滑块:先把模拟推到当前时刻(任何一次重绘都算一拍,
-/// 渲染不依赖唤醒链),再按归一化位折算轨内坐标;端点外钳到轨道,
-/// 压缩缩短高度、贴撞击的那条边。
-fn drawn_thumb(s: &Candidate, track: Rect, thumb: Rect) -> Rect {
-    let Some((_, _, target, travel)) = thumb_target(s) else {
-        return thumb;
-    };
-    if s.fx.reduce || s.fx.scroll_drag.is_some() {
-        return thumb;
-    }
-    let mut slot = s.fx.thumb.borrow_mut();
-    let Some(fx) = slot.as_mut() else {
-        return thumb;
-    };
-    let now = Instant::now();
-    let dt = now.duration_since(fx.at).as_secs_f32();
-    fx.at = now;
-    fx_step(fx, target, travel, thumb.height(), dt);
-    if thumb_settled(fx, target) {
-        fx.pos = target;
-        fx.vel = 0.0;
-        fx.squash = 0.0;
-    }
-    let pos = track.top + fx.pos * travel;
-    let squash = fx.squash.min(thumb.height() * THUMB_SQUASH_MAX);
-    if fx.pos <= 0.0 {
-        // 顶侧:顶沿贴轨顶,从下往上压。
-        return Rect::from_xywh(
-            thumb.left,
-            track.top,
-            thumb.width(),
-            thumb.height() - squash,
-        );
-    }
-    if fx.pos >= 1.0 {
-        // 底侧:底沿贴轨底,从上往下压。
-        return Rect::from_xywh(
-            thumb.left,
-            track.top + travel - (thumb.height() - squash),
-            thumb.width(),
-            thumb.height() - squash,
-        );
-    }
-    Rect::from_xywh(thumb.left, pos, thumb.width(), thumb.height())
 }
 
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
@@ -949,6 +793,17 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             last.view.highlight != view.highlight
                 && last.view.page == view.page
                 && last.view.expanded == view.expanded
+        })
+    {
+        tx.animated();
+    }
+    // 棋盘滚动起点变化:animated 提交让滑块沿布局弹簧行进去——行进
+    // 时后缘欠阻尼,撞端过冲即压缩、回弹复原。poll 引发的提交默认
+    // 全部即时落地,必须显式要动画,否则滑块瞬移而原生果冻不播。
+    if s.effects()
+        && !fresh
+        && s.fx.last.as_ref().is_some_and(|last| {
+            last.view.grid_scroll != view.grid_scroll && last.view.expanded && view.expanded
         })
     {
         tx.animated();
@@ -1729,12 +1584,22 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     .fill(look.tint(look.palette.text_tertiary, track_a)),
             )
             .child({
-                let thumb = drawn_thumb(s, track, thumb);
-                el().absolute(thumb.left, thumb.top)
+                // 键控滑块:位置交元素布局动画。行进时后缘欠阻尼,撞端
+                // 过冲就是压缩、回弹复原;帧由 rt.animating 保,不押在
+                // 会被宿主滤掉的定时器唤醒上。拖动与减动态即时跟手。
+                let mut el = el()
+                    .key("grid-thumb")
+                    .absolute(thumb.left, thumb.top)
                     .w(thumb.width())
                     .h(thumb.height())
                     .radius(thumb.width() * 0.5)
                     .fill(look.tint(look.palette.text_tertiary, thumb_a))
+                    .motion(THUMB_LEAD)
+                    .lead(THUMB_LEAD, THUMB_TRAIL);
+                if s.fx.reduce || s.fx.scroll_drag.is_some() {
+                    el = el.instant_changes();
+                }
+                el
             });
     }
     if let Some(cap) = cap {
