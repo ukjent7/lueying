@@ -1693,27 +1693,40 @@ fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
     )
 }
 
-/// 液滴轮廓:滞后缘(u=0)一个尖,领先端(u=W 处)直径 H 的整圆,
-/// 上下两条三次贝塞尔从尖对称鼓进圆的左右切点。一条封闭 path 包完
-/// 整颗水滴,不留「胶囊+尾巴」的叠加接缝。坐标在归一化 (u,n):u
-/// 主轴 0→W 指领先端,n 侧轴;axis_y 转置,fwd<0 沿主轴镜像。
-/// drop=true 收尖,drop=false 退化为两端半圆(胶囊)供她上层复用。
-fn drop_path(w: f32, h: f32, map: impl Fn(f32, f32) -> [f32; 2]) -> Path {
+/// 液滴轮廓:滞后缘(u=0)一个尖,两侧直线切到领先端直径 H 的整圆
+/// 上(切点在圆的左上/左下弧段,不在顶点),圆取两切点间的大弧——
+/// 头是一颗完整的球,尾是一条锥,数学上就是彗星/水滴剪影。侧边用
+/// quadratic 向外微鼓(0.06H)去机械感。坐标在归一化 (u,n):u 主轴
+/// 0→W 指领先端,n 侧轴;axis_y 转置,fwd<0 沿主轴镜像。
+/// 离线光栅化调过的参数,改之前先用 /tmp/drop.py 看剪影。
+fn drop_path(w: f32, h: f32, map: &dyn Fn(f32, f32) -> [f32; 2]) -> Path {
     let r = h * 0.5;
-    Path::new()
-        .move_to(map(0.0, r))
-        // 尖→上切点:贝塞尔把侧边往圆外鼓,圆的切线方向接得上。
-        .cubic_to(map(w * 0.36, h * 0.42), map(w * 0.80, h * 0.02), map(w - r, 0.0))
-        // 领先端半圆(两截 quadratic)。
-        .quad_to(map(w, 0.0), map(w, r))
-        .quad_to(map(w, h), map(w - r, h))
-        // 下切点→尖:与上侧镜像。
-        .cubic_to(map(w * 0.80, h * 0.98), map(w * 0.36, h * 0.58), map(0.0, r))
-        .close()
+    // 圆心最多顶到 u=W-r;W 太小时 clamp 防 acos 越域。
+    let cx = (w - r).max(r * 1.2);
+    let beta = (-r / cx).acos();
+    // 切点相对圆心:(cos β, ±sin β),cos β = -r/cx 是负的→切点在左半圆。
+    let up = (cx + r * beta.cos(), r - r * beta.sin());
+    let down = (cx + r * beta.cos(), r + r * beta.sin());
+    let bow = h * 0.06;
+    let mut path = Path::new().move_to(map(0.0, r)).quad_to(
+        map(up.0 * 0.5, (r + up.1) * 0.5 - bow),
+        map(up.0, up.1),
+    );
+    // 头圆大弧:-β → +β 经过 0°(正右),约 200° 采样 20 段。
+    for i in 1..=20 {
+        let a = -beta + 2.0 * beta * (i as f32 / 20.0);
+        path = path.line_to(map(cx + r * a.cos(), r + r * a.sin()));
+    }
+    path.quad_to(
+        map(down.0 * 0.5, (r + down.1) * 0.5 + bow),
+        map(0.0, r),
+    )
+    .close()
 }
 
 /// 拉伸态选中液滴:单个元素、单条轮廓,与静止胶囊同一盏灯。
-/// 主轴渐变拆成「上亮下暗」两条内部填充;外圈描边晕替胶囊的投影。
+/// 渐变拆成「上亮下暗」:主体 core_bottom,上半部压一条同色轮廓的
+/// 高光填充;外圈同轮廓描边晕替胶囊的投影(shape 不吃元素阴影)。
 fn goo_drop_marker(w: f32, h: f32, axis_x: bool, fwd: f32, look: &Look, scale: f32, rect: Rect) -> El {
     let m = |u: f32, n: f32| -> [f32; 2] {
         let u = if fwd < 0.0 { w - u } else { u };
@@ -1725,17 +1738,11 @@ fn goo_drop_marker(w: f32, h: f32, axis_x: bool, fwd: f32, look: &Look, scale: f
         .h(rect.height())
         .key("sel");
     if look.high_contrast {
-        return el.shape(Shape::new().fill_path(&drop_path(w, h, m), rgb(look.palette.selected_bg)));
+        return el.shape(Shape::new().fill_path(&drop_path(w, h, &m), rgb(look.palette.selected_bg)));
     }
-    let body = drop_path(w, h, m);
-    // 高光层:上 0..0.52H 的子轮廓,底部水平收口,模拟顶亮。
-    let sheen = Path::new()
-        .move_to(m(w * 0.10, h * 0.50))
-        .cubic_to(m(w * 0.36, h * 0.42), m(w * 0.80, h * 0.02), m(w - h * 0.5, 0.0))
-        .quad_to(m(w, 0.0), m(w, h * 0.5))
-        .line_to(m(w * 0.94, h * 0.52))
-        .cubic_to(m(w * 0.70, h * 0.50), m(w * 0.30, h * 0.52), m(w * 0.10, h * 0.50))
-        .close();
+    let body = drop_path(w, h, &m);
+    // 高光:同轮廓压到上 55% 高度,底部弦自然闭合,贴合上缘不留缝。
+    let sheen = drop_path(w, h * 0.55, &m);
     el.shape(
         Shape::new()
             .stroke_path(&body, 7.0 * scale, LineCap::Round, look.glow.core_bottom.alpha(0.16))
