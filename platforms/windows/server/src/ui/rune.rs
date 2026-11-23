@@ -131,8 +131,13 @@ struct Fx {
     since: Option<Instant>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 选中胶囊的液桥动画:目标矩形变化时在旧位残一滴、拉出桥再收编。
+    /// 选中胶囊的液块动画:四条边弹簧采样,胶囊本体拉伸成跨度。
     sel_goo: Option<SelGoo>,
+    /// 聚合余震:高速归位后胶囊按衰减正弦抖(水滴落地)。瞬时与振幅。
+    sel_wobble: Option<(Instant, f32)>,
+    /// 液块播放期尾边追速的全程峰值:聚合瞬间转成余震能量
+    /// (停稳判定要求速度≈0,峰值必须另记)。
+    sel_peak_v: f32,
     /// 上一份内容的 sel 矩形(逻辑点,面板本地);比 view 数据可靠——
     /// 「我→我们」这类纯文字替换也会让胶囊变宽,view.highlight 不变。
     sel_rect: Option<Rect>,
@@ -147,14 +152,32 @@ struct Fx {
 const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
 const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 
-/// 选中胶囊的液桥弹簧:前缘(行进方向侧)走快的临界阻尼先到位,
-/// 后缘走慢的欠阻尼——它滞后拉出的就是桥与拖尾残滴,追上即复圆。
-/// 拖尾 0.42s 是「看得出液体」与「选中不拖泥」的折中(探针实测:
-/// 0.3s 拉丝一闪而过,0.55s 又太拖)。行进中不压缩;后缘过冲就是
-/// 到达瞬间的撞扁,与滑块同一物理语言。
-const GOO_LEAD: rune::Spring = rune::Spring::new(0.18, 0.0);
-// 后缘欠阻尼快收拢:单步只微微拖尾,远跳仍有拉伸液感(探针逐帧选定)。
-const GOO_TRAIL: rune::Spring = rune::Spring::new(0.30, 0.15);
+/// 液块的连击热度:重定向距上一跳 <300ms 计一次连击(封顶 4)。
+/// 慢按与拼命按是两种物理,热度把输入节奏喂进弹簧——拖尾越拉越
+/// 长、甩断的水珠越多。停手一拍热度清零。
+fn goo_heat(prev_t0: Instant, prev_heat: u8, now: Instant) -> u8 {
+    if now.duration_since(prev_t0).as_secs_f32() < 0.30 {
+        (prev_heat + 1).min(4)
+    } else {
+        0
+    }
+}
+/// 前缘走快的临界阻尼:连按下单跳必须在下次按键前到位,否则永
+/// 远落后一格("不跟手"的另一半)。
+const GOO_LEAD: rune::Spring = rune::Spring::new(0.14, 0.0);
+/// 后缘随热度放慢变弹:慢按 0.26s 几乎不拖;连击顶到 0.55s,
+/// 滞后久到甩出拉伸封顶——液体被拽断成水珠追。
+fn goo_trail(heat: u8) -> rune::Spring {
+    rune::Spring::new(
+        (0.26 + 0.07 * heat as f32).min(0.55),
+        (0.15 + 0.02 * heat as f32).min(0.25),
+    )
+}
+/// 拉伸封顶(半高倍数):收紧保持小体量,滞后超出即甩断成珠;
+/// 热度越高封得越晚一点。
+fn goo_cap(heat: u8) -> f32 {
+    (3.5 + 0.25 * heat as f32).min(4.5)
+}
 
 impl Fx {
     fn clear(&mut self) {
@@ -560,16 +583,31 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     // 并保住下一帧唤醒,绝不能提前 return——版本检查与 place() 都
     // 在后面,跳过了新按键要等动画停稳才被看见("按了顿住没反应,
     // 打断像没做"实测就是这个)。打断接力由 place() 在途采样完成。
-    let goo_live = if s.fx.sel_goo.is_some() {
-        let (_, _, _, _, _, done) = s.fx.sel_goo.as_ref().unwrap().sample(Instant::now());
+    let mut goo_live = false;
+    if let Some(g) = &s.fx.sel_goo {
+        let (_, _, _, _, _, done) = g.sample(Instant::now());
+        s.fx.sel_peak_v = s.fx.sel_peak_v.max(g.trail_v(Instant::now()).abs());
         if done {
             s.fx.sel_goo = None;
+            // 聚合瞬间:追击峰值冲量转成落地余震(衰减正弦抖高),
+            // 追得狠才抖,慢步不抖。
+            let amp = (s.fx.sel_peak_v * 0.0005).min(0.30);
+            if amp > 0.06 {
+                s.fx.sel_wobble = Some((Instant::now(), amp));
+            }
+            s.fx.sel_peak_v = 0.0;
         }
         tx.wake_after(Duration::from_millis(0));
-        true
-    } else {
-        false
-    };
+        goo_live = true;
+    }
+    if let Some((w0, _)) = s.fx.sel_wobble {
+        if Instant::now().duration_since(w0).as_secs_f32() > 0.55 {
+            s.fx.sel_wobble = None;
+        } else {
+            tx.wake_after(Duration::from_millis(0));
+            goo_live = true;
+        }
+    }
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘,颜色用弹簧渐变过去。
@@ -784,19 +822,20 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .as_ref()
             .is_some_and(|last| last.view.page == view.page && last.view.expanded == view.expanded)
     {
-        // 起点取在途位置:已有 goo 在飞就先采样它,无缝接力。
+        // 起点取在途位置:已有 goo 在飞就先采样它,无缝接力;连击
+        // 热度也随 t0 带过来(上一跳没凉就 +1)。
         let now = Instant::now();
-        let (l0, r0, t0, b0, vl, vr, vt, vb) = if let Some(g) = &s.fx.sel_goo {
+        let (l0, r0, t0, b0, vl, vr, vt, vb, heat) = if let Some(g) = &s.fx.sel_goo {
             let t = now.duration_since(g.t0).as_secs_f32();
             let run = |e: &GooEdge, lead: bool| {
-                let sp = if lead { GOO_LEAD } else { GOO_TRAIL };
+                let sp = if lead { GOO_LEAD } else { g.trail };
                 sp.sample(e.x0, e.v0, e.target, t)
             };
             let (l, vl) = run(&g.x_l, g.axis_x && g.forward < 0.0);
             let (r, vr) = run(&g.x_r, g.axis_x && g.forward > 0.0);
             let (tp, vt) = run(&g.y_t, !g.axis_x && g.forward < 0.0);
             let (bt, vb) = run(&g.y_b, !g.axis_x && g.forward > 0.0);
-            (l, r, tp, bt, vl, vr, vt, vb)
+            (l, r, tp, bt, vl, vr, vt, vb, goo_heat(g.t0, g.heat, now))
         } else {
             (
                 prev.left,
@@ -807,6 +846,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
                 0.0,
                 0.0,
                 0.0,
+                0,
             )
         };
         // 主轴=两端中心位移大的那轴;方向取主轴符号,纯宽变(中心
@@ -832,6 +872,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             axis_x,
             forward,
             to: cur,
+            trail: goo_trail(heat),
+            heat,
         });
     }
     s.fx.sel_rect = cur_sel;
@@ -1521,7 +1563,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             } else {
                 goo.to.width()
             } / 2.0;
-            let u_far = u_lo.max(u_hi - w_drop - r_cap * 6.0);
+            let u_far = u_lo.max(u_hi - w_drop - r_cap * goo_cap(goo.heat));
             let squash = (1.0 - v_lead * 0.0008).clamp(0.7, 1.0);
             let (l2, t2, w2, h2) = if axis_x {
                 let (a, b) = (u_far / fwd, u_hi / fwd);
@@ -1533,17 +1575,73 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 (n_c - w / 2.0, a.min(b), w, (a - b).abs())
             };
             layer = layer.child(sel_marker(
-                Rect::from_xywh(l2, t2, w2, h2),
+                wobbled(s.fx.sel_wobble, Rect::from_xywh(l2, t2, w2, h2)),
                 look,
                 geom.metrics.scale(),
             ));
+            // 甩脱的水滴:滞后边被封顶丢在 u_far 之后,空隙里撒一串
+            // 渐小渐淡的小圆点——液体被拽断成水珠追。珠带宽 10×半高
+            // 封顶,超出的远端蒸发(甩太远的珠子追不上就散)。
+            let shed = u_far - u_lo;
+            if shed > r_cap * 1.5 {
+                let reach = shed.min(r_cap * 10.0);
+                let n_drop = ((reach / (r_cap * 2.2)).floor() as usize).clamp(2, 6);
+                let ink = if look.high_contrast {
+                    rgb(look.palette.selected_bg)
+                } else {
+                    look.glow.core_bottom
+                };
+                for k in 1..=n_drop {
+                    let f = k as f32 / (n_drop + 1) as f32; // 0→1 珠带远端往胶囊
+                    let du = (u_far - reach) + reach * f;
+                    let d_r = r_cap * (0.34 + 0.34 * f); // 越靠胶囊越大
+                    let d_a = 0.45 + 0.45 * f; // 越靠胶囊越实
+                    let (dx2, dy2) = if axis_x {
+                        (du / fwd, n_c)
+                    } else {
+                        (n_c, du / fwd)
+                    };
+                    layer = layer.child(
+                        el().absolute(dx2 - d_r, dy2 - d_r)
+                            .w(d_r * 2.0)
+                            .h(d_r * 2.0)
+                            .radius(d_r)
+                            .fill(ink.alpha(d_a)),
+                    );
+                }
+            }
         } else {
-            layer = layer.child(sel_marker(rect, look, geom.metrics.scale()));
+            layer = layer.child(sel_marker(
+                wobbled(s.fx.sel_wobble, rect),
+                look,
+                geom.metrics.scale(),
+            ));
         }
     }
     layer = layer.child(viewport);
     layer = layer.child(control_tree(s, geom, look));
     layer
+}
+
+/// 聚合余震:液块归位后衰减正弦(水滴落地)。高度抖动、宽度反向
+/// 补偿(体积守恒的果冻),中心锚定。约 0.5s 三个半波衰减看不见。
+fn wobbled(wobble: Option<(Instant, f32)>, r: Rect) -> Rect {
+    let Some((w0, amp)) = wobble else {
+        return r;
+    };
+    let t = Instant::now().duration_since(w0).as_secs_f32();
+    let w = amp * (-9.0 * t).exp() * (core::f32::consts::TAU * 6.0 * t).sin();
+    if w.abs() < 0.003 && t > 0.4 {
+        return r;
+    }
+    let dh = r.height() * w;
+    let dw = -r.width() * w * 0.55;
+    Rect::from_xywh(
+        r.left - dw / 2.0,
+        r.top - dh / 2.0,
+        r.width() + dw,
+        r.height() + dh,
+    )
 }
 
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
@@ -1591,6 +1689,10 @@ struct SelGoo {
     forward: f32,
     /// 目标矩形(主轴上的半长与垂直半宽,供成形端与残滴尺寸)。
     to: Rect,
+    /// 后缘弹簧:随连击热度变(见 goo_trail);每跳一份,存在结构上。
+    trail: rune::Spring,
+    /// 连击热度:本跳生成时算出,水珠与封顶吃它。
+    heat: u8,
 }
 
 impl SelGoo {
@@ -1599,7 +1701,7 @@ impl SelGoo {
     fn sample(&self, now: Instant) -> (f32, f32, f32, f32, f32, bool) {
         let t = now.duration_since(self.t0).as_secs_f32();
         let run = |e: &GooEdge, lead: bool| {
-            let s = if lead { GOO_LEAD } else { GOO_TRAIL };
+            let s = if lead { GOO_LEAD } else { self.trail };
             s.sample(e.x0, e.v0, e.target, t)
         };
         let (l, vl) = run(&self.x_l, self.axis_x && self.forward < 0.0);
@@ -1617,6 +1719,25 @@ impl SelGoo {
             && eps(&self.y_t, tp, vt)
             && eps(&self.y_b, bt, vb);
         (l, r, tp, bt, v_lead, done)
+    }
+
+    /// 滞后边(追的那条)的瞬时速度。聚合瞬间它仍在冲——记进
+    /// 播放期峰值,归位时转成落地余震的能量。
+    fn trail_v(&self, now: Instant) -> f32 {
+        let t = now.duration_since(self.t0).as_secs_f32();
+        let e = if self.axis_x {
+            if self.forward > 0.0 {
+                self.x_l
+            } else {
+                self.x_r
+            }
+        } else if self.forward > 0.0 {
+            self.y_t
+        } else {
+            self.y_b
+        };
+        let (_, v) = self.trail.sample(e.x0, e.v0, e.target, t);
+        v
     }
 }
 
