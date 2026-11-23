@@ -20,9 +20,9 @@ use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::tok::motion;
 use rune::{
-    App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput, OverlayOptions,
-    OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle, Transition, Tx,
-    canvas, col, el, text,
+    Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
+    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle,
+    Transition, Tx, canvas, col, el, text,
 };
 use rune_text::TextSystem;
 
@@ -1145,6 +1145,10 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         // 捕获图反而会把错位的残影留在候选页即将展开的位置。
         // transition/motion 与 body 同款:展开/收起与入场时跟面板走同一条
         // 轨迹,否则方角补丁会在圆角面板外闪一下。
+        // 背板贴屏不贴形:截图按最终面板矩形一次抓成,展开/收起时
+        // 元素矩形仍跟 body 同一条弹簧,但像素 1:1 不缩放(真玻璃是
+        // 光圈在屏上滑,折射图样不跟着拉伸)。锚边取贴光标的一侧:
+        // 向上展开钉底、向下展开钉顶,收起时正好停在固定条的位置。
         root = root.child(
             el().absolute(bx, by)
                 .w(s.fx.placement.panel.2 as f32 / scale)
@@ -1153,7 +1157,16 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .motion(motion::SETTLE)
                 // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
                 .clip_rounded(panel::PANEL_RADIUS * scale)
-                .pixels_fit(&backdrop.pixels, SurfaceFit::Fill),
+                .pixels_fit(&backdrop.pixels, SurfaceFit::Fill)
+                .surface_unscaled(true)
+                .surface_anchor(
+                    Align::Start,
+                    if s.fx.above == Some(true) {
+                        Align::End
+                    } else {
+                        Align::Start
+                    },
+                ),
         );
     }
     let mut body = col()
@@ -1193,13 +1206,23 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                         .fill(rgba(0x000000, 0.28)),
                 );
             }
-            // 亚克力颗粒:固定噪点图垫在模糊之上,blur 抹不掉。
+            // 亚克力颗粒:固定噪点图垫在模糊之上,blur 抹不掉。与背板
+            // 同一条纪律:噪点 1:1 不随面板形变拉伸,钉在贴光标的一侧。
             if let Some(grain) = &s.grain {
                 body = body.child(
                     el().absolute(0.0, 0.0)
                         .w_full()
                         .h_full()
-                        .pixels_fit(grain, SurfaceFit::Fill),
+                        .pixels_fit(grain, SurfaceFit::Fill)
+                        .surface_unscaled(true)
+                        .surface_anchor(
+                            Align::Start,
+                            if s.fx.above == Some(true) {
+                                Align::End
+                            } else {
+                                Align::Start
+                            },
+                        ),
                 );
             }
             // 环境感知的棱缘 rim:上下 1px 釉线随环境光亮暗,玻璃的
