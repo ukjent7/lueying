@@ -131,7 +131,28 @@ struct Fx {
     since: Option<Instant>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
+    /// 棋盘滑块的橡皮模拟;无滚动条或几何换过时为 None。
+    thumb: Option<ThumbFx>,
 }
+
+/// 棋盘滑块的橡皮物理:欠阻尼弹簧追 `scroll.offset` 的目标位;快速
+/// 滚动冲到轨端时过冲转成压缩,回弹复原。几何/容量变了整体重吸附。
+struct ThumbFx {
+    /// (候选总数, 一屏条数, 轨顶, 轨高, 块高) — 任一变了就重吸附。
+    key: (usize, usize, f32, f32, f32),
+    /// 滑块顶沿位置与速度(逻辑点)。
+    pos: f32,
+    vel: f32,
+    /// 上一次积分的时刻。
+    at: Instant,
+}
+
+/// 橡皮常数:ω≈13、ζ≈0.5,过冲约 16% 再回弹;积分步长 1/240s 抗跳帧。
+const THUMB_K: f32 = 170.0;
+const THUMB_C: f32 = 13.0;
+const THUMB_STEP: f32 = 1.0 / 240.0;
+/// 过冲换压缩的比例上限:滑块最多压掉一半高度。
+const THUMB_SQUASH: f32 = 0.5;
 
 impl Fx {
     fn clear(&mut self) {
@@ -627,7 +648,103 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     } else {
         changed |= s.glaze.take().is_some();
     }
+    changed |= step_thumb(s, tx);
     changed
+}
+
+/// 橡皮模拟推进一拍:还在动就要求再醒,并标 changed 让视图重跑。
+/// 拖动中滑块钉在目标位(跟手),「减少动态效果」直接贴终态。
+fn step_thumb(s: &mut Candidate, tx: &mut Tx) -> bool {
+    let now = Instant::now();
+    let Some(spec_scroll) = s.geom.as_ref().and_then(|geom| geom.spec.scroll) else {
+        s.fx.thumb = None;
+        return false;
+    };
+    let Some(geom) = &s.geom else { return false };
+    let Some((track, thumb)) =
+        panel::scrollbar_rects(spec_scroll, geom.width, geom.height, &geom.metrics, true)
+    else {
+        s.fx.thumb = None;
+        return false;
+    };
+    let key = (
+        spec_scroll.len,
+        spec_scroll.cap,
+        track.top,
+        track.height(),
+        thumb.height(),
+    );
+    if s.fx.reduce || s.fx.scroll_drag.is_some() {
+        s.fx.thumb = Some(ThumbFx {
+            key,
+            pos: thumb.top,
+            vel: 0.0,
+            at: now,
+        });
+        return false;
+    }
+    let fx = s.fx.thumb.get_or_insert(ThumbFx {
+        key,
+        pos: thumb.top,
+        vel: 0.0,
+        at: now,
+    });
+    if fx.key != key {
+        *fx = ThumbFx {
+            key,
+            pos: thumb.top,
+            vel: 0.0,
+            at: now,
+        };
+        return false;
+    }
+    let mut remaining = now.duration_since(fx.at).as_secs_f32().min(0.1);
+    fx.at = now;
+    let moved = fx.pos != thumb.top || fx.vel != 0.0;
+    while remaining > 0.0 {
+        let dt = remaining.min(THUMB_STEP);
+        remaining -= dt;
+        let acc = THUMB_K * (thumb.top - fx.pos) - THUMB_C * fx.vel;
+        fx.vel += acc * dt;
+        fx.pos += fx.vel * dt;
+    }
+    // 到点停稳:吸附目标位,不再续醒;这一帧仍标 changed 画终态。
+    if (fx.pos - thumb.top).abs() < 0.05 && fx.vel.abs() < 2.0 {
+        fx.pos = thumb.top;
+        fx.vel = 0.0;
+        return moved;
+    }
+    tx.wake_after(Duration::from_millis(8));
+    moved
+}
+
+/// 视图实际画的滑块:模拟位在轨道内就用它,冲出端点时压扁贴边。
+fn drawn_thumb(s: &Candidate, track: Rect, thumb: Rect) -> Rect {
+    let Some(fx) = &s.fx.thumb else { return thumb };
+    let travel = (track.height() - thumb.height()).max(0.0);
+    let over_top = (track.top - fx.pos).max(0.0);
+    let over_bottom = (fx.pos - (track.top + travel)).max(0.0);
+    if over_top == 0.0 && over_bottom == 0.0 {
+        return Rect::from_xywh(thumb.left, fx.pos, thumb.width(), thumb.height());
+    }
+    let squash = (over_top.max(over_bottom) * THUMB_SQUASH).min(thumb.height() * 0.5);
+    if over_top > 0.0 {
+        // 顶冲:顶沿贴轨顶,从下往上压。
+        Rect::from_xywh(
+            thumb.left,
+            track.top,
+            thumb.width(),
+            thumb.height() - squash,
+        )
+    } else {
+        // 底冲:底沿贴轨底,从上往下压。
+        Rect::from_xywh(
+            thumb.left,
+            track.top + travel - (thumb.height() - squash),
+            thumb.width(),
+            thumb.height() - squash,
+        )
+    }
 }
 
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
@@ -1566,13 +1683,14 @@ fn control_tree(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     .radius(track.width() * 0.5)
                     .fill(look.tint(look.palette.text_tertiary, track_a)),
             )
-            .child(
+            .child({
+                let thumb = drawn_thumb(s, track, thumb);
                 el().absolute(thumb.left, thumb.top)
                     .w(thumb.width())
                     .h(thumb.height())
                     .radius(thumb.width() * 0.5)
-                    .fill(look.tint(look.palette.text_tertiary, thumb_a)),
-            );
+                    .fill(look.tint(look.palette.text_tertiary, thumb_a))
+            });
     }
     if let Some(cap) = cap {
         let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
