@@ -1579,6 +1579,44 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 look,
                 geom.metrics.scale(),
             ));
+            // 甩脱的水滴:滞后边被封顶丢在 u_far 之后,珠带撒迷你灯珠
+            // ——与胶囊同盏灯(渐变+小光晕),读作液体而非噪点;flat
+            // 纯色点实测在真机是"蓝色棋盘状碎片"。只在 heat≥2(真
+            // 连击)出现,日常按法见不着;珠带 8×半高,远端蒸发。
+            let shed = u_far - u_lo;
+            if shed > r_cap * 2.0 && goo.heat >= 2 {
+                let reach = shed.min(r_cap * 8.0);
+                let n_drop = ((reach / (r_cap * 3.0)).floor() as usize).clamp(2, 4);
+                let scale = geom.metrics.scale();
+                for k in 1..=n_drop {
+                    let f = k as f32 / (n_drop + 1) as f32; // 0→1 珠带远端往胶囊
+                    let du = (u_far - reach) + reach * f;
+                    let d_r = r_cap * (0.42 + 0.36 * f); // 越靠胶囊越大
+                    let d_a = 0.45 + 0.50 * f; // 越靠胶囊越实
+                    let (dx2, dy2) = if axis_x {
+                        (du / fwd, n_c)
+                    } else {
+                        (n_c, du / fwd)
+                    };
+                    let mut bead = el()
+                        .absolute(dx2 - d_r, dy2 - d_r)
+                        .w(d_r * 2.0)
+                        .h(d_r * 2.0)
+                        .radius(d_r)
+                        .opacity(d_a);
+                    bead = if look.high_contrast {
+                        bead.fill(rgb(look.palette.selected_bg))
+                    } else {
+                        bead.gradient(look.glow.core_top, look.glow.core_bottom)
+                            .shadow(
+                                0.0,
+                                d_r * 0.9 * scale,
+                                look.glow.core_bottom.alpha(0.30 * d_a),
+                            )
+                    };
+                    layer = layer.child(bead);
+                }
+            }
         } else {
             layer = layer.child(sel_marker(
                 wobbled(s.fx.sel_wobble, rect),
