@@ -20,7 +20,7 @@ use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::tok::motion;
 use rune::{
-    Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, Live, OverlayHandle, OverlayInput,
+    Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
     OverlayOptions, OverlayPlacement, OverlaySpec, Path, Pixels, Shape, Side, Spring, SurfaceFit,
     TextStyle, Transition, Tx, anchor_rect, canvas, col, el, text,
 };
@@ -126,59 +126,37 @@ struct Fx {
     menu: Menu,
     /// 本次组合的起点;外观扩展的时钟从这儿算。
     since: Option<f64>,
-    /// 本帧的逻辑钟(poll 的 t,秒):液块采样、淡出进度、捕获节流同走
+    /// 本帧的逻辑钟(poll 的 t,秒):水块积分、淡出进度、捕获节流同走
     /// 一口钟,headless 下与虚拟时钟一致,不再各摸各的墙钟。
     now: f64,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 选中几何的目标矩形(面板本地):刚体弹簧的目标。
+    /// 选中几何的目标矩形(面板本地):水块槽位的基准。
     sel_to: Option<Rect>,
-    /// 刚体上一帧写出的绘制矩形(窗口点):量中心速度、判停稳。
-    sel_drawn_last: [f32; 4],
-    /// 中心速度采样:上次采样时间、一阶低通后的速度(逻辑点/秒)、
-    /// 本次行程的峰值速度(停稳后决定余震)。
-    sel_v_at: f64,
-    sel_v: f32,
-    /// 尾流记忆的近期峰值速度:连击之间速度会掉,尾流不会立刻散。
-    sel_v_wake: f32,
-    sel_peak_v: f32,
-    /// 气动形变 0..1:动态压强 v² 的目标经尾流惯性滞后;0=胶囊,
-    /// 1=圆润水滴。展开/翻页/换位直接归零。
-    sel_flow: f32,
-    /// 本提交选中几何直接落位。
-    sel_snap: bool,
-    /// 落位代数:几何元素换 key,旧节点的弹簧轨迹随旧节点一起消失。
-    sel_gen: u64,
-    /// 面板在窗口里的逻辑原点:绘制矩形是窗口点,轮廓与目标都是面板
-    /// 本地,换算用这一份。
-    sel_origin: (f32, f32),
-    /// 选中几何的主轴(true=x)与行进方向(+1 右/下,-1 左/上)。
+    /// 选中水团:沿候选格长轴排的一串水块(面板本地)。
+    sel_blobs: Vec<Blob>,
+    /// 水团的长轴(true=x)与行进方向(+1 右/下,-1 左/上)。
     sel_axis_x: bool,
     sel_forward: f32,
-    /// 聚合余震:高速归位后胶囊按衰减正弦抖(水滴落地)。瞬时与振幅。
-    sel_wobble: Option<(f64, f32)>,
-    /// 甩脱的小水珠(面板本地)。
-    sel_beads: Vec<Bead>,
-    /// 上一次甩珠的时间与序号(key 用)。
-    sel_bead_at: f64,
-    sel_bead_seq: u64,
+    /// 水块物理时钟:上次积分时间(秒)。
+    sel_sim_at: f64,
     /// 上一份内容的 sel 矩形(逻辑点,面板本地);比 view 数据可靠——
     /// 「我→我们」这类纯文字替换也会让胶囊变宽,view.highlight 不变。
     sel_rect: Option<Rect>,
 }
 
-/// 一滴甩脱的水珠:位置与速度是面板本地逻辑点,出生时间与寿命用于
-/// 淡出;id 只给 key,保证同一滴跨帧是同一节点。
+/// 一颗水块:面板本地坐标,弹簧周期与阻尼比决定它跟槽位的滞后。
 #[derive(Clone, Copy)]
-struct Bead {
-    id: u64,
+struct Blob {
     x: f32,
     y: f32,
     vx: f32,
     vy: f32,
+    tx: f32,
+    ty: f32,
     r: f32,
-    born: f64,
-    life: f32,
+    period: f32,
+    bounce: f32,
 }
 
 /// 棋盘滑块的果冻弹簧:后缘(相对行进方向,下行是上沿)走更慢的
@@ -190,29 +168,23 @@ struct Bead {
 const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
 const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 
-/// 选中胶囊的刚体弹簧:前/后缘同一条,只平移,不靠位移把元素拉长。
-/// 0.28s 比原生 LEAD(0.2s)软一点,单步是一段完整滑行。
-const BODY: rune::Spring = rune::Spring::new(0.28, 0.0);
-
-/// 气动模型:尾流强度按动态压强 v² 增长。`FLOW_V_ON` 取单格滑动的
-/// 峰值之上(108pt 格实测约 680pt/s),单步不起形;`FLOW_V_FULL` 是
-/// 按住方向键的巡航速度(实测约 2000pt/s),到顶就是满水滴。
-const FLOW_V_ON: f32 = 720.0;
-const FLOW_V_FULL: f32 = 1800.0;
-/// 尾流惯性:起形 40ms、退形 120ms。单步的短峰来不及把液面拉满,
-/// 连击才会持续供能——这就是「速度越快、加速度越高,形变越大」。
-const FLOW_GROW: f32 = 0.04;
-const FLOW_DECAY: f32 = 0.12;
-/// 中心速度的一阶低通时间常数。
-const SPEED_TAU: f32 = 0.045;
-/// 满形时尾端圆角收到 0.55r:圆润的水滴尾,不是尖锥,更不拉长。
-const DROP_TAIL_R: f32 = 0.55;
-/// 侧边外鼓强度:满形时鼓包正好抵到原矩形边,所以有效高度先收。
-const DROP_BOW: f32 = 0.30;
-/// 甩珠门槛:满形且高速才掉小水珠;每 75ms 一滴,0.32s 淡完。
-const BEAD_FLOW: f32 = 0.72;
-const BEAD_EVERY: f64 = 0.075;
-const BEAD_LIFE: f32 = 0.32;
+/// 水团模型:水块基准半径 = 格高的 0.28;数量按长轴长度自动取 5~9。
+const WATER_R: f32 = 0.28;
+/// 水块的长轴步长/半径比:长轴每 0.34 个格高排一颗,格越宽水块越多。
+const WATER_STEP: f32 = 0.34;
+/// metaball 等值面阈值:越大水块越瘦、脖子越细;2.0 时静止是一颗
+/// 贴合格高的水团,拉开时自然断成几颗。
+const WATER_THR: f32 = 2.0;
+/// 头端弹簧周期 0.15s、尾端 0.45s;阻尼比头 0.90、尾 0.70。
+/// 头先走、尾滞后,停稳时尾部过冲一点再回弹,就是水块撞回一团。
+const WATER_HEAD_T: f32 = 0.15;
+const WATER_TAIL_T: f32 = 0.30;
+const WATER_HEAD_Z: f32 = 0.90;
+const WATER_TAIL_Z: f32 = 0.20;
+/// 高光层:同水块中心上移 0.16 格高、半径 0.74;主体吃 core_bottom,
+/// 高光吃 core_top,读作水面上的天光。
+const WATER_SHEEN_DY: f32 = 0.16;
+const WATER_SHEEN_R: f32 = 0.74;
 
 impl Fx {
     fn clear(&mut self) {
@@ -223,19 +195,110 @@ impl Fx {
         matches!(self.presence, Presence::FadingOut(_))
     }
 
-    /// 选中几何直接落位:换代数让旧节点连同在途弹簧一起退场,速度、
-    /// 气动形变、水珠与余震全部归零。展开/翻页/换位/减动效走这里。
-    fn snap_sel(&mut self, now: f64) {
-        self.sel_snap = true;
-        self.sel_gen = self.sel_gen.wrapping_add(1);
-        self.sel_v = 0.0;
-        self.sel_v_wake = 0.0;
-        self.sel_flow = 0.0;
-        self.sel_peak_v = 0.0;
-        self.sel_v_at = now;
-        self.sel_drawn_last = [0.0; 4];
-        self.sel_beads.clear();
-        self.sel_wobble = None;
+    /// 选中水团直接落位:展开/翻页/新组合/减动效时把水块摆到新槽位,
+    /// 不跨旧形态流过去。
+    fn reset_water(&mut self, rect: Rect, now: f64) {
+        self.sel_to = Some(rect);
+        self.sel_axis_x = rect.width() >= rect.height();
+        let n = blob_count(rect, self.sel_axis_x);
+        self.sel_blobs.clear();
+        self.sel_blobs.reserve(n);
+        for i in 0..n {
+            let b = blob_slot(rect, self.sel_axis_x, self.sel_forward, i, n);
+            self.sel_blobs.push(b);
+        }
+        self.sel_sim_at = now;
+    }
+
+    /// 一帧水块积分。返回 true 表示还有水块在动,需要下一帧唤醒。
+    fn step_water(&mut self, rect: Rect, dt: f32) -> bool {
+        let axis_x = rect.width() >= rect.height();
+        let n = blob_count(rect, axis_x);
+        if axis_x != self.sel_axis_x || n != self.sel_blobs.len() {
+            // 条↔棋盘/文字宽度变化:水块数量或长轴变了,直接复位,
+            // 不让旧槽位的弹簧把水团拉成一条跨形态的桥。
+            self.reset_water(rect, self.sel_sim_at);
+            return true;
+        }
+        self.sel_axis_x = axis_x;
+        let mut moving = false;
+        for (i, b) in self.sel_blobs.iter_mut().enumerate() {
+            let slot = blob_slot(rect, axis_x, self.sel_forward, i, n);
+            b.tx = slot.tx;
+            b.ty = slot.ty;
+            b.r = slot.r;
+            b.period = slot.period;
+            b.bounce = slot.bounce;
+            let w = std::f32::consts::TAU / b.period.max(0.05);
+            let k = w * w;
+            let c = 2.0 * b.bounce * w;
+            let ax = (b.tx - b.x) * k - b.vx * c;
+            let ay = (b.ty - b.y) * k - b.vy * c;
+            b.vx += ax * dt;
+            b.vy += ay * dt;
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            if (b.tx - b.x).abs() > 0.02
+                || (b.ty - b.y).abs() > 0.02
+                || b.vx.abs() > 0.5
+                || b.vy.abs() > 0.5
+            {
+                moving = true;
+            }
+        }
+        moving
+    }
+}
+
+/// 水块数量:长轴每 0.34 个短轴排一颗,夹在 5~9 颗。
+fn blob_count(rect: Rect, axis_x: bool) -> usize {
+    let (long, short) = if axis_x {
+        (rect.width(), rect.height())
+    } else {
+        (rect.height(), rect.width())
+    };
+    ((long / (short * WATER_STEP)).round() as usize).clamp(5, 9)
+}
+
+/// 一颗水块的静止槽位:长轴从头到尾按半径梯度排开,头端大而硬,
+/// 尾端小而软。水块中心按行进方向留出首尾半径,整团水收在候选格里。
+fn blob_slot(rect: Rect, axis_x: bool, fwd: f32, i: usize, n: usize) -> Blob {
+    let short_len = if axis_x { rect.height() } else { rect.width() };
+    let r = short_len * WATER_R;
+    let u = if n > 1 {
+        i as f32 / (n - 1) as f32
+    } else {
+        0.5
+    };
+    let lead = if fwd >= 0.0 { u } else { 1.0 - u };
+    let rr = r * (0.85 + 0.30 * lead);
+    let rh = r * 1.15;
+    let rt = r * 0.85;
+    let start = if axis_x { rect.left } else { rect.top };
+    let end = if axis_x { rect.right } else { rect.bottom };
+    let (lo, hi) = if fwd >= 0.0 {
+        (start + rt, end - rh)
+    } else {
+        (start + rh, end - rt)
+    };
+    let along = lo + (hi - lo) * u;
+    let (x, y) = if axis_x {
+        (along, rect.center_y())
+    } else {
+        (rect.center_x(), along)
+    };
+    // lead=1 头端:周期短、阻尼大;lead=0 尾端:周期长、阻尼小。
+    let lag = 1.0 - lead;
+    Blob {
+        x,
+        y,
+        vx: 0.0,
+        vy: 0.0,
+        tx: x,
+        ty: y,
+        r: rr,
+        period: WATER_HEAD_T + WATER_TAIL_T * lag,
+        bounce: WATER_HEAD_Z - WATER_TAIL_Z * lag,
     }
 }
 
@@ -336,9 +399,6 @@ struct Candidate {
     visible: bool,
     /// 光标屏缩放;placement 与内容共用。
     scale: f32,
-    /// 选中几何的逐帧绘制矩形(窗口点):原生 lead 弹簧画完每帧写回,
-    /// 轮廓据此重建,弹簧本体不再手采样。
-    sel_drawn: Live<[f32; 4]>,
     /// 最近一次摆位算出的几何。
     geom: Option<Geom>,
     sent: Option<lueying_ext::proto::candidate::CandidateState>,
@@ -371,7 +431,6 @@ impl Candidate {
             private: false,
             visible: false,
             scale: 1.0,
-            sel_drawn: Live::new([0.0; 4]),
             geom: None,
             sent: None,
             comp: 0,
@@ -620,109 +679,10 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     // 全窗一口钟:poll 的 t 是 Rune 帧钟,view 里所有采样都读它。
     s.fx.now = now;
-    // 刚体选中几何:前后缘同一条弹簧,只平移不靠位移拉长。每帧读
-    // 画完写回的绘制矩形量中心速度,气动形变由速度决定,不再从
-    // 「画出来的矩形比目标长多少」取尾长——那会把棋盘一格的位移
-    // 直接读成尾巴。只标记本轮要重绘并保住下一帧唤醒,绝不能提前
-    // return——版本检查与 place() 都在后面,跳过了新按键要等动画
-    // 停稳才被看见("按了顿住没反应,打断像没做"实测就是这个)。
-    let snap = s.fx.sel_snap;
-    s.fx.sel_snap = false;
+    // 水团:每帧积分水块弹簧;有块在动就保住下一帧唤醒。绝不能提前
+    // return——版本检查与 place() 都在后面,跳过了新按键要等动画停稳
+    // 才被看见("按了顿住没反应,打断像没做"实测就是这个)。
     let mut sel_live = false;
-    let drawn = s.sel_drawn.get();
-    if snap {
-        // 直接落位那一拍:旧矩形到目标是一步跳,不能当速度记,
-        // 否则页变/形变会凭空拉出液面。
-        s.fx.sel_v = 0.0;
-        s.fx.sel_v_wake = 0.0;
-        s.fx.sel_flow = 0.0;
-        s.fx.sel_peak_v = 0.0;
-        s.fx.sel_drawn_last = [0.0; 4];
-        s.fx.sel_v_at = now;
-        s.fx.sel_beads.clear();
-        s.fx.sel_bead_at = now;
-    } else if drawn[2] > 0.0 {
-        let dt = (now - s.fx.sel_v_at).clamp(1.0 / 1000.0, 0.05) as f32;
-        let cx = drawn[0] + drawn[2] * 0.5;
-        let cy = drawn[1] + drawn[3] * 0.5;
-        let last = s.fx.sel_drawn_last;
-        let moved = drawn != last;
-        if last[2] > 0.0 {
-            let dx = cx - (last[0] + last[2] * 0.5);
-            let dy = cy - (last[1] + last[3] * 0.5);
-            let step = (dx * dx + dy * dy).sqrt();
-            // 一阶低通:帧间抖动不直接进气动项。
-            let a = 1.0 - (-dt / SPEED_TAU).exp();
-            s.fx.sel_v += (step / dt - s.fx.sel_v) * a;
-            if step > 0.05 {
-                if dx.abs() >= dy.abs() {
-                    s.fx.sel_axis_x = true;
-                    s.fx.sel_forward = if dx < 0.0 { -1.0 } else { 1.0 };
-                } else {
-                    s.fx.sel_axis_x = false;
-                    s.fx.sel_forward = if dy < 0.0 { -1.0 } else { 1.0 };
-                }
-            }
-            s.fx.sel_peak_v = s.fx.sel_peak_v.max(s.fx.sel_v);
-        }
-        s.fx.sel_v_at = now;
-        s.fx.sel_drawn_last = drawn;
-
-        // 动态压强 v² → 尾流目标。速度取近期峰值(160ms 衰减):连击
-        // 之间速度会掉,尾流不会立刻散;单步峰值仍低于门槛,不起形。
-        s.fx.sel_v_wake = (s.fx.sel_v_wake * (-dt / 0.16).exp()).max(s.fx.sel_v);
-        let v = s.fx.sel_v_wake;
-        let target = ((v * v - FLOW_V_ON * FLOW_V_ON)
-            / (FLOW_V_FULL * FLOW_V_FULL - FLOW_V_ON * FLOW_V_ON))
-            .clamp(0.0, 1.0);
-        let tau = if target > s.fx.sel_flow {
-            FLOW_GROW
-        } else {
-            FLOW_DECAY
-        };
-        s.fx.sel_flow += (target - s.fx.sel_flow) * (1.0 - (-dt / tau).exp());
-        if target == 0.0 && s.fx.sel_flow < 0.002 {
-            s.fx.sel_flow = 0.0;
-        }
-        beads_step(s, now, dt);
-        // 拖滚动条不是选中迁移:滑块在动,液面不起形也不甩珠。
-        if s.fx.scroll_drag.is_some() {
-            s.fx.sel_v = 0.0;
-            s.fx.sel_flow = 0.0;
-            s.fx.sel_beads.clear();
-        }
-        if moved || s.fx.sel_flow > 0.0 || !s.fx.sel_beads.is_empty() {
-            tx.wake_after(Duration::ZERO);
-            sel_live = true;
-        }
-    }
-    // 停稳:高速行程收尾给一下余震;单步峰值不过门槛,不抖。峰值
-    // 无论是否够抖都要清,不然下一次慢步会拿旧峰值补一抖。
-    if let Some(target) = s.fx.sel_to
-        && s.fx.sel_wobble.is_none()
-        && s.fx.sel_flow < 0.05
-        && s.fx.sel_v < 60.0
-        && drawn[2] > 0.0
-        && (drawn[0] - (target.left + s.fx.sel_origin.0)).abs() < 0.5
-        && (drawn[1] - (target.top + s.fx.sel_origin.1)).abs() < 0.5
-        && (drawn[2] - target.width()).abs() < 0.5
-        && (drawn[3] - target.height()).abs() < 0.5
-    {
-        let amp =
-            ((s.fx.sel_peak_v - FLOW_V_ON) / (FLOW_V_FULL - FLOW_V_ON) * 0.14).clamp(0.0, 0.14);
-        if amp > 0.02 {
-            s.fx.sel_wobble = Some((now, amp));
-        }
-        s.fx.sel_peak_v = 0.0;
-    }
-    if let Some((w0, _)) = s.fx.sel_wobble {
-        if (now - w0) as f32 > 0.55 {
-            s.fx.sel_wobble = None;
-        } else {
-            tx.wake_after(Duration::ZERO);
-            sel_live = true;
-        }
-    }
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘,颜色用弹簧渐变过去。
@@ -783,6 +743,30 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
         park(s);
         return true;
     }
+    // 水团物理:每帧从头到尾积分水块弹簧。展开/翻页的复位已在 place
+    // 里做;这里只推进在途水块,有块动就保住下一帧唤醒。
+    if let Some(rect) = s.fx.sel_to {
+        if s.fx.sel_blobs.is_empty() {
+            s.fx.reset_water(rect, now);
+            sel_live = true;
+        } else {
+            let dt = (now - s.fx.sel_sim_at).clamp(0.0, 0.05) as f32;
+            s.fx.sel_sim_at = now;
+            if dt > 0.0 {
+                let mut left = dt;
+                let mut moving = false;
+                while left > 0.0 {
+                    let h = left.min(1.0 / 120.0);
+                    moving |= s.fx.step_water(rect, h);
+                    left -= h;
+                }
+                if moving {
+                    tx.wake_after(Duration::ZERO);
+                    sel_live = true;
+                }
+            }
+        }
+    }
     if s.live_glass(high_contrast) {
         let rect = s.fx.placement.panel;
         if s.backdrop_read
@@ -816,76 +800,6 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
         changed |= s.glaze.take().is_some();
     }
     changed | sel_live
-}
-
-/// 水珠:先按阻力衰减已甩出的,再在满形高速时从尾尖续一滴。位置与
-/// 速度都在面板本地,content 只负责画;每滴有独立寿命,淡完移除。
-fn beads_step(s: &mut Candidate, now: f64, dt: f32) {
-    let mut i = 0;
-    while i < s.fx.sel_beads.len() {
-        let b = &mut s.fx.sel_beads[i];
-        let age = (now - b.born) as f32;
-        if age >= b.life {
-            s.fx.sel_beads.swap_remove(i);
-            continue;
-        }
-        let drag = (-dt / 0.06).exp();
-        b.vx *= drag;
-        b.vy *= drag;
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
-        i += 1;
-    }
-    let v = s.fx.sel_v;
-    if s.fx.sel_flow < BEAD_FLOW || v < FLOW_V_ON + (FLOW_V_FULL - FLOW_V_ON) * 0.55 {
-        return;
-    }
-    if now - s.fx.sel_bead_at < BEAD_EVERY {
-        return;
-    }
-    let drawn = s.fx.sel_drawn_last;
-    if drawn[2] <= 0.0 {
-        return;
-    }
-    s.fx.sel_bead_at = now;
-    s.fx.sel_bead_seq = s.fx.sel_bead_seq.wrapping_add(1);
-    let (px, py) = s.fx.sel_origin;
-    let left = drawn[0] - px;
-    let top = drawn[1] - py;
-    let (w, h) = (drawn[2], drawn[3]);
-    let axis_x = s.fx.sel_axis_x;
-    let fwd = if s.fx.sel_forward < 0.0 { -1.0 } else { 1.0 };
-    let r_cap = w.min(h) * 0.5;
-    let (tx, ty) = if axis_x {
-        (if fwd > 0.0 { left } else { left + w }, top + h * 0.5)
-    } else {
-        (left + w * 0.5, if fwd > 0.0 { top } else { top + h })
-    };
-    let mut seed = (now * 1000.0) as u64 ^ s.fx.sel_bead_seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    let mut j = || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((seed >> 33) as f32 / (u32::MAX >> 1) as f32) - 0.5
-    };
-    let side = if axis_x { h * 0.16 } else { w * 0.16 };
-    let back = v * 0.08;
-    let (bx, by, vx, vy) = if axis_x {
-        (tx, ty + j() * side, -fwd * back, j() * back * 0.30)
-    } else {
-        (tx + j() * side, ty, j() * back * 0.30, -fwd * back)
-    };
-    let r = (r_cap * (0.16 + 0.08 * (j() + 0.5))).max(1.2);
-    s.fx.sel_beads.push(Bead {
-        id: s.fx.sel_bead_seq,
-        x: bx,
-        y: by,
-        vx,
-        vy,
-        r,
-        born: now,
-        life: BEAD_LIFE,
-    });
 }
 
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
@@ -944,8 +858,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.hover = None;
         s.fx.chev = false;
         s.fx.since = Some(s.fx.now);
-        // 新组合从头起形:上一次组合的水滴/水珠/速度不带进来。
-        s.fx.snap_sel(s.fx.now);
+        // 新一次组合从右/下起形,不继承上一次的尾端方向。
+        s.fx.sel_forward = 1.0;
         // 入场过渡只在 animated 提交里播;这一条提交把它打出来。
         tx.animated();
     }
@@ -992,28 +906,45 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.scale = place::scale_at(l.min(r), b);
     }
     let geom = geom_of(s, view);
-    // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):刚体弹簧
-    // 只平移,气动形变在 content 里按实测速度取水滴;页变/形态变各
-    // 有推入与形变,选中几何直接落位,不跨形态拉一条旧坐标的桥。
+    // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):水块槽位
+    // 跟着矩形走,正常迁移让水块自己流;页变/形态变直接复位,不跨
+    // 旧形态拉一条水桥。
     let cur_sel = sel_rect_of(s, &geom);
     let prev_sel = s.fx.sel_rect;
     let same_form =
         s.fx.last
             .as_ref()
             .is_some_and(|last| last.view.page == view.page && last.view.expanded == view.expanded);
+    s.fx.sel_to = cur_sel;
+    let mut water_reset = fresh;
     if cur_sel != prev_sel {
-        s.fx.sel_to = cur_sel;
-        if let (Some(prev), Some(cur)) = (prev_sel, cur_sel) {
+        if let (Some(cur), Some(prev)) = (cur_sel, prev_sel) {
             let dx = (cur.left + cur.width() / 2.0) - (prev.left + prev.width() / 2.0);
             let dy = (cur.top + cur.height() / 2.0) - (prev.top + prev.height() / 2.0);
-            s.fx.sel_axis_x = dx.abs() >= dy.abs();
-            let d = if s.fx.sel_axis_x { dx } else { dy };
-            s.fx.sel_forward = if d < 0.0 { -1.0 } else { 1.0 };
+            let axis_x = cur.width() >= cur.height();
+            s.fx.sel_axis_x = axis_x;
+            // 只在水团长轴方向上的迁移改前后端;棋盘竖移时水团仍横排,
+            // 让整排一起落,不把横向槽位当成行进方向。
+            if (axis_x && dx.abs() >= dy.abs()) || (!axis_x && dy.abs() >= dx.abs()) {
+                let d = if axis_x { dx } else { dy };
+                s.fx.sel_forward = if d < 0.0 { -1.0 } else { 1.0 };
+            }
+        } else if let Some(cur) = cur_sel {
+            s.fx.sel_axis_x = cur.width() >= cur.height();
         }
-        if s.effects() && !fresh && prev_sel.is_some() && s.fx.scroll_drag.is_none() && same_form {
+        if s.effects()
+            && !fresh
+            && prev_sel.is_some()
+            && cur_sel.is_some()
+            && s.fx.scroll_drag.is_none()
+            && same_form
+        {
+            // 水块自己带弹簧,这里只需把下一帧叫醒;tx.animated 保留
+            // 给页面/面板的其他过渡。
             tx.animated();
+            tx.wake_after(Duration::ZERO);
         } else {
-            s.fx.snap_sel(s.fx.now);
+            water_reset = true;
         }
     }
     s.fx.sel_rect = cur_sel;
@@ -1043,14 +974,13 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
-        // 形态变:选中几何直接落在新形态的目标格,旧节点连同在途
-        // 弹簧一起退场;不跨旧棋盘坐标拉一条桥。
-        s.fx.snap_sel(s.fx.now);
+        // 形态变:选中水团直接落在新形态的目标格,不跨旧棋盘坐标流。
+        water_reset = true;
     }
     // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。上一帧也得是
     // 固定条:展开→收起那拍页码常变,武装了只会在收起后的重挂载里
     // 回放。武装单拍有效:下一提交页码没再变就清掉,不然残留期间
-    // 任何视口重挂载(液块水珠增减都会顶动它)都把推入再播一遍,
+    // 任何视口重挂载(水块增减都会顶动它)都把推入再播一遍,
     // 读作元素突然从右缘飞回——收起收尾时的「右飞」就是这个。
     if s.effects()
         && !view.expanded
@@ -1068,13 +998,13 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         tx.animated();
         s.fx.hover = None;
         s.fx.chev = false;
-        // 页间格子整批换人,选中几何两端都已失效,同上直接落位。
-        s.fx.snap_sel(s.fx.now);
+        // 页间格子整批换人,选中水团两端都已失效,同上直接落位。
+        water_reset = true;
     } else {
         s.fx.slide_edge = None;
     }
-    // 同形态、同页内选中迁移:液桥取代元素弹簧(上面已按矩形变化
-    // 起 goo);页变走推入、形态变走形变,各自已 animated。
+    // 同形态、同页内选中迁移由水块弹簧自己流;页变走推入、形态变走
+    // 形变,各自已 animated。
     // 棋盘滚动起点变化:animated 提交让滑块沿布局弹簧行进去——行进
     // 时后缘欠阻尼,撞端过冲即压缩、回弹复原。poll 引发的提交默认
     // 全部即时落地,必须显式要动画,否则滑块瞬移而原生果冻不播。
@@ -1086,14 +1016,14 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     {
         tx.animated();
     }
-    // 面板整体挪动时,上一帧的绘制矩形还带着旧窗口原点;轮廓这一拍
-    // 直接落目标,避免一帧错位。
-    s.fx.sel_origin = (
-        (placement.panel.0 - placement.window.0) as f32 / geom.metrics.scale(),
-        (placement.panel.1 - placement.window.1) as f32 / geom.metrics.scale(),
-    );
-    if (placement.panel.0, placement.panel.1) != (s.fx.placement.panel.0, s.fx.placement.panel.1) {
-        s.fx.snap_sel(s.fx.now);
+    if water_reset {
+        match s.fx.sel_to {
+            Some(rect) => s.fx.reset_water(rect, s.fx.now),
+            None => {
+                s.fx.sel_blobs.clear();
+                s.fx.sel_sim_at = s.fx.now;
+            }
+        }
     }
     s.fx.placement = placement;
     // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
@@ -1285,6 +1215,8 @@ fn park(s: &mut Candidate) {
     s.grain_size = None;
     s.glaze = None;
     s.glaze_read = None;
+    s.fx.sel_to = None;
+    s.fx.sel_blobs.clear();
     publish_state(s, None);
 }
 
@@ -1606,7 +1538,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
 }
 
 /// 选中槽的目标矩形(面板本地逻辑点);place() 与 content() 共用一份
-/// 计算——液桥的起点/终点与它严格同源。
+/// 计算——水团槽位的基准与它严格同源。
 fn sel_rect_of(s: &Candidate, geom: &Geom) -> Option<Rect> {
     let meas: &dyn Measure = s;
     if geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap) {
@@ -1649,7 +1581,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     }
     // 翻页推入挂在视口上:只在翻页滑动时播;挂在条自己的包装层会断开
     // 格子两侧的父路径。fresh 的 animated 提交里挂载不重演,否则会与
-    // 面板入场过渡叠着闪。key 钉住视口身份:液块水珠/选中标记在它
+    // 面板入场过渡叠着闪。key 钉住视口身份:水块/选中标记在它
     // 前面来去,没 key 时它的父内 index 跟着挪=每帧重挂载,武装过
     // 的推入被反复回放,元素看着从右缘一次次飞入。
     viewport = viewport.key("viewport");
@@ -1690,116 +1622,57 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             ));
         }
     }
-    // sel 垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
+    // 选中水团垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
     let mut layer = el().w_full().h_full();
-    if let Some(target) = sel_rect {
-        // 选中几何:刚体弹簧驱动整块平移,气动形变由 poll 实测的
-        // 中心速度决定。几何本身透明(零 alpha 仍会被画,
-        // `drawn_rect_into` 每帧有值),水滴/胶囊盖在它上面。
+    if let Some(target) = sel_rect
+        && !s.fx.sel_blobs.is_empty()
+    {
         let scale = geom.metrics.scale();
-        let (panel_x, panel_y) = s.fx.sel_origin;
-        let live = s.sel_drawn.get();
-        let drawn = if s.fx.sel_snap || live[2] <= 0.0 {
-            target
-        } else {
-            Rect::from_xywh(live[0] - panel_x, live[1] - panel_y, live[2], live[3])
-        };
-        let mut geom_el = el()
-            .key(format!("sel-geom-{}", s.fx.sel_gen))
-            .absolute(target.left, target.top)
-            .w(target.width())
-            .h(target.height())
-            .radius(target.height() * 0.5)
-            .fill(Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            })
-            .motion(BODY)
-            .drawn_rect_into(&s.sel_drawn);
-        if s.fx.sel_snap || !s.effects() || s.fx.reduce || s.fx.scroll_drag.is_some() {
-            geom_el = geom_el.instant_changes();
-        }
-        layer = layer.child(geom_el);
-
-        let axis_x = s.fx.sel_axis_x;
-        let fwd = if s.fx.sel_forward < 0.0 { -1.0 } else { 1.0 };
-        // 气动形变 0..1;直接落位/减动效/拖滚动条时不起形。只在水
-        // 平长条上把尾端收圆——棋盘格子横长,竖向平移没有可收的尾。
-        let flow = if s.fx.sel_snap || !s.effects() || s.fx.reduce || s.fx.scroll_drag.is_some() {
-            0.0
-        } else {
-            s.fx.sel_flow
-        };
-        let taper = if axis_x && drawn.width() > drawn.height() * 1.2 {
-            flow * flow * (3.0 - 2.0 * flow)
-        } else {
-            0.0
-        };
-        // 安全网:弹簧只会在面板内动;真出板就裁到板内,绝不把旧
-        // 形态坐标画成整盘蓝块。
-        let left = drawn.left.max(0.0);
-        let top = drawn.top.max(0.0);
-        let right = drawn.right.min(geom.width);
-        let bottom = drawn.bottom.min(geom.height);
-        if right > left && bottom > top {
-            let shown = Rect::from_xywh(left, top, right - left, bottom - top);
-            // 小水珠垫在液滴下面:从尾尖甩出、向后减速、淡出。
-            for b in &s.fx.sel_beads {
-                let age = (s.fx.now - b.born) as f32;
-                let life = (1.0 - age / b.life).clamp(0.0, 1.0);
-                if life <= 0.0
-                    || b.x - b.r < 0.0
-                    || b.y - b.r < 0.0
-                    || b.x + b.r > geom.width
-                    || b.y + b.r > geom.height
-                {
-                    continue;
-                }
-                let a = 0.85 * life * life;
-                let mut bead = el()
-                    .key(format!("bead-{}", b.id))
-                    .absolute(b.x - b.r, b.y - b.r)
-                    .w(b.r * 2.0)
-                    .h(b.r * 2.0)
-                    .radius(b.r)
-                    .opacity(a)
-                    .instant_changes()
-                    // 寿命到就消失,不留 0.15s 的残影。
-                    .transition(Transition::none());
-                bead = if look.high_contrast {
-                    bead.fill(rgb(look.palette.selected_bg))
-                } else {
-                    bead.gradient(look.glow.core_top, look.glow.core_bottom)
-                        .shadow(
-                            0.0,
-                            b.r * 0.9 * scale,
-                            look.glow.core_bottom.alpha(0.30 * a),
-                        )
-                };
-                layer = layer.child(bead);
-            }
-            if taper > 0.04 {
-                // 满形是圆润水滴:整块仍在候选格里,只把尾端收圆,
-                // 不向外拉长。头是整圆,尾是 0.28r 的小圆角。
-                layer = layer.child(goo_drop_marker(
-                    shown.width(),
-                    shown.height(),
-                    taper,
-                    axis_x,
-                    fwd,
-                    look,
-                    scale,
-                    shown,
-                ));
+        let row_h = target.height();
+        let body = water_contour(&s.fx.sel_blobs, 0.0, 1.0);
+        if body == Path::new() {
+            // 等值线异常时退回实心胶囊:选中状态不能消失。
+            let mut pill = el()
+                .key("sel")
+                .absolute(target.left, target.top)
+                .w(target.width())
+                .h(target.height())
+                .radius(target.height() * 0.5)
+                .instant_changes();
+            pill = if look.high_contrast {
+                pill.fill(rgb(look.palette.selected_bg))
             } else {
-                layer = layer.child(sel_marker(
-                    wobbled(s.fx.sel_wobble, s.fx.now, shown),
-                    look,
-                    scale,
-                ));
-            }
+                pill.gradient(look.glow.core_top, look.glow.core_bottom)
+                    .shadow(0.0, 14.0 * scale, look.glow.core_bottom.alpha(0.30))
+                    .shadow(0.0, 26.0 * scale, look.glow.core_bottom.alpha(0.16))
+            };
+            layer = layer.child(pill);
+        } else {
+            let mut water = el()
+                .key("sel")
+                .absolute(0.0, 0.0)
+                .w(geom.width)
+                .h(geom.height)
+                .instant_changes();
+            water = if look.high_contrast {
+                water.shape(Shape::new().fill_path(&body, rgb(look.palette.selected_bg)))
+            } else {
+                // 同一条等值线压成上移、缩小的高光层:水块分开时每颗
+                // 有自己的亮芯,聚拢时亮芯连成一片水面。
+                let sheen = water_contour(&s.fx.sel_blobs, -row_h * WATER_SHEEN_DY, WATER_SHEEN_R);
+                water.shape(
+                    Shape::new()
+                        .stroke_path(
+                            &body,
+                            7.0 * scale,
+                            LineCap::Round,
+                            look.glow.core_bottom.alpha(0.16),
+                        )
+                        .fill_path(&body, look.glow.core_bottom)
+                        .fill_path(&sheen, look.glow.core_top.alpha(0.80)),
+                )
+            };
+            layer = layer.child(water);
         }
     }
     layer = layer.child(viewport);
@@ -1807,148 +1680,176 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     layer
 }
 
-/// 聚合余震:液块归位后衰减正弦(水滴落地)。高度抖动、宽度反向
-/// 补偿(体积守恒的果冻),中心锚定。约 0.5s 三个半波衰减看不见。
-fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
-    let Some((w0, amp)) = wobble else {
-        return r;
-    };
-    let t = (now - w0) as f32;
-    let w = amp * (-9.0 * t).exp() * (core::f32::consts::TAU * 6.0 * t).sin();
-    if w.abs() < 0.003 && t > 0.4 {
-        return r;
+/// 水团的 metaball 等值线:Σ r²/(d²+1) = WATER_THR。用 marching squares
+/// 取闭合环,统一方向后拼成一条 Path。`dy` 上移、`rk` 缩半径就是水面
+/// 高光层;两者共用同一套水块,水块分开时高光也跟着分成几颗亮芯。
+fn water_contour(blobs: &[Blob], dy: f32, rk: f32) -> Path {
+    if blobs.is_empty() {
+        return Path::new();
     }
-    let dh = r.height() * w;
-    let dw = -r.width() * w * 0.55;
-    Rect::from_xywh(
-        r.left - dw / 2.0,
-        r.top - dh / 2.0,
-        r.width() + dw,
-        r.height() + dh,
-    )
-}
-
-/// 水滴轮廓:领先端(u=W)是整圆头,滞后端(u=0)是半径 r_t 的小圆角,
-/// 两侧用两圆的外公切线连接,再向外微鼓成饱满的肚子。`taper` 0 时
-/// r_t=r、鼓包为 0,就是标准胶囊;1 时 r_t=0.55r,是圆润的水滴——
-/// 整条轮廓仍在 [0,W]×[0,H] 里,不向外拉长。`map` 负责轴向转置与反向。
-fn drop_path(w: f32, h: f32, taper: f32, map: &dyn Fn(f32, f32) -> [f32; 2]) -> Path {
-    let taper = taper.clamp(0.0, 1.0);
-    // 鼓包的控制点偏移;曲线实际鼓出 bow/2,所以有效高度收 bow。
-    let bow = h * DROP_BOW * taper / (1.0 + DROP_BOW * taper);
-    let he = h - bow;
-    let r = he * 0.5;
-    let cy = h * 0.5;
-    let rt = (r * (1.0 - (1.0 - DROP_TAIL_R) * taper)).max(0.5);
-    let d = (w - r - rt).max(0.01);
-    let alpha = ((r - rt) / d).clamp(-1.0, 1.0).asin();
-    let (sa, ca) = alpha.sin_cos();
-    let (head, tail) = ((w - r, cy), (rt, cy));
-    // 外公切线的四个切点;taper=0 时 alpha=0,退化成胶囊的上下边。
-    let hu = (head.0 - r * sa, head.1 - r * ca);
-    let hl = (head.0 - r * sa, head.1 + r * ca);
-    let tu = (tail.0 - rt * sa, tail.1 - rt * ca);
-    let tl = (tail.0 - rt * sa, tail.1 + rt * ca);
-    let mut path = Path::new().move_to(map(tu.0, tu.1));
-    path = path.quad_to(
-        map((tu.0 + hu.0) * 0.5, (tu.1 + hu.1) * 0.5 - bow),
-        map(hu.0, hu.1),
-    );
-    // 头圆大弧:-π/2-α → π/2+α,经过 0(正右)。
-    let a0 = -core::f32::consts::FRAC_PI_2 - alpha;
-    let a1 = core::f32::consts::FRAC_PI_2 + alpha;
-    for i in 1..=24 {
-        let a = a0 + (a1 - a0) * (i as f32 / 24.0);
-        path = path.line_to(map(head.0 + r * a.cos(), head.1 + r * a.sin()));
+    let max_r = blobs.iter().map(|b| b.r).fold(0.0, f32::max);
+    let pad = max_r * 2.5;
+    let mut x0 = f32::MAX;
+    let mut y0 = f32::MAX;
+    let mut x1 = f32::MIN;
+    let mut y1 = f32::MIN;
+    for b in blobs {
+        let r = b.r * rk;
+        x0 = x0.min(b.x - r);
+        y0 = y0.min(b.y + dy - r);
+        x1 = x1.max(b.x + r);
+        y1 = y1.max(b.y + dy + r);
     }
-    path = path.quad_to(
-        map((tl.0 + hl.0) * 0.5, (tl.1 + hl.1) * 0.5 + bow),
-        map(tl.0, tl.1),
-    );
-    // 尾圆小弧:π/2+α → 3π/2-α,经过 π(正左)。
-    let b0 = core::f32::consts::FRAC_PI_2 + alpha;
-    let b1 = core::f32::consts::TAU - core::f32::consts::FRAC_PI_2 - alpha;
-    for i in 1..=16 {
-        let a = b0 + (b1 - b0) * (i as f32 / 16.0);
-        path = path.line_to(map(tail.0 + rt * a.cos(), tail.1 + rt * a.sin()));
+    x0 -= pad;
+    y0 -= pad;
+    x1 += pad;
+    y1 += pad;
+    let cs = 1.6f32;
+    let nx = (((x1 - x0) / cs).ceil() as usize + 1).clamp(2, 512);
+    let ny = (((y1 - y0) / cs).ceil() as usize + 1).clamp(2, 512);
+    let mut f = vec![0.0f32; nx * ny];
+    for j in 0..ny {
+        let y = y0 + j as f32 * cs;
+        for i in 0..nx {
+            let x = x0 + i as f32 * cs;
+            let mut v = 0.0;
+            for b in blobs {
+                let r = b.r * rk;
+                let ddx = x - b.x;
+                let ddy = y - (b.y + dy);
+                v += r * r / (ddx * ddx + ddy * ddy + 1.0);
+            }
+            f[j * nx + i] = v;
+        }
     }
-    path.close()
-}
-
-/// 拉伸态选中液滴:单个元素、单条轮廓,与静止胶囊同一盏灯。
-/// 渐变拆成「上亮下暗」:主体 core_bottom,上半部压一条同色轮廓的
-/// 高光填充;外圈同轮廓描边晕替胶囊的投影(shape 不吃元素阴影)。
-fn goo_drop_marker(
-    w: f32,
-    h: f32,
-    taper: f32,
-    axis_x: bool,
-    fwd: f32,
-    look: &Look,
-    scale: f32,
-    rect: Rect,
-) -> El {
-    let m = |u: f32, n: f32| -> [f32; 2] {
-        let u = if fwd < 0.0 { w - u } else { u };
-        if axis_x { [u, n] } else { [n, u] }
-    };
-    let el = el()
-        .absolute(rect.left, rect.top)
-        .w(rect.width())
-        .h(rect.height())
-        .key("sel")
-        .instant_changes();
-    if look.high_contrast {
-        return el.shape(
-            Shape::new().fill_path(&drop_path(w, h, taper, &m), rgb(look.palette.selected_bg)),
-        );
+    let at = |i: usize, j: usize| f[j * nx + i];
+    let thr = WATER_THR;
+    let mut segs: Vec<([f32; 2], [f32; 2])> = Vec::new();
+    for j in 0..ny - 1 {
+        for i in 0..nx - 1 {
+            let v0 = at(i, j);
+            let v1 = at(i + 1, j);
+            let v2 = at(i + 1, j + 1);
+            let v3 = at(i, j + 1);
+            let mut case = 0u8;
+            if v0 >= thr {
+                case |= 1;
+            }
+            if v1 >= thr {
+                case |= 2;
+            }
+            if v2 >= thr {
+                case |= 4;
+            }
+            if v3 >= thr {
+                case |= 8;
+            }
+            if case == 0 || case == 15 {
+                continue;
+            }
+            let e = |a: f32, b: f32| (thr - a) / (b - a);
+            let e0 = [x0 + (i as f32 + e(v0, v1)) * cs, y0 + j as f32 * cs];
+            let e1 = [x0 + (i + 1) as f32 * cs, y0 + (j as f32 + e(v1, v2)) * cs];
+            let e2 = [x0 + (i as f32 + e(v3, v2)) * cs, y0 + (j + 1) as f32 * cs];
+            let e3 = [x0 + i as f32 * cs, y0 + (j as f32 + e(v0, v3)) * cs];
+            match case {
+                1 => segs.push((e3, e0)),
+                2 => segs.push((e0, e1)),
+                3 => segs.push((e3, e1)),
+                4 => segs.push((e1, e2)),
+                5 => {
+                    let c = (v0 + v1 + v2 + v3) * 0.25;
+                    if c >= thr {
+                        segs.push((e3, e2));
+                        segs.push((e0, e1));
+                    } else {
+                        segs.push((e3, e0));
+                        segs.push((e1, e2));
+                    }
+                }
+                6 => segs.push((e0, e2)),
+                7 => segs.push((e3, e2)),
+                8 => segs.push((e2, e3)),
+                9 => segs.push((e2, e0)),
+                10 => {
+                    let c = (v0 + v1 + v2 + v3) * 0.25;
+                    if c >= thr {
+                        segs.push((e3, e0));
+                        segs.push((e1, e2));
+                    } else {
+                        segs.push((e3, e2));
+                        segs.push((e0, e1));
+                    }
+                }
+                11 => segs.push((e2, e1)),
+                12 => segs.push((e1, e3)),
+                13 => segs.push((e1, e0)),
+                14 => segs.push((e0, e3)),
+                _ => {}
+            }
+        }
     }
-    let body = drop_path(w, h, taper, &m);
-    // 高光:同轮廓压到上 55% 高度,底部弦自然闭合,贴合上缘不留缝。
-    let sheen = drop_path(w, h * 0.55, taper, &m);
-    el.shape(
-        Shape::new()
-            .stroke_path(
-                &body,
-                7.0 * scale,
-                LineCap::Round,
-                look.glow.core_bottom.alpha(0.16),
-            )
-            .fill_path(&body, look.glow.core_bottom)
-            .fill_path(&sheen, look.glow.core_top.alpha(0.80)),
-    )
-}
-
-/// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
-/// 选中迁移的几何由 content 里的 `sel-geom` 刚体弹簧驱动;这里只按
-/// 它写出的绘制矩形画胶囊/水滴,元素自己不再配 `.motion`。
-fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
-    selection_pill(
-        el().absolute(rect.left, rect.top)
-            .w(rect.width())
-            .h(rect.height())
-            .radius(rect.height() * 0.5)
-            .instant_changes(),
-        look,
-        scale,
-    )
-    // key+持久身份:条↔棋盘同一节点。位置/尺寸每帧按绘制矩形直接
-    // 落(instant_changes),不配 motion/transition:弹簧已经在
-    // sel-geom 上跑过一遍,这里再弹一次会落后一帧;重挂载的淡入
-    // 淡出也会顶掉形变。
-    .key("sel")
-}
-
-/// 选中槽:发光胶囊。它自己是面板的光源:灯芯上白热下饱和,双层光晕
-/// 落在胎上——玻璃读作磨砂下的透光,瓷读作照亮黑瓷。灯色跟主题色走。
-/// 高对比度回归系统选中色的平涂:光源是装饰语义。
-fn selection_pill(cell: El, look: &Look, scale: f32) -> El {
-    if look.high_contrast {
-        return cell.fill(rgb(look.palette.selected_bg));
+    use std::collections::HashMap;
+    let key = |p: [f32; 2]| ((p[0] * 20.0).round() as i32, (p[1] * 20.0).round() as i32);
+    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, (a, b)) in segs.iter().enumerate() {
+        ends.entry(key(*a)).or_default().push(i);
+        ends.entry(key(*b)).or_default().push(i);
     }
-    cell.gradient(look.glow.core_top, look.glow.core_bottom)
-        .shadow(0.0, 14.0 * scale, look.glow.core_bottom.alpha(0.30))
-        .shadow(0.0, 26.0 * scale, look.glow.core_bottom.alpha(0.16))
+    let mut used = vec![false; segs.len()];
+    let mut path = Path::new();
+    for start in 0..segs.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let mut pts = vec![segs[start].0, segs[start].1];
+        let start_key = key(segs[start].0);
+        let mut cur = segs[start].1;
+        let mut guard = 0usize;
+        while key(cur) != start_key && guard < segs.len() {
+            guard += 1;
+            let mut next = None;
+            if let Some(cands) = ends.get(&key(cur)) {
+                for &k in cands {
+                    if used[k] {
+                        continue;
+                    }
+                    let (a, b) = segs[k];
+                    if key(a) == key(cur) {
+                        next = Some((k, b));
+                        break;
+                    }
+                    if key(b) == key(cur) {
+                        next = Some((k, a));
+                        break;
+                    }
+                }
+            }
+            let Some((k, p)) = next else { break };
+            used[k] = true;
+            pts.push(p);
+            cur = p;
+        }
+        if pts.len() < 4 || key(cur) != start_key {
+            continue;
+        }
+        let mut area = 0.0;
+        for i in 0..pts.len() {
+            let a = pts[i];
+            let b = pts[(i + 1) % pts.len()];
+            area += a[0] * b[1] - b[0] * a[1];
+        }
+        if area < 0.0 {
+            pts.reverse();
+        }
+        path = path.move_to(pts[0]);
+        for p in pts.iter().skip(1) {
+            path = path.line_to(*p);
+        }
+        path = path.close();
+    }
+    path
 }
 
 /// 一个候选格的布局事实:矩形、页内序号、全列表序号与悬停态。
