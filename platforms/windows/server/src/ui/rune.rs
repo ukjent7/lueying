@@ -556,16 +556,20 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 
 /// 每帧开头跑一次:补丁、版本、摆位、活背板,并决定下一次唤醒。
 fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
-    // 液桥步进:动画期间每帧采样重绘,停稳即摘。
-    if s.fx.sel_goo.is_some() {
+    // 液桥步进:动画期间每帧采样重绘,停稳即摘。只标记本轮要重绘
+    // 并保住下一帧唤醒,绝不能提前 return——版本检查与 place() 都
+    // 在后面,跳过了新按键要等动画停稳才被看见("按了顿住没反应,
+    // 打断像没做"实测就是这个)。打断接力由 place() 在途采样完成。
+    let goo_live = if s.fx.sel_goo.is_some() {
         let (_, _, _, _, _, done) = s.fx.sel_goo.as_ref().unwrap().sample(Instant::now());
         if done {
             s.fx.sel_goo = None;
         }
-        // 活跃期保证下一帧还轮得到(overlay 的 poll 每帧跑,这行是保险)。
         tx.wake_after(Duration::from_millis(0));
-        return true;
-    }
+        true
+    } else {
+        false
+    };
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
     // 外观补丁:晚到的旧补丁直接丢;主题色变了就重绘,颜色用弹簧渐变过去。
@@ -660,7 +664,7 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     } else {
         changed |= s.glaze.take().is_some();
     }
-    changed
+    changed | goo_live
 }
 
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
@@ -1543,8 +1547,10 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
 }
 
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
-/// 选中迁移=同一元素的矩形变化,由 `.motion` 弹簧在 animated 提交里跟随;
-/// 翻页时它随 strip 整棵重挂在目标位,不飞。
+/// 选中迁移走液块:goo 分支每帧把四边弹簧采样的矩形直接摆上,元素
+/// 自己不再配 `.motion`——配了就是弹簧追弹簧,每帧慢一拍,打断时
+/// 两层滞后叠加("不跟手"的根源)。翻页时它随 strip 整棵重挂在目
+/// 标位,不飞。
 fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     selection_pill(
         el().absolute(rect.left, rect.top)
@@ -1554,13 +1560,12 @@ fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
         look,
         scale,
     )
-    // key+持久身份:条↔棋盘同一节点,矩形走 motion 渐变拉伸。
+    // key+持久身份:条↔棋盘同一节点。
     // 不用 matched:胶囊飞行走 launches 通道,会盖住同路径 top1
     // 的字("猛沉")——持久形变照常拉伸,且永远画在飞行层下面。
     // 不配 transition:重挂载时的淡入淡出会顶掉形变,看着像胶囊
     // 消失重冒而不是拉伸。
     .key("sel")
-    .motion(motion::SNAP)
 }
 
 /// 液桥的一条边:闭式弹簧的初值与目标;`sample` 采样当前位/速。
