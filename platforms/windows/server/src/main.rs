@@ -17,12 +17,12 @@ fn main() {
     println!("lueying-server 仅支持 Windows");
 }
 
+// 液体玻璃的背板光学:纯函数,非门控宿主也能跑单测。
+mod liquid;
+
 #[cfg(windows)]
 mod context;
 
-#[cfg(windows)]
-#[cfg(windows)]
-#[cfg(windows)]
 #[cfg(windows)]
 mod imp;
 

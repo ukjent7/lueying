@@ -29,6 +29,7 @@ use rune_text::TextSystem;
 use lueying_server::config::{UiLayout, UiMaterial};
 
 use crate::imp;
+use crate::liquid;
 use crate::ui::place;
 
 /// 活背板的重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
@@ -42,9 +43,7 @@ const HIDE_FADE: Duration = Duration::from_millis(90);
 /// 可疑左移光标的复核窗口:盖过两帧,期间有更新的报告就作废。
 const CARET_HOLD: Duration = Duration::from_millis(40);
 
-/// 高透玻璃的模糊强度:40px 条上结构可辨、文字不可读。
-const GLASS_BLUR: f32 = 7.0;
-/// 磨砂玻璃的模糊强度:更重,接近亚克力。
+/// 磨砂玻璃的模糊强度:更重,接近亚克力;高透端的 σ 由变体给出。
 const FROST_BLUR: f32 = 9.0;
 /// 测宽的内部放大倍数:measure 结果按设备像素取整,放大可拿到亚点精度。
 const MEASURE_SCALE: f32 = 4.0;
@@ -220,7 +219,13 @@ struct Candidate {
     /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
     backdrop: Option<Backdrop>,
     backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
-    /// 瓷釉的环境光:面板上下窄带的桌面实采均值,没有来源就不上光。
+    /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
+    backdrop_raw: Option<((u32, u32), Vec<u8>)>,
+    /// 亚克力颗粒:面板尺寸的固定噪点图;随尺寸重生成。
+    grain: Option<Pixels>,
+    grain_size: Option<(u32, u32)>,
+    /// 釉光的环境光:面板上下窄带的桌面实采均值,瓷釉光泽与玻璃棱缘
+    /// rim 共用,没有来源就不上光。
     glaze: Option<lueying_server::theme::Glaze>,
     glaze_read: Option<(Instant, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
@@ -231,6 +236,11 @@ struct Candidate {
     material: UiMaterial,
     /// 玻璃磨砂程度 0..=1;高透到磨砂连续可调。
     frost: f32,
+    /// 玻璃变体(临时调参);配置重载后随版本号生效。
+    glass: liquid::GlassVariant,
+    glass_name: String,
+    /// 生效的折射带宽:变体默认或 `ui_glass_band` 覆盖值(临时调参)。
+    glass_band: f32,
     /// 配置里的主题色下标;变化时让调色板用弹簧渐变过去。
     accent: usize,
     /// 私密字段标记;只影响扩展发布,绘制照常。
@@ -254,12 +264,18 @@ impl Candidate {
             ink: RefCell::new(TextSystem::new(&[], ("Noto Sans SC", "Noto Sans SC"))),
             backdrop: None,
             backdrop_read: None,
+            backdrop_raw: None,
+            grain: None,
+            grain_size: None,
             glaze: None,
             glaze_read: None,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
             frost: 0.0,
+            glass: liquid::variant("A"),
+            glass_name: "A".to_string(),
+            glass_band: 8.0,
             accent: 0,
             private: false,
             visible: false,
@@ -504,6 +520,26 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         let material = cfg.ui_material;
         let frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
         let accent = cfg.ui_accent;
+        // 带宽/变体变了要让下一轮捕获重算光学:原图去重只看像素,
+        // 参数变了它会把旧结果一直留下去(折射「消失」的一半来源)。
+        let mut glass_dirty = false;
+        if s.glass_name != cfg.ui_glass_variant {
+            s.glass_name = cfg.ui_glass_variant.clone();
+            s.glass = liquid::variant(&cfg.ui_glass_variant);
+            glass_dirty = true;
+        }
+        let band = if cfg.ui_glass_band > 0.0 {
+            cfg.ui_glass_band
+        } else {
+            s.glass.band
+        };
+        if (s.glass_band - band).abs() > f32::EPSILON {
+            glass_dirty = true;
+        }
+        s.glass_band = band;
+        if glass_dirty {
+            s.backdrop_raw = None;
+        }
         drop(cfg);
         // 配置换了外观:调色板与材质参数走官方的主题变化弹簧渐变过去。
         if s.material != material || s.frost != frost || s.accent != accent {
@@ -538,9 +574,10 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         s.backdrop_read = None;
         changed |= s.backdrop.take().is_some();
     }
-    // 瓷釉的环境光:面板上下窄带低频实采,周边变了釉光跟着变。
-    // 淡出期保留釉光,冻结内容里釉面不能闪变;停靠由 park 清。
-    if matches!(s.material, UiMaterial::Ceramic) && !high_contrast && s.visible {
+    // 釉光的环境光:面板上下窄带低频实采,周边变了光跟着变。瓷釉的
+    // 光泽与玻璃的棱缘 rim 都吃这份采样;淡出期保留,冻结内容里不
+    // 闪变;停靠由 park 清。
+    if !high_contrast && s.visible {
         let now = Instant::now();
         let rect = s.fx.placement.panel;
         if s.glaze_read
@@ -901,6 +938,9 @@ fn park(s: &mut Candidate) {
         .unwrap_or_else(|p| p.into_inner()) = None;
     s.backdrop = None;
     s.backdrop_read = None;
+    s.backdrop_raw = None;
+    s.grain = None;
+    s.grain_size = None;
     s.glaze = None;
     s.glaze_read = None;
     publish_state(s, None);
@@ -917,23 +957,52 @@ fn show(s: &mut Candidate) {
     s.visible = true;
 }
 
-/// 抓取面板矩形的桌面像素作为玻璃背板;每帧重捕,背景变动跟随。
-/// 只捕面板区:它是 backdrop_blur 的唯一底图,面板外的空带不铺
-/// 像素,直接透出真桌面,任何捕获残影都到不了那儿。
+/// 抓取面板矩形外扩折射带宽的桌面像素,过液体玻璃光学后作为玻璃背板;
+/// 每帧重捕,背景变动跟随。面板外的空带不铺像素,直接透出真桌面。
 fn capture_backdrop(s: &mut Candidate) -> bool {
     let (x, y, w, h) = s.fx.placement.panel;
     if w <= 0 || h <= 0 {
         return false;
     }
-    if let Some((width, height, rgba)) = capture_rect(x, y, w as u32, h as u32) {
-        // 流式像素通道:同一张图原地换内容,Rune 唤醒显示它的窗口。
-        // 无解码 worker、无 pending 空帧,同尺寸帧复用图集槽位。
-        return s
-            .backdrop
-            .get_or_insert_with(Backdrop::default)
-            .publish(width, height, rgba);
+    let scale = s.scale;
+    let pad = liquid::capture_pad(s.glass_band, s.glass.pull, scale);
+    let Some((raw_w, raw_h, raw)) =
+        capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32)
+    else {
+        return false;
+    };
+    // 原图没变(窗口没动、桌面静止)就不重算光学、不重新上传。
+    if s.backdrop_raw
+        .as_ref()
+        .is_some_and(|(size, previous)| *size == (raw_w, raw_h) && **previous == raw)
+    {
+        return false;
     }
-    false
+    let radius = panel::PANEL_RADIUS * scale;
+    let optics = liquid::process_with_pull(
+        &raw,
+        raw_w,
+        raw_h,
+        pad,
+        w as u32,
+        h as u32,
+        s.glass_band * scale,
+        radius,
+        s.glass.pull,
+    );
+    let changed = s
+        .backdrop
+        .get_or_insert_with(Backdrop::default)
+        .publish(w as u32, h as u32, optics);
+    s.backdrop_raw = Some(((raw_w, raw_h), raw));
+    let size = (w as u32, h as u32);
+    if s.grain_size != Some(size) {
+        let pixels = Pixels::new();
+        pixels.set(w as u32, h as u32, liquid::grain_rgba(w as u32, h as u32));
+        s.grain = Some(pixels);
+        s.grain_size = Some(size);
+    }
+    changed
 }
 
 /// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
@@ -1015,10 +1084,13 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
     // 材质判定与背板是否就位解耦:第一帧没背板也只是少一层模糊,
     // 墨色与选中胶囊从头到尾是同一套,不会闪变材质。
     let glass = !s.private && s.material.is_glass() && s.glass_wanted(high_contrast);
-    // 高透到磨砂的连续插值:压光与模糊同步加重。
+    // 高透到磨砂的连续插值:压光与模糊同步加重;端点由变体给出。
     let frost = s.frost.clamp(0.0, 1.0);
-    let frost_blur = GLASS_BLUR + (FROST_BLUR - GLASS_BLUR) * frost;
-    let frost_fill = rgba(0x262624, 0.40 + 0.22 * frost);
+    let frost_blur = s.glass.base_blur + (FROST_BLUR - s.glass.base_blur) * frost;
+    let frost_fill = rgba(
+        0x262624,
+        s.glass.base_tint + (0.62 - s.glass.base_tint) * frost,
+    );
     let frost_top = rgba(0x000000, 0.06 + 0.04 * frost);
     let frost_bottom = rgba(0x000000, 0.22 + 0.08 * frost);
     let (_, _, accent) = place::ui_options(&s.state);
@@ -1067,13 +1139,52 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         })
         .on_secondary_press_local(|s: &mut Candidate, p, _| s.on_secondary(p.x, p.y));
     match (s.material, glass) {
-        // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。
+        // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。背板是过液体
+        // 玻璃光学的桌面像素(棱缘折射 + 色散 + 提饱和),模糊仍由
+        // backdrop_blur 做。
         (UiMaterial::Glass, true) => {
+            let height = s.fx.placement.panel.3 as f32 / scale;
             body = body
                 .backdrop_blur(frost_blur)
                 .fill(frost_fill)
                 .gradient(frost_top, frost_bottom)
-                .border(1.0 * scale, rgba(0xffffff, 0.14));
+                .border(1.0 * scale, rgba(0xffffff, s.glass.border));
+            // 加深的 meniscus 内阴影(变体 C/D):贴底的静观玻璃感。
+            if s.glass.meniscus {
+                body = body.child(
+                    el().absolute(0.0, (height - 2.0 * scale).max(0.0))
+                        .w_full()
+                        .h(2.0 * scale)
+                        .fill(rgba(0x000000, 0.28)),
+                );
+            }
+            // 亚克力颗粒:固定噪点图垫在模糊之上,blur 抹不掉。
+            if let Some(grain) = &s.grain {
+                body = body.child(
+                    el().absolute(0.0, 0.0)
+                        .w_full()
+                        .h_full()
+                        .pixels_fit(grain, SurfaceFit::Fill),
+                );
+            }
+            // 环境感知的棱缘 rim:上下 1px 釉线随环境光亮暗,玻璃的
+            // Fresnel 边光近似;「光必有来源」与瓷釉同一套纪律。
+            if let Some(glaze) = &s.glaze {
+                let height = s.fx.placement.panel.3 as f32 / scale;
+                body = body
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .w_full()
+                            .h(1.0 * scale)
+                            .fill(glaze.edge_top),
+                    )
+                    .child(
+                        el().absolute(0.0, (height - 1.0 * scale).max(0.0))
+                            .w_full()
+                            .h(1.0 * scale)
+                            .fill(glaze.edge_bottom),
+                    );
+            }
         }
         // 黑瓷:不透明暖黑胎,同构釉面。釉面的光全部来自环境采样:
         // 面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。
