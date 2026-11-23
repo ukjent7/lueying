@@ -258,6 +258,13 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             reply
         }
         Request::ToggleMode { session } => {
+            // 会话不存在(焦点在桌面、设置窗这类没有掠影会话的窗口,active 已被
+            // Focus{false} 清零)时工具栏与全局热键仍要能切模式:只翻全局位并
+            // 遍历所有存活会话,新会话上线时跟随(current_mode)。
+            if state.session(session).is_none() {
+                set_global_mode(state, !state.chinese.load(Ordering::Relaxed));
+                return neutral(state);
+            }
             state.activate(session);
             let Some(handle) = state.session(session) else {
                 return neutral(state);
@@ -371,11 +378,14 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             reply
         }
         Request::ToggleFullwidth { session } => {
-            state.activate(session);
-            if state.session(session).is_some() {
-                let fullwidth = !state.fullwidth.load(Ordering::Relaxed);
-                set_global_fullwidth(state, fullwidth);
+            // 会话不存在时同 ToggleMode:全局位照翻,新会话上线时跟随。
+            if state.session(session).is_none() {
+                set_global_fullwidth(state, !state.fullwidth.load(Ordering::Relaxed));
+                return neutral(state);
             }
+            state.activate(session);
+            let fullwidth = !state.fullwidth.load(Ordering::Relaxed);
+            set_global_fullwidth(state, fullwidth);
             neutral(state)
         }
         Request::SetFullwidth { session, fullwidth } => {

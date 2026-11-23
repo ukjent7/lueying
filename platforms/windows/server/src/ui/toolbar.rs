@@ -70,16 +70,14 @@ impl BarHud {
     fn act(&mut self, button: Button) {
         match button.action() {
             Action::ToggleMode => {
+                // active 为 0(焦点落在没有掠影会话的窗口)也照发:
+                // 分发端没有会话就只翻全局位,按钮不能静默无效。
                 let session = self.state.active.load(Ordering::Relaxed);
-                if session != 0 {
-                    let _ = handle(&self.state, Request::ToggleMode { session });
-                }
+                let _ = handle(&self.state, Request::ToggleMode { session });
             }
             Action::ToggleFullWidth => {
                 let session = self.state.active.load(Ordering::Relaxed);
-                if session != 0 {
-                    let _ = handle(&self.state, Request::ToggleFullwidth { session });
-                }
+                let _ = handle(&self.state, Request::ToggleFullwidth { session });
             }
             Action::TogglePunct => {
                 let _ = handle(&self.state, Request::TogglePunct);
@@ -102,7 +100,11 @@ pub(super) fn register<T: 'static>(app: &mut rune::App<T>, state: Arc<State>) {
             ..Default::default()
         })
         .release_gpu_when_hidden()
-        .poll(toolbar_poll);
+        .poll(toolbar_poll)
+        // 事件循环一起就走一遍既有的 kick 路径(排空更新→首轮 poll→show);
+        // 不然工具栏要等到第一次模式切换或设置保存才出现(升级装完服务
+        // 重启后没有任何 kick,打字只叫醒候选窗)。
+        .setup(|_: &mut BarHud, _| kick());
     let handle = app.overlay(spec, BarHud::new(state, bar));
     let _ = HANDLE.set(handle);
 }
