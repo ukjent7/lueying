@@ -131,15 +131,24 @@ struct Fx {
     now: f64,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 选中几何的目标矩形(面板本地):原生 lead 弹簧的目标,绘制轮廓
-    /// 从它和逐帧绘制矩形取形。
+    /// 选中几何的目标矩形(面板本地):刚体弹簧的目标。
     sel_to: Option<Rect>,
-    /// 原生 lead 上一帧写出的绘制矩形(窗口点)与时刻:判变化、算尾速。
+    /// 刚体上一帧写出的绘制矩形(窗口点):量中心速度、判停稳。
     sel_drawn_last: [f32; 4],
-    sel_drawn_at: f64,
-    /// 本提交选中几何直接落位(页变/形变/拖动/减少动态):轮廓用目标
-    /// 矩形,不等下一帧的绘制矩形。
+    /// 中心速度采样:上次采样时间、一阶低通后的速度(逻辑点/秒)、
+    /// 本次行程的峰值速度(停稳后决定余震)。
+    sel_v_at: f64,
+    sel_v: f32,
+    /// 尾流记忆的近期峰值速度:连击之间速度会掉,尾流不会立刻散。
+    sel_v_wake: f32,
+    sel_peak_v: f32,
+    /// 气动形变 0..1:动态压强 v² 的目标经尾流惯性滞后;0=胶囊,
+    /// 1=圆润水滴。展开/翻页/换位直接归零。
+    sel_flow: f32,
+    /// 本提交选中几何直接落位。
     sel_snap: bool,
+    /// 落位代数:几何元素换 key,旧节点的弹簧轨迹随旧节点一起消失。
+    sel_gen: u64,
     /// 面板在窗口里的逻辑原点:绘制矩形是窗口点,轮廓与目标都是面板
     /// 本地,换算用这一份。
     sel_origin: (f32, f32),
@@ -148,12 +157,28 @@ struct Fx {
     sel_forward: f32,
     /// 聚合余震:高速归位后胶囊按衰减正弦抖(水滴落地)。瞬时与振幅。
     sel_wobble: Option<(f64, f32)>,
-    /// 选中几何尾长变化的全程峰值:聚合瞬间转成余震能量
-    /// (停稳判定要求速度≈0,峰值必须另记)。
-    sel_peak_v: f32,
+    /// 甩脱的小水珠(面板本地)。
+    sel_beads: Vec<Bead>,
+    /// 上一次甩珠的时间与序号(key 用)。
+    sel_bead_at: f64,
+    sel_bead_seq: u64,
     /// 上一份内容的 sel 矩形(逻辑点,面板本地);比 view 数据可靠——
     /// 「我→我们」这类纯文字替换也会让胶囊变宽,view.highlight 不变。
     sel_rect: Option<Rect>,
+}
+
+/// 一滴甩脱的水珠:位置与速度是面板本地逻辑点,出生时间与寿命用于
+/// 淡出;id 只给 key,保证同一滴跨帧是同一节点。
+#[derive(Clone, Copy)]
+struct Bead {
+    id: u64,
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    r: f32,
+    born: f64,
+    life: f32,
 }
 
 /// 棋盘滑块的果冻弹簧:后缘(相对行进方向,下行是上沿)走更慢的
@@ -165,15 +190,29 @@ struct Fx {
 const THUMB_LEAD: rune::Spring = rune::Spring::new(0.30, 0.0);
 const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 
-/// 选中几何走 Rune 原生 lead(前缘 motion::LEAD,后缘 motion::DEFAULT):
-/// 单步轻点只有一条短瞬态,连按才把后缘落下。这里只剩物理封顶与
-/// 换水滴轮廓的门槛,不再按热度/速度分档。
-/// 液块封顶:尾长最多 3.5×半高(表面张力,不能被无限拉长)。
-const GOO_CAP: f32 = 3.5;
-/// 拉伸超过 0.7×头径才换成水滴轮廓;短拉伸保持胶囊,尖头不露怯。
-const GOO_DROP_RATIO: f32 = 0.7;
-/// 甩珠的尾速门槛(逻辑点/秒):只有真连击才甩。
-const GOO_SHED_V: f32 = 300.0;
+/// 选中胶囊的刚体弹簧:前/后缘同一条,只平移,不靠位移把元素拉长。
+/// 0.28s 比原生 LEAD(0.2s)软一点,单步是一段完整滑行。
+const BODY: rune::Spring = rune::Spring::new(0.28, 0.0);
+
+/// 气动模型:尾流强度按动态压强 v² 增长。`FLOW_V_ON` 取单格滑动的
+/// 峰值之上(108pt 格实测约 680pt/s),单步不起形;`FLOW_V_FULL` 是
+/// 按住方向键的巡航速度(实测约 2000pt/s),到顶就是满水滴。
+const FLOW_V_ON: f32 = 720.0;
+const FLOW_V_FULL: f32 = 1800.0;
+/// 尾流惯性:起形 40ms、退形 120ms。单步的短峰来不及把液面拉满,
+/// 连击才会持续供能——这就是「速度越快、加速度越高,形变越大」。
+const FLOW_GROW: f32 = 0.04;
+const FLOW_DECAY: f32 = 0.12;
+/// 中心速度的一阶低通时间常数。
+const SPEED_TAU: f32 = 0.045;
+/// 满形时尾端圆角收到 0.55r:圆润的水滴尾,不是尖锥,更不拉长。
+const DROP_TAIL_R: f32 = 0.55;
+/// 侧边外鼓强度:满形时鼓包正好抵到原矩形边,所以有效高度先收。
+const DROP_BOW: f32 = 0.30;
+/// 甩珠门槛:满形且高速才掉小水珠;每 75ms 一滴,0.32s 淡完。
+const BEAD_FLOW: f32 = 0.72;
+const BEAD_EVERY: f64 = 0.075;
+const BEAD_LIFE: f32 = 0.32;
 
 impl Fx {
     fn clear(&mut self) {
@@ -182,6 +221,21 @@ impl Fx {
 
     fn fading(&self) -> bool {
         matches!(self.presence, Presence::FadingOut(_))
+    }
+
+    /// 选中几何直接落位:换代数让旧节点连同在途弹簧一起退场,速度、
+    /// 气动形变、水珠与余震全部归零。展开/翻页/换位/减动效走这里。
+    fn snap_sel(&mut self, now: f64) {
+        self.sel_snap = true;
+        self.sel_gen = self.sel_gen.wrapping_add(1);
+        self.sel_v = 0.0;
+        self.sel_v_wake = 0.0;
+        self.sel_flow = 0.0;
+        self.sel_peak_v = 0.0;
+        self.sel_v_at = now;
+        self.sel_drawn_last = [0.0; 4];
+        self.sel_beads.clear();
+        self.sel_wobble = None;
     }
 }
 
@@ -566,42 +620,97 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     // 全窗一口钟:poll 的 t 是 Rune 帧钟,view 里所有采样都读它。
     s.fx.now = now;
-    // 原生 lead 的选中几何:每帧读画完写回的绘制矩形,变了就重跑
-    // 视图重建水滴轮廓;弹簧重定向与速度接力由 Rune 自己保,不再手
-    // 采样四条边。只标记本轮要重绘并保住下一帧唤醒,绝不能提前
+    // 刚体选中几何:前后缘同一条弹簧,只平移不靠位移拉长。每帧读
+    // 画完写回的绘制矩形量中心速度,气动形变由速度决定,不再从
+    // 「画出来的矩形比目标长多少」取尾长——那会把棋盘一格的位移
+    // 直接读成尾巴。只标记本轮要重绘并保住下一帧唤醒,绝不能提前
     // return——版本检查与 place() 都在后面,跳过了新按键要等动画
     // 停稳才被看见("按了顿住没反应,打断像没做"实测就是这个)。
     let snap = s.fx.sel_snap;
     s.fx.sel_snap = false;
     let mut sel_live = false;
     let drawn = s.sel_drawn.get();
-    if drawn[2] > 0.0 && drawn != s.fx.sel_drawn_last {
-        if snap {
-            // 直接落位那一拍:旧矩形到目标是一步跳,不能当尾速记,
-            // 否则页变/形变会凭空抖一下。
-            s.fx.sel_peak_v = 0.0;
-        } else {
-            let dt = (now - s.fx.sel_drawn_at).max(1.0 / 240.0) as f32;
-            let main = |r: [f32; 4]| if s.fx.sel_axis_x { r[2] } else { r[3] };
-            let v = (main(drawn) - main(s.fx.sel_drawn_last)) / dt;
-            s.fx.sel_peak_v = s.fx.sel_peak_v.max(v.abs());
+    if snap {
+        // 直接落位那一拍:旧矩形到目标是一步跳,不能当速度记,
+        // 否则页变/形变会凭空拉出液面。
+        s.fx.sel_v = 0.0;
+        s.fx.sel_v_wake = 0.0;
+        s.fx.sel_flow = 0.0;
+        s.fx.sel_peak_v = 0.0;
+        s.fx.sel_drawn_last = [0.0; 4];
+        s.fx.sel_v_at = now;
+        s.fx.sel_beads.clear();
+        s.fx.sel_bead_at = now;
+    } else if drawn[2] > 0.0 {
+        let dt = (now - s.fx.sel_v_at).clamp(1.0 / 1000.0, 0.05) as f32;
+        let cx = drawn[0] + drawn[2] * 0.5;
+        let cy = drawn[1] + drawn[3] * 0.5;
+        let last = s.fx.sel_drawn_last;
+        let moved = drawn != last;
+        if last[2] > 0.0 {
+            let dx = cx - (last[0] + last[2] * 0.5);
+            let dy = cy - (last[1] + last[3] * 0.5);
+            let step = (dx * dx + dy * dy).sqrt();
+            // 一阶低通:帧间抖动不直接进气动项。
+            let a = 1.0 - (-dt / SPEED_TAU).exp();
+            s.fx.sel_v += (step / dt - s.fx.sel_v) * a;
+            if step > 0.05 {
+                if dx.abs() >= dy.abs() {
+                    s.fx.sel_axis_x = true;
+                    s.fx.sel_forward = if dx < 0.0 { -1.0 } else { 1.0 };
+                } else {
+                    s.fx.sel_axis_x = false;
+                    s.fx.sel_forward = if dy < 0.0 { -1.0 } else { 1.0 };
+                }
+            }
+            s.fx.sel_peak_v = s.fx.sel_peak_v.max(s.fx.sel_v);
         }
+        s.fx.sel_v_at = now;
         s.fx.sel_drawn_last = drawn;
-        s.fx.sel_drawn_at = now;
-        tx.wake_after(Duration::ZERO);
-        sel_live = true;
+
+        // 动态压强 v² → 尾流目标。速度取近期峰值(160ms 衰减):连击
+        // 之间速度会掉,尾流不会立刻散;单步峰值仍低于门槛,不起形。
+        s.fx.sel_v_wake = (s.fx.sel_v_wake * (-dt / 0.16).exp()).max(s.fx.sel_v);
+        let v = s.fx.sel_v_wake;
+        let target = ((v * v - FLOW_V_ON * FLOW_V_ON)
+            / (FLOW_V_FULL * FLOW_V_FULL - FLOW_V_ON * FLOW_V_ON))
+            .clamp(0.0, 1.0);
+        let tau = if target > s.fx.sel_flow {
+            FLOW_GROW
+        } else {
+            FLOW_DECAY
+        };
+        s.fx.sel_flow += (target - s.fx.sel_flow) * (1.0 - (-dt / tau).exp());
+        if target == 0.0 && s.fx.sel_flow < 0.002 {
+            s.fx.sel_flow = 0.0;
+        }
+        beads_step(s, now, dt);
+        // 拖滚动条不是选中迁移:滑块在动,液面不起形也不甩珠。
+        if s.fx.scroll_drag.is_some() {
+            s.fx.sel_v = 0.0;
+            s.fx.sel_flow = 0.0;
+            s.fx.sel_beads.clear();
+        }
+        if moved || s.fx.sel_flow > 0.0 || !s.fx.sel_beads.is_empty() {
+            tx.wake_after(Duration::ZERO);
+            sel_live = true;
+        }
     }
-    // 原生弹簧停稳且尾速够狠:聚合余震(衰减正弦抖高)。慢步不抖。
+    // 停稳:高速行程收尾给一下余震;单步峰值不过门槛,不抖。峰值
+    // 无论是否够抖都要清,不然下一次慢步会拿旧峰值补一抖。
     if let Some(target) = s.fx.sel_to
         && s.fx.sel_wobble.is_none()
+        && s.fx.sel_flow < 0.05
+        && s.fx.sel_v < 60.0
         && drawn[2] > 0.0
         && (drawn[0] - (target.left + s.fx.sel_origin.0)).abs() < 0.5
         && (drawn[1] - (target.top + s.fx.sel_origin.1)).abs() < 0.5
         && (drawn[2] - target.width()).abs() < 0.5
         && (drawn[3] - target.height()).abs() < 0.5
     {
-        let amp = (s.fx.sel_peak_v * 0.0004).min(0.30);
-        if amp > 0.08 {
+        let amp =
+            ((s.fx.sel_peak_v - FLOW_V_ON) / (FLOW_V_FULL - FLOW_V_ON) * 0.14).clamp(0.0, 0.14);
+        if amp > 0.02 {
             s.fx.sel_wobble = Some((now, amp));
         }
         s.fx.sel_peak_v = 0.0;
@@ -709,6 +818,76 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     changed | sel_live
 }
 
+/// 水珠:先按阻力衰减已甩出的,再在满形高速时从尾尖续一滴。位置与
+/// 速度都在面板本地,content 只负责画;每滴有独立寿命,淡完移除。
+fn beads_step(s: &mut Candidate, now: f64, dt: f32) {
+    let mut i = 0;
+    while i < s.fx.sel_beads.len() {
+        let b = &mut s.fx.sel_beads[i];
+        let age = (now - b.born) as f32;
+        if age >= b.life {
+            s.fx.sel_beads.swap_remove(i);
+            continue;
+        }
+        let drag = (-dt / 0.06).exp();
+        b.vx *= drag;
+        b.vy *= drag;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        i += 1;
+    }
+    let v = s.fx.sel_v;
+    if s.fx.sel_flow < BEAD_FLOW || v < FLOW_V_ON + (FLOW_V_FULL - FLOW_V_ON) * 0.55 {
+        return;
+    }
+    if now - s.fx.sel_bead_at < BEAD_EVERY {
+        return;
+    }
+    let drawn = s.fx.sel_drawn_last;
+    if drawn[2] <= 0.0 {
+        return;
+    }
+    s.fx.sel_bead_at = now;
+    s.fx.sel_bead_seq = s.fx.sel_bead_seq.wrapping_add(1);
+    let (px, py) = s.fx.sel_origin;
+    let left = drawn[0] - px;
+    let top = drawn[1] - py;
+    let (w, h) = (drawn[2], drawn[3]);
+    let axis_x = s.fx.sel_axis_x;
+    let fwd = if s.fx.sel_forward < 0.0 { -1.0 } else { 1.0 };
+    let r_cap = w.min(h) * 0.5;
+    let (tx, ty) = if axis_x {
+        (if fwd > 0.0 { left } else { left + w }, top + h * 0.5)
+    } else {
+        (left + w * 0.5, if fwd > 0.0 { top } else { top + h })
+    };
+    let mut seed = (now * 1000.0) as u64 ^ s.fx.sel_bead_seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut j = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as f32 / (u32::MAX >> 1) as f32) - 0.5
+    };
+    let side = if axis_x { h * 0.16 } else { w * 0.16 };
+    let back = v * 0.08;
+    let (bx, by, vx, vy) = if axis_x {
+        (tx, ty + j() * side, -fwd * back, j() * back * 0.30)
+    } else {
+        (tx + j() * side, ty, j() * back * 0.30, -fwd * back)
+    };
+    let r = (r_cap * (0.16 + 0.08 * (j() + 0.5))).max(1.2);
+    s.fx.sel_beads.push(Bead {
+        id: s.fx.sel_bead_seq,
+        x: bx,
+        y: by,
+        vx,
+        vy,
+        r,
+        born: now,
+        life: BEAD_LIFE,
+    });
+}
+
 /// 组合结束或没有候选可画:reduce 直接停靠;否则窗口留在原地淡出,
 /// 到期由轮询停靠。后续键补上内容时,fresh 会取消排队中的 Hide。
 fn retract(s: &mut Candidate, tx: &mut Tx) {
@@ -765,6 +944,8 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.hover = None;
         s.fx.chev = false;
         s.fx.since = Some(s.fx.now);
+        // 新组合从头起形:上一次组合的水滴/水珠/速度不带进来。
+        s.fx.snap_sel(s.fx.now);
         // 入场过渡只在 animated 提交里播;这一条提交把它打出来。
         tx.animated();
     }
@@ -811,10 +992,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.scale = place::scale_at(l.min(r), b);
     }
     let geom = geom_of(s, view);
-    // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):交给原生
-    // lead——前缘/后缘各一条弹簧,重定向保速度;轮廓在 content 里
-    // 按逐帧绘制矩形取形。页变/形态变各有推入与形变,选中几何直接
-    // 落位,不跨形态拉一条旧坐标的桥。
+    // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):刚体弹簧
+    // 只平移,气动形变在 content 里按实测速度取水滴;页变/形态变各
+    // 有推入与形变,选中几何直接落位,不跨形态拉一条旧坐标的桥。
     let cur_sel = sel_rect_of(s, &geom);
     let prev_sel = s.fx.sel_rect;
     let same_form =
@@ -823,7 +1003,6 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             .is_some_and(|last| last.view.page == view.page && last.view.expanded == view.expanded);
     if cur_sel != prev_sel {
         s.fx.sel_to = cur_sel;
-        s.fx.sel_drawn_at = s.fx.now;
         if let (Some(prev), Some(cur)) = (prev_sel, cur_sel) {
             let dx = (cur.left + cur.width() / 2.0) - (prev.left + prev.width() / 2.0);
             let dy = (cur.top + cur.height() / 2.0) - (prev.top + prev.height() / 2.0);
@@ -831,11 +1010,10 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
             let d = if s.fx.sel_axis_x { dx } else { dy };
             s.fx.sel_forward = if d < 0.0 { -1.0 } else { 1.0 };
         }
-        if s.effects() && !fresh && s.fx.scroll_drag.is_none() && same_form {
+        if s.effects() && !fresh && prev_sel.is_some() && s.fx.scroll_drag.is_none() && same_form {
             tx.animated();
         } else {
-            s.fx.sel_snap = true;
-            s.fx.sel_peak_v = 0.0;
+            s.fx.snap_sel(s.fx.now);
         }
     }
     s.fx.sel_rect = cur_sel;
@@ -865,9 +1043,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         // 槽位重排后旧的悬停坐标已失效;箭头在棋盘里换了格子。
         s.fx.hover = None;
         s.fx.chev = false;
-        // 形态变:选中几何直接落在新形态的目标格,不跨旧棋盘坐标
-        // 拉一条桥(那会在胶囊附近画出一块蓝色残块)。
-        s.fx.sel_snap = true;
+        // 形态变:选中几何直接落在新形态的目标格,旧节点连同在途
+        // 弹簧一起退场;不跨旧棋盘坐标拉一条桥。
+        s.fx.snap_sel(s.fx.now);
     }
     // 只有固定条翻页才滑动;展开棋盘里挪高亮不横向跳。上一帧也得是
     // 固定条:展开→收起那拍页码常变,武装了只会在收起后的重挂载里
@@ -891,7 +1069,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.hover = None;
         s.fx.chev = false;
         // 页间格子整批换人,选中几何两端都已失效,同上直接落位。
-        s.fx.sel_snap = true;
+        s.fx.snap_sel(s.fx.now);
     } else {
         s.fx.slide_edge = None;
     }
@@ -915,7 +1093,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         (placement.panel.1 - placement.window.1) as f32 / geom.metrics.scale(),
     );
     if (placement.panel.0, placement.panel.1) != (s.fx.placement.panel.0, s.fx.placement.panel.1) {
-        s.fx.sel_snap = true;
+        s.fx.snap_sel(s.fx.now);
     }
     s.fx.placement = placement;
     // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
@@ -1515,9 +1693,9 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     // sel 垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
     let mut layer = el().w_full().h_full();
     if let Some(target) = sel_rect {
-        // 选中几何:原生 lead 驱动前/后缘弹簧,重定向保速度;这里只
-        // 读它每帧写回的绘制矩形,重建水滴轮廓。几何本身透明(零
-        // alpha 仍会被画,`drawn_rect_into` 每帧有值),轮廓盖在它上面。
+        // 选中几何:刚体弹簧驱动整块平移,气动形变由 poll 实测的
+        // 中心速度决定。几何本身透明(零 alpha 仍会被画,
+        // `drawn_rect_into` 每帧有值),水滴/胶囊盖在它上面。
         let scale = geom.metrics.scale();
         let (panel_x, panel_y) = s.fx.sel_origin;
         let live = s.sel_drawn.get();
@@ -1527,7 +1705,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             Rect::from_xywh(live[0] - panel_x, live[1] - panel_y, live[2], live[3])
         };
         let mut geom_el = el()
-            .key("sel-geom")
+            .key(format!("sel-geom-{}", s.fx.sel_gen))
             .absolute(target.left, target.top)
             .w(target.width())
             .h(target.height())
@@ -1538,7 +1716,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 b: 0.0,
                 a: 0.0,
             })
-            .lead(motion::LEAD, motion::DEFAULT)
+            .motion(BODY)
             .drawn_rect_into(&s.sel_drawn);
         if s.fx.sel_snap || !s.effects() || s.fx.reduce || s.fx.scroll_drag.is_some() {
             geom_el = geom_el.instant_changes();
@@ -1547,56 +1725,73 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
 
         let axis_x = s.fx.sel_axis_x;
         let fwd = if s.fx.sel_forward < 0.0 { -1.0 } else { 1.0 };
-        let (main_len, head_d) = if axis_x {
-            (drawn.width(), drawn.height())
+        // 气动形变 0..1;直接落位/减动效/拖滚动条时不起形。只在水
+        // 平长条上把尾端收圆——棋盘格子横长,竖向平移没有可收的尾。
+        let flow = if s.fx.sel_snap || !s.effects() || s.fx.reduce || s.fx.scroll_drag.is_some() {
+            0.0
         } else {
-            (drawn.height(), drawn.width())
+            s.fx.sel_flow
         };
-        let rest_main = if axis_x {
-            target.width()
+        let taper = if axis_x && drawn.width() > drawn.height() * 1.2 {
+            flow * flow * (3.0 - 2.0 * flow)
         } else {
-            target.height()
+            0.0
         };
-        let r_cap = target.width().min(target.height()) / 2.0;
-        let extra = (main_len - rest_main).max(0.0);
-        let cap = r_cap * GOO_CAP;
-        let shown_main = main_len.min(rest_main + cap);
-        let shown = if axis_x {
-            let head = if fwd > 0.0 { drawn.right } else { drawn.left };
-            let left = if fwd > 0.0 { head - shown_main } else { head };
-            Rect::from_xywh(left, drawn.top, shown_main, drawn.height())
-        } else {
-            let head = if fwd > 0.0 { drawn.bottom } else { drawn.top };
-            let top = if fwd > 0.0 { head - shown_main } else { head };
-            Rect::from_xywh(drawn.left, top, drawn.width(), shown_main)
-        };
-        // 几何 sanity:原生弹簧只会在面板内动,这里仍留一道保险——
-        // 非有限/出板不画,绝不把旧形态坐标画成整盘蓝块。
-        let (pw, ph) = (geom.width, geom.height);
-        let bad = !(shown.left.is_finite()
-            && shown.top.is_finite()
-            && shown.width().is_finite()
-            && shown.height().is_finite())
-            || shown.left < 0.0
-            || shown.top < 0.0
-            || shown.right > pw
-            || shown.bottom > ph;
-        if bad {
-            eprintln!(
-                "sel_goo 几何越界 left={:.0} top={:.0} w={:.0} h={:.0} \
-                 pw={pw:.0} ph={ph:.0} main={main_len:.0} rest={rest_main:.0} \
-                 axis_x={axis_x}",
-                shown.left,
-                shown.top,
-                shown.width(),
-                shown.height()
-            );
-        } else {
-            // 拉得够长就是水滴:单条轮廓,滞后缘收尖、领先端整圆。
-            // 短拉伸保持胶囊,尖头不露怯。
-            if extra > head_d * GOO_DROP_RATIO && shown_main > head_d * 1.5 {
+        // 安全网:弹簧只会在面板内动;真出板就裁到板内,绝不把旧
+        // 形态坐标画成整盘蓝块。
+        let left = drawn.left.max(0.0);
+        let top = drawn.top.max(0.0);
+        let right = drawn.right.min(geom.width);
+        let bottom = drawn.bottom.min(geom.height);
+        if right > left && bottom > top {
+            let shown = Rect::from_xywh(left, top, right - left, bottom - top);
+            // 小水珠垫在液滴下面:从尾尖甩出、向后减速、淡出。
+            for b in &s.fx.sel_beads {
+                let age = (s.fx.now - b.born) as f32;
+                let life = (1.0 - age / b.life).clamp(0.0, 1.0);
+                if life <= 0.0
+                    || b.x - b.r < 0.0
+                    || b.y - b.r < 0.0
+                    || b.x + b.r > geom.width
+                    || b.y + b.r > geom.height
+                {
+                    continue;
+                }
+                let a = 0.85 * life * life;
+                let mut bead = el()
+                    .key(format!("bead-{}", b.id))
+                    .absolute(b.x - b.r, b.y - b.r)
+                    .w(b.r * 2.0)
+                    .h(b.r * 2.0)
+                    .radius(b.r)
+                    .opacity(a)
+                    .instant_changes()
+                    // 寿命到就消失,不留 0.15s 的残影。
+                    .transition(Transition::none());
+                bead = if look.high_contrast {
+                    bead.fill(rgb(look.palette.selected_bg))
+                } else {
+                    bead.gradient(look.glow.core_top, look.glow.core_bottom)
+                        .shadow(
+                            0.0,
+                            b.r * 0.9 * scale,
+                            look.glow.core_bottom.alpha(0.30 * a),
+                        )
+                };
+                layer = layer.child(bead);
+            }
+            if taper > 0.04 {
+                // 满形是圆润水滴:整块仍在候选格里,只把尾端收圆,
+                // 不向外拉长。头是整圆,尾是 0.28r 的小圆角。
                 layer = layer.child(goo_drop_marker(
-                    shown_main, head_d, axis_x, fwd, look, scale, shown,
+                    shown.width(),
+                    shown.height(),
+                    taper,
+                    axis_x,
+                    fwd,
+                    look,
+                    scale,
+                    shown,
                 ));
             } else {
                 layer = layer.child(sel_marker(
@@ -1604,60 +1799,6 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                     look,
                     scale,
                 ));
-            }
-            // 甩脱的水滴:原生尾长超过封顶的部分截掉,只剩快连击时
-            // 在封顶外撒几颗同灯珠。flat 纯色点真机读作噪点,灯珠
-            // (渐变+小光晕)才读作液体。
-            let shed = main_len - shown_main;
-            if shed > r_cap * 0.8 && s.fx.sel_peak_v > GOO_SHED_V {
-                let reach = shed.min(r_cap * 8.0);
-                let n_drop = ((reach / (r_cap * 3.0)).floor() as usize).clamp(2, 4);
-                let n_c = shown.top + shown.height() * 0.5;
-                let n_cx = shown.left + shown.width() * 0.5;
-                let head_u = if axis_x {
-                    if fwd > 0.0 { shown.right } else { shown.left }
-                } else if fwd > 0.0 {
-                    shown.bottom
-                } else {
-                    shown.top
-                };
-                for k in 1..=n_drop {
-                    // 0 贴封顶缘(大而实),1 远端(小而淡)。
-                    let f = (k - 1) as f32 / (n_drop.max(2) - 1) as f32;
-                    let u = shown_main + reach * f;
-                    let (dx2, dy2) = if axis_x {
-                        (head_u - fwd * u, n_c)
-                    } else {
-                        (n_cx, head_u - fwd * u)
-                    };
-                    let d_r = (r_cap * (0.42 + 0.36 * (1.0 - f))).min(20.0);
-                    let d_a = 0.45 + 0.50 * (1.0 - f);
-                    if !(dx2.is_finite() && dy2.is_finite())
-                        || dx2 - d_r < 0.0
-                        || dy2 - d_r < 0.0
-                        || dx2 + d_r > geom.width
-                        || dy2 + d_r > geom.height
-                    {
-                        continue;
-                    }
-                    let mut bead = el()
-                        .absolute(dx2 - d_r, dy2 - d_r)
-                        .w(d_r * 2.0)
-                        .h(d_r * 2.0)
-                        .radius(d_r)
-                        .opacity(d_a);
-                    bead = if look.high_contrast {
-                        bead.fill(rgb(look.palette.selected_bg))
-                    } else {
-                        bead.gradient(look.glow.core_top, look.glow.core_bottom)
-                            .shadow(
-                                0.0,
-                                d_r * 0.9 * scale,
-                                look.glow.core_bottom.alpha(0.30 * d_a),
-                            )
-                    };
-                    layer = layer.child(bead);
-                }
             }
         }
     }
@@ -1687,31 +1828,51 @@ fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
     )
 }
 
-/// 液滴轮廓:滞后缘(u=0)一个尖,两侧直线切到领先端直径 H 的整圆
-/// 上(切点在圆的左上/左下弧段,不在顶点),圆取两切点间的大弧——
-/// 头是一颗完整的球,尾是一条锥,数学上就是彗星/水滴剪影。侧边用
-/// quadratic 向外微鼓(0.06H)去机械感。坐标在归一化 (u,n):u 主轴
-/// 0→W 指领先端,n 侧轴;axis_y 转置,fwd<0 沿主轴镜像。
-/// 离线光栅化调过的参数,改之前先用 /tmp/drop.py 看剪影。
-fn drop_path(w: f32, h: f32, map: &dyn Fn(f32, f32) -> [f32; 2]) -> Path {
-    let r = h * 0.5;
-    // 圆心最多顶到 u=W-r;W 太小时 clamp 防 acos 越域。
-    let cx = (w - r).max(r * 1.2);
-    let beta = (-r / cx).acos();
-    // 切点相对圆心:(cos β, ±sin β),cos β = -r/cx 是负的→切点在左半圆。
-    let up = (cx + r * beta.cos(), r - r * beta.sin());
-    let down = (cx + r * beta.cos(), r + r * beta.sin());
-    let bow = h * 0.06;
-    let mut path = Path::new()
-        .move_to(map(0.0, r))
-        .quad_to(map(up.0 * 0.5, (r + up.1) * 0.5 - bow), map(up.0, up.1));
-    // 头圆大弧:-β → +β 经过 0°(正右),约 200° 采样 20 段。
-    for i in 1..=20 {
-        let a = -beta + 2.0 * beta * (i as f32 / 20.0);
-        path = path.line_to(map(cx + r * a.cos(), r + r * a.sin()));
+/// 水滴轮廓:领先端(u=W)是整圆头,滞后端(u=0)是半径 r_t 的小圆角,
+/// 两侧用两圆的外公切线连接,再向外微鼓成饱满的肚子。`taper` 0 时
+/// r_t=r、鼓包为 0,就是标准胶囊;1 时 r_t=0.55r,是圆润的水滴——
+/// 整条轮廓仍在 [0,W]×[0,H] 里,不向外拉长。`map` 负责轴向转置与反向。
+fn drop_path(w: f32, h: f32, taper: f32, map: &dyn Fn(f32, f32) -> [f32; 2]) -> Path {
+    let taper = taper.clamp(0.0, 1.0);
+    // 鼓包的控制点偏移;曲线实际鼓出 bow/2,所以有效高度收 bow。
+    let bow = h * DROP_BOW * taper / (1.0 + DROP_BOW * taper);
+    let he = h - bow;
+    let r = he * 0.5;
+    let cy = h * 0.5;
+    let rt = (r * (1.0 - (1.0 - DROP_TAIL_R) * taper)).max(0.5);
+    let d = (w - r - rt).max(0.01);
+    let alpha = ((r - rt) / d).clamp(-1.0, 1.0).asin();
+    let (sa, ca) = alpha.sin_cos();
+    let (head, tail) = ((w - r, cy), (rt, cy));
+    // 外公切线的四个切点;taper=0 时 alpha=0,退化成胶囊的上下边。
+    let hu = (head.0 - r * sa, head.1 - r * ca);
+    let hl = (head.0 - r * sa, head.1 + r * ca);
+    let tu = (tail.0 - rt * sa, tail.1 - rt * ca);
+    let tl = (tail.0 - rt * sa, tail.1 + rt * ca);
+    let mut path = Path::new().move_to(map(tu.0, tu.1));
+    path = path.quad_to(
+        map((tu.0 + hu.0) * 0.5, (tu.1 + hu.1) * 0.5 - bow),
+        map(hu.0, hu.1),
+    );
+    // 头圆大弧:-π/2-α → π/2+α,经过 0(正右)。
+    let a0 = -core::f32::consts::FRAC_PI_2 - alpha;
+    let a1 = core::f32::consts::FRAC_PI_2 + alpha;
+    for i in 1..=24 {
+        let a = a0 + (a1 - a0) * (i as f32 / 24.0);
+        path = path.line_to(map(head.0 + r * a.cos(), head.1 + r * a.sin()));
     }
-    path.quad_to(map(down.0 * 0.5, (r + down.1) * 0.5 + bow), map(0.0, r))
-        .close()
+    path = path.quad_to(
+        map((tl.0 + hl.0) * 0.5, (tl.1 + hl.1) * 0.5 + bow),
+        map(tl.0, tl.1),
+    );
+    // 尾圆小弧:π/2+α → 3π/2-α,经过 π(正左)。
+    let b0 = core::f32::consts::FRAC_PI_2 + alpha;
+    let b1 = core::f32::consts::TAU - core::f32::consts::FRAC_PI_2 - alpha;
+    for i in 1..=16 {
+        let a = b0 + (b1 - b0) * (i as f32 / 16.0);
+        path = path.line_to(map(tail.0 + rt * a.cos(), tail.1 + rt * a.sin()));
+    }
+    path.close()
 }
 
 /// 拉伸态选中液滴:单个元素、单条轮廓,与静止胶囊同一盏灯。
@@ -1720,6 +1881,7 @@ fn drop_path(w: f32, h: f32, map: &dyn Fn(f32, f32) -> [f32; 2]) -> Path {
 fn goo_drop_marker(
     w: f32,
     h: f32,
+    taper: f32,
     axis_x: bool,
     fwd: f32,
     look: &Look,
@@ -1734,14 +1896,16 @@ fn goo_drop_marker(
         .absolute(rect.left, rect.top)
         .w(rect.width())
         .h(rect.height())
-        .key("sel");
+        .key("sel")
+        .instant_changes();
     if look.high_contrast {
-        return el
-            .shape(Shape::new().fill_path(&drop_path(w, h, &m), rgb(look.palette.selected_bg)));
+        return el.shape(
+            Shape::new().fill_path(&drop_path(w, h, taper, &m), rgb(look.palette.selected_bg)),
+        );
     }
-    let body = drop_path(w, h, &m);
+    let body = drop_path(w, h, taper, &m);
     // 高光:同轮廓压到上 55% 高度,底部弦自然闭合,贴合上缘不留缝。
-    let sheen = drop_path(w, h * 0.55, &m);
+    let sheen = drop_path(w, h * 0.55, taper, &m);
     el.shape(
         Shape::new()
             .stroke_path(
@@ -1756,22 +1920,22 @@ fn goo_drop_marker(
 }
 
 /// 选中指示器:单一共享元素垫在选中槽下,而不是每格各自开关装饰子树。
-/// 选中迁移的几何由 content 里的 `sel-geom` 原生 lead 驱动;这里只按
+/// 选中迁移的几何由 content 里的 `sel-geom` 刚体弹簧驱动;这里只按
 /// 它写出的绘制矩形画胶囊/水滴,元素自己不再配 `.motion`。
 fn sel_marker(rect: Rect, look: &Look, scale: f32) -> El {
     selection_pill(
         el().absolute(rect.left, rect.top)
             .w(rect.width())
             .h(rect.height())
-            .radius(rect.height() * 0.5),
+            .radius(rect.height() * 0.5)
+            .instant_changes(),
         look,
         scale,
     )
-    // key+持久身份:条↔棋盘同一节点。
-    // 不用 matched:胶囊飞行走 launches 通道,会盖住同路径 top1
-    // 的字("猛沉")——持久形变照常拉伸,且永远画在飞行层下面。
-    // 不配 transition:重挂载时的淡入淡出会顶掉形变,看着像胶囊
-    // 消失重冒而不是拉伸。
+    // key+持久身份:条↔棋盘同一节点。位置/尺寸每帧按绘制矩形直接
+    // 落(instant_changes),不配 motion/transition:弹簧已经在
+    // sel-geom 上跑过一遍,这里再弹一次会落后一帧;重挂载的淡入
+    // 淡出也会顶掉形变。
     .key("sel")
 }
 
