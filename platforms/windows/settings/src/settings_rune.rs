@@ -189,8 +189,9 @@ fn load_core() -> Core {
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出。
-    cx.reduced_motion(!theme::client_area_animation());
+    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出;上游宿主喂的
+    // 就是同一个 SPI,不重复读注册表。
+    cx.reduced_motion(cx.system_reduced_motion());
     scene(s)
 }
 
@@ -938,19 +939,33 @@ fn open_text(s: &mut State, kind: TextKind) {
             .say(Notice::Error, format!("写模板失败: {error}"));
         return;
     }
-    match std::fs::read_to_string(&path) {
-        Ok(body) => {
-            s.text = TextEdit::new(body);
-            s.overlay = Overlay::Text {
-                title: kind.title().into(),
-                path,
-                kind,
-            };
-        }
-        Err(error) => s
-            .core
+    // 短语文件可以上百 KB,读盘不占 UI 帧;结果回 UI 线程再开编辑层。
+    let Some(handle) = ui_handle() else {
+        return;
+    };
+    let spawned = std::thread::Builder::new()
+        .name("settings-text".into())
+        .spawn(move || {
+            let body = std::fs::read_to_string(&path);
+            handle.update(move |s: &mut State, _| match body {
+                Ok(body) => {
+                    s.text = TextEdit::new(body);
+                    s.overlay = Overlay::Text {
+                        title: kind.title().into(),
+                        path,
+                        kind,
+                    };
+                }
+                Err(error) => s
+                    .core
+                    .settings
+                    .say(Notice::Error, format!("读文件失败: {error}")),
+            });
+        });
+    if let Err(error) = spawned {
+        s.core
             .settings
-            .say(Notice::Error, format!("读文件失败: {error}")),
+            .say(Notice::Error, format!("读文件线程启动失败: {error}"));
     }
 }
 

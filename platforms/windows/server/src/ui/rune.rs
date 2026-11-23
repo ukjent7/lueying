@@ -14,15 +14,15 @@
 use std::cell::RefCell;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lueying_protocol::{Request, SessionView};
 use lueying_render::panel::{self, Item, Layout, Measure, Metrics, PanelSpec, Rect};
 use rune::tok::motion;
 use rune::{
     Align, App, AppSpec, Color, Cursor, Edge, El, LineCap, OverlayHandle, OverlayInput,
-    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Spring, SurfaceFit, TextStyle,
-    Transition, Tx, canvas, col, el, text,
+    OverlayOptions, OverlayPlacement, OverlaySpec, Pixels, Shape, Side, Spring, SurfaceFit,
+    TextStyle, Transition, Tx, anchor_rect, canvas, col, el, text,
 };
 use rune_text::TextSystem;
 
@@ -57,9 +57,6 @@ const WRAP_WINDOW_H: f32 = 210.0;
 /// 常驻的 overlay 句柄;别的线程靠它改状态、注入鼠标与唤醒。
 static HANDLE: OnceLock<OverlayHandle<Candidate>> = OnceLock::new();
 
-/// 服务端状态的转交点;AppSpec 的 fn 指针从这里取状态。
-static RUNE_STATE: OnceLock<Arc<imp::State>> = OnceLock::new();
-
 /// 候选窗的存在状态;截止时刻只在淡出中有效。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum Presence {
@@ -67,7 +64,7 @@ enum Presence {
     #[default]
     Idle,
     /// 原生 alpha 淡出进行中,到期停靠;期间沿用冻结内容并让鼠标穿透。
-    FadingOut(Instant),
+    FadingOut(f64),
 }
 
 /// 右键菜单状态;悬停槽位只在打开时有效。
@@ -128,13 +125,16 @@ struct Fx {
     /// 右键菜单状态。
     menu: Menu,
     /// 本次组合的起点;外观扩展的时钟从这儿算。
-    since: Option<Instant>,
+    since: Option<f64>,
+    /// 本帧的逻辑钟(poll 的 t,秒):液块采样、淡出进度、捕获节流同走
+    /// 一口钟,headless 下与虚拟时钟一致,不再各摸各的墙钟。
+    now: f64,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
     /// 选中胶囊的液块动画:四条边弹簧采样,胶囊本体拉伸成跨度。
     sel_goo: Option<SelGoo>,
     /// 聚合余震:高速归位后胶囊按衰减正弦抖(水滴落地)。瞬时与振幅。
-    sel_wobble: Option<(Instant, f32)>,
+    sel_wobble: Option<(f64, f32)>,
     /// 液块播放期尾边追速的全程峰值:聚合瞬间转成余震能量
     /// (停稳判定要求速度≈0,峰值必须另记)。
     sel_peak_v: f32,
@@ -155,8 +155,8 @@ const THUMB_TRAIL: rune::Spring = rune::Spring::new(0.50, 0.5);
 /// 液块的连击热度:重定向距上一跳 <300ms 计一次连击(封顶 4)。
 /// 慢按与拼命按是两种物理,热度把输入节奏喂进弹簧——拖尾越拉越
 /// 长、甩断的水珠越多。停手一拍热度清零。
-fn goo_heat(prev_t0: Instant, prev_heat: u8, now: Instant) -> u8 {
-    if now.duration_since(prev_t0).as_secs_f32() < 0.30 {
+fn goo_heat(prev_t0: f64, prev_heat: u8, now: f64) -> u8 {
+    if ((now - prev_t0) as f32) < 0.30 {
         (prev_heat + 1).min(4)
     } else {
         0
@@ -190,8 +190,8 @@ impl Fx {
 }
 
 /// 0..1 的动画进度;已过期钳到 1。
-fn progress(total: Duration, end: Instant, now: Instant) -> f32 {
-    let remain = end.checked_duration_since(now).unwrap_or_default();
+fn progress(total: Duration, end: f64, now: f64) -> f32 {
+    let remain = Duration::from_secs_f64((end - now).max(0.0));
     (1.0 - remain.as_secs_f32() / total.as_secs_f32()).clamp(0.0, 1.0)
 }
 
@@ -227,33 +227,22 @@ struct Geom {
     fit: usize,
 }
 
-/// 保留一帧原始像素,不为内容相同的背板唤醒 Rune。
+/// 背板像素的流式通道;原图去重在 `capture_backdrop` 的 `backdrop_raw` 已做,
+/// 这里不再存一份比。调用方只在内容变了时 publish。
 struct Backdrop {
     pixels: Pixels,
-    last: Option<((u32, u32), Vec<u8>)>,
 }
 
 impl Default for Backdrop {
     fn default() -> Self {
         Self {
             pixels: Pixels::new(),
-            last: None,
         }
     }
 }
 
 impl Backdrop {
     fn publish(&mut self, width: u32, height: u32, rgba: Vec<u8>) -> bool {
-        let size = (width, height);
-        if self
-            .last
-            .as_ref()
-            .is_some_and(|(previous_size, previous)| *previous_size == size && *previous == rgba)
-        {
-            return false;
-        }
-        const MAX_RETAINED_BYTES: usize = 512 * 1024;
-        self.last = (rgba.len() <= MAX_RETAINED_BYTES).then(|| (size, rgba.clone()));
         self.pixels.set(width, height, rgba);
         true
     }
@@ -267,7 +256,7 @@ struct Candidate {
     ink: RefCell<TextSystem>,
     /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
     backdrop: Option<Backdrop>,
-    backdrop_read: Option<(Instant, (i32, i32, i32, i32))>,
+    backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
     backdrop_raw: Option<((u32, u32), Vec<u8>)>,
     /// 亚克力颗粒:面板尺寸的固定噪点图;随尺寸重生成。
@@ -276,7 +265,7 @@ struct Candidate {
     /// 釉光的环境光:面板上下窄带的桌面实采均值,瓷釉光泽与玻璃棱缘
     /// rim 共用,没有来源就不上光。
     glaze: Option<lueying_server::theme::Glaze>,
-    glaze_read: Option<(Instant, (i32, i32, i32, i32))>,
+    glaze_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -379,17 +368,17 @@ impl Candidate {
     }
 
     /// 组合结束后的外观时钟;减少动态效果时恒为 1。
-    fn clock(&self, now: Instant) -> f32 {
+    fn clock(&self, now: f64) -> f32 {
         if self.fx.reduce {
             return 1.0;
         }
-        self.fx.since.map_or(1.0, |start| {
-            now.saturating_duration_since(start).as_secs_f32()
-        })
+        self.fx
+            .since
+            .map_or(1.0, |start| (now - start).max(0.0) as f32)
     }
 
     /// 淡出分支的进度;静止恒为 1。
-    fn anim(&self, now: Instant) -> f32 {
+    fn anim(&self, now: f64) -> f32 {
         match self.fx.presence {
             Presence::FadingOut(end) => ease_out_quint(progress(HIDE_FADE, end, now)).max(0.001),
             Presence::Idle => 1.0,
@@ -414,11 +403,6 @@ impl Candidate {
         ink.measure(text, TextStyle::new(size, 400.0), MEASURE_SCALE)
             .0
     }
-}
-
-/// `Candidate` 作 `Measure` 的借用视图;`self` 不可变借用场景直接用。
-fn meas_of(s: &Candidate) -> &dyn Measure {
-    s
 }
 
 impl Measure for Candidate {
@@ -494,13 +478,14 @@ fn ceramic_ink(mut p: panel::Palette) -> panel::Palette {
 
 /// 入口:建 Rune 应用与 overlay;事件循环不返回。
 pub(crate) fn run(state: Arc<imp::State>) {
-    let _ = RUNE_STATE.set(Arc::clone(&state));
     let spec = AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
+        // App::init 完全覆盖 AppSpec::init(上游 into_parts 只跑其一):fn 指针
+        // 是必填占位,永不执行,不再经全局转交状态。
         ..AppSpec::new(
             "lueying-rune-candidate",
             (480.0, WRAP_WINDOW_H),
-            no_window,
+            dead_init,
             view,
         )
     };
@@ -526,12 +511,12 @@ pub(crate) fn run(state: Arc<imp::State>) {
             // 只有标了 hit 的面板区域拦指针;条外透明区原生穿透给宿主。
             input: OverlayInput::Regions,
             exclude_from_capture: true,
-            prewarm: true,
             ..Default::default()
         })
         // 隐藏即归还 GPU 表面(上游 release_gpu_when_hidden):复显时 surface 重建,
         // 首帧必是新内容,不闪上一组句的候选页或展开棋盘;device 仍按上游策略保留
-        // 五分钟,复显只等几毫秒,不触发管线重建。
+        // 五分钟,复显只等几毫秒,不触发管线重建。(prewarm 与它互斥,预热效果
+        // 留不住,不配。)
         .release_gpu_when_hidden()
         .poll(poll);
     let handle = app.overlay(overlay, Candidate::with_state(state.clone()));
@@ -547,9 +532,9 @@ pub(crate) fn run(state: Arc<imp::State>) {
     app.run();
 }
 
-/// App::init 已接管状态构建;这个 fn 指针只是 AppSpec 的必填占位。
-fn no_window() -> Candidate {
-    Candidate::with_state(Arc::clone(RUNE_STATE.get().expect("候选窗状态未就绪")))
+/// AppSpec 必填的 init 占位:App::init 在上游 into_parts 里完全覆盖它,永不执行。
+fn dead_init() -> Candidate {
+    unreachable!("App::init 已接管状态构建")
 }
 
 /// 管道线程要叫醒候选窗时调用;overlay 起来之前是空操作。
@@ -578,33 +563,35 @@ pub(crate) fn forward_mouse(event: FallbackMouse) {
 }
 
 /// 每帧开头跑一次:补丁、版本、摆位、活背板,并决定下一次唤醒。
-fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
+fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
+    // 全窗一口钟:poll 的 t 是 Rune 帧钟,view 里所有采样都读它。
+    s.fx.now = now;
     // 液桥步进:动画期间每帧采样重绘,停稳即摘。只标记本轮要重绘
     // 并保住下一帧唤醒,绝不能提前 return——版本检查与 place() 都
     // 在后面,跳过了新按键要等动画停稳才被看见("按了顿住没反应,
     // 打断像没做"实测就是这个)。打断接力由 place() 在途采样完成。
     let mut goo_live = false;
     if let Some(g) = &s.fx.sel_goo {
-        let (_, _, _, _, _, done) = g.sample(Instant::now());
-        s.fx.sel_peak_v = s.fx.sel_peak_v.max(g.trail_v(Instant::now()).abs());
+        let (_, _, _, _, _, done) = g.sample(now);
+        s.fx.sel_peak_v = s.fx.sel_peak_v.max(g.trail_v(now).abs());
         if done {
             s.fx.sel_goo = None;
             // 聚合瞬间:追击峰值冲量转成落地余震(衰减正弦抖高),
             // 追得狠才抖,慢步不抖。
             let amp = (s.fx.sel_peak_v * 0.0005).min(0.30);
             if amp > 0.06 {
-                s.fx.sel_wobble = Some((Instant::now(), amp));
+                s.fx.sel_wobble = Some((now, amp));
             }
             s.fx.sel_peak_v = 0.0;
         }
-        tx.wake_after(Duration::from_millis(0));
+        tx.wake_after(Duration::ZERO);
         goo_live = true;
     }
     if let Some((w0, _)) = s.fx.sel_wobble {
-        if Instant::now().duration_since(w0).as_secs_f32() > 0.55 {
+        if (now - w0) as f32 > 0.55 {
             s.fx.sel_wobble = None;
         } else {
-            tx.wake_after(Duration::from_millis(0));
+            tx.wake_after(Duration::ZERO);
             goo_live = true;
         }
     }
@@ -663,22 +650,21 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
     // 淡出到期停靠;摆位时已排好这一次唤醒。
-    if matches!(s.fx.presence, Presence::FadingOut(end) if Instant::now() >= end) {
+    if matches!(s.fx.presence, Presence::FadingOut(end) if now >= end) {
         s.fx.clear();
         park(s);
         return true;
     }
     if s.live_glass(high_contrast) {
-        let now = Instant::now();
         let rect = s.fx.placement.panel;
         if s.backdrop_read
-            .is_none_or(|(last, area)| area != rect || now.duration_since(last) >= LIVE_TICK)
+            .is_none_or(|(last, area)| area != rect || now - last >= LIVE_TICK.as_secs_f64())
         {
             s.backdrop_read = Some((now, rect));
             changed |= capture_backdrop(s);
         }
         if let Some((last, _)) = s.backdrop_read {
-            tx.wake_after((last + LIVE_TICK).saturating_duration_since(Instant::now()));
+            tx.wake_at(last + LIVE_TICK.as_secs_f64());
         }
     } else if s.private || !s.glass_wanted(high_contrast) || !s.material.is_glass() {
         s.backdrop_read = None;
@@ -688,16 +674,15 @@ fn poll(s: &mut Candidate, _now: f64, tx: &mut Tx) -> bool {
     // 光泽与玻璃的棱缘 rim 都吃这份采样;淡出期保留,冻结内容里不
     // 闪变;停靠由 park 清。会被画的材质才采,实底主题与私密玻璃不采。
     if s.visible && s.glaze_wanted(high_contrast) {
-        let now = Instant::now();
         let rect = s.fx.placement.panel;
         if s.glaze_read
-            .is_none_or(|(last, area)| area != rect || now.duration_since(last) >= AMBIENT_TICK)
+            .is_none_or(|(last, area)| area != rect || now - last >= AMBIENT_TICK.as_secs_f64())
         {
             s.glaze_read = Some((now, rect));
             changed |= capture_glaze(s);
         }
         if let Some((last, _)) = s.glaze_read {
-            tx.wake_after((last + AMBIENT_TICK).saturating_duration_since(Instant::now()));
+            tx.wake_at(last + AMBIENT_TICK.as_secs_f64());
         }
     } else {
         changed |= s.glaze.take().is_some();
@@ -714,7 +699,7 @@ fn retract(s: &mut Candidate, tx: &mut Tx) {
         return;
     }
     if !s.fx.fading() {
-        s.fx.presence = Presence::FadingOut(Instant::now() + HIDE_FADE);
+        s.fx.presence = Presence::FadingOut(s.fx.now + HIDE_FADE.as_secs_f64());
         s.fx.menu = Menu::Closed;
         s.fx.hover = None;
         s.fx.chev = false;
@@ -760,7 +745,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
         s.fx.menu = Menu::Closed;
         s.fx.hover = None;
         s.fx.chev = false;
-        s.fx.since = Some(Instant::now());
+        s.fx.since = Some(s.fx.now);
         // 入场过渡只在 animated 提交里播;这一条提交把它打出来。
         tx.animated();
     }
@@ -772,7 +757,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     if let Some(hold) = holding {
         if view.caret != Some(hold.rect) {
             holding = None;
-        } else if hold.at.elapsed() >= CARET_HOLD {
+        } else if s.fx.now - hold.at >= CARET_HOLD.as_secs_f64() {
             holding = None;
             released = true;
         }
@@ -794,7 +779,7 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     {
         fresh_hold = Some(CaretHold {
             rect: new,
-            at: Instant::now(),
+            at: s.fx.now,
         });
         tx.wake_after(CARET_HOLD);
     }
@@ -824,9 +809,9 @@ fn place(s: &mut Candidate, tx: &mut Tx) {
     {
         // 起点取在途位置:已有 goo 在飞就先采样它,无缝接力;连击
         // 热度也随 t0 带过来(上一跳没凉就 +1)。
-        let now = Instant::now();
+        let now = s.fx.now;
         let (l0, r0, t0, b0, vl, vr, vt, vb, heat) = if let Some(g) = &s.fx.sel_goo {
-            let t = now.duration_since(g.t0).as_secs_f32();
+            let t = (now - g.t0) as f32;
             let run = |e: &GooEdge, lead: bool| {
                 let sp = if lead { GOO_LEAD } else { g.trail };
                 sp.sample(e.x0, e.v0, e.target, t)
@@ -969,7 +954,7 @@ struct Placement {
 #[derive(Clone, Copy)]
 struct CaretHold {
     rect: (i32, i32, i32, i32),
-    at: Instant,
+    at: f64,
 }
 
 /// 光标位置算出的摆位;宽为 0 表示这次不弹。
@@ -1217,7 +1202,7 @@ fn publish_state(s: &mut Candidate, view: Option<&SessionView>) {
 
 /// 把场景发给外观扩展;主题色与私密标记都带上。
 fn submit_scene(s: &Candidate, view: &SessionView) {
-    let now = Instant::now();
+    let now = s.fx.now;
     let (_, _, accent) = place::ui_options(&s.state);
     let appearance = lueying_server::theme::Appearance::of_system();
     let high_contrast = matches!(appearance, lueying_server::theme::Appearance::HighContrast);
@@ -1255,8 +1240,9 @@ fn submit_scene(s: &Candidate, view: &SessionView) {
 
 /// 每帧重建候选窗的控件树;几何全部来自 panel.rs,所指即所画。
 fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
-    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出。
-    cx.reduced_motion(!lueying_server::theme::client_area_animation());
+    // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出;上游宿主在
+    // 建窗与焦点变化时读同一个 SPI,直接取它喂下的值。
+    cx.reduced_motion(cx.system_reduced_motion());
     if s.fx.last.is_none() {
         return el();
     }
@@ -1439,16 +1425,9 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             .last
             .as_ref()
             .is_some_and(|last| last.view.candidates.get(*gidx) == Some(text))
-        && let Some(origin) =
-            menu_origin(*gidx, s.page_start(), &geom.spec, &geom.metrics, meas_of(s))
+        && menu_rect(*gidx, s, geom).is_some()
     {
-        let look = Look {
-            palette: &palette,
-            glow,
-            selected_ink,
-            high_contrast,
-        };
-        root = root.child(menu_tree(s, geom, &look, *gidx, origin, bx, by));
+        root = root.child(menu_card(s, geom, &look, *gidx, text));
     }
     root
 }
@@ -1539,7 +1518,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     let mut layer = el().w_full().h_full();
     if let Some(rect) = sel_rect {
         if let Some(goo) = &s.fx.sel_goo {
-            let (l, r, tp, bt, v_lead, _) = goo.sample(Instant::now());
+            let (l, r, tp, bt, v_lead, _) = goo.sample(s.fx.now);
             // 行进主轴的 forward-u 边与垂直轴 n 边。
             let (axis_x, fwd) = (goo.axis_x, goo.forward);
             let (u_t, u_l) = if axis_x {
@@ -1598,7 +1577,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 (l2, t2, w2, h2)
             };
             layer = layer.child(sel_marker(
-                wobbled(s.fx.sel_wobble, Rect::from_xywh(l2, t2, w2, h2)),
+                wobbled(s.fx.sel_wobble, s.fx.now, Rect::from_xywh(l2, t2, w2, h2)),
                 look,
                 geom.metrics.scale(),
             ));
@@ -1651,7 +1630,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
             }
         } else {
             layer = layer.child(sel_marker(
-                wobbled(s.fx.sel_wobble, rect),
+                wobbled(s.fx.sel_wobble, s.fx.now, rect),
                 look,
                 geom.metrics.scale(),
             ));
@@ -1664,11 +1643,11 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
 
 /// 聚合余震:液块归位后衰减正弦(水滴落地)。高度抖动、宽度反向
 /// 补偿(体积守恒的果冻),中心锚定。约 0.5s 三个半波衰减看不见。
-fn wobbled(wobble: Option<(Instant, f32)>, r: Rect) -> Rect {
+fn wobbled(wobble: Option<(f64, f32)>, now: f64, r: Rect) -> Rect {
     let Some((w0, amp)) = wobble else {
         return r;
     };
-    let t = Instant::now().duration_since(w0).as_secs_f32();
+    let t = (now - w0) as f32;
     let w = amp * (-9.0 * t).exp() * (core::f32::consts::TAU * 6.0 * t).sin();
     if w.abs() < 0.003 && t > 0.4 {
         return r;
@@ -1721,7 +1700,7 @@ struct SelGoo {
     x_r: GooEdge,
     y_t: GooEdge,
     y_b: GooEdge,
-    t0: Instant,
+    t0: f64,
     /// 行进主轴(true=x);由两端中心位移决定。
     axis_x: bool,
     /// 主轴上行进方向(+1 右/下,-1 左/上);映射时镜像成「正向行进」。
@@ -1737,8 +1716,8 @@ struct SelGoo {
 impl SelGoo {
     /// 采样四条边的世界当前值,返回 (x_l, x_r, y_t, y_b, 前缘速度, 停稳)。
     /// 前缘=行进主轴上朝行进方向的那条边;其余三条同走 GOO_LEAD。
-    fn sample(&self, now: Instant) -> (f32, f32, f32, f32, f32, bool) {
-        let t = now.duration_since(self.t0).as_secs_f32();
+    fn sample(&self, now: f64) -> (f32, f32, f32, f32, f32, bool) {
+        let t = (now - self.t0) as f32;
         let run = |e: &GooEdge, lead: bool| {
             let s = if lead { GOO_LEAD } else { self.trail };
             s.sample(e.x0, e.v0, e.target, t)
@@ -1762,8 +1741,8 @@ impl SelGoo {
 
     /// 滞后边(追的那条)的瞬时速度。聚合瞬间它仍在冲——记进
     /// 播放期峰值,归位时转成落地余震的能量。
-    fn trail_v(&self, now: Instant) -> f32 {
-        let t = now.duration_since(self.t0).as_secs_f32();
+    fn trail_v(&self, now: f64) -> f32 {
+        let t = (now - self.t0) as f32;
         let e = if self.axis_x {
             if self.forward > 0.0 {
                 self.x_l
@@ -1823,14 +1802,17 @@ fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> E
         // 右边滑回来。同 key 让条↔棋盘是同一节点。不配 motion:格
         // 子矩形瞬间到位,字的飞行落点不中途挪动,路径保持直线。
         .key(format!("cell-{}-{gidx}-{}", s.comp, item.text))
-        .on_hover_change(move |s: &mut Candidate, inside, _| {
-            s.fx.hover = inside.then_some(index);
-        })
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_slot(index));
     // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
-    if hovered && !item.selected {
-        cell = cell.fill(look.tint(look.palette.hover, 0x66));
+    // 悬停高亮:原生路径交给 El::hover 悬停叠加(零视图提交);
+    // 回落注入路径没有元素悬停,仍读 fx.hover 画 fill。
+    if !item.selected {
+        cell = if hovered {
+            cell.fill(look.tint(look.palette.hover, 0x66))
+        } else {
+            cell.hover(look.tint(look.palette.hover, 0x66))
+        };
     }
     let index_ink = if item.selected {
         // 亮芯上的数字与选中文字同一墨:灯色的深色同源(光越亮字越深)。
@@ -1842,52 +1824,46 @@ fn item_el(s: &Candidate, geom: &Geom, look: &Look, item: &Item, at: &Cell) -> E
     };
     cell = cell
         .child(
-            el().absolute(
-                panel::ITEM_PAD * scale,
-                ink_y(rect.height(), geom.metrics.small),
-            )
-            .w(20.0 * scale)
-            .child(
-                text(format!("{}", index + 1))
-                    .font(TextStyle::new(geom.metrics.small, 400.0))
-                    .color(index_ink)
-                    .a11y_hidden(),
-            ),
+            text(format!("{}", index + 1))
+                .absolute(
+                    panel::ITEM_PAD * scale,
+                    ink_y(rect.height(), geom.metrics.small),
+                )
+                .w(20.0 * scale)
+                .font(TextStyle::new(geom.metrics.small, 400.0))
+                .color(index_ink)
+                .a11y_hidden(),
         )
         .child(
-            el().absolute(
-                panel::TEXT_X * scale,
-                ink_y(rect.height(), geom.metrics.text),
-            )
-            .child(
-                // 字的持久节点:条与棋盘两侧同一个 key,翻转时节点不重挂,
-                // 布局弹簧原生把它从当前视觉位置滑到新位置——「哪来回哪去」
-                // 由构造保证。曾用两侧不同 key + El::matched 配对飞行,实测
-                // 两种翻车:matched 起点读旧节点的布局矩形、无视它在途的
-                // travel 偏移,飞行到一半再翻转就跳回旧布局位置重飞;翻转
-                // 几次后 NodeId 回收的场景残留又让配对起点失真。
-                text(ellipsized(s, geom, &item.text))
-                    .key(format!("word-{}-{gidx}-{}", s.comp, item.text))
-                    .font(TextStyle::new(geom.metrics.text, 400.0))
-                    .color(if item.selected {
-                        look.selected_ink
-                    } else {
-                        rgb(look.palette.text)
-                    })
-                    .a11y_hidden(),
-            ),
+            // 字的持久节点:条与棋盘两侧同一个 key,翻转时节点不重挂,
+            // 布局弹簧原生把它从当前视觉位置滑到新位置——「哪来回哪去」
+            // 由构造保证。曾用两侧不同 key + El::matched 配对飞行,实测
+            // 两种翻车:matched 起点读旧节点的布局矩形、无视它在途的
+            // travel 偏移,飞行到一半再翻转就跳回旧布局位置重飞;翻转
+            // 几次后 NodeId 回收的场景残留又让配对起点失真。
+            text(ellipsized(s, geom, &item.text))
+                .absolute(
+                    panel::TEXT_X * scale,
+                    ink_y(rect.height(), geom.metrics.text),
+                )
+                .key(format!("word-{}-{gidx}-{}", s.comp, item.text))
+                .font(TextStyle::new(geom.metrics.text, 400.0))
+                .color(if item.selected {
+                    look.selected_ink
+                } else {
+                    rgb(look.palette.text)
+                })
+                .a11y_hidden(),
         );
     if !geom.spec.is_strip() && !item.hint.is_empty() {
         let shown = ellipsized(s, geom, &item.text);
         let hint_x = panel::TEXT_X * scale + s.text_width(&shown, geom.metrics.text) + 4.0 * scale;
         cell = cell.child(
-            el().absolute(hint_x, ink_y(rect.height(), geom.metrics.small))
+            text(item.hint.clone())
+                .absolute(hint_x, ink_y(rect.height(), geom.metrics.small))
                 .w(100.0 * scale)
-                .child(
-                    text(item.hint.clone())
-                        .font(TextStyle::new(geom.metrics.small, 400.0))
-                        .color(rgb(look.palette.text_tertiary)),
-                ),
+                .font(TextStyle::new(geom.metrics.small, 400.0))
+                .color(rgb(look.palette.text_tertiary)),
         );
     }
     cell
@@ -2067,27 +2043,32 @@ fn chevron_segment(shape: Shape, a: (f32, f32), b: (f32, f32), width: f32, color
 }
 
 /// 右键菜单:固定形状,外层 10px、行内缩 4px;玻璃上也用实底。
-fn menu_tree(
-    s: &Candidate,
-    geom: &Geom,
-    look: &Look,
-    gidx: usize,
-    origin: (f32, f32),
-    bx: f32,
-    by: f32,
-) -> El {
-    let (mx, my) = origin;
+/// 原生路径:锚在候选格子的 key 上,放不下自动翻到行上、8pt 窗口内
+/// 钳制(El::anchored);modal 提供外点关闭,行悬停/键盘高亮同享
+/// focus_highlight(NSMenu 同款)。回落注入的路径不走元素树,悬停
+/// 仍由 fx.menu.hover 画 fill、命中走 menu_rect + panel::menu_hit。
+fn menu_card(s: &Candidate, geom: &Geom, look: &Look, gidx: usize, text_: &str) -> El {
     let scale = geom.metrics.scale();
     let w = 116.0 * scale;
     let h = panel::menu_height(&geom.metrics);
+    let tint = rgb(look.palette.hover);
     let mut card = col()
-        .absolute(mx + bx, my + by)
+        .anchored(
+            format!("cell-{}-{gidx}-{text_}", s.comp),
+            Side::Bottom,
+            Align::Start,
+            0.0,
+        )
+        .anchored_round()
         .hit()
         .w(w)
         .h(h)
         .radius(10.0 * scale)
         .fill(rgb(look.palette.bg))
-        .border(1.0 * scale, rgb(look.palette.border));
+        .border(1.0 * scale, rgb(look.palette.border))
+        .role("menu")
+        .focus_group()
+        .modal(true, |s: &mut Candidate| s.fx.menu = Menu::Closed);
     for (index, label) in panel::MENU_ITEMS.iter().enumerate() {
         let y = (4.0 + index as f32 * 28.0) * scale;
         let hovered = s.fx.menu.hover() == Some(index);
@@ -2096,73 +2077,77 @@ fn menu_tree(
             .w((w - 8.0 * scale).max(0.0))
             .h(26.0 * scale)
             .radius(panel::concentric_radius(10.0 * scale, 4.0 * scale, 0.0))
-            .px(4.0 * scale)
             .cursor(Cursor::Pointer)
-            .role("button")
+            .role("menuitem")
             .label_static(label)
-            .on_hover_change(move |s: &mut Candidate, inside, _| {
-                s.fx.menu.set_hover(inside.then_some(index));
-            })
+            .focusable(true)
+            .focus_highlight(tint)
             .press_on_down()
-            .on_press(move |s: &mut Candidate| s.menu_click(gidx, index));
+            .on_press(move |s: &mut Candidate| s.menu_click(index));
         if hovered {
-            row = row.fill(rgb(look.palette.hover));
+            row = row.fill(tint);
         }
         card = card.child(
             row.child(
-                el().absolute(0.0, ink_y(26.0 * scale, 12.0 * scale)).child(
-                    text(*label)
-                        .font(TextStyle::new(12.0 * scale, 400.0))
-                        .color(rgb(if hovered {
-                            look.palette.text
-                        } else {
-                            look.palette.text_secondary
-                        }))
-                        .a11y_hidden(),
-                ),
+                text(*label)
+                    .absolute(0.0, ink_y(26.0 * scale, 12.0 * scale))
+                    .font(TextStyle::new(12.0 * scale, 400.0))
+                    .color(rgb(if hovered {
+                        look.palette.text
+                    } else {
+                        look.palette.text_secondary
+                    }))
+                    .a11y_hidden(),
             ),
         );
     }
     card
 }
 
-/// 菜单锚点:压着指定候选,画在面板内部;锚不下就贴行顶。
-/// `gidx` 是全局候选序号:棋盘按 `index` 找格,固定条/竖排减去页起点
-/// 换成槽位;候选已滚出当前可视区时返回 None,菜单随之不画。
-fn menu_origin(
-    gidx: usize,
-    page_start: usize,
-    spec: &PanelSpec,
-    metrics: &Metrics,
-    measure: &dyn Measure,
-) -> Option<(f32, f32)> {
-    let scale = metrics.scale();
-    let panel_h = panel::panel_height(spec, metrics, measure);
-    let menu_h = panel::menu_height(metrics);
-    let expanded = spec.expand && matches!(spec.layout, Layout::Wrap);
+/// 菜单矩形(面板本地逻辑点):与 El::anchored 同一份数学(anchor_rect),
+/// 回落注入路径拿它做命中与悬停;锚格不在本页/棋盘时返回 None,
+/// 视图不挂菜单(anchored 解析不到锚也会压到零矩形,双保险)。
+fn menu_rect(gidx: usize, s: &Candidate, geom: &Geom) -> Option<Rect> {
+    let scale = geom.metrics.scale();
+    let meas: &dyn Measure = s;
+    let expanded = geom.spec.expand && matches!(geom.spec.layout, Layout::Wrap);
     let cells = if expanded {
-        panel::grid_cells(spec, metrics, measure)
+        panel::grid_cells(&geom.spec, &geom.metrics, meas)
     } else {
-        panel::item_rects(spec, metrics, measure)
+        panel::item_rects(&geom.spec, &geom.metrics, meas)
     };
-    let rect = if expanded {
-        spec.grid
+    let cell = if expanded {
+        geom.spec
+            .grid
             .iter()
             .zip(&cells)
             .find(|(cell, _)| cell.index == gidx)
-            .map(|(_, rect)| *rect)
+            .map(|(_, rect)| *rect)?
     } else {
-        cells.get(gidx.checked_sub(page_start)?).copied()
+        cells.get(gidx.checked_sub(s.page_start())?).copied()?
     };
-    let rect = rect?;
-    // 菜单只画在面板内部:上界是首行行顶,锚不下就压着行画。
-    let floor = cells.first().map_or(0.0, |first| first.top);
-    let top = if rect.bottom + menu_h <= panel_h {
-        rect.bottom
-    } else {
-        (rect.top - menu_h).max(floor)
-    };
-    Some((8.0 * scale, top))
+    // 面板本地 → 窗口本地(与 body 的 absolute(bx, by) 同一步换算)。
+    let bx = (s.fx.placement.panel.0 - s.fx.placement.window.0) as f32 / scale;
+    let by = (s.fx.placement.panel.1 - s.fx.placement.window.1) as f32 / scale;
+    let target = [
+        cell.left + bx,
+        cell.top + by,
+        cell.right + bx,
+        cell.bottom + by,
+    ];
+    let win = (
+        s.fx.placement.window.2 as f32 / scale,
+        s.fx.placement.window.3 as f32 / scale,
+    );
+    let r = anchor_rect(
+        target,
+        (116.0 * scale, panel::menu_height(&geom.metrics)),
+        Side::Bottom,
+        Align::Start,
+        0.0,
+        win,
+    );
+    Some(Rect::from_ltrb(r[0] - bx, r[1] - by, r[2] - bx, r[3] - by))
 }
 
 impl Candidate {
@@ -2196,11 +2181,14 @@ impl Candidate {
         self.request(Request::Expand { session });
     }
 
-    /// 菜单项:全局候选序号直达,展开棋盘里的页外行也能置顶/降权。
-    fn menu_click(&mut self, gidx: usize, item: usize) {
+    /// 菜单项:全局候选序号取自菜单状态,展开棋盘里的页外行也能置顶/降权。
+    fn menu_click(&mut self, item: usize) {
         if !self.interactive() {
             return;
         }
+        let Menu::Open { gidx, .. } = self.fx.menu else {
+            return;
+        };
         let session = self.state.active.load(Ordering::Relaxed);
         let req = if item == 0 {
             Request::PinIndex { session, gidx }
@@ -2351,17 +2339,13 @@ impl Candidate {
             return;
         }
         // 菜单项优先于候选行。
-        if let Menu::Open { gidx, .. } = &self.fx.menu
+        if let Menu::Open { gidx, .. } = self.fx.menu
             && let Some(geom) = &self.geom
+            && let Some(rect) = menu_rect(gidx, self, geom)
+            && let Some(item) = panel::menu_hit(rect.left, rect.top, &geom.metrics, x, y)
         {
-            let meas: &dyn Measure = self;
-            let origin = menu_origin(*gidx, self.page_start(), &geom.spec, &geom.metrics, meas);
-            if let Some((mx, my)) = origin
-                && let Some(item) = panel::menu_hit(mx, my, &geom.metrics, x, y)
-            {
-                self.menu_click(*gidx, item);
-                return;
-            }
+            self.menu_click(item);
+            return;
         }
         match raw {
             panel::Hit::Item(slot) => self.pick_slot(slot),
@@ -2392,9 +2376,9 @@ impl Candidate {
             && geom.spec.scroll.is_some_and(|scroll| {
                 panel::scrollbar_hit(scroll, geom.width, geom.height, &geom.metrics, x, y).is_some()
             });
-        let menu_hover = if let Menu::Open { gidx, .. } = &self.fx.menu {
-            menu_origin(*gidx, self.page_start(), &geom.spec, &geom.metrics, meas)
-                .and_then(|(mx, my)| panel::menu_hit(mx, my, &geom.metrics, x, y))
+        let menu_hover = if let Menu::Open { gidx, .. } = self.fx.menu {
+            menu_rect(gidx, self, geom)
+                .and_then(|r| panel::menu_hit(r.left, r.top, &geom.metrics, x, y))
         } else {
             None
         };
@@ -2678,23 +2662,21 @@ fn cell_el(
         .press_on_down()
         .on_press(move |s: &mut Candidate| s.pick_index(index));
     // 格子本身透明不可见,不需要飞;真正"哪来回哪去"的是字。
-    // 与条侧同一结构(cell > 绝对定位包装 > 字):文字 key 两侧一致,
-    // 节点跨翻转持久,布局弹簧把它从当前位置滑到棋盘位。居中用实测
-    // 宽度,不走 row 的 grow——行内文字的纵向会瞬时到位,飞不全。
+    // 与条侧同一结构(cell > 字):文字 key 两侧一致,节点跨翻转
+    // 持久,布局弹簧把它从当前位置滑到棋盘位。居中用实测宽度,
+    // 不走 row 的 grow——行内文字的纵向会瞬时到位,飞不全。
     let shown_w = s.text_width(&shown, geom.metrics.text);
     let text_x = (((rect.width() - shown_w) / 2.0).max(8.0 * scale)).floor();
     cell.child(
-        el().absolute(text_x, ink_y(rect.height(), geom.metrics.text))
-            .child(
-                text(shown)
-                    .key(format!("word-{}-{index}-{candidate}", s.comp))
-                    .font(TextStyle::new(geom.metrics.text, 400.0))
-                    .color(if selected {
-                        look.selected_ink
-                    } else {
-                        rgb(look.palette.text)
-                    })
-                    .a11y_hidden(),
-            ),
+        text(shown)
+            .absolute(text_x, ink_y(rect.height(), geom.metrics.text))
+            .key(format!("word-{}-{index}-{candidate}", s.comp))
+            .font(TextStyle::new(geom.metrics.text, 400.0))
+            .color(if selected {
+                look.selected_ink
+            } else {
+                rgb(look.palette.text)
+            })
+            .a11y_hidden(),
     )
 }

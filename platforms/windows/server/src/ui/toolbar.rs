@@ -38,6 +38,8 @@ pub(super) struct BarHud {
     status: Status,
     /// 月相 0=弯月 1=满月;形变期间由 poll 里的弹簧推进,canvas 路径按它重建。
     phase: f32,
+    /// 月相弹簧的初值与起点时刻(帧钟秒);目标翻转时记下当前相位接力。
+    phase_from: (f32, f64),
     /// 外观与主题色下标按 poll 取一次:系统主题切得很慢,每帧读注册表纯属浪费。
     appearance: theme::Appearance,
     accent: usize,
@@ -53,6 +55,7 @@ impl BarHud {
         Self {
             // 启动即落在当前月相,首帧不播形变。
             phase: if status.fullwidth { 1.0 } else { 0.0 },
+            phase_from: (if status.fullwidth { 1.0 } else { 0.0 }, 0.0),
             status,
             appearance: theme::Appearance::of_system(),
             accent: place::ui_options(&state).2,
@@ -117,7 +120,7 @@ pub(super) fn kick() {
 }
 
 /// 每帧开头跑一次:配置倍率、状态字、外观与可见性;有变化才让 view 重跑。
-fn toolbar_poll(s: &mut BarHud, _now: f64, tx: &mut Tx) -> bool {
+fn toolbar_poll(s: &mut BarHud, now: f64, tx: &mut Tx) -> bool {
     let mut changed = false;
     let version = s.state.version.load(Ordering::Acquire);
     if version != s.version {
@@ -136,22 +139,27 @@ fn toolbar_poll(s: &mut BarHud, _now: f64, tx: &mut Tx) -> bool {
     if status != s.status {
         s.status = status;
         // 全/半切换是月亮的形变:下面的月相弹簧把暗面侵蚀到位。
+        s.phase_from = (s.phase, now);
         tx.animated();
         changed = true;
     }
-    // 月相弹簧:0=弯月,1=满月;形变期间每 16ms 推进一步并叫醒下一拍,
-    // 到位即停(shapes 示例的 poll 驱动同款)。系统关掉动画效果就直落。
+    // 月相弹簧:0=弯月,1=满月;闭式弹簧按经过时间采样,形变期间
+    // 每帧重采样并叫醒下一拍(shapes 示例的 poll 驱动同款),到位即停。
+    // 系统关掉动画效果就直落。
     let target = if s.status.fullwidth { 1.0 } else { 0.0 };
-    if (s.phase - target).abs() > 0.005 {
+    if s.phase != target {
         if theme::client_area_animation() {
-            s.phase += (target - s.phase) * 0.2;
+            let t = (now - s.phase_from.1) as f32;
+            let (p, v) = rune::Spring::new(0.28, 0.12).sample(s.phase_from.0, 0.0, target, t);
+            s.phase = p;
+            // 位置与速度都近零才算停;采样值过冲是弹簧的自然回弹。
+            if (s.phase - target).abs() < 0.005 && v.abs() < 0.05 {
+                s.phase = target;
+            } else {
+                tx.wake_after(Duration::ZERO);
+            }
         } else {
             s.phase = target;
-        }
-        if (s.phase - target).abs() <= 0.005 {
-            s.phase = target;
-        } else {
-            tx.wake_after(Duration::from_millis(16));
         }
         changed = true;
     }
@@ -199,8 +207,9 @@ fn place_bar(s: &BarHud) {
 
 /// 一帧控件树:圆角条 + 一排按钮。
 fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
-    // 系统关掉"动画效果"时,框架把过渡降级为淡出。
-    cx.reduced_motion(!theme::client_area_animation());
+    // 系统关掉"动画效果"时,框架把过渡降级为淡出;上游宿主喂的
+    // 就是同一个 SPI,不重复读注册表。
+    cx.reduced_motion(cx.system_reduced_motion());
     if !s.bar.visible {
         return el();
     }
@@ -238,6 +247,9 @@ fn button_el(
 ) -> El {
     let x = gap + index as f32 * (size + gap);
     let y = gap;
+    // 悬停亮底:普通按钮交给 El::hover 的悬停叠加(零视图提交);
+    // 月亮的影圆要与亮底同色混合,canvas 画不出悬停叠加,仍读
+    // s.hover 画 fill——它一个人保留悬停状态。
     let hovered = s.hover == Some(button);
     let mut cell = el()
         .absolute(x, y)
@@ -249,20 +261,20 @@ fn button_el(
         .role("button")
         .label(a11y_label(button))
         .key(format!("toolbar-{index}"))
-        .on_hover_change(move |s: &mut BarHud, inside, _| {
-            s.hover = inside.then_some(button);
-        })
         .press_on_down()
         .on_press(move |s: &mut BarHud| s.act(button));
     cell = if button == Button::FullWidth {
-        cell.a11y_value(if s.status.fullwidth {
+        cell.on_hover_change(move |s: &mut BarHud, inside, _| {
+            s.hover = inside.then_some(button);
+        })
+        .a11y_value(if s.status.fullwidth {
             "全角"
         } else {
             "半角"
         })
         .child(moon_el(s, size, hovered, palette))
     } else {
-        cell.child(
+        cell.hover(theme::srgb_alpha(palette.hover, 0.66)).child(
             text(toolbar::label(button, s.status))
                 .font(TextStyle::new(toolbar::FONT * t, 400.0))
                 .color(theme::srgb(palette.text)),
@@ -535,6 +547,7 @@ fn toggle_traditional(state: &Arc<State>) {
 }
 
 /// 打开设置窗口:与语言栏的「设置」一样启动同目录的 `lueying-settings.exe`。
+/// Windows 起进程要几十毫秒,不占用 UI 帧,挪到助手线程。
 fn open_settings() {
     let Some(dir) = std::env::current_exe()
         .ok()
@@ -542,9 +555,13 @@ fn open_settings() {
     else {
         return;
     };
-    if let Err(e) = std::process::Command::new(dir.join("lueying-settings.exe")).spawn() {
-        println!("启动设置失败: {e}");
-    }
+    let _ = std::thread::Builder::new()
+        .name("open-settings".into())
+        .spawn(move || {
+            if let Err(e) = std::process::Command::new(dir.join("lueying-settings.exe")).spawn() {
+                println!("启动设置失败: {e}");
+            }
+        });
 }
 
 /// 无障碍名:按钮只有状态字,读屏需要完整的动作说明。

@@ -12,7 +12,7 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use lueying_render::badge;
 use lueying_server::theme;
@@ -41,7 +41,8 @@ pub(super) struct BadgeHud {
     label: Option<&'static str>,
     /// 切换时的宿主光标矩形(物理像素);没有可用光标时退到主屏。
     caret: Option<(i32, i32, i32, i32)>,
-    at: Instant,
+    /// 本次切换的帧钟起点(秒);保持期与退场淡出都按它算。
+    at: f64,
     /// 外观与主题色下标按切换取一次:系统主题切得很慢,每帧读注册表纯属浪费。
     appearance: theme::Appearance,
     accent: usize,
@@ -59,7 +60,7 @@ impl BadgeHud {
             serial: 0,
             label: None,
             caret: None,
-            at: Instant::now(),
+            at: 0.0,
             appearance,
             accent: 0,
             kit: kit(appearance, 0),
@@ -159,7 +160,7 @@ pub(super) fn kick() {
 /// 切换序号变了就重读徽标;保持期结束撤下内容,退场淡出播完再停靠。
 /// poll 返回 true 才会让 view 重跑(上游契约:false 即不重跑、不重绘),
 /// 所以序号变化与撤下内容都必须返回 true。
-fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
+fn badge_poll(s: &mut BadgeHud, now: f64, tx: &mut Tx) -> bool {
     let serial = s.state.hud_serial.load(Ordering::Acquire);
     let mut changed = false;
     if serial != s.serial {
@@ -167,7 +168,7 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
         let source = s.state.mode_hud.lock().unwrap_or_else(|p| p.into_inner());
         s.label = source.as_ref().map(|hud| hud.label);
         s.caret = source.as_ref().and_then(|hud| hud.caret);
-        s.at = Instant::now();
+        s.at = now;
         s.appearance = theme::Appearance::of_system();
         s.accent = place::ui_options(&s.state).2;
         s.kit = kit(s.appearance, s.accent);
@@ -175,8 +176,8 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
         s.exit = false;
         changed = true;
     }
-    let elapsed = Instant::now().saturating_duration_since(s.at);
-    if elapsed >= HOLD + EXIT {
+    let elapsed = (now - s.at).max(0.0);
+    if elapsed >= (HOLD + EXIT).as_secs_f64() {
         // 退场淡出播完(窗口级 hide 只是兜底收尾):停靠。
         s.label = None;
         s.caret = None;
@@ -203,8 +204,8 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
         s.shown = true;
         changed = true;
     }
-    if elapsed < HOLD {
-        tx.wake_after(HOLD - elapsed);
+    if elapsed < HOLD.as_secs_f64() {
+        tx.wake_at(s.at + HOLD.as_secs_f64());
         return changed;
     }
     if !s.exit {
@@ -221,8 +222,9 @@ fn badge_poll(s: &mut BadgeHud, _now: f64, tx: &mut Tx) -> bool {
 
 /// 一枚徽标:kit 的 Badge 组件居中在透明 overlay 里;每份一个 key,重挂载重播入场。
 fn badge_view(s: &BadgeHud, cx: &mut Cx<BadgeHud>) -> El {
-    // 系统关掉"动画效果"时,过渡降级为框架内置的快速淡出。
-    cx.reduced_motion(!lueying_server::theme::client_area_animation());
+    // 系统关掉"动画效果"时,过渡降级为框架内置的快速淡出;上游宿主
+    // 喂的就是同一个 SPI,不重复读注册表。
+    cx.reduced_motion(cx.system_reduced_motion());
     if s.exit || s.label.is_none() {
         return el();
     }

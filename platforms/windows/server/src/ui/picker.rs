@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use lueying_ext::host::Done;
-use lueying_render::panel::{self, Palette};
+use lueying_render::panel::Palette;
 use lueying_render::picker;
 use lueying_server::host_panel::{HostPanel, HostPanelView};
 use lueying_server::services::PanelJob;
@@ -63,7 +63,6 @@ pub(super) struct Picker {
     /// 唤出前的前台窗口(裸句柄值);关闭时把焦点还给它。
     restore: isize,
     visible: bool,
-    hover: Option<usize>,
     selected: Option<u32>,
 }
 
@@ -80,7 +79,6 @@ impl Picker {
             pending: None,
             restore: 0,
             visible: false,
-            hover: None,
             selected: None,
         }
     }
@@ -92,7 +90,6 @@ impl Picker {
         self.panel = Some(panel);
         self.current = Some(done);
         self.selected = None;
-        self.hover = None;
         self.refresh();
         self.place();
         if let Some(window) = WINDOW.get() {
@@ -311,8 +308,9 @@ fn picker_key(s: &mut Picker, event: &KeyEvent, _tx: &mut Tx) -> bool {
 
 /// 一帧控件树:圆角卡片、标题分隔线、行列表与页脚。
 fn picker_view(s: &Picker, cx: &mut Cx<Picker>) -> El {
-    // 系统关掉"动画效果"时,框架把过渡降级为淡出。
-    cx.reduced_motion(!theme::client_area_animation());
+    // 系统关掉"动画效果"时,框架把过渡降级为淡出;上游宿主喂的
+    // 就是同一个 SPI,不重复读注册表。
+    cx.reduced_motion(cx.system_reduced_motion());
     if !s.visible {
         return el();
     }
@@ -338,31 +336,28 @@ fn title_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> 
     let pad = picker::PAD;
     let title = layout.title;
     let count = format!("{} 项", spec.total);
-    let title_budget = title.width() - 3.0 * pad;
     col()
         .w_full()
         .h(title.height())
         .child(
-            el().absolute(pad, super::rune::ink_y(title.height(), 15.0))
-                .w(title_budget)
-                .child(
-                    text(ellipsize(&spec.title, title_budget, 15.0))
-                        .font(TextStyle::new(15.0, 400.0))
-                        .color(theme::srgb(palette.text)),
-                ),
+            text(&spec.title)
+                .absolute(pad, super::rune::ink_y(title.height(), 15.0))
+                .w(title.width() - 3.0 * pad)
+                .font(TextStyle::new(15.0, 400.0))
+                .color(theme::srgb(palette.text))
+                .truncate()
+                .a11y_hidden(),
         )
         .child(
-            el().absolute(
-                title.width() - pad - 60.0,
-                super::rune::ink_y(title.height(), 11.0),
-            )
-            .w(60.0)
-            .child(
-                text(count)
-                    .font(TextStyle::new(11.0, 400.0))
-                    .color(theme::srgb(palette.text_tertiary))
-                    .a11y_hidden(),
-            ),
+            text(count)
+                .absolute(
+                    title.width() - pad - 60.0,
+                    super::rune::ink_y(title.height(), 11.0),
+                )
+                .w(60.0)
+                .font(TextStyle::new(11.0, 400.0))
+                .color(theme::srgb(palette.text_tertiary))
+                .a11y_hidden(),
         )
         .child(
             el().absolute(pad, title.height() - 1.0)
@@ -380,6 +375,11 @@ fn rows_el(s: &Picker, palette: &Palette) -> El {
         .absolute(0.0, list.top)
         .w(list.width())
         .h(list.height())
+        // 原生 listbox:方向键巡游焦点高亮,回车/空格确认;选中胶囊是
+        // 面板自身的选中态,与悬停/焦点高光分层(NSMenu 的选中与高亮)。
+        .role("listbox")
+        .label(s.spec.title.clone())
+        .focus_group()
         .on_wheel(|s: &mut Picker, e, _| {
             if s.spec.rows.is_empty() {
                 return false;
@@ -409,14 +409,14 @@ fn rows_el(s: &Picker, palette: &Palette) -> El {
 }
 
 /// 一行:绝对定位在行矩形上,选中是主题色胶囊(纵向收进 2px,与行
-/// 留出呼吸,与旧画法一致),悬停亮底,点击选中并收起。
+/// 留出呼吸,与旧画法一致),悬停与键盘焦点共用原生高光,点击选中
+/// 并收起。
 fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
     let Some(rect) = s.layout.rows.get(index) else {
         return el();
     };
     let rect = *rect;
     let selected = index == s.spec.selected;
-    let hovered = s.hover == Some(index);
     let (top, height) = if selected {
         (rect.top + 2.0, rect.height() - 4.0)
     } else {
@@ -427,36 +427,36 @@ fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
         .w(rect.width())
         .h(height)
         .cursor(Cursor::Pointer)
-        .role("button")
+        .role("option")
         .label(row.clone())
+        .position_in_set(s.spec.above + index + 1, s.spec.total)
         .key(format!("row-{}", s.spec.above + index))
-        .on_hover_change(move |s: &mut Picker, inside, _| {
-            s.hover = inside.then_some(index);
-        })
+        .focusable(true)
+        .focus_selected(selected)
         .press_on_down()
         .on_press(move |s: &mut Picker| s.click(index))
         .child(
-            el().absolute(picker::PAD, super::rune::ink_y(height, 14.0))
+            text(row)
+                .absolute(picker::PAD, super::rune::ink_y(height, 14.0))
                 .w(rect.width() - 2.0 * picker::PAD)
-                .child(
-                    text(ellipsize(&row, rect.width() - 2.0 * picker::PAD, 14.0))
-                        .font(TextStyle::new(14.0, 400.0))
-                        .color(theme::srgb(if selected {
-                            palette.selected_text
-                        } else {
-                            palette.text
-                        }))
-                        .a11y_hidden(),
-                ),
+                .font(TextStyle::new(14.0, 400.0))
+                .color(theme::srgb(if selected {
+                    palette.selected_text
+                } else {
+                    palette.text
+                }))
+                .truncate()
+                .a11y_hidden(),
         );
     if selected {
         cell = cell
             .radius(picker::RADIUS)
             .fill(theme::srgb(palette.selected_bg));
-    } else if hovered {
+    } else {
+        // 悬停与键盘焦点同一个高光(NSMenu);选中行由胶囊承担高亮。
         cell = cell
             .radius(picker::RADIUS)
-            .fill(theme::srgb_alpha(palette.hover, 0.66));
+            .focus_highlight(theme::srgb_alpha(palette.hover, 0.66));
     }
     cell
 }
@@ -467,23 +467,18 @@ fn scroll_hints_el(s: &Picker, palette: &Palette) -> El {
     let mut hints = el().w_full().h_full().a11y_hidden();
     if s.spec.above > 0 {
         hints = hints.child(
-            el().absolute(list.width() - 16.0, 5.0).child(
-                text("▲")
-                    .font(TextStyle::new(10.0, 400.0))
-                    .color(theme::srgb(palette.text_tertiary))
-                    .a11y_hidden(),
-            ),
+            text("▲")
+                .absolute(list.width() - 16.0, 5.0)
+                .font(TextStyle::new(10.0, 400.0))
+                .color(theme::srgb(palette.text_tertiary)),
         );
     }
     if s.spec.below > 0 {
         hints = hints.child(
-            el().absolute(list.width() - 16.0, list.height() - 15.0)
-                .child(
-                    text("▼")
-                        .font(TextStyle::new(10.0, 400.0))
-                        .color(theme::srgb(palette.text_tertiary))
-                        .a11y_hidden(),
-                ),
+            text("▼")
+                .absolute(list.width() - 16.0, list.height() - 15.0)
+                .font(TextStyle::new(10.0, 400.0))
+                .color(theme::srgb(palette.text_tertiary)),
         );
     }
     hints
@@ -502,35 +497,24 @@ fn footer_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) ->
         .w(footer.width())
         .h(footer.height())
         .child(
-            el().absolute(pad, super::rune::ink_y(footer.height(), 11.0))
+            text("↑↓ 选择 · Enter 确认 · Esc 取消")
+                .absolute(pad, super::rune::ink_y(footer.height(), 11.0))
                 .w(footer.width() - 2.0 * pad)
-                .child(
-                    text("↑↓ 选择 · Enter 确认 · Esc 取消")
-                        .font(TextStyle::new(11.0, 400.0))
-                        .color(theme::srgb(palette.text_tertiary))
-                        .a11y_hidden(),
-                ),
+                .font(TextStyle::new(11.0, 400.0))
+                .color(theme::srgb(palette.text_tertiary))
+                .a11y_hidden(),
         )
         .child(
-            el().absolute(
-                footer.width() - pad - 40.0,
-                super::rune::ink_y(footer.height(), 11.0),
-            )
-            .w(40.0)
-            .child(
-                text(position)
-                    .font(TextStyle::new(11.0, 400.0))
-                    .color(theme::srgb(palette.text_tertiary))
-                    .a11y_hidden(),
-            ),
+            text(position)
+                .absolute(
+                    footer.width() - pad - 40.0,
+                    super::rune::ink_y(footer.height(), 11.0),
+                )
+                .w(40.0)
+                .font(TextStyle::new(11.0, 400.0))
+                .color(theme::srgb(palette.text_tertiary))
+                .a11y_hidden(),
         )
-}
-
-/// 文本按可宽截断;行宽以内用省略号。与候选窗同一套估宽截断
-/// (`panel::Estimate`),字符宽近似 ASCII 半角、其余全角,不为面板
-/// 引入一套文本测量。
-fn ellipsize(text: &str, budget: f32, size: f32) -> String {
-    panel::ellipsize(text, budget, size, &panel::Estimate)
 }
 
 /// 视图转渲染输入。
