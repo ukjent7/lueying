@@ -10,7 +10,7 @@ pub(crate) mod material;
 pub(crate) mod picker;
 pub(crate) mod place;
 pub(crate) mod rune;
-mod toolbar;
+pub(crate) mod toolbar;
 
 use std::sync::Arc;
 

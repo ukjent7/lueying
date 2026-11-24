@@ -31,6 +31,53 @@ fn main() {
     #[cfg(windows)]
     {
         use lueying_settings::settings_rune;
+        // 调试快照:独立进程渲染候选外观页,不开窗口、不跑自检。
+        #[cfg(debug_assertions)]
+        if std::env::args().nth(1).as_deref() == Some("--visual-settings-candidate") {
+            let mut args = std::env::args().skip(2);
+            let stress = match args.next().as_deref() {
+                Some("default") => false,
+                Some("stress") => true,
+                _ => std::process::exit(2),
+            };
+            let Some(output) = args.next() else {
+                std::process::exit(2);
+            };
+            let result = settings_rune::snap_candidate(stress, output);
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        // 调试快照:独立进程渲染指定设置页,不开窗口、不跑自检。
+        #[cfg(debug_assertions)]
+        if std::env::args().nth(1).as_deref() == Some("--visual-settings-page") {
+            let mut args = std::env::args().skip(2);
+            let scene = match args.next() {
+                Some(scene)
+                    if matches!(
+                        scene.as_str(),
+                        "input" | "candidate" | "extensions" | "dictionary" | "about" | "search"
+                    ) =>
+                {
+                    scene
+                }
+                _ => std::process::exit(2),
+            };
+            let Some(output) = args.next() else {
+                std::process::exit(2);
+            };
+            if args.next().is_some() {
+                std::process::exit(2);
+            }
+            let result = settings_rune::snap_page(&scene, output);
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            return;
+        }
         let mut args = std::env::args().skip(1);
         if args.next().as_deref() == Some("--selftest") {
             let path = args

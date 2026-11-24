@@ -65,7 +65,7 @@ pub fn run(report: &mut String) -> usize {
                 .iter()
                 .map(|g| g.title.as_str())
                 .collect::<Vec<_>>()
-                == ["输入"],
+                == ["输入方式", "文字与标点", "桌面工具栏", "隐私与记录"],
         format!("{nav:?} 当前 {}", page.active_nav),
     );
     // 每一页都有行,每行都有标题。
@@ -93,8 +93,8 @@ pub fn run(report: &mut String) -> usize {
         format!("空标题 {empty_rows} 行,空页 {empty_pages:?}"),
     );
     // 关键开关都在。
-    let aux = row_detail(&settings, PageId::Input, "输入", "辅助码");
-    let punct = row_detail(&settings, PageId::Input, "输入", "中文标点");
+    let aux = row_detail(&settings, PageId::Input, "输入方式", "辅助码");
+    let punct = row_detail(&settings, PageId::Input, "文字与标点", "中文标点");
     push(
         &mut checks,
         "设置关键行在位",
@@ -109,7 +109,7 @@ pub fn run(report: &mut String) -> usize {
         "设置左栏切页",
         nav_settings.page == PageId::Candidate
             && nav_settings.page(&colors()).active_nav == 1
-            && nav_settings.page(&colors()).groups[0].title == "候选",
+            && nav_settings.page(&colors()).title == PageId::Candidate.title(),
         format!("页面={:?}", nav_settings.page),
     );
 
@@ -340,8 +340,8 @@ pub fn run(report: &mut String) -> usize {
         &mut checks,
         "设置跨页搜索",
         search_settings.searching()
-            && searched.title == "搜索"
-            && searched.subtitle.contains("项")
+            && searched.title == "搜索结果"
+            && searched.subtitle.contains("项匹配")
             && hit
             && searched.active_nav == usize::MAX,
         format!(
@@ -353,7 +353,8 @@ pub fn run(report: &mut String) -> usize {
     push(
         &mut checks,
         "设置清空搜索回页",
-        !search_settings.searching() && search_settings.page(&colors()).title == "掠影",
+        !search_settings.searching()
+            && search_settings.page(&colors()).title == search_settings.page.title(),
         format!("搜索={:?}", search_settings.search),
     );
     // 候选页第一行是实时预览,只画不点。
@@ -408,7 +409,10 @@ pub fn run(report: &mut String) -> usize {
     // 词库导入:词库页有用户词库那行,点导入走的是导入动作。
     let mut dict_settings = sample_settings();
     let dict_page = dict_settings.page_view(PageId::Dictionary, &colors());
-    let dict_group = dict_page.groups.iter().find(|group| group.title == "词库");
+    let dict_group = dict_page
+        .groups
+        .iter()
+        .find(|group| group.title == "词库与自定义");
     let dict_labels: Vec<&str> = dict_group
         .map(|group| group.rows.iter().map(|row| row.label.as_str()).collect())
         .unwrap_or_default();
@@ -438,4 +442,11 @@ pub fn run(report: &mut String) -> usize {
     );
 
     crate::harness::write(report, "设置页模型", checks)
+}
+
+#[cfg(test)]
+#[test]
+fn settings_model_contract() {
+    let mut report = String::new();
+    assert_eq!(run(&mut report), 0, "{report}");
 }

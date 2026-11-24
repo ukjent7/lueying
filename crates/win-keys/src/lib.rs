@@ -71,7 +71,9 @@ pub fn vk_to_key(vk: u32, scan: u32, shift: bool, ctrl: bool) -> Option<KeyMsg> 
         0x60..=0x69 => KeyMsg::Digit(vk as u8 - 0x60),
         0x20 => KeyMsg::Space,
         0x0D => KeyMsg::Enter,
-        0x09 if !ctrl => KeyMsg::Tab,
+        // 只有裸 Tab 归输入法;Shift+Tab 等组合键原样交给应用。
+        0x09 if !shift && !ctrl => KeyMsg::Tab,
+        0x09 => return None,
         0x1B => KeyMsg::Esc,
         // 组合中 Ctrl+Backspace/Delete 按音节删,Ctrl+左右按音节移动;
         // 没有组合时引擎回直通,应用仍拿到原来的快捷键。
@@ -207,5 +209,18 @@ impl KeyTap {
     /// Shift 抬起时消费判定结果;非 Shift 返回 false。
     pub fn take_shift_tap(&self, vk: u32) -> bool {
         is_shift(vk) && self.armed.replace(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_unmodified_tab_maps_to_ime_tab() {
+        assert_eq!(vk_to_key(0x09, 0, false, false), Some(KeyMsg::Tab));
+        assert_eq!(vk_to_key(0x09, 0, true, false), None);
+        assert_eq!(vk_to_key(0x09, 0, false, true), None);
+        assert_eq!(vk_to_key(0x09, 0, true, true), None);
     }
 }

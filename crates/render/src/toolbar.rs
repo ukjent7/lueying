@@ -8,8 +8,14 @@ use crate::panel::Rect;
 
 /// 按钮的边长(倍率 1.0 时,逻辑像素)。
 pub const BUTTON: f32 = 28.0;
-/// 按钮之间与边缘的留白(倍率 1.0 时)。
+/// 同一组里按钮之间的留白(倍率 1.0 时)。
 pub const GAP: f32 = 4.0;
+/// 条体边缘到按钮的留白(倍率 1.0 时)。
+const INSET: f32 = 5.0;
+/// 状态组与命令组之间的间隔(倍率 1.0 时)。
+const COMMAND_GAP: f32 = 12.0;
+/// 左侧状态开关的数量;其后是设置与收起。
+const STATE_COUNT: usize = 4;
 /// 默认离屏幕右边与底边的距离。
 pub const MARGIN: f32 = 12.0;
 /// 任务栏高度的保守估计,默认位置要在它上方。
@@ -89,12 +95,33 @@ pub struct Toolbar {
     grab: Option<(f32, f32)>,
 }
 
+/// 第 `index` 个按钮在条体本地坐标里的矩形(左上角为原点);`index` 应在
+/// [`BUTTONS`] 范围内。倍率先夹到允许范围,与 [`Toolbar::size`] 一致。
+pub fn button_rect(index: usize, scale: f32) -> Rect {
+    let s = clamp_scale(scale);
+    let x = INSET
+        + index as f32 * (BUTTON + GAP)
+        + if index >= STATE_COUNT {
+            COMMAND_GAP - GAP
+        } else {
+            0.0
+        };
+    Rect::from_xywh(x * s, INSET * s, BUTTON * s, BUTTON * s)
+}
+
+/// 状态组与命令组之间的留白中点(条体本地横坐标);这里是可拖动的缺口。
+pub fn command_divider_x(scale: f32) -> f32 {
+    (button_rect(STATE_COUNT - 1, scale).right + button_rect(STATE_COUNT, scale).left) * 0.5
+}
+
 impl Toolbar {
     /// 工具栏的总宽高(像素),按当前倍率。
     pub fn size(&self) -> (f32, f32) {
         let s = clamp_scale(self.scale);
-        let width = BUTTONS.len() as f32 * BUTTON * s + (BUTTONS.len() as f32 + 1.0) * GAP * s;
-        (width, (BUTTON + 2.0 * GAP) * s)
+        (
+            button_rect(BUTTONS.len() - 1, s).right + INSET * s,
+            (BUTTON + 2.0 * INSET) * s,
+        )
     }
 
     /// 放在屏幕右下角、任务栏上方的默认位置(倍率 1.0)。
@@ -123,16 +150,20 @@ impl Toolbar {
 
     /// 每个按钮的矩形,从左到右。
     pub fn buttons(&self) -> Vec<(Button, Rect)> {
-        let s = clamp_scale(self.scale);
-        let size = BUTTON * s;
-        let gap = GAP * s;
         BUTTONS
             .iter()
             .enumerate()
             .map(|(index, &button)| {
-                let x = self.x + gap + index as f32 * (size + gap);
-                let y = self.y + gap;
-                (button, Rect::from_xywh(x, y, size, size))
+                let rect = button_rect(index, self.scale);
+                (
+                    button,
+                    Rect::from_xywh(
+                        self.x + rect.left,
+                        self.y + rect.top,
+                        rect.width(),
+                        rect.height(),
+                    ),
+                )
             })
             .collect()
     }
@@ -213,8 +244,7 @@ pub fn label(button: Button, status: Status) -> &'static str {
     }
 }
 
-/// 圆角半径与字号(倍率 1.0 时);窗口层与绘制共用。
-pub const RADIUS: f32 = 9.0;
+/// 按钮字号(倍率 1.0 时)。
 pub const FONT: f32 = 14.0;
 
 /// 月相几何沿右下/左上对角线的单位分量。月盘、影圆与暖光共用这一份,
@@ -358,7 +388,8 @@ mod tests {
     fn hidden_toolbar_catches_no_clicks() {
         let mut bar = Toolbar::at_default(screen());
         bar.visible = false;
-        let (cx, cy) = (bar.x + GAP + BUTTON / 2.0, bar.y + GAP + BUTTON / 2.0);
+        let first = bar.buttons()[0].1;
+        let (cx, cy) = (first.center_x(), first.center_y());
         assert_eq!(bar.hit(cx, cy), None);
     }
 
@@ -381,10 +412,31 @@ mod tests {
     fn pressing_a_button_does_not_start_a_drag() {
         let mut bar = Toolbar::at_default(screen());
         let before = (bar.x, bar.y);
-        let (cx, cy) = (bar.x + GAP + BUTTON / 2.0, bar.y + GAP + BUTTON / 2.0);
+        let first = bar.buttons()[0].1;
+        let (cx, cy) = (first.center_x(), first.center_y());
         bar.press(cx, cy);
         bar.drag(10.0, 10.0, screen());
         assert_eq!((bar.x, bar.y), before);
+    }
+
+    #[test]
+    fn group_divider_is_in_a_draggable_gap_at_each_scale() {
+        for scale in [SCALE_MIN, 1.0, SCALE_MAX] {
+            let mut bar = Toolbar {
+                scale,
+                x: 0.0,
+                y: 0.0,
+                ..Toolbar::at_default(screen())
+            };
+            assert!(
+                button_rect(4, scale).left - button_rect(3, scale).right
+                    > button_rect(1, scale).left - button_rect(0, scale).right
+            );
+            let (x, y) = (command_divider_x(scale), bar.size().1 * 0.5);
+            assert_eq!(bar.hit(x, y), None);
+            bar.press(x, y);
+            assert!(bar.grab.is_some());
+        }
     }
 
     #[test]

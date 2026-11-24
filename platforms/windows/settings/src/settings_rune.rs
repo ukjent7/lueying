@@ -25,6 +25,7 @@ use crate::settings::model::{self as model, ButtonKind, Control};
 use crate::settings::view::{Action, ConsentState, Notice, PageColors, PageId};
 use crate::settings::view::{Settings, UpdateState};
 use crate::update::{self, Check, Release};
+use lueying_render::panel::{self, Estimate, Item, Layout, Metrics, PanelSpec};
 use lueying_server::accents::ACCENTS;
 use lueying_server::config::{self, AppConfig};
 use lueying_server::theme::{self, Colors};
@@ -159,7 +160,7 @@ pub fn run() {
         poll: Some(settings_poll),
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
-    let app = App::new(spec).init(move || state);
+    let app = App::new(spec).tab_visits_controls(true).init(move || state);
     let handle = app.handle();
     HANDLE.with(|slot| *slot.borrow_mut() = Some(handle.clone()));
     // 首帧后再跑引擎状态与重排模型,首屏不被管道请求阻塞;Option 保证只一次。
@@ -284,23 +285,27 @@ fn scene(s: &State) -> El {
     let header = row()
         .key("header")
         .w_full()
-        .h(52.0)
+        .h(58.0)
         .px(18.0)
         .gap(16.0)
         .center_y()
         .child(
             col()
                 .key("titles")
+                .grow(1.0)
+                .min_w(0.0)
                 .gap(1.0)
                 .child(
-                    text("掠影设置")
-                        .font(TextStyle::new(16.0, 600.0))
-                        .color(color(colors.text)),
+                    text(page.title.clone())
+                        .font(TextStyle::new(21.0, 600.0).lh(25.0))
+                        .color(color(colors.text))
+                        .truncate(),
                 )
                 .child(
                     text(page.subtitle.clone())
                         .font(TextStyle::new(11.0, 400.0))
-                        .color(color(colors.text_secondary)),
+                        .color(color(colors.text_secondary))
+                        .truncate(),
                 ),
         )
         .child(
@@ -345,6 +350,7 @@ fn scene(s: &State) -> El {
                 .position_in_set(i + 1, n_nav)
                 .focusable(true)
                 .focus_selected(selected)
+                .focus_ring(2.0, -2.0, color(colors.accent_text))
                 .w_full()
                 .h(34.0)
                 .px(12.0)
@@ -393,7 +399,7 @@ fn scene(s: &State) -> El {
                 .truncate(),
         );
     for button in &page.footer_buttons {
-        footer = footer.child(button_el(button, &kit));
+        footer = footer.child(footer_button_el(button, &kit));
     }
 
     let mut base = col()
@@ -425,8 +431,12 @@ fn scene(s: &State) -> El {
 /// 右栏:滚动的卡片流。
 fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors, appearance: theme::Appearance) -> El {
     let mut cards = col().key("cards").w_full().gap(12.0);
+    // 相邻同名分组只画一次标题,官方扩展的多张卡片不重复起头。
+    let mut previous_title = None;
     for group in &page.groups {
-        cards = cards.child(group_card(group, kit, colors, appearance));
+        let show_title = previous_title != Some(group.title.as_str());
+        cards = cards.child(group_card(group, kit, colors, appearance, show_title));
+        previous_title = Some(group.title.as_str());
     }
     col()
         .key("page")
@@ -437,6 +447,7 @@ fn page_scene(page: &model::Page, kit: &Kit, colors: &Colors, appearance: theme:
         .pb(14.0)
         // 滚动边缘渐隐,官方 settings 示例的内容列同款:提示还有没滚到的卡片。
         .clip_fade(0.0, 8.0, 0.0, 16.0)
+        .scroll_margin(18.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
@@ -448,6 +459,7 @@ fn group_card(
     kit: &Kit,
     colors: &Colors,
     appearance: theme::Appearance,
+    show_title: bool,
 ) -> El {
     let extension = match group.rows.as_slice() {
         [
@@ -494,17 +506,16 @@ fn group_card(
         }
     }
     card = card.child(inner);
-    col()
-        .key(format!("section-{key}"))
-        .w_full()
-        .gap(6.0)
-        .child(
+    let mut section = col().key(format!("section-{key}")).w_full().gap(6.0);
+    if show_title {
+        section = section.child(
             text(group.title.clone())
-                .font(TextStyle::new(11.0, 500.0))
+                .font(TextStyle::new(12.0, 600.0))
                 .color(color(colors.text_secondary))
                 .ml(4.0),
-        )
-        .child(card)
+        );
+    }
+    section.child(card)
 }
 
 fn setting_row(
@@ -529,7 +540,7 @@ fn setting_row(
                 text(row_data.detail.clone())
                     .font(TextStyle::new(11.0, 400.0).lh(15.0))
                     .color(color(colors.text_secondary))
-                    .truncate(),
+                    .wrap(),
             )
     };
     match &row_data.control {
@@ -560,71 +571,104 @@ fn setting_row(
     }
 }
 
-/// 候选窗预览:直接画拼音与胶囊候选。高对比明确用系统选中实底/字色;
-/// 普通主题与运行时胶囊同一份暗胎渐变,选中字取该主题的 dark[2],
-/// 预设里找不到就退回黑瓷正文色。预览只示意,不伪造环境光。
+/// 候选窗预览:用真实 panel 布局量出固定条/竖排的每条矩形与圆角;
+/// 预览按 0.9 缩放画,最小设置宽度也留得下横排,竖排预算更窄。
+/// 不画可点的条尾箭头——结构性预览不是交互件,模型已留了同样的尾宽。
 fn candidate_preview(
     style: &model::CandidatePreview,
     colors: &Colors,
     appearance: theme::Appearance,
 ) -> El {
-    let font = TextStyle::new(12.0 * style.font_scale, 400.0);
-    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
-    let selected_text = if high_contrast {
-        colors.selected_text
-    } else {
-        ACCENTS
+    let metrics = Metrics::scaled(style.font_scale * 0.9);
+    let scale = metrics.scale();
+    let max_text_width = 380.0 * scale;
+    let spec = PanelSpec {
+        width: 0.0,
+        max_text_width,
+        expand: false,
+        items: style
+            .candidates
             .iter()
-            .find(|accent| accent.dark[0] == style.accent)
-            .map_or(colors.text, |accent| accent.dark[2])
+            .take(style.page_size.clamp(1, 9))
+            .enumerate()
+            .map(|(i, candidate)| Item {
+                text: panel::ellipsize(candidate, max_text_width, metrics.text, &Estimate),
+                hint: String::new(),
+                selected: i == 0,
+            })
+            .collect(),
+        grid: Vec::new(),
+        scroll: None,
+        layout: if style.vertical {
+            Layout::Column
+        } else {
+            Layout::Wrap
+        },
     };
-    let mut candidates = if style.vertical { col() } else { row() };
-    candidates = candidates.key("candidates").gap(4.0);
-    for (i, candidate) in style
-        .candidates
+    let (w, h) = (
+        panel::panel_width(&spec, &metrics, &Estimate),
+        panel::panel_height(&spec, &metrics, &Estimate),
+    );
+    let radius = panel::surface_radius(spec.is_strip(), w, h, scale);
+    let (selected_fill, selected_ink) = if matches!(appearance, theme::Appearance::HighContrast) {
+        (color(colors.selected_bg), color(colors.selected_text))
+    } else {
+        theme::capsule_colors(style.accent)
+    };
+    let mut surface = el()
+        .key("candidate-preview")
+        .w(w)
+        .h(h)
+        .radius(radius)
+        .continuous_corners()
+        .clip_rounded(radius)
+        .fill(color(colors.surface))
+        .border(1.0, color(colors.border));
+    for (i, (item, rect)) in spec
+        .items
         .iter()
-        .take(style.page_size.max(1))
+        .zip(panel::item_rects(&spec, &metrics, &Estimate))
         .enumerate()
     {
-        let selected = i == 0;
-        let mut cell = row()
-            .key(format!("candidate-{i}"))
-            .px(9.0)
-            .py(3.0)
-            .radius(6.0);
-        cell = if selected {
-            if high_contrast {
-                cell.fill(color(colors.selected_bg))
-            } else {
-                let (top, bottom) = theme::capsule_fill(colors.bg, style.accent);
-                cell.gradient(top, bottom)
-            }
-        } else {
-            cell.fill(color(colors.surface_alt))
-        };
-        candidates = candidates.child(cell.child(
-            text(candidate.clone()).font(font).color(color(if selected {
-                selected_text
-            } else {
-                colors.text
-            })),
-        ));
+        let mut cell = el()
+            .absolute(rect.left, rect.top)
+            .w(rect.width())
+            .h(rect.height())
+            .key(format!("candidate-{i}"));
+        if item.selected {
+            cell = cell
+                .radius(panel::capsule_radius(rect.width(), rect.height()))
+                .fill(selected_fill);
+        }
+        cell = cell
+            .child(
+                text(format!("{}", i + 1))
+                    .absolute(
+                        panel::ITEM_PAD * scale,
+                        (rect.height() - metrics.small) * 0.5,
+                    )
+                    .font(TextStyle::new(metrics.small, 400.0))
+                    .color(if item.selected {
+                        selected_ink
+                    } else {
+                        color(colors.text_tertiary)
+                    }),
+            )
+            .child(
+                text(item.text.clone())
+                    .absolute(panel::TEXT_X * scale, (rect.height() - metrics.text) * 0.5)
+                    .w((rect.width() - (panel::TEXT_X + panel::ITEM_PAD) * scale).max(1.0))
+                    .font(TextStyle::new(metrics.text, 400.0))
+                    .color(if item.selected {
+                        selected_ink
+                    } else {
+                        color(colors.text)
+                    })
+                    .truncate(),
+            );
+        surface = surface.child(cell);
     }
-    col()
-        .key("candidate-preview")
-        .w_full()
-        .gap(6.0)
-        .px(10.0)
-        .py(8.0)
-        .radius(10.0)
-        .fill(color(colors.surface_alt))
-        .border(1.0, color(colors.border))
-        .child(
-            text(style.pinyin.clone())
-                .font(TextStyle::new(11.0, 400.0))
-                .color(color(colors.text_secondary)),
-        )
-        .child(candidates)
+    surface
 }
 
 fn control_el(
@@ -711,6 +755,7 @@ fn slider_el(id: &model::Id, label: &str, value: f32, colors: &Colors) -> El {
         .cursor(Cursor::Pointer)
         .role("slider")
         .label(label.to_string())
+        .focus_ring(2.0, 1.0, color(colors.accent_text))
         .range_value(f64::from(value), 0.0, 1.0)
         .range_step(STEP)
         .a11y_value(format!("{:.0}%", value * 100.0))
@@ -801,6 +846,25 @@ fn button_el(button: &model::Button, kit: &Kit) -> El {
         .disabled(!button.enabled)
         .on_press(move |s: &mut State| activate(s, base.clone(), index))
         .build(kit)
+}
+
+/// 页脚按钮:回车只在它自己聚焦时激活,不设全局默认按钮。
+fn footer_button_el(button: &model::Button, kit: &Kit) -> El {
+    let base = button.id.base.clone();
+    let index = button.id.index;
+    let control = button_el(button, kit).key(format!("footer-{base}"));
+    if !button.enabled {
+        return control;
+    }
+    control.on_key(move |s: &mut State, event, tx| {
+        if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            activate(s, base.clone(), index);
+        }
+        true
+    })
 }
 
 /// 一次激活:先让模型改配置,再执行它要求的平台动作。
@@ -1388,6 +1452,75 @@ fn mount_overlay(key: &str, card: El, layers: &mut Vec<El>, scrim: Color) {
     );
 }
 
+/// 调试快照:独立进程渲染真实候选外观设置页并写 PNG,不读配置、不开窗口、
+/// 不接管道。default 常规宽度,stress 窄窗 + 竖排 + 大字号 + 9 候选。
+#[cfg(debug_assertions)]
+pub fn snap_candidate(stress: bool, output: String) -> Result<(), String> {
+    let mut state = State {
+        appearance: Some(theme::Appearance::Dark),
+        reduced_motion: Some(true),
+        ..State::default()
+    };
+    state.core.settings.page = PageId::Candidate;
+    let size = if stress {
+        (760.0, 800.0)
+    } else {
+        (960.0, 680.0)
+    };
+    if stress {
+        state.core.settings.cfg.ui_layout = config::UiLayout::Vertical;
+        state.core.settings.cfg.ui_font = config::UiFont::Large;
+        state.core.settings.cfg.page_size = 9;
+    }
+    snap_state(state, size, output)
+}
+
+#[cfg(debug_assertions)]
+fn snap_state(state: State, size: (f32, f32), output: String) -> Result<(), String> {
+    let spec = AppSpec {
+        families: ("Noto Sans SC", "Noto Sans SC"),
+        ..AppSpec::new("Lueying Settings Snapshot", size, State::default, view)
+    };
+    App::new(spec)
+        .tab_visits_controls(true)
+        .init(move || state)
+        .args([
+            "--snap".into(),
+            output,
+            "--scale".into(),
+            "1".into(),
+            "--at".into(),
+            "0.35".into(),
+        ])
+        .try_run()
+}
+
+/// 调试快照:渲染指定设置页,统一用最小支持窗口宽度。
+#[cfg(debug_assertions)]
+pub fn snap_page(scene: &str, output: String) -> Result<(), String> {
+    let page = match scene {
+        "input" => PageId::Input,
+        "candidate" => PageId::Candidate,
+        "extensions" => PageId::Extensions,
+        "dictionary" => PageId::Dictionary,
+        "about" => PageId::About,
+        "search" => PageId::Input,
+        _ => return Err(format!("未知场景: {scene}")),
+    };
+    let mut state = State {
+        appearance: Some(theme::Appearance::Dark),
+        reduced_motion: Some(true),
+        ..State::default()
+    };
+    state.core.settings.page = page;
+    state.core.settings.current = update::current_version();
+    if scene == "search" {
+        state.search = TextEdit::new("候选".to_owned());
+        state.core.settings.set_search("候选".to_owned());
+    }
+    snap_state(state, (760.0, 480.0), output)
+}
+
 /// 自检:写报告并返回成败;首行必须是「结果:通过/失败」。
 pub fn selftest(report: &Path) -> Result<(), String> {
     let mut lines: Vec<String> = Vec::new();
@@ -1467,8 +1600,215 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
     ));
     let state = State::default();
     let _ = scene(&state);
+    keyboard_selftest(lines)?;
     store::selftest()?;
     lines.push("扩展商店:点卡片、查看权限、启用与快捷键通过".to_string());
+    Ok(())
+}
+
+/// 键盘旅程:真实 headless Runtime 走一遍搜索、导航、页内滚动、开关与页脚。
+fn keyboard_selftest(lines: &mut Vec<String>) -> Result<(), String> {
+    fn focus_desc(el: &rune::ElementInfo) -> String {
+        el.key
+            .clone()
+            .or_else(|| el.label.clone())
+            .unwrap_or_else(|| el.role.to_string())
+    }
+    fn focused(rt: &rune::Runtime<State>) -> Option<rune::ElementInfo> {
+        rt.elements()
+            .into_iter()
+            .find(|el| el.focused && el.focus_visible)
+    }
+    fn predict_switch(rt: &rune::Runtime<State>) -> Option<rune::ElementInfo> {
+        rt.elements()
+            .into_iter()
+            .find(|el| el.role == "switch" && el.label.as_deref() == Some("下一词联想"))
+    }
+
+    let state = State {
+        appearance: Some(theme::Appearance::Dark),
+        reduced_motion: Some(true),
+        ..State::default()
+    };
+    let mut rt = rune::Runtime::new(state, view, (760.0, 480.0), rune::Env::new(true, 1.0));
+    // 系统「全键盘控制」关闭时,应用的 Tab 巡游仍要覆盖所有控件。
+    rt.set_full_keyboard_access(false);
+    rt.set_tab_visits_controls(true);
+    rt.frame(0.0);
+    let key = |rt: &mut rune::Runtime<State>, key: rune::Key, shift: bool| {
+        rt.key(rune::KeyEvent {
+            key,
+            mods: rune::Mods {
+                shift,
+                ..rune::Mods::default()
+            },
+        });
+        rt.frame(0.0);
+    };
+
+    // a. 首个 Tab 到搜索框。
+    key(&mut rt, rune::Key::Tab, false);
+    let at_search = focused(&rt).ok_or_else(|| "键盘: Tab 后没有可见焦点".to_string())?;
+    if at_search.key.as_deref() != Some("search") && at_search.label.as_deref() != Some("搜索设置")
+    {
+        return Err(format!(
+            "键盘: 首个 Tab 应到搜索框,实际 key={:?} label={:?} role={}",
+            at_search.key, at_search.label, at_search.role
+        ));
+    }
+    lines.push(format!(
+        "键盘: 首个 Tab 停在搜索框(key={:?}, label={:?})",
+        at_search.key, at_search.label
+    ));
+
+    // b. 搜索框里回车不能落到保存。
+    key(&mut rt, rune::Key::Enter, false);
+    let settings = &rt.state.core.settings;
+    if settings.notice == Notice::Error {
+        return Err(format!(
+            "键盘: 搜索框回车触发了保存/错误提示: {}",
+            settings.message
+        ));
+    }
+    lines.push(format!(
+        "键盘: 搜索框回车不保存、无错误(notice={:?})",
+        settings.notice
+    ));
+
+    // c. 左栏:Tab 到输入分类,Down 到候选,Enter 切页。
+    key(&mut rt, rune::Key::Tab, false);
+    let nav = focused(&rt).ok_or_else(|| "键盘: Tab 后没有可见焦点".to_string())?;
+    if nav.key.as_deref() != Some("nav-nav-input") {
+        return Err(format!(
+            "键盘: Tab 应到左侧「输入」,实际 key={:?} label={:?}",
+            nav.key, nav.label
+        ));
+    }
+    key(&mut rt, rune::Key::Down, false);
+    let nav = focused(&rt).ok_or_else(|| "键盘: Down 后没有可见焦点".to_string())?;
+    if nav.key.as_deref() != Some("nav-nav-candidate") {
+        return Err(format!(
+            "键盘: Down 应到左侧「候选」,实际 key={:?} label={:?}",
+            nav.key, nav.label
+        ));
+    }
+    key(&mut rt, rune::Key::Enter, false);
+    if rt.state.core.settings.page != PageId::Candidate {
+        return Err(format!(
+            "键盘: 在左侧「候选」回车没有切页,实际 {:?}",
+            rt.state.core.settings.page
+        ));
+    }
+    lines.push("键盘: Tab→nav-input,Down→nav-candidate,Enter 切到候选页".into());
+
+    // d. 「下一词联想」初始被页底裁掉;Tab 走到它时页要滚动并留出边距。
+    let predict =
+        predict_switch(&rt).ok_or_else(|| "键盘: 候选页找不到「下一词联想」开关".to_string())?;
+    let (rect, visible) = (predict.rect, predict.visible);
+    if !(visible[3] < rect[3] - 1.0) {
+        return Err(format!(
+            "键盘: 「下一词联想」初始应被页底裁掉,rect={rect:?} visible={visible:?}"
+        ));
+    }
+    lines.push(format!(
+        "键盘: 「下一词联想」初始在视口外(rect y={:.1}..{:.1}, visible y={:.1}..{:.1})",
+        rect[1],
+        rect[1] + rect[3],
+        visible[1],
+        visible[1] + visible[3]
+    ));
+
+    let mut tab_count = 0usize;
+    let mut reached = Vec::new();
+    loop {
+        if tab_count == 24 {
+            return Err(format!(
+                "键盘: Tab 24 次仍未到「下一词联想」;途经 {:?}",
+                reached
+            ));
+        }
+        key(&mut rt, rune::Key::Tab, false);
+        tab_count += 1;
+        let el =
+            focused(&rt).ok_or_else(|| format!("键盘: 第 {tab_count} 次 Tab 后没有可见焦点"))?;
+        reached.push(focus_desc(&el));
+        if el.role == "switch" && el.label.as_deref() == Some("下一词联想") {
+            break;
+        }
+    }
+    let predict =
+        predict_switch(&rt).ok_or_else(|| "键盘: 聚焦后找不到「下一词联想」开关".to_string())?;
+    let (rect, visible) = (predict.rect, predict.visible);
+    if (visible[2] - rect[2]).abs() > 1.0 || (visible[3] - rect[3]).abs() > 1.0 {
+        return Err(format!(
+            "键盘: Tab 到「下一词联想」后仍被裁,rect={rect:?} visible={visible:?} scrolled={:?}",
+            predict.scrolled
+        ));
+    }
+    if !(predict.scrolled[1] > 0.0) {
+        return Err(format!(
+            "键盘: Tab 到「下一词联想」后页面没有滚动,scrolled={:?} rect={rect:?} visible={visible:?}",
+            predict.scrolled
+        ));
+    }
+    lines.push(format!(
+        "键盘: Tab {tab_count} 次到「下一词联想」({}),整行可见并滚动 {:.1}pt;途经 {:?}",
+        focus_desc(&predict),
+        predict.scrolled[1],
+        reached
+    ));
+
+    // e. 空格翻转开关。
+    let before = rt.state.core.settings.cfg.predict;
+    key(&mut rt, rune::Key::Text(" ".into()), false);
+    let after = rt.state.core.settings.cfg.predict;
+    if after == before {
+        return Err(format!(
+            "键盘: 空格没有翻转「下一词联想」({before} -> {after}),当前焦点 {:?}",
+            focused(&rt).as_ref().map(focus_desc)
+        ));
+    }
+    lines.push(format!("键盘: 空格翻转「下一词联想」{before} -> {after}"));
+
+    // f. 页脚顺序:关闭、保存;Shift+Tab 回关闭,再 Tab 回保存。
+    let expect_focus =
+        |rt: &mut rune::Runtime<State>, want: &str, shift: bool| -> Result<(), String> {
+            key(rt, rune::Key::Tab, shift);
+            let el = focused(rt).ok_or_else(|| {
+                format!(
+                    "键盘: {}Tab 后没有可见焦点",
+                    if shift { "Shift+" } else { "" }
+                )
+            })?;
+            if el.key.as_deref() != Some(want) {
+                return Err(format!(
+                    "键盘: {}Tab 应到 {want},实际 key={:?} label={:?}",
+                    if shift { "Shift+" } else { "" },
+                    el.key,
+                    el.label
+                ));
+            }
+            Ok(())
+        };
+    expect_focus(&mut rt, "footer-close", false)?;
+    expect_focus(&mut rt, "footer-save", false)?;
+    expect_focus(&mut rt, "footer-close", true)?;
+    expect_focus(&mut rt, "footer-save", false)?;
+    lines.push("键盘: 页脚 Tab→关闭→保存,Shift+Tab→关闭,Tab→保存".into());
+
+    // g. 保存按钮的回车走真实回调;无配置路径时只报错,不写文件。
+    key(&mut rt, rune::Key::Enter, false);
+    let settings = &rt.state.core.settings;
+    if settings.notice != Notice::Error || settings.message != "没有可写的配置路径" {
+        return Err(format!(
+            "键盘: 保存回车没有执行真实回调: notice={:?} message={:?}",
+            settings.notice, settings.message
+        ));
+    }
+    lines.push(format!(
+        "键盘: 保存回车触发真实回调 -> Error「{}」(未写文件)",
+        settings.message
+    ));
     Ok(())
 }
 

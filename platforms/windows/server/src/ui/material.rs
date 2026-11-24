@@ -40,6 +40,11 @@ fn rgba(v: u32, a: f32) -> rune::Color {
     theme::srgb_alpha(v, a)
 }
 
+/// 面板外壳与玻璃背板共用同一个连续圆角与裁切。
+pub(super) fn rounded_surface(el: El, radius: f32) -> El {
+    el.radius(radius).continuous_corners().clip_rounded(radius)
+}
+
 /// 玻璃面:模糊、面层 tint、上下压光与边框。候选窗与工具栏共用同一份
 /// 像素配方;meniscus、颗粒与釉缘是各自按变体追加的层。
 pub(super) fn glass_face(face: El, variant: liquid::GlassVariant, frost: f32, stroke: f32) -> El {

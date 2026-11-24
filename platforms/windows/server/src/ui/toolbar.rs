@@ -21,8 +21,8 @@ use lueying_server::config::{self, UiMaterial};
 use lueying_server::theme;
 use rune::tok::motion;
 use rune::{
-    Align, Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions,
-    OverlaySpec, OverlaySupport, Phase, Pixels, SurfaceFit, TextStyle, Tx, el, text,
+    Align, Color, Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions,
+    OverlaySpec, OverlaySupport, Phase, Pixels, Shape, SurfaceFit, TextStyle, Tx, canvas, el, text,
 };
 use windows::Win32::Foundation::RECT;
 
@@ -537,8 +537,7 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
     {
         return false;
     }
-    let t = toolbar::clamp_scale(s.bar.scale);
-    let radius = toolbar::RADIUS * t * dpi;
+    let radius = lueying_render::panel::capsule_radius(w as f32, h as f32);
     let mut optics = liquid::process_with_pull(
         &raw,
         raw_w,
@@ -566,6 +565,25 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
     changed || rim_changed || grain_changed
 }
 
+/// 一帧控件树的全部输入:视图、快照与交互共用这一份,外观只有一条路径。
+struct ToolbarVisual<'a> {
+    bar: Toolbar,
+    appearance: theme::Appearance,
+    material: UiMaterial,
+    accent: usize,
+    effects: bool,
+    glass: bool,
+    variant: liquid::GlassVariant,
+    frost: f32,
+    phase: f32,
+    status: Status,
+    hover: Option<Button>,
+    backdrop: Option<&'a Pixels>,
+    grain: Option<&'a Pixels>,
+    rim: Option<&'a Pixels>,
+    glaze: Option<&'a theme::Glaze>,
+}
+
 /// 一帧控件树:圆角条 + 共同材质 + 一排按钮。
 fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
     // 减少动态效果与用户关闭特效都走即时档;reduce 来自 poll 的
@@ -574,6 +592,37 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
     if !s.bar.visible {
         return el();
     }
+    let high_contrast = matches!(s.appearance, theme::Appearance::HighContrast);
+    let glass = !s.private
+        && s.effects
+        && s.transparency
+        && s.material.is_glass()
+        && !high_contrast
+        && s.backdrop.is_some();
+    toolbar_surface(
+        ToolbarVisual {
+            bar: s.bar,
+            appearance: s.appearance,
+            material: s.material,
+            accent: s.accent,
+            effects: s.effects,
+            glass,
+            variant: s.glass,
+            frost: s.frost,
+            phase: s.phase,
+            status: s.status,
+            hover: s.hover,
+            backdrop: s.backdrop.as_ref(),
+            grain: s.grain.as_ref(),
+            rim: s.rim.as_ref(),
+            glaze: s.glaze.as_ref(),
+        },
+        true,
+    )
+}
+
+/// 由视图输入搭一帧控件树;`interactive` 为假时只画外观,不挂指针回调。
+fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
     let t = toolbar::clamp_scale(s.bar.scale);
     let (w, h) = s.bar.size();
     let high_contrast = matches!(s.appearance, theme::Appearance::HighContrast);
@@ -589,54 +638,46 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
         UiMaterial::Glass if !high_contrast => theme::glass_panel_palette(base),
         _ => base,
     };
-    let glass = !s.private
-        && s.effects
-        && s.transparency
-        && s.material.is_glass()
-        && !high_contrast
-        && s.backdrop.is_some();
-    let radius = toolbar::RADIUS * t;
+    let radius = lueying_render::panel::capsule_radius(w, h);
     let mut root = el().w_full().h_full();
     // 活背板只铺条体矩形:圆角外透明区不画,直接透出真桌面。
-    if glass && let Some(backdrop) = &s.backdrop {
-        root = root.child(
+    if s.glass
+        && let Some(backdrop) = s.backdrop
+    {
+        root = root.child(material::rounded_surface(
             el().absolute(0.0, 0.0)
                 .w(w)
                 .h(h)
-                .continuous_corners()
-                .clip_rounded(radius)
                 .pixels_fit(backdrop, SurfaceFit::Fill)
                 .surface_unscaled(true)
                 .surface_anchor(Align::Start, Align::Start),
-        );
+            radius,
+        ));
     }
-    let mut bar = el()
-        .absolute(0.0, 0.0)
-        .w(w)
-        .h(h)
-        .radius(radius)
-        .continuous_corners()
-        .clip_rounded(radius)
+    let mut bar = material::rounded_surface(el().absolute(0.0, 0.0).w(w).h(h), radius);
+    if interactive {
         // 条体是命中区:按下非按钮处开始拖动。
-        .hit()
-        .on_drag(|s: &mut BarHud, drag, _| on_bar_drag(s, drag));
-    match (s.material, glass) {
+        bar = bar
+            .hit()
+            .on_drag(|s: &mut BarHud, drag, _| on_bar_drag(s, drag));
+    }
+    match (s.material, s.glass) {
         // 玻璃:与候选窗同一条像素配方(背板折射+模糊+tint+压光+边框)。
         (UiMaterial::Glass, true) => {
-            bar = material::glass_face(bar, s.glass, s.frost, t);
-            bar = material::glass_meniscus(bar, s.glass, t);
-            if let Some(grain) = &s.grain {
+            bar = material::glass_face(bar, s.variant, s.frost, t);
+            bar = material::glass_meniscus(bar, s.variant, t);
+            if let Some(grain) = s.grain {
                 bar = material::glass_grain(bar, grain, false);
             }
             // 环境棱缘作为条体自身的图像填充:条体已显式给出宽高,
             // 纹理铺满整块面板并随条体缩放,垫在按钮与月光之下。
-            if let Some(rim) = &s.rim {
+            if let Some(rim) = s.rim {
                 bar = bar.pixels(rim);
             }
         }
         // 黑瓷:不透的共享石墨胎体;釉光只跟真实窄带采样。
         (UiMaterial::Ceramic, _) if !high_contrast => {
-            bar = material::ceramic_face(bar, &palette, s.glaze.as_ref(), t, h);
+            bar = material::ceramic_face(bar, &palette, s.glaze, t, h);
         }
         // 关闭特效、私密与高对比:实底主题兜底,不采桌面。
         _ => {
@@ -645,23 +686,39 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
                 .border(1.0, theme::srgb(palette.border));
         }
     }
-    let size = toolbar::BUTTON * t;
-    let gap = toolbar::GAP * t;
+    let moon_rect = toolbar::button_rect(1, t);
     // 缺口、亮区与暖光共用同一份月相几何:算一次,两处按各自字段取用。
-    let moon = toolbar::moon_illumination(size * 0.62 / 2.0, s.phase);
+    let moon = toolbar::moon_illumination(moon_rect.height() * 0.62 / 2.0, s.phase);
     // 月亮是明确的暖黄光源:它的接光只落在按钮周围,裁在条体内,
-    // 画在条体材料之后、按钮文字之前。高对比度不引入暖光。
-    if !high_contrast {
-        bar = bar.child(moon_light(moon, size, gap, h));
+    // 画在条体材料之后、按钮文字之前。关掉特效或高对比不引入暖光。
+    if s.effects && !high_contrast {
+        bar = bar.child(moon_light(moon, moon_rect));
     }
+    bar = bar.child(
+        el().absolute(
+            toolbar::command_divider_x(t) - 0.5 * t,
+            (h - 12.0 * t) * 0.5,
+        )
+        .w(t)
+        .h(12.0 * t)
+        .radius(0.5 * t)
+        .fill(if high_contrast {
+            theme::srgb(palette.border)
+        } else {
+            theme::srgb_alpha(palette.text_secondary, 0.24)
+        })
+        .key("command-divider")
+        .a11y_hidden(),
+    );
     for (index, button) in toolbar::BUTTONS.into_iter().enumerate() {
+        let rect = toolbar::button_rect(index, t);
         bar = bar.child(button_el(
-            s,
+            &s,
+            interactive,
             moon,
             button,
             index,
-            size,
-            gap,
+            rect,
             t,
             high_contrast,
             palette,
@@ -672,60 +729,125 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
 
 /// 一个按钮:居中状态字,悬停亮底,按下执行动作。全半角按钮是月亮。
 /// `palette` 由 `toolbar_view` 算一次传下来,每个按钮不重复取色;
-/// 位置由 `index`/`gap`/`size` 在函数内推导,不再作参数传入。
+/// `rect` 是条体本地坐标里的按钮矩形,与模型共用同一份布局。
 fn button_el(
-    s: &BarHud,
+    s: &ToolbarVisual<'_>,
+    interactive: bool,
     moon: toolbar::MoonIllumination,
     button: Button,
     index: usize,
-    size: f32,
-    gap: f32,
+    rect: Rect,
     t: f32,
     high_contrast: bool,
     palette: Palette,
 ) -> El {
-    let x = gap + index as f32 * (size + gap);
-    let y = gap;
+    let size = rect.height();
     // 悬停亮底:普通按钮交给 El::hover 的悬停叠加(零视图提交);
     // 月亮也读 s.hover 画 fill,让挖空处透出同一块悬停底。
     let hovered = s.hover == Some(button);
     let mut cell = el()
-        .absolute(x, y)
-        .w(size)
+        .absolute(rect.left, rect.top)
+        .w(rect.width())
         .h(size)
         .radius(size * 0.5)
         .center()
         .cursor(Cursor::Pointer)
         .role("button")
         .label(a11y_label(button))
-        .key(format!("toolbar-{index}"))
-        .press_on_down()
-        .on_press(move |s: &mut BarHud| s.act(button));
+        .key(format!("toolbar-{index}"));
+    if interactive {
+        cell = cell
+            .press_on_down()
+            .on_press(move |s: &mut BarHud| s.act(button));
+    }
     // 状态按钮是开关:checked 让读屏报 Toggled,value 读当前档位。
     // 设置与收起是命令按钮,不加开关语义。
     if let Some((on, value)) = a11y_toggle(button, &s.status) {
         cell = cell.checked(on).a11y_value(value);
     }
-    cell = if button == Button::FullWidth {
-        cell.on_hover_change(move |s: &mut BarHud, inside, _| {
-            s.hover = inside.then_some(button);
-        })
-        .child(moon_el(moon, size, high_contrast, palette))
+    let mode_on = button == Button::Mode && s.status.chinese;
+    let ink = theme::srgb(if high_contrast && mode_on {
+        palette.selected_text
+    } else if mode_on {
+        palette.accent_text
     } else {
-        cell.hover(theme::srgb_alpha(palette.hover, 0.66)).child(
+        palette.text
+    });
+    if mode_on {
+        cell = cell.fill(if high_contrast {
+            theme::srgb(palette.selected_bg)
+        } else {
+            theme::srgb_alpha(palette.accent, 0.16)
+        });
+    }
+    // 高对比用系统面/选中实色,避免半透明叠加改掉系统字色;其余档保持
+    // 原来的轻悬停叠色。
+    let hover = if high_contrast {
+        theme::srgb(if mode_on {
+            palette.selected_bg
+        } else {
+            palette.hover
+        })
+    } else {
+        theme::srgb_alpha(palette.hover, 0.66)
+    };
+    cell = if button == Button::FullWidth {
+        if interactive {
+            cell = cell.on_hover_change(move |s: &mut BarHud, inside, _| {
+                s.hover = inside.then_some(button);
+            });
+        }
+        cell.child(moon_el(moon, size, high_contrast, palette))
+    } else {
+        let glyph = if matches!(button, Button::Settings | Button::Hide) {
+            command_glyph(button, t, ink)
+        } else {
             text(toolbar::label(button, s.status))
-                .font(TextStyle::new(toolbar::FONT * t, 400.0))
-                .color(theme::srgb(palette.text)),
-        )
+                .font(TextStyle::new(
+                    toolbar::FONT * t,
+                    if button == Button::Mode { 550.0 } else { 400.0 },
+                ))
+                .color(ink)
+                .a11y_hidden()
+        };
+        cell.hover(hover).child(glyph)
     };
     if hovered {
-        cell = cell.fill(theme::srgb_alpha(palette.hover, 0.66));
+        cell = cell.fill(hover);
     }
     cell
 }
 
-/// 月亮按钮:固定的暖黄光源,不跟主题色走——候选窗的胶囊灯管才跟
-/// 主题色,月亮是自己的天体。盘与月坑放在同一块 d×d 局部层里,
+/// 设置与收起的线性图标:居中画在按钮里,不依赖字体里的符号资产。
+fn command_glyph(button: Button, scale: f32, ink: Color) -> El {
+    let stroke = |shape: Shape, points: &[[f32; 2]]| {
+        shape.stroke(
+            points
+                .iter()
+                .map(|p| [p[0] * scale, p[1] * scale])
+                .collect::<Vec<_>>(),
+            1.45 * scale,
+            ink,
+        )
+    };
+    let shape = match button {
+        Button::Settings => {
+            let mut shape = Shape::new();
+            for (y, x) in [(4.25, 5.0), (8.0, 10.5), (11.75, 6.5)] {
+                shape = stroke(shape, &[[2.75, y], [13.25, y]]);
+                shape = stroke(shape, &[[x, y - 1.4], [x, y + 1.4]]);
+            }
+            shape
+        }
+        Button::Hide => stroke(Shape::new(), &[[4.0, 6.25], [8.0, 10.25], [12.0, 6.25]]),
+        _ => unreachable!(),
+    };
+    canvas(shape).w(16.0 * scale).h(16.0 * scale).a11y_hidden()
+}
+
+/// 月亮按钮:固定的暖黄光源,不跟主题色走——月亮是自己的天体,主题色
+/// 只留给状态与命令;候选窗的选中胶囊也不发光,两边都不借强调色当灯管。
+/// 盘与月坑放在同一块 d×d 局部层里,
 /// 月相只在外面用 `cutout_circle` 挖掉影圆覆盖的部分:缺月处是真
 /// 透明,露出条体材料/悬停底,绝不用背景色填出一块假月盘。
 /// 盘的高光是盘自身的偏心渐变;条体上的暖光由 `moon_light` 单独铺。
@@ -785,18 +907,14 @@ fn moon_el(
 
 /// 条体自己的月亮接光:中心落在真实亮区质心,能量按亮区面积,
 /// 范围局部并由条体圆角裁切;不是整个工具栏的天光。
-fn moon_light(moon: toolbar::MoonIllumination, size: f32, gap: f32, h: f32) -> El {
-    let d = size * 0.62;
+fn moon_light(moon: toolbar::MoonIllumination, rect: Rect) -> El {
+    let d = rect.height() * 0.62;
     let offset = moon.centroid_offset * toolbar::FRAC_1_SQRT_2;
-    let index = toolbar::BUTTONS
-        .iter()
-        .position(|button| *button == Button::FullWidth)
-        .unwrap_or(1) as f32;
-    let cx = gap + index * (size + gap) + size * 0.5 + offset;
-    let cy = h * 0.5 + offset;
+    let cx = rect.center_x() + offset;
+    let cy = rect.center_y() + offset;
     let range = d * 1.6;
     let glow = d * 3.2;
-    let alpha = 0.28 * moon.emitting_area_ratio;
+    let alpha = 0.18 * moon.emitting_area_ratio;
     el().absolute(cx - glow * 0.5, cy - glow * 0.5)
         .w(glow)
         .h(glow)
@@ -961,6 +1079,135 @@ fn a11y_label(button: Button) -> &'static str {
         Button::Settings => "打开设置",
         Button::Hide => "收起工具栏",
     }
+}
+
+/// 调试快照的完整状态:模型、材质与合成背板。
+#[cfg(debug_assertions)]
+struct ToolbarShot {
+    bar: Toolbar,
+    material: UiMaterial,
+    backdrop: Option<Pixels>,
+    grain: Option<Pixels>,
+    rim: Option<Pixels>,
+}
+
+/// 快照视图:与产品同一条材质与按钮渲染路径,只去掉指针交互。
+#[cfg(debug_assertions)]
+fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
+    toolbar_surface(
+        ToolbarVisual {
+            bar: s.bar,
+            appearance: theme::Appearance::Dark,
+            material: s.material,
+            accent: 0,
+            effects: true,
+            glass: s.backdrop.is_some(),
+            variant: liquid::variant("A"),
+            frost: 0.0,
+            phase: 0.0,
+            status: Status {
+                chinese: true,
+                fullwidth: false,
+                punct: true,
+                traditional: false,
+            },
+            hover: None,
+            backdrop: s.backdrop.as_ref(),
+            grain: s.grain.as_ref(),
+            rim: s.rim.as_ref(),
+            glaze: None,
+        },
+        false,
+    )
+}
+
+/// 调试快照:独立进程渲染一帧真实工具栏并写 PNG,不建管道、不驻留。
+/// 只给 `--visual-toolbar` 用;玻璃场景用确定性的合成背板走同一套光学,
+/// 不抓屏。
+#[cfg(debug_assertions)]
+pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String> {
+    // 合成背板按物理像素生成;无头 Rune 快照默认设备倍率为 2,这里显式对齐。
+    const DEVICE_SCALE: f32 = 2.0;
+    let mut bar = Toolbar::at_default(Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0));
+    bar.scale = toolbar::clamp_scale(scale);
+    let size = bar.size();
+    let (material, backdrop, grain, rim) = match scene {
+        "ceramic" => (UiMaterial::Ceramic, None, None, None),
+        "glass-dark" | "glass-light" => {
+            let (w, h) = (
+                (size.0 * DEVICE_SCALE).ceil() as u32,
+                (size.1 * DEVICE_SCALE).ceil() as u32,
+            );
+            let variant = liquid::variant("A");
+            let pad = liquid::capture_pad(variant.band, variant.pull, DEVICE_SCALE);
+            let (raw_w, raw_h) = (w + 2 * pad as u32, h + 2 * pad as u32);
+            let (a, b) = if scene == "glass-light" {
+                (208, 255)
+            } else {
+                (18, 68)
+            };
+            let stripe = (24.0 * DEVICE_SCALE) as u32;
+            let mut raw = Vec::with_capacity((raw_w * raw_h * 4) as usize);
+            for y in 0..raw_h {
+                for x in 0..raw_w {
+                    let v = if ((x + y) / stripe) % 2 == 0 { a } else { b };
+                    raw.extend_from_slice(&[v, v, v, 255]);
+                }
+            }
+            let radius = lueying_render::panel::capsule_radius(w as f32, h as f32);
+            let mut rgba = liquid::process_with_pull(
+                &raw,
+                raw_w,
+                raw_h,
+                pad,
+                w,
+                h,
+                variant.band * DEVICE_SCALE,
+                radius,
+                variant.pull,
+            );
+            liquid::prepare_glass_backdrop(&mut rgba);
+            let pixels = Pixels::new();
+            pixels.set(w, h, rgba);
+            let grain = Pixels::new();
+            grain.set(w, h, liquid::grain_rgba(w, h));
+            let rim = Pixels::new();
+            rim.set(
+                w,
+                h,
+                liquid::environment_rim(&raw, raw_w, raw_h, pad, w, h, radius, DEVICE_SCALE),
+            );
+            (UiMaterial::Glass, Some(pixels), Some(grain), Some(rim))
+        }
+        _ => return Err(format!("未知的工具栏快照场景: {scene}")),
+    };
+    let state = ToolbarShot {
+        bar,
+        material,
+        backdrop,
+        grain,
+        rim,
+    };
+    let spec = rune::AppSpec {
+        families: ("Noto Sans SC", "Noto Sans SC"),
+        ..rune::AppSpec::new(
+            "Lueying Toolbar Snapshot",
+            size,
+            || unreachable!(),
+            shot_view,
+        )
+    };
+    rune::App::new(spec)
+        .init(move || state)
+        .args([
+            "--snap".to_string(),
+            output,
+            "--scale".to_string(),
+            DEVICE_SCALE.to_string(),
+            "--at".to_string(),
+            "0.35".to_string(),
+        ])
+        .try_run()
 }
 
 fn to_rect(r: RECT) -> Rect {

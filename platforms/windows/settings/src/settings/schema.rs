@@ -812,7 +812,7 @@ pub static SETTINGS: &[SettingDef] = &[
     SettingDef {
         key: "ui_font",
         title: "候选字号",
-        detail: "只缩放候选行,拼音行不变",
+        detail: "调整候选文字和行高",
         value: ValueType::Enum(&["small", "standard", "large"]),
         default: DefaultValue::Text("standard"),
         ui: Some(UiDef {

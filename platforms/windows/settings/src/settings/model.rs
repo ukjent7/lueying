@@ -59,8 +59,6 @@ pub struct CandidatePreview {
     pub vertical: bool,
     /// 每页候选数。
     pub page_size: usize,
-    /// 预览里的拼音行。
-    pub pinyin: String,
     /// 样例候选。
     pub candidates: Vec<String>,
 }

@@ -21,8 +21,8 @@ const PAD_Y: f32 = 5.0;
 pub const GAP: f32 = 4.0;
 /// 列表左右内边距;与上下留白相等,内层胶囊才能和窗口圆角同心。
 pub const PAD_X: f32 = PAD_Y;
-/// 候选窗圆角(逻辑像素);标准行高 40 时正好是胶囊(半高)。
-pub const PANEL_RADIUS: f32 = 20.0;
+/// 展开网格与竖排面板的圆角(逻辑像素);胶囊形态按短边半高计算。
+const STACK_RADIUS: f32 = 20.0;
 /// 槽内左右留白;选中槽是胶囊,两端有弧,文字与序号都要收进来。
 pub const ITEM_PAD: f32 = 10.0;
 /// 序号字宽。
@@ -38,8 +38,8 @@ const COL_PAD_X: f32 = PAD_X;
 pub const STRIP_W: f32 = 480.0;
 /// 条尾展开按钮(⌄)的方格边长。
 const CHEVRON: f32 = 22.0;
-/// 条尾按钮距右缘;圆角半径差 = 20 − 11,按钮圆心与窗口端帽圆心重合。
-const CHEVRON_INSET: f32 = PANEL_RADIUS - CHEVRON * 0.5;
+/// 条尾与控制轨共用的水平内缩:展开/收起期间圆心对齐,按钮不重新定位。
+const CHEVRON_INSET: f32 = 9.0;
 /// 展开棋盘的列数;480 逻辑宽下每格约 114×30,四字词也装得下。
 pub const GRID_COLS: usize = 4;
 /// 展开棋盘的行数;滚动按整行推进,候选列始终对齐。
@@ -287,6 +287,21 @@ impl Rect {
 /// Apple 的 `ConcentricRectangle` 用同一定义,胶囊是半径等于半高的特例。
 pub fn concentric_radius(outer: f32, gap: f32, minimum: f32) -> f32 {
     (outer - gap).max(minimum)
+}
+
+/// 短边的一半是胶囊半径;横条和过窄的矩形都不会超出边界。
+pub fn capsule_radius(width: f32, height: f32) -> f32 {
+    width.min(height).max(0.0) * 0.5
+}
+
+/// 横排固定条用胶囊,展开与竖排使用独立面板圆角。
+pub fn surface_radius(is_strip: bool, width: f32, height: f32, scale: f32) -> f32 {
+    let limit = capsule_radius(width, height);
+    if is_strip {
+        limit
+    } else {
+        (STACK_RADIUS * scale).min(limit)
+    }
 }
 
 /// 选中槽釉面的上下两端:玻璃把亮面黄的明度拉开,底缘往琥珀收,
@@ -655,11 +670,11 @@ fn cell_width(width: f32, s: f32) -> f32 {
 }
 
 /// 棋盘一格(画布坐标)。
-fn cell_rect(width: f32, s: f32, row_h: f32, row: usize, col: usize) -> Rect {
+fn cell_rect(width: f32, s: f32, row_h: f32, row_pitch: f32, row: usize, col: usize) -> Rect {
     let w = cell_width(width, s);
     Rect::from_xywh(
         PAD_X * s + col as f32 * (w + GAP * s),
-        PAD_Y * s + row as f32 * (row_h + GAP * s),
+        PAD_Y * s + row as f32 * row_pitch,
         w,
         row_h,
     )
@@ -673,7 +688,16 @@ pub fn grid_cells(spec: &PanelSpec, metrics: &Metrics, measure: &dyn Measure) ->
     let row_h = metrics.visual_row();
     let count = spec.items.len() + spec.grid.len();
     (0..count)
-        .map(|index| cell_rect(width, s, row_h, index / GRID_COLS, index % GRID_COLS))
+        .map(|index| {
+            cell_rect(
+                width,
+                s,
+                row_h,
+                metrics.row,
+                index / GRID_COLS,
+                index % GRID_COLS,
+            )
+        })
         .collect()
 }
 
@@ -688,7 +712,7 @@ fn column_rects(spec: &PanelSpec, metrics: &Metrics, width: f32) -> Vec<Rect> {
         .map(|(index, _)| {
             Rect::from_xywh(
                 COL_PAD_X * s,
-                (PAD_Y + index as f32 * (row_h + GAP)) * s,
+                PAD_Y * s + index as f32 * metrics.row,
                 box_width,
                 row_h,
             )
@@ -927,6 +951,7 @@ pub fn draw_with_items(
     let width = panel_width(frame.spec, &frame.metrics, measure);
     let height = panel_height(frame.spec, &frame.metrics, measure);
     let body = Rect::from_xywh(0.5 * s, 0.5 * s, width - s, height - s);
+    let radius = surface_radius(frame.spec.is_strip(), width, height, s);
     let glass = frame.surface == Surface::Glass;
     // 材质背板上不透明色块会盖住材质,统一压成半透明。
     let tint = |rgb: u32, alpha: u8| {
@@ -938,20 +963,15 @@ pub fn draw_with_items(
     };
     if glass {
         // 材质自带边缘,这里只留一道极淡的描边把轮廓点出来。
-        canvas.stroke_rrect(
-            body,
-            PANEL_RADIUS * s,
-            s,
-            tint(frame.palette.border_strong, 0x4d),
-        );
+        canvas.stroke_rrect(body, radius, s, tint(frame.palette.border_strong, 0x4d));
     } else if frame.surface == Surface::Solid {
         canvas.shadow_rrect(
             Rect::from_xywh(2.0 * s, 3.0 * s, width - 4.0 * s, height - 6.0 * s),
-            (PANEL_RADIUS - 1.0) * s,
+            (radius - s).max(0.0),
             16.0 * s,
             Color::with_alpha(0x000000, 56),
         );
-        canvas.fill_rrect(body, PANEL_RADIUS * s, Color::opaque(frame.palette.bg));
+        canvas.fill_rrect(body, radius, Color::opaque(frame.palette.bg));
         canvas.stroke_rrect(
             Rect::from_xywh(
                 body.left + 0.5 * s,
@@ -959,7 +979,7 @@ pub fn draw_with_items(
                 (width - 2.0 * s).max(0.0),
                 (height - 2.0 * s).max(0.0),
             ),
-            (PANEL_RADIUS - 0.5) * s,
+            (radius - 0.5 * s).max(0.0),
             s,
             Color::opaque(frame.palette.border),
         );
@@ -1264,5 +1284,73 @@ fn draw_item(
             Color::opaque(frame.palette.text_tertiary),
             Some(100.0 * s),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surface_rounding_tracks_form_and_bounds() {
+        assert_eq!(surface_radius(true, 480.0, 40.0, 1.0), 20.0);
+        assert_eq!(surface_radius(true, 196.0, 36.0, 1.0), 18.0);
+        assert_eq!(surface_radius(true, 10.0, 36.0, 1.0), 5.0);
+        assert_eq!(surface_radius(false, 480.0, 230.0, 1.25), 25.0);
+        assert_eq!(surface_radius(false, 480.0, 20.0, 1.25), 10.0);
+    }
+
+    #[test]
+    fn scaled_rows_keep_last_cell_inside_panel() {
+        for factor in [0.88_f32, 1.15, 1.5] {
+            for (layout, count) in [(Layout::Column, 9), (Layout::Wrap, 24)] {
+                let metrics = Metrics::scaled(factor);
+                let spec = PanelSpec {
+                    width: 0.0,
+                    max_text_width: 0.0,
+                    expand: layout == Layout::Wrap,
+                    items: if layout == Layout::Column {
+                        (0..count)
+                            .map(|_| Item {
+                                text: "示例".into(),
+                                hint: String::new(),
+                                selected: false,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    grid: if layout == Layout::Wrap {
+                        (0..count)
+                            .map(|index| GridItem {
+                                text: "示例".into(),
+                                index,
+                                selected: false,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    scroll: None,
+                    layout,
+                };
+                let cells = if spec.expand {
+                    grid_cells(&spec, &metrics, &Estimate)
+                } else {
+                    item_rects(&spec, &metrics, &Estimate)
+                };
+                let height = panel_height(&spec, &metrics, &Estimate);
+
+                assert_eq!(cells.len(), count);
+                let rows: Vec<_> = cells
+                    .iter()
+                    .step_by(if spec.expand { GRID_COLS } else { 1 })
+                    .collect();
+                for pair in rows.windows(2) {
+                    assert!((pair[1].top - pair[0].top - metrics.row).abs() < 0.001);
+                }
+                assert!((height - cells.last().unwrap().bottom - PAD_Y * factor).abs() < 0.001);
+            }
+        }
     }
 }

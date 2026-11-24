@@ -1,8 +1,8 @@
 use super::*;
 use crate::settings::model::{Control, Id};
-use crate::settings::schema::PageId;
+use crate::settings::schema::{self, PageId};
 use lueying_ext::manifest::metrics::{ExtMetrics, ExtStat, ExtState};
-use lueying_server::config::OcrBackend;
+use lueying_server::config::{self, OcrBackend};
 
 fn entry(id: &str, name: &str) -> ScriptEntry {
     ScriptEntry::new(id, name)
@@ -162,7 +162,7 @@ fn search_spans_pages_and_clears_on_navigation() {
     settings.set_search("辅助码");
     assert!(settings.searching());
     let page = settings.page(&crate::settings::view::PageColors::default());
-    assert_eq!(page.title, "搜索");
+    assert_eq!(page.title, "搜索结果");
     assert!(page.active_nav == usize::MAX);
     assert!(
         page.groups
@@ -193,6 +193,44 @@ fn candidate_page_starts_with_preview() {
         first.control,
         crate::settings::model::Control::Preview { .. }
     ));
+}
+
+#[test]
+fn visible_schema_rows_have_matching_controls() {
+    for page in [PageId::Input, PageId::Candidate] {
+        for material in [config::UiMaterial::Glass, config::UiMaterial::Ceramic] {
+            for traditional in [true, false] {
+                let mut settings = Settings::default();
+                settings.cfg.ui_material = material;
+                settings.cfg.traditional = traditional;
+                let page_model = settings.page_view(page, &PageColors::default());
+                let controls: Vec<_> = page_model
+                    .groups
+                    .iter()
+                    .flat_map(|group| &group.rows)
+                    .filter_map(|row| match &row.control {
+                        Control::Toggle { id, .. }
+                        | Control::Segment { id, .. }
+                        | Control::Slider { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                for def in schema::on_page(page) {
+                    let Some(ui) = &def.ui else { continue };
+                    let matching = controls
+                        .iter()
+                        .filter(|id| **id == Id::new(ui.control.id(), 0))
+                        .count();
+                    let expected = usize::from((ui.visible)(&settings.cfg));
+                    assert_eq!(
+                        matching, expected,
+                        "{} 在 {page:?} 页的控件数量不对",
+                        def.key
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

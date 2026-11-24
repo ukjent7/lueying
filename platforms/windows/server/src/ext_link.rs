@@ -118,6 +118,23 @@ impl ExtLink {
         Self { shared, wake }
     }
 
+    /// 调试快照专用的空连接:不拉起宿主、不起线程,只保留与 [`ExtLink::spawn`]
+    /// 同形的共享槽和唤醒端。
+    #[cfg(debug_assertions)]
+    pub fn disconnected() -> Self {
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(Queue::default()),
+            private_to: Mutex::new(Vec::new()),
+            patch: Mutex::new(None),
+            submitted: Mutex::new((0, Instant::now())),
+            titles: Mutex::new(Vec::new()),
+            on_patch: Mutex::new(None),
+            handler: Arc::new(|_, _, _| {}),
+        });
+        let (wake, _) = mpsc::sync_channel(1);
+        Self { shared, wake }
+    }
+
     fn kick(&self) {
         let _ = self.wake.try_send(());
     }

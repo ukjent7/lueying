@@ -17,7 +17,7 @@ use lueying_server::services::PanelJob;
 use lueying_server::theme;
 use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Cursor, Cx, El, Key, KeyEvent, TextStyle, Transition, Tx,
+    Align, App, AppHandle, AppSpec, Cursor, Cx, El, Key, KeyEvent, TextStyle, Transition, Tx,
     WindowHandle, WindowOptions, WindowSpec, col, el, text,
 };
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use crate::ui::place;
+use crate::ui::{material, place};
 
 /// 面板窗口的应用句柄;投递端靠它叫醒隐藏中的 poll。
 static APP: OnceLock<AppHandle<Picker>> = OnceLock::new();
@@ -42,8 +42,12 @@ static WINDOW: OnceLock<WindowHandle> = OnceLock::new();
 static PICKER_ACCENT: OnceLock<usize> = OnceLock::new();
 /// 请求通道容量:面板开着时再来的请求直接回「正忙」。
 const QUEUE: usize = 1;
-/// 卡片圆角;行内圆角沿用 render 模型的 6。
-const CARD_RADIUS: f32 = 8.0;
+/// 卡片圆角(逻辑点);行内圆角沿用 render 模型的 6。
+const CARD_RADIUS: f32 = 16.0;
+/// 标题右侧条目计数的独占宽度,给大数字留位。
+const TITLE_META_W: f32 = 76.0;
+/// 页脚右侧当前位置的独占宽度。
+const FOOTER_META_W: f32 = 66.0;
 
 /// 面板窗口的状态;Rune 每帧从它重建控件树。
 pub(super) struct Picker {
@@ -329,11 +333,7 @@ fn picker_view(s: &Picker, cx: &mut Cx<Picker>) -> El {
     }
     let palette = theme::palette(theme::colors_with(s.appearance, s.accent));
     let (w, h) = s.layout.size;
-    col()
-        .w(w)
-        .h(h)
-        .radius(CARD_RADIUS)
-        .clip_rounded(CARD_RADIUS)
+    material::rounded_surface(col().w(w).h(h), CARD_RADIUS)
         .fill(theme::srgb(palette.bg))
         .border(1.0, theme::srgb(palette.border))
         .key("panel")
@@ -355,8 +355,8 @@ fn title_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> 
         .child(
             text(&spec.title)
                 .absolute(pad, super::rune::ink_y(title.height(), 15.0))
-                .w(title.width() - 3.0 * pad)
-                .font(TextStyle::new(15.0, 400.0))
+                .w((title.width() - 3.0 * pad - TITLE_META_W).max(0.0))
+                .font(TextStyle::new(15.0, 600.0))
                 .color(theme::srgb(palette.text))
                 .truncate()
                 .a11y_hidden(),
@@ -364,12 +364,14 @@ fn title_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> 
         .child(
             text(count)
                 .absolute(
-                    title.width() - pad - 60.0,
+                    title.width() - pad - TITLE_META_W,
                     super::rune::ink_y(title.height(), 11.0),
                 )
-                .w(60.0)
+                .w(TITLE_META_W)
                 .font(TextStyle::new(11.0, 400.0))
+                .align(Align::End)
                 .color(theme::srgb(palette.text_tertiary))
+                .truncate()
                 .a11y_hidden(),
         )
         .child(
@@ -421,24 +423,28 @@ fn rows_el(s: &Picker, palette: &Palette) -> El {
     rows
 }
 
-/// 一行:绝对定位在行矩形上,选中是主题色胶囊(纵向收进 2px,与行
-/// 留出呼吸,与旧画法一致),悬停与键盘焦点共用原生高光,点击选中
-/// 并收起。
+/// 一行:绝对定位在整行矩形上;选中时在文字下垫主题色胶囊(纵向收进
+/// 2px,与行留出呼吸),悬停与键盘焦点共用原生高光,点击选中并收起。
 fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
     let Some(rect) = s.layout.rows.get(index) else {
         return el();
     };
     let rect = *rect;
     let selected = index == s.spec.selected;
-    let (top, height) = if selected {
-        (rect.top + 2.0, rect.height() - 4.0)
+    let (selected_fill, selected_ink) = if matches!(s.appearance, theme::Appearance::HighContrast) {
+        (
+            theme::srgb(palette.selected_bg),
+            theme::srgb(palette.selected_text),
+        )
     } else {
-        (rect.top, rect.height())
+        theme::capsule_colors(palette.accent)
     };
+    // rows_el 的父节点已落在 list.top;Rune 的 absolute 坐标相对父节点
+    // padding box,而行矩形是窗口绝对坐标,这里换算成列表内坐标。
     let mut cell = el()
-        .absolute(rect.left, top)
+        .absolute(rect.left - s.layout.list.left, rect.top - s.layout.list.top)
         .w(rect.width())
-        .h(height)
+        .h(rect.height())
         .cursor(Cursor::Pointer)
         .role("option")
         .label(row.clone())
@@ -447,31 +453,36 @@ fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
         .focusable(true)
         .focus_selected(selected)
         .press_on_down()
-        .on_press(move |s: &mut Picker| s.click(index))
-        .child(
-            text(row)
-                .absolute(picker::PAD, super::rune::ink_y(height, 14.0))
-                .w(rect.width() - 2.0 * picker::PAD)
-                .font(TextStyle::new(14.0, 400.0))
-                .color(theme::srgb(if selected {
-                    palette.selected_text
-                } else {
-                    palette.text
-                }))
-                .truncate()
+        .on_press(move |s: &mut Picker| s.click(index));
+    // 选中底色垫在文字之前、仍是整行命中;切换选中不会挪动交互区域。
+    if selected {
+        cell = cell.child(
+            el().absolute(0.0, 2.0)
+                .w(rect.width())
+                .h(rect.height() - 4.0)
+                .radius(picker::RADIUS)
+                .fill(selected_fill)
                 .a11y_hidden(),
         );
-    if selected {
-        cell = cell
-            .radius(picker::RADIUS)
-            .fill(theme::srgb(palette.selected_bg));
     } else {
         // 悬停与键盘焦点同一个高光(NSMenu);选中行由胶囊承担高亮。
         cell = cell
             .radius(picker::RADIUS)
             .focus_highlight(theme::srgb_alpha(palette.hover, 0.66));
     }
-    cell
+    cell.child(
+        text(row)
+            .absolute(picker::PAD, super::rune::ink_y(rect.height(), 14.0))
+            .w(rect.width() - 2.0 * picker::PAD)
+            .font(TextStyle::new(14.0, 400.0))
+            .color(if selected {
+                selected_ink
+            } else {
+                theme::srgb(palette.text)
+            })
+            .truncate()
+            .a11y_hidden(),
+    )
 }
 
 /// 卷动提示:上下还有内容时在列表右缘画小箭头。
@@ -512,20 +523,23 @@ fn footer_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) ->
         .child(
             text("↑↓ 选择 · Enter 确认 · Esc 取消")
                 .absolute(pad, super::rune::ink_y(footer.height(), 11.0))
-                .w(footer.width() - 2.0 * pad)
+                .w(footer.width() - 3.0 * pad - FOOTER_META_W)
                 .font(TextStyle::new(11.0, 400.0))
                 .color(theme::srgb(palette.text_tertiary))
+                .truncate()
                 .a11y_hidden(),
         )
         .child(
             text(position)
                 .absolute(
-                    footer.width() - pad - 40.0,
+                    footer.width() - pad - FOOTER_META_W,
                     super::rune::ink_y(footer.height(), 11.0),
                 )
-                .w(40.0)
+                .w(FOOTER_META_W)
                 .font(TextStyle::new(11.0, 400.0))
+                .align(Align::End)
                 .color(theme::srgb(palette.text_tertiary))
+                .truncate()
                 .a11y_hidden(),
         )
 }
@@ -559,6 +573,52 @@ fn window_rect(hwnd: HWND) -> RECT {
         rect = RECT::default();
     }
     rect
+}
+
+/// 调试快照:独立进程渲染一帧真实选择面板并写 PNG,不建管道、不驻留。
+/// 只给 `--visual-picker` 用,固定样例覆盖选中行、长文本与卷动提示。
+#[cfg(debug_assertions)]
+pub(crate) fn snap(appearance: theme::Appearance, output: String) -> Result<(), String> {
+    let (_, jobs) = mpsc::channel();
+    let mut state = Picker::new(jobs, 0);
+    state.appearance = appearance;
+    state.visible = true;
+    state.spec = picker::Spec {
+        title: "剪贴板历史".into(),
+        rows: [
+            "液态玻璃与黑瓷",
+            "在编辑器中粘贴",
+            "今天的笔记",
+            "一段需要截断的长文本：桌面输入、候选选择，以及不同主题下的排版留白。",
+            "返回工作区",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        selected: 1,
+        total: 12_345,
+        above: 0,
+        below: 12_340,
+    };
+    state.layout = picker::layout(&state.spec, 1.0);
+    let spec = AppSpec {
+        families: ("Noto Sans SC", "Noto Sans SC"),
+        ..AppSpec::new(
+            "Lueying Picker Snapshot",
+            state.layout.size,
+            || unreachable!(),
+            picker_view,
+        )
+    };
+    App::new(spec)
+        .init(move || state)
+        .args([
+            "--snap".to_string(),
+            output,
+            "--at".to_string(),
+            "0.35".to_string(),
+        ])
+        .try_run()
 }
 
 /// 自检:`lueying-server.exe --panel-selftest <报告>`。独立进程:主线程跑

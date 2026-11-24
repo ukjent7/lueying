@@ -243,6 +243,53 @@ pub(super) struct State {
     pub(super) fullwidth: AtomicBool,
 }
 
+/// 调试快照专用状态:按生产 [`State`] 的形状填默认值,不读配置、不碰
+/// 词典/模型/用户数据,也不拉起任何线程或宿主。
+#[cfg(debug_assertions)]
+pub(crate) fn visual_state() -> Arc<State> {
+    let app_config = AppConfig::default();
+    let prediction = Arc::new(Prediction::with_enabled(app_config.predict));
+    let script = Arc::new(ScriptModule::new(app_config.script()));
+    let scheme = lueying_core::schemes::scheme(app_config.scheme, app_config.aux);
+    Arc::new(State {
+        dict: Arc::new(Dictionary::builtin()),
+        dict_source: "builtin",
+        gram: None,
+        sessions: Mutex::new(HashMap::new()),
+        conns: Mutex::new(HashMap::new()),
+        version: AtomicU64::new(0),
+        hud_serial: AtomicU64::new(0),
+        wake_ui: Wake(HANDLE::default()),
+        mode_hud: Mutex::new(None),
+        candidate_above: AtomicBool::new(false),
+        candidate_rect: Mutex::new(None),
+        active: AtomicU64::new(0),
+        sync_model: None,
+        settled_model: None,
+        settled_resident: AtomicBool::new(false),
+        sync_tx: None,
+        rerank_sync_metrics: Arc::new(LatencyMetrics::default()),
+        rerank_settle_metrics: Arc::new(LatencyMetrics::default()),
+        settle_queue: None,
+        uia_tx: None,
+        anchor_tx: None,
+        fallback_active: Mutex::new(HashMap::new()),
+        user: Arc::new(RwLock::new(UserDict::new())),
+        typing_tx: mpsc::channel().0,
+        modules: crate::modules::registry(None, Arc::clone(&prediction), Arc::clone(&script)),
+        phrases: None,
+        prediction,
+        script,
+        scheme: RwLock::new(scheme),
+        config: RwLock::new(app_config),
+        ext: Arc::new(lueying_server::ext_link::ExtLink::disconnected()),
+        panel_service: Arc::new(lueying_server::services::PanelProvider::new()),
+        config_path: None,
+        chinese: AtomicBool::new(true),
+        fullwidth: AtomicBool::new(false),
+    })
+}
+
 /// 管道与候选窗共用的请求入口;实现放在 `request` 子模块。
 pub(crate) fn handle(state: &State, req: Request) -> Reply {
     request::dispatch(state, req)

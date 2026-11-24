@@ -1,0 +1,16 @@
+页面 Input: 8 行,控件树构造成功
+页面 Candidate: 10 行,控件树构造成功
+页面 Extensions: 6 行,控件树构造成功
+页面 Dictionary: 6 行,控件树构造成功
+页面 About: 3 行,控件树构造成功
+模型 5 页共 33 行,关键控件 13 个在位
+键盘: 首个 Tab 停在搜索框(key=Some("input"), label=Some("搜索设置"))
+键盘: 搜索框回车不保存、无错误(notice=None)
+键盘: Tab→nav-input,Down→nav-candidate,Enter 切到候选页
+键盘: 「下一词联想」初始在视口外(rect y=782.6..798.6, visible y=782.6..782.6)
+键盘: Tab 9 次到「下一词联想」(下一词联想),整行可见并滚动 384.6pt;途经 ["segment1", "segment0", "segment1", "segment0", "slider-glass-frost", "segment0", "弹性动效", "停顿后重排", "下一词联想"]
+键盘: 空格翻转「下一词联想」true -> false
+键盘: 页脚 Tab→关闭→保存,Shift+Tab→关闭,Tab→保存
+键盘: 保存回车触发真实回调 -> Error「没有可写的配置路径」(未写文件)
+扩展商店:点卡片、查看权限、启用与快捷键通过
+结果:通过

@@ -112,42 +112,17 @@ pub fn glaze_from_ambient(above: Color, below: Color) -> Glaze {
     }
 }
 
-/// 发光胶囊的灯色:选中胶囊自己是面板的光源。灯芯上白热下饱和,
-/// 亮芯上的字墨是灯色的深色同源——光越亮,字越深,同出一源。
-#[derive(Clone, Copy, PartialEq)]
-pub struct Glow {
-    /// 灯芯上端:accent 混白的白热。
-    pub core_top: Color,
-    /// 灯芯下端:饱和 accent。
-    pub core_bottom: Color,
-    /// 亮芯上的字墨:accent 混黑的深色同源。
-    pub ink: Color,
-}
-
-/// 由 accent 算灯色;混白混黑与调色板同一空间(sRGB)。
-pub fn glow_of(accent: u32) -> Glow {
-    Glow {
-        core_top: srgb(blend(accent, 0xffffff, 0.5)),
-        core_bottom: srgb(accent),
-        ink: srgb(blend(accent, 0x000000, 0.8)),
-    }
-}
-
-/// 选中胶囊的暗胎渐变:底色里只混一点灯色上/下端,正文继续留在
-/// 深色表面上。亮底主题略加重混色,保证胶囊仍可辨。运行时候选窗与
-/// 设置窗预览共用这一份,预览不另造光。
-pub fn capsule_fill(base: u32, accent: u32) -> (Color, Color) {
-    let base = srgb(base);
-    let glow = glow_of(accent);
-    let (top, bottom) = if base.luminance() < 0.2 {
-        (0.03, 0.09)
+/// 候选窗和设置预览共用的实心主题色与高对比字色。
+pub fn capsule_colors(accent: u32) -> (Color, Color) {
+    let fill = srgb(accent);
+    // 默认优先白字;较亮的主题色切到黑字,两者都守住 4.5:1。
+    let white_contrast = 1.05 / (fill.luminance() + 0.05);
+    let ink = if white_contrast >= 4.5 {
+        0xffffff
     } else {
-        (0.07, 0.14)
+        0x000000
     };
-    (
-        base.mix(glow.core_top, top),
-        base.mix(glow.core_bottom, bottom),
-    )
+    (fill, srgb(ink))
 }
 
 /// 共享黑瓷的中性石墨配色:候选窗与工具栏共用胎体色,设置窗固定使用。

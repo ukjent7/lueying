@@ -101,7 +101,8 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 let carried = s.ui_reply.take();
                 // 组句中 Tab 切固定条/展开网格;空闲 Tab 直通给应用(缩进)。
                 if key == KeyMsg::Tab {
-                    if s.engine.composition().is_some() {
+                    let composing = s.engine.composition().is_some();
+                    if composing {
                         if s.expanded {
                             s.expanded = false;
                             refresh_view(s);
@@ -113,7 +114,9 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                         s.ui_reply = Some(carried);
                     }
                     // 带回当前内联文本,免得 TSF 的应用路径清掉组合。
-                    return current_reply(s);
+                    let mut reply = current_reply(s);
+                    reply.passthrough = !composing;
+                    return reply;
                 }
                 // 编辑组合的键把展开网格收回去;展开/选词键保持不动。
                 if matches!(
@@ -212,10 +215,19 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
                 }
                 let before_mode = s.engine.mode();
                 let before_rev = s.engine.revision();
+                let was_composing = s.engine.composition().is_some();
                 // 每次按键刷新本地时间,跨午夜/夏令时切换后日期仍然正确。
                 s.engine.set_now(local_time());
                 s.engine.set_typing_log(typing_on(state));
                 let events = s.engine.process(engine_key);
+                // TSF 在写回新组句后才报光标,首帧不能沿用上一轮坐标。
+                // 回落通道起句前已量光标,必须保留。
+                if !was_composing
+                    && s.engine.composition().is_some()
+                    && session != crate::imp::fallback::SESSION
+                {
+                    s.view.caret = None;
+                }
                 send_typing(state, s);
                 // 触发词整串匹配时把动作交给引擎注入候选;命令是否可执行看标题表。
                 sync_action(state, s);

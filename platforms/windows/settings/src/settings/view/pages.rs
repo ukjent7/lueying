@@ -41,16 +41,22 @@ impl Settings {
             self.groups_page(page, colors)
         };
         let matched: usize = groups.iter().map(|group| group.rows.len()).sum();
-        let subtitle = if searching {
-            format!("搜索「{}」· {} 项", self.search.trim(), matched)
-        } else {
-            format!("拼音输入法 · v{}", self.current)
-        };
         Page {
-            title: if searching { "搜索" } else { "掠影" }.to_string(),
-            subtitle,
+            title: if searching {
+                "搜索结果"
+            } else {
+                page.title()
+            }
+            .to_string(),
+            subtitle: if searching {
+                format!("{} 项匹配", matched)
+            } else if page == PageId::About && !self.current.is_empty() {
+                format!("掠影拼音输入法 · v{}", self.current)
+            } else {
+                "掠影设置".to_string()
+            },
             search: self.search.clone(),
-            header_button: Some(self.update_button()),
+            header_button: (!searching && page == PageId::About).then(|| self.update_button()),
             nav,
             active_nav,
             groups,
@@ -77,21 +83,44 @@ impl Settings {
     fn groups_page(&self, page: PageId, colors: &PageColors) -> Vec<Group> {
         match page {
             PageId::Input => {
-                let mut rows = self.setting_rows(PageId::Input, colors);
-                rows.push(self.typing_log_row());
-                vec![Group {
-                    title: PageId::Input.title().to_string(),
-                    rows,
-                }]
+                let mut privacy = self.settings_group("隐私与记录", page, &["typing_log"], colors);
+                privacy.rows.push(self.typing_log_row());
+                vec![
+                    self.settings_group(
+                        "输入方式",
+                        page,
+                        &["scheme", "aux_code", "shift_toggle"],
+                        colors,
+                    ),
+                    self.settings_group(
+                        "文字与标点",
+                        page,
+                        &["chinese_punct", "traditional", "traditional_region"],
+                        colors,
+                    ),
+                    self.settings_group("桌面工具栏", page, &["toolbar_scale"], colors),
+                    privacy,
+                ]
             }
-            PageId::Candidate => {
-                let mut rows = vec![self.candidate_preview_row(colors)];
-                rows.extend(self.setting_rows(PageId::Candidate, colors));
-                vec![Group {
-                    title: PageId::Candidate.title().to_string(),
-                    rows,
-                }]
-            }
+            PageId::Candidate => vec![
+                Group {
+                    title: "预览".into(),
+                    rows: vec![self.candidate_preview_row(colors)],
+                },
+                self.settings_group("排版", page, &["page_size", "ui_layout", "ui_font"], colors),
+                self.settings_group(
+                    "材质与配色",
+                    page,
+                    &["ui_material", "ui_glass_frost", "ui_accent"],
+                    colors,
+                ),
+                self.settings_group(
+                    "候选行为",
+                    page,
+                    &["effects", "settled_promote", "predict"],
+                    colors,
+                ),
+            ],
             PageId::Extensions => {
                 let mut groups = self.extension_cards();
                 groups.push(Group {
@@ -106,7 +135,7 @@ impl Settings {
             }
             PageId::Dictionary => vec![
                 Group {
-                    title: PageId::Dictionary.title().to_string(),
+                    title: "词库与自定义".to_string(),
                     rows: vec![
                         self.phrases_row(),
                         self.punct_row(),
@@ -120,7 +149,7 @@ impl Settings {
                 },
             ],
             PageId::About => vec![Group {
-                title: PageId::About.title().to_string(),
+                title: "版本与诊断".to_string(),
                 rows: vec![
                     Row {
                         label: "引擎状态".to_string(),
@@ -159,12 +188,24 @@ impl Settings {
         out
     }
 
-    /// 一页里由 schema 生成的简单设置行。
-    fn setting_rows(&self, page: PageId, colors: &PageColors) -> Vec<Row> {
-        schema::on_page(page)
-            .filter(|def| def.ui.as_ref().is_none_or(|ui| (ui.visible)(&self.cfg)))
+    /// 按固定顺序取 schema 里的设置行。
+    fn settings_group(
+        &self,
+        title: &str,
+        page: PageId,
+        keys: &[&str],
+        colors: &PageColors,
+    ) -> Group {
+        let rows = keys
+            .iter()
+            .filter_map(|key| schema::on_page(page).find(|def| def.key == *key))
+            .filter(|def| def.ui.as_ref().is_some_and(|ui| (ui.visible)(&self.cfg)))
             .map(|def| self.setting_row(def, colors))
-            .collect()
+            .collect();
+        Group {
+            title: title.into(),
+            rows,
+        }
     }
 
     /// 候选窗实时预览:同一份配置直接渲染样例候选。
@@ -172,7 +213,7 @@ impl Settings {
         let accent = colors.accents.get(self.cfg.ui_accent).copied().unwrap_or(0);
         Row {
             label: "候选窗预览".to_string(),
-            detail: "改字号、排列或主题色会实时反映".to_string(),
+            detail: "字号、排列和主题色实时更新；不模拟桌面材质".to_string(),
             control: Control::Preview {
                 id: Id::new("candidate-preview", 0),
                 style: CandidatePreview {
@@ -180,14 +221,13 @@ impl Settings {
                     font_scale: self.cfg.ui_font.factor(),
                     vertical: self.cfg.ui_layout == lueying_server::config::UiLayout::Vertical,
                     page_size: self.cfg.page_size,
-                    pinyin: "lue ying".to_string(),
                     candidates: vec![
                         "掠影".to_string(),
                         "略影".to_string(),
-                        "掠应".to_string(),
-                        "月影".to_string(),
                         "掠映".to_string(),
-                        "略赢".to_string(),
+                        "月影".to_string(),
+                        "略映".to_string(),
+                        "曾在夜色中捕捉一瞬微光并把这段很长的候选放进列表检查截断效果".to_string(),
                         "掠鹰".to_string(),
                         "略应".to_string(),
                         "掠缨".to_string(),
