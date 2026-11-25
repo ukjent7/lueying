@@ -22,8 +22,6 @@ members = [
     "platforms/windows/installer",
     # 验证与工具
     "crates/bench",
-    # 临时:rune-fx lens 观感验证原型(评估后移除或转正)
-    "crates/lens-proto",
     "platforms/windows/win-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
