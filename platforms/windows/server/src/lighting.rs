@@ -205,7 +205,7 @@ fn blit_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::R
 /// 一帧的光照提取:发光元件中心(pt→设备 px 转换在调用处)与 prim 列表。
 struct Extracted {
     prims: Vec<Prim>,
-    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32)>,  // rect, rgb, k, intensity, radius
+    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32, f32)>,  // rect, rgb, k, intensity, radius, alpha
 }
 
 /// 从实例流提取瓷面与发光元件。实例矩形是设备 px;辐射色取实例填充。
@@ -239,7 +239,9 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
                     .gloss(0.85, 0.15)
                     .emissive([rgb[0] * gain, rgb[1] * gain, rgb[2] * gain]),
             );
-            out.emitters.push((rect, rgb, k, intensity, radius));
+            // fill[3] 是 alpha:日出日落天体渐隐时,掺白与强度必须
+            // 跟暗——否则隐形的天体还在投满强度的白光,光与源脱节。
+            out.emitters.push((rect, rgb, k, intensity, radius, fill[3]));
         }
         _ => {}
     }
@@ -283,14 +285,14 @@ impl<S: 'static> Compositor<S> for LightFx {
         let emitter_lights: Vec<Light> = extracted
             .emitters
             .iter()
-            .map(|(rect, rgb, k, intensity, radius)| {
+            .map(|(rect, rgb, k, intensity, radius, alpha)| {
                 let cx = rect[0] + rect[2] / 2.0;
                 let cy = rect[1] + rect[3] / 2.0;
                 Light::point(cx, cy, LIGHT_Z_PT * k)
                     .color([
-                        rgb[0] + 0.25,
-                        rgb[1] + 0.28,
-                        rgb[2] + 0.32,
+                        rgb[0] + 0.25 * alpha,
+                        rgb[1] + 0.28 * alpha,
+                        rgb[2] + 0.32 * alpha,
                     ])
                     .intensity(*intensity)
                     .radius(radius * k)
