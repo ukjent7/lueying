@@ -39,12 +39,15 @@ const WARM_EMIT: [f32; 3] = [0.91, 0.66, 0.04];
 // 宽光池(见 Gi 配置注释), capsule 实测不炸——GI 自反馈
 // 在增益 10 左右才开始洗红,6.0 有余量。
 const EMIT_GAIN: f32 = 3.5;
-/// 点光贴着元件上方的高度(pt)与半径:小半径→紧实高光(瓷)。
-const LIGHT_Z_PT: f32 = 28.0;
+/// 点光悬在元件上方的高度(pt)与半径:z 越高光池越宽越柔——
+/// spike 验证 z70-80 量级是「灯泡泼瓷面」的形态;28 是灯泡贴墙,
+/// 近场直射过狠。发光体有 unlit 护体(见 extract),灯下不炸。
+const LIGHT_Z_PT: f32 = 70.0;
 const LIGHT_RADIUS_PT: f32 = 9.0;
-// 胶囊不配同位直射点光(见 EMIT_GAIN 注释);保留常量因为
-// 灯构造管线对天空灯仍需要强度语义,值只对胶囊族生效。
-const LIGHT_INTENSITY: f32 = 0.0;
+// 同位直射灯强度:unlit 之前是物理死路(灯下表面必被乘法放大
+/// 炸白,z/intensity 怎么调都无解——pi 独立复现确认),unlit 之后
+/// 胶囊按设计色渲染,灯只管泼池。天空灯走自己的强度语义。
+const LIGHT_INTENSITY: f32 = 3.0;
 const LIGHT_RANGE_PT: f32 = 420.0;
 /// 环境底:不是光源,是曝光基准——房间不是绝对黑,远端文字不死。
 const AMBIENT: [f32; 3] = [0.08, 0.08, 0.085];
@@ -282,7 +285,12 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
                     .raised(2.0 * k)
                     .bevel(4.2 * k, 2.7 * k)
                     .gloss(0.85, 0.15)
-                    .emissive([rgb[0] * gain, rgb[1] * gain, rgb[2] * gain]),
+                    .emissive([rgb[0] * gain, rgb[1] * gain, rgb[2] * gain])
+                    // unlit(上游 #2258):发光体自身像素按设计色渲染——
+                    // 不受直射/环境/GI/镜面放大,仍喂 GI 照亮邻居。
+                    // 这是直射灯能请回来的前提:灯下表面不再被乘法
+                    // 放大炸白(此前 z80i4 胶囊中心 114 vs 设计 47)。
+                    .unlit(),
             );
             // fill[3] 是 alpha:日出日落天体渐隐时,掺白与强度必须
             // 跟暗——否则隐形的天体还在投满强度的白光,光与源脱节。

@@ -66,18 +66,18 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152", default-features = false, features = ["accessibility"] }
 
 # Rune vendored patches must be pinned to the same fork revision as Rune.
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-naga = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
-accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
 
 # 视觉验证专用:release 的优化与体积 + debug_assertions(快照 harness
 # 门控)。不污染发布 profile,产物在 target/.../visual/。

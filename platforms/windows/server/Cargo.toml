@@ -31,15 +31,15 @@ winresource = "0.1"
 [target."cfg(windows)".dependencies]
 rune.workspace = true
 # 液态玻璃 GPU 光学:lens 折射/色散/frost 全在上游着色器,与 rune 同 rev。
-rune-fx = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
 # 黑瓷物理光照:灯位/bevel 法线/specular 全在上游着色器,与 rune 同 rev。
-rune-light = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+rune-light = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152" }
 wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "dx12"] }
 # VK → 协议键的映射:低层钩子回落通道用。
 lueying-win-keys = { workspace = true }
-rune-text = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71", default-features = false }
+rune-text = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152", default-features = false }
 # 模式徽标用 kit 的 Badge 组件;配色从主题三色种子派生(Kit::from_palette)。
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71", default-features = false }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "0cb24bbec10ad32f599e8f2af6968ea8af8d4152", default-features = false }
 # 常驻进程与设置窗的分配器:降碎片,服务端峰值工作集门禁受益;纯分配器,无网络符号。
 mimalloc = "0.1.52"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
