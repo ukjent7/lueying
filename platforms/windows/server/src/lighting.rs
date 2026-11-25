@@ -130,6 +130,16 @@ fn vs(@builtin(vertex_index) vi: u32) -> Vary {
     return v;
 }
 
+// 合成输出是 sRGB 编码值;overlay 表面是 sRGB 格式,硬件写入时
+// 还会再做一次 linear→sRGB——不先解码回去,中间调全部被双重
+// 编码提亮(实测胶囊 (119,176,243) 而非设计蓝 (47,111,237))。
+// 上游参考实现 gfx.rs 的 fs_resolve_srgb 同样先 from_srgb 再写。
+fn from_srgb(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
 @fragment
 fn fs(v: Vary) -> @location(0) vec4<f32> {
     let dims = vec2<i32>(textureDimensions(lit));
@@ -138,7 +148,7 @@ fn fs(v: Vary) -> @location(0) vec4<f32> {
     let a = max(textureLoad(base, px, 0).a, textureLoad(text, px, 0).a);
     // 合成输出 alpha 恒 1(不透明窗口设计);overlay 需要底图 alpha
     // 贴回,并转预乘——透明区保持透明,光只在有表面的地方存在。
-    return vec4<f32>(l.rgb * a, a);
+    return vec4<f32>(from_srgb(l.rgb) * a, a);
 }
 ";
 
@@ -208,7 +218,7 @@ fn blit_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::R
 /// 一帧的光照提取:发光元件中心(pt→设备 px 转换在调用处)与 prim 列表。
 struct Extracted {
     prims: Vec<Prim>,
-    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32, f32)>,  // rect, rgb, k, intensity, radius, alpha
+    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32, f32, f32)>,  // rect, rgb, k, intensity, radius, alpha, z_pt
 }
 
 /// 从实例流提取瓷面与发光元件。实例矩形是设备 px;辐射色取实例填充。
@@ -237,16 +247,27 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
             // 三族参数:胶囊是唯一光源(full 量级);天体要盘形(低
             // emission 免冲白);暖月是装饰氛围灯——工具栏整条都在
             // 近场,full 量级会把瓷面洗成暖黄浴室,收弱收小。
-            let (gain, intensity, radius) = if mark == MARK_EMITTER_SKY {
-                (1.15, 1.55, 11.0)
+            // z 是灯离面的高度:胶囊/暖月是贴在瓷面上的元件,灯在
+            // 28pt;天体是「天上」的远物——spike 验证过 z 300~520
+            // 才是柔光,28pt 等于灯泡贴墙,近场直射把窗角洗白。
+            let (gain, intensity, radius, z) = if mark == MARK_EMITTER_SKY {
+                (1.15, 2.2, 36.0, 340.0)
             } else if mark == MARK_EMITTER_WARM {
                 // 暖月纯 emission:bar 太小,同位点光全是近场直射,
                 // 洗白按钮;GI 光池衰减柔,月亮自身亮起来,暖意
                 // 只在附近瓷面荡开——装饰灯的本分。
-                (1.6, 0.0, 7.0)
+                (1.6, 0.0, 7.0, LIGHT_Z_PT)
             } else {
-                (EMIT_GAIN, LIGHT_INTENSITY, LIGHT_RADIUS_PT)
+                (EMIT_GAIN, LIGHT_INTENSITY, LIGHT_RADIUS_PT, LIGHT_Z_PT)
             };
+            // 一盏灯的守恒:胶囊是「一个」光源,不管它在条态是小
+            // 药丸还是在 column 布局拉成整行横条——总辐射功率恒定,
+            // 面积越大单位面积辐射越弱,否则整行横条的辐射总量是小
+            // 药丸的十几倍,GI 光池按比例泛滥(column-stress 实机整窗
+            // 洗蓝)。参考面积取条态胶囊的典型值;小胶囊不放大(clamp 1.0)。
+            let area_pt = (rect[2] / k) * (rect[3] / k);
+            let power_scale = (4000.0 / area_pt.max(1.0)).min(1.0);
+            let gain = gain * power_scale;
             out.prims.push(
                 Prim::from_rune(rect, radii)
                     .albedo(rgb)
@@ -257,7 +278,7 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
             );
             // fill[3] 是 alpha:日出日落天体渐隐时,掺白与强度必须
             // 跟暗——否则隐形的天体还在投满强度的白光,光与源脱节。
-            out.emitters.push((rect, rgb, k, intensity, radius, fill[3]));
+            out.emitters.push((rect, rgb, k, intensity, radius, fill[3], z));
         }
         _ => {}
     }
@@ -350,10 +371,10 @@ impl<S: 'static> Compositor<S> for LightFx {
         let emitter_lights: Vec<Light> = extracted
             .emitters
             .iter()
-            .map(|(rect, rgb, k, intensity, radius, alpha)| {
+            .map(|(rect, rgb, k, intensity, radius, alpha, z)| {
                 let cx = rect[0] + rect[2] / 2.0;
                 let cy = rect[1] + rect[3] / 2.0;
-                Light::point(cx, cy, LIGHT_Z_PT * k)
+                Light::point(cx, cy, z * k)
                     .color([
                         rgb[0] + 0.25 * alpha,
                         rgb[1] + 0.28 * alpha,

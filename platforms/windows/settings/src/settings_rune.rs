@@ -162,7 +162,7 @@ pub fn run() {
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
     let app = App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([0.42, 0.42, 0.45]))
+        .compositor(lueying_server::lighting::LightFx::lit_room([0.72, 0.72, 0.75]))
         .tab_visits_controls(true)
         .init(move || state);
     let handle = app.handle();
@@ -215,21 +215,29 @@ fn load_core() -> Core {
 /// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
 /// 造型对应样张 v2:太阳带日冕(自身大气,不是假光)、月亮带
 /// 月坑(呼应工具栏),低 emission 增益保盘形。
-fn sky_body() -> Vec<El> {
+fn sky_body(win_w: f32) -> Vec<El> {
     const CYCLE: f64 = 720.0;
     const D: f32 = 26.0;
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
+        .unwrap_or(0.0)
+        + std::env::var("LYSKY_SHIFT")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
     let cycle = (secs % CYCLE) / CYCLE; // 0..1
     let is_day = cycle < 0.5;
     let p = ((cycle % 0.5) * 2.0) as f32; // 半程内进度 0..1
     let elev = (std::f32::consts::PI * p).sin();
-    // 行程:名义窗宽 960,从左 70 到右 864;地平线在 y 72,弧高 40。
-    let x = 70.0 + p * (864.0 - 70.0) - D / 2.0;
+    // 行程随实际窗宽:左缘 7% 起到右缘 90%;地平线在 y 72(内容区
+    // 顶缘——天体沉入内容即落山),弧高 40。低角度天体半透明,
+    // 飘过内容边缘只是淡影;高升后实心,在标题带里完整可见。
+    let x0 = win_w * 0.07;
+    let x1 = win_w * 0.90;
+    let x = x0 + p * (x1 - x0) - D / 2.0;
     let y = 72.0 - elev * 40.0 - D / 2.0;
-    let fade = (elev * 3.0).clamp(0.0, 1.0);
+    let fade = elev.powf(0.6).clamp(0.0, 1.0);
 
     let hex = if is_day {
         // 太阳:低位橙(0xff9a50)→高位亮黄白(0xffe9a0)。
@@ -241,7 +249,10 @@ fn sky_body() -> Vec<El> {
         };
         (ch(16) << 16) | (ch(8) << 8) | ch(0)
     } else {
-        0xdfe8f5 // 月亮:冷白,与太阳拉开色温
+        // 月亮:冷灰而非冷白—— emission 自发光反馈会把盘面推上
+        // 削波,白底上月坑(更暗)的对比度全被压没;灰底给坑留
+        // 出阶调空间,亮度交给物理去打。
+        0xaebcd6
     };
 
     let mut sky: Vec<El> = Vec::new();
@@ -282,15 +293,18 @@ fn sky_body() -> Vec<El> {
     if !is_day {
         // 月坑三粒,比例照抄工具栏月亮:两个月亮是同一个月亮。
         // 坑在盘之上(后画),全部绝对坐标平铺,不套层。
-        for (fx, fy, fd) in [(0.66f32, 0.70f32, 0.17f32), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)] {
+        for (ci, (fx, fy, fd)) in [(0.66f32, 0.70f32, 0.17f32), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)]
+            .into_iter()
+            .enumerate()
+        {
             let d = fd * D;
             sky.push(
                 el().absolute(x + (fx - fd / 2.0) * D, y + (fy - fd / 2.0) * D)
                     .w(d)
                     .h(d)
                     .radius(d / 2.0)
-                    .fill(color(0x9aa4b8).alpha(0.4 * fade))
-                    .key("crater")
+                    .fill(color(0x4a5568).alpha(0.7 * fade))
+                    .key(format!("crater{ci}"))
                     .a11y_hidden(),
             );
         }
@@ -305,7 +319,10 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         .reduced_motion
         .unwrap_or_else(|| cx.system_reduced_motion());
     cx.reduced_motion(reduced);
-    scene(s)
+    // 首帧布局未出,拿 None——用名义宽先画,布局就绪后视图
+    // 自动重跑(读 layout_size 即建立追踪依赖)。
+    let win_w = cx.layout_size("window").map(|sz| sz[0]).unwrap_or(950.0);
+    scene(s, win_w)
 }
 
 /// 前台每秒复查系统外观与「减少动态效果」;隐藏时不读注册表,也不
@@ -351,7 +368,7 @@ fn page_colors(c: &Colors, appearance: theme::Appearance) -> PageColors {
     }
 }
 
-fn scene(s: &State) -> El {
+fn scene(s: &State, win_w: f32) -> El {
     // 外观由 poll 缓存;高对比度让位系统色,普通深浅仍固定中性黑瓷。
     let appearance = s.appearance.unwrap_or_else(theme::Appearance::of_system);
     // 固定中性黑瓷:瓷是身份材质,不跟系统深浅或候选窗材质走;
@@ -509,12 +526,15 @@ fn scene(s: &State) -> El {
     // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
     // 地方来。12 分钟一圈的设计节奏,不是真实时间。元素平铺进
     // base,不套零尺寸容器(裁切不确定)。
+    base = base.child(header).child(body).child(footer);
+    // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
+    // 地方来。12 分钟一圈的设计节奏,不是真实时间。画在最前:
+    // 搜索框占了标题带右半,天体若走其后,半段旅程不可见。
     if !matches!(appearance, theme::Appearance::HighContrast) {
-        for body in sky_body() {
+        for body in sky_body(win_w) {
             base = base.child(body);
         }
     }
-    base = base.child(header).child(body).child(footer);
 
     let mut layers = Vec::new();
     overlay_scene(
@@ -1511,7 +1531,7 @@ fn snap_state(state: State, size: (f32, f32), output: String) -> Result<(), Stri
     // 快照必须与真实应用同构:光照 compositor 缺失会让设置页
     // 渲染退化成无光照平底,验证失真。
     App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([0.42, 0.42, 0.45]))
+        .compositor(lueying_server::lighting::LightFx::lit_room([0.72, 0.72, 0.75]))
         .tab_visits_controls(true)
         .init(move || state)
         .args([
@@ -1629,7 +1649,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         13
     ));
     let state = State::default();
-    let _ = scene(&state);
+    let _ = scene(&state, 950.0);
     keyboard_selftest(lines)?;
     store::selftest()?;
     lines.push("扩展商店:点卡片、查看权限、启用与快捷键通过".to_string());
