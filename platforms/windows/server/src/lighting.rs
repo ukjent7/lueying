@@ -23,6 +23,10 @@ pub const MARK_EMITTER: u32 = 3;
 /// 暖色发光体(暖月):同色路但辐射色固定暖黄——月亮是自己的天体,
 /// 不跟主题色走,而渐变盘的实例填充不一定可取。
 pub const MARK_EMITTER_WARM: u32 = 4;
+/// 天体发光体(设置窗日/月):低 emission 增益保盘形——lit_room 模式
+/// 无 GI,emission 只决定盘自身亮度,光池全由同位点光负责;增益高
+/// 了盘心冲白、天体糊成灯泡。
+pub const MARK_EMITTER_SKY: u32 = 5;
 /// 暖月定色(0xfac738 线性值)。发光强度与胶囊同倍数。
 const WARM_EMIT: [f32; 3] = [0.91, 0.66, 0.04];
 
@@ -201,7 +205,7 @@ fn blit_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::R
 /// 一帧的光照提取:发光元件中心(pt→设备 px 转换在调用处)与 prim 列表。
 struct Extracted {
     prims: Vec<Prim>,
-    emitters: Vec<([f32; 4], [f32; 3], f32)>,
+    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32)>,  // rect, rgb, k, intensity, radius
 }
 
 /// 从实例流提取瓷面与发光元件。实例矩形是设备 px;辐射色取实例填充。
@@ -216,20 +220,26 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
                     .gloss(0.85, 0.15),
             );
         }
-        MARK_EMITTER | MARK_EMITTER_WARM => {
+        MARK_EMITTER | MARK_EMITTER_WARM | MARK_EMITTER_SKY => {
             let mut rgb = [fill[0], fill[1], fill[2]];
             if mark == MARK_EMITTER_WARM {
                 rgb = WARM_EMIT;
             }
+            // 角色参数:胶囊/暖月要光池(GI 辐射),天体要盘形。
+            let (gain, intensity, radius) = if mark == MARK_EMITTER_SKY {
+                (1.15, 1.55, 11.0)
+            } else {
+                (EMIT_GAIN, LIGHT_INTENSITY, LIGHT_RADIUS_PT)
+            };
             out.prims.push(
                 Prim::from_rune(rect, radii)
                     .albedo(rgb)
                     .raised(2.0 * k)
                     .bevel(4.2 * k, 2.7 * k)
                     .gloss(0.85, 0.15)
-                    .emissive([rgb[0] * EMIT_GAIN, rgb[1] * EMIT_GAIN, rgb[2] * EMIT_GAIN]),
+                    .emissive([rgb[0] * gain, rgb[1] * gain, rgb[2] * gain]),
             );
-            out.emitters.push((rect, rgb, k));
+            out.emitters.push((rect, rgb, k, intensity, radius));
         }
         _ => {}
     }
@@ -257,7 +267,7 @@ impl<S: 'static> Compositor<S> for LightFx {
                 base_idx.push(n);
             }
             let mark = f.rt.marks.get(n).copied().unwrap_or(0) & 0xff;
-            if mark == MARK_SHELL || mark == MARK_EMITTER || mark == MARK_EMITTER_WARM {
+            if mark == MARK_SHELL || mark == MARK_EMITTER || mark == MARK_EMITTER_WARM || mark == MARK_EMITTER_SKY {
                 any_mark = true;
                 extract(i.rect, i.radii, i.fill, mark, i.params[3], &mut extracted);
             }
@@ -273,7 +283,7 @@ impl<S: 'static> Compositor<S> for LightFx {
         let emitter_lights: Vec<Light> = extracted
             .emitters
             .iter()
-            .map(|(rect, rgb, k)| {
+            .map(|(rect, rgb, k, intensity, radius)| {
                 let cx = rect[0] + rect[2] / 2.0;
                 let cy = rect[1] + rect[3] / 2.0;
                 Light::point(cx, cy, LIGHT_Z_PT * k)
@@ -282,8 +292,8 @@ impl<S: 'static> Compositor<S> for LightFx {
                         rgb[1] + 0.28,
                         rgb[2] + 0.32,
                     ])
-                    .intensity(LIGHT_INTENSITY)
-                    .radius(LIGHT_RADIUS_PT * k)
+                    .intensity(*intensity)
+                    .radius(radius * k)
                     .range(LIGHT_RANGE_PT * k)
             })
             .collect();

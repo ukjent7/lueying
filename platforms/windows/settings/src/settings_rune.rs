@@ -213,6 +213,8 @@ fn load_core() -> Core {
 /// 月亮,各走正弦弧从左升右落。高度决定颜色与能量——日出日落
 /// 变暖变暗(premultiplied fill 让 emission 自动跟暗),接近地平线
 /// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
+/// 造型对应样张 v2:太阳带日冕(自身大气,不是假光)、月亮带
+/// 月坑(呼应工具栏),低 emission 增益保盘形。
 fn sky_body() -> El {
     const CYCLE: f64 = 720.0;
     const D: f32 = 26.0;
@@ -224,37 +226,76 @@ fn sky_body() -> El {
     let is_day = cycle < 0.5;
     let p = ((cycle % 0.5) * 2.0) as f32; // 半程内进度 0..1
     let elev = (std::f32::consts::PI * p).sin();
-    // 行程:名义窗宽 960,从左 70 到右 864;弧顶在 y 18,地平线 y 62。
+    // 行程:名义窗宽 960,从左 70 到右 864;地平线在 y 72,弧高 40。
     let x = 70.0 + p * (864.0 - 70.0) - D / 2.0;
-    let y = 62.0 - elev * 44.0 - D / 2.0;
+    let y = 72.0 - elev * 40.0 - D / 2.0;
     let fade = (elev * 3.0).clamp(0.0, 1.0);
 
-    let body = if is_day {
+    let hex = if is_day {
         // 太阳:低位橙(0xff9a50)→高位亮黄白(0xffe9a0)。
         let t = elev.powf(0.7);
-        let mix = |a: u32, b: u32| -> u32 {
-            let ch = |shift: u32| -> u32 {
-                let ca = ((a >> shift) & 0xff) as f32;
-                let cb = ((b >> shift) & 0xff) as f32;
-                (ca + (cb - ca) * t) as u32
-            };
-            (ch(16) << 16) | (ch(8) << 8) | ch(0)
+        let ch = |shift: u32| -> u32 {
+            let ca = ((0xff9a50u32 >> shift) & 0xff) as f32;
+            let cb = ((0xffe9a0u32 >> shift) & 0xff) as f32;
+            (ca + (cb - ca) * t) as u32
         };
-        el().fill(color(mix(0xff9a50, 0xffe9a0)))
+        (ch(16) << 16) | (ch(8) << 8) | ch(0)
     } else {
-        el().fill(color(0xe8ecf4))
+        0xdfe8f5 // 月亮:冷白,与太阳拉开色温
     };
-    let mut disc = body
+
+    let mut sky = el().absolute(0.0, 0.0).w(0.0).h(0.0);
+    if is_day {
+        // 日冕:太阳自身的大气,radial 渐变衰减到透明——不是照明贴图,
+        // 是天体外观的一部分。
+        let cd = D * 1.9;
+        let cx0 = x + D / 2.0 - cd / 2.0;
+        let cy0 = y + D / 2.0 - cd / 2.0;
+        sky = sky.child(
+            el().absolute(cx0, cy0)
+                .w(cd)
+                .h(cd)
+                .radius(cd / 2.0)
+                .radial_gradient(
+                    [0.5, 0.5],
+                    cd / 2.0,
+                    [
+                        (0.0, color(hex).alpha(0.35 * fade)),
+                        (0.55, color(hex).alpha(0.12 * fade)),
+                        (1.0, color(hex).alpha(0.0)),
+                    ],
+                )
+                .key("sun-corona")
+                .a11y_hidden(),
+        );
+    }
+    let disc = el()
         .absolute(x, y)
         .w(D)
         .h(D)
         .radius(D / 2.0)
-        .opacity(fade)
+        .fill(color(hex).alpha(fade))
         .key(if is_day { "sun" } else { "moon" })
-        .mark(lueying_server::lighting::MARK_EMITTER)
+        .mark(lueying_server::lighting::MARK_EMITTER_SKY)
         .a11y_hidden();
-    let _ = &mut disc;
-    disc
+    sky = sky.child(disc);
+    if !is_day {
+        // 月坑三粒,比例照抄工具栏月亮:两个月亮是同一个月亮。
+        // 坑在盘之上(后画),全部绝对坐标平铺,不套层。
+        for (fx, fy, fd) in [(0.66f32, 0.70f32, 0.17f32), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)] {
+            let d = fd * D;
+            sky = sky.child(
+                el().absolute(x + (fx - fd / 2.0) * D, y + (fy - fd / 2.0) * D)
+                    .w(d)
+                    .h(d)
+                    .radius(d / 2.0)
+                    .fill(color(0x9aa4b8).alpha(0.4 * fade))
+                    .key("crater")
+                    .a11y_hidden(),
+            );
+        }
+    }
+    sky
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
