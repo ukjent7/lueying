@@ -11,11 +11,12 @@ use std::time::Duration;
 use lueying_protocol::Request;
 use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cursor, Cx, Drag, El, Phase, ScrollSpec, TextEdit, TextStyle,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, El, ScrollSpec, TextEdit, TextStyle,
     Tx, col, el, row, text,
 };
 use rune_kit::{
-    Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Switch,
+    Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Slider,
+    Switch,
     TextArea, TextInput, root,
 };
 
@@ -708,7 +709,20 @@ fn control_el(
                 })
                 .build(kit)
         }
-        Control::Slider { id, value } => slider_el(id, label, *value, colors),
+        Control::Slider { id, value } => {
+            let base = id.base.clone();
+            Slider::new(format!("slider-{}", id.base), *value)
+                .range(0.0..=1.0)
+                .step(0.05)
+                .label(label)
+                .hide_label()
+                .width(180.0)
+                .value_text(format!("{:.0}%", value * 100.0))
+                .on_change(move |s: &mut State, v, _done| {
+                    s.core.settings.set_slider(&base, v);
+                })
+                .build(kit)
+        }
         Control::Buttons { items } => buttons_el(items, kit),
         Control::ButtonsToggle {
             items,
@@ -738,93 +752,6 @@ fn control_el(
 /// 取值 0..=1,保存按钮把整份配置落盘。写法对齐官方 settings 示例的滑杆:
 /// a11y 走 role/range_value/on_step(方向键 0.05 步进),按下记值、Esc 取消恢复,
 /// 点在轨道远处用弹簧滑过去,拖动中 tx.instant() 让拇指严格跟手。
-fn slider_el(id: &model::Id, label: &str, value: f32, colors: &Colors) -> El {
-    const TRACK_W: f32 = 180.0;
-    const TRACK_H: f32 = 4.0;
-    const THUMB: f32 = 20.0;
-    const TRAVEL: f32 = TRACK_W - THUMB;
-    const STEP: f64 = 0.05;
-    let base = id.base.clone();
-    let value = value.clamp(0.0, 1.0);
-    let to_value = |x: f32| ((x - THUMB * 0.5) / TRAVEL).clamp(0.0, 1.0);
-    row()
-        .key(format!("slider-{}", id.base))
-        .w(TRACK_W)
-        .h(THUMB)
-        .center_y()
-        .cursor(Cursor::Pointer)
-        .role("slider")
-        .label(label.to_string())
-        .focus_ring(2.0, 1.0, color(colors.accent_text))
-        .range_value(f64::from(value), 0.0, 1.0)
-        .range_step(STEP)
-        .a11y_value(format!("{:.0}%", value * 100.0))
-        .on_step({
-            let base = base.clone();
-            move |s: &mut State, steps, _| {
-                let current = s.core.settings.slider_value(&base);
-                s.core.settings.set_slider(
-                    &base,
-                    (current + steps as f32 * STEP as f32).clamp(0.0, 1.0),
-                );
-            }
-        })
-        .motion(motion::SNAPPY)
-        .on_drag(move |s: &mut State, drag: &mut Drag, tx| {
-            let current = s.core.settings.slider_value(&base);
-            match drag.phase {
-                Phase::Down => {
-                    drag.data = current;
-                    let knob = THUMB * 0.5 + current * TRAVEL;
-                    if (drag.x - knob).abs() > THUMB * 0.5 + 2.0 {
-                        // 点在轨道上:拇指用弹簧滑过去。
-                        s.core.settings.set_slider(&base, to_value(drag.x));
-                    }
-                }
-                Phase::Move => {
-                    let knob = THUMB * 0.5 + drag.data * TRAVEL;
-                    let grab = if (drag.start_x - knob).abs() <= THUMB * 0.5 + 2.0 {
-                        drag.start_x - knob
-                    } else {
-                        0.0
-                    };
-                    s.core.settings.set_slider(&base, to_value(drag.x - grab));
-                    tx.instant();
-                }
-                Phase::Up => {
-                    if drag.cancelled() {
-                        s.core.settings.set_slider(&base, drag.data);
-                    }
-                }
-            }
-        })
-        .child(
-            el().absolute(0.0, (THUMB - TRACK_H) * 0.5)
-                .w(TRACK_W)
-                .h(TRACK_H)
-                .radius(TRACK_H * 0.5)
-                .fill(color(colors.border))
-                .a11y_hidden()
-                .child(
-                    el().absolute(0.0, 0.0)
-                        .w(TRAVEL * value + THUMB * 0.5)
-                        .h(TRACK_H)
-                        .radius(TRACK_H * 0.5)
-                        .fill(color(colors.accent)),
-                ),
-        )
-        .child(
-            el().absolute(TRAVEL * value, 0.0)
-                .w(THUMB)
-                .h(THUMB)
-                .radius(THUMB * 0.5)
-                .fill(color(colors.bg))
-                .border(1.0, color(colors.border))
-                .shadow(0.0, 5.0, Color::BLACK.alpha(0.22))
-                .a11y_hidden(),
-        )
-}
-
 fn buttons_el(items: &[model::Button], kit: &Kit) -> El {
     let mut buttons = row().key("buttons").gap(6.0).center_y();
     for button in items {
