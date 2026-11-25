@@ -5,8 +5,8 @@
 //! 共用渲染构件,窗口摆位、节流与生命周期由各自 overlay 管理。
 
 use lueying_render::panel::Palette;
-use lueying_server::theme::{self, Glaze};
-use rune::{El, OverlayHandle, OverlaySupport, Pixels, el};
+use lueying_server::theme::{self};
+use rune::{El, OverlayHandle, OverlaySupport, Pixels};
 
 /// 窗口的捕获排除是否已足以安全 BitBlt:Requested 与 Supported 都
 /// 表示系统已受理或平台本身支持;Unknown(窗口尚未建好)、Failed 与
@@ -37,90 +37,11 @@ pub(super) fn rounded_surface(el: El, radius: f32) -> El {
 
 /// 黑瓷面:不透的共享石墨胎体配结构描边;釉光只来自真实环境采样,
 /// 采不到保持哑光。`height` 是面板逻辑高度,决定顶部光泽的渐隐范围。
-pub(super) fn ceramic_face(
-    mut face: El,
-    palette: &Palette,
-    glaze: Option<&Glaze>,
-    stroke: f32,
-    height: f32,
-) -> El {
-    face = face
-        .fill(theme::srgb(palette.bg))
-        .border(1.0 * stroke, theme::srgb(palette.border));
-    if let Some(glaze) = glaze {
-        face = face
-            .child(
-                el().pin(Some(0.0), Some(0.0), Some(0.0), None)
-                    .h(height * 0.45)
-                    .gradient(glaze.sheen_top, glaze.sheen_top.alpha(0.0)),
-            )
-            .child(
-                el().pin(Some(0.0), Some(0.0), Some(0.0), None)
-                    .h(1.0 * stroke)
-                    .fill(glaze.edge_top),
-            )
-            .child(
-                el().pin(Some(0.0), None, Some(0.0), Some(0.0))
-                    .h(1.0 * stroke)
-                    .fill(glaze.edge_bottom),
-            );
-    }
-    face
+pub(super) fn ceramic_face(face: El, palette: &Palette, stroke: f32) -> El {
+    face.fill(theme::srgb(palette.bg))
+        .border(1.0 * stroke, theme::srgb(palette.border))
 }
 
-/// 采样面板上下两条窄带的桌面像素均值,算出釉光的环境色。两侧都有
-/// 采样时各取各的转换;只有一侧时,缺失侧用透明覆盖,绝不把一侧的
-/// 光镜像到没有来源的另一侧。两条都采不到就返回 None(哑光)。
-pub(super) fn sample_glaze(rect: (i32, i32, i32, i32)) -> Option<Glaze> {
-    const BAND: i32 = 6;
-    let (x, y, w, h) = rect;
-    if w <= 0 || h <= 0 {
-        return None;
-    }
-    let average = |pixels: Option<(u32, u32, Vec<u8>)>| -> Option<u32> {
-        let rgba = pixels?.2;
-        let count = rgba.len() / 4;
-        if count == 0 {
-            return None;
-        }
-        let (mut r, mut g, mut b) = (0u64, 0u64, 0u64);
-        for pixel in rgba.as_chunks::<4>().0 {
-            r += u64::from(pixel[0]);
-            g += u64::from(pixel[1]);
-            b += u64::from(pixel[2]);
-        }
-        let (r, g, b) = (
-            (r / count as u64) as u32,
-            (g / count as u64) as u32,
-            (b / count as u64) as u32,
-        );
-        Some((r << 16) | (g << 8) | b)
-    };
-    let work = super::place::work_area_at(x, y + h);
-    let above = (y - BAND >= work.top)
-        .then(|| average(capture_rect(x, y - BAND, w as u32, BAND as u32)))
-        .flatten();
-    let below = (y + h + BAND <= work.bottom)
-        .then(|| average(capture_rect(x, y + h, w as u32, BAND as u32)))
-        .flatten();
-    Some(match (above, below) {
-        (Some(top), Some(bottom)) => {
-            theme::glaze_from_ambient(theme::srgb(top), theme::srgb(bottom))
-        }
-        (Some(top), None) => {
-            let mut glaze = theme::glaze_from_ambient(theme::srgb(top), theme::srgb(top));
-            glaze.edge_bottom = rune::Color::TRANSPARENT;
-            glaze
-        }
-        (None, Some(bottom)) => {
-            let mut glaze = theme::glaze_from_ambient(theme::srgb(bottom), theme::srgb(bottom));
-            glaze.sheen_top = rune::Color::TRANSPARENT;
-            glaze.edge_top = rune::Color::TRANSPARENT;
-            glaze
-        }
-        (None, None) => return None,
-    })
-}
 
 /// 抓取一块屏幕区域的桌面像素(RGBA,straight alpha)。
 #[cfg(windows)]

@@ -36,7 +36,6 @@ const LIVE_TICK: Duration = Duration::from_millis(33);
 /// 外壳 SETTLE 弹簧收尾前,收起时先沿用上一张更大的背板光学。
 const GLASS_COLLAPSE_HOLD: f64 = 0.45;
 /// 瓷釉环境采样的重采节奏:周边变了釉光跟着变,又不必像玻璃那样逐帧跟。
-const AMBIENT_TICK: Duration = Duration::from_millis(500);
 /// 捕获排除失败后的低频复查;没有新能力就不做 BitBlt。
 const CAPTURE_RETRY: Duration = Duration::from_secs(1);
 /// 候选文字最大宽度(逻辑像素):窗口宽度减去页码与翻页箭头的空间。
@@ -218,8 +217,6 @@ struct Candidate {
     backdrop_raw: Option<BackdropSample>,
     /// 釉光的环境光:面板上下窄带的桌面实采均值,瓷釉光泽与玻璃棱缘
     /// rim 共用,没有来源就不上光。
-    glaze: Option<lueying_server::theme::Glaze>,
-    glaze_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -257,8 +254,6 @@ impl Candidate {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
-            glaze: None,
-            glaze_read: None,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
@@ -298,18 +293,6 @@ impl Candidate {
         !high_contrast && self.effects() && self.transparency
     }
 
-    /// 釉面环境采样是否会被画:高对比度让位系统色;关闭动态效果与
-    /// 私密会话都不采桌面。窄带釉光只服务黑瓷;玻璃的棱缘改由背板
-    /// 原图算出的环境棱缘流提供,不再额外采屏。瓷胎采不到时仍是哑光。
-    fn glaze_wanted(&self, high_contrast: bool) -> bool {
-        if high_contrast || self.private || !self.effects() {
-            return false;
-        }
-        match self.material {
-            UiMaterial::Glass => false,
-            UiMaterial::Ceramic => true,
-        }
-    }
 
     fn live_glass(&self, high_contrast: bool) -> bool {
         !self.private
@@ -458,7 +441,7 @@ pub(crate) fn run(state: Arc<imp::State>) {
         // 留不住,不配。)
         .release_gpu_when_hidden()
         // 液态玻璃的光学 compositor:lens 折射/色散/frost 走 rune-fx 原生着色器。
-        .compositor(super::lens::LensFx::new())
+        .compositor(super::lens::SurfaceFx::new())
         .poll(poll);
     let handle = app.overlay(overlay, Candidate::with_state(state.clone()));
     let _ = HANDLE.set(handle);
@@ -578,7 +561,7 @@ pub(crate) fn snap(scene: &str, output: String) -> Result<(), String> {
         )
     };
     App::new(spec)
-        .compositor(super::lens::LensFx::new())
+        .compositor(super::lens::SurfaceFx::new())
         .init(move || s)
         .args([
             "--snap".into(),
@@ -738,7 +721,7 @@ pub(crate) fn snap_motion(
         )
     };
     App::new(spec)
-        .compositor(super::lens::LensFx::new())
+        .compositor(super::lens::SurfaceFx::new())
         .init(move || s)
         .args([
             "--strip".into(),
@@ -895,24 +878,6 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     } else if s.private || !s.glass_wanted(high_contrast) || !s.material.is_glass() {
         s.backdrop_read = None;
         changed |= s.drop_backdrop();
-    }
-    // 釉光的环境光:面板上下窄带低频实采,周边变了光跟着变。瓷釉的
-    // 光泽与玻璃的棱缘 rim 都吃这份采样;淡出期保留,冻结内容里不
-    // 闪变;停靠由 park 清。会被画的材质才采,实底主题与私密玻璃不采。
-    if s.visible && s.glaze_wanted(high_contrast) {
-        let rect = s.fx.placement.panel;
-        if s.glaze_read
-            .is_none_or(|(last, area)| area != rect || now - last >= AMBIENT_TICK.as_secs_f64())
-        {
-            s.glaze_read = Some((now, rect));
-            changed |= capture_glaze(s);
-        }
-        if let Some((last, _)) = s.glaze_read {
-            tx.wake_at(last + AMBIENT_TICK.as_secs_f64());
-        }
-    } else {
-        s.glaze_read = None;
-        changed |= s.glaze.take().is_some();
     }
     // 可见窗口每秒复查外观/透明/减动效;隐藏后不常驻轮询。
     if s.visible {
@@ -1329,8 +1294,6 @@ fn park(s: &mut Candidate) {
     s.backdrop = None;
     s.backdrop_read = None;
     s.backdrop_raw = None;
-    s.glaze = None;
-    s.glaze_read = None;
     s.fx.sel_rect = None;
     s.fx.sel_layout = None;
     publish_state(s, None);
@@ -1609,13 +1572,10 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         // 黑瓷:不透的共享石墨胎体,同构釉面。釉面的光全部来自环境
         // 采样:面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。
         (UiMaterial::Ceramic, _) if !high_contrast => {
-            body = super::material::ceramic_face(
-                body,
-                &palette,
-                s.glaze.as_ref(),
-                scale,
-                s.fx.placement.panel.3 as f32 / dpi,
-            );
+            body = super::material::ceramic_face(body, &palette, scale)
+            // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
+            // compositor 侧,这里只声明身份。
+            .mark(super::lighting::MARK_SHELL);
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {
@@ -1745,13 +1705,21 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         // motion 推进。key 带页/形态身份:跨页、条↔棋盘、布局切换
         // 是旧节点退出 + 新节点进入(淡入淡出),只有同形态内的槽间
         // 迁移做矩形飞行——正是手写弹簧时代的 reset/retarget 语义。
+        let capsule = lueying_server::capsule::selection_capsule(
+            rect,
+            scale,
+            look.selected_fill,
+            look.high_contrast,
+        );
+        // 黑瓷里胶囊是唯一光源:标记 emitter,灯位每帧取自它的矩形,
+        // 弹簧飞行时光跟着飞。玻璃模式不标——lens 光学的边缘光自足。
+        let capsule = if matches!(s.material, UiMaterial::Ceramic) && !look.high_contrast {
+            capsule.mark(super::lighting::MARK_EMITTER)
+        } else {
+            capsule
+        };
         layer = layer.child(
-            lueying_server::capsule::selection_capsule(
-                rect,
-                scale,
-                look.selected_fill,
-                look.high_contrast,
-            )
+            capsule
             .key(format!(
                 "sel-{}-{}-{:?}",
                 s.fx.last.as_ref().map(|l| l.view.page).unwrap_or(0),
@@ -2480,13 +2448,6 @@ impl Candidate {
     }
 }
 
-/// 采样面板上下两条窄带的桌面像素均值,算出釉光的环境色;贴屏幕
-/// 边采不到的带子用另一条补,两条都没有就哑光(釉光清空)。
-fn capture_glaze(s: &mut Candidate) -> bool {
-    let previous = s.glaze;
-    s.glaze = super::material::sample_glaze(s.fx.placement.panel);
-    s.glaze != previous
-}
 
 /// 主屏原点与缩放;placement 的 Rect 相对主屏原点。
 #[cfg(windows)]

@@ -32,6 +32,8 @@ winresource = "0.1"
 rune.workspace = true
 # 液态玻璃 GPU 光学:lens 折射/色散/frost 全在上游着色器,与 rune 同 rev。
 rune-fx = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+# 黑瓷物理光照:灯位/bevel 法线/specular 全在上游着色器,与 rune 同 rev。
+rune-light = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
 wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "dx12"] }
 # VK → 协议键的映射:低层钩子回落通道用。
 lueying-win-keys = { workspace = true }

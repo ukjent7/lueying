@@ -60,6 +60,10 @@ impl LensFx {
     pub(crate) fn new() -> Self {
         Self { fx: None }
     }
+
+    pub(crate) fn release(&mut self) {
+        self.fx = None;
+    }
 }
 
 impl<S: 'static> Compositor<S> for LensFx {
@@ -68,7 +72,7 @@ impl<S: 'static> Compositor<S> for LensFx {
     }
 
     fn release_gpu(&mut self) {
-        self.fx = None;
+        self.release();
     }
 
     fn render(&mut self, f: &mut Frame<'_, S>) {
@@ -140,5 +144,55 @@ impl<S: 'static> Compositor<S> for LensFx {
                 EffectPhase::Draw(pass) => fx.draw_layer_in(pass, s.format, s.origin, k),
             }
         });
+    }
+}
+
+/// 材质分派 compositor:候选窗/工具栏共用。玻璃帧(有 lens slot)走
+/// lens 光学;黑瓷帧(有光照标记)走 rune-light 物理光照;都没有时
+/// 原始绘制。两种材质按配置互斥,不会同帧出现。
+pub(crate) struct SurfaceFx {
+    lens: LensFx,
+    light: super::lighting::LightFx,
+}
+
+impl SurfaceFx {
+    pub(crate) fn new() -> Self {
+        Self {
+            lens: LensFx::new(),
+            light: super::lighting::LightFx::new(),
+        }
+    }
+}
+
+impl<S: 'static> Compositor<S> for SurfaceFx {
+    fn animating(&self) -> bool {
+        false
+    }
+
+    fn release_gpu(&mut self) {
+        self.lens.release();
+        self.light.release();
+    }
+
+    fn render(&mut self, f: &mut Frame<'_, S>) {
+        let mut has_lens = false;
+        let mut has_light = false;
+        for (n, i) in f.rt.instances.iter().enumerate() {
+            let mark = f.rt.marks.get(n).copied().unwrap_or(0) & 0xff;
+            if i.params[1] == KIND_EFFECT && mark == LENS {
+                has_lens = true;
+            }
+            if matches!(mark, super::lighting::MARK_SHELL | super::lighting::MARK_EMITTER | super::lighting::MARK_EMITTER_WARM) {
+                has_light = true;
+            }
+        }
+        if has_lens {
+            self.lens.render(f);
+        } else if has_light {
+            self.light.render(f);
+        } else {
+            f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
+            f.ui.draw(f.encoder, f.target, f.rt.clear_color());
+        }
     }
 }

@@ -35,7 +35,6 @@ static HANDLE: OnceLock<OverlayHandle<BarHud>> = OnceLock::new();
 /// 活玻璃的背板重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
 const LIVE_TICK: Duration = Duration::from_millis(33);
 /// 釉光环境窄带的重采节奏;位置变化会提前重采。
-const AMBIENT_TICK: Duration = Duration::from_millis(500);
 /// 捕获排除失败后的低频复查;拿出来 Backdrop 只会白费 BitBlt。
 const CAPTURE_RETRY: Duration = Duration::from_secs(1);
 
@@ -109,8 +108,6 @@ pub(super) struct BarHud {
     /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
     /// 亚克力颗粒:条体物理尺寸的固定噪点图;随尺寸重生成。
     /// 釉光的环境光:条体上下窄带的桌面实采均值;没有来源就不上光。
-    glaze: Option<theme::Glaze>,
-    glaze_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 显示后是否已主动请求过捕获排除;默认 Unknown 时等窗口建好。
     exclusion_checked: bool,
 }
@@ -142,8 +139,6 @@ impl BarHud {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
-            glaze: None,
-            glaze_read: None,
             exclusion_checked: false,
         }
     }
@@ -189,9 +184,7 @@ impl BarHud {
 
     /// 连同环境釉光一起清空;釉光也来自旧位置/旧状态的窄带采样。
     fn clear_capture(&mut self) -> bool {
-        let mut changed = self.clear_backdrop();
-        changed |= self.glaze.take().is_some();
-        self.glaze_read = None;
+        let changed = self.clear_backdrop();
         changed
     }
 }
@@ -210,7 +203,7 @@ pub(super) fn register<T: 'static>(app: &mut rune::App<T>, state: Arc<State>) {
             ..Default::default()
         })
         .release_gpu_when_hidden()
-        .compositor(super::lens::LensFx::new())
+        .compositor(super::lens::SurfaceFx::new())
         .poll(toolbar_poll)
         // 事件循环一起就走一遍既有的 kick 路径(排空更新→首轮 poll→show);
         // 不然工具栏要等到第一次模式切换或设置保存才出现(升级装完服务
@@ -421,27 +414,6 @@ fn toolbar_poll(s: &mut BarHud, now: f64, tx: &mut Tx) -> bool {
         changed |= s.clear_backdrop();
     }
 
-    // 窄带釉光只服务黑瓷:实际采样,采不到就是哑光。玻璃棱缘改由
-    // 背板原图算出的环境棱缘流提供,不再额外采屏。
-    let glaze_live = shown && s.effects && !s.private && !high_contrast && !s.material.is_glass();
-    if glaze_live {
-        let due = s
-            .glaze_read
-            .is_none_or(|(last, area)| area != rect || now - last >= AMBIENT_TICK.as_secs_f64());
-        if due {
-            s.glaze_read = Some((now, rect));
-            let previous = s.glaze;
-            s.glaze = material::sample_glaze(rect);
-            changed |= previous != s.glaze;
-        }
-        if let Some((last, _)) = s.glaze_read {
-            tx.wake_at(last + AMBIENT_TICK.as_secs_f64());
-        }
-    } else {
-        s.glaze_read = None;
-        changed |= s.glaze.take().is_some();
-    }
-
     // 外观/透明/减动效偏好运行中可响应:显示期间每秒复查一次,
     // 不改现有帧;隐藏时不常驻轮询。
     if shown {
@@ -521,7 +493,6 @@ struct ToolbarVisual<'a> {
     status: Status,
     hover: Option<Button>,
     backdrop: Option<&'a Pixels>,
-    glaze: Option<&'a theme::Glaze>,
 }
 
 /// 一帧控件树:圆角条 + 共同材质 + 一排按钮。
@@ -552,7 +523,6 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
             status: s.status,
             hover: s.hover,
             backdrop: s.backdrop.as_ref(),
-            glaze: s.glaze.as_ref(),
         },
         true,
     )
@@ -618,9 +588,10 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
         // 玻璃激活:条体表面就是 lens 的输出,bar 本身不画底;
         // 月亮、按钮等内容照常画在最上层。
         (UiMaterial::Glass, true) => {}
-        // 黑瓷:不透的共享石墨胎体;釉光只跟真实窄带采样。
+        // 黑瓷:不透的共享石墨胎体,受光面身份交给光照 compositor。
         (UiMaterial::Ceramic, _) if !high_contrast => {
-            bar = material::ceramic_face(bar, &palette, s.glaze, t, h);
+            bar = material::ceramic_face(bar, &palette, t)
+                .mark(super::lighting::MARK_SHELL);
         }
         // 关闭特效、私密与高对比:实底主题兜底,不采桌面。
         _ => {
@@ -804,7 +775,14 @@ fn moon_el(
     let r = d / 2.0;
     let at = (box_size - d) / 2.0;
     let yellow = theme::srgb(0xfac738);
-    let mut disc = el().absolute(0.0, 0.0).w(d).h(d).radius(r).key("moon-disc");
+    // 暖月是工具栏唯一的光源:emitter 标记,灯位每帧取自盘心。
+    let mut disc = el()
+        .absolute(0.0, 0.0)
+        .w(d)
+        .h(d)
+        .radius(r)
+        .key("moon-disc")
+        .mark(super::lighting::MARK_EMITTER_WARM);
     disc = if high_contrast {
         // 高对比只保留系统色月相,不加暖光。
         disc.fill(theme::srgb(palette.text))
@@ -1053,7 +1031,6 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
             },
             hover: None,
             backdrop: s.backdrop.as_ref(),
-            glaze: None,
         },
         false,
     )
@@ -1115,7 +1092,7 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
         )
     };
     rune::App::new(spec)
-        .compositor(super::lens::LensFx::new())
+        .compositor(super::lens::SurfaceFx::new())
         .init(move || state)
         .args([
             "--snap".to_string(),

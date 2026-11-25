@@ -2069,6 +2069,7 @@ version = "0.1.0"
 dependencies = [
  "rune",
  "rune-fx",
+ "rune-light",
  "wgpu",
 ]
 
@@ -2283,6 +2284,7 @@ dependencies = [
  "rune",
  "rune-fx",
  "rune-kit",
+ "rune-light",
  "rune-text",
  "serde",
  "serde_json",
@@ -3850,6 +3852,16 @@ dependencies = [
  "rune",
  "rune-motion",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "rune-light"
+version = "0.0.1"
+source = "git+https://github.com/anomalyco/rune?rev=ce89f1725af4f7b963d828ca23d776b2b9e2bd71#ce89f1725af4f7b963d828ca23d776b2b9e2bd71"
+dependencies = [
+ "bytemuck",
+ "rune-staging",
+ "wgpu",
 ]
 
 [[package]]
