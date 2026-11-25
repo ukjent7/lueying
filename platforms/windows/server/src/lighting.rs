@@ -32,11 +32,18 @@ const WARM_EMIT: [f32; 3] = [0.91, 0.66, 0.04];
 
 /// 发光强度:emission 与点光共用元件填充色的倍数。accent 实体发光,
 /// 掺白降饱和——瓷要的是釉面反射,不是霓虹。
-const EMIT_GAIN: f32 = 2.6;
+// 纯 emission 路线的增益:胶囊不再配同位点光——直接光对
+// 发光体自身的放大随 dpi 变化(衰减参考 REF=200 以设备 px
+// 焊死在着色器,阴影通过率又随分辨率变),k=1 白炸 k=2 刚好,
+// 无解;而 GI 辐射传播是物理量,跨倍率表现一致,增益推到
+// 3.5 胶囊依然饱和、光池清晰(spike 双倍率验证)。
+const EMIT_GAIN: f32 = 3.5;
 /// 点光贴着元件上方的高度(pt)与半径:小半径→紧实高光(瓷)。
 const LIGHT_Z_PT: f32 = 28.0;
 const LIGHT_RADIUS_PT: f32 = 9.0;
-const LIGHT_INTENSITY: f32 = 1.9;
+// 胶囊不配同位直射点光(见 EMIT_GAIN 注释);保留常量因为
+// 灯构造管线对天空灯仍需要强度语义,值只对胶囊族生效。
+const LIGHT_INTENSITY: f32 = 0.0;
 const LIGHT_RANGE_PT: f32 = 420.0;
 /// 环境底:不是光源,是曝光基准——房间不是绝对黑,远端文字不死。
 const AMBIENT: [f32; 3] = [0.08, 0.08, 0.085];
@@ -368,6 +375,12 @@ impl<S: 'static> Compositor<S> for LightFx {
 
         // 灯光:Emitters 模式每个发光元件中心一盏同位点光(色掺白降
         // 饱和);Skylight 模式一盏时间驱动的天光,位置相对窗口中心。
+        if std::env::var("LYSCAN").is_ok() {
+            for (rect, rgb, _, intensity, radius, alpha, _) in &extracted.emitters {
+                eprintln!("LYEM rect={rect:?} r={:.2} g={:.2} b={:.2} i={intensity} a={alpha} prims={}",
+                    rgb[0], rgb[1], rgb[2], extracted.prims.len());
+            }
+        }
         let emitter_lights: Vec<Light> = extracted
             .emitters
             .iter()
