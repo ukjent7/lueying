@@ -5,7 +5,7 @@
 //! 也不会回到「边缘亮、中心透底」的空心观感。
 
 use lueying_render::panel::{self, Rect};
-use rune::{Color, El, Shadow, el};
+use rune::{Color, El, el};
 
 /// 一个已定位的选中胶囊背景。调用方负责 key、即时形态切换与命中/语义;
 /// 这个元素只负责视觉,不暴露辅助功能节点。
@@ -23,21 +23,7 @@ pub fn selection_capsule(rect: Rect, scale: f32, fill: Color, high_contrast: boo
     }
 
     let stroke = scale.max(0.75);
-    capsule
-        // 上缘接住白光,下缘轻轻压暗:只是照明,不改变中心主题色。
-        .border_gradient(stroke, Color::WHITE.alpha(0.34), Color::BLACK.alpha(0.14))
-        // 近处一圈较实的色光让胶囊像光源,远处再散开。两层都是 accent,
-        // 不引入黄色釉光或独立灯管色。
-        .box_shadow(Shadow {
-            y: 0.0,
-            blur: 5.0 * scale,
-            color: fill.alpha(0.28),
-            ..Shadow::default()
-        })
-        .box_shadow(Shadow {
-            y: scale,
-            blur: 12.0 * scale,
-            color: fill.alpha(0.14),
-            ..Shadow::default()
-        })
+    // 真光时代不再贴假光晕:黑瓷里胶囊是真的光源,光池由 rune-light
+    // 物理辐射;玻璃里它是踏实的实色元件。保留上下棱线只做塑形。
+    capsule.border_gradient(stroke, Color::WHITE.alpha(0.34), Color::BLACK.alpha(0.14))
 }

@@ -606,7 +606,6 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
     // 月亮是明确的暖黄光源:它的接光只落在按钮周围,裁在条体内,
     // 画在条体材料之后、按钮文字之前。关掉特效或高对比不引入暖光。
     if s.effects && !high_contrast {
-        bar = bar.child(moon_light(moon, moon_rect));
     }
     bar = bar.child(
         el().absolute(
@@ -826,31 +825,6 @@ fn moon_el(
     )
 }
 
-/// 条体自己的月亮接光:中心落在真实亮区质心,能量按亮区面积,
-/// 范围局部并由条体圆角裁切;不是整个工具栏的天光。
-fn moon_light(moon: toolbar::MoonIllumination, rect: Rect) -> El {
-    let d = rect.height() * 0.62;
-    let offset = moon.centroid_offset * toolbar::FRAC_1_SQRT_2;
-    let cx = rect.center_x() + offset;
-    let cy = rect.center_y() + offset;
-    let range = d * 1.6;
-    let glow = d * 3.2;
-    let alpha = 0.18 * moon.emitting_area_ratio;
-    el().absolute(cx - glow * 0.5, cy - glow * 0.5)
-        .w(glow)
-        .h(glow)
-        .radial_gradient(
-            [0.5, 0.5],
-            range,
-            [
-                (0.0, theme::srgb_alpha(0xfac738, alpha)),
-                (0.5, theme::srgb_alpha(0xfac738, alpha * 0.5)),
-                (1.0, theme::srgb_alpha(0xfac738, 0.0)),
-            ],
-        )
-        .key("moon-light")
-        .a11y_hidden()
-}
 
 /// 拖动:按下非按钮处抓住,移动跟手并夹在屏幕内,松开写回配置。
 /// 屏幕坐标用 `Drag::screen_point`(桌面物理像素),与模型、配置一致。
