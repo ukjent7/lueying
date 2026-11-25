@@ -591,7 +591,7 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
         // 黑瓷:不透的共享石墨胎体,受光面身份交给光照 compositor。
         (UiMaterial::Ceramic, _) if !high_contrast => {
             bar = material::ceramic_face(bar, &palette, t)
-                .mark(lueying_server::lighting::MARK_SHELL | (((t * 100.0) as u32) << 8));
+                .mark(lueying_server::lighting::MARK_SHELL);
         }
         // 关闭特效、私密与高对比:实底主题兜底,不采桌面。
         _ => {

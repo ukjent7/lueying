@@ -1578,7 +1578,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             body = super::material::ceramic_face(body, &palette, scale)
             // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
             // compositor 侧,这里只声明身份。
-            .mark(lueying_server::lighting::MARK_SHELL | (((scale * 100.0) as u32) << 8));
+            .mark(lueying_server::lighting::MARK_SHELL);
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {

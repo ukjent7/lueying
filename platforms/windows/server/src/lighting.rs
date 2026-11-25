@@ -234,8 +234,16 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
                 rgb = WARM_EMIT;
             }
             // 角色参数:胶囊/暖月要光池(GI 辐射),天体要盘形。
+            // 三族参数:胶囊是唯一光源(full 量级);天体要盘形(低
+            // emission 免冲白);暖月是装饰氛围灯——工具栏整条都在
+            // 近场,full 量级会把瓷面洗成暖黄浴室,收弱收小。
             let (gain, intensity, radius) = if mark == MARK_EMITTER_SKY {
                 (1.15, 1.55, 11.0)
+            } else if mark == MARK_EMITTER_WARM {
+                // 暖月纯 emission:bar 太小,同位点光全是近场直射,
+                // 洗白按钮;GI 光池衰减柔,月亮自身亮起来,暖意
+                // 只在附近瓷面荡开——装饰灯的本分。
+                (1.6, 0.0, 7.0)
             } else {
                 (EMIT_GAIN, LIGHT_INTENSITY, LIGHT_RADIUS_PT)
             };
@@ -270,10 +278,9 @@ impl<S: 'static> Compositor<S> for LightFx {
         let mut base_idx: Vec<usize> = Vec::new();
         let mut text_idx: Vec<usize> = Vec::new();
         let mut any_mark = false;
-        // 实例是设备 px,常量是 pt:frame 级倍率由壳标记高 24 位编码
+        // 实例是设备 px,常量是 pt:帧级倍率从 size/viewport 推
         // (params[3] 是字形覆盖率指数,不是倍率——曾按它取值导致
-        // z/radius/range 全部归零,光照全黑)。mark 是元素侧的任意
-        // 元数据通道,编码合法;无编码时按 1.0。
+        // z/radius/range 全部归零,光照全黑)。
         // mark 继承是上游设计("最近标记节点"):壳容器里每个后代实例
         // 都带着 MARK_SHELL——字形方块、行底、箭头全部算在内。提取
         // 必须讲策略:字形排除(文字走文字纹理,不是 3D 形体);隐形
