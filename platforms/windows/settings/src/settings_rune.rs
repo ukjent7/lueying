@@ -11,7 +11,7 @@ use std::time::Duration;
 use lueying_protocol::Request;
 use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cursor, Cx, El, ScrollSpec, TextEdit, TextStyle,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, El, Live, ScrollSpec, TextEdit, TextStyle,
     Tx, col, el, row, text,
 };
 use rune_kit::{
@@ -131,7 +131,109 @@ struct State {
     text: TextEdit,
     overlay: Overlay,
     downloading_extension: Option<&'static str>,
+    /// 窗顶日月的实时位置/颜色;poll 只更新 Live,不重建整页。
+    sky: Sky,
 }
+
+/// 窗顶日月的实时值。几何/颜色走 `Live`,poll 更新这些源时不重跑 view;
+/// 只有跨过日出/日落切换日/月节点时才提交一次重绘。
+struct Sky {
+    disc: Live<[f32; 2]>,
+    corona: Live<[f32; 2]>,
+    craters: [Live<[f32; 2]>; 3],
+    fill: Live<Color>,
+    fade: Live<f32>,
+    width: f32,
+    base: f64,
+    cycle: f64,
+    is_day: bool,
+}
+
+impl Default for Sky {
+    fn default() -> Self {
+        let mut sky = Self {
+            disc: Live::new([0.0; 2]),
+            corona: Live::new([0.0; 2]),
+            craters: std::array::from_fn(|_| Live::new([0.0; 2])),
+            fill: Live::new(Color::TRANSPARENT),
+            fade: Live::new(0.0),
+            width: 950.0,
+            base: 0.0,
+            cycle: 0.0,
+            is_day: true,
+        };
+        sky.base = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+            + std::env::var("LYSKY_SHIFT")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0);
+        let cycle = (sky.base % SKY_CYCLE) / SKY_CYCLE;
+        sky.place(cycle);
+        sky
+    }
+}
+
+impl Sky {
+    fn set_width(&mut self, width: f32) {
+        if width > 0.0 && self.width != width {
+            self.width = width;
+            self.place(self.cycle);
+        }
+    }
+
+    /// 按 app 时钟推进;只改 Live,不要求 view 重跑。
+    fn advance(&mut self, now: f64) {
+        let cycle = ((self.base + now) % SKY_CYCLE) / SKY_CYCLE;
+        if (cycle - self.cycle).abs() > f64::EPSILON {
+            self.place(cycle);
+        }
+    }
+
+    fn place(&mut self, cycle: f64) {
+        let is_day = cycle < 0.5;
+        let p = ((cycle % 0.5) * 2.0) as f32;
+        let elev = (std::f32::consts::PI * p).sin();
+        let x0 = self.width * 0.07;
+        let x1 = self.width * 0.90;
+        let x = x0 + p * (x1 - x0) - SKY_D / 2.0;
+        let y = 72.0 - elev * 40.0 - SKY_D / 2.0;
+        let fade = elev.powf(0.6).clamp(0.0, 1.0);
+        let hex = if is_day {
+            let t = elev.powf(0.7);
+            let ch = |shift: u32| -> u32 {
+                let ca = ((0xff9a50u32 >> shift) & 0xff) as f32;
+                let cb = ((0xffe9a0u32 >> shift) & 0xff) as f32;
+                (ca + (cb - ca) * t) as u32
+            };
+            (ch(16) << 16) | (ch(8) << 8) | ch(0)
+        } else {
+            0xaebcd6
+        };
+        self.disc.set([x, y]);
+        let cd = SKY_D * 1.9;
+        self.corona.set([x + SKY_D / 2.0 - cd / 2.0, y + SKY_D / 2.0 - cd / 2.0]);
+        for (crater, (fx, fy, fd)) in self.craters.iter().zip([
+            (0.66f32, 0.70f32, 0.17f32),
+            (0.76, 0.45, 0.12),
+            (0.56, 0.80, 0.09),
+        ]) {
+            crater.set([
+                x + (fx - fd / 2.0) * SKY_D,
+                y + (fy - fd / 2.0) * SKY_D,
+            ]);
+        }
+        self.fill.set(color(hex).alpha(fade));
+        self.fade.set(fade);
+        self.cycle = cycle;
+        self.is_day = is_day;
+    }
+}
+
+const SKY_CYCLE: f64 = 720.0;
+const SKY_D: f32 = 26.0;
 
 thread_local! {
     /// UI 线程保存句柄;控件回调用它启动后台任务或关窗。
@@ -199,9 +301,8 @@ fn load_core() -> Core {
     // 引擎状态由首帧后的后台线程读取,首屏不为两条管道请求阻塞。
     settings.status_loading = true;
     settings.current = update::current_version();
-    settings.scripts = actions::installed_scripts();
-    settings.ppocr_ready = actions::ppocr_ready();
-    settings.ext_metrics = actions::read_ext_metrics();
+    // 扩展目录扫描、OCR 目录检查、运行指标读取都放到首帧后的后台任务;
+    // 首屏先用空列表,加载完再由 update 落回同一份状态。
     Core {
         settings,
         release: None,
@@ -215,55 +316,16 @@ fn load_core() -> Core {
 /// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
 /// 造型对应样张 v2:太阳带日冕(自身大气,不是假光)、月亮带
 /// 月坑(呼应工具栏),低 emission 增益保盘形。
-fn sky_body(win_w: f32) -> Vec<El> {
-    const CYCLE: f64 = 720.0;
-    const D: f32 = 26.0;
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-        + std::env::var("LYSKY_SHIFT")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0);
-    let cycle = (secs % CYCLE) / CYCLE; // 0..1
-    let is_day = cycle < 0.5;
-    let p = ((cycle % 0.5) * 2.0) as f32; // 半程内进度 0..1
-    let elev = (std::f32::consts::PI * p).sin();
-    // 行程随实际窗宽:左缘 7% 起到右缘 90%;地平线在 y 72(内容区
-    // 顶缘——天体沉入内容即落山),弧高 40。低角度天体半透明,
-    // 飘过内容边缘只是淡影;高升后实心,在标题带里完整可见。
-    let x0 = win_w * 0.07;
-    let x1 = win_w * 0.90;
-    let x = x0 + p * (x1 - x0) - D / 2.0;
-    let y = 72.0 - elev * 40.0 - D / 2.0;
-    let fade = elev.powf(0.6).clamp(0.0, 1.0);
-
-    let hex = if is_day {
-        // 太阳:低位橙(0xff9a50)→高位亮黄白(0xffe9a0)。
-        let t = elev.powf(0.7);
-        let ch = |shift: u32| -> u32 {
-            let ca = ((0xff9a50u32 >> shift) & 0xff) as f32;
-            let cb = ((0xffe9a0u32 >> shift) & 0xff) as f32;
-            (ca + (cb - ca) * t) as u32
-        };
-        (ch(16) << 16) | (ch(8) << 8) | ch(0)
-    } else {
-        // 月亮:冷灰而非冷白—— emission 自发光反馈会把盘面推上
-        // 削波,白底上月坑(更暗)的对比度全被压没;灰底给坑留
-        // 出阶调空间,亮度交给物理去打。
-        0xaebcd6
-    };
-
-    let mut sky: Vec<El> = Vec::new();
+fn sky_body(values: &Sky) -> Vec<El> {
+    const D: f32 = SKY_D;
+    let is_day = values.is_day;
+    let mut bodies: Vec<El> = Vec::new();
     if is_day {
         // 日冕:太阳自身的大气,radial 渐变衰减到透明——不是照明贴图,
         // 是天体外观的一部分。
         let cd = D * 1.9;
-        let cx0 = x + D / 2.0 - cd / 2.0;
-        let cy0 = y + D / 2.0 - cd / 2.0;
-        sky.push(
-            el().absolute(cx0, cy0)
+        bodies.push(
+            el().absolute(0.0, 0.0)
                 .w(cd)
                 .h(cd)
                 .radius(cd / 2.0)
@@ -271,45 +333,47 @@ fn sky_body(win_w: f32) -> Vec<El> {
                     [0.5, 0.5],
                     cd / 2.0,
                     [
-                        (0.0, color(hex).alpha(0.35 * fade)),
-                        (0.55, color(hex).alpha(0.12 * fade)),
-                        (1.0, color(hex).alpha(0.0)),
+                        (0.0, color(0xff9a50).alpha(0.35)),
+                        (0.55, color(0xff9a50).alpha(0.12)),
+                        (1.0, color(0xff9a50).alpha(0.0)),
                     ],
                 )
+                .live_offset(&values.corona)
+                .live_opacity(&values.fade)
                 .key("sun-corona")
                 .a11y_hidden(),
         );
     }
     let disc = el()
-        .absolute(x, y)
+        .absolute(0.0, 0.0)
         .w(D)
         .h(D)
         .radius(D / 2.0)
-        .fill(color(hex).alpha(fade))
+        .live_offset(&values.disc)
+        .live_fill(&values.fill)
         .key(if is_day { "sun" } else { "moon" })
         .mark(lueying_server::lighting::MARK_EMITTER_SKY)
         .a11y_hidden();
-    sky.push(disc);
+    bodies.push(disc);
     if !is_day {
         // 月坑三粒,比例照抄工具栏月亮:两个月亮是同一个月亮。
         // 坑在盘之上(后画),全部绝对坐标平铺,不套层。
-        for (ci, (fx, fy, fd)) in [(0.66f32, 0.70f32, 0.17f32), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)]
-            .into_iter()
-            .enumerate()
-        {
+        for (ci, fd) in [0.17f32, 0.12, 0.09].into_iter().enumerate() {
             let d = fd * D;
-            sky.push(
-                el().absolute(x + (fx - fd / 2.0) * D, y + (fy - fd / 2.0) * D)
+            bodies.push(
+                el().absolute(0.0, 0.0)
                     .w(d)
                     .h(d)
                     .radius(d / 2.0)
-                    .fill(color(0x4a5568).alpha(0.7 * fade))
+                    .fill(color(0x4a5568).alpha(0.7))
+                    .live_offset(&values.craters[ci])
+                    .live_opacity(&values.fade)
                     .key(format!("crater{ci}"))
                     .a11y_hidden(),
             );
         }
     }
-    sky
+    bodies
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -319,15 +383,13 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         .reduced_motion
         .unwrap_or_else(|| cx.system_reduced_motion());
     cx.reduced_motion(reduced);
-    // 首帧布局未出,拿 None——用名义宽先画,布局就绪后视图
-    // 自动重跑(读 layout_size 即建立追踪依赖)。
-    let win_w = cx.layout_size("window").map(|sz| sz[0]).unwrap_or(950.0);
-    scene(s, win_w)
+    scene(s)
 }
 
-/// 前台每秒复查系统外观与「减少动态效果」;隐藏时不读注册表,也不
-/// 常驻唤醒。缓存值真的变了才返回 true,不改焦点、弹层或黑瓷身份。
-fn settings_poll(s: &mut State, _now: f64, tx: &mut Tx) -> bool {
+/// 前台每半秒复查系统外观、减少动态与日月相位;隐藏时不读注册表,也不
+/// 常驻唤醒。外观/减动效真的变了才返回 true;日月只更新 Live 源,只有
+/// 昼夜切换才提交一次重绘。
+fn settings_poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if !tx.window_visible() {
         return false;
     }
@@ -340,6 +402,11 @@ fn settings_poll(s: &mut State, _now: f64, tx: &mut Tx) -> bool {
     }
     if s.reduced_motion != Some(reduced) {
         s.reduced_motion = Some(reduced);
+        changed = true;
+    }
+    let was_day = s.sky.is_day;
+    s.sky.advance(now);
+    if s.sky.is_day != was_day {
         changed = true;
     }
     tx.wake_after(Duration::from_millis(500));
@@ -368,7 +435,7 @@ fn page_colors(c: &Colors, appearance: theme::Appearance) -> PageColors {
     }
 }
 
-fn scene(s: &State, win_w: f32) -> El {
+fn scene(s: &State) -> El {
     // 外观由 poll 缓存;高对比度让位系统色,普通深浅仍固定中性黑瓷。
     let appearance = s.appearance.unwrap_or_else(theme::Appearance::of_system);
     // 固定中性黑瓷:瓷是身份材质,不跟系统深浅或候选窗材质走;
@@ -523,6 +590,8 @@ fn scene(s: &State, win_w: f32) -> El {
     if !matches!(appearance, theme::Appearance::HighContrast) {
         base = base.mark(lueying_server::lighting::MARK_SHELL);
     }
+    // 窗宽变化只更新 Live 位置,不重建整页。
+    base = base.on_layout(|s: &mut State, [_, _, width, _]| s.sky.set_width(width));
     // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
     // 地方来。12 分钟一圈的设计节奏,不是真实时间。元素平铺进
     // base,不套零尺寸容器(裁切不确定)。
@@ -531,7 +600,7 @@ fn scene(s: &State, win_w: f32) -> El {
     // 地方来。12 分钟一圈的设计节奏,不是真实时间。画在最前:
     // 搜索框占了标题带右半,天体若走其后,半段旅程不可见。
     if !matches!(appearance, theme::Appearance::HighContrast) {
-        for body in sky_body(win_w) {
+        for body in sky_body(&s.sky) {
             base = base.child(body);
         }
     }
@@ -898,20 +967,13 @@ fn button_el(button: &model::Button, kit: &Kit) -> El {
 /// 页脚按钮:回车只在它自己聚焦时激活,不设全局默认按钮。
 fn footer_button_el(button: &model::Button, kit: &Kit) -> El {
     let base = button.id.base.clone();
-    let index = button.id.index;
     let control = button_el(button, kit).key(format!("footer-{base}"));
     if !button.enabled {
         return control;
     }
-    control.on_key(move |s: &mut State, event, tx| {
-        if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
-            return false;
-        }
-        if !tx.key_repeat() {
-            activate(s, base.clone(), index);
-        }
-        true
-    })
+    // Native focused-button Return: ignores key repeats and modified Return,
+    // and still lets the KitButton's own on_press do the activation.
+    control.press_on_return()
 }
 
 /// 一次激活:先让模型改配置,再执行它要求的平台动作。
@@ -1069,25 +1131,23 @@ fn confirm(s: &mut State, action: ConfirmAction) {
                 .settings
                 .say(Notice::Info, "正在下载安装包;界面可以继续使用");
             if let Some(handle) = ui_handle() {
-                let spawned = std::thread::Builder::new()
-                    .name("settings-update".into())
-                    .spawn(move || {
-                        let result = actions::download_and_run_installer(&release);
-                        handle.update(move |s: &mut State, _| match result {
-                            Ok(()) => s
-                                .core
-                                .settings
-                                .say(Notice::Success, "安装程序已启动;按提示完成更新"),
-                            Err(error) => s
-                                .core
-                                .settings
-                                .say(Notice::Error, format!("更新失败: {error}")),
-                        });
+                let spawned = rune::task::spawn("settings-update", move || {
+                    let result = actions::download_and_run_installer(&release);
+                    handle.update(move |s: &mut State, _| match result {
+                        Ok(()) => s
+                            .core
+                            .settings
+                            .say(Notice::Success, "安装程序已启动;按提示完成更新"),
+                        Err(error) => s
+                            .core
+                            .settings
+                            .say(Notice::Error, format!("更新失败: {error}")),
                     });
+                });
                 if let Err(error) = spawned {
                     s.core
                         .settings
-                        .say(Notice::Error, format!("启动下载线程失败: {error}"));
+                        .say(Notice::Error, format!("启动下载任务失败: {error}"));
                 }
             }
         }
@@ -1115,12 +1175,30 @@ fn open_secret(s: &mut State, ext: String, key: String, title: String) {
 fn save_secret(s: &mut State, ext: String, key: String) {
     let value = s.secret.text.clone();
     s.overlay = Overlay::None;
-    match ext_secret::set(&ext, &key, &value) {
-        Ok(()) => s.core.settings.say(Notice::Success, "已保存扩展密钥"),
-        Err(error) => s
-            .core
+    let Some(handle) = ui_handle() else {
+        match ext_secret::set(&ext, &key, &value) {
+            Ok(()) => s.core.settings.say(Notice::Success, "已保存扩展密钥"),
+            Err(error) => s
+                .core
+                .settings
+                .say(Notice::Error, format!("保存失败: {error}")),
+        }
+        return;
+    };
+    let spawned = rune::task::spawn("settings-secret", move || {
+        let result = ext_secret::set(&ext, &key, &value);
+        handle.update(move |s: &mut State, _| match result {
+            Ok(()) => s.core.settings.say(Notice::Success, "已保存扩展密钥"),
+            Err(error) => s
+                .core
+                .settings
+                .say(Notice::Error, format!("保存失败: {error}")),
+        });
+    });
+    if let Err(error) = spawned {
+        s.core
             .settings
-            .say(Notice::Error, format!("保存失败: {error}")),
+            .say(Notice::Error, format!("保存任务启动失败: {error}"));
     }
 }
 
@@ -1129,61 +1207,86 @@ fn open_text(s: &mut State, kind: TextKind) {
         s.core.settings.say(Notice::Error, "没有可写的文本文件路径");
         return;
     };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if !path.exists()
-        && let Err(error) = std::fs::write(&path, kind.template())
-    {
-        s.core
-            .settings
-            .say(Notice::Error, format!("写模板失败: {error}"));
-        return;
-    }
-    // 短语文件可以上百 KB,读盘不占 UI 帧;结果回 UI 线程再开编辑层。
+    // 短语文件可以上百 KB,建目录、写模板与读盘都放后台;结果回 UI 线程
+    // 再开编辑层。
     let Some(handle) = ui_handle() else {
         return;
     };
-    let spawned = std::thread::Builder::new()
-        .name("settings-text".into())
-        .spawn(move || {
-            let body = std::fs::read_to_string(&path);
-            handle.update(move |s: &mut State, _| match body {
-                Ok(body) => {
-                    s.text = TextEdit::new(body);
-                    s.overlay = Overlay::Text {
-                        title: kind.title().into(),
-                        path,
-                        kind,
-                    };
-                }
-                Err(error) => s
-                    .core
+    let spawned = rune::task::spawn("settings-text", move || {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if !path.exists()
+            && let Err(error) = std::fs::write(&path, kind.template())
+        {
+            handle.update(move |s: &mut State, _| {
+                s.core
                     .settings
-                    .say(Notice::Error, format!("读文件失败: {error}")),
+                    .say(Notice::Error, format!("写模板失败: {error}"));
             });
+            return;
+        }
+        let body = std::fs::read_to_string(&path);
+        handle.update(move |s: &mut State, _| match body {
+            Ok(body) => {
+                s.text = TextEdit::new(body);
+                s.overlay = Overlay::Text {
+                    title: kind.title().into(),
+                    path,
+                    kind,
+                };
+            }
+            Err(error) => s
+                .core
+                .settings
+                .say(Notice::Error, format!("读文件失败: {error}")),
         });
+    });
     if let Err(error) = spawned {
         s.core
             .settings
-            .say(Notice::Error, format!("读文件线程启动失败: {error}"));
+            .say(Notice::Error, format!("读文件任务启动失败: {error}"));
     }
 }
 
 fn save_text(s: &mut State, path: std::path::PathBuf, kind: TextKind) {
     let body = s.text.text.clone();
     s.overlay = Overlay::None;
-    match write_text(&path, &body) {
-        Ok(()) => {
-            actions::reload();
-            s.core
-                .settings
-                .say(Notice::Success, format!("已保存{}", kind.title()));
+    let Some(handle) = ui_handle() else {
+        match write_text(&path, &body) {
+            Ok(()) => {
+                actions::reload();
+                s.core
+                    .settings
+                    .say(Notice::Success, format!("已保存{}", kind.title()));
+            }
+            Err(error) => s.core.settings.say(
+                Notice::Error,
+                format!("写入 {} 失败: {error}", path.display()),
+            ),
         }
-        Err(error) => s.core.settings.say(
-            Notice::Error,
-            format!("写入 {} 失败: {error}", path.display()),
-        ),
+        return;
+    };
+    let spawned = rune::task::spawn("settings-save-text", move || {
+        let result = write_text(&path, &body);
+        let message = match &result {
+            Ok(()) => format!("已保存{}", kind.title()),
+            Err(error) => format!("写入 {} 失败: {error}", path.display()),
+        };
+        if result.is_ok() {
+            actions::reload();
+        }
+        let notice = if result.is_ok() {
+            Notice::Success
+        } else {
+            Notice::Error
+        };
+        handle.update(move |s: &mut State, _| s.core.settings.say(notice, message));
+    });
+    if let Err(error) = spawned {
+        s.core
+            .settings
+            .say(Notice::Error, format!("保存任务启动失败: {error}"));
     }
 }
 
@@ -1213,27 +1316,25 @@ fn start_update_check(s: &mut State) {
     let Some(handle) = ui_handle() else {
         return;
     };
-    let spawned = std::thread::Builder::new()
-        .name("settings-update".into())
-        .spawn(move || {
-            let result = update::check_channel(channel);
-            handle.update(move |s: &mut State, _| {
-                s.core.settings.updates = match result {
-                    Ok(Check::Latest) => UpdateState::Latest,
-                    Ok(Check::Available(release)) => {
-                        let version = release.version.clone();
-                        s.core.release = Some(release);
-                        UpdateState::Available(version)
-                    }
-                    Ok(Check::NoRelease) => UpdateState::NoRelease,
-                    Err(error) => UpdateState::Failed(error),
-                };
-            });
+    let spawned = rune::task::spawn("settings-update", move || {
+        let result = update::check_channel(channel);
+        handle.update(move |s: &mut State, _| {
+            s.core.settings.updates = match result {
+                Ok(Check::Latest) => UpdateState::Latest,
+                Ok(Check::Available(release)) => {
+                    let version = release.version.clone();
+                    s.core.release = Some(release);
+                    UpdateState::Available(version)
+                }
+                Ok(Check::NoRelease) => UpdateState::NoRelease,
+                Err(error) => UpdateState::Failed(error),
+            };
         });
+    });
     if let Err(error) = spawned {
         s.core
             .settings
-            .say(Notice::Error, format!("检查更新的线程启动失败: {error}"));
+            .say(Notice::Error, format!("检查更新的任务启动失败: {error}"));
     }
 }
 
@@ -1256,43 +1357,47 @@ fn confirm_install(s: &mut State) {
 /// 初始/刷新顺序,不覆盖用户已改的配置、页面或搜索。
 fn start_startup_load(handle: AppHandle<State>) {
     let fallback = handle.clone();
-    let spawned = std::thread::Builder::new()
-        .name("settings-startup".into())
-        .spawn(move || {
-            let groups = actions::call(&Request::FuzzyStats)
-                .map(|reply| reply.groups)
-                .unwrap_or_default();
-            let status = actions::call(&Request::Status).and_then(|reply| reply.status);
-            handle.update(move |s: &mut State, _| {
-                if std::mem::take(&mut s.initial_groups_pending) {
-                    s.core.settings.groups = groups;
-                }
-                s.core.settings.status = status;
-                s.core.settings.status_loading = false;
-            });
-
-            let result = crate::models::ensure();
-            if result.as_ref().is_ok_and(|&count| count > 0) {
-                actions::restart_server();
+    let spawned = rune::task::spawn("settings-startup", move || {
+        let groups = actions::call(&Request::FuzzyStats)
+            .map(|reply| reply.groups)
+            .unwrap_or_default();
+        let status = actions::call(&Request::Status).and_then(|reply| reply.status);
+        let scripts = actions::installed_scripts();
+        let ppocr_ready = actions::ppocr_ready();
+        let ext_metrics = actions::read_ext_metrics();
+        handle.update(move |s: &mut State, _| {
+            if std::mem::take(&mut s.initial_groups_pending) {
+                s.core.settings.groups = groups;
             }
-            let status = actions::call(&Request::Status).and_then(|reply| reply.status);
-            handle.update(move |s: &mut State, _| {
-                s.core.settings.status = status;
-                match result {
-                    Ok(0) => {}
-                    Ok(count) => s.core.settings.say(
-                        Notice::Success,
-                        format!("重排模型已就绪(补齐 {count} 个文件)"),
-                    ),
-                    Err(error) => s
-                        .core
-                        .settings
-                        .say(Notice::Error, format!("重排模型补齐失败: {error}")),
-                }
-            });
+            s.core.settings.status = status;
+            s.core.settings.status_loading = false;
+            s.core.settings.scripts = scripts;
+            s.core.settings.ppocr_ready = ppocr_ready;
+            s.core.settings.ext_metrics = ext_metrics;
         });
+
+        let result = crate::models::ensure();
+        if result.as_ref().is_ok_and(|&count| count > 0) {
+            actions::restart_server();
+        }
+        let status = actions::call(&Request::Status).and_then(|reply| reply.status);
+        handle.update(move |s: &mut State, _| {
+            s.core.settings.status = status;
+            match result {
+                Ok(0) => {}
+                Ok(count) => s.core.settings.say(
+                    Notice::Success,
+                    format!("重排模型已就绪(补齐 {count} 个文件)"),
+                ),
+                Err(error) => s
+                    .core
+                    .settings
+                    .say(Notice::Error, format!("重排模型补齐失败: {error}")),
+            }
+        });
+    });
     if let Err(error) = spawned {
-        eprintln!("设置后台加载线程启动失败: {error}");
+        eprintln!("设置后台加载任务启动失败: {error}");
         fallback.update(|s: &mut State, _| {
             s.initial_groups_pending = false;
             s.core.settings.status_loading = false;
@@ -1649,7 +1754,7 @@ fn selftest_run(lines: &mut Vec<String>) -> Result<(), String> {
         13
     ));
     let state = State::default();
-    let _ = scene(&state, 950.0);
+    let _ = scene(&state);
     keyboard_selftest(lines)?;
     store::selftest()?;
     lines.push("扩展商店:点卡片、查看权限、启用与快捷键通过".to_string());
@@ -1755,7 +1860,7 @@ fn keyboard_selftest(lines: &mut Vec<String>) -> Result<(), String> {
     let predict =
         predict_switch(&rt).ok_or_else(|| "键盘: 候选页找不到「下一词联想」开关".to_string())?;
     let (rect, visible) = (predict.rect, predict.visible);
-    if !(visible[3] < rect[3] - 1.0) {
+    if visible[3] >= rect[3] - 1.0 {
         return Err(format!(
             "键盘: 「下一词联想」初始应被页底裁掉,rect={rect:?} visible={visible:?}"
         ));
@@ -1795,7 +1900,7 @@ fn keyboard_selftest(lines: &mut Vec<String>) -> Result<(), String> {
             predict.scrolled
         ));
     }
-    if !(predict.scrolled[1] > 0.0) {
+    if predict.scrolled[1] <= 0.0 {
         return Err(format!(
             "键盘: Tab 到「下一词联想」后页面没有滚动,scrolled={:?} rect={rect:?} visible={visible:?}",
             predict.scrolled

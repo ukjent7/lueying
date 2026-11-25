@@ -1,14 +1,15 @@
-//! 候选窗与模式徽标共用的 Win32 摆位、DPI 与会话快照助手。
+//! 候选窗与模式徽标共用的显示器摆位、DPI 与会话快照助手。
 //!
-//! 候选窗与模式徽标共用逐显示器 DPI、工作区夹取与全屏避让。
+//! 显示器查询走 `rune::displays()` 与 `Display::work_area()`;只有
+//! 无窗口启动兜底和前台全屏检测保留 Win32。
 
 use lueying_protocol::SessionView;
 use lueying_render::panel::{self, GridItem, Item, Layout, Measure, Metrics, PanelSpec};
 use lueying_server::config::{UiFont, UiLayout};
+use rune::{Display, displays};
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
-    MonitorFromPoint,
+    GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -16,7 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, IsZoomed, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 
+use std::cell::RefCell;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::imp::{self, State};
 
@@ -47,38 +50,105 @@ pub(super) fn in_composition(state: &State) -> bool {
         .is_some_and(|published| published.composing)
 }
 
+thread_local! {
+    /// Rune 的显示器查询是一次系统询问;同一帧/同一轮摆位会多次用到,
+    /// 短缓存把重复查询压成一次。显示器热插拔最迟半秒后可见。
+    static DISPLAY_CACHE: RefCell<Option<(Instant, Vec<Display>)>> = const { RefCell::new(None) };
+}
+
+fn cached_displays() -> Vec<Display> {
+    const TTL: Duration = Duration::from_millis(500);
+    DISPLAY_CACHE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some((read_at, list)) = slot.as_ref()
+            && read_at.elapsed() < TTL
+        {
+            return list.clone();
+        }
+        let list = displays();
+        if !list.is_empty() {
+            *slot = Some((Instant::now(), list.clone()));
+        }
+        list
+    })
+}
+
 /// 虚拟桌面左缘之外的停靠点。固定负坐标会落在左侧副屏上,露出空白候选窗。
 pub(super) fn park_point() -> (i32, i32) {
+    let all = cached_displays();
+    if let Some(left) = all.iter().map(|display| display.position.0).min() {
+        let top = all
+            .iter()
+            .map(|display| display.position.1)
+            .min()
+            .unwrap_or_default();
+        return (left.saturating_sub(PARK_GAP), top);
+    }
+    // 启动第一帧前 Rune 还没有窗口可读显示器时的兜底。
     let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
     let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
     (left.saturating_sub(PARK_GAP), top)
 }
 
-pub(super) fn monitor_at(x: i32, y: i32) -> HMONITOR {
-    unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) }
+/// 光标所在显示器;落在显示器之间的空隙时取最近的一块。
+pub(super) fn display_at(x: i32, y: i32) -> Option<Display> {
+    let all = cached_displays();
+    all.iter()
+        .min_by_key(|display| display_distance(display, x, y))
+        .cloned()
 }
 
-pub(super) fn monitor_info_at(x: i32, y: i32) -> Option<MONITORINFO> {
-    monitor_info(monitor_at(x, y))
-}
-
-fn monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
-    if monitor.is_invalid() {
-        return None;
-    }
-    let mut info = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
+fn display_distance(display: &Display, x: i32, y: i32) -> i64 {
+    let (left, top) = display.position;
+    let (width, height) = display.size;
+    let left = i64::from(left);
+    let top = i64::from(top);
+    let right = left + i64::from(width);
+    let bottom = top + i64::from(height);
+    let x = i64::from(x);
+    let y = i64::from(y);
+    let dx = if x < left {
+        left - x
+    } else if x >= right {
+        x - (right - 1)
+    } else {
+        0
     };
-    unsafe { GetMonitorInfoW(monitor, &mut info) }
-        .as_bool()
-        .then_some(info)
+    let dy = if y < top {
+        top - y
+    } else if y >= bottom {
+        y - (bottom - 1)
+    } else {
+        0
+    };
+    dx * dx + dy * dy
 }
 
-/// 主屏工作区;没有光标位置时徽标退到这里的下三分之一处。
+fn primary_display() -> Option<Display> {
+    let all = cached_displays();
+    all.iter()
+        .find(|display| display.primary)
+        .or_else(|| all.first())
+        .cloned()
+}
+
+fn work_area_of(display: &Display) -> RECT {
+    let ((x, y), (width, height)) = display.work_area();
+    RECT {
+        left: x,
+        top: y,
+        right: x.saturating_add(width as i32),
+        bottom: y.saturating_add(height as i32),
+    }
+}
+
+/// 主屏工作区;没有 Rune Display 时退回 Win32。
 pub(super) fn primary_work_area() -> RECT {
+    if let Some(display) = primary_display() {
+        return work_area_of(&display);
+    }
     let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
-    monitor_info(monitor).map_or(
+    win32_monitor_info(monitor).map_or(
         RECT {
             left: 0,
             top: 0,
@@ -91,32 +161,52 @@ pub(super) fn primary_work_area() -> RECT {
 
 /// 光标所在显示器的缩放比例;取不到时按 100%。
 pub(super) fn scale_at(x: i32, y: i32) -> f32 {
-    let monitor = monitor_at(x, y);
+    display_at(x, y).map_or(1.0, |display| display.scale as f32)
+}
+
+/// 光标所在显示器的工作区(物理像素);取不到时给主屏。
+pub(super) fn work_area_at(x: i32, y: i32) -> RECT {
+    display_at(x, y).map_or_else(primary_work_area, |display| work_area_of(&display))
+}
+
+fn win32_monitor_info(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> Option<MONITORINFO> {
     if monitor.is_invalid() {
-        return 1.0;
+        return None;
     }
-    let mut dpi_x = 0u32;
-    let mut dpi_y = 0u32;
-    if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.is_ok()
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some(info)
+}
+
+/// 主屏原点与缩放;placement 的 Rect 相对主屏原点。
+pub(super) fn primary_basis() -> ((i32, i32), f32) {
+    if let Some(display) = primary_display() {
+        return (display.position, display.scale as f32);
+    }
+    let monitor = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    let mut info = MONITORINFO {
+        cbSize: u32::try_from(std::mem::size_of::<MONITORINFO>()).unwrap_or_default(),
+        ..Default::default()
+    };
+    let origin = if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        (info.rcMonitor.left, info.rcMonitor.top)
+    } else {
+        (0, 0)
+    };
+    let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+    let scale = if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
+        .is_ok()
         && dpi_x > 0
     {
         dpi_x as f32 / 96.0
     } else {
         1.0
-    }
-}
-
-/// 光标所在显示器的工作区(物理像素);取不到时给常见主屏兜底。
-pub(super) fn work_area_at(x: i32, y: i32) -> RECT {
-    monitor_info_at(x, y).map_or(
-        RECT {
-            left: 0,
-            top: 0,
-            right: 1920,
-            bottom: 1080,
-        },
-        |info| info.rcWork,
-    )
+    };
+    (origin, scale)
 }
 
 /// 前台窗口是否铺满光标所在显示器。最大化窗口不算(任务栏仍在),
@@ -141,14 +231,15 @@ pub(super) fn foreground_fullscreen_at(x: i32, y: i32, host_pid: u32) -> bool {
     if unsafe { GetWindowRect(foreground, &mut rect) }.is_err() {
         return false;
     }
-    let Some(info) = monitor_info_at(x, y) else {
+    let Some(display) = display_at(x, y) else {
         return false;
     };
-    let screen = info.rcMonitor;
-    rect.left <= screen.left
-        && rect.top <= screen.top
-        && rect.right >= screen.right
-        && rect.bottom >= screen.bottom
+    let (left, top) = display.position;
+    let (width, height) = display.size;
+    rect.left <= left
+        && rect.top <= top
+        && rect.right >= left.saturating_add(width as i32)
+        && rect.bottom >= top.saturating_add(height as i32)
 }
 
 /// 会话视图转面板输入;展开态(view.expanded)只在横排生效:固定条是

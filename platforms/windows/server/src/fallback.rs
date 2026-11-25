@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use windows::core::PWSTR;
+use rune::{PointerButton, PointerInput};
 
 use crate::imp::State;
 
@@ -64,6 +65,8 @@ thread_local! {
     static MOUSE_CAPTURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 上一次转发的鼠标位置,避免移动消息刷屏。
     static LAST_MOVE: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((i32::MIN, i32::MIN)) };
+    /// 上一次是否在候选面板内;离开时给 Rune 发一次 Leave,清掉悬停。
+    static POINTER_INSIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// 在一条专用线程上挂低层钩子并泵消息。
@@ -151,43 +154,71 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
 }
 
 /// 候选窗在浮层下面,真实点击到不了它;把落在候选窗矩形里的鼠标事件
-/// 经候选窗的注入口转过去,原事件吞掉。候选窗不用激活,搜索框保持焦点。
+/// 经 `OverlayHandle::send_pointer` 转给 Rune 原生命中管线,原事件吞掉。
+/// 候选窗不用激活,搜索框保持焦点。
 fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
     let message = wparam.0 as u32;
     let rect = visible_candidate()?;
-    let (x, y) = (info.pt.x as f32, info.pt.y as f32);
-    let inside = x >= rect.0 as f32
-        && x < (rect.0 + rect.2) as f32
-        && y >= rect.1 as f32
-        && y < (rect.1 + rect.3) as f32;
-    use crate::ui::{forward_candidate_mouse, rune::FallbackMouse};
+    let (x, y) = (info.pt.x, info.pt.y);
+    let inside = x >= rect.0
+        && x < rect.0 + rect.2
+        && y >= rect.1
+        && y < rect.1 + rect.3;
+    let local = || crate::ui::rune::pointer_local((x, y));
     match message {
         WM_LBUTTONDOWN if inside => {
-            forward_candidate_mouse(FallbackMouse::Down(x, y));
+            if let Some((lx, ly)) = local() {
+                crate::ui::rune::send_pointer(PointerInput::down(lx, ly, PointerButton::Primary));
+            }
             MOUSE_CAPTURED.with(|captured| captured.set(true));
+            POINTER_INSIDE.with(|inside| inside.set(true));
             Some(LRESULT(1))
         }
         WM_LBUTTONUP if MOUSE_CAPTURED.with(std::cell::Cell::get) => {
+            if let Some((lx, ly)) = local() {
+                crate::ui::rune::send_pointer(PointerInput::up(lx, ly, PointerButton::Primary));
+            } else {
+                // overlay 在按住期间收起了:取消捕获,别把按下状态留在 Rune。
+                crate::ui::rune::send_pointer(PointerInput::Cancel);
+            }
             MOUSE_CAPTURED.with(|captured| captured.set(false));
-            forward_candidate_mouse(FallbackMouse::Up);
             Some(LRESULT(1))
         }
         WM_RBUTTONDOWN if inside => {
-            forward_candidate_mouse(FallbackMouse::Right(x, y));
+            if let Some((lx, ly)) = local() {
+                crate::ui::rune::send_pointer(PointerInput::down(lx, ly, PointerButton::Secondary));
+                crate::ui::rune::send_pointer(PointerInput::up(lx, ly, PointerButton::Secondary));
+            }
             Some(LRESULT(1))
         }
         WM_MOUSEWHEEL if inside => {
-            // WM_MOUSEWHEEL 的键状态在高 16 位;坐标按屏幕坐标给。
+            // WM_MOUSEWHEEL 的键状态在高 16 位;WHEEL_DELTA = 120。
             let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
-            forward_candidate_mouse(FallbackMouse::Wheel(delta));
+            if let Some((lx, ly)) = local() {
+                crate::ui::rune::send_pointer(PointerInput::wheel_lines(
+                    lx,
+                    ly,
+                    0.0,
+                    f32::from(delta) / 120.0,
+                ));
+            }
             Some(LRESULT(1))
         }
         WM_MOUSEMOVE if inside || MOUSE_CAPTURED.with(std::cell::Cell::get) => {
             // 只转发悬停,不吞移动;同一点不重复发。
-            if LAST_MOVE.with(|last| last.replace((info.pt.x, info.pt.y))) != (info.pt.x, info.pt.y)
+            if LAST_MOVE.with(|last| last.replace((x, y))) != (x, y)
+                && let Some((lx, ly)) = local()
             {
-                forward_candidate_mouse(FallbackMouse::Move(x, y));
+                crate::ui::rune::send_pointer(PointerInput::move_to(lx, ly));
+            }
+            POINTER_INSIDE.with(|state| state.set(inside));
+            None
+        }
+        WM_MOUSEMOVE => {
+            if POINTER_INSIDE.with(|inside| inside.replace(false)) {
+                LAST_MOVE.with(|last| last.set((i32::MIN, i32::MIN)));
+                crate::ui::rune::send_pointer(PointerInput::Leave);
             }
             None
         }

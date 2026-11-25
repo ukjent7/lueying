@@ -214,24 +214,21 @@ fn download(s: &mut State, item: Official) {
     }
     s.downloading_extension = Some(item.id);
     s.core.settings.clear_notice();
-    if let Err(error) = std::thread::Builder::new()
-        .name("extension-store".into())
-        .spawn(move || {
-            let result = item.download();
-            let scripts = actions::installed_scripts();
-            handle.update(move |s: &mut State, _| {
-                s.downloading_extension = None;
-                s.core.settings.scripts = scripts;
-                match result {
-                    Ok(()) => s
-                        .core
-                        .settings
-                        .say(Notice::Success, "已安装；同意权限并保存后可用"),
-                    Err(error) => s.core.settings.say(Notice::Error, error),
-                }
-            });
-        })
-    {
+    if let Err(error) = rune::task::spawn("extension-store", move || {
+        let result = item.download();
+        let scripts = actions::installed_scripts();
+        handle.update(move |s: &mut State, _| {
+            s.downloading_extension = None;
+            s.core.settings.scripts = scripts;
+            match result {
+                Ok(()) => s
+                    .core
+                    .settings
+                    .say(Notice::Success, "已安装；同意权限并保存后可用"),
+                Err(error) => s.core.settings.say(Notice::Error, error),
+            }
+        });
+    }) {
         s.downloading_extension = None;
         s.core
             .settings

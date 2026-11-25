@@ -84,6 +84,12 @@ pub struct LightFx {
     source: Source,
 }
 
+impl Default for LightFx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LightFx {
     pub fn new() -> Self {
         Self { gpu: None, source: Source::Emitters }
@@ -226,10 +232,13 @@ fn blit_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::R
     (pipeline, bind_layout)
 }
 
+/// 一个发光元件:矩形、RGB、强度、半径、alpha、z(pt)。
+type Emitter = ([f32; 4], [f32; 3], f32, f32, f32, f32, f32);
+
 /// 一帧的光照提取:发光元件中心(pt→设备 px 转换在调用处)与 prim 列表。
 struct Extracted {
     prims: Vec<Prim>,
-    emitters: Vec<([f32; 4], [f32; 3], f32, f32, f32, f32, f32)>,  // rect, rgb, k, intensity, radius, alpha, z_pt
+    emitters: Vec<Emitter>,  // rect, rgb, k, intensity, radius, alpha, z_pt
 }
 
 /// 从实例流提取瓷面与发光元件。实例矩形是设备 px;辐射色取实例填充。
@@ -385,7 +394,7 @@ impl<S: 'static> Compositor<S> for LightFx {
         // 灯光:Emitters 模式每个发光元件中心一盏同位点光(色掺白降
         // 饱和);Skylight 模式一盏时间驱动的天光,位置相对窗口中心。
         if std::env::var("LYSCAN").is_ok() {
-            for (rect, rgb, _, intensity, radius, alpha, _) in &extracted.emitters {
+            for (rect, rgb, _, intensity, _radius, alpha, _) in &extracted.emitters {
                 eprintln!("LYEM rect={rect:?} r={:.2} g={:.2} b={:.2} i={intensity} a={alpha} prims={}",
                     rgb[0], rgb[1], rgb[2], extracted.prims.len());
             }

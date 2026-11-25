@@ -47,10 +47,6 @@ pub(crate) fn run_candidate(state: Arc<State>) {
     rune::run(state);
 }
 
-pub(crate) fn forward_candidate_mouse(event: rune::FallbackMouse) {
-    rune::forward_mouse(event);
-}
-
 /// 界面线程入口。窗口都建在这条线程上,循环不返回。
 pub(super) fn run(state: Arc<State>) {
     unsafe {

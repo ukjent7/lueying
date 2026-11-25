@@ -139,8 +139,7 @@ impl Picker {
                 Some((point.x, point.y))
             });
         let work = anchor
-            .and_then(|(x, y)| place::monitor_info_at(x, y))
-            .map_or_else(place::primary_work_area, |info| info.rcWork);
+            .map_or_else(place::primary_work_area, |(x, y)| place::work_area_at(x, y));
         let scale = anchor.map_or(1.0, |(x, y)| place::scale_at(x, y));
         let width = work.right - work.left;
         let height = work.bottom - work.top;
@@ -306,7 +305,7 @@ fn picker_poll(s: &mut Picker, _now: f64, tx: &mut Tx) -> bool {
 
 /// 窗口级键盘:树里没有可聚焦控件,所有键都到这里。
 fn picker_key(s: &mut Picker, event: &KeyEvent, _tx: &mut Tx) -> bool {
-    if !s.visible {
+    if !s.visible || event.mods != rune::Mods::default() {
         return false;
     }
     match event.key {
@@ -386,10 +385,11 @@ fn title_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) -> 
 /// 行列表:选中行是主题色胶囊,悬停亮底;滚轮翻动。
 fn rows_el(s: &Picker, palette: &Palette) -> El {
     let list = s.layout.list;
+    // 原生纵向列表:标题/列表/页脚由面板 col 依次排,行不再各自 absolute。
     let mut rows = col()
-        .absolute(0.0, list.top)
-        .w(list.width())
+        .w_full()
         .h(list.height())
+        .px(picker::PAD)
         // 原生 listbox:方向键巡游焦点高亮,回车/空格确认;选中胶囊是
         // 面板自身的选中态,与悬停/焦点高光分层(NSMenu 的选中与高亮)。
         .role("listbox")
@@ -423,7 +423,7 @@ fn rows_el(s: &Picker, palette: &Palette) -> El {
     rows
 }
 
-/// 一行:绝对定位在整行矩形上;选中时在文字下垫主题色胶囊(纵向收进
+/// 一行:由列表 col 纵向排布;选中时在文字下垫主题色胶囊(纵向收进
 /// 2px,与行留出呼吸),悬停与键盘焦点共用原生高光,点击选中并收起。
 fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
     let Some(rect) = s.layout.rows.get(index) else {
@@ -439,11 +439,8 @@ fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
     } else {
         theme::capsule_colors(palette.accent)
     };
-    // rows_el 的父节点已落在 list.top;Rune 的 absolute 坐标相对父节点
-    // padding box,而行矩形是窗口绝对坐标,这里换算成列表内坐标。
     let mut cell = el()
-        .absolute(rect.left - s.layout.list.left, rect.top - s.layout.list.top)
-        .w(rect.width())
+        .w_full()
         .h(rect.height())
         .cursor(Cursor::Pointer)
         .role("option")
@@ -458,7 +455,7 @@ fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
     if selected {
         cell = cell.child(
             el().absolute(0.0, 2.0)
-                .w(rect.width())
+                .w_full()
                 .h(rect.height() - 4.0)
                 .radius(picker::RADIUS)
                 .fill(selected_fill)
@@ -488,7 +485,7 @@ fn row_el(s: &Picker, index: usize, row: String, palette: &Palette) -> El {
 /// 卷动提示:上下还有内容时在列表右缘画小箭头。
 fn scroll_hints_el(s: &Picker, palette: &Palette) -> El {
     let list = s.layout.list;
-    let mut hints = el().w_full().h_full().a11y_hidden();
+    let mut hints = el().absolute(0.0, 0.0).w_full().h_full().a11y_hidden();
     if s.spec.above > 0 {
         hints = hints.child(
             text("▲")
@@ -517,8 +514,7 @@ fn footer_el(spec: &picker::Spec, layout: &picker::Layout, palette: &Palette) ->
     } else {
         format!("{}/{}", spec.above + spec.selected + 1, spec.total)
     };
-    el().absolute(0.0, footer.top)
-        .w(footer.width())
+    el().w_full()
         .h(footer.height())
         .child(
             text("↑↓ 选择 · Enter 确认 · Esc 取消")

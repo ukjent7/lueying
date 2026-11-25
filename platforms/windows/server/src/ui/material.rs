@@ -21,13 +21,19 @@ pub(super) fn desktop_capture_ready<T: 'static>(handle: Option<&OverlayHandle<T>
 }
 
 /// 更新一路 RGBA 像素流(背板或环境棱缘)。同尺寸已挂载时只
-/// `Pixels::set` 原地流式换像素,不需要重跑 view,故返回 false;首次
-/// 挂载或尺寸变化仍要重建,返回 true。
-pub(super) fn set_stream(slot: &mut Option<Pixels>, size: (u32, u32), rgba: Vec<u8>) -> bool {
+/// `Pixels::replace` 原地换像素,不需要重跑 view,故返回 false;首次
+/// 挂载或尺寸变化仍要重建,返回 true。返回的旧 buffer 留给下一次抓屏
+/// 复用,避免逐帧分配。
+pub(super) fn set_stream(
+    slot: &mut Option<Pixels>,
+    size: (u32, u32),
+    rgba: Vec<u8>,
+) -> (bool, Vec<u8>) {
     let mounted = slot.as_ref().is_some_and(|pixels| pixels.size() == size);
-    slot.get_or_insert_with(Pixels::new)
-        .set(size.0, size.1, rgba);
-    !mounted
+    let old = slot
+        .get_or_insert_with(Pixels::new)
+        .replace(size.0, size.1, rgba);
+    (!mounted, old)
 }
 
 /// 面板外壳与玻璃背板共用同一个连续圆角与裁切。
@@ -45,7 +51,13 @@ pub(super) fn ceramic_face(face: El, palette: &Palette, stroke: f32) -> El {
 
 /// 抓取一块屏幕区域的桌面像素(RGBA,straight alpha)。
 #[cfg(windows)]
-pub(super) fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Option<(u32, u32, Vec<u8>)> {
+pub(super) fn capture_rect(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    mut reuse: Vec<u8>,
+) -> Option<(u32, u32, Vec<u8>)> {
     use std::ffi::c_void;
     use std::ptr::null_mut;
 
@@ -102,9 +114,10 @@ pub(super) fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Option<(u
             SRCCOPY,
         )
         .is_ok();
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let len = (width * height * 4) as usize;
+        reuse.resize(len, 0);
         if copied && !bits.is_null() {
-            std::ptr::copy_nonoverlapping(bits.cast::<u8>(), pixels.as_mut_ptr(), pixels.len());
+            std::ptr::copy_nonoverlapping(bits.cast::<u8>(), reuse.as_mut_ptr(), len);
         }
         SelectObject(memory, old);
         let _ = DeleteObject(bitmap.into());
@@ -113,11 +126,11 @@ pub(super) fn capture_rect(x: i32, y: i32, width: u32, height: u32) -> Option<(u
         if !copied {
             return None;
         }
-        for pixel in pixels.as_chunks_mut::<4>().0 {
+        for pixel in reuse.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
             pixel[3] = 255;
         }
-        Some((width, height, pixels))
+        Some((width, height, reuse))
     }
 }
 
@@ -127,6 +140,7 @@ pub(super) fn capture_rect(
     _y: i32,
     _width: u32,
     _height: u32,
+    _reuse: Vec<u8>,
 ) -> Option<(u32, u32, Vec<u8>)> {
     None
 }
@@ -138,17 +152,22 @@ mod tests {
     #[test]
     fn backdrop_streams_same_size_and_remounts_on_first_or_size_change() {
         let mut slot = None;
-        assert!(set_stream(&mut slot, (4, 2), vec![1; 4 * 2 * 4]));
+        let (mounted, old) = set_stream(&mut slot, (4, 2), vec![1; 4 * 2 * 4]);
+        assert!(mounted);
+        assert!(old.is_empty());
         assert_eq!(slot.as_ref().unwrap().rgba()[0], 1);
 
-        assert!(!set_stream(&mut slot, (4, 2), vec![2; 4 * 2 * 4]));
+        let (mounted, old) = set_stream(&mut slot, (4, 2), vec![2; 4 * 2 * 4]);
+        assert!(!mounted);
+        assert_eq!(old.len(), 4 * 2 * 4, "previous frame comes back for reuse");
         assert_eq!(
             slot.as_ref().unwrap().rgba()[0],
             2,
-            "same-size set still feeds the mounted pixels"
+            "same-size replace still feeds the mounted pixels"
         );
 
-        assert!(set_stream(&mut slot, (2, 4), vec![3; 2 * 4 * 4]));
+        let (mounted, _) = set_stream(&mut slot, (2, 4), vec![3; 2 * 4 * 4]);
+        assert!(mounted);
         assert_eq!(slot.as_ref().unwrap().size(), (2, 4));
         assert_eq!(slot.as_ref().unwrap().rgba()[0], 3);
     }

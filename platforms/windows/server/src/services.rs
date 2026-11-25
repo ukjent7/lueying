@@ -161,8 +161,6 @@ fn unicode_input(unit: u16, up: bool) -> INPUT {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn deliver_units_normalize_lines_and_tabs() {
         assert!(super::deliver_units("").is_empty());

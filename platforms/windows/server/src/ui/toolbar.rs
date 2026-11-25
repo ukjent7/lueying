@@ -22,7 +22,8 @@ use lueying_server::theme;
 use rune::tok::motion;
 use rune::{
     Align, Color, Cursor, Cx, Drag, El, KeyPolicy, OverlayHandle, OverlayInput, OverlayOptions,
-    OverlaySpec, OverlaySupport, Phase, Pixels, Shape, SurfaceFit, TextStyle, Tx, canvas, el, text,
+    OverlaySpec, OverlaySupport, Phase, Pixels, Shape, SurfaceFit, TextStyle, Tx, canvas, el, row,
+    text,
 };
 use windows::Win32::Foundation::RECT;
 
@@ -94,17 +95,16 @@ pub(super) struct BarHud {
     accent: usize,
     /// 活动会话的私密标记;采样前判定,转私密立刻作废已有背板。
     private: bool,
-    hover: Option<Button>,
     /// overlay 已显示;隐藏后 show 只在 poll 里发生。
     shown: bool,
     drag_moved: bool,
     /// 最近一次摆位的屏幕物理矩形与显示器 DPI;背板与釉光共用同一份。
     placed: Option<((i32, i32, i32, i32), f32)>,
-    /// 玻璃背板:流式像素通道,一次分配,逐帧 `set` 原地换桌面像素。
+    /// 玻璃背板:流式像素通道,用 `Pixels::replace` 原地换桌面像素。
     backdrop: Option<Pixels>,
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
-    /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
-    backdrop_raw: Option<((u32, u32), Vec<u8>)>,
+    /// 上一帧 `Pixels::replace` 返回的旧 buffer,交给下一次抓屏复用。
+    backdrop_spare: Vec<u8>,
     /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
     /// 亚克力颗粒:条体物理尺寸的固定噪点图;随尺寸重生成。
     /// 釉光的环境光:条体上下窄带的桌面实采均值;没有来源就不上光。
@@ -132,13 +132,12 @@ impl BarHud {
             private: false,
             state,
             bar,
-            hover: None,
             shown: false,
             drag_moved: false,
             placed: None,
             backdrop: None,
             backdrop_read: None,
-            backdrop_raw: None,
+            backdrop_spare: Vec::new(),
             exclusion_checked: false,
         }
     }
@@ -170,9 +169,8 @@ impl BarHud {
     /// 在新位置或新状态下继续显示。采样失败时只丢画面,保留读时刻
     /// 以便节流重试。
     fn drop_backdrop(&mut self) -> bool {
-        let mut changed = false;
-        changed |= self.backdrop.take().is_some();
-        changed |= self.backdrop_raw.take().is_some();
+        let changed = self.backdrop.take().is_some();
+        self.backdrop_spare.clear();
         changed
     }
 
@@ -184,8 +182,7 @@ impl BarHud {
 
     /// 连同环境釉光一起清空;釉光也来自旧位置/旧状态的窄带采样。
     fn clear_capture(&mut self) -> bool {
-        let changed = self.clear_backdrop();
-        changed
+        self.clear_backdrop()
     }
 }
 
@@ -230,13 +227,6 @@ fn toolbar_poll(s: &mut BarHud, now: f64, tx: &mut Tx) -> bool {
     if (cfg.scale - s.bar.scale).abs() > f32::EPSILON {
         let work = place::work_area_at(s.bar.x as i32, s.bar.y as i32);
         s.bar = s.bar.with_scale(cfg.scale, to_rect(work));
-        changed = true;
-    }
-
-    // 磨砂滑杆改动时 lens 参数经 effect_data 逐帧生效,无需作废旧背板:
-    // 捕获的是原始桌面,光学在 GPU 侧跟着参数走。
-    if false {
-        s.clear_capture();
         changed = true;
     }
 
@@ -463,20 +453,25 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
         return s.drop_backdrop();
     }
     let pad = super::rune::capture_pad(dpi);
+    let reuse = std::mem::take(&mut s.backdrop_spare);
     let Some((raw_w, raw_h, raw)) =
-        material::capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32)
+        material::capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32, reuse)
     else {
         // 采样失败:旧桌面截图不能继续冒充当前玻璃。
         return s.drop_backdrop();
     };
-    if s.backdrop_raw
+    if s.backdrop
         .as_ref()
-        .is_some_and(|(size, previous)| *size == (raw_w, raw_h) && **previous == raw)
+        .and_then(|pixels| {
+            pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw)
+        })
+        .unwrap_or(false)
     {
+        s.backdrop_spare = raw;
         return false;
     }
-    let changed = material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw.clone());
-    s.backdrop_raw = Some(((raw_w, raw_h), raw));
+    let (changed, old) = material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw);
+    s.backdrop_spare = old;
     changed
 }
 
@@ -486,12 +481,10 @@ struct ToolbarVisual<'a> {
     appearance: theme::Appearance,
     material: UiMaterial,
     accent: usize,
-    effects: bool,
     glass: bool,
     frost: f32,
     phase: f32,
     status: Status,
-    hover: Option<Button>,
     backdrop: Option<&'a Pixels>,
 }
 
@@ -516,12 +509,10 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
             appearance: s.appearance,
             material: s.material,
             accent: s.accent,
-            effects: s.effects,
             glass,
             frost: s.frost,
             phase: s.phase,
             status: s.status,
-            hover: s.hover,
             backdrop: s.backdrop.as_ref(),
         },
         true,
@@ -603,10 +594,6 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
     let moon_rect = toolbar::button_rect(1, t);
     // 缺口、亮区与暖光共用同一份月相几何:算一次,两处按各自字段取用。
     let moon = toolbar::moon_illumination(moon_rect.height() * 0.62 / 2.0, s.phase);
-    // 月亮是明确的暖黄光源:它的接光只落在按钮周围,裁在条体内,
-    // 画在条体材料之后、按钮文字之前。关掉特效或高对比不引入暖光。
-    if s.effects && !high_contrast {
-    }
     bar = bar.child(
         el().absolute(
             toolbar::command_divider_x(t) - 0.5 * t,
@@ -623,44 +610,66 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
         .key("command-divider")
         .a11y_hidden(),
     );
+    // 按钮组走原生 row:间距和尺寸仍取同一份 toolbar 几何,视图不再
+    // 逐个 absolute 摆位;条体上的拖动命中与按钮命中由 Rune 的节点顺序
+    // 自然分层。
+    let first = toolbar::button_rect(0, t);
+    let button_gap = toolbar::button_rect(1, t).left - first.right;
+    let group_gap = toolbar::button_rect(4, t).left - toolbar::button_rect(3, t).right;
+    let mut state_group = row().gap(button_gap).center_y();
+    let mut command_group = row().gap(button_gap).center_y();
+    let frame = ButtonFrame {
+        interactive,
+        moon,
+        size: first.width(),
+        scale: t,
+        high_contrast,
+        palette,
+    };
     for (index, button) in toolbar::BUTTONS.into_iter().enumerate() {
-        let rect = toolbar::button_rect(index, t);
-        bar = bar.child(button_el(
-            &s,
-            interactive,
-            moon,
-            button,
-            index,
-            rect,
-            t,
-            high_contrast,
-            palette,
-        ));
+        let cell = button_el(&s, &frame, button, index);
+        if index < 4 {
+            state_group = state_group.child(cell);
+        } else {
+            command_group = command_group.child(cell);
+        }
     }
+    bar = bar.child(
+        row()
+            .absolute(first.left, 0.0)
+            .w((w - 2.0 * first.left).max(1.0))
+            .h(h)
+            .center_y()
+            .gap(group_gap)
+            .child(state_group)
+            .child(command_group),
+    );
     root.child(bar)
+}
+
+/// 一帧里所有按钮共用的外观参数;收进结构体,避免按钮函数堆 9 个参数。
+#[derive(Clone, Copy)]
+struct ButtonFrame {
+    interactive: bool,
+    moon: toolbar::MoonIllumination,
+    size: f32,
+    scale: f32,
+    high_contrast: bool,
+    palette: Palette,
 }
 
 /// 一个按钮:居中状态字,悬停亮底,按下执行动作。全半角按钮是月亮。
 /// `palette` 由 `toolbar_view` 算一次传下来,每个按钮不重复取色;
 /// `rect` 是条体本地坐标里的按钮矩形,与模型共用同一份布局。
-fn button_el(
-    s: &ToolbarVisual<'_>,
-    interactive: bool,
-    moon: toolbar::MoonIllumination,
-    button: Button,
-    index: usize,
-    rect: Rect,
-    t: f32,
-    high_contrast: bool,
-    palette: Palette,
-) -> El {
-    let size = rect.height();
-    // 悬停亮底:普通按钮交给 El::hover 的悬停叠加(零视图提交);
-    // 月亮也读 s.hover 画 fill,让挖空处透出同一块悬停底。
-    let hovered = s.hover == Some(button);
+fn button_el(s: &ToolbarVisual<'_>, frame: &ButtonFrame, button: Button, index: usize) -> El {
+    let size = frame.size;
+    let t = frame.scale;
+    let high_contrast = frame.high_contrast;
+    let palette = frame.palette;
+    // 悬停亮底交给 El::hover 的悬停叠加(零视图提交);月亮的
+    // cutout 是子元素挖空,露出的正是这层悬停底,不需要再维护 hover 状态。
     let mut cell = el()
-        .absolute(rect.left, rect.top)
-        .w(rect.width())
+        .w(size)
         .h(size)
         .radius(size * 0.5)
         .center()
@@ -668,7 +677,7 @@ fn button_el(
         .role("button")
         .label(a11y_label(button))
         .key(format!("toolbar-{index}"));
-    if interactive {
+    if frame.interactive {
         cell = cell
             .press_on_down()
             .on_press(move |s: &mut BarHud| s.act(button));
@@ -705,12 +714,7 @@ fn button_el(
         theme::srgb_alpha(palette.hover, 0.66)
     };
     cell = if button == Button::FullWidth {
-        if interactive {
-            cell = cell.on_hover_change(move |s: &mut BarHud, inside, _| {
-                s.hover = inside.then_some(button);
-            });
-        }
-        cell.child(moon_el(moon, size, high_contrast, palette))
+        cell.child(moon_el(frame.moon, size, high_contrast, palette))
     } else {
         let glyph = if matches!(button, Button::Settings | Button::Hide) {
             command_glyph(button, t, ink)
@@ -725,8 +729,10 @@ fn button_el(
         };
         cell.hover(hover).child(glyph)
     };
-    if hovered {
-        cell = cell.fill(hover);
+    // Mode's accent fill is a replacement, not an overlay: keep its
+    // existing hovered appearance when the shared hover state goes away.
+    if mode_on {
+        cell = cell.hover_fill(hover);
     }
     cell
 }
@@ -927,13 +933,11 @@ fn open_settings() {
     else {
         return;
     };
-    let _ = std::thread::Builder::new()
-        .name("open-settings".into())
-        .spawn(move || {
-            if let Err(e) = std::process::Command::new(dir.join("lueying-settings.exe")).spawn() {
-                println!("启动设置失败: {e}");
-            }
-        });
+    let _ = rune::task::spawn("open-settings", move || {
+        if let Err(e) = std::process::Command::new(dir.join("lueying-settings.exe")).spawn() {
+            println!("启动设置失败: {e}");
+        }
+    });
 }
 
 /// 四个状态按钮的开关值与读屏值;设置、收起没有开关状态。
@@ -993,7 +997,6 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
             appearance: theme::Appearance::Dark,
             material: s.material,
             accent: 0,
-            effects: true,
             glass: s.backdrop.is_some(),
             frost: 0.0,
             phase: 0.0,
@@ -1003,7 +1006,6 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
                 punct: true,
                 traditional: false,
             },
-            hover: None,
             backdrop: s.backdrop.as_ref(),
         },
         false,
@@ -1038,7 +1040,7 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
             let mut raw = Vec::with_capacity((raw_w * raw_h * 4) as usize);
             for y in 0..raw_h {
                 for x in 0..raw_w {
-                    let v = if ((x + y) / stripe) % 2 == 0 { a } else { b };
+                    let v = if ((x + y) / stripe).is_multiple_of(2) { a } else { b };
                     raw.extend_from_slice(&[v, v, v, 255]);
                 }
             }
