@@ -162,7 +162,7 @@ pub fn run() {
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
     let app = App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::skylight())
+        .compositor(lueying_server::lighting::LightFx::lit_room([0.42, 0.42, 0.45]))
         .tab_visits_controls(true)
         .init(move || state);
     let handle = app.handle();
@@ -208,6 +208,55 @@ fn load_core() -> Core {
     }
 }
 
+
+/// 窗顶天空的日/月。12 分钟一整圈(720 秒):前半圈太阳、后半圈
+/// 月亮,各走正弦弧从左升右落。高度决定颜色与能量——日出日落
+/// 变暖变暗(premultiplied fill 让 emission 自动跟暗),接近地平线
+/// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
+fn sky_body() -> El {
+    const CYCLE: f64 = 720.0;
+    const D: f32 = 26.0;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let cycle = (secs % CYCLE) / CYCLE; // 0..1
+    let is_day = cycle < 0.5;
+    let p = ((cycle % 0.5) * 2.0) as f32; // 半程内进度 0..1
+    let elev = (std::f32::consts::PI * p).sin();
+    // 行程:名义窗宽 960,从左 70 到右 864;弧顶在 y 18,地平线 y 62。
+    let x = 70.0 + p * (864.0 - 70.0) - D / 2.0;
+    let y = 62.0 - elev * 44.0 - D / 2.0;
+    let fade = (elev * 3.0).clamp(0.0, 1.0);
+
+    let body = if is_day {
+        // 太阳:低位橙(0xff9a50)→高位亮黄白(0xffe9a0)。
+        let t = elev.powf(0.7);
+        let mix = |a: u32, b: u32| -> u32 {
+            let ch = |shift: u32| -> u32 {
+                let ca = ((a >> shift) & 0xff) as f32;
+                let cb = ((b >> shift) & 0xff) as f32;
+                (ca + (cb - ca) * t) as u32
+            };
+            (ch(16) << 16) | (ch(8) << 8) | ch(0)
+        };
+        el().fill(color(mix(0xff9a50, 0xffe9a0)))
+    } else {
+        el().fill(color(0xe8ecf4))
+    };
+    let mut disc = body
+        .absolute(x, y)
+        .w(D)
+        .h(D)
+        .radius(D / 2.0)
+        .opacity(fade)
+        .key(if is_day { "sun" } else { "moon" })
+        .mark(lueying_server::lighting::MARK_EMITTER)
+        .a11y_hidden();
+    let _ = &mut disc;
+    disc
+}
+
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     // 系统关掉"动画效果"时,框架把弹簧动效降级为淡出;真实窗口用
     // poll 缓存的运行时值,默认/测试状态回退到宿主快照。
@@ -235,7 +284,7 @@ fn settings_poll(s: &mut State, _now: f64, tx: &mut Tx) -> bool {
         s.reduced_motion = Some(reduced);
         changed = true;
     }
-    tx.wake_after(Duration::from_secs(1));
+    tx.wake_after(Duration::from_millis(500));
     changed
 }
 
@@ -412,10 +461,14 @@ fn scene(s: &State) -> El {
         .w_full()
         .h_full()
         .fill(color(colors.bg));
-    // 黑瓷受光面:非高对比时标记身份,光照 compositor 按时间天光
-    // (太阳/月亮)照它——定义明确的真实光源,不是影棚灯数学。
+    // 黑瓷受光面:非高对比时标记身份,光照 compositor 按它打光。
     if !matches!(appearance, theme::Appearance::HighContrast) {
         base = base.mark(lueying_server::lighting::MARK_SHELL);
+    }
+    // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
+    // 地方来。12 分钟一圈的设计节奏,不是真实时间。
+    if !matches!(appearance, theme::Appearance::HighContrast) {
+        base = base.child(sky_body());
     }
     base = base.child(header).child(body).child(footer);
 

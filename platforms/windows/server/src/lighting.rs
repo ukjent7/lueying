@@ -56,6 +56,8 @@ struct Gpu {
 pub enum Source {
     /// 发光元件中心即灯位;灯随元件飞行。
     Emitters,
+    /// 同 emitter 驱动,但 ambient 抬高、GI 关闭(工具窗)。
+    LitRoom([f32; 3]),
     /// 时间驱动的太阳/月亮:静止的调色层,不是戏剧照明。白天/夜晚
     /// 各自的色温与方向,开窗时刻是什么样就是什么样——真实太阳本来
     /// 就慢到看不见。
@@ -75,6 +77,12 @@ impl LightFx {
 
     pub fn skylight() -> Self {
         Self { gpu: None, source: Source::Skylight }
+    }
+
+    /// 亮室 emitter 模式:高 ambient 保底可读、关 GI。设置窗用——
+    /// 日月 emitter 驱动光照,但工具窗任何时刻都要均匀可读。
+    pub fn lit_room(ambient: [f32; 3]) -> Self {
+        Self { gpu: None, source: Source::LitRoom(ambient) }
     }
 
     pub fn release(&mut self) {
@@ -454,14 +462,14 @@ impl<S: 'static> Compositor<S> for LightFx {
         }
 
         let settings = Settings {
-            ambient: if self.source == Source::Skylight {
-                skylight(std::time::SystemTime::now()).ambient
-            } else {
-                AMBIENT
+            ambient: match self.source {
+                Source::Skylight => skylight(std::time::SystemTime::now()).ambient,
+                Source::LitRoom(a) => a,
+                Source::Emitters => AMBIENT,
             },
             albedo_floor: 0.06,
             text: TextPolicy { floor: 0.5, ceiling: 1.3, ..Default::default() },
-            gi: if self.source == Source::Skylight { None } else { Some(Gi::default()) },
+            gi: if matches!(self.source, Source::Emitters) { Some(Gi::default()) } else { None },
             ..Default::default()
         };
         gpu.light.render(
