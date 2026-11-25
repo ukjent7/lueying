@@ -638,6 +638,39 @@ fn shot_motion_poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     shot_motion_step(s, now, tx, false)
 }
 
+/// 飞行场景:条态不换形态,0.3/0.9/1.5 秒换高亮(1→4→0→2),
+/// 胶囊弹簧飞行是黑瓷光照「光跟灯走」的终极目验——灯位每帧
+/// 取自元件矩形,飞行途中光池必须贴着胶囊走。
+#[cfg(debug_assertions)]
+fn shot_flight_poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
+    s.fx.now = now;
+    let highlight = if now < 0.3 {
+        1
+    } else if now < 0.9 {
+        4
+    } else if now < 1.5 {
+        0
+    } else {
+        2
+    };
+    let Some(published) = &s.fx.last else {
+        return false;
+    };
+    if published.view.highlight == highlight {
+        return false;
+    }
+    let mut published = (**published).clone();
+    published.view.highlight = highlight;
+    s.fx.last = Some(Arc::new(published.clone()));
+    // 胶囊矩形来自 fx.sel_rect(发布路径算出),harness 改高亮
+    // 必须按同一条函数补算,否则胶囊永远停在初始槽。
+    let geom = geom_of(s, &published.view);
+    s.fx.sel_rect = sel_rect_of(s, &geom);
+    s.geom = Some(geom);
+    tx.animated();
+    true
+}
+
 #[cfg(debug_assertions)]
 fn shot_live_motion_poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
     shot_motion_step(s, now, tx, true)
@@ -695,6 +728,7 @@ pub(crate) fn snap_motion(
     reduce: bool,
     glass_up: bool,
     moving: bool,
+    flight: bool,
     output: String,
     frames: String,
 ) -> Result<(), String> {
@@ -713,6 +747,8 @@ pub(crate) fn snap_motion(
         families: ("Noto Sans SC", "Noto Sans SC"),
         poll: Some(if moving {
             shot_live_motion_poll
+        } else if flight {
+            shot_flight_poll
         } else {
             shot_motion_poll
         }),
@@ -734,7 +770,7 @@ pub(crate) fn snap_motion(
             "--scale".into(),
             std::env::var("LYSCALE").unwrap_or_else(|_| "1".into()),
             "--frames".into(),
-            "102".into(),
+            std::env::var("LYFRAMES").unwrap_or_else(|_| "102".into()),
             "--fps".into(),
             "60".into(),
             "--every".into(),
