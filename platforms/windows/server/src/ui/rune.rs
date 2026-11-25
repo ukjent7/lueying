@@ -29,7 +29,6 @@ use rune_text::TextSystem;
 use lueying_server::config::{UiLayout, UiMaterial};
 
 use crate::imp;
-use crate::selection_motion::SelectionMotion;
 use crate::ui::place;
 
 /// 活背板的重捕节奏(~30fps):背景变动跟随,再高肉眼无感只费电。
@@ -136,8 +135,6 @@ struct Fx {
     glass_collapse: Option<GlassCollapse>,
     /// 挂起中的可疑光标:锚点左移的报告挂一拍复核,到期无人覆盖才应用。
     caret_hold: Option<CaretHold>,
-    /// 选中胶囊的物理状态(面板本地):中心、基础宽高与有符号形变。
-    selection: SelectionMotion,
     /// 上一帧的候选排列;横排/竖排切换时选中胶囊直接落地,不跨布局
     /// 拉桥。
     sel_layout: Option<Layout>,
@@ -547,9 +544,6 @@ fn shot_state(high_contrast: bool, expanded: bool, stress: bool) -> Candidate {
         window: rect,
         panel: rect,
     };
-    if let Some(selection) = sel_rect_of(&s, &geom) {
-        s.fx.selection.reset(selection, 0.0);
-    }
     s.fx.last = Some(Arc::new(imp::Published {
         view: session,
         private: false,
@@ -645,10 +639,6 @@ fn shot_motion_step(s: &mut Candidate, now: f64, tx: &mut Tx, moving: bool) -> b
     let instant = s.fx.reduce;
     begin_glass_collapse(s, next, expanded, instant);
     s.fx.placement = next;
-    match sel_rect_of(s, &geom) {
-        Some(rect) => s.fx.selection.reset(rect, now),
-        None => s.fx.selection.clear(),
-    };
     s.geom = Some(geom);
     s.fx.last = Some(Arc::new(published));
     s.fx.form_changed = true;
@@ -875,21 +865,6 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
         park(s);
         return true;
     }
-    // 选中胶囊物理:每帧推进在途弹簧;运动期间保下一帧唤醒。展开/
-    // 翻页的复位已在 place 里做,这里只推进在途状态。即时档(关动效、
-    // 减动效、高对比)直接落到目标,即使 target 未变也终止已在路上的
-    // 效果;最后一帧仍返回 changed,让落点提交出去。
-    if instant_motion {
-        if s.fx.selection.is_moving() {
-            s.fx.selection.settle();
-            changed = true;
-        }
-    } else if s.fx.selection.advance(now) {
-        changed = true;
-    }
-    if !instant_motion && s.fx.selection.is_moving() {
-        tx.wake_after(Duration::ZERO);
-    }
     if s.live_glass(high_contrast) {
         let rect = s.fx.placement.panel;
         if s.backdrop_read
@@ -1058,33 +1033,12 @@ fn place(s: &mut Candidate, tx: &mut Tx, instant_motion: bool) {
     // 选中矩形变化(换高亮、文字变宽、条↔棋盘同位重排):同页同形态
     // 内让胶囊带着当前速度 retarget;页变/形态变直接复位,不跨旧形态
     // 拉桥。即时档一律落位,不把弹簧尾巴带进画面。
+    // 选中矩形只是记录:胶囊元素 keyed 持久,矩形渐变由 Rune 原生
+    // motion 推进,不再需要手写弹簧的 retarget/reset 管理。
     let cur_sel = sel_rect_of(s, &geom);
-    let prev_sel = s.fx.sel_rect;
-    let same_form = s.fx.last.as_ref().is_some_and(|last| {
-        last.view.page == view.page
-            && last.view.expanded == view.expanded
-            && last.view.grid_scroll == view.grid_scroll
-            && s.fx.sel_layout == Some(geom.spec.layout)
-    });
-    // 同一候选槽的文字/布局重算只改几何,不激励形变;槽间迁移才给
-    // 形变驱动。只认 view 里的 highlight,不做文字字符串比较。
-    let slot_changed =
-        s.fx.last.as_ref().is_some_and(|last| {
-            last.view.page == view.page && last.view.highlight != view.highlight
-        });
-    // 复位条件独立于目标矩形是否变化:跨形态/布局、拖滚动条、即时档
-    // 和新会话都必须让胶囊落地,哪怕新旧格坐标碰巧相同。
-    let reset_selection = fresh || instant_motion || !same_form || s.fx.scroll_drag.is_some();
-    let mut selection_reset = reset_selection;
-    if cur_sel != prev_sel {
-        if !reset_selection && let Some(cur) = cur_sel {
-            s.fx.selection.retarget(cur, s.fx.now, slot_changed);
-        } else {
-            selection_reset = true;
-        }
+    if cur_sel != s.fx.sel_rect {
+        s.fx.sel_rect = cur_sel;
     }
-    s.fx.sel_rect = cur_sel;
-    s.fx.sel_layout = Some(geom.spec.layout);
     let placement = if s.fx.caret_hold.is_some() {
         // 挂起回合:沿用上一回合摆位,内容照常更新,到期复核再挪。
         s.fx.placement
@@ -1150,12 +1104,6 @@ fn place(s: &mut Candidate, tx: &mut Tx, instant_motion: bool) {
         })
     {
         tx.animated();
-    }
-    if selection_reset {
-        match cur_sel {
-            Some(rect) => s.fx.selection.reset(rect, s.fx.now),
-            None => s.fx.selection.clear(),
-        }
     }
     s.fx.placement = placement;
     // 回落钩子按面板矩形转发点击;发布给扩展的也是它。
@@ -1383,7 +1331,6 @@ fn park(s: &mut Candidate) {
     s.backdrop_raw = None;
     s.glaze = None;
     s.glaze_read = None;
-    s.fx.selection.clear();
     s.fx.sel_rect = None;
     s.fx.sel_layout = None;
     publish_state(s, None);
@@ -1793,7 +1740,11 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
     // 中心保持实心主题色,光只沿轮廓与外溢光走;高对比直接用系统
     // 选中实底/字色,不加装饰光。
     let mut layer = el().w_full().h_full();
-    if let Some(rect) = s.fx.selection.presented() {
+    if let Some(rect) = s.fx.sel_rect {
+        // 目标矩形直接喂给 keyed 胶囊,矩形渐变拉伸由 Rune 原生
+        // motion 推进。key 带页/形态身份:跨页、条↔棋盘、布局切换
+        // 是旧节点退出 + 新节点进入(淡入淡出),只有同形态内的槽间
+        // 迁移做矩形飞行——正是手写弹簧时代的 reset/retarget 语义。
         layer = layer.child(
             lueying_server::capsule::selection_capsule(
                 rect,
@@ -1801,8 +1752,13 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
                 look.selected_fill,
                 look.high_contrast,
             )
-            .key("sel")
-            .instant_changes(),
+            .key(format!(
+                "sel-{}-{}-{:?}",
+                s.fx.last.as_ref().map(|l| l.view.page).unwrap_or(0),
+                s.fx.last.as_ref().map(|l| l.view.expanded).unwrap_or(false),
+                geom.spec.layout,
+            ))
+            .motion(motion::SETTLE),
         );
     }
     layer = layer.child(viewport);

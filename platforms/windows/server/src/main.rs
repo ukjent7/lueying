@@ -114,7 +114,6 @@ fn main() {
 
 // 候选窗选中胶囊的物理运动:纯模型,Windows 与单测共用。
 #[cfg(any(windows, test))]
-mod selection_motion;
 
 #[cfg(windows)]
 mod context;
