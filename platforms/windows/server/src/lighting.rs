@@ -380,7 +380,12 @@ impl<S: 'static> Compositor<S> for LightFx {
                         rgb[1] + 0.28 * alpha,
                         rgb[2] + 0.32 * alpha,
                     ])
-                    .intensity(*intensity)
+                    // 衰减常数 REF=200 焊死在着色器里(设备 px),
+                    // 同一物理距离在不同 dpi 下吃到的衰减不同——
+                    // k=1 的灯比 k=2 热四倍。强度乘 (k/2)² 精确
+                    // 补偿:k=2 为基准(参数在此验证),物理亮度
+                    // 跨 dpi 一致。
+                    .intensity(*intensity * (k / 2.0) * (k / 2.0))
                     .radius(radius * k)
                     .range(LIGHT_RANGE_PT * k)
             })

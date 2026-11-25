@@ -732,7 +732,7 @@ pub(crate) fn snap_motion(
             "--out".into(),
             frames,
             "--scale".into(),
-            "1".into(),
+            std::env::var("LYSCALE").unwrap_or_else(|_| "1".into()),
             "--frames".into(),
             "102".into(),
             "--fps".into(),
