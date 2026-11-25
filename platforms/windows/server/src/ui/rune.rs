@@ -522,6 +522,9 @@ fn shot_state(high_contrast: bool, expanded: bool, stress: bool) -> Candidate {
         session.page_size = 9;
     }
     let geom = geom_of(&mut s, &session);
+    // 生产里 sel_rect 由 place 在发布回合算出;冻结快照要胶囊(唯一
+    // 光源)在场,按同一条函数补上,否则光照路径无灯直通。
+    s.fx.sel_rect = sel_rect_of(&s, &geom);
     let rect = (0, 0, geom.width as i32, geom.height as i32);
     s.fx.placement = Placement {
         window: rect,
@@ -1575,7 +1578,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             body = super::material::ceramic_face(body, &palette, scale)
             // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
             // compositor 侧,这里只声明身份。
-            .mark(lueying_server::lighting::MARK_SHELL);
+            .mark(lueying_server::lighting::MARK_SHELL | (((scale * 100.0) as u32) << 8));
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {

@@ -13,7 +13,7 @@
 //! 无 emitter 时 render 零开销,compositor 也直接走原始绘制。
 
 use rune::compose::{Compositor, DeviceKey, Frame};
-use rune::render::KIND_GLYPH;
+use rune::render::{KIND_GLYPH, Renderer};
 use rune_light::{Gi, Light, LightRenderer, Prim, Scene, Settings, TextPolicy};
 
 /// 瓷面(面板外壳):raised + bevel + gloss 的受光面。
@@ -45,6 +45,9 @@ struct Gpu {
     device_key: DeviceKey,
     size: (u32, u32),
     format: wgpu::TextureFormat,
+    /// 离屏 float 通道专用渲染器:f.ui 的 uber 管线按表面格式编译,
+    /// 画不进 Rgba16Float——base/text 两路必须用同格式的独立管线。
+    ui16: Renderer,
     light: LightRenderer,
     base: wgpu::TextureView,
     text: wgpu::TextureView,
@@ -221,7 +224,12 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
             );
         }
         MARK_EMITTER | MARK_EMITTER_WARM | MARK_EMITTER_SKY => {
-            let mut rgb = [fill[0], fill[1], fill[2]];
+            // 辐射/灯色转线性(spike 验证过的契约):实例填充是 srgb
+            // 值,直接当线性会让红光通道高估数倍、光偏白。
+            let lin = |c: f32| {
+                if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+            };
+            let mut rgb = [lin(fill[0]), lin(fill[1]), lin(fill[2])];
             if mark == MARK_EMITTER_WARM {
                 rgb = WARM_EMIT;
             }
@@ -262,17 +270,67 @@ impl<S: 'static> Compositor<S> for LightFx {
         let mut base_idx: Vec<usize> = Vec::new();
         let mut text_idx: Vec<usize> = Vec::new();
         let mut any_mark = false;
+        // 实例是设备 px,常量是 pt:frame 级倍率由壳标记高 24 位编码
+        // (params[3] 是字形覆盖率指数,不是倍率——曾按它取值导致
+        // z/radius/range 全部归零,光照全黑)。mark 是元素侧的任意
+        // 元数据通道,编码合法;无编码时按 1.0。
+        // mark 继承是上游设计("最近标记节点"):壳容器里每个后代实例
+        // 都带着 MARK_SHELL——字形方块、行底、箭头全部算在内。提取
+        // 必须讲策略:字形排除(文字走文字纹理,不是 3D 形体);隐形
+        // 实例跳过(alpha≈0 的填充不挡光);壳是面板自己的背景——
+        // 非字形实例里面积最大的那个;emitter 按矩形去重(填充+描边
+        // 两个实例同几何只取一份)。
+        let k = if f.rt.viewport.0 > 1.0 {
+            (f.size.0 as f32 / f.rt.viewport.0).clamp(0.5, 4.0)
+        } else {
+            1.0
+        };
+        let mut shell: Option<(f32, usize)> = None;
+        let mut emitter_rects: Vec<[f32; 4]> = Vec::new();
         for (n, i) in f.rt.instances.iter().enumerate() {
-            if i.params[1] == KIND_GLYPH {
+            let glyph = i.params[1] == KIND_GLYPH;
+            if glyph {
                 text_idx.push(n);
             } else {
                 base_idx.push(n);
             }
             let mark = f.rt.marks.get(n).copied().unwrap_or(0) & 0xff;
-            if mark == MARK_SHELL || mark == MARK_EMITTER || mark == MARK_EMITTER_WARM || mark == MARK_EMITTER_SKY {
-                any_mark = true;
-                extract(i.rect, i.radii, i.fill, mark, i.params[3], &mut extracted);
+            if glyph || i.fill[3] < 0.01 {
+                continue;
             }
+            match mark {
+                MARK_SHELL => {
+                    any_mark = true;
+                    let area = i.rect[2] * i.rect[3];
+                    if shell.is_none_or(|(a, _)| area > a) {
+                        shell = Some((area, n));
+                    }
+                }
+                MARK_EMITTER | MARK_EMITTER_WARM | MARK_EMITTER_SKY => {
+                    any_mark = true;
+                    if !emitter_rects.iter().any(|r| {
+                        (r[0] - i.rect[0]).abs() < 0.5
+                            && (r[1] - i.rect[1]).abs() < 0.5
+                            && (r[2] - i.rect[2]).abs() < 0.5
+                            && (r[3] - i.rect[3]).abs() < 0.5
+                    }) {
+                        emitter_rects.push(i.rect);
+                        extract(i.rect, i.radii, i.fill, mark, k, &mut extracted);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some((_, n)) = shell {
+            // 壳先于 emitter 组装:gbuffer 画家序后者赢,胶囊 z 盖住
+            // 面板才能触发自遮挡——否则胶囊被自己的同位灯直射炸白
+            // (spike 对照实验:prim 翻序胶囊中心 216 vs 80)。
+            let i = f.rt.instances[n];
+            let mut ordered = Extracted { prims: Vec::new(), emitters: Vec::new() };
+            extract(i.rect, i.radii, i.fill, MARK_SHELL, k, &mut ordered);
+            ordered.prims.extend(extracted.prims.iter().copied());
+            ordered.emitters = extracted.emitters;
+            extracted = ordered;
         }
         if !any_mark {
             f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
@@ -300,6 +358,13 @@ impl<S: 'static> Compositor<S> for LightFx {
             })
             .collect();
         let lights = emitter_lights;
+        // 无灯帧(如无选中胶囊的条):rune-light 无灯早退、lit 不写入,
+        // 直接原始绘制——无灯即无光效,平面底图就是正确的物理结果。
+        if lights.is_empty() {
+            f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
+            f.ui.draw(f.encoder, f.target, f.rt.clear_color());
+            return;
+        }
 
         let (device, queue, size) = (f.device, f.queue, f.size);
         let device_key = f.device_key();
@@ -307,16 +372,32 @@ impl<S: 'static> Compositor<S> for LightFx {
         if self.gpu.as_ref().is_none_or(|g| {
             g.device_key != device_key || g.size != size || g.format != format
         }) {
-            let light = LightRenderer::new(device, queue, size.0, size.1, wgpu::TextureFormat::Rgba16Float);
+            let light = LightRenderer::new(device, queue, size.0, size.1, wgpu::TextureFormat::Rgba8Unorm);
             let (blit, bind_layout) = blit_pipeline(device, format);
             self.gpu = Some(Gpu {
                 device_key,
                 size,
                 format,
+                ui16: Renderer::new(device, wgpu::TextureFormat::Rgba16Float),
                 light,
                 base: float_target(device, size, "light-base"),
                 text: float_target(device, size, "light-text"),
-                lit: float_target(device, size, "light-lit"),
+                lit: device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some("light-lit"),
+                        size: wgpu::Extent3d {
+                            width: size.0.max(1),
+                            height: size.1.max(1),
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                    .create_view(&Default::default()),
                 blit,
                 bind_layout,
             });
@@ -326,16 +407,16 @@ impl<S: 'static> Compositor<S> for LightFx {
         // 底图(非文字)与文字两路离屏。
         let base_instances: Vec<_> = base_idx.iter().map(|n| f.rt.instances[*n]).collect();
         let text_instances: Vec<_> = text_idx.iter().map(|n| f.rt.instances[*n]).collect();
-        f.ui.prepare(device, queue, &mut f.rt.text.atlas, &base_instances, size);
+        gpu.ui16.prepare(device, queue, &mut f.rt.text.atlas, &base_instances, size);
         {
             let mut enc = device.create_command_encoder(&Default::default());
-            f.ui.draw(&mut enc, &gpu.base, [0.0; 4]);
+            gpu.ui16.draw(&mut enc, &gpu.base, [0.0; 4]);
             queue.submit([enc.finish()]);
         }
-        f.ui.prepare(device, queue, &mut f.rt.text.atlas, &text_instances, size);
+        gpu.ui16.prepare(device, queue, &mut f.rt.text.atlas, &text_instances, size);
         {
             let mut enc = device.create_command_encoder(&Default::default());
-            f.ui.draw(&mut enc, &gpu.text, [0.0; 4]);
+            gpu.ui16.draw(&mut enc, &gpu.text, [0.0; 4]);
             queue.submit([enc.finish()]);
         }
 

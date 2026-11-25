@@ -1508,7 +1508,10 @@ fn snap_state(state: State, size: (f32, f32), output: String) -> Result<(), Stri
         families: ("Noto Sans SC", "Noto Sans SC"),
         ..AppSpec::new("Lueying Settings Snapshot", size, State::default, view)
     };
+    // 快照必须与真实应用同构:光照 compositor 缺失会让设置页
+    // 渲染退化成无光照平底,验证失真。
     App::new(spec)
+        .compositor(lueying_server::lighting::LightFx::lit_room([0.42, 0.42, 0.45]))
         .tab_visits_controls(true)
         .init(move || state)
         .args([
