@@ -29,7 +29,6 @@ use rune_text::TextSystem;
 use lueying_server::config::{UiLayout, UiMaterial};
 
 use crate::imp;
-use crate::liquid;
 use crate::selection_motion::SelectionMotion;
 use crate::ui::place;
 
@@ -206,8 +205,6 @@ struct Geom {
 
 struct BackdropSample {
     source_size: (u32, u32),
-    panel_size: (u32, u32),
-    radius: f32,
     rgba: Vec<u8>,
 }
 
@@ -220,13 +217,8 @@ struct Candidate {
     /// 玻璃背板:流式像素通道,一次分配,同尺寸逐帧 `set` 原地换桌面像素。
     backdrop: Option<Pixels>,
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
-    /// 上一次喂给光学的背板样本:源图、输出尺寸、圆角与像素全一致才跳过重算。
+    /// 上一次写入背板流的源像素:尺寸与字节全一致才跳过上传。
     backdrop_raw: Option<BackdropSample>,
-    /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
-    rim: Option<Pixels>,
-    /// 亚克力颗粒:面板尺寸的固定噪点图;随尺寸重生成。
-    grain: Option<Pixels>,
-    grain_size: Option<(u32, u32)>,
     /// 釉光的环境光:面板上下窄带的桌面实采均值,瓷釉光泽与玻璃棱缘
     /// rim 共用,没有来源就不上光。
     glaze: Option<lueying_server::theme::Glaze>,
@@ -239,11 +231,7 @@ struct Candidate {
     material: UiMaterial,
     /// 玻璃磨砂程度 0..=1;高透到磨砂连续可调。
     frost: f32,
-    /// 玻璃变体(临时调参);配置重载后随版本号生效。
-    glass: liquid::GlassVariant,
-    glass_name: String,
     /// 生效的折射带宽:变体默认或 `ui_glass_band` 覆盖值(临时调参)。
-    glass_band: f32,
     /// 配置里的主题色下标;变化时让调色板用弹簧渐变过去。
     accent: usize,
     /// 当前系统外观;约 1 秒复查,变化即让 view 重跑(即使没有背板要清)。
@@ -272,18 +260,12 @@ impl Candidate {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
-            rim: None,
-            grain: None,
-            grain_size: None,
             glaze: None,
             glaze_read: None,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
             frost: 0.0,
-            glass: liquid::variant("A"),
-            glass_name: "A".to_string(),
-            glass_band: 8.0,
             accent: 0,
             appearance: lueying_server::theme::Appearance::of_system(),
             transparency: lueying_server::theme::transparency_enabled(),
@@ -345,9 +327,6 @@ impl Candidate {
         self.fx.glass_collapse = None;
         let mut changed = self.backdrop.take().is_some();
         changed |= self.backdrop_raw.take().is_some();
-        changed |= self.rim.take().is_some();
-        changed |= self.grain.take().is_some();
-        self.grain_size = None;
         changed
     }
 
@@ -481,6 +460,8 @@ pub(crate) fn run(state: Arc<imp::State>) {
         // 五分钟,复显只等几毫秒,不触发管线重建。(prewarm 与它互斥,预热效果
         // 留不住,不配。)
         .release_gpu_when_hidden()
+        // 液态玻璃的光学 compositor:lens 折射/色散/frost 走 rune-fx 原生着色器。
+        .compositor(super::lens::LensFx::new())
         .poll(poll);
     let handle = app.overlay(overlay, Candidate::with_state(state.clone()));
     let _ = HANDLE.set(handle);
@@ -603,6 +584,7 @@ pub(crate) fn snap(scene: &str, output: String) -> Result<(), String> {
         )
     };
     App::new(spec)
+        .compositor(super::lens::LensFx::new())
         .init(move || s)
         .args([
             "--snap".into(),
@@ -705,7 +687,7 @@ fn shot_motion_surface(s: &mut Candidate, phase: i32) -> bool {
     };
     let (x, y, w, h) = area.rect;
     s.backdrop_read = Some((s.fx.now, area.rect));
-    let pad = liquid::capture_pad(s.glass_band, s.glass.pull, s.scale);
+    let pad = capture_pad(s.scale);
     let rw = (w + 2 * pad) as u32;
     let rh = (h + 2 * pad) as u32;
     let mut raw = Vec::with_capacity((rw * rh * 4) as usize);
@@ -766,6 +748,7 @@ pub(crate) fn snap_motion(
         )
     };
     App::new(spec)
+        .compositor(super::lens::LensFx::new())
         .init(move || s)
         .args([
             "--strip".into(),
@@ -873,28 +856,7 @@ fn poll(s: &mut Candidate, now: f64, tx: &mut Tx) -> bool {
         let material = cfg.ui_material;
         let frost = cfg.ui_glass_frost.clamp(0.0, 1.0);
         let accent = cfg.ui_accent;
-        // 带宽/变体变了要让下一轮捕获重算光学:原图去重只看像素,
-        // 参数变了它会把旧结果一直留下去(折射「消失」的一半来源)。
-        let mut glass_dirty = false;
-        if s.glass_name != cfg.ui_glass_variant {
-            s.glass_name = cfg.ui_glass_variant.clone();
-            s.glass = liquid::variant(&cfg.ui_glass_variant);
-            glass_dirty = true;
-        }
-        let band = if cfg.ui_glass_band > 0.0 {
-            cfg.ui_glass_band
-        } else {
-            s.glass.band
-        };
-        if (s.glass_band - band).abs() > f32::EPSILON {
-            glass_dirty = true;
-        }
-        s.glass_band = band;
         drop(cfg);
-        if glass_dirty {
-            s.drop_backdrop();
-            s.backdrop_read = None;
-        }
         // 配置换了外观:调色板与材质参数走官方的主题变化弹簧渐变过去。
         if s.material != material || s.frost != frost || s.accent != accent {
             s.material = material;
@@ -1217,7 +1179,6 @@ fn place(s: &mut Candidate, tx: &mut Tx, instant_motion: bool) {
 #[derive(Clone, Copy)]
 struct BackdropArea {
     rect: (i32, i32, i32, i32),
-    radius: f32,
 }
 
 /// 收起保持:过期时间、该次提交的窗口矩形与保持的大采样区;区内背板照常直播。
@@ -1420,9 +1381,6 @@ fn park(s: &mut Candidate) {
     s.backdrop = None;
     s.backdrop_read = None;
     s.backdrop_raw = None;
-    s.rim = None;
-    s.grain = None;
-    s.grain_size = None;
     s.glaze = None;
     s.glaze_read = None;
     s.fx.selection.clear();
@@ -1454,12 +1412,11 @@ fn begin_glass_collapse(s: &mut Candidate, next: Placement, expanded: bool, inst
             .as_ref()
             .is_some_and(|p| p.size().1 > next.panel.3 as u32);
     s.fx.glass_collapse = if retain {
-        s.geom.as_ref().map(|geom| GlassCollapse {
+        s.geom.as_ref().map(|_geom| GlassCollapse {
             until: s.fx.now + GLASS_COLLAPSE_HOLD,
             window: next.window,
             area: BackdropArea {
                 rect: s.fx.placement.panel,
-                radius: candidate_radius(s.fx.placement.panel, geom),
             },
         })
     } else {
@@ -1478,12 +1435,8 @@ fn backdrop_area(s: &mut Candidate) -> Option<BackdropArea> {
         return Some(hold.area);
     }
     s.fx.glass_collapse = None;
-    let geom = s.geom.as_ref()?;
     let rect = s.fx.placement.panel;
-    Some(BackdropArea {
-        rect,
-        radius: candidate_radius(rect, geom),
-    })
+    Some(BackdropArea { rect })
 }
 
 /// 抓取面板矩形外扩折射带宽的桌面像素,过液体玻璃光学后作为玻璃背板;
@@ -1496,8 +1449,7 @@ fn capture_backdrop(s: &mut Candidate) -> bool {
     if w <= 0 || h <= 0 {
         return s.drop_backdrop();
     }
-    let scale = s.scale;
-    let pad = liquid::capture_pad(s.glass_band, s.glass.pull, scale);
+    let pad = capture_pad(s.scale);
     let Some((raw_w, raw_h, raw)) =
         super::material::capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32)
     else {
@@ -1507,7 +1459,17 @@ fn capture_backdrop(s: &mut Candidate) -> bool {
     apply_backdrop(s, area, pad, raw_w, raw_h, raw)
 }
 
-/// 把已采样的原始像素过液体玻璃光学,写入背板;桌面抓取与调试夹具共用。
+/// 背板捕获的外扩量(物理像素):盖住 lens 棱缘折射的采样半径,棱缘
+/// 才有真实桌面可采,不落到透明外边。bevel 14pt 的位移在 2x 下约
+/// 28px,留到 22pt 等量;捕获成本随面积线性,这点外扩可忽略。
+pub(crate) fn capture_pad(scale: f32) -> i32 {
+    (22.0 * scale).ceil() as i32 + 2
+}
+
+/// 把已采样的原始像素原样写入背板流:光学全部在 GPU(lens)侧,
+/// CPU 不做任何逐像素处理。桌面抓取与调试夹具共用。去重只在源
+/// 像素级别:没变就不惊动 Pixels,空闲零重绘(上游没有
+/// set_if_changed,去掉会退化为背板 tick 空唤醒重绘)。
 fn apply_backdrop(
     s: &mut Candidate,
     area: BackdropArea,
@@ -1516,59 +1478,18 @@ fn apply_backdrop(
     raw_h: u32,
     raw: Vec<u8>,
 ) -> bool {
-    let (_, _, w, h) = area.rect;
-    let radius = area.radius;
-    let scale = s.scale;
-    let panel_size = (w as u32, h as u32);
-    // 原图、输出尺寸或圆角变了都要重算;固定条与棋盘/视口切形时
-    // 不能沿用旧光学。
+    let _ = (area, pad);
     if s.backdrop_raw.as_ref().is_some_and(|sample| {
-        sample.source_size == (raw_w, raw_h)
-            && sample.panel_size == panel_size
-            && sample.radius == radius
-            && sample.rgba == raw
+        sample.source_size == (raw_w, raw_h) && sample.rgba == raw
     }) {
         return false;
     }
-    let mut optics = liquid::process_with_pull(
-        &raw,
-        raw_w,
-        raw_h,
-        pad,
-        panel_size.0,
-        panel_size.1,
-        s.glass_band * scale,
-        radius,
-        s.glass.pull,
-    );
-    liquid::prepare_glass_backdrop(&mut optics);
-    let rim = liquid::environment_rim(
-        &raw,
-        raw_w,
-        raw_h,
-        pad,
-        panel_size.0,
-        panel_size.1,
-        radius,
-        scale,
-    );
-    let size = panel_size;
-    let changed = super::material::set_stream(&mut s.backdrop, size, optics);
-    let rim_changed = super::material::set_stream(&mut s.rim, size, rim);
+    let changed = super::material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw.clone());
     s.backdrop_raw = Some(BackdropSample {
         source_size: (raw_w, raw_h),
-        panel_size: size,
-        radius,
         rgba: raw,
     });
-    let grain_changed = s.grain_size != Some(size);
-    if grain_changed {
-        let pixels = Pixels::new();
-        pixels.set(size.0, size.1, liquid::grain_rgba(size.0, size.1));
-        s.grain = Some(pixels);
-        s.grain_size = Some(size);
-    }
-    changed || rim_changed || grain_changed
+    changed
 }
 
 /// 把候选窗的当前状态发布给订阅的原生扩展;内容没变就不发。
@@ -1675,10 +1596,14 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         // 元素矩形仍跟 body 同一条弹簧,但像素 1:1 不缩放(真玻璃是
         // 光圈在屏上滑,折射图样不跟着拉伸)。锚边取贴光标的一侧:
         // 向上展开钉底、向下展开钉顶,收起时正好停在固定条的位置。
+        // 元素外扩捕获 margin:棱缘折射要在形状外沿几像素内采到真桌面,
+        // 铺到棱缘采样半径为止;裁圆半径同步外扩。像素 1:1 锚贴光标侧,
+        // 展开/收起与活桌面重捕都保持屏幕对齐。
+        let pl = capture_pad(dpi) as f32 / dpi;
         root = root.child(super::material::rounded_surface(
-            el().absolute(bx, by)
-                .w(s.fx.placement.panel.2 as f32 / dpi)
-                .h(s.fx.placement.panel.3 as f32 / dpi)
+            el().absolute(bx - pl, by - pl)
+                .w(s.fx.placement.panel.2 as f32 / dpi + 2.0 * pl)
+                .h(s.fx.placement.panel.3 as f32 / dpi + 2.0 * pl)
                 .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
                 .motion(motion::SETTLE)
                 // 方形图像补丁垫在圆角面板下,角上会戳出来——同半径裁圆。
@@ -1692,7 +1617,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                         Align::Start
                     },
                 ),
-            radius,
+            radius + pl,
         ));
     }
     let mut body = super::material::rounded_surface(
@@ -1712,27 +1637,28 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             .on_secondary_press_local(|s: &mut Candidate, p, _| s.on_secondary(p.x, p.y)),
         radius,
     );
+    // 玻璃的光学面:独立 effect slot 兄弟元素,盖在捕获层之上、内容
+    // 之下。折射、色散、frost 与 rim 全在 rune-fx lens 的 GPU 着色器;
+    // 滑杆 frost 经 effect_data 连续进 shader;slot 矩形与圆角跟随
+    // 面板弹簧(同款 transition/motion),形状同步零手写代码。
+    if glass && matches!(s.material, UiMaterial::Glass) {
+        root = root.child(
+            rune::effect(super::lens::LENS)
+                .absolute(bx, by)
+                .w(s.fx.placement.panel.2 as f32 / dpi)
+                .h(s.fx.placement.panel.3 as f32 / dpi)
+                .radius(radius)
+                .transition(Transition::offset(0.0, 6.0).combined(Transition::opacity()))
+                .motion(motion::SETTLE)
+                .effect_backdrop(true)
+                .effect_bleed(28.0)
+                .effect_data([s.frost, 0.0, 0.0, 0.0]),
+        );
+    }
     match (s.material, glass) {
-        // 玻璃:探针配方的连续插值,滑杆从高透滑到磨砂。背板是过液体
-        // 玻璃光学的桌面像素(棱缘折射 + 色散 + 提饱和),模糊仍由
-        // backdrop_blur 做。
-        (UiMaterial::Glass, true) => {
-            body = super::material::glass_face(body, s.glass, s.frost, scale);
-            // 加深的 meniscus 内阴影(变体 C/D):贴底的静观玻璃感。
-            // pin 底边:面板形变期间跟着动画中的底缘走,absolute 会钉在
-            // 终态高度上提前脱底。
-            body = super::material::glass_meniscus(body, s.glass, scale);
-            // 亚克力颗粒:固定噪点图垫在模糊之上,blur 抹不掉。与背板
-            // 同一条纪律:噪点 1:1 不随面板形变拉伸,钉在贴光标的一侧。
-            if let Some(grain) = &s.grain {
-                body = super::material::glass_grain(body, grain, s.fx.above == Some(true));
-            }
-            // 环境棱缘作为面板自身的图像填充:由 body 的四边尺寸界定,
-            // 形变时随 body 一起缩放;纹理只是目标几何那次采样。
-            if let Some(rim) = &s.rim {
-                body = body.pixels(rim);
-            }
-        }
+        // 玻璃激活:面板表面就是 lens 的输出,body 本身不画任何底——
+        // 画实底会把 lens 盖住。内容(文字/选中胶囊)照常画在最上层。
+        (UiMaterial::Glass, true) => {}
         // 黑瓷:不透的共享石墨胎体,同构釉面。釉面的光全部来自环境
         // 采样:面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。
         (UiMaterial::Ceramic, _) if !high_contrast => {
@@ -1864,22 +1790,19 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         }
     }
     // 选中胶囊垫在格子下,两侧都挂 layer(父路径一致才持久);先于视口画。
-    // 非高对比是实心主题色胶囊,与条底色明确分层;高对比直接用系统
-    // 选中实底/字色。胶囊只画实色,不叠边、影或外围受光。
+    // 中心保持实心主题色,光只沿轮廓与外溢光走;高对比直接用系统
+    // 选中实底/字色,不加装饰光。
     let mut layer = el().w_full().h_full();
     if let Some(rect) = s.fx.selection.presented() {
-        let radius = panel::capsule_radius(rect.width(), rect.height());
         layer = layer.child(
-            el().key("sel")
-                .absolute(rect.left, rect.top)
-                .w(rect.width())
-                .h(rect.height())
-                .radius(radius)
-                .fill(look.selected_fill)
-                .instant_changes()
-                // 背景只是视觉底,选中语义在格子的 role/label 上,不重复
-                // 暴露给 A11y,也不参与命中。
-                .a11y_hidden(),
+            lueying_server::capsule::selection_capsule(
+                rect,
+                scale,
+                look.selected_fill,
+                look.high_contrast,
+            )
+            .key("sel")
+            .instant_changes(),
         );
     }
     layer = layer.child(viewport);

@@ -27,7 +27,6 @@ use rune::{
 use windows::Win32::Foundation::RECT;
 
 use crate::imp::{State, handle};
-use crate::liquid;
 use crate::ui::{material, place};
 
 /// 常驻的 overlay 句柄;别的线程靠它叫醒本线程。
@@ -50,8 +49,6 @@ struct ConfigSnapshot {
     material: UiMaterial,
     effects: bool,
     frost: f32,
-    variant: String,
-    band: f32,
     accent: usize,
     punct: bool,
     traditional: bool,
@@ -65,8 +62,6 @@ impl ConfigSnapshot {
             material: cfg.ui_material,
             effects: cfg.effects,
             frost: cfg.ui_glass_frost.clamp(0.0, 1.0),
-            variant: cfg.ui_glass_variant.clone(),
-            band: cfg.ui_glass_band,
             accent: cfg.ui_accent,
             punct: cfg.chinese_punct,
             traditional: cfg.traditional,
@@ -97,9 +92,6 @@ pub(super) struct BarHud {
     /// 不把 host 建窗时的旧快照当运行时开关。
     reduce: bool,
     frost: f32,
-    glass: liquid::GlassVariant,
-    glass_name: String,
-    glass_band: f32,
     accent: usize,
     /// 活动会话的私密标记;采样前判定,转私密立刻作废已有背板。
     private: bool,
@@ -115,10 +107,7 @@ pub(super) struct BarHud {
     /// 上一次喂给光学的原始背板:静止时逐位一致,跳过重算与上传。
     backdrop_raw: Option<((u32, u32), Vec<u8>)>,
     /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
-    rim: Option<Pixels>,
     /// 亚克力颗粒:条体物理尺寸的固定噪点图;随尺寸重生成。
-    grain: Option<Pixels>,
-    grain_size: Option<(u32, u32)>,
     /// 釉光的环境光:条体上下窄带的桌面实采均值;没有来源就不上光。
     glaze: Option<theme::Glaze>,
     glaze_read: Option<(f64, (i32, i32, i32, i32))>,
@@ -130,8 +119,6 @@ impl BarHud {
     fn new(state: Arc<State>, bar: Toolbar) -> Self {
         let cfg = ConfigSnapshot::read(&state);
         let status = status_of(&state, &cfg);
-        let glass = liquid::variant(&cfg.variant);
-        let band = if cfg.band > 0.0 { cfg.band } else { glass.band };
         // 启动即落在当前月相,首帧不播形变。
         let phase = if status.fullwidth { 1.0 } else { 0.0 };
         Self {
@@ -144,9 +131,6 @@ impl BarHud {
             effects: cfg.effects,
             reduce: !theme::client_area_animation(),
             frost: cfg.frost,
-            glass,
-            glass_name: cfg.variant,
-            glass_band: band,
             accent: cfg.accent,
             private: false,
             state,
@@ -158,9 +142,6 @@ impl BarHud {
             backdrop: None,
             backdrop_read: None,
             backdrop_raw: None,
-            rim: None,
-            grain: None,
-            grain_size: None,
             glaze: None,
             glaze_read: None,
             exclusion_checked: false,
@@ -197,9 +178,6 @@ impl BarHud {
         let mut changed = false;
         changed |= self.backdrop.take().is_some();
         changed |= self.backdrop_raw.take().is_some();
-        changed |= self.rim.take().is_some();
-        changed |= self.grain.take().is_some();
-        self.grain_size = None;
         changed
     }
 
@@ -232,6 +210,7 @@ pub(super) fn register<T: 'static>(app: &mut rune::App<T>, state: Arc<State>) {
             ..Default::default()
         })
         .release_gpu_when_hidden()
+        .compositor(super::lens::LensFx::new())
         .poll(toolbar_poll)
         // 事件循环一起就走一遍既有的 kick 路径(排空更新→首轮 poll→show);
         // 不然工具栏要等到第一次模式切换或设置保存才出现(升级装完服务
@@ -261,23 +240,9 @@ fn toolbar_poll(s: &mut BarHud, now: f64, tx: &mut Tx) -> bool {
         changed = true;
     }
 
-    // 玻璃光学参数:变体/带宽变了要让下一轮捕获重算,旧背板也不能再露。
-    let mut glass_dirty = false;
-    if s.glass_name != cfg.variant {
-        s.glass_name = cfg.variant.clone();
-        s.glass = liquid::variant(&cfg.variant);
-        glass_dirty = true;
-    }
-    let band = if cfg.band > 0.0 {
-        cfg.band
-    } else {
-        s.glass.band
-    };
-    if (s.glass_band - band).abs() > f32::EPSILON {
-        glass_dirty = true;
-    }
-    s.glass_band = band;
-    if glass_dirty {
+    // 磨砂滑杆改动时 lens 参数经 effect_data 逐帧生效,无需作废旧背板:
+    // 捕获的是原始桌面,光学在 GPU 侧跟着参数走。
+    if false {
         s.clear_capture();
         changed = true;
     }
@@ -517,14 +482,15 @@ fn place_bar(s: &mut BarHud) {
     s.placed = Some((rect, scale));
 }
 
-/// 抓取条体矩形外扩折射带宽的桌面像素,过液体玻璃光学后作为背板;
-/// 位置或原始像素变化时重算,静止时逐位去重。
+/// 抓取窗口矩形(条体 + 棱缘 margin)的桌面像素原样写入背板流;
+/// 光学全部在 GPU(lens)侧,CPU 不做逐像素处理。静止时逐位去重,
+/// 没变就不上传不重绘。
 fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> bool {
     let (x, y, w, h) = rect;
     if w <= 0 || h <= 0 {
         return s.drop_backdrop();
     }
-    let pad = liquid::capture_pad(s.glass_band, s.glass.pull, dpi);
+    let pad = super::rune::capture_pad(dpi);
     let Some((raw_w, raw_h, raw)) =
         material::capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32)
     else {
@@ -537,32 +503,9 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
     {
         return false;
     }
-    let radius = lueying_render::panel::capsule_radius(w as f32, h as f32);
-    let mut optics = liquid::process_with_pull(
-        &raw,
-        raw_w,
-        raw_h,
-        pad,
-        w as u32,
-        h as u32,
-        s.glass_band * dpi,
-        radius,
-        s.glass.pull,
-    );
-    liquid::prepare_glass_backdrop(&mut optics);
-    let rim = liquid::environment_rim(&raw, raw_w, raw_h, pad, w as u32, h as u32, radius, dpi);
-    let size = (w as u32, h as u32);
-    let changed = material::set_stream(&mut s.backdrop, size, optics);
-    let rim_changed = material::set_stream(&mut s.rim, size, rim);
+    let changed = material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw.clone());
     s.backdrop_raw = Some(((raw_w, raw_h), raw));
-    let grain_changed = s.grain_size != Some(size);
-    if grain_changed {
-        let grain = Pixels::new();
-        grain.set(size.0, size.1, liquid::grain_rgba(size.0, size.1));
-        s.grain = Some(grain);
-        s.grain_size = Some(size);
-    }
-    changed || rim_changed || grain_changed
+    changed
 }
 
 /// 一帧控件树的全部输入:视图、快照与交互共用这一份,外观只有一条路径。
@@ -573,14 +516,11 @@ struct ToolbarVisual<'a> {
     accent: usize,
     effects: bool,
     glass: bool,
-    variant: liquid::GlassVariant,
     frost: f32,
     phase: f32,
     status: Status,
     hover: Option<Button>,
     backdrop: Option<&'a Pixels>,
-    grain: Option<&'a Pixels>,
-    rim: Option<&'a Pixels>,
     glaze: Option<&'a theme::Glaze>,
 }
 
@@ -607,14 +547,11 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
             accent: s.accent,
             effects: s.effects,
             glass,
-            variant: s.glass,
             frost: s.frost,
             phase: s.phase,
             status: s.status,
             hover: s.hover,
             backdrop: s.backdrop.as_ref(),
-            grain: s.grain.as_ref(),
-            rim: s.rim.as_ref(),
             glaze: s.glaze.as_ref(),
         },
         true,
@@ -640,19 +577,35 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
     };
     let radius = lueying_render::panel::capsule_radius(w, h);
     let mut root = el().w_full().h_full();
-    // 活背板只铺条体矩形:圆角外透明区不画,直接透出真桌面。
+    // 活背板铺满窗口矩形,不裁圆:像素 1:1 屏幕对齐,圆角外画的就是
+    // 该区域的真实桌面,与透明区等效;胶囊角落的棱缘折射还能采到
+    // 真实像素。窗口边缘外没有像素可采——棱缘外沿采样略欠,是
+    // 窗口恰好条体大小的固有边界,后续可按需给窗口加 margin。
     if s.glass
         && let Some(backdrop) = s.backdrop
     {
-        root = root.child(material::rounded_surface(
+        root = root.child(
             el().absolute(0.0, 0.0)
                 .w(w)
                 .h(h)
                 .pixels_fit(backdrop, SurfaceFit::Fill)
                 .surface_unscaled(true)
                 .surface_anchor(Align::Start, Align::Start),
-            radius,
-        ));
+        );
+    }
+    // 玻璃光学面:effect slot 盖在捕获层上、内容之下,与候选窗同一
+    // 条 lens 管线;滑杆 frost 经 effect_data 连续进 shader。
+    if s.glass && matches!(s.material, UiMaterial::Glass) {
+        root = root.child(
+            rune::effect(super::lens::LENS)
+                .absolute(0.0, 0.0)
+                .w(w)
+                .h(h)
+                .radius(radius)
+                .effect_backdrop(true)
+                .effect_bleed(28.0)
+                .effect_data([s.frost, 0.0, 0.0, 0.0]),
+        );
     }
     let mut bar = material::rounded_surface(el().absolute(0.0, 0.0).w(w).h(h), radius);
     if interactive {
@@ -662,19 +615,9 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
             .on_drag(|s: &mut BarHud, drag, _| on_bar_drag(s, drag));
     }
     match (s.material, s.glass) {
-        // 玻璃:与候选窗同一条像素配方(背板折射+模糊+tint+压光+边框)。
-        (UiMaterial::Glass, true) => {
-            bar = material::glass_face(bar, s.variant, s.frost, t);
-            bar = material::glass_meniscus(bar, s.variant, t);
-            if let Some(grain) = s.grain {
-                bar = material::glass_grain(bar, grain, false);
-            }
-            // 环境棱缘作为条体自身的图像填充:条体已显式给出宽高,
-            // 纹理铺满整块面板并随条体缩放,垫在按钮与月光之下。
-            if let Some(rim) = s.rim {
-                bar = bar.pixels(rim);
-            }
-        }
+        // 玻璃激活:条体表面就是 lens 的输出,bar 本身不画底;
+        // 月亮、按钮等内容照常画在最上层。
+        (UiMaterial::Glass, true) => {}
         // 黑瓷:不透的共享石墨胎体;釉光只跟真实窄带采样。
         (UiMaterial::Ceramic, _) if !high_contrast => {
             bar = material::ceramic_face(bar, &palette, s.glaze, t, h);
@@ -845,8 +788,8 @@ fn command_glyph(button: Button, scale: f32, ink: Color) -> El {
     canvas(shape).w(16.0 * scale).h(16.0 * scale).a11y_hidden()
 }
 
-/// 月亮按钮:固定的暖黄光源,不跟主题色走——月亮是自己的天体,主题色
-/// 只留给状态与命令;候选窗的选中胶囊也不发光,两边都不借强调色当灯管。
+/// 月亮按钮:固定的暖黄光源,不跟主题色走——月亮是自己的天体;候选窗
+/// 选中胶囊的光沿用主题色,两者互不借色。
 /// 盘与月坑放在同一块 d×d 局部层里,
 /// 月相只在外面用 `cutout_circle` 挖掉影圆覆盖的部分:缺月处是真
 /// 透明,露出条体材料/悬停底,绝不用背景色填出一块假月盘。
@@ -1087,8 +1030,6 @@ struct ToolbarShot {
     bar: Toolbar,
     material: UiMaterial,
     backdrop: Option<Pixels>,
-    grain: Option<Pixels>,
-    rim: Option<Pixels>,
 }
 
 /// 快照视图:与产品同一条材质与按钮渲染路径,只去掉指针交互。
@@ -1102,7 +1043,6 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
             accent: 0,
             effects: true,
             glass: s.backdrop.is_some(),
-            variant: liquid::variant("A"),
             frost: 0.0,
             phase: 0.0,
             status: Status {
@@ -1113,8 +1053,6 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
             },
             hover: None,
             backdrop: s.backdrop.as_ref(),
-            grain: s.grain.as_ref(),
-            rim: s.rim.as_ref(),
             glaze: None,
         },
         false,
@@ -1131,15 +1069,14 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
     let mut bar = Toolbar::at_default(Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0));
     bar.scale = toolbar::clamp_scale(scale);
     let size = bar.size();
-    let (material, backdrop, grain, rim) = match scene {
-        "ceramic" => (UiMaterial::Ceramic, None, None, None),
+    let (material, backdrop) = match scene {
+        "ceramic" => (UiMaterial::Ceramic, None),
         "glass-dark" | "glass-light" => {
             let (w, h) = (
                 (size.0 * DEVICE_SCALE).ceil() as u32,
                 (size.1 * DEVICE_SCALE).ceil() as u32,
             );
-            let variant = liquid::variant("A");
-            let pad = liquid::capture_pad(variant.band, variant.pull, DEVICE_SCALE);
+            let pad = super::rune::capture_pad(DEVICE_SCALE);
             let (raw_w, raw_h) = (w + 2 * pad as u32, h + 2 * pad as u32);
             let (a, b) = if scene == "glass-light" {
                 (208, 255)
@@ -1154,30 +1091,12 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
                     raw.extend_from_slice(&[v, v, v, 255]);
                 }
             }
-            let radius = lueying_render::panel::capsule_radius(w as f32, h as f32);
-            let mut rgba = liquid::process_with_pull(
-                &raw,
-                raw_w,
-                raw_h,
-                pad,
-                w,
-                h,
-                variant.band * DEVICE_SCALE,
-                radius,
-                variant.pull,
-            );
-            liquid::prepare_glass_backdrop(&mut rgba);
+            // 与生产路径同一份原件:捕获尺寸的原始条纹直接入流,
+            // 光学在 lens 着色器里。快照看不到 lens 的话此处仍是
+            // 条纹原图,便于分辨「捕获层正常、光学缺失」。
             let pixels = Pixels::new();
-            pixels.set(w, h, rgba);
-            let grain = Pixels::new();
-            grain.set(w, h, liquid::grain_rgba(w, h));
-            let rim = Pixels::new();
-            rim.set(
-                w,
-                h,
-                liquid::environment_rim(&raw, raw_w, raw_h, pad, w, h, radius, DEVICE_SCALE),
-            );
-            (UiMaterial::Glass, Some(pixels), Some(grain), Some(rim))
+            pixels.set(raw_w, raw_h, raw);
+            (UiMaterial::Glass, Some(pixels))
         }
         _ => return Err(format!("未知的工具栏快照场景: {scene}")),
     };
@@ -1185,8 +1104,6 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
         bar,
         material,
         backdrop,
-        grain,
-        rim,
     };
     let spec = rune::AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),
@@ -1198,6 +1115,7 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
         )
     };
     rune::App::new(spec)
+        .compositor(super::lens::LensFx::new())
         .init(move || state)
         .args([
             "--snap".to_string(),

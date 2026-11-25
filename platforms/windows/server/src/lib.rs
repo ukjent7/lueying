@@ -11,6 +11,9 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod accents;
 
+#[cfg(windows)]
+pub mod capsule;
+
 pub mod config;
 pub mod ext_link;
 pub mod typing_store;

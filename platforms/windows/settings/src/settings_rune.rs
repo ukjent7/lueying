@@ -610,7 +610,8 @@ fn candidate_preview(
         panel::panel_height(&spec, &metrics, &Estimate),
     );
     let radius = panel::surface_radius(spec.is_strip(), w, h, scale);
-    let (selected_fill, selected_ink) = if matches!(appearance, theme::Appearance::HighContrast) {
+    let high_contrast = matches!(appearance, theme::Appearance::HighContrast);
+    let (selected_fill, selected_ink) = if high_contrast {
         (color(colors.selected_bg), color(colors.selected_text))
     } else {
         theme::capsule_colors(style.accent)
@@ -630,16 +631,15 @@ fn candidate_preview(
         .zip(panel::item_rects(&spec, &metrics, &Estimate))
         .enumerate()
     {
-        let mut cell = el()
-            .absolute(rect.left, rect.top)
-            .w(rect.width())
-            .h(rect.height())
-            .key(format!("candidate-{i}"));
-        if item.selected {
-            cell = cell
-                .radius(panel::capsule_radius(rect.width(), rect.height()))
-                .fill(selected_fill);
-        }
+        let mut cell = if item.selected {
+            lueying_server::capsule::selection_capsule(rect, scale, selected_fill, high_contrast)
+                .key(format!("candidate-{i}"))
+        } else {
+            el().absolute(rect.left, rect.top)
+                .w(rect.width())
+                .h(rect.height())
+                .key(format!("candidate-{i}"))
+        };
         cell = cell
             .child(
                 text(format!("{}", i + 1))

@@ -22,6 +22,8 @@ members = [
     "platforms/windows/installer",
     # 验证与工具
     "crates/bench",
+    # 临时:rune-fx lens 观感验证原型(评估后移除或转正)
+    "crates/lens-proto",
     "platforms/windows/win-e2e",
     # 官方扩展:编成 wasm32-unknown-unknown 后随包分发。
     "extensions/shot-ocr",
@@ -64,16 +66,18 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71", default-features = false, features = ["accessibility"] }
 
 # Rune vendored patches must be pinned to the same fork revision as Rune.
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "97086d897494aa341e0454e0468b94f79e8d0793" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "ce89f1725af4f7b963d828ca23d776b2b9e2bd71" }
 
 [profile.release]
 lto = "thin"
