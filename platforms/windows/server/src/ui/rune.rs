@@ -1575,7 +1575,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
             body = super::material::ceramic_face(body, &palette, scale)
             // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
             // compositor 侧,这里只声明身份。
-            .mark(super::lighting::MARK_SHELL);
+            .mark(lueying_server::lighting::MARK_SHELL);
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {
@@ -1714,7 +1714,7 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         // 黑瓷里胶囊是唯一光源:标记 emitter,灯位每帧取自它的矩形,
         // 弹簧飞行时光跟着飞。玻璃模式不标——lens 光学的边缘光自足。
         let capsule = if matches!(s.material, UiMaterial::Ceramic) && !look.high_contrast {
-            capsule.mark(super::lighting::MARK_EMITTER)
+            capsule.mark(lueying_server::lighting::MARK_EMITTER)
         } else {
             capsule
         };

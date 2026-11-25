@@ -591,7 +591,7 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
         // 黑瓷:不透的共享石墨胎体,受光面身份交给光照 compositor。
         (UiMaterial::Ceramic, _) if !high_contrast => {
             bar = material::ceramic_face(bar, &palette, t)
-                .mark(super::lighting::MARK_SHELL);
+                .mark(lueying_server::lighting::MARK_SHELL);
         }
         // 关闭特效、私密与高对比:实底主题兜底,不采桌面。
         _ => {
@@ -782,7 +782,7 @@ fn moon_el(
         .h(d)
         .radius(r)
         .key("moon-disc")
-        .mark(super::lighting::MARK_EMITTER_WARM);
+        .mark(lueying_server::lighting::MARK_EMITTER_WARM);
     disc = if high_contrast {
         // 高对比只保留系统色月相,不加暖光。
         disc.fill(theme::srgb(palette.text))

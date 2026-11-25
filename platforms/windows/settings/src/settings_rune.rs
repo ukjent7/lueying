@@ -161,7 +161,10 @@ pub fn run() {
         poll: Some(settings_poll),
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
-    let app = App::new(spec).tab_visits_controls(true).init(move || state);
+    let app = App::new(spec)
+        .compositor(lueying_server::lighting::LightFx::skylight())
+        .tab_visits_controls(true)
+        .init(move || state);
     let handle = app.handle();
     HANDLE.with(|slot| *slot.borrow_mut() = Some(handle.clone()));
     // 首帧后再跑引擎状态与重排模型,首屏不被管道请求阻塞;Option 保证只一次。
@@ -409,10 +412,10 @@ fn scene(s: &State) -> El {
         .w_full()
         .h_full()
         .fill(color(colors.bg));
-    // 黑瓷外壳的影棚灯棱线:垫在页头/正文/页脚之下,不参与布局、焦点或
-    // 命中;高对比度整层省略,也不连接候选窗/工具栏的材质状态。
+    // 黑瓷受光面:非高对比时标记身份,光照 compositor 按时间天光
+    // (太阳/月亮)照它——定义明确的真实光源,不是影棚灯数学。
     if !matches!(appearance, theme::Appearance::HighContrast) {
-        base = base.child(crate::settings_ceramic::layer());
+        base = base.mark(lueying_server::lighting::MARK_SHELL);
     }
     base = base.child(header).child(body).child(footer);
 

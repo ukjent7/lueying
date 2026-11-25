@@ -152,14 +152,14 @@ impl<S: 'static> Compositor<S> for LensFx {
 /// 原始绘制。两种材质按配置互斥,不会同帧出现。
 pub(crate) struct SurfaceFx {
     lens: LensFx,
-    light: super::lighting::LightFx,
+    light: lueying_server::lighting::LightFx,
 }
 
 impl SurfaceFx {
     pub(crate) fn new() -> Self {
         Self {
             lens: LensFx::new(),
-            light: super::lighting::LightFx::new(),
+            light: lueying_server::lighting::LightFx::new(),
         }
     }
 }
@@ -182,7 +182,7 @@ impl<S: 'static> Compositor<S> for SurfaceFx {
             if i.params[1] == KIND_EFFECT && mark == LENS {
                 has_lens = true;
             }
-            if matches!(mark, super::lighting::MARK_SHELL | super::lighting::MARK_EMITTER | super::lighting::MARK_EMITTER_WARM) {
+            if matches!(mark, lueying_server::lighting::MARK_SHELL | lueying_server::lighting::MARK_EMITTER | lueying_server::lighting::MARK_EMITTER_WARM) {
                 has_light = true;
             }
         }

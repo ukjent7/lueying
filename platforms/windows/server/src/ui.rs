@@ -7,7 +7,6 @@
 
 pub(crate) mod badge;
 pub(crate) mod lens;
-pub(crate) mod lighting;
 pub(crate) mod material;
 pub(crate) mod picker;
 pub(crate) mod place;

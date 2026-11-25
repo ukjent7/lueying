@@ -22,6 +22,8 @@ mod config_file;
 
 pub mod host_panel;
 
+pub mod lighting;
+
 #[cfg(windows)]
 pub mod services;
 
