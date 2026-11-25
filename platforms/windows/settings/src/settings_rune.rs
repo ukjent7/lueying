@@ -215,7 +215,7 @@ fn load_core() -> Core {
 /// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
 /// 造型对应样张 v2:太阳带日冕(自身大气,不是假光)、月亮带
 /// 月坑(呼应工具栏),低 emission 增益保盘形。
-fn sky_body() -> El {
+fn sky_body() -> Vec<El> {
     const CYCLE: f64 = 720.0;
     const D: f32 = 26.0;
     let secs = std::time::SystemTime::now()
@@ -244,14 +244,14 @@ fn sky_body() -> El {
         0xdfe8f5 // 月亮:冷白,与太阳拉开色温
     };
 
-    let mut sky = el().absolute(0.0, 0.0).w(0.0).h(0.0);
+    let mut sky: Vec<El> = Vec::new();
     if is_day {
         // 日冕:太阳自身的大气,radial 渐变衰减到透明——不是照明贴图,
         // 是天体外观的一部分。
         let cd = D * 1.9;
         let cx0 = x + D / 2.0 - cd / 2.0;
         let cy0 = y + D / 2.0 - cd / 2.0;
-        sky = sky.child(
+        sky.push(
             el().absolute(cx0, cy0)
                 .w(cd)
                 .h(cd)
@@ -278,13 +278,13 @@ fn sky_body() -> El {
         .key(if is_day { "sun" } else { "moon" })
         .mark(lueying_server::lighting::MARK_EMITTER_SKY)
         .a11y_hidden();
-    sky = sky.child(disc);
+    sky.push(disc);
     if !is_day {
         // 月坑三粒,比例照抄工具栏月亮:两个月亮是同一个月亮。
         // 坑在盘之上(后画),全部绝对坐标平铺,不套层。
         for (fx, fy, fd) in [(0.66f32, 0.70f32, 0.17f32), (0.76, 0.45, 0.12), (0.56, 0.80, 0.09)] {
             let d = fd * D;
-            sky = sky.child(
+            sky.push(
                 el().absolute(x + (fx - fd / 2.0) * D, y + (fy - fd / 2.0) * D)
                     .w(d)
                     .h(d)
@@ -507,9 +507,12 @@ fn scene(s: &State) -> El {
         base = base.mark(lueying_server::lighting::MARK_SHELL);
     }
     // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
-    // 地方来。12 分钟一圈的设计节奏,不是真实时间。
+    // 地方来。12 分钟一圈的设计节奏,不是真实时间。元素平铺进
+    // base,不套零尺寸容器(裁切不确定)。
     if !matches!(appearance, theme::Appearance::HighContrast) {
-        base = base.child(sky_body());
+        for body in sky_body() {
+            base = base.child(body);
+        }
     }
     base = base.child(header).child(body).child(footer);
 
