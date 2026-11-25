@@ -35,8 +35,9 @@ const WARM_EMIT: [f32; 3] = [0.91, 0.66, 0.04];
 // 纯 emission 路线的增益:胶囊不再配同位点光——直接光对
 // 发光体自身的放大随 dpi 变化(衰减参考 REF=200 以设备 px
 // 焊死在着色器,阴影通过率又随分辨率变),k=1 白炸 k=2 刚好,
-// 无解;而 GI 辐射传播是物理量,跨倍率表现一致,增益推到
-// 3.5 胶囊依然饱和、光池清晰(spike 双倍率验证)。
+// 无解;而 GI 辐射传播是物理量,跨倍率表现一致,增益 6.0 配低吸收
+// 宽光池(见 Gi 配置注释), capsule 实测不炸——GI 自反馈
+// 在增益 10 左右才开始洗红,6.0 有余量。
 const EMIT_GAIN: f32 = 3.5;
 /// 点光贴着元件上方的高度(pt)与半径:小半径→紧实高光(瓷)。
 const LIGHT_Z_PT: f32 = 28.0;
@@ -473,7 +474,21 @@ impl<S: 'static> Compositor<S> for LightFx {
             },
             albedo_floor: 0.06,
             text: TextPolicy { floor: 0.5, ceiling: 1.3, ..Default::default() },
-            gi: if matches!(self.source, Source::Emitters) { Some(Gi::default()) } else { None },
+            gi: if matches!(self.source, Source::Emitters) {
+                // 宽光池配方(spike 参数族扫描,双倍率形态一致):
+                // 吸收 0.35→0.05——辐射在瓷面里走得更远,光池从
+                // 贴胶囊的光晕变成泼出去的一片,越远越淡长尾;
+                // strength 2——辐射→辐照换算加倍,远端衰减梯度
+                // 推到视觉阈值之上。物理上这就是「灯泡悬在瓷面
+                // 上方」:胶囊是唯一光源,瓷面吃光全凭辐射传播。
+                Some(Gi {
+                    absorption: 0.05,
+                    strength: 1.0,
+                    ..Gi::default()
+                })
+            } else {
+                None
+            },
             ..Default::default()
         };
         gpu.light.render(
