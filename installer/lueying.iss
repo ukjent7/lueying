@@ -54,10 +54,18 @@ VersionInfoVersion={#VersionInfo}
 VersionInfoDescription={#AppName} 安装程序
 VersionInfoProductName={#AppName}
 SetupLogging=yes
+; Never register files with Restart Manager, even with /CLOSEAPPLICATIONS.
+CloseApplications=no
+CloseApplicationsFilterExcludes=*
+RestartApplications=no
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+chinesesimplified.WelcomeLabel2=即将在您的计算机上安装 [name/ver]。
+english.WelcomeLabel2=This will install [name/ver] on your computer.
 
 [Files]
 Source: "{#PayloadDir}\lueying-server.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -66,9 +74,8 @@ Source: "{#PayloadDir}\lueying-settings.exe"; DestDir: "{app}"; Flags: ignorever
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; PrepareToInstall 在复制文件前就要停掉旧服务,所以再嵌一份临时副本。
 Source: "{#PayloadDir}\lueying-user.exe"; DestDir: "{tmp}"; Flags: dontcopy noencryption
-; TSF 组件文件名固定:升级覆盖同一文件,Restart Manager 才能把正在用
-; 旧组件的应用列出来征询关闭并在装完重启;仍被宿主加载时由
-; PrepareTsfDll 改名让路,注册表指向的路径因此长期稳定。
+; 宿主继续使用已加载的旧组件;PrepareTsfDll 改名让路,不关闭宿主。
+; 新组件仍用同一个文件名,注册表指向的路径长期稳定。
 Source: "{#PayloadDir}\lueying_tsf.dll"; DestDir: "{app}"; DestName: "lueying_tsf.dll"; \
     Flags: ignoreversion regserver 64bit uninsrestartdelete; \
     BeforeInstall: PrepareTsfDll
