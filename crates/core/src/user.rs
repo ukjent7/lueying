@@ -91,6 +91,16 @@ impl Memory {
         (f64::from(self.uses) * kept - 1.0).max(0.0)
     }
 
+    /// 原样输入缓存的层级:同一击键串用过一次就有证据。
+    /// 词键记忆要扣掉首次「曝光」,这里不扣——用户确实把整串打出来并选了这个词。
+    pub(crate) fn cache_level(&self, now: u64) -> f64 {
+        if self.uses == 0 {
+            return 0.0;
+        }
+        let kept = retention(self.stability, elapsed_days(self.last, now));
+        f64::from(self.uses) * kept
+    }
+
     /// 一次使用:先按当前保持率增长稳定度,再记下这次时刻。
     pub(crate) fn reinforce(&mut self, now: u64) {
         if self.uses == 0 {
@@ -109,12 +119,46 @@ impl Memory {
     }
 }
 
+/// 纠正证据:用户在非首选位置主动选过一次这个词。
+///
+/// 与 `Memory.uses` 分开记:曝光只说明「用户用了这个词」,纠正才说明
+/// 「模型原来的首选不对」。权重按半衰期衰减,一次误选会把它撤回。
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Corrected {
+    pub count: u32,
+    pub last: u64,
+}
+
+/// 一次非首选纠正记一级证据:主动绕过首选说明原排序确实不合用户习惯。
+/// 永久污染由三件事兜住:误选立刻撤回、反复越过每次减一、六周半衰期。
+const CORRECTION_WEIGHT: f64 = 1.0;
+
+impl Corrected {
+    /// `half_life` 天前的纠正权重减半。默认六周,可配置。
+    pub(crate) fn level(&self, now: u64, half_life: f64) -> f64 {
+        if self.count == 0 || half_life <= 0.0 {
+            return 0.0;
+        }
+        let days = elapsed_days(self.last, now);
+        CORRECTION_WEIGHT * f64::from(self.count) * 0.5f64.powf(days / half_life)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct WordEntry {
     pub word: String,
     pub memory: Memory,
     /// 最近一次误选的时刻;`None` 表示没有误选记录。
     pub miss: Option<u64>,
+    /// 非首选位置被主动选中的次数;与曝光分开,用来把一次纠正变成首选。
+    pub corrected: Corrected,
+}
+
+impl WordEntry {
+    /// 打分用的有效层级:曝光记忆 + 纠正证据(按半衰期衰减)。
+    pub(crate) fn level(&self, now: u64, half_life: f64) -> f64 {
+        self.memory.level(now) + self.corrected.level(now, half_life)
+    }
 }
 
 #[derive(Default)]
@@ -135,6 +179,8 @@ pub struct UserDict {
     word_keys: HashMap<String, String>,
     /// 学习键 → 置顶词(用户手动置顶,不属于学习)。
     pinned: HashMap<String, String>,
+    /// 纠正证据的半衰期(天)。一次纠正默认 42 天后权重减半。
+    correction_half_life: f64,
     /// 打字习惯:模糊组与快捷词抑制。
     typing: Typing,
     /// 内容每次变化自增;解码器据此与时钟一起判断前缀图是否仍有效。

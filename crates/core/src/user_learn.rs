@@ -4,6 +4,9 @@
 
 use super::*;
 
+/// 纠正证据的半衰期:六周。纠正不是永久标签,久不确认就退回普通曝光。
+pub(crate) const DEFAULT_CORRECTION_HALF_LIFE: f64 = 42.0;
+
 /// 词序加分:每个有效层级的对数权重与上限,沿用旧设计的分数尺度。
 const TRANSITION_BONUS_STEP: f64 = 0.2;
 const TRANSITION_BONUS_MAX: f64 = 1.2;
@@ -14,7 +17,10 @@ fn multi_char(word: &str) -> bool {
 
 impl UserDict {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            correction_half_life: DEFAULT_CORRECTION_HALF_LIFE,
+            ..Self::default()
+        }
     }
 
     /// 内容修订号;只增不减。
@@ -32,7 +38,8 @@ impl UserDict {
 
     /// 同键下 `word` 的有效层级(见 `Memory::level`);没有记录为 0。
     pub fn level(&self, key: &str, word: &str) -> f64 {
-        self.entry(key, word).map_or(0.0, |e| e.memory.level(now()))
+        self.entry(key, word)
+            .map_or(0.0, |e| e.level(now(), self.correction_half_life))
     }
 
     /// 同键下的词是否已达到首位门槛(与词库首位保护同一标准)。
@@ -70,6 +77,7 @@ impl UserDict {
                     word: word.to_string(),
                     memory,
                     miss: None,
+                    corrected: Corrected::default(),
                 });
                 self.count += 1;
             }
@@ -88,20 +96,45 @@ impl UserDict {
         self.rev = self.rev.wrapping_add(1);
     }
 
+    /// 一次纠正证据:用户在本键的非首选位置主动选了 `word`。
+    /// 只加在已有词条上;`learn` 总在它之前调用,所以词条一定存在。
+    pub fn correction(&mut self, key: &str, word: &str) {
+        let now = now();
+        if let Some(entry) = self.entry_mut(key, word) {
+            entry.corrected.count = entry.corrected.count.saturating_add(1);
+            entry.corrected.last = now;
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
     /// 误选:上屏后立刻删掉重打并改选了别的词。撤销这次选择的强化,并记下误选时刻。
     pub fn mispick(&mut self, key: &str, word: &str) {
         let now = now();
         if let Some(entry) = self.entry_mut(key, word) {
             entry.memory.weaken();
+            // 直接改掉的一次纠正不再算数:不能靠一次误选永久占首位。
+            entry.corrected.count = entry.corrected.count.saturating_sub(1);
             entry.miss = Some(now);
             self.rev = self.rev.wrapping_add(1);
         }
     }
 
+    /// 误选的词也要从原样输入缓存里减弱:上屏后立刻改选,说明那次整串选择不作数。
+    pub fn mispick_raw(&mut self, typed: &str, word: &str) {
+        if let Some(entries) = self.raw.get_mut(typed)
+            && let Some((_, memory)) = entries.iter_mut().find(|(text, _)| text == word)
+        {
+            memory.weaken();
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
     /// 跳过:同键下用户选了排在它后面的候选,它减弱一次。
+    /// 纠正证据同样撤回一次,反复越过会把它从首位压下去。
     pub fn skip(&mut self, key: &str, word: &str) {
         if let Some(entry) = self.entry_mut(key, word) {
             entry.memory.weaken();
+            entry.corrected.count = entry.corrected.count.saturating_sub(1);
             self.rev = self.rev.wrapping_add(1);
         }
     }
@@ -128,13 +161,13 @@ impl UserDict {
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 击键串 `typed` 上屏过的词:(词, 有效层级, 使用次数)。
+    /// 击键串 `typed` 上屏过的词:(词, 缓存层级, 使用次数)。
     pub(crate) fn raw_words(&self, typed: &str) -> Vec<(&str, f64, u32)> {
         let now = now();
         self.raw.get(typed).map_or_else(Vec::new, |entries| {
             entries
                 .iter()
-                .map(|(text, memory)| (text.as_str(), memory.level(now), memory.uses))
+                .map(|(text, memory)| (text.as_str(), memory.cache_level(now), memory.uses))
                 .collect()
         })
     }
@@ -263,6 +296,11 @@ impl UserDict {
         keys
     }
 
+    /// 学习键对应的词条(可写,导入纠正证据用)。
+    pub(crate) fn entries_mut(&mut self, key: &str) -> &mut [WordEntry] {
+        self.words.get_mut(key).map_or(&mut [], Vec::as_mut_slice)
+    }
+
     /// 学习键对应的词条。
     pub(crate) fn entries(&self, key: &str) -> &[WordEntry] {
         self.words.get(key).map_or(&[], Vec::as_slice)
@@ -277,6 +315,34 @@ impl UserDict {
 
     pub fn is_empty(&self) -> bool {
         self.words.is_empty() && self.raw.is_empty()
+    }
+
+    /// 纠正证据的半衰期(天)。设置页/实验可调;0 表示纠正证据立即失效。
+    pub fn set_correction_half_life(&mut self, days: f64) {
+        let days = if days.is_finite() {
+            days.max(0.0)
+        } else {
+            42.0
+        };
+        if self.correction_half_life != days {
+            self.correction_half_life = days;
+            self.rev = self.rev.wrapping_add(1);
+        }
+    }
+
+    /// 清空全部学习结果(词、原样输入缓存、词序、置顶与打字习惯)。
+    /// 设置页的「重置个性化」与实验共用。
+    pub fn reset(&mut self) {
+        self.words.clear();
+        self.by_initials.clear();
+        self.prefixes.clear();
+        self.count = 0;
+        self.raw.clear();
+        self.transitions.clear();
+        self.word_keys.clear();
+        self.pinned.clear();
+        self.typing = Typing::default();
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// 词条总数。

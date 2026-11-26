@@ -5,6 +5,7 @@ mod actions;
 mod address;
 mod bench;
 mod consent;
+mod conversion;
 mod extensions;
 mod extwasm;
 mod features;
@@ -15,6 +16,8 @@ mod learn_sim;
 mod learning;
 mod metrics;
 mod modules;
+mod personal;
+mod personalize;
 mod quick;
 mod render;
 mod rerank;
@@ -122,6 +125,9 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   同上 --only-shared [--corpus <语料>] [--shard <序号>/<总片数>]   共享语料逐条结果,写到 target/bench/
   latency --old <旧二进制> --new <新二进制> --dict <主词典> --rerank-dir <模型目录>   延迟 ABAB,报告线程 CPU 时间的比值
   learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full]   学习模拟(完整版含对验收集的副作用)
+  personal --dict <主词典> [--gram <搭配表>] [--rerank-dir <模型目录>] [--passes N] [--side-effect]   个性化留出评估(v1..v3 训练、v4 验收集)
+  conversion --dict <主词典> --corpus <语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--limit N]   转换准确率分组(有/无上文,词/短语/整句)
+  personalize --dict <主词典> --test <语料.tsv> [--train <语料.tsv>] --rerank-dir <模型目录> [--gram <搭配表>] [--repeats N]   时间序 flat/primed 个性化
   import-typing <记录目录> [--out <文件>]   打字记录合成 eval-user-* 语料(见 lueying-core 的 typing_log)
 
 测试集(eval-v2-test、eval-v3-test 与私有 test)只在发版时跑:dict-bench 工作流 workflow_dispatch 勾选 test;
@@ -147,6 +153,15 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("learn-sim") {
         std::process::exit(learn_sim::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("personal") {
+        std::process::exit(personal::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("conversion") {
+        std::process::exit(conversion::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("personalize") {
+        std::process::exit(personalize::run(&args));
     }
     if args.get(1).map(String::as_str) == Some("latency") {
         std::process::exit(latency::run(&args));

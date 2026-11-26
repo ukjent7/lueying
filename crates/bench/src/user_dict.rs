@@ -38,7 +38,7 @@ pub fn run(report: &mut String) -> usize {
     let dict = Arc::new(Dictionary::builtin());
     let mut checks = Checks::new();
     memory::shared_sessions(&dict, &mut checks);
-    memory::two_picks_promote(&dict, &mut checks);
+    memory::one_correction_promotes(&dict, &mut checks);
     memory::mispick_demotes(&dict, &mut checks);
     memory::skip_weakens(&dict, &mut checks);
     memory::round_trip_and_bad_lines(&dict, &mut checks);

@@ -551,6 +551,11 @@ impl Engine {
             .import(text);
     }
 
+    /// 清空本机学习结果;设置页「重置个性化」与实验共用。
+    pub fn reset_user(&self) {
+        self.user.write().unwrap_or_else(|p| p.into_inner()).reset();
+    }
+
     /// 模糊组的当前有效学习次数,设置页展示与 E2E 断言用。
     pub fn group_stats(&self) -> Vec<(&'static str, u32)> {
         self.user

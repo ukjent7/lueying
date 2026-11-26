@@ -3,6 +3,7 @@
 //! 文件是制表符分隔的行,首字段是记录类型,每行一条记录,按内容排序,导出稳定:
 //!
 //! - `w 键 词 次数 稳定度 最近时刻 误选时刻`:读音词记忆,误选时刻为 0 表示没有。
+//! - `x 键 词 纠正次数 最近时刻`:非首选位置被主动选中的证据;紧跟在对应的 `w` 行后面。
 //! - `r 击键串 词 次数 稳定度 最近时刻`:原样输入记忆。
 //! - `t 前词 后词 次数 稳定度 最近时刻`:词序记忆。
 //! - `g 模糊组 次数 时刻`:打字习惯,模糊组。
@@ -33,6 +34,12 @@ impl UserDict {
                     m.last,
                     e.miss.unwrap_or(0)
                 ));
+                if e.corrected.count > 0 {
+                    out.push_str(&format!(
+                        "x\t{key}\t{}\t{}\t{}\n",
+                        e.word, e.corrected.count, e.corrected.last
+                    ));
+                }
             }
         }
         for (typed, entries) in in_key_order(&self.raw) {
@@ -155,6 +162,22 @@ impl UserDict {
                 }
                 true
             }
+            ["x", key, word, count, last] => {
+                let (Ok(count), Ok(last)) = (count.parse::<u32>(), last.parse::<u64>()) else {
+                    return false;
+                };
+                if count == 0 || key.is_empty() || word.is_empty() {
+                    return false;
+                }
+                // `x` 只给已存在的 `w` 行补纠正证据;导入顺序由导出保证。
+                let Some(entry) = self.entries_mut(key).iter_mut().find(|e| e.word == word) else {
+                    return false;
+                };
+                if last >= entry.corrected.last {
+                    entry.corrected = Corrected { count, last };
+                }
+                true
+            }
             ["p", key, word] => {
                 if key.is_empty() || word.is_empty() {
                     return false;
@@ -182,6 +205,7 @@ impl UserDict {
                     word: word.to_string(),
                     memory,
                     miss,
+                    corrected: Corrected::default(),
                 });
                 self.count += 1;
             }

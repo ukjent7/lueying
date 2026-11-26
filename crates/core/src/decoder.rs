@@ -18,7 +18,9 @@ use lueying_dict::gram::{CONTEXT_CHARS, Gram, at_clause_start};
 use lueying_dict::{Dictionary, Fuzzy, syllables};
 
 use crate::channel::{self, Unit};
-use crate::lexicon::{CHAR_BONUS, Hit, Lexicon, WORD_PENALTY, raw_candidate, user_gain};
+use crate::lexicon::{
+    CHAR_BONUS, Hit, Lexicon, RAW_MIN_LEVEL, WORD_PENALTY, cache_gain, raw_candidate, user_gain,
+};
 use crate::query::{BuildArgs, Built, Candidate};
 use crate::user::UserDict;
 
@@ -856,8 +858,8 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     let typed: String = raw.chars().filter(|c| *c != '\'').collect();
     for (word, level, uses) in user.raw_words(&typed) {
         if full.iter().any(|cand| cand.text == word) {
-            if level > 0.0 {
-                let gain = user_gain(level);
+            if level > RAW_MIN_LEVEL {
+                let gain = cache_gain(level);
                 for cand in full.iter_mut().filter(|cand| cand.text == word) {
                     cand.score += gain;
                     cand.personal += gain;
@@ -865,7 +867,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
                     cand.learned = true;
                 }
             }
-        } else if uses >= 2 {
+        } else if uses >= 1 && level > RAW_MIN_LEVEL {
             full.push(raw_candidate(raw.len(), word, level, total));
         }
     }
