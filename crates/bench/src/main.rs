@@ -123,6 +123,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
 
   --dict <主词典> --gram <搭配表> --rerank-dir <模型目录>   场景 E2E 与准确率报告(--bench 全量,--bench-fast 快速)
   同上 --only-shared [--corpus <语料>] [--shard <序号>/<总片数>]   共享语料逐条结果,写到 target/bench/
+  --accuracy-smoke   固定输入与学习行为回归,不加载外部模型
   latency --old <旧二进制> --new <新二进制> --dict <主词典> --rerank-dir <模型目录>   延迟 ABAB,报告线程 CPU 时间的比值
   learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full]   学习模拟(完整版含对验收集的副作用)
   personal --dict <主词典> [--gram <搭配表>] [--rerank-dir <模型目录>] [--passes N] [--side-effect]   个性化留出评估(v1..v3 训练、v4 验收集)
@@ -130,8 +131,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   personalize --dict <主词典> --test <语料.tsv> [--train <语料.tsv>] --rerank-dir <模型目录> [--gram <搭配表>] [--repeats N]   时间序 flat/primed 个性化
   import-typing <记录目录> [--out <文件>]   打字记录合成 eval-user-* 语料(见 lueying-core 的 typing_log)
 
-测试集(eval-v2-test、eval-v3-test 与私有 test)只在发版时跑:dict-bench 工作流 workflow_dispatch 勾选 test;
-日常 CI 不跑,也不打印测试集的数字。
+公开测试集由发版准确率作业过滤重合后评估;私有测试另行验收。
 ";
 
 fn main() {
@@ -147,6 +147,30 @@ fn main() {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
         return;
+    }
+    if args.iter().any(|a| a == "--accuracy-smoke") {
+        let dict = Arc::new(Dictionary::builtin());
+        let mut report = String::new();
+        let scenarios = scenarios();
+        let mut failures = 0;
+        for sc in &scenarios {
+            if let Err(error) = run_scenario(sc, &dict) {
+                failures += 1;
+                eprintln!("{}: {error}", sc.name);
+            }
+        }
+        failures += features::run(&mut report);
+        failures += extensions::run(&mut report);
+        failures += user_dict::run(&mut report);
+        println!(
+            "{} fixed input scenarios; {} total failures",
+            scenarios.len(),
+            failures
+        );
+        if failures > 0 {
+            eprintln!("{report}");
+        }
+        std::process::exit(i32::from(failures > 0));
     }
     if args.get(1).map(String::as_str) == Some("import-typing") {
         std::process::exit(import_typing::run(&args));
@@ -192,6 +216,7 @@ fn main() {
         None
     };
     let only_shared = args.iter().any(|a| a == "--only-shared");
+    let accuracy = args.iter().any(|a| a == "--accuracy");
 
     // `--only-shared`:独立基准 job 只跑共享语料,与场景 E2E 并行,互不拖累。
     if only_shared {
@@ -227,12 +252,30 @@ fn main() {
                 .and_then(|at| args.get(at + 1))
         };
         // `--shard 1/4`:多台 runner 各跑一片,结果由 bench_shared.py 合并。
-        let shard = value("--shard")
-            .and_then(|text| text.split_once('/'))
-            .and_then(|(at, total)| Some((at.parse().ok()?, total.parse().ok()?)))
-            .unwrap_or((0, 1));
+        let shard = match value("--shard") {
+            None => Some((0, 1)),
+            Some(text) => text
+                .split_once('/')
+                .and_then(|(at, total)| Some((at.parse().ok()?, total.parse().ok()?)))
+                .filter(|(at, total)| at < total),
+        };
+        let Some(shard) = shard else {
+            eprintln!("无效分片");
+            std::process::exit(2);
+        };
         let corpus = value("--corpus").map(String::as_str);
-        let failures = shared::run(Arc::new(dict), gram, models.as_ref(), corpus, shard);
+        if accuracy && (gram.is_none() || models.is_none() || corpus.is_none()) {
+            eprintln!("--accuracy 需要搭配表、两档模型和输入清单");
+            std::process::exit(2);
+        }
+        let failures = shared::run(
+            Arc::new(dict),
+            gram,
+            models.as_ref(),
+            corpus,
+            shard,
+            accuracy,
+        );
         std::process::exit(i32::from(failures > 0));
     }
 

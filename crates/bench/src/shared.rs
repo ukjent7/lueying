@@ -4,10 +4,11 @@
 //! `tools/bench_shared.py` 从这份数据算,这里不做汇总,这样分片和跨引擎结果走同一条路。
 
 use std::fmt::Write as _;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::Instant;
 
-use lueying_core::{Candidate, Engine, Fuzzy, Key};
+use lueying_core::{Engine, Fuzzy, Key};
 use lueying_dict::Dictionary;
 use lueying_dict::gram::Gram;
 use lueying_rerank::Rerank;
@@ -17,24 +18,27 @@ use crate::rerank::Models;
 
 const CORPUS: &str = include_str!("../../../dicts/eval-shared-v1.tsv");
 const CORPUS_NAME: &str = "eval-shared-v1";
-const SCHEMA: &str = "lueying-bench-v1";
+const SCHEMA: &str = "lueying-bench-v2";
 const COLUMNS: &str = "category\tinput\texpected\trank\ttop1\tms\t\
-    rank_8m\trank_settled\ttop1_settled\tpool_rank\tpool_len\tms_8m\tms_25m\tpicks\tpages";
+    rank_8m\trank_settled\ttop1_settled\tpool_rank\tpool_len\tms_8m\tms_25m\tpicks\tpages\t\
+    case_ref\tstrict_rank\tstrict_rank_8m\tstrict_rank_settled";
 /// 逐段选词的上限,足够覆盖语料里最长的句子。
 const MAX_PICKS: usize = 16;
-/// 特征导出的候选数:短输入看得更深,整句只看前面几条。
-const FEATURE_CANDS_SHORT: usize = 32;
-const FEATURE_CANDS_LONG: usize = 12;
-const FEATURE_SHORT_BYTES: usize = 12;
-
 pub(crate) struct Case<'a> {
     pub(crate) category: &'a str,
     pub(crate) input: &'a str,
     pub(crate) expected: &'a str,
     pub(crate) context: &'a str,
+    source: &'a str,
+    row: &'a str,
+    settle: bool,
 }
 
 pub(crate) fn cases(corpus: &'static str) -> (Vec<Case<'static>>, usize) {
+    parse_cases(corpus, false)
+}
+
+fn parse_cases(corpus: &'static str, accuracy: bool) -> (Vec<Case<'static>>, usize) {
     let mut rows = Vec::new();
     let mut malformed = 0;
     for line in corpus.lines() {
@@ -42,18 +46,33 @@ pub(crate) fn cases(corpus: &'static str) -> (Vec<Case<'static>>, usize) {
             continue;
         }
         let mut fields = line.split('\t');
-        let (Some(category), Some(_source), Some(input), Some(expected)) =
+        let (Some(category), Some(source), Some(input), Some(expected)) =
             (fields.next(), fields.next(), fields.next(), fields.next())
         else {
             malformed += 1;
             continue;
         };
         let context = fields.next().unwrap_or("");
+        let settle = if accuracy {
+            match fields.next() {
+                Some("1") => true,
+                Some("0") => false,
+                _ => {
+                    malformed += 1;
+                    continue;
+                }
+            }
+        } else {
+            true
+        };
         rows.push(Case {
             category,
             input,
             expected,
             context,
+            source,
+            row: line,
+            settle,
         });
     }
     (rows, malformed)
@@ -119,10 +138,13 @@ pub(crate) fn input_cost(engine: &mut Engine, expected: &str) -> (i64, i64) {
 /// 一条用例的逐条结果,列序同 `COLUMNS`。
 struct Outcome {
     rank: i64,
+    strict_rank: i64,
     top1: String,
     ms: f64,
     rank_8m: i64,
+    strict_rank_8m: i64,
     rank_settled: i64,
+    strict_rank_settled: i64,
     top1_settled: String,
     pool_rank: i64,
     pool_len: usize,
@@ -130,25 +152,31 @@ struct Outcome {
     ms_25m: f64,
     picks: i64,
     pages: i64,
-    /// 重排前每条整键候选的特征行,离线拟合重排权重用。
-    features: Vec<String>,
 }
 
-/// 还原产品链路:8M 逐键同步、25M 停顿。快捷与置顶候选的位置由插入顺序决定,
-/// 产品直接跳过重排,这里也一样。返回 8M 名次与两个模型的耗时。
+/// 在整串键入结束后模拟两档重排;不模拟实际逐键或停顿调度。
 pub(crate) fn apply_rerank(
     engine: &mut Engine,
     four: &mut Rerank,
     five: &mut Rerank,
     expected: &str,
 ) -> (i64, f64, f64) {
-    let skip = engine
-        .candidates_detailed()
-        .iter()
-        .any(|cand| cand.quick || cand.pinned);
-    if skip {
+    if skip_rerank(engine) {
         return (rank_of(engine, expected), 0.0, 0.0);
     }
+    let ms_8m = apply_sync(engine, four);
+    let rank_8m = rank_of(engine, expected);
+    (rank_8m, ms_8m, apply_settled(engine, five))
+}
+
+fn skip_rerank(engine: &Engine) -> bool {
+    engine
+        .candidates_detailed()
+        .iter()
+        .any(|cand| cand.quick || cand.pinned)
+}
+
+fn apply_sync(engine: &mut Engine, four: &mut Rerank) -> f64 {
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
@@ -160,8 +188,10 @@ pub(crate) fn apply_rerank(
     if let Some(index) = promote {
         engine.promote(index);
     }
-    let rank_8m = rank_of(engine, expected);
+    ms_8m
+}
 
+fn apply_settled(engine: &mut Engine, five: &mut Rerank) -> f64 {
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
@@ -170,7 +200,14 @@ pub(crate) fn apply_rerank(
     if let Some(index) = promote {
         engine.promote(index);
     }
-    (rank_8m, ms_8m, ms_25m)
+    ms_25m
+}
+
+fn strict_rank_of(engine: &Engine, expected: &str) -> i64 {
+    bench::eval_texts(engine)
+        .into_iter()
+        .position(|text| text == expected)
+        .map_or(-1, |rank| rank as i64)
 }
 
 /// 一片用例的评测;每片自带引擎与模型句柄,片间无共享可变状态。
@@ -179,7 +216,6 @@ fn run_chunk(
     dict: &Arc<Dictionary>,
     gram: &Option<Arc<Gram>>,
     models: Option<&Models>,
-    features: bool,
 ) -> Vec<Outcome> {
     let mut engine = bench::make_engine(dict, gram, Fuzzy::auto());
     // 成本模拟要真的选词,不关学习的话前面的用例会抬高后面的答案。
@@ -201,6 +237,7 @@ fn run_chunk(
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         let expected = bench::normalize(case.expected);
         let rank = rank_of(&engine, &expected);
+        let strict_rank = strict_rank_of(&engine, case.expected);
         let top1 = bench::eval_texts(&engine)
             .first()
             .map_or(String::new(), |text| (*text).to_string());
@@ -216,41 +253,38 @@ fn run_chunk(
             .position(|text| bench::matches_normalized(text, &expected))
             .map_or(-1, |at| at as i64);
         let pool_len = pool.len();
-        let limit = if case.input.len() <= FEATURE_SHORT_BYTES {
-            FEATURE_CANDS_SHORT
-        } else {
-            FEATURE_CANDS_LONG
+        let skip = skip_rerank(&engine);
+        let ms_8m = match four.as_mut() {
+            Some(four) if !skip => apply_sync(&mut engine, four),
+            _ => 0.0,
         };
-        let listed: Vec<(usize, Candidate)> = engine
-            .candidates_detailed()
-            .iter()
-            .enumerate()
-            .filter(|(_, cand)| !cand.no_learn && !cand.quick && cand.full)
-            .take(limit)
-            .map(|(at, cand)| (at, cand.clone()))
-            .collect();
-        let context = crate::rerank::snapshot(&engine).context;
-        let (rank_8m, ms_8m, ms_25m) = match (four.as_mut(), five.as_mut()) {
-            (Some(four), Some(five)) => apply_rerank(&mut engine, four, five, &expected),
-            _ => (rank, 0.0, 0.0),
+        let rank_8m = rank_of(&engine, &expected);
+        let strict_rank_8m = strict_rank_of(&engine, case.expected);
+        let ms_25m = match five.as_mut() {
+            Some(five) if case.settle && !skip => apply_settled(&mut engine, five),
+            _ => 0.0,
         };
         let top1_settled = bench::eval_texts(&engine)
             .first()
             .map_or(String::new(), |text| (*text).to_string());
-        let rank_settled = rank_of(&engine, &expected);
-        let (picks, pages) = input_cost(&mut engine, &expected);
-        let features = match (four.as_mut(), five.as_mut()) {
-            (Some(four), Some(five)) if features => {
-                feature_rows(case, &expected, &context, &listed, four, five)
-            }
-            _ => Vec::new(),
+        let (rank_settled, strict_rank_settled) = if case.settle {
+            (
+                rank_of(&engine, &expected),
+                strict_rank_of(&engine, case.expected),
+            )
+        } else {
+            (-2, -2)
         };
+        let (picks, pages) = input_cost(&mut engine, &expected);
         out.push(Outcome {
             rank,
+            strict_rank,
             top1,
             ms,
             rank_8m,
+            strict_rank_8m,
             rank_settled,
+            strict_rank_settled,
             top1_settled,
             pool_rank,
             pool_len,
@@ -258,49 +292,9 @@ fn run_chunk(
             ms_25m,
             picks,
             pages,
-            features,
         });
     }
     out
-}
-
-/// 每条候选一行:引擎给的事实加两个模型的每字平均对数概率。
-fn feature_rows(
-    case: &Case,
-    expected: &str,
-    context: &str,
-    listed: &[(usize, Candidate)],
-    four: &mut Rerank,
-    five: &mut Rerank,
-) -> Vec<String> {
-    let texts: Vec<&str> = listed.iter().map(|(_, cand)| cand.text.as_str()).collect();
-    let (lm8, lm25) = (four.scores(context, &texts), five.scores(context, &texts));
-    listed
-        .iter()
-        .zip(lm8.iter().zip(&lm25))
-        .map(|((at, cand), (lm8, lm25))| {
-            format!(
-                "{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}",
-                case.category,
-                escape(case.input),
-                escape(expected),
-                at,
-                escape(&cand.text),
-                cand.score,
-                cand.channel,
-                cand.edits,
-                u8::from(cand.trusted),
-                u8::from(cand.sentence),
-                u8::from(cand.correction),
-                u8::from(cand.completion),
-                cand.freq,
-                cand.words.len(),
-                lm8,
-                lm25,
-                context.chars().count(),
-            )
-        })
-        .collect()
 }
 
 /// 私有语料与用户语料:逐条文字只允许出现在加密文件里。
@@ -315,6 +309,7 @@ pub fn run(
     models: Option<&Models>,
     corpus: Option<&str>,
     shard: (usize, usize),
+    accuracy: bool,
 ) -> usize {
     // 换用的语料只活到进程结束,泄漏掉省得 Case 带生命周期穿过线程。
     let (body, name) = match corpus {
@@ -328,7 +323,7 @@ pub fn run(
         }
         None => (CORPUS, CORPUS_NAME.to_string()),
     };
-    let (cases, malformed) = cases(body);
+    let (cases, malformed) = parse_cases(body, accuracy);
     let (at, total) = shard;
     let picked: Vec<&Case> = cases.iter().skip(at).step_by(total.max(1)).collect();
 
@@ -337,16 +332,12 @@ pub fn run(
         .map_or(1, usize::from)
         .max(1);
     let chunk_size = picked.len().div_ceil(threads).max(1);
-    // 私有与用户语料的文字只进加密文件,不导出特征。
-    let features = !is_sensitive(&name);
     let dict_ref = &dict;
     let gram_ref = &gram;
     let outcomes: Vec<Vec<Outcome>> = std::thread::scope(|scope| {
         let handles: Vec<_> = picked
             .chunks(chunk_size)
-            .map(|chunk| {
-                scope.spawn(move || run_chunk(chunk, dict_ref, gram_ref, models, features))
-            })
+            .map(|chunk| scope.spawn(move || run_chunk(chunk, dict_ref, gram_ref, models)))
             .collect();
         handles
             .into_iter()
@@ -355,19 +346,26 @@ pub fn run(
     });
 
     let mut tsv = String::new();
-    let mut feat = String::new();
     let _ = writeln!(tsv, "# schema={SCHEMA}");
     let _ = writeln!(tsv, "# engine=lueying {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(tsv, "# corpus={name}");
     let _ = writeln!(tsv, "# kind=items\n{COLUMNS}");
-    for (case, item) in picked.iter().zip(outcomes.into_iter().flatten()) {
-        for row in &item.features {
-            feat.push_str(row);
-            feat.push('\n');
-        }
+    for (index, (case, item)) in picked
+        .iter()
+        .zip(outcomes.into_iter().flatten())
+        .enumerate()
+    {
+        let case_ref = if accuracy {
+            case.source.to_string()
+        } else {
+            // Legacy pairing uses the original ordinal and includes the unexported context.
+            let mut hash = DefaultHasher::new();
+            case.row.hash(&mut hash);
+            format!("{}:{:016x}", at + index * total, hash.finish())
+        };
         let _ = writeln!(
             tsv,
-            "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}",
             case.category,
             escape(case.input),
             escape(case.expected),
@@ -383,6 +381,10 @@ pub fn run(
             item.ms_25m,
             item.picks,
             item.pages,
+            case_ref,
+            item.strict_rank,
+            item.strict_rank_8m,
+            item.strict_rank_settled,
         );
     }
     let path = format!("target/bench/{name}.{at}.tsv");
@@ -390,9 +392,6 @@ pub fn run(
         .and_then(|()| std::fs::write(&path, tsv))
         .map_err(|error| eprintln!("写 {path} 失败: {error}"))
         .is_ok();
-    if features {
-        let _ = std::fs::write(format!("target/bench/{name}.{at}.feat"), feat);
-    }
     println!("{path}: {} 条", picked.len());
     usize::from(malformed > 0) + usize::from(picked.is_empty()) + usize::from(!written)
 }

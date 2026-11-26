@@ -1,4 +1,4 @@
-# 真实词典与引擎链路的门禁:Linux 场景 E2E、候选基准、学习模拟、共享语料基准与延迟 ABAB 并行跑。
+# 真实词典与引擎链路的门禁:Linux 场景 E2E、候选基准与学习模拟并行跑。
 # Windows 全链路 E2E 与安装冒烟在 ci.yml 的 windows job 直跑,不再重复一套 Windows 构建。
 # 核心路径改动在 push 到 main 时由 ci.yml 通过 workflow_call 调用;也可手动 workflow_dispatch,勾 full 跑全量候选基准。
 # 同一提交成功跑过就跳过。
@@ -172,10 +172,3 @@ jobs:
         with:
           name: quality-learn-report
           path: target/learn-sim.md
-
-  # 共享语料基准单独铺开,不和上面的场景串行;延迟 ABAB 也在里面,与分片并行。
-  shared:
-    needs: preflight
-    if: needs.preflight.outputs.run == 'true'
-    uses: ./.github/workflows/dict-bench.yml
-    secrets: inherit

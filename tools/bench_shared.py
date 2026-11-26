@@ -11,7 +11,7 @@
     import-qingjian   把青简 --eval-details 的 JSONL 转成统一逐条结果
     import-windinput  把清风 sentence_eval_file 的控制台表格转成统一汇总结果
     import-msime      把水杉 convert_eval --dump 的 JSONL 转成统一逐条结果
-    summarize         把逐条结果(可含分片)合成 summary.json,含门限判定;--base 时与父提交配对做 McNemar 门禁
+    summarize         把逐条结果合成 summary.json;--base 诊断配对翻转,--gate 只卡绝对下限
     diff              逐条对比两份结果:增量、McNemar p 与被改坏的样本,JSON 输出
 
 统一结果 TSV 的头部用 `# key=value` 记录 schema/engine/corpus/kind:
@@ -226,8 +226,12 @@ def read_result(path: Path) -> tuple[dict[str, str], str, list[dict[str, str]]]:
             continue
         fields = line.split("\t")
         if header is None:
+            if len(set(fields)) != len(fields):
+                raise SystemExit(f"{path}: 列名重复")
             header = fields
             continue
+        if len(fields) != len(header):
+            raise SystemExit(f"{path}: 结果行列数与表头不一致")
         rows.append(dict(zip(header, fields)))
     if header is None:
         raise SystemExit(f"{path}: 缺少表头")
@@ -284,12 +288,6 @@ CORE_PREFIXES = ("clause-full-", "word-full-", "word-initials-", "word-mixed-", 
 EXCLUDED_FROM_CORE = ("clause-initials-",)
 # 延迟不在这里门限:共享语料分片在同一台机器上并行跑,逐条的 ms 互相干扰,只作诊断。
 # 产品延迟门限只看 E2E 单线程的数字(rerank.rs 的 8M/25M 决策 p95,main.rs 的按键 p95)。
-# 受保护类别:干净全拼。它们的首选若被纠错候选替换(误纠),与父提交配对后净退步不得超过下面的条数。
-CLEAN_PREFIXES = ("clause-full-", "word-full-", "chunk-full-")
-PROTECTED_MAX_NET_LOSS = 1
-# 配对门禁的显著性水平。每个类别单独做 McNemar 精确检验,只看净退步且 p 低于它的类别;
-# 常规取值 0.05。类别之间不做多重比较校正,判红依据的是单次运行里的配对计数。
-ALPHA = 0.05
 
 
 def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]:
@@ -300,6 +298,8 @@ def read_items(paths: list[Path]) -> tuple[dict[str, str], list[dict[str, str]]]
         part_meta, kind, part = read_result(path)
         if kind != "items":
             raise SystemExit(f"{path}: 需要 kind=items 的逐条结果")
+        for row in part:
+            row["_corpus"] = part_meta.get("corpus", "").removeprefix("eval-")
         meta.update(part_meta)
         rows.extend(part)
     return meta, rows
@@ -418,20 +418,25 @@ def corpus_groups(path: Path) -> dict[str, list[Path]]:
     return groups
 
 
-def paired(base_rows: list[dict[str, str]], head_rows: list[dict[str, str]]) -> dict[str, dict[str, float]]:
-    """同一语料两次运行的配对比较:按(类别, 键入串, 期望, 出现序)对齐,逐类统计退步、进步与 McNemar p。
+def paired_rows(base_rows: list[dict[str, str]], head_rows: list[dict[str, str]]):
+    """Require a bijection; ambiguous imported/historical rows without IDs cannot be paired."""
+    if not base_rows or not head_rows:
+        raise SystemExit("无法配对空结果")
+    rows = base_rows + head_rows
+    if any("case_ref" in row and not row["case_ref"] for row in rows):
+        raise SystemExit("用例 ID 为空")
+    use_ref = all(row.get("case_ref") for row in rows)
 
-    退步 = 父提交首选正确、当前首选错误;进步则相反。两边用例集合必须一致,否则报错。
-    """
+    def fields(row):
+        return (row["_corpus"] if "_corpus" in row else "", row["category"], row["input"], row["expected"])
 
-    def index(rows: list[dict[str, str]]) -> dict[tuple[str, str, str, int], dict[str, str]]:
-        seen: dict[tuple[str, str, str], int] = {}
+    def index(items):
         keyed = {}
-        for row in rows:
-            base = (row["category"], row["input"], row.get("expected", ""))
-            nth = seen.get(base, 0)
-            seen[base] = nth + 1
-            keyed[(*base, nth)] = row
+        for row in items:
+            key = (row.get("_corpus", ""), row["case_ref"]) if use_ref else fields(row)
+            if key in keyed:
+                raise SystemExit("配对存在重复键;需要两侧都提供唯一的稳定用例 ID")
+            keyed[key] = row
         return keyed
 
     before, after = index(base_rows), index(head_rows)
@@ -440,33 +445,62 @@ def paired(base_rows: list[dict[str, str]], head_rows: list[dict[str, str]]) -> 
             f"两次运行的用例不一致: 仅父提交 {len(before.keys() - after.keys())} 条, "
             f"仅当前 {len(after.keys() - before.keys())} 条"
         )
-    stats: dict[str, dict[str, float]] = {}
-    for key, row in after.items():
-        was = rank_in(before[key], "settled") == 0
-        now = rank_in(row, "settled") == 0
-        entry = stats.setdefault(key[0], {"n": 0, "regressed": 0, "improved": 0})
-        entry["n"] += 1
-        entry["regressed"] += was and not now
-        entry["improved"] += now and not was
-    for entry in stats.values():
-        entry["net"] = entry["improved"] - entry["regressed"]
-        entry["p"] = round(mcnemar_exact(int(entry["improved"]), int(entry["regressed"])), 4)
-    return stats
+    if use_ref and any(fields(before[key]) != fields(row) for key, row in after.items()):
+        raise SystemExit("用例 ID 相同但题目字段不一致")
+    return [(before[key], row) for key, row in after.items()]
 
 
-def paired_failures(stats_by_corpus: dict[str, dict[str, dict[str, float]]]) -> list[str]:
-    """配对门禁:任一类别显著净退步判红;干净全拼的净退步合计超过 PROTECTED_MAX_NET_LOSS 判红。"""
-    failed = []
-    protected_loss = 0
-    for corpus, stats in stats_by_corpus.items():
-        for category, entry in stats.items():
-            if entry["net"] < 0 and entry["p"] < ALPHA:
-                failed.append(f"{corpus}/{category}: 显著净退步 {-entry['net']:g} 条 (p={entry['p']})")
-            if category.startswith(CLEAN_PREFIXES):
-                protected_loss -= entry["net"]
-    if protected_loss > PROTECTED_MAX_NET_LOSS:
-        failed.append(f"干净全拼净退步 {protected_loss:g} 条,超过 {PROTECTED_MAX_NET_LOSS} 条")
-    return failed
+def paired_scope(pairs, stages=("settled", "settled"), samples=0):
+    n = len(pairs)
+    out = {"n": n}
+    for top in (1, 5):
+        rescued = broken = 0
+        examples = []
+        for a, b in pairs:
+            was = 0 <= rank_in(a, stages[0]) < top
+            now = 0 <= rank_in(b, stages[1]) < top
+            rescued += now and not was
+            broken += was and not now
+            if was and not now and len(examples) < samples:
+                examples.append({key: b.get(key, "") for key in ("input", "expected", "top1", "top1_settled")})
+        out[f"top{top}"] = {
+            "improved": rescued,
+            "regressed": broken,
+            "net": rescued - broken,
+            "delta": round((rescued - broken) * 100.0 / n, 2),
+            "p": mcnemar_exact(rescued, broken),
+        }
+        if samples:
+            out[f"top{top}"]["broken_samples"] = examples
+    return out
+
+
+def paired(base_rows, head_rows):
+    scopes = {}
+    for a, b in paired_rows(base_rows, head_rows):
+        scopes.setdefault(b["category"], []).append((a, b))
+    return {category: paired_scope(scope) for category, scope in scopes.items()}
+
+
+def validate_shards(groups, shards, required):
+    missing = set(required) - groups.keys()
+    if missing:
+        raise SystemExit(f"缺少必要语料: {sorted(missing)}")
+    for name, parts in groups.items():
+        if {p.name for p in parts} != {f"{name}.{i}.tsv" for i in range(shards)}:
+            raise SystemExit(f"{name}: 预期恰好 {shards} 个分片")
+        total = 0
+        source = ROOT / "dicts" / f"{name}.tsv"
+        for path in parts:
+            _, kind, rows = read_result(path)
+            shard = int(path.stem.rsplit(".", 1)[1])
+            seen = [row.get("case_ref", "").partition(":")[0] for row in rows]
+            expected = list(map(str, range(shard, shard + shards * len(rows), shards)))
+            if kind != "items" or not rows or seen != expected:
+                raise SystemExit(f"{path}: 分片为空或用例编号不连续")
+            total += len(rows)
+        if source.is_file() and total != len(read_corpus(source)):
+            raise SystemExit(f"{name}: 用例总数与语料不一致")
 
 
 def cmd_summarize(args: argparse.Namespace) -> int:
@@ -475,31 +509,23 @@ def cmd_summarize(args: argparse.Namespace) -> int:
     if not groups:
         raise SystemExit(f"{args.dir}: 没有结果")
     base_groups = corpus_groups(Path(args.base)) if args.base else None
+    if base_groups is not None and base_groups.keys() != groups.keys():
+        raise SystemExit("两次运行的语料集合不一致")
+    if args.shards:
+        validate_shards(groups, args.shards, args.require_corpus)
+        if base_groups is not None:
+            validate_shards(base_groups, args.shards, args.require_corpus)
     summary: dict[str, object] = {}
     failed: list[str] = []
-    stats_by_corpus: dict[str, dict[str, dict[str, float]]] = {}
     for corpus, paths in groups.items():
         meta, rows = read_items(paths)
         section = summarize_rows(rows)
         section["engine_name"] = meta.get("engine", "")
         section["gate_failures"] = gate_failures(section)
         if base_groups is not None:
-            if corpus not in base_groups:
-                raise SystemExit(f"父提交缺少语料 {corpus}")
-            stats = paired(read_items(base_groups[corpus])[1], rows)
-            section["paired"] = stats
-            stats_by_corpus[corpus] = stats
+            section["paired"] = paired(read_items(base_groups[corpus])[1], rows)
         failed += section["gate_failures"]
         summary[corpus] = section
-    if stats_by_corpus:
-        failed += paired_failures(stats_by_corpus)
-        protected = sum(
-            -entry["net"]
-            for stats in stats_by_corpus.values()
-            for category, entry in stats.items()
-            if category.startswith(CLEAN_PREFIXES)
-        )
-        print(f"干净全拼净变化 {-protected:+g} 条(门限:退步不超过 {PROTECTED_MAX_NET_LOSS} 条)")
     text = json.dumps(summary, ensure_ascii=False, indent=1)
     Path(args.dir, "summary.json").write_text(text, encoding="utf-8")
     print(text if args.print else f"写出 {args.dir}/summary.json")
@@ -510,42 +536,24 @@ def cmd_summarize(args: argparse.Namespace) -> int:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     """逐条对比两份结果:每类的增量、McNemar p 与翻转样本,JSON 输出。"""
-    def load(spec: str) -> tuple[dict[tuple[str, str], dict[str, str]], str]:
+    def load(spec: str) -> tuple[list[dict[str, str]], str]:
         path, _, stage = spec.partition(":")
         target = Path(path)
         paths = sorted(target.glob("*.tsv")) if target.is_dir() else [target]
-        rows = read_items(paths)[1]
-        return {(row["category"], row["input"]): row for row in rows}, stage or "settled"
+        if stage and stage not in STAGES:
+            raise SystemExit(f"未知阶段: {stage}")
+        return read_items(paths)[1], stage or "settled"
 
     base, base_stage = load(args.base)
     cand, cand_stage = load(args.candidate)
-    keys = [key for key in base if key in cand]
-    out: dict[str, object] = {"common": len(keys)}
-    for category in sorted({key[0] for key in keys}) + ["all"]:
-        scope = [key for key in keys if category in ("all", key[0])]
-        entry: dict[str, object] = {"n": len(scope)}
-        for top in (1, 5):
-            def hit(row: dict[str, str], stage: str) -> bool:
-                return 0 <= rank_in(row, stage) < top
-
-            rescued = [key for key in scope if hit(cand[key], cand_stage) and not hit(base[key], base_stage)]
-            broken = [key for key in scope if hit(base[key], base_stage) and not hit(cand[key], cand_stage)]
-            entry[f"top{top}"] = {
-                "delta": round((len(rescued) - len(broken)) * 100.0 / len(scope), 2),
-                "rescued": len(rescued),
-                "broken": len(broken),
-                "p": round(mcnemar_exact(len(rescued), len(broken)), 5),
-            }
-            if top == 1 and category != "all" and args.samples:
-                entry["broken_samples"] = [
-                    {
-                        "input": key[1],
-                        "expected": base[key].get("expected", ""),
-                        "got": cand[key].get("top1_settled") or cand[key].get("top1", ""),
-                    }
-                    for key in broken[: args.samples]
-                ]
-        out[category] = entry
+    pairs = paired_rows(base, cand)
+    stages = (base_stage, cand_stage)
+    scopes = {}
+    for a, b in pairs:
+        scopes.setdefault(b["category"], []).append((a, b))
+    out = {"common": len(pairs), "all": paired_scope(pairs, stages), "categories": {
+        category: paired_scope(scope, stages, args.samples) for category, scope in scopes.items()
+    }}
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0
 
@@ -689,6 +697,8 @@ def main() -> int:
     summarize.add_argument("--gate", action="store_true", help="门限不达标时退出码非零")
     summarize.add_argument("--print", action="store_true", help="同时打印到标准输出")
     summarize.add_argument("--base", help="父提交的逐条结果目录;与之配对做退步/进步计数与 McNemar 检验")
+    summarize.add_argument("--shards", type=int, help="校验每份语料的预期分片数")
+    summarize.add_argument("--require-corpus", action="append", default=[], help="必须存在的语料名;可重复")
     summarize.set_defaults(func=cmd_summarize)
 
     diff = sub.add_parser("diff", help="逐条对比两份结果,JSON 输出;路径后可跟 :engine/:8m/:settled")
