@@ -254,8 +254,19 @@ impl Reranker {
             .as_ref()
             .is_some_and(|(cached, _)| *cached == tokens);
         if !matched {
-            let prefix = self.model.run_prefix(&tokens);
-            self.cached = Some((tokens, prefix));
+            // Prefix extension is orthogonal to the one-at-a-time candidate loop, so the
+            // reference uses it too and the position counts stay comparable.
+            let extends = self.cached.as_ref().is_some_and(|(cached, _)| {
+                cached.len() < tokens.len() && tokens.starts_with(cached)
+            });
+            if extends {
+                let (_, old) = self.cached.take().expect("extend checked above");
+                let prefix = self.model.extend_prefix(&old, &tokens);
+                self.cached = Some((tokens, prefix));
+            } else {
+                let prefix = self.model.run_prefix(&tokens);
+                self.cached = Some((tokens, prefix));
+            }
         }
         let (_, prefix) = self.cached.as_ref().expect("prefix was just computed");
         let mut previous =

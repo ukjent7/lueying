@@ -94,6 +94,12 @@ impl Reranker {
 
     pub(crate) fn clear_history(&mut self) {
         self.cached = None;
+        self.clear_resume();
+    }
+
+    /// Candidate states describe runs that started after the old prefix. A longer context
+    /// changes what those runs should have attended to, so only the prefix itself survives.
+    fn clear_resume(&mut self) {
         self.resume.clear();
         self.resume_scratch.clear();
     }
@@ -292,11 +298,24 @@ impl Reranker {
             .as_ref()
             .is_some_and(|(cached, _)| *cached == tokens);
         if !matched {
-            self.clear_history();
-            let prefix = self
-                .model
-                .run_prefix_reusing(&tokens, &mut self.scratch.feed_forward);
-            self.cached = Some((tokens, prefix));
+            // 上屏让上下文变长时,旧前缀仍逐 token 是新前缀的开始:只补算新增的
+            // 位置,旧 KV 与末行隐藏状态都留着。候选续跑仍要清空,它们是在旧
+            // 前缀之后算的,不能带着错误的可见上下文复用。
+            let extends = self.cached.as_ref().is_some_and(|(cached, _)| {
+                cached.len() < tokens.len() && tokens.starts_with(cached)
+            });
+            if extends {
+                let (_, old) = self.cached.take().expect("extend checked above");
+                let prefix = self.model.extend_prefix(&old, &tokens);
+                self.clear_resume();
+                self.cached = Some((tokens, prefix));
+            } else {
+                self.clear_history();
+                let prefix = self
+                    .model
+                    .run_prefix_reusing(&tokens, &mut self.scratch.feed_forward);
+                self.cached = Some((tokens, prefix));
+            }
         }
         let (_, prefix) = self.cached.as_ref().expect("prefix was just computed");
         let capacity = indices.size_hint().0;

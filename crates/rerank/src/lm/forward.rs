@@ -232,6 +232,82 @@ impl SentenceModel {
         }
     }
 
+    /// Continues a cached prefix with more tokens, keeping the KV already computed.
+    ///
+    /// Only the appended tokens are forwarded: the new rows attend to the old prefix and
+    /// to each other exactly as they would after a full [`Self::run_prefix`]. The caller
+    /// guarantees `tokens` starts with the prefix's own token sequence.
+    pub(crate) fn extend_prefix(&self, prefix: &Prefix<'_>, tokens: &[u32]) -> Prefix<'static> {
+        let n_embd = self.config.n_embd;
+        let base = prefix.length;
+        debug_assert!(tokens.len() >= base);
+        debug_assert!(prefix.terminal.is_none());
+        let suffix = &tokens[base..];
+        if suffix.is_empty() {
+            return Prefix {
+                length: base,
+                keys: Cow::Owned(
+                    prefix
+                        .keys
+                        .iter()
+                        .map(|row| row[..base * n_embd].to_vec())
+                        .collect(),
+                ),
+                values: Cow::Owned(
+                    prefix
+                        .values
+                        .iter()
+                        .map(|row| row[..base * n_embd].to_vec())
+                        .collect(),
+                ),
+                terminal: None,
+                last_hidden: Arc::clone(&prefix.last_hidden),
+            };
+        }
+        let contexts = [BatchContext::default()];
+        let rows: Vec<BatchRow> = suffix
+            .iter()
+            .enumerate()
+            .map(|(depth, &token)| BatchRow {
+                token,
+                parent: depth.checked_sub(1),
+                depth,
+                context: 0,
+            })
+            .collect();
+        let states = self.run_batch(prefix, &contexts, &rows);
+        let keys = states
+            .keys
+            .iter()
+            .zip(prefix.keys.iter())
+            .map(|(added, old)| {
+                let mut row = Vec::with_capacity(tokens.len() * n_embd);
+                row.extend_from_slice(&old[..base * n_embd]);
+                row.extend_from_slice(added);
+                row
+            })
+            .collect();
+        let values = states
+            .values
+            .iter()
+            .zip(prefix.values.iter())
+            .map(|(added, old)| {
+                let mut row = Vec::with_capacity(tokens.len() * n_embd);
+                row.extend_from_slice(&old[..base * n_embd]);
+                row.extend_from_slice(added);
+                row
+            })
+            .collect();
+        let last = &states.hidden[states.hidden.len() - n_embd..];
+        Prefix {
+            length: tokens.len(),
+            keys: Cow::Owned(keys),
+            values: Cow::Owned(values),
+            terminal: None,
+            last_hidden: Arc::new(HiddenState::new(last.to_vec())),
+        }
+    }
+
     /// Runs a candidate against a cached prefix and returns its total log-probability.
     #[cfg(test)]
     pub(crate) fn score_tail(&self, prefix: &Prefix<'_>, tail: &[u32]) -> f32 {

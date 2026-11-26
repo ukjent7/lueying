@@ -191,6 +191,31 @@ fn split_qkv_preserves_prefix_and_row_order() {
 }
 
 #[test]
+fn extending_a_prefix_matches_rebuilding_it() {
+    let model = cache_test_model();
+    let head = model.encode("我很");
+    let full = model.encode("我很你");
+    let prefix = model.run_prefix(&head);
+    let extended = model.extend_prefix(&prefix, &full);
+    let rebuilt = model.run_prefix(&full);
+    assert_eq!(extended.length, rebuilt.length);
+    for (left, right) in extended.keys.iter().zip(rebuilt.keys.iter()) {
+        assert_eq!(left, right);
+    }
+    for (left, right) in extended.values.iter().zip(rebuilt.values.iter()) {
+        assert_eq!(left, right);
+    }
+    assert_eq!(
+        extended.last_hidden.values, rebuilt.last_hidden.values,
+        "末位置隐藏状态与整串重建不一致"
+    );
+    let tail = model.encode("好");
+    let via_extended = model.score_tail(&extended, &tail);
+    let via_rebuilt = model.score_tail(&rebuilt, &tail);
+    assert_eq!(via_extended.to_bits(), via_rebuilt.to_bits());
+}
+
+#[test]
 fn a_short_tail_does_not_double_the_retained_kv_capacity() {
     let model = cache_test_model();
     let prefix = model.run_prefix(&[super::BOS, 3, 4, 5, 6]);
