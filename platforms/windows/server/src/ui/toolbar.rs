@@ -454,17 +454,19 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
     }
     let pad = super::rune::capture_pad(dpi);
     let reuse = std::mem::take(&mut s.backdrop_spare);
-    let Some((raw_w, raw_h, raw)) =
-        material::capture_rect(x - pad, y - pad, (w + 2 * pad) as u32, (h + 2 * pad) as u32, reuse)
-    else {
+    let Some((raw_w, raw_h, raw)) = material::capture_rect(
+        x - pad,
+        y - pad,
+        (w + 2 * pad) as u32,
+        (h + 2 * pad) as u32,
+        reuse,
+    ) else {
         // 采样失败:旧桌面截图不能继续冒充当前玻璃。
         return s.drop_backdrop();
     };
     if s.backdrop
         .as_ref()
-        .and_then(|pixels| {
-            pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw)
-        })
+        .and_then(|pixels| pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw))
         .unwrap_or(false)
     {
         s.backdrop_spare = raw;
@@ -581,8 +583,8 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
         (UiMaterial::Glass, true) => {}
         // 黑瓷:不透的共享石墨胎体,受光面身份交给光照 compositor。
         (UiMaterial::Ceramic, _) if !high_contrast => {
-            bar = material::ceramic_face(bar, &palette, t)
-                .mark(lueying_server::lighting::MARK_SHELL);
+            bar =
+                material::ceramic_face(bar, &palette, t).mark(lueying_server::lighting::MARK_SHELL);
         }
         // 关闭特效、私密与高对比:实底主题兜底,不采桌面。
         _ => {
@@ -831,7 +833,6 @@ fn moon_el(
     )
 }
 
-
 /// 拖动:按下非按钮处抓住,移动跟手并夹在屏幕内,松开写回配置。
 /// 屏幕坐标用 `Drag::screen_point`(桌面物理像素),与模型、配置一致。
 /// 每次位置变化先作废旧位置的采样,下一轮 poll 抓新位置。
@@ -1040,7 +1041,11 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
             let mut raw = Vec::with_capacity((raw_w * raw_h * 4) as usize);
             for y in 0..raw_h {
                 for x in 0..raw_w {
-                    let v = if ((x + y) / stripe).is_multiple_of(2) { a } else { b };
+                    let v = if ((x + y) / stripe).is_multiple_of(2) {
+                        a
+                    } else {
+                        b
+                    };
                     raw.extend_from_slice(&[v, v, v, 255]);
                 }
             }

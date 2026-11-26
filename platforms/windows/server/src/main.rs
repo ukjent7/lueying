@@ -98,7 +98,8 @@ fn main() {
             let Some(frames) = args.next() else {
                 std::process::exit(2);
             };
-            let result = crate::ui::rune::snap_motion(reduce, glass_up, moving, flight, output, frames);
+            let result =
+                crate::ui::rune::snap_motion(reduce, glass_up, moving, flight, output, frames);
             if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);

@@ -11,13 +11,12 @@ use std::time::Duration;
 use lueying_protocol::Request;
 use rune::tok::motion;
 use rune::{
-    App, AppHandle, AppSpec, Color, Cursor, Cx, El, Live, ScrollSpec, TextEdit, TextStyle,
-    Tx, col, el, row, text,
+    App, AppHandle, AppSpec, Color, Cursor, Cx, El, Live, ScrollSpec, TextEdit, TextStyle, Tx, col,
+    el, row, text,
 };
 use rune_kit::{
     Button as KitButton, ButtonVariant, ControlSize, Kit, PaletteSeed, SegmentedControl, Slider,
-    Switch,
-    TextArea, TextInput, root,
+    Switch, TextArea, TextInput, root,
 };
 
 use crate::ext_secret;
@@ -214,16 +213,14 @@ impl Sky {
         };
         self.disc.set([x, y]);
         let cd = SKY_D * 1.9;
-        self.corona.set([x + SKY_D / 2.0 - cd / 2.0, y + SKY_D / 2.0 - cd / 2.0]);
+        self.corona
+            .set([x + SKY_D / 2.0 - cd / 2.0, y + SKY_D / 2.0 - cd / 2.0]);
         for (crater, (fx, fy, fd)) in self.craters.iter().zip([
             (0.66f32, 0.70f32, 0.17f32),
             (0.76, 0.45, 0.12),
             (0.56, 0.80, 0.09),
         ]) {
-            crater.set([
-                x + (fx - fd / 2.0) * SKY_D,
-                y + (fy - fd / 2.0) * SKY_D,
-            ]);
+            crater.set([x + (fx - fd / 2.0) * SKY_D, y + (fy - fd / 2.0) * SKY_D]);
         }
         self.fill.set(color(hex).alpha(fade));
         self.fade.set(fade);
@@ -264,7 +261,9 @@ pub fn run() {
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
     let app = App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([0.72, 0.72, 0.75]))
+        .compositor(lueying_server::lighting::LightFx::lit_room([
+            0.72, 0.72, 0.75,
+        ]))
         .tab_visits_controls(true)
         .init(move || state);
     let handle = app.handle();
@@ -308,7 +307,6 @@ fn load_core() -> Core {
         release: None,
     }
 }
-
 
 /// 窗顶天空的日/月。12 分钟一整圈(720 秒):前半圈太阳、后半圈
 /// 月亮,各走正弦弧从左升右落。高度决定颜色与能量——日出日落
@@ -1636,7 +1634,9 @@ fn snap_state(state: State, size: (f32, f32), output: String) -> Result<(), Stri
     // 快照必须与真实应用同构:光照 compositor 缺失会让设置页
     // 渲染退化成无光照平底,验证失真。
     App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([0.72, 0.72, 0.75]))
+        .compositor(lueying_server::lighting::LightFx::lit_room([
+            0.72, 0.72, 0.75,
+        ]))
         .tab_visits_controls(true)
         .init(move || state)
         .args([

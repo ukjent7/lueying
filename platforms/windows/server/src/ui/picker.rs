@@ -138,8 +138,7 @@ impl Picker {
                 unsafe { GetCursorPos(&mut point) }.ok()?;
                 Some((point.x, point.y))
             });
-        let work = anchor
-            .map_or_else(place::primary_work_area, |(x, y)| place::work_area_at(x, y));
+        let work = anchor.map_or_else(place::primary_work_area, |(x, y)| place::work_area_at(x, y));
         let scale = anchor.map_or(1.0, |(x, y)| place::scale_at(x, y));
         let width = work.right - work.left;
         let height = work.bottom - work.top;

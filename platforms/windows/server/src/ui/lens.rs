@@ -131,19 +131,24 @@ impl<S: 'static> Compositor<S> for LensFx {
         );
         let clear = f.rt.clear_color();
         f.ui.prepare(device, queue, &mut f.rt.text.atlas, &f.rt.instances, size);
-        f.ui.draw_with_backdrop(f.encoder, f.target, clear, &mut |phase, s: &EffectSite<'_>| {
-            let Some(k) = at.iter().position(|n| *n == s.index) else {
-                return;
-            };
-            match phase {
-                EffectPhase::Backdrop(enc) => {
-                    if let Some(bd) = s.backdrop {
-                        fx.blur_backdrop(device, queue, enc, bd, k);
+        f.ui.draw_with_backdrop(
+            f.encoder,
+            f.target,
+            clear,
+            &mut |phase, s: &EffectSite<'_>| {
+                let Some(k) = at.iter().position(|n| *n == s.index) else {
+                    return;
+                };
+                match phase {
+                    EffectPhase::Backdrop(enc) => {
+                        if let Some(bd) = s.backdrop {
+                            fx.blur_backdrop(device, queue, enc, bd, k);
+                        }
                     }
+                    EffectPhase::Draw(pass) => fx.draw_layer_in(pass, s.format, s.origin, k),
                 }
-                EffectPhase::Draw(pass) => fx.draw_layer_in(pass, s.format, s.origin, k),
-            }
-        });
+            },
+        );
     }
 }
 
@@ -182,7 +187,12 @@ impl<S: 'static> Compositor<S> for SurfaceFx {
             if i.params[1] == KIND_EFFECT && mark == LENS {
                 has_lens = true;
             }
-            if matches!(mark, lueying_server::lighting::MARK_SHELL | lueying_server::lighting::MARK_EMITTER | lueying_server::lighting::MARK_EMITTER_WARM) {
+            if matches!(
+                mark,
+                lueying_server::lighting::MARK_SHELL
+                    | lueying_server::lighting::MARK_EMITTER
+                    | lueying_server::lighting::MARK_EMITTER_WARM
+            ) {
                 has_light = true;
             }
         }
@@ -191,7 +201,13 @@ impl<S: 'static> Compositor<S> for SurfaceFx {
         } else if has_light {
             self.light.render(f);
         } else {
-            f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
+            f.ui.prepare(
+                f.device,
+                f.queue,
+                &mut f.rt.text.atlas,
+                &f.rt.instances,
+                f.size,
+            );
             f.ui.draw(f.encoder, f.target, f.rt.clear_color());
         }
     }

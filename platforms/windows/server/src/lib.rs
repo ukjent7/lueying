@@ -22,6 +22,7 @@ mod config_file;
 
 pub mod host_panel;
 
+#[cfg(windows)]
 pub mod lighting;
 
 #[cfg(windows)]

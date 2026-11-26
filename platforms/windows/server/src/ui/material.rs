@@ -48,7 +48,6 @@ pub(super) fn ceramic_face(face: El, palette: &Palette, stroke: f32) -> El {
         .border(1.0 * stroke, theme::srgb(palette.border))
 }
 
-
 /// 抓取一块屏幕区域的桌面像素(RGBA,straight alpha)。
 #[cfg(windows)]
 pub(super) fn capture_rect(

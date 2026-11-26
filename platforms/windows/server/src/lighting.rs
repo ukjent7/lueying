@@ -92,20 +92,25 @@ impl Default for LightFx {
 
 impl LightFx {
     pub fn new() -> Self {
-        Self { gpu: None, source: Source::Emitters }
+        Self {
+            gpu: None,
+            source: Source::Emitters,
+        }
     }
 
     /// 亮室 emitter 模式:高 ambient 保底可读、关 GI。设置窗用——
     /// 日月 emitter 驱动光照,但工具窗任何时刻都要均匀可读。
     pub fn lit_room(ambient: [f32; 3]) -> Self {
-        Self { gpu: None, source: Source::LitRoom(ambient) }
+        Self {
+            gpu: None,
+            source: Source::LitRoom(ambient),
+        }
     }
 
     pub fn release(&mut self) {
         self.gpu = None;
     }
 }
-
 
 fn float_target(device: &wgpu::Device, size: (u32, u32), label: &str) -> wgpu::TextureView {
     device
@@ -169,7 +174,10 @@ fn fs(v: Vary) -> @location(0) vec4<f32> {
 }
 ";
 
-fn blit_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+fn blit_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("lueying-light-blit"),
         source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
@@ -238,11 +246,18 @@ type Emitter = ([f32; 4], [f32; 3], f32, f32, f32, f32, f32);
 /// 一帧的光照提取:发光元件中心(pt→设备 px 转换在调用处)与 prim 列表。
 struct Extracted {
     prims: Vec<Prim>,
-    emitters: Vec<Emitter>,  // rect, rgb, k, intensity, radius, alpha, z_pt
+    emitters: Vec<Emitter>, // rect, rgb, k, intensity, radius, alpha, z_pt
 }
 
 /// 从实例流提取瓷面与发光元件。实例矩形是设备 px;辐射色取实例填充。
-fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, out: &mut Extracted) {
+fn extract(
+    rect: [f32; 4],
+    radii: [f32; 4],
+    fill: [f32; 4],
+    mark: u32,
+    k: f32,
+    out: &mut Extracted,
+) {
     match mark {
         MARK_SHELL => {
             out.prims.push(
@@ -257,7 +272,11 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
             // 辐射/灯色转线性(spike 验证过的契约):实例填充是 srgb
             // 值,直接当线性会让红光通道高估数倍、光偏白。
             let lin = |c: f32| {
-                if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
             };
             let mut rgb = [lin(fill[0]), lin(fill[1]), lin(fill[2])];
             if mark == MARK_EMITTER_WARM {
@@ -303,7 +322,8 @@ fn extract(rect: [f32; 4], radii: [f32; 4], fill: [f32; 4], mark: u32, k: f32, o
             );
             // fill[3] 是 alpha:日出日落天体渐隐时,掺白与强度必须
             // 跟暗——否则隐形的天体还在投满强度的白光,光与源脱节。
-            out.emitters.push((rect, rgb, k, intensity, radius, fill[3], z));
+            out.emitters
+                .push((rect, rgb, k, intensity, radius, fill[3], z));
         }
         _ => {}
     }
@@ -320,7 +340,10 @@ impl<S: 'static> Compositor<S> for LightFx {
 
     fn render(&mut self, f: &mut Frame<'_, S>) {
         // 扫描实例:拆文字/底图,提取光照 primitive 与发光元件。
-        let mut extracted = Extracted { prims: Vec::new(), emitters: Vec::new() };
+        let mut extracted = Extracted {
+            prims: Vec::new(),
+            emitters: Vec::new(),
+        };
         let mut base_idx: Vec<usize> = Vec::new();
         let mut text_idx: Vec<usize> = Vec::new();
         let mut any_mark = false;
@@ -379,14 +402,23 @@ impl<S: 'static> Compositor<S> for LightFx {
             // 面板才能触发自遮挡——否则胶囊被自己的同位灯直射炸白
             // (spike 对照实验:prim 翻序胶囊中心 216 vs 80)。
             let i = f.rt.instances[n];
-            let mut ordered = Extracted { prims: Vec::new(), emitters: Vec::new() };
+            let mut ordered = Extracted {
+                prims: Vec::new(),
+                emitters: Vec::new(),
+            };
             extract(i.rect, i.radii, i.fill, MARK_SHELL, k, &mut ordered);
             ordered.prims.extend(extracted.prims.iter().copied());
             ordered.emitters = extracted.emitters;
             extracted = ordered;
         }
         if !any_mark {
-            f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
+            f.ui.prepare(
+                f.device,
+                f.queue,
+                &mut f.rt.text.atlas,
+                &f.rt.instances,
+                f.size,
+            );
             f.ui.draw(f.encoder, f.target, f.rt.clear_color());
             return;
         }
@@ -395,8 +427,13 @@ impl<S: 'static> Compositor<S> for LightFx {
         // 饱和);Skylight 模式一盏时间驱动的天光,位置相对窗口中心。
         if std::env::var("LYSCAN").is_ok() {
             for (rect, rgb, _, intensity, _radius, alpha, _) in &extracted.emitters {
-                eprintln!("LYEM rect={rect:?} r={:.2} g={:.2} b={:.2} i={intensity} a={alpha} prims={}",
-                    rgb[0], rgb[1], rgb[2], extracted.prims.len());
+                eprintln!(
+                    "LYEM rect={rect:?} r={:.2} g={:.2} b={:.2} i={intensity} a={alpha} prims={}",
+                    rgb[0],
+                    rgb[1],
+                    rgb[2],
+                    extracted.prims.len()
+                );
             }
         }
         let emitter_lights: Vec<Light> = extracted
@@ -425,7 +462,13 @@ impl<S: 'static> Compositor<S> for LightFx {
         // 无灯帧(如无选中胶囊的条):rune-light 无灯早退、lit 不写入,
         // 直接原始绘制——无灯即无光效,平面底图就是正确的物理结果。
         if lights.is_empty() {
-            f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, &f.rt.instances, f.size);
+            f.ui.prepare(
+                f.device,
+                f.queue,
+                &mut f.rt.text.atlas,
+                &f.rt.instances,
+                f.size,
+            );
             f.ui.draw(f.encoder, f.target, f.rt.clear_color());
             return;
         }
@@ -433,10 +476,18 @@ impl<S: 'static> Compositor<S> for LightFx {
         let (device, queue, size) = (f.device, f.queue, f.size);
         let device_key = f.device_key();
         let format = f.format;
-        if self.gpu.as_ref().is_none_or(|g| {
-            g.device_key != device_key || g.size != size || g.format != format
-        }) {
-            let light = LightRenderer::new(device, queue, size.0, size.1, wgpu::TextureFormat::Rgba8Unorm);
+        if self
+            .gpu
+            .as_ref()
+            .is_none_or(|g| g.device_key != device_key || g.size != size || g.format != format)
+        {
+            let light = LightRenderer::new(
+                device,
+                queue,
+                size.0,
+                size.1,
+                wgpu::TextureFormat::Rgba8Unorm,
+            );
             let (blit, bind_layout) = blit_pipeline(device, format);
             self.gpu = Some(Gpu {
                 device_key,
@@ -458,7 +509,8 @@ impl<S: 'static> Compositor<S> for LightFx {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     })
                     .create_view(&Default::default()),
@@ -471,13 +523,15 @@ impl<S: 'static> Compositor<S> for LightFx {
         // 底图(非文字)与文字两路离屏。
         let base_instances: Vec<_> = base_idx.iter().map(|n| f.rt.instances[*n]).collect();
         let text_instances: Vec<_> = text_idx.iter().map(|n| f.rt.instances[*n]).collect();
-        gpu.ui16.prepare(device, queue, &mut f.rt.text.atlas, &base_instances, size);
+        gpu.ui16
+            .prepare(device, queue, &mut f.rt.text.atlas, &base_instances, size);
         {
             let mut enc = device.create_command_encoder(&Default::default());
             gpu.ui16.draw(&mut enc, &gpu.base, [0.0; 4]);
             queue.submit([enc.finish()]);
         }
-        gpu.ui16.prepare(device, queue, &mut f.rt.text.atlas, &text_instances, size);
+        gpu.ui16
+            .prepare(device, queue, &mut f.rt.text.atlas, &text_instances, size);
         {
             let mut enc = device.create_command_encoder(&Default::default());
             gpu.ui16.draw(&mut enc, &gpu.text, [0.0; 4]);
@@ -490,7 +544,11 @@ impl<S: 'static> Compositor<S> for LightFx {
                 Source::Emitters => AMBIENT,
             },
             albedo_floor: 0.06,
-            text: TextPolicy { floor: 0.5, ceiling: 1.3, ..Default::default() },
+            text: TextPolicy {
+                floor: 0.5,
+                ceiling: 1.3,
+                ..Default::default()
+            },
             gi: if matches!(self.source, Source::Emitters) {
                 // 宽光池配方(spike 参数族扫描,双倍率形态一致):
                 // 吸收 0.35→0.05——辐射在瓷面里走得更远,光池从
@@ -512,7 +570,12 @@ impl<S: 'static> Compositor<S> for LightFx {
             device,
             queue,
             f.encoder,
-            &Scene { prims: &extracted.prims, lights: &lights, settings, emission: None },
+            &Scene {
+                prims: &extracted.prims,
+                lights: &lights,
+                settings,
+                emission: None,
+            },
             &gpu.base,
             &gpu.text,
             &gpu.lit,
@@ -523,9 +586,18 @@ impl<S: 'static> Compositor<S> for LightFx {
             label: Some("lueying-light-blit"),
             layout: &gpu.bind_layout,
             entries: [
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&gpu.lit) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&gpu.base) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&gpu.text) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&gpu.lit),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&gpu.base),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&gpu.text),
+                },
             ]
             .as_slice(),
         });

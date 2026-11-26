@@ -28,8 +28,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
 };
 
-use windows::core::PWSTR;
 use rune::{PointerButton, PointerInput};
+use windows::core::PWSTR;
 
 use crate::imp::State;
 
@@ -161,10 +161,7 @@ fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let message = wparam.0 as u32;
     let rect = visible_candidate()?;
     let (x, y) = (info.pt.x, info.pt.y);
-    let inside = x >= rect.0
-        && x < rect.0 + rect.2
-        && y >= rect.1
-        && y < rect.1 + rect.3;
+    let inside = x >= rect.0 && x < rect.0 + rect.2 && y >= rect.1 && y < rect.1 + rect.3;
     let local = || crate::ui::rune::pointer_local((x, y));
     match message {
         WM_LBUTTONDOWN if inside => {

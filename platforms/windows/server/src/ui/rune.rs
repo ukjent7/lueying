@@ -264,7 +264,6 @@ impl Candidate {
         !high_contrast && self.effects() && self.transparency
     }
 
-
     fn live_glass(&self, high_contrast: bool) -> bool {
         !self.private
             && self.material.is_glass()
@@ -1399,9 +1398,7 @@ fn apply_backdrop(
     let _ = (area, pad);
     if s.backdrop
         .as_ref()
-        .and_then(|pixels| {
-            pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw)
-        })
+        .and_then(|pixels| pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw))
         .unwrap_or(false)
     {
         s.backdrop_spare = raw;
@@ -1583,9 +1580,9 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
         // 采样:面板上方亮则光泽与上缘亮,环境暗则哑光,没有凭空的光。
         (UiMaterial::Ceramic, _) if !high_contrast => {
             body = super::material::ceramic_face(body, &palette, scale)
-            // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
-            // compositor 侧,这里只声明身份。
-            .mark(lueying_server::lighting::MARK_SHELL);
+                // 瓷面受光 primitive:rune-light 的 bevel/gloss 参数在
+                // compositor 侧,这里只声明身份。
+                .mark(lueying_server::lighting::MARK_SHELL);
         }
         // 背板/动效不可用:实底主题兜底,绝不露原始桌面。
         _ => {
@@ -1745,13 +1742,13 @@ fn content(s: &Candidate, geom: &Geom, look: &Look) -> El {
         };
         layer = layer.child(
             capsule
-            .key(format!(
-                "sel-{}-{}-{:?}",
-                s.fx.last.as_ref().map(|l| l.view.page).unwrap_or(0),
-                s.fx.last.as_ref().map(|l| l.view.expanded).unwrap_or(false),
-                geom.spec.layout,
-            ))
-            .motion(motion::SETTLE),
+                .key(format!(
+                    "sel-{}-{}-{:?}",
+                    s.fx.last.as_ref().map(|l| l.view.page).unwrap_or(0),
+                    s.fx.last.as_ref().map(|l| l.view.expanded).unwrap_or(false),
+                    geom.spec.layout,
+                ))
+                .motion(motion::SETTLE),
         );
     }
     layer = layer.child(viewport);
@@ -2344,8 +2341,6 @@ impl Candidate {
         }
     }
 }
-
-
 
 /// 棋盘的一格:选中时垫同款实心主题色胶囊,文字在格内居中。
 fn cell_el(
