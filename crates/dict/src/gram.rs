@@ -33,6 +33,14 @@ const SCORE_SCALE: f64 = 255.0 / 6.0;
 /// 更长的前文只会逐级缩短后再查,多取无益。
 pub const CONTEXT_CHARS: usize = 3;
 
+/// True if there is no written clause before the insertion point.
+pub fn at_clause_start(context: &str) -> bool {
+    let tail = context.trim_end_matches([
+        ' ', '\t', '\u{3000}', '“', '‘', '「', '『', '（', '(', '【', '[', '《',
+    ]);
+    tail.is_empty() || tail.ends_with(['。', '！', '？', '!', '?', '\n', '\r'])
+}
+
 /// 只读打开的搭配表。
 pub struct Gram {
     mmap: Mmap,
@@ -142,9 +150,9 @@ impl Gram {
     }
 
     /// 给「`context` 之后接 `word`」打分;`is_rear` 表示 `word` 是句末。
-    /// 前文为空返回 0,让调用方把句首当常数省掉。
+    /// 前文没有当前分句时不加搭配或句末分:组合结束不代表已经有可收尾的句子。
     pub fn score(&self, context: &str, word: &str, is_rear: bool) -> f64 {
-        if context.is_empty() {
+        if at_clause_start(context) {
             return 0.0;
         }
         // 前文逐级缩短各查一次:"非常喜欢" 依次查 "非常喜欢"、"常喜欢"、"喜欢"、"欢"。
@@ -217,6 +225,9 @@ mod tests {
         assert_eq!(gram.score("陌生", "搭配", false), 0.0);
         assert!((gram.score("天气", "不错", true) - 0.9).abs() < STEP);
         assert_eq!(gram.score("天气", "不错", false), 0.0);
+        assert_eq!(gram.score("上一句。 “", "不错", true), 0.0);
+        assert_eq!(gram.score("上一句\n  ", "不错", true), 0.0);
+        assert!((gram.score("上一句。天气", "不错", true) - 0.9).abs() < STEP);
 
         let _ = std::fs::remove_file(test_path);
     }

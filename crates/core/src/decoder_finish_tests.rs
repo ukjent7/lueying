@@ -6,7 +6,9 @@ use lueying_dict::Dictionary;
 fn engine() -> Engine {
     let (d, bad) = Dictionary::from_text(
         "你\t9000\tni\n拟\t600\tni\n好\t9000\thao\n你好\t5000\tni'hao\n拟好\t800\tni'hao\n\
-         世\t3000\tshi\n界\t2500\tjie\n世界\t4000\tshi'jie\n视界\t400\tshi'jie\n",
+         世\t3000\tshi\n界\t2500\tjie\n世界\t4000\tshi'jie\n视界\t400\tshi'jie\n\
+         妮\t500\tni\n泥\t400\tni\n号\t3500\thao\n浩\t2000\thao\n毫\t1000\thao\n\
+         吗\t7500\tma\n马\t3000\tma\n码\t1500\tma\n",
     );
     assert_eq!(bad, 0);
     Engine::new(Arc::new(d), Config::default())
@@ -147,4 +149,49 @@ fn stale_raw_and_empty_buffer_exits_check_the_same_real_transition() {
     e.user.write().unwrap().learn("ni", "拟");
     e.set_mode(crate::Mode::English);
     assert_eq!(shape(&e), before);
+}
+
+#[test]
+fn segmented_candidates_are_reachable_before_whole_reading_overflow() {
+    let mut e = engine();
+    e.set_page_size(5);
+    type_into(&mut e, "nihao");
+    let single = e
+        .cands
+        .iter()
+        .position(|c| !c.full && c.text == "你")
+        .unwrap();
+    assert_eq!(single, 8);
+    let tail = e
+        .cands
+        .iter()
+        .enumerate()
+        .skip(single + 1)
+        .find(|(_, c)| c.full && !c.weaker_reading)
+        .map(|(i, c)| (i, c.text.clone()))
+        .unwrap();
+    assert!(e.promote(tail.0));
+    assert_eq!(e.cands[0].text, tail.1);
+    assert_eq!(e.cands[single].text, "你");
+    assert!(e.set_highlight(single));
+    assert_eq!(e.pick_in_page(single % 5), [Event::Commit("你".into())]);
+    assert_eq!(e.composition().unwrap().raw, "hao");
+
+    let mut e = engine();
+    type_into(&mut e, "nihaoma");
+    let pair = e
+        .cands
+        .iter()
+        .position(|c| !c.full && c.text == "你好")
+        .unwrap();
+    let single = e
+        .cands
+        .iter()
+        .position(|c| !c.full && c.text == "你")
+        .unwrap();
+    assert_eq!(pair, 8);
+    assert!(pair < single && single <= 12);
+    assert!(e.cands[single + 1..].iter().any(|c| c.full));
+    assert_eq!(e.pick(pair), [Event::Commit("你好".into())]);
+    assert_eq!(e.composition().unwrap().raw, "ma");
 }

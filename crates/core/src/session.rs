@@ -24,6 +24,8 @@ pub struct Snapshot {
     pub raw: String,
     /// 发起时的引擎版本号,用来判断推理结果是否已经过期。
     pub revision: u64,
+    /// 确认仍紧邻当前输入的上屏词;只有宿主原文、没有已知词界时留空。
+    pub adjacent_word: Option<String>,
     /// 候选文本。
     pub texts: Vec<String>,
     /// 与候选一一对应的事实。
@@ -86,20 +88,38 @@ pub fn refresh(engine: &Engine, view: &mut SessionView) {
 pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
     let comp = engine.composition()?;
     let candidates = engine.candidates_detailed();
+    let context = engine.context();
+    let adjacent_word = engine
+        .last_word
+        .as_deref()
+        .filter(|word| !word.is_empty() && context.ends_with(word))
+        .or_else(|| {
+            engine
+                .last_commit
+                .as_ref()
+                .filter(|anchor| anchor.matches_tail(context))
+                .map(|anchor| anchor.word())
+        })
+        .map(str::to_owned);
     Some(Snapshot {
-        context: engine.context().to_string(),
+        context: context.to_string(),
+        adjacent_word,
         raw: comp.raw.clone(),
         revision: engine.revision(),
         texts: candidates.iter().map(|c| c.text.clone()).collect(),
         facts: candidates
             .iter()
             .map(|c| Fact {
-                answers_key: c.full && !c.rejected && !c.no_learn,
+                answers_key: c.full
+                    && !c.rejected
+                    && !c.no_learn
+                    && !c.weaker_reading
+                    && !c.needs_clause_prefix,
                 trusted_dictionary_hit: c.trusted,
                 score: c.score as f32,
                 channel: c.channel as f32,
                 personal: c.personal as f32,
-                locked: c.learned_enough(),
+                locked: c.learned_enough() || c.attested_context,
                 edited: c.edits > 0,
             })
             .collect(),
@@ -121,7 +141,7 @@ pub fn sync_worthwhile(snapshot: &Snapshot) -> bool {
     !snapshot.context.is_empty()
 }
 
-/// 有上文时用一次前向重排多个候选,不挪动未参与比较的槽位。
+/// 有上文时重排多个候选,不挪动未参与比较的槽位;相邻词会再做连接/断句对照。
 pub fn rank_context(rerank: &mut Rerank, snapshot: &Snapshot) -> Vec<usize> {
     rank_context_with_gap(rerank, snapshot).order
 }
@@ -129,7 +149,12 @@ pub fn rank_context(rerank: &mut Rerank, snapshot: &Snapshot) -> Vec<usize> {
 /// 同次重排附带前两名分差;缺少可比候选时不报告置信度。
 pub fn rank_context_with_gap(rerank: &mut Rerank, snapshot: &Snapshot) -> ContextRank {
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    rerank.rank_in_context_with_gap(&snapshot.context, &texts, &snapshot.facts)
+    rerank.rank_with_local_context(
+        &snapshot.context,
+        &texts,
+        &snapshot.facts,
+        snapshot.adjacent_word.as_deref(),
+    )
 }
 
 /// 双模型的选择性停顿门槛。没有有效分差时仍允许原来的 25M 回退。
@@ -149,7 +174,12 @@ pub fn can_skip_25m(snapshot: &Snapshot, ranking: &ContextRank) -> bool {
 /// 25M 停顿重排:模型直接给出最终顺序,没有上下文也能用。
 pub fn decide_settled(rerank: &mut Rerank, snapshot: &Snapshot) -> Option<usize> {
     let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
-    rerank.decide_settled(&snapshot.context, &texts, &snapshot.facts)
+    rerank.decide_settled_with_local_context(
+        &snapshot.context,
+        &texts,
+        &snapshot.facts,
+        snapshot.adjacent_word.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -265,5 +295,78 @@ mod tests {
                 .into_iter()
                 .any(|event| matches!(event, crate::Event::Commit(text) if text == "丙"))
         );
+    }
+    #[test]
+    fn mixed_input_keeps_the_complete_syllable_during_automatic_ranking() {
+        use crate::Event;
+        let words = "改一下\t1\tgai'yi'xia\n关爱\t50000\tguan'ai\n一下\t50000\tyi'xia\n";
+        let typed = |keys: &str| {
+            let mut engine =
+                Engine::new(Arc::new(Dictionary::from_text(words).0), Config::default());
+            engine.set_context("我们要多");
+            for key in keys.chars() {
+                engine.process(if key == '\'' {
+                    Key::Punct(key)
+                } else {
+                    Key::Letter(key)
+                });
+            }
+            engine
+        };
+        let mut engine = typed("gaiyx");
+        let snap = snapshot(&engine).unwrap();
+        assert_eq!(snap.texts[0], "改一下");
+        assert!(snap.facts[0].answers_key);
+        let weaker = snap
+            .texts
+            .iter()
+            .position(|s| s == "关爱一下")
+            .expect("仍可选择的次级读法");
+        assert!(engine.candidates_detailed()[weaker].full);
+        assert!(!snap.facts[weaker].answers_key);
+        assert!(!engine.promote(weaker));
+        assert!(!engine.reorder_candidates(&[weaker, 0]));
+        assert_eq!(engine.pick(weaker), [Event::Commit("关爱一下".into())]);
+        let explicit = snapshot(&typed("g'aiyx")).unwrap();
+        assert_eq!(explicit.raw, "g'aiyx");
+        let index = explicit.texts.iter().position(|s| s == "关爱一下").unwrap();
+        assert!(explicit.facts[index].answers_key);
+    }
+    #[test]
+    fn a_fresh_clause_prefers_openers_but_particles_remain_selectable() {
+        let words = "吧\t9000\tba\n把\t3000\tba\n不\t15000\tbu\n吗\t7000\tma\n妈\t3000\tma\n啊\t7000\ta\n阿\t3000\ta\n呢\t1000\tne\n";
+        let (dict, bad) = Dictionary::from_text(words);
+        assert_eq!(bad, 0);
+        let dict = Arc::new(dict);
+        let typed = |context: &str, keys: &str| {
+            let mut engine = Engine::new(Arc::clone(&dict), Config::default());
+            engine.set_context(context);
+            for key in keys.chars() {
+                engine.process(Key::Letter(key));
+            }
+            engine
+        };
+        for context in ["", "上句。", "上句！ “", "上句\n  "] {
+            let mut engine = typed(context, "ba");
+            let snap = snapshot(&engine).unwrap();
+            assert_eq!(snap.texts[0], "把");
+            let particle = snap.texts.iter().position(|s| s == "吧").unwrap();
+            assert!(!snap.facts[particle].answers_key);
+            assert!(!engine.promote(particle));
+            assert_eq!(engine.pick(particle), [crate::Event::Commit("吧".into())]);
+        }
+        for (context, keys, expected) in [
+            ("", "b", "不"),
+            ("", "ma", "妈"),
+            ("", "a", "啊"),
+            ("", "ne", "呢"),
+            ("我们走", "ba", "吧"),
+            ("可以", "ma", "吗"),
+        ] {
+            let engine = typed(context, keys);
+            let snap = snapshot(&engine).unwrap();
+            assert_eq!(snap.texts[0], expected);
+            assert!(snap.facts[0].answers_key);
+        }
     }
 }

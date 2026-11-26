@@ -149,9 +149,14 @@ impl Engine {
         }
         if fixed {
             // 让 `note_events` 把上一条词序切断,而不是把日期/表情记成前词。
-            self.last_word = None;
+            self.break_word_context();
         } else {
             self.last_word = cand.words.last().cloned();
+            self.last_commit = if self.learning {
+                crate::commit_context::CommitAnchor::new(&cand, &learn_text)
+            } else {
+                None
+            };
             self.transition_handled += 1;
         }
         let rest = raw[cut..].trim_start_matches('\'').to_string();

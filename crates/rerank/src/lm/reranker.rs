@@ -194,6 +194,78 @@ impl Reranker {
         self.score(context, candidates)
     }
 
+    /// Compare connecting the last committed word with starting a new sentence after it.
+    pub(crate) fn adjacency_contradicts(&self, left: &str, leader: &str, challenger: &str) -> bool {
+        let width = leader.chars().count();
+        if left.is_empty()
+            || width == 0
+            || challenger.chars().count() != width
+            || !left
+                .chars()
+                .chain(leader.chars())
+                .chain(challenger.chars())
+                .chain(['。'])
+                .all(|c| self.model.token(c).is_some())
+        {
+            return false;
+        }
+        let detached = format!("{left}。");
+        let prefix_len = 1 + detached.chars().count();
+        // If either half is truncated, this is not a comparison of the same junction.
+        if self.model.prefix_tokens(&detached, width).len() != prefix_len
+            || prefix_len + width > self.model.config.context
+        {
+            return false;
+        }
+        // Independent short probes leave the full-context prefix and tail cache intact.
+        let words = [leader, challenger];
+        let adjacent = self.model.score(left, &words);
+        let detached = self.model.score(&detached, &words);
+        opposing_boundary_evidence(&adjacent, &detached)
+    }
+
+    /// Confirm a local veto against the actual prefix and candidates just scored.
+    pub(crate) fn full_context_confirms_veto(
+        &self,
+        left: &str,
+        leader: &str,
+        challenger: &str,
+    ) -> bool {
+        let Some((tokens, prefix)) = &self.cached else {
+            return false;
+        };
+        if left
+            .chars()
+            .map(|c| self.model.token(c))
+            .eq(tokens[1..].iter().copied().map(Some))
+        {
+            // The model saw no additional context; the local comparison already used this prefix.
+            return true;
+        }
+        let width = leader.chars().count();
+        if prefix.length + 1 + width > self.model.config.context {
+            return false;
+        }
+        let words = [leader, challenger];
+        let adjacent = words.map(|word| {
+            let tokens = self.model.encode_limited(word, width);
+            self.resume
+                .iter()
+                .find(|(scored, _)| *scored == tokens)
+                .and_then(|(_, run)| run.cumulative.last())
+                .map_or(f32::NAN, |total| total / width as f32)
+        });
+        if !adjacent.iter().all(|score| score.is_finite()) {
+            return false;
+        }
+        let Some(boundary) = self.model.token('。') else {
+            return false;
+        };
+        // Score only the counterfactual tail; it shares the same full-context KV.
+        let detached = self.model.score_from_prefix(prefix, &words, Some(boundary));
+        opposing_boundary_evidence(&adjacent, &detached)
+    }
+
     fn score(&mut self, context: &str, candidates: &[&str]) -> Vec<f32> {
         let mut scores = Vec::new();
         self.score_indices_into(context, candidates, 0..candidates.len(), &mut scores);
@@ -704,5 +776,30 @@ impl<'a> Batch<'a> {
                 Arc::clone(&hidden[run.terminal.expect("terminal row was planned")])
             }
         }
+    }
+}
+
+fn opposing_boundary_evidence(adjacent: &[f32], detached: &[f32]) -> bool {
+    let ([head, next], [head_detached, next_detached]) = (adjacent, detached) else {
+        return false;
+    };
+    [head, next, head_detached, next_detached]
+        .into_iter()
+        .all(|p| p.is_finite())
+        && head > head_detached
+        && next < next_detached
+}
+
+#[cfg(test)]
+mod adjacency_tests {
+    #[test]
+    fn adjacency_only_overrules_a_clear_local_contradiction() {
+        use super::opposing_boundary_evidence as disagrees;
+        assert!(disagrees(&[-6.30, -5.66], &[-6.62, -5.08]));
+        assert!(!disagrees(&[-5.37, -4.23], &[-6.21, -5.12]));
+        assert!(!disagrees(&[-6.62, -5.66], &[-6.62, -5.08]));
+        assert!(!disagrees(&[-6.7, -5.66], &[-6.62, -5.08]));
+        assert!(!disagrees(&[-6.30, f32::NEG_INFINITY], &[-6.62, -5.08]));
+        assert!(!disagrees(&[-6.30], &[-6.62, -5.08]));
     }
 }

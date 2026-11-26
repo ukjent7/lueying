@@ -3,6 +3,22 @@ mod project_rows;
 
 use super::{CandidateFacts, Compared, comparable, erf, gelu, should_rerank};
 
+#[test]
+fn counterfactual_boundary_scores_match_a_rebuilt_prefix() {
+    let model = cache_test_model();
+    let words = ["你", "你好", "你吗", ""];
+    let prefix = model.run_prefix(&model.prefix_tokens("我", 2));
+    let boundary = model.token('很').unwrap();
+    let expected = model.score("我很", &words);
+    let count = || super::FORWARD_POSITIONS.with(std::cell::Cell::get);
+    let before = count();
+    let actual = model.score_from_prefix(&prefix, &words, Some(boundary));
+    assert_eq!(count() - before, 2, "只补算断句与共用的候选首字");
+    for (a, b) in actual.into_iter().zip(expected) {
+        assert!(a == b || (a - b).abs() < 1e-6, "{a} != {b}");
+    }
+}
+
 // 一层小模型只使用合成权重，缓存测试不读取外部模型文件。
 fn cache_test_model() -> std::sync::Arc<super::SentenceModel> {
     use super::{Block, Config, Matrix, SentenceModel};

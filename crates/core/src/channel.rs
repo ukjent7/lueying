@@ -126,6 +126,13 @@ fn abbrev_letter(c: char) -> bool {
     ABBREV_LETTERS.contains(c) || matches!(c, 'e' | 'o')
 }
 
+/// 未写出完整音节的简拼单元。
+pub(crate) fn is_initial(text: &str) -> bool {
+    !is_syllable(text)
+        && (ABBREV_DIGRAPHS.contains(&text)
+            || matches!(text.as_bytes(), [c] if abbrev_letter(*c as char)))
+}
+
 /// 只用全拼音节能否读完整串。
 fn reads_as_full(raw: &str, edges: &[Vec<Unit>]) -> bool {
     let mut reach = vec![false; raw.len() + 1];
@@ -399,6 +406,49 @@ pub fn first_path(raw: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// An alternate is weaker when it only recycles a complete syllable's consonant
+/// and written rime as an initial plus a separate vowel syllable.
+pub(crate) fn splits_into_initials(
+    raw: &str,
+    reference: &[(usize, usize)],
+    alternate: &[(usize, usize)],
+) -> bool {
+    if alternate.len() <= reference.len() {
+        return false;
+    }
+    let mut parts = alternate.iter().copied();
+    for &(start, end) in reference {
+        let Some((from, mid)) = parts.next() else {
+            return false;
+        };
+        if start != from || from >= mid || mid > end {
+            return false;
+        }
+        if mid == end {
+            continue;
+        }
+        if parts.next() != Some((mid, end)) {
+            return false;
+        }
+        let (Some(initial), Some(rime), Some(syllable)) =
+            (raw.get(start..mid), raw.get(mid..end), raw.get(start..end))
+        else {
+            return false;
+        };
+        // 单键元音也常是干脆的简拼(如「啊」),y/w 只是零声母的拼写,都保留歧义。
+        if !is_initial(initial)
+            || matches!(initial, "y" | "w")
+            || rime.len() == 1
+            || !rime.starts_with(['a', 'e', 'o'])
+            || !is_syllable(rime)
+            || !is_syllable(syllable)
+        {
+            return false;
+        }
+    }
+    parts.next().is_none()
+}
+
 /// 用户输入的规范音节边界:`bounds[p]` 为真表示某条规范读法恰好在 `p` 结束,末尾恒为真。
 /// 简拼单元的消费终点必须落在这里,才能给学习加分;切进完整音节内部的前缀读法不算。
 pub fn canonical_bounds(raw: &str) -> Vec<bool> {
@@ -471,5 +521,27 @@ mod tests {
     fn apostrophes_stop_typo_windows() {
         let edges = lattice("ho'a", &Fuzzy::auto(), true);
         assert!(edges[0].iter().all(|unit| unit.span.1 <= 2));
+    }
+    #[test]
+    fn only_implicit_initials_inside_a_complete_syllable_are_dominated() {
+        assert!(splits_into_initials(
+            "gaiyx",
+            &[(0, 3), (3, 4), (4, 5)],
+            &[(0, 1), (1, 3), (3, 4), (4, 5)]
+        ));
+        assert!(!splits_into_initials("xian", &[(0, 4)], &[(0, 2), (2, 4)]));
+        assert!(!splits_into_initials(
+            "g'aiyx",
+            &[(0, 4), (4, 5), (5, 6)],
+            &[(0, 1), (2, 4), (4, 5), (5, 6)]
+        ));
+        assert!(!splits_into_initials(
+            "nanjing",
+            &[(0, 3), (3, 7)],
+            &[(0, 1), (1, 4), (4, 7)]
+        ));
+        assert!(!splits_into_initials("da", &[(0, 2)], &[(0, 1), (1, 2)]));
+        assert!(!splits_into_initials("shuo", &[(0, 4)], &[(0, 1), (1, 4)]));
+        assert!(!splits_into_initials("yan", &[(0, 3)], &[(0, 1), (1, 3)]));
     }
 }

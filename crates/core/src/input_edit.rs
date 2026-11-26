@@ -27,9 +27,15 @@ impl Engine {
     }
 
     pub(crate) fn try_insert_apostrophe(&mut self) {
+        let full_pinyin = self.scheme.manifest().id == "full";
         let ok = if let Some(comp) = self.comp.as_ref() {
             comp.seg_spans.iter().rev().any(|&(s, e)| {
-                e == comp.cursor && lueying_dict::syllables::is_syllable(&comp.raw[s..e])
+                if e != comp.cursor {
+                    return false;
+                }
+                let segment = &comp.raw[s..e];
+                lueying_dict::syllables::is_syllable(segment)
+                    || (full_pinyin && crate::channel::is_initial(segment))
             })
         } else {
             false

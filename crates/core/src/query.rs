@@ -60,6 +60,12 @@ pub struct Candidate {
     pub completion: bool,
     /// 用户在当前键下置顶的词:直接放首位,重排与快捷项都让位。
     pub pinned: bool,
+    /// 与刚上屏的词在词典里接成整词;本次候选重排不得改动首位。
+    pub(crate) attested_context: bool,
+    /// 字面全音节已有可信词条时,把它拆成简拼的次级读法;仍可手动选。
+    pub(crate) weaker_reading: bool,
+    /// 句首有可用的非语气词时,仅依附前文的语气词不自动升首。
+    pub(crate) needs_clause_prefix: bool,
     /// 动作候选要执行的完整命令 id;普通候选为空。动作候选不上屏文字、
     /// 不学习,选中即执行命令。
     pub action: Option<String>,
@@ -101,6 +107,9 @@ impl Candidate {
             no_learn: false,
             completion: false,
             pinned: false,
+            attested_context: false,
+            weaker_reading: false,
+            needs_clause_prefix: false,
             action: None,
         }
     }

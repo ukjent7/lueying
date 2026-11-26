@@ -29,6 +29,7 @@ impl Engine {
             context_handled: 0,
             quick_handled: 0,
             last_word: None,
+            last_commit: None,
             last_pick: None,
             host: String::new(),
             transition_handled: 0,
@@ -84,11 +85,11 @@ impl Engine {
     /// 私密字段里关掉用户词库/自动造词学习。切回普通字段时恢复。
     pub fn set_learning(&mut self, enabled: bool) {
         if self.learning != enabled {
+            self.learning = enabled;
             // 私密/普通字段切换:前一段文本、引号配对和词序都不能带进新字段。
             self.clear_context();
             self.phrase = None;
         }
-        self.learning = enabled;
     }
 
     /// 记录宿主 exe 名,供功能模块读取;空名表示未知宿主。
@@ -162,6 +163,14 @@ impl Engine {
         self.retain_last_words(text);
         // 光标左边是数字时,随后的半角句点更像小数点。
         self.after_digit = ends_with_digit(text);
+        if self
+            .last_commit
+            .as_ref()
+            .is_some_and(|anchor| !anchor.matches_tail(text))
+        {
+            self.last_commit = None;
+            self.invalidate_attested_context();
+        }
     }
 
     /// 左邻文本整体替换后,只保留仍在文本末尾的上一个/上上个词。
@@ -178,13 +187,34 @@ impl Engine {
     /// 清空已上屏上下文(焦点切到别处时调用)。
     pub fn clear_context(&mut self) {
         self.context.clear();
-        self.last_word = None;
+        self.break_word_context();
         self.last_pick = None;
         self.after_digit = false;
         // 新输入框的引号从开引号重新配对;沿用上一个文档的奇偶会把
         // 句首引号打成闭引号。
         self.dq_open = false;
         self.sq_open = false;
+        self.invalidate_attested_context();
+    }
+
+    pub(crate) fn break_word_context(&mut self) {
+        self.last_word = None;
+        self.last_commit = None;
+    }
+
+    fn invalidate_attested_context(&mut self) {
+        if !self.cands.iter().any(|cand| cand.attested_context) {
+            return;
+        }
+        if self.comp.is_some() && self.page == 0 && self.hl == 0 {
+            self.recompute();
+        } else {
+            // 不移动已经翻页或移动高亮的候选,只撤销对旧上下文的保护。
+            for cand in &mut self.cands {
+                cand.attested_context = false;
+            }
+            self.rev = self.rev.wrapping_add(1);
+        }
     }
 
     pub(crate) fn push_context(&mut self, text: &str) {
@@ -205,17 +235,32 @@ impl Engine {
     /// 只换顺序,不增删候选;只有覆盖整个按键且没被用户跳过过的候选可以提升,
     /// 否则模型重排会把刚学到的负分立即抵消。成功返回 `true`。
     pub fn promote(&mut self, index: usize) -> bool {
-        if index == 0
-            || index >= self.cands.len()
+        if index == 0 || index >= self.cands.len() {
+            return false;
+        }
+        if self.cands[0].attested_context
             || !self.cands[index].full
             || self.cands[index].rejected
             || self.cands[index].quick
             || self.cands[index].no_learn
+            || self.cands[index].weaker_reading
+            || self.cands[index].needs_clause_prefix
         {
             return false;
         }
-        let cand = self.cands.remove(index);
-        self.cands.insert(0, cand);
+        // 停顿重排只移动整串候选,保留分段入口的槽位。
+        if self.cands[0].full {
+            let mut at = index;
+            for earlier in (0..index).rev() {
+                if self.cands[earlier].full {
+                    self.cands.swap(earlier, at);
+                    at = earlier;
+                }
+            }
+        } else {
+            let cand = self.cands.remove(index);
+            self.cands.insert(0, cand);
+        }
         if let Some(comp) = self.comp.as_mut()
             && let Some(top) = self.cands.first()
         {
@@ -234,7 +279,15 @@ impl Engine {
         }
         if !order.iter().all(|&index| {
             self.cands.get(index).is_some_and(|c| {
-                c.full && !c.rejected && !c.quick && !c.no_learn && !c.pinned && !c.learned_enough()
+                c.full
+                    && !c.rejected
+                    && !c.quick
+                    && !c.no_learn
+                    && !c.pinned
+                    && !c.learned_enough()
+                    && !c.attested_context
+                    && !c.weaker_reading
+                    && !c.needs_clause_prefix
             })
         }) {
             return false;
@@ -437,7 +490,7 @@ impl Engine {
         self.rev = self.rev.wrapping_add(1);
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
-        self.last_word = None;
+        self.break_word_context();
         Some(text)
     }
 

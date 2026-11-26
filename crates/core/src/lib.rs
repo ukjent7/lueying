@@ -13,6 +13,9 @@
 mod address;
 mod channel;
 mod code;
+mod commit_context;
+#[cfg(test)]
+mod commit_context_tests;
 mod decoder;
 pub mod features;
 mod input;
@@ -101,6 +104,8 @@ pub struct Engine {
     quick_handled: usize,
     /// 最近上屏的最后一个词;词级转移加分与学习使用。
     last_word: Option<String>,
+    /// 最近相邻上屏的拼音词;只用来核对词典里跨边界的整词。
+    last_commit: Option<commit_context::CommitAnchor>,
     /// 最近一次学习上屏的词;同键下立刻改选别的词时据此判定误选。
     last_pick: Option<LastPick>,
     /// 宿主 exe 名(小写,不含路径),供功能模块读取;空表示未知宿主。

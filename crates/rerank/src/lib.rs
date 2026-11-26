@@ -117,7 +117,7 @@ impl Model {
 /// 一条候选相对当前按键的事实。两者都只有引擎知道,不能从候选文本推断。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Fact {
-    /// 候选覆盖整个组合输入,而不是前缀词或联想补全。
+    /// 候选按可自动比较的读法覆盖整个组合输入,而非前缀、补全或被更明确读法支配的切分。
     pub answers_key: bool,
     /// 词典对用户实际键入的整键给出的精确命中,没有上文时值得让模型让位。
     pub trusted_dictionary_hit: bool,
@@ -127,7 +127,7 @@ pub struct Fact {
     pub channel: f32,
     /// 引擎总分里来自用户学习的部分。
     pub personal: f32,
-    /// 用户在这个键下稳定选过这个词,任何模型都不改。
+    /// 用户在这个键下稳定选过这个词,或词典确认它能与刚上屏的词接成整词;任何模型都不改。
     pub locked: bool,
     /// 经模糊音或手误改动过读音。
     pub edited: bool,
@@ -222,7 +222,7 @@ impl Rerank {
 
     fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
         if !context.is_empty() {
-            return self.decide_in_context(context, texts, facts);
+            return self.decide_in_context(context, texts, facts, None);
         }
         self.decide_inner_with_margin(context, texts, &same_reading(facts), SYNC_PROMOTE_MARGIN)
     }
@@ -233,10 +233,12 @@ impl Rerank {
         context: &str,
         texts: &[&str],
         facts: &[Fact],
+        left: Option<&str>,
     ) -> Option<usize> {
         let (indices, scores) = self.context_scores(context, texts, facts, false)?;
         let best = (0..indices.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b]))?;
-        (best != 0).then_some(indices[best])
+        let winner = indices[best];
+        (winner != 0 && !self.local_disagrees(left, texts, facts, winner)).then_some(winner)
     }
 
     /// Reorder the scored slots using the same batch and objective as head-only promotion.
@@ -246,11 +248,25 @@ impl Rerank {
     }
 
     /// Expose the top gap from the same pass, without running the model again.
+    /// The gap is absent when local adjacency evidence puts a candidate other than
+    /// the model's top-scoring one first.
     pub fn rank_in_context_with_gap(
         &mut self,
         context: &str,
         texts: &[&str],
         facts: &[Fact],
+    ) -> ContextRank {
+        self.rank_with_local_context(context, texts, facts, None)
+    }
+
+    /// 有上文时重排;知道相邻上屏词时,用连接与断句的对照检验首选替换。
+    /// The gap is absent when the returned order's top is not the model score order.
+    pub fn rank_with_local_context(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        left: Option<&str>,
     ) -> ContextRank {
         if context.is_empty() {
             return ContextRank::default();
@@ -261,7 +277,17 @@ impl Rerank {
             .map_or_else(ContextRank::default, |(indices, scores)| {
                 let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
                 order.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
-                let gap = order.get(1).map(|second| order[0].1 - second.1);
+                let gap = if self.local_disagrees(left, texts, facts, order[0].0) {
+                    // 句末/独立位置更适合挑战者,不要拿它替换直连证据更强的首位。
+                    let head = order
+                        .iter()
+                        .position(|&(index, _)| index == 0)
+                        .expect("leader was scored");
+                    order[..=head].rotate_right(1);
+                    None
+                } else {
+                    order.get(1).map(|second| order[0].1 - second.1)
+                };
                 ContextRank {
                     order: order.into_iter().map(|(index, _)| index).collect(),
                     gap,
@@ -269,6 +295,29 @@ impl Rerank {
             });
         self.metrics.record(started.elapsed());
         result
+    }
+
+    fn local_disagrees(
+        &self,
+        left: Option<&str>,
+        texts: &[&str],
+        facts: &[Fact],
+        winner: usize,
+    ) -> bool {
+        winner != 0
+            && facts[0].trusted_dictionary_hit
+            && !facts[0].edited
+            && (facts[winner].trusted_dictionary_hit || facts[winner].edited)
+            && left.is_some_and(|left| {
+                let (leader, challenger) = (texts[0], texts[winner]);
+                self.inner
+                    .adjacency_contradicts(left, leader, challenger)
+                    // 跨读音纠错已经由完整上文打分;仅短窗口反对,不足以否决。
+                    && (!facts[winner].edited
+                        || self
+                            .inner
+                            .full_context_confirms_veto(left, leader, challenger))
+            })
     }
 
     fn context_scores(
@@ -348,8 +397,19 @@ impl Rerank {
         texts: &[&str],
         facts: &[Fact],
     ) -> Option<usize> {
+        self.decide_settled_with_local_context(context, texts, facts, None)
+    }
+
+    /// 带相邻上屏词的停顿决策;无上文时沿用原门控。
+    pub fn decide_settled_with_local_context(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        left: Option<&str>,
+    ) -> Option<usize> {
         let started = Instant::now();
-        let result = self.decide_settled_inner(context, texts, facts);
+        let result = self.decide_settled_inner(context, texts, facts, left);
         self.metrics.record(started.elapsed());
         result
     }
@@ -359,9 +419,10 @@ impl Rerank {
         context: &str,
         texts: &[&str],
         facts: &[Fact],
+        left: Option<&str>,
     ) -> Option<usize> {
         if !context.is_empty() {
-            return self.decide_in_context(context, texts, facts);
+            return self.decide_in_context(context, texts, facts, left);
         }
         let leader = facts.first()?;
         if leader.trusted_dictionary_hit || !leader.answers_key {

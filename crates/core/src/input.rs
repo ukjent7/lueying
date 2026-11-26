@@ -63,7 +63,7 @@ impl Engine {
                     if self.transition_handled > 0 {
                         self.transition_handled -= 1;
                     } else {
-                        self.last_word = None;
+                        self.break_word_context();
                     }
                     if self.quick_handled > 0 {
                         self.quick_handled -= 1;
@@ -73,16 +73,16 @@ impl Engine {
                 Event::Passthrough(Key::Digit(_)) => {
                     self.after_digit = true;
                     // 直通内容由宿主直接写进文档,已经断开中文词序。
-                    self.last_word = None;
+                    self.break_word_context();
                 }
                 Event::Passthrough(_) => {
                     self.after_digit = false;
-                    self.last_word = None;
+                    self.break_word_context();
                 }
                 // 命令没有上屏文字,词序在这里断开;左邻上下文保持原样。
                 Event::Action(_) => {
                     self.after_digit = false;
-                    self.last_word = None;
+                    self.break_word_context();
                 }
                 Event::Mode(_) => {}
             }

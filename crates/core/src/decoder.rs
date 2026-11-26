@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use lueying_dict::gram::{CONTEXT_CHARS, Gram};
+use lueying_dict::gram::{CONTEXT_CHARS, Gram, at_clause_start};
 use lueying_dict::{Dictionary, Fuzzy, syllables};
 
 use crate::channel::{self, Unit};
@@ -965,9 +965,8 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             )
             .then(a.text.cmp(&b.text))
     });
-    // 首页优先放满整句备选:长句的正确读法常排在第 6-8 条,第二位的分段
-    // 前缀会把它挤出页外。五条名额先给整句,最高分前缀词顺延到第 6 位;
-    // 需要逐段上屏时下移一格即可,整句不足五条时前缀词自动补位。
+    // 整句仍先按分数建立原始首选:这里沿用最初的一条前缀回退,保证整句不足时
+    // 分段入口能参与精确保护并决定原始 head。最终展示分区在精确保护后统一重排。
     let mut cands: Vec<Candidate> = Vec::new();
     let mut rest = full.into_iter();
     cands.extend(rest.by_ref().take(page));
@@ -987,7 +986,12 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         let cut = c.spans.last().map_or(0, |s| s.1);
         seen.insert((c.text.clone(), cut))
     });
+    mark_weaker_readings(raw, &mut cands);
+    if at_clause_start(context) {
+        mark_clause_particles(&mut cands);
+    }
     protect_exact(&mut cands);
+    layout_candidates(&mut cands, &bounds);
     cands.truncate(MAX_CANDS);
 
     chart.raw = raw.to_string();
@@ -1083,6 +1087,98 @@ fn completion_candidates(
     out
 }
 
+/// Keep the full-reading order for the reranker while giving common prefix picks early slots.
+fn layout_candidates(cands: &mut Vec<Candidate>, bounds: &[bool]) {
+    const WHOLE: usize = 8;
+    const MULTI: usize = 4;
+    const SINGLE: usize = 10;
+    let prefix_tier = |cand: &Candidate| {
+        if cand.full
+            || !cand.trusted
+            || cand.edits != 0
+            || cand.rejected
+            || cand.completion
+            || cand.spans.is_empty()
+            || !cand
+                .spans
+                .iter()
+                .all(|&(_, end)| bounds.get(end) == Some(&true))
+        {
+            return None;
+        }
+        match cand.text.chars().count() {
+            0 => None,
+            1 => Some(3),
+            2 => Some(2),
+            _ => Some(1),
+        }
+    };
+    if !cands.first().is_some_and(|cand| cand.full)
+        || !cands.iter().any(|cand| prefix_tier(cand).is_some())
+    {
+        return;
+    }
+    let limits = [WHOLE, MULTI, MULTI, SINGLE];
+    let mut tiers: [Vec<Candidate>; 5] = std::array::from_fn(|_| Vec::new());
+    for cand in cands.drain(..) {
+        let tier = if cand.full {
+            Some(0)
+        } else {
+            prefix_tier(&cand)
+        };
+        let tier = tier.filter(|&i| tiers[i].len() < limits[i]).unwrap_or(4);
+        tiers[tier].push(cand);
+    }
+    cands.extend(tiers.into_iter().flatten());
+}
+
+fn mark_clause_particles(cands: &mut [Candidate]) {
+    // Keep interjections such as 啊 and 呀, which can stand on their own.
+    let particle = |text: &str| matches!(text, "吧" | "吗" | "呢" | "嘛" | "呗" | "啦");
+    let has_alternative = cands.iter().any(|cand| {
+        cand.full
+            && cand.trusted
+            && cand.freq != 0
+            && cand.edits == 0
+            && cand.spans.len() == 1
+            && !cand.rejected
+            && !cand.weaker_reading
+            && !cand.completion
+            && !particle(&cand.text)
+    });
+    if has_alternative {
+        for cand in cands
+            .iter_mut()
+            .filter(|cand| cand.full && cand.spans.len() == 1)
+        {
+            cand.needs_clause_prefix = particle(&cand.text);
+        }
+    }
+}
+
+fn mark_weaker_readings(raw: &str, cands: &mut [Candidate]) {
+    let anchors: HashSet<Vec<(usize, usize)>> = cands
+        .iter()
+        .filter(|cand| {
+            cand.full
+                && cand.trusted
+                && cand.freq != 0
+                && cand.edits == 0
+                && !cand.rejected
+                && !cand.completion
+        })
+        .map(|cand| cand.spans.clone())
+        .collect();
+    for cand in cands
+        .iter_mut()
+        .filter(|cand| cand.full && cand.edits == 0 && !cand.completion)
+    {
+        cand.weaker_reading = anchors
+            .iter()
+            .any(|spans| channel::splits_into_initials(raw, spans, &cand.spans));
+    }
+}
+
 /// 排序后的最后一道闸:没打错音时,常用精确整词固定首位。
 ///
 /// 只锁首位,不锁整页。青简把全部精确候选压在模糊前,模糊可能永远翻不到;
@@ -1119,6 +1215,8 @@ fn protect_exact(cands: &mut [Candidate]) {
             .enumerate()
             .filter(|(_, c)| {
                 !c.rejected
+                    && !c.weaker_reading
+                    && !c.needs_clause_prefix
                     && c.full
                     && c.edits == 0
                     && (c.trusted && !leader_is_completion && c.freq >= EXACT_PROTECT_MIN_FREQ

@@ -48,6 +48,9 @@ impl Engine {
         });
         remap_to_keystrokes(&mut built.cands, &expansion, raw.len());
         apply_aux(&mut built.cands, &expansion, raw.len());
+        if let Some(anchor) = &self.last_commit {
+            anchor.promote_attested(&self.dict, &mut built.cands);
+        }
         let now = self.now.unwrap_or_else(CivilTime::now_utc);
         insert_address(&mut built.cands, &raw);
         apply_pin(&mut built.cands, &user, &expansion, &raw);

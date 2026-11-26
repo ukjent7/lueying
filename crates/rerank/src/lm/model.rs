@@ -6,9 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::lm::ModelError;
-#[cfg(test)]
-use crate::lm::forward::Prefix;
-use crate::lm::forward::{BatchContext, BatchRow, HiddenState};
+use crate::lm::forward::{BatchContext, BatchRow, HiddenState, Prefix};
 use crate::lm::math::{LinearScratch, Matrix, dot, dot_i8};
 use crate::lm::weights::{PACKED_FORMAT, Pack, Tensor, Weights};
 #[cfg(test)]
@@ -383,7 +381,22 @@ impl SentenceModel {
             .max()
             .unwrap_or(0);
         let prefix = self.run_prefix(&self.prefix_tokens(context, longest));
-        let limit = self.config.context.saturating_sub(prefix.length).max(1);
+        self.score_from_prefix(&prefix, candidates, None)
+    }
+
+    /// Score candidates with an optional shared token inserted after the cached prefix.
+    pub(crate) fn score_from_prefix(
+        &self,
+        prefix: &Prefix<'_>,
+        candidates: &[&str],
+        boundary: Option<u32>,
+    ) -> Vec<f32> {
+        let offset = usize::from(boundary.is_some());
+        let limit = self
+            .config
+            .context
+            .saturating_sub(prefix.length + offset)
+            .max(1);
         let tails: Vec<Vec<u32>> = candidates
             .iter()
             .map(|text| self.encode_limited(text, limit))
@@ -394,11 +407,20 @@ impl SentenceModel {
         // `steps[c][i]` is the batch row whose state predicts token `i + 1` of candidate `c`. The
         // last token of a candidate predicts nothing and is never run.
         let mut rows: Vec<BatchRow> = Vec::new();
+        let opening = boundary.map(|token| {
+            rows.push(BatchRow {
+                token,
+                parent: None,
+                depth: 0,
+                context: 0,
+            });
+            0
+        });
         let mut known: HashMap<(usize, u32), usize> = HashMap::new();
         let steps: Vec<Vec<usize>> = tails
             .iter()
             .map(|tail| {
-                let mut parent = None;
+                let mut parent = opening;
                 let mut path = Vec::with_capacity(tail.len().saturating_sub(1));
                 for (depth, &token) in tail.iter().enumerate().take(tail.len().saturating_sub(1)) {
                     let key = (parent.map_or(0, |row| row + 1), token);
@@ -406,7 +428,7 @@ impl SentenceModel {
                         rows.push(BatchRow {
                             token,
                             parent,
-                            depth,
+                            depth: depth + offset,
                             context: 0,
                         });
                         rows.len() - 1
@@ -418,7 +440,7 @@ impl SentenceModel {
             })
             .collect();
         let hidden = self
-            .run_batch(&prefix, &[BatchContext::default()], &rows)
+            .run_batch(prefix, &[BatchContext::default()], &rows)
             .hidden;
         let mut normalizers = Vec::with_capacity(rows.len());
         self.log_normalizers_into(&hidden, &mut normalizers);
@@ -432,7 +454,15 @@ impl SentenceModel {
                     return f32::NEG_INFINITY;
                 };
                 // The same additions in the same order as `run_tail`, so the sum is the same f32.
-                let mut running = self.log_probability(&prefix.last_hidden, first);
+                let mut running = if let Some(row) = opening {
+                    self.token.dot_row(
+                        &hidden[row * n_embd..(row + 1) * n_embd],
+                        (first as usize).min(self.config.vocab - 1),
+                        n_embd,
+                    ) - normalizers[row]
+                } else {
+                    self.log_probability(&prefix.last_hidden, first)
+                };
                 for (&row, &next) in path.iter().zip(&tail[1..]) {
                     let next = (next as usize).min(self.config.vocab - 1);
                     running +=
