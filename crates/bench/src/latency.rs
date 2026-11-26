@@ -11,6 +11,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 
 use lueying_core::{Fuzzy, Key};
 use lueying_dict::Dictionary;
@@ -163,5 +164,131 @@ pub fn run(args: &[String]) -> i32 {
     if std::fs::create_dir_all("target").is_ok() {
         let _ = std::fs::write("target/latency.md", &out);
     }
+    0
+}
+
+/// 逐键延迟:同一会话连续打多句,上屏后保留上下文,模拟真实按键路径。
+///
+/// 每个字母记录三段时间:引擎重算、8M 同步决策、两者合计。句间不清上下文,
+/// 这样上屏后的前缀缓存与候选续跑能跨句复用;对照改前/改后时只看同一语料、
+/// 同一模型与同一门控。
+pub fn keys(args: &[String]) -> i32 {
+    let (Some(dict_path), Some(rerank_dir)) = (value(args, "--dict"), value(args, "--rerank-dir"))
+    else {
+        eprintln!("keys 需要 --dict 与 --rerank-dir(可选 --gram、--corpus、--cases)");
+        return 2;
+    };
+    let corpus_path = value(args, "--corpus").unwrap_or("dicts/eval-user-v4.tsv");
+    let limit = value(args, "--cases")
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(usize::MAX);
+    let Ok((dict, _)) = Dictionary::from_path(Path::new(dict_path)) else {
+        eprintln!("词典加载失败 {dict_path}");
+        return 2;
+    };
+    let gram =
+        value(args, "--gram").and_then(|path| Gram::open(Path::new(path)).ok().map(Arc::new));
+    let Ok(models) = rerank::load(Path::new(rerank_dir)) else {
+        eprintln!("模型加载失败 {rerank_dir}");
+        return 2;
+    };
+    let Ok(body) = std::fs::read_to_string(corpus_path) else {
+        eprintln!("读语料失败 {corpus_path}");
+        return 2;
+    };
+    let leaked: &'static str = Box::leak(body.into_boxed_str());
+    let (cases, malformed) = shared::cases(leaked);
+    let dict = Arc::new(dict);
+    let mut engine = bench::make_engine(&dict, &gram, Fuzzy::auto());
+    engine.set_learning(false);
+    if let Some(context) = cases.iter().find(|case| !case.context.is_empty()) {
+        engine.set_context(context.context);
+    }
+    let mut four = Rerank::new(&models.four);
+    let mut core_ms = Vec::new();
+    let mut eight_ms = Vec::new();
+    let mut total_ms = Vec::new();
+    let mut rows = String::from("input\texpected\trank\tkeys\tms_engine\tms_8m\tms_total\n");
+    let (mut top1, mut total) = (0usize, 0usize);
+    for case in cases.iter().take(limit) {
+        engine.process(Key::Esc);
+        let expected = bench::normalize(case.expected);
+        let mut keys = 0usize;
+        let mut case_engine = 0.0;
+        let mut case_eight = 0.0;
+        for c in case.input.chars() {
+            let started = Instant::now();
+            engine.process(Key::Letter(c));
+            let core = started.elapsed().as_secs_f64() * 1000.0;
+            let mut eight = 0.0;
+            let snap = rerank::snapshot(&engine);
+            if !snap.context.is_empty() && !snap.texts.is_empty() {
+                let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+                let started = Instant::now();
+                let promote = four.decide(&snap.context, &texts, &snap.facts);
+                eight = started.elapsed().as_secs_f64() * 1000.0;
+                if let Some(index) = promote {
+                    engine.promote(index);
+                }
+            }
+            let total = started.elapsed().as_secs_f64() * 1000.0;
+            core_ms.push(core);
+            eight_ms.push(eight);
+            total_ms.push(total);
+            case_engine += core;
+            case_eight += eight;
+            keys += 1;
+        }
+        let rank = shared::rank_of(&engine, &expected);
+        top1 += usize::from(rank == 0);
+        total += 1;
+        let _ = writeln!(
+            rows,
+            "{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}",
+            case.input.replace(['\t', '\n'], " "),
+            case.expected.replace(['\t', '\n'], " "),
+            rank,
+            keys,
+            case_engine,
+            case_eight,
+            case_engine + case_eight
+        );
+        // 上屏当前首选,上下文留给下一句;前缀词没吃完时再落定剩余组合。
+        engine.process(Key::Space);
+        if engine.composition().is_some() {
+            engine.flush();
+        }
+    }
+    let mut out = format!(
+        "# 逐键延迟({corpus_path})\n\n{} 句(坏行 {malformed}),学习关闭;句间保留已上屏上下文。\n\n| 指标 | 引擎 | 8M 同步 | 合计 |\n|---|---:|---:|---:|\n",
+        total
+    );
+    let (p50_core, p50_eight, p50_total) = (
+        shared::pct(&mut core_ms, 50.0),
+        shared::pct(&mut eight_ms, 50.0),
+        shared::pct(&mut total_ms, 50.0),
+    );
+    let (p95_core, p95_eight, p95_total) = (
+        shared::pct(&mut core_ms, 95.0),
+        shared::pct(&mut eight_ms, 95.0),
+        shared::pct(&mut total_ms, 95.0),
+    );
+    let (p99_core, p99_eight, p99_total) = (
+        shared::pct(&mut core_ms, 99.0),
+        shared::pct(&mut eight_ms, 99.0),
+        shared::pct(&mut total_ms, 99.0),
+    );
+    let _ = writeln!(
+        out,
+        "| p50 | {p50_core:.2} | {p50_eight:.2} | {p50_total:.2} |\n| p95 | {p95_core:.2} | {p95_eight:.2} | {p95_total:.2} |\n| p99 | {p99_core:.2} | {p99_eight:.2} | {p99_total:.2} |\n\n按键 {} 个,P@1 {}/{} = {:.1}%。",
+        total_ms.len(),
+        top1,
+        total,
+        100.0 * top1 as f64 / total.max(1) as f64,
+    );
+    let _ = std::fs::create_dir_all("target/bench");
+    let _ = std::fs::write("target/bench/keys.tsv", rows);
+    let _ = std::fs::write("target/keys.md", &out);
+    print!("{out}\n逐条结果: target/bench/keys.tsv\n报告: target/keys.md\n");
     0
 }
