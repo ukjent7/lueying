@@ -43,11 +43,16 @@ impl Module for EnglishModule {
         let trusted_full = cands
             .iter()
             .any(|cand| cand.full && cand.trusted && !cand.quick && !cand.no_learn);
-        let text = match table().get(raw) {
+        let exact = table().get(raw);
+        let text = match exact {
             Some(text) => text.to_string(),
             None if has_full || !cands.is_empty() => return,
             None => raw.to_string(),
         };
+        // 词表里的整词且整串按全拼读不通:这是明确的英文直通,不再让半截拼音或
+        // 模糊切分把原文压到第二位。`he`/`long` 这类本身是合法全拼的英文词仍
+        // 让中文整词优先,避免抢「和」「龙」。
+        let direct = exact.is_some() && !crate::channel::is_complete(raw);
         let mut cand = Candidate::whole(raw.len(), text.clone(), 0.0);
         cand.words.clear();
         cand.full = false;
@@ -58,10 +63,10 @@ impl Module for EnglishModule {
         // 与微信一致:中文首选可信时英文排第二;用户选过 PROMOTE_PICKS 次就升到首位。
         let skip = cands.iter().take_while(|other| other.pinned).count();
         let promoted = ctx.user.promoted(raw, &text);
-        let at = if trusted_full && !promoted {
-            (skip + 1).min(cands.len())
-        } else {
+        let at = if direct || promoted || !trusted_full {
             skip
+        } else {
+            (skip + 1).min(cands.len())
         };
         cands.insert(at, cand);
     }

@@ -62,6 +62,10 @@ const EXACT_PROTECT_MIN_FREQ: u64 = 1;
 /// 3.0 会让「藏书/参数」这类词频差 20–50 倍的精确整句落在门外,放宽到 5.0;
 /// 口音语料与中立难例一起看,若保护了「总过」这类勉强切分就回收。
 const EXACT_SENTENCE_MARGIN: f64 = 5.0;
+/// 首位已经是模糊/手误读法时,精确词要追到多近才允许被拉回首位。
+/// 精确路径相对弱的时候,纠错读法应当保留领先;只有精确词分数接近时才按
+/// 「常用精确词优先」处理。1.5 nat ≈ 4.5 倍词频,足够挡住明确的模糊读法。
+const EXACT_WORD_MARGIN: f64 = 1.5;
 /// 精确整词达到这个频次就不补全;1 表示只要词典里有整词就不猜用户少打了字母。
 const COMPLETION_EXACT_MIN_FREQ: u64 = 1;
 /// 补全词频超过精确词这么多倍时,精确词只是语料碎片,不能挡住补全:
@@ -1212,6 +1216,9 @@ fn protect_exact(cands: &mut [Candidate]) {
     } else {
         let leader = cands[0].score;
         let leader_is_completion = cands[0].completion;
+        // 首位是模糊/手误读法时,精确词要追到 margin 内才拉回首位;首位本身
+        // 精确时保持原来的「常用精确词优先」,不看分数差。
+        let weak_leader = cands[0].edits > 0;
         if let Some(index) = cands
             .iter()
             .enumerate()
@@ -1221,7 +1228,10 @@ fn protect_exact(cands: &mut [Candidate]) {
                     && !c.needs_clause_prefix
                     && c.full
                     && c.edits == 0
-                    && (c.trusted && !leader_is_completion && c.freq >= EXACT_PROTECT_MIN_FREQ
+                    && (c.trusted
+                        && !leader_is_completion
+                        && c.freq >= EXACT_PROTECT_MIN_FREQ
+                        && (!weak_leader || c.score + EXACT_WORD_MARGIN >= leader)
                         || c.sentence
                             && !leader_is_completion
                             && c.score + EXACT_SENTENCE_MARGIN >= leader)
