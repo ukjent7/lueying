@@ -81,7 +81,7 @@ pub(crate) fn pct(values: &mut [f64], p: f64) -> f64 {
 
 /// 模拟用户把句子打出来的成本:每次选能接上剩余文字的最长候选,需要时翻页。
 /// 返回选词次数与翻页次数;打不出来时选词次数为 -1。
-fn input_cost(engine: &mut Engine, expected: &str) -> (i64, i64) {
+pub(crate) fn input_cost(engine: &mut Engine, expected: &str) -> (i64, i64) {
     let size = engine.page_size();
     let mut rest = expected.to_string();
     let (mut picks, mut pages) = (0, 0);

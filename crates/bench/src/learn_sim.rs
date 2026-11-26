@@ -94,7 +94,7 @@ fn settled(engine: &mut Engine, case: &Case, four: &mut Rerank, five: &mut Reran
 }
 
 /// 用一句的正确选择学习:按最长前缀逐段上屏。返回选词次数。
-fn learn_sentence(engine: &mut Engine, sentence: &Case) -> usize {
+pub(crate) fn learn_sentence(engine: &mut Engine, sentence: &Case) -> usize {
     engine.process(Key::Esc);
     engine.set_context("");
     for c in sentence.input.chars() {

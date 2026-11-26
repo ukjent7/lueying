@@ -447,9 +447,7 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("是".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["事"])]),
-                // 新词第一次选中不升首位,第二次起才升首位。
-                stage(l("shi"), vec![]),
-                stage(vec![Key::Digit(2)], vec![commits(&["事"])]),
+                // 非首选位置主动选中一次即记一级纠正证据,下一次回到首位。
                 stage(l("shi"), vec![Check::Top("事".into())]),
                 stage(vec![Key::Space], vec![commits(&["事"])]),
             ],
@@ -531,16 +529,14 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("四".into()), Check::Contains("是".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
-                // 同键选过两次的词回到首位(一次不够,与新词规则一致)。
-                stage(l("si"), vec![]),
-                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
+                // 同键在非首选位置选过一次,纠正证据把「是」带回首位。
                 stage(l("si"), vec![Check::Top("是".into())]),
                 stage(vec![Key::Space], vec![commits(&["是"])]),
                 stage(l("si"), vec![Check::Top("是".into())]),
             ],
         ),
         s(
-            "英文同键:bin 第二,选两次升到首位",
+            "英文同键:bin 第二,纠错一次升到首位",
             false,
             vec![
                 stage(
@@ -548,9 +544,8 @@ pub fn scenarios() -> Vec<Scenario> {
                     vec![Check::Top("斌".into()), Check::Contains("bin".into())],
                 ),
                 stage(vec![Key::Digit(2)], vec![commits(&["bin"])]),
-                stage(l("bin"), vec![Check::Top("斌".into())]),
-                stage(vec![Key::Digit(2)], vec![commits(&["bin"])]),
                 stage(l("bin"), vec![Check::Top("bin".into())]),
+                stage(vec![Key::Space], vec![commits(&["bin"])]),
             ],
         ),
         s(

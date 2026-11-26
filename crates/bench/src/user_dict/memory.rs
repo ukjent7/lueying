@@ -1,4 +1,4 @@
-//! 词记忆的 E2E:新词两次选择才首位、误选与跳过减弱、衰减不删词、导入导出往返、
+//! 词记忆的 E2E:非首选选中一次即纠正升首、误选与跳过减弱、衰减不删词、导入导出往返、
 //! 跨会话共享、多音节学习键与私密字段。
 //!
 //! 时间相关的检查用 `set_sim_now` 注入模拟时钟;检查结束后恢复系统时钟。
@@ -34,8 +34,8 @@ pub(super) fn shared_sessions(shared: &Arc<Dictionary>, checks: &mut Checks) {
     );
 }
 
-/// 新词第一次选中不升首位,第二次起才升首位。
-pub(super) fn two_picks_promote(shared: &Arc<Dictionary>, checks: &mut Checks) {
+/// 新词在非首选位置被主动选中一次,下一次就回到首位。
+pub(super) fn one_correction_promotes(shared: &Arc<Dictionary>, checks: &mut Checks) {
     let dict = Arc::clone(shared);
     let user = Arc::new(RwLock::new(UserDict::new()));
     let mut e = engine(&dict, &user);
@@ -44,14 +44,11 @@ pub(super) fn two_picks_promote(shared: &Arc<Dictionary>, checks: &mut Checks) {
     pick_word(&mut e, &word);
     type_keys(&mut e, "tianqi");
     let after_one = e.candidates().first().cloned().unwrap_or_default();
-    pick_word(&mut e, &word);
-    type_keys(&mut e, "tianqi");
-    let after_two = e.candidates().first().cloned().unwrap_or_default();
     push(
         checks,
-        "新词两次选中后首位",
-        !word.is_empty() && after_one != word && after_two == word,
-        format!("{word:?}:一次后首位 {after_one:?},两次后首位 {after_two:?}"),
+        "新词一次纠正后首位",
+        !word.is_empty() && after_one == word,
+        format!("{word:?}:一次纠正后首位 {after_one:?}"),
     );
 }
 

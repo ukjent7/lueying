@@ -133,8 +133,17 @@ impl Engine {
                 && now.saturating_sub(pick.at) <= MISPICK_SECS
             {
                 user.mispick(&pick.key, &pick.word);
+                user.mispick_raw(&pick.typed, &pick.word);
             }
             user.learn(&learned, &learn_text);
+            // 非首选位置被主动选中:这是纠正证据,权重比曝光高一级。
+            // 只看同 consume 的可比候选,快捷项与日期/符号不算「首选」。
+            let corrected = self.cands.iter().take(idx).any(|skipped| {
+                !skipped.quick && !skipped.no_learn && skipped.consume == cand.consume
+            });
+            if corrected {
+                user.correction(&learned, &learn_text);
+            }
             if cand.groups != 0 {
                 user.learn_groups(cand.groups);
             }
@@ -181,9 +190,18 @@ impl Engine {
             if let Some((typed_all, key, text)) = phrase
                 && text.chars().count() > 1
             {
-                let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
-                user.learn(&key, &text);
-                user.learn_raw(&typed_all, &text);
+                // 只学长 n-gram 里词典没有的那一段。整串已经是词典词时,
+                // 词典词频与搭配模型已经覆盖它,再写一条用户词只会放大偏差。
+                let known = self
+                    .dict
+                    .lookup_exact(&key)
+                    .iter()
+                    .any(|entry| entry.word == text);
+                if !known {
+                    let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
+                    user.learn(&key, &text);
+                    user.learn_raw(&typed_all, &text);
+                }
             }
         } else {
             self.phrase = phrase;

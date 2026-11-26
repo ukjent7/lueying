@@ -56,3 +56,47 @@ fn group_lines_keep_known_groups_only() {
     user.import(&format!("g\t{}\t2\t10\ng\tnope\t2\t10\n", FUZZY_GROUPS[0]));
     assert_eq!(user.export(), format!("g\t{}\t2\t10\n", FUZZY_GROUPS[0]));
 }
+
+#[test]
+fn correction_evidence_round_trips_and_reset_clears_it() {
+    set_sim_now(T0);
+    let mut user = UserDict::new();
+    user.learn("ni'hao", "你好");
+    user.correction("ni'hao", "你好");
+    assert!(user.promoted("ni'hao", "你好"), "一次纠正应达到首位门槛");
+    let text = user.export();
+    assert!(text.contains("x\tni'hao\t你好\t1\t"), "{text}");
+    let mut again = UserDict::new();
+    again.import(&text);
+    assert_eq!(again.export(), text);
+    assert!(again.promoted("ni'hao", "你好"));
+    again.reset();
+    assert!(again.is_empty());
+    assert_eq!(again.export(), "");
+    set_sim_now(0);
+}
+
+#[test]
+fn mispick_withdraws_the_correction() {
+    set_sim_now(T0);
+    let mut user = UserDict::new();
+    user.learn("ni'hao", "你好");
+    user.correction("ni'hao", "你好");
+    user.mispick("ni'hao", "你好");
+    assert!(!user.promoted("ni'hao", "你好"), "误选后纠正证据应撤回");
+    set_sim_now(0);
+}
+
+#[test]
+fn correction_half_life_decays() {
+    set_sim_now(T0);
+    let mut user = UserDict::new();
+    user.learn("ni'hao", "你好");
+    user.correction("ni'hao", "你好");
+    set_sim_now(T0 + 42 * DAY);
+    assert!(
+        !user.promoted("ni'hao", "你好"),
+        "六周后纠正权重减半,不再单独升首位"
+    );
+    set_sim_now(0);
+}

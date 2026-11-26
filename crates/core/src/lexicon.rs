@@ -68,6 +68,17 @@ pub(crate) fn user_gain(level: f64) -> f64 {
     USER_W * (1.0 + level).ln()
 }
 
+/// 原样输入缓存的权重。击键串逐字相同才命中,一次使用就比词键记忆更可信;
+/// 仍按 ln(1+次数) 爬升,反复用同一个串才逐渐压过词频先验。
+const RAW_W: f64 = 2.0;
+/// 原样输入缓存的保留门槛。长期不用后层级按幂律衰减,跌破 0.2 就不再
+/// 以「用户打过这个串」的身份进候选;词键记忆仍按原规则保留。
+pub(crate) const RAW_MIN_LEVEL: f64 = 0.2;
+
+pub(crate) fn cache_gain(level: f64) -> f64 {
+    RAW_W * (1.0 + level).ln()
+}
+
 fn prior(word: &str, base: f64, level: f64, total: f64) -> f64 {
     let chars = word.chars().count().max(1) as f64;
     (base / total).ln() + CHAR_BONUS * chars + user_gain(level) - WORD_PENALTY
@@ -79,8 +90,9 @@ const USER_ONLY_FREQ: f64 = 1.0;
 
 /// 原样输入记忆给出的整串候选:击键串上屏过的词,读音路径没有它时按用户词先验入列。
 pub(crate) fn raw_candidate(raw_len: usize, word: &str, level: f64, total: f64) -> Candidate {
-    let mut cand = Candidate::whole(raw_len, word, prior(word, USER_ONLY_FREQ, level, total));
-    cand.personal = user_gain(level);
+    let mut cand = Candidate::whole(raw_len, word, prior(word, USER_ONLY_FREQ, 0.0, total));
+    cand.score += cache_gain(level);
+    cand.personal = cache_gain(level);
     cand.level = level;
     cand.learned = true;
     cand
