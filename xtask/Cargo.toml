@@ -6,6 +6,6 @@ license.workspace = true
 description = "打包与发布等仓库任务"
 
 [dependencies]
-serde_json = "1"
+serde_json = "1.0.154"
 # 发布清单签名;与 server 的验签共用同一条 ed25519 实现。
-ed25519-dalek = "3"
+ed25519-dalek = "3.0.0"

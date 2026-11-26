@@ -7,9 +7,9 @@ license = "GPL-3.0-or-later AND Apache-2.0"
 description = "本地神经重排:8M 同步、25M 停顿门控与去抖;内含 Apache-2.0 的字符级语言模型推理内核"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
 
 [lints.rust]
 # 仅在 CPU 分派、只读文件映射与字节视图的边界局部放开。
@@ -20,4 +20,4 @@ unknown_lints = "allow"
 chunks_exact_to_as_chunks = "allow"
 
 [target.'cfg(windows)'.dependencies]
-memmap2 = "0.9"
+memmap2 = "0.9.12"
