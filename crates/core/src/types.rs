@@ -151,6 +151,15 @@ impl Default for Config {
     }
 }
 
+/// 上屏后立即给出的下一词建议。宿主可把 `text` 放在建议条上，
+/// 用户接受时按 `key` 的拼音键整词上屏，省掉这个词的全部字母。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NextWord {
+    pub text: String,
+    /// 这个词的完整拼音键（音节用 `'` 分隔）；用户词库没有记录读音时为空。
+    pub key: Option<String>,
+}
+
 /// 组合态快照(UI 用)。
 #[derive(Clone, Debug)]
 pub struct Composition {

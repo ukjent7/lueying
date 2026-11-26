@@ -44,7 +44,7 @@ pub use lueying_dict::Fuzzy;
 use lueying_dict::gram::Gram;
 
 pub use query::Candidate;
-pub use types::{Action, CivilTime, Composition, Config, Event, Key, Mode, Script};
+pub use types::{Action, CivilTime, Composition, Config, Event, Key, Mode, NextWord, Script};
 pub use user::UserDict;
 #[cfg(any(test, feature = "sim-clock"))]
 pub use user::set_sim_now;
@@ -57,7 +57,7 @@ pub mod prelude {
     pub use crate::scheme::{
         CandidateFilter, CodeCandidate, Expansion, FullPinyin, Scheme, SchemeManifest,
     };
-    pub use crate::{Candidate, Config, Engine, Event, Key, Mode, UserDict};
+    pub use crate::{Candidate, Config, Engine, Event, Key, Mode, NextWord, UserDict};
 }
 
 /// 多个会话共享的用户词库;Server 让所有应用看到同一份学习结果。
