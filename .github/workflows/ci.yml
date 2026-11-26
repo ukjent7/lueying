@@ -1,7 +1,7 @@
 # push/PR:格式、构建、静态检查、单测与 Windows 构建体积门禁;主分支每次推送出测试安装包。
 # Windows 全链路 E2E 与安装冒烟在 push 到 main 与手动 dispatch 时随 windows job 直跑;
-# Linux 场景 E2E、候选基准、学习模拟、共享语料基准与延迟 ABAB 在 quality.yml,核心路径改动时由本工作流调用。
-# tag 发版只走构建与打包,几分钟出产物;E2E 与冒烟不挡发版。
+# Linux 场景 E2E、候选基准与学习模拟在 quality.yml,核心路径改动时由本工作流调用。
+# tag 发版先过准确率复核再构建打包;E2E 与冒烟不挡发版。
 name: ci
 
 on:
@@ -67,7 +67,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
         run: |
-          core_re='^(crates/(dict|core|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py|bench_shard\.sh)$)'
+          core_re='^(crates/(bench|dict|core|rerank)/|dicts/|tools/(fetch_dict\.sh|fetch_rerank\.sh|bench_shared\.py|bench_shard\.sh|make_eval_v3\.py|make_dev_v4\.py)$)'
           # 手动触发跑全量;新分支首推(before 全零)或历史缺失时保守地当作核心改动。
           if [ "$EVENT" = workflow_dispatch ] || [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             core=true
@@ -79,7 +79,7 @@ jobs:
           echo "核心路径改动: $core"
           echo "core=$core" >> "$GITHUB_OUTPUT"
 
-  # 核心路径改动:Linux 场景 E2E、准确率与延迟红线、共享语料基准,复用 quality.yml;
+  # 核心路径改动:Linux 场景 E2E、候选基准与学习模拟,复用 quality.yml;
   # Windows E2E 与安装冒烟已在下面的 windows job 直跑,不再重复起一套 Windows 构建。
   quality:
     needs: changes
@@ -88,6 +88,8 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/quality.yml
+    with:
+      full: ${{ github.event_name == 'workflow_dispatch' }}
     secrets: inherit
 
   engine:
@@ -187,8 +189,17 @@ jobs:
           LUEYING_NO_UIACCESS: "1"
         run: cargo test -p lueying-server --lib --release --locked
 
+  release-accuracy:
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/bench-accuracy.yml
+    with:
+      release: true
+
   windows:
-    if: ${{ !cancelled() }}
+    needs: release-accuracy
+    if: ${{ !cancelled() && (!startsWith(github.ref, 'refs/tags/') || needs.release-accuracy.result == 'success') }}
     runs-on: windows-latest
     timeout-minutes: 45
     # 打 tag 时创建 Release;其他触发只读。

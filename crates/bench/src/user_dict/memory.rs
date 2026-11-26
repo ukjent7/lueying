@@ -470,39 +470,32 @@ pub(super) fn learning_keys(shared: &Arc<Dictionary>, checks: &mut Checks) {
     for ch in "nihao".chars() {
         g.process(Key::Letter(ch));
     }
-    g.process(Key::Down);
-    let committed: String = g
-        .process(Key::Space)
-        .into_iter()
-        .filter_map(|event| match event {
-            Event::Commit(text) => Some(text),
-            _ => None,
-        })
-        .collect();
+    let committed = pick_word(&mut g, "你");
+    let remaining = g.composition().is_some();
     let exported = g.export_user();
     push(
         checks,
         "分段上屏只学吃掉的音节",
-        committed == "你"
+        committed
+            && remaining
             && exported.contains("w\tni\t你\t")
             && !exported.contains("w\tni'hao\t你\t"),
-        format!("上屏 {committed:?}"),
+        format!("选中「你」上屏: {committed}, 留有下一段: {remaining}"),
     );
 
-    // 连续分段上屏自动造词:先选「你」再选「好」,整串键与整词一起学。
+    // 连续分段上屏只为词典未收录的连写造词,所以夹具只收两个组成字。
+    let (phrase_dict, _) = Dictionary::from_text("你\t3000000\tni\n好\t2000000\thao\n");
     let mut phrase =
-        Engine::new(Arc::clone(&dict), Config::default()).with_modules(crate::builtins());
+        Engine::new(Arc::new(phrase_dict), Config::default()).with_modules(crate::builtins());
     for ch in "nihao".chars() {
         phrase.process(Key::Letter(ch));
     }
-    phrase.process(Key::Down);
-    phrase.process(Key::Space);
-    phrase.process(Key::Space);
+    let picked = pick_word(&mut phrase, "你") && pick_word(&mut phrase, "好");
     let exported = phrase.export_user();
     push(
         checks,
         "连续分段上屏自动造词",
-        exported.contains("w\tni'hao\t你好\t"),
+        picked && exported.contains("w\tni'hao\t你好\t"),
         exported
             .lines()
             .filter(|l| l.starts_with("w\tni'hao\t"))

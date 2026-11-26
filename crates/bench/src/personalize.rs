@@ -1,9 +1,9 @@
-//! 个性化实验口:时间序日志上的 flat(无学习/无档案)与 primed(档案 + 在线学习)。
+//! 个性化实验口:同一初始档案,比较 flat(冻结)与 primed(在线学习)。
 //!
 //! 与 `learn-sim` 的区别:
 //! - `learn-sim` 报新词、误选、衰减、用户整句收益与对开发集的副作用;
 //! - 这里固定「先训练档案,再在留出语料上按时间顺序逐条先测后学」的口径,
-//!   同时报 Top-1/P@5、逐条配对胜负(McNemar 方向)与选词/翻页成本。
+//!   同时报 Top-1/P@5、逐条配对翻转与成功条件下的选词/翻页成本。
 //!
 //! 产品链路与共享语料基准一致:8M 有上文同步、25M 停顿。每次测量都先量分,
 //! 再让模拟用户按最长前缀逐段上屏;上屏过程就是学习过程。
@@ -62,7 +62,24 @@ impl Score {
     }
 
     fn avg_cost(self) -> f64 {
-        (self.picks + self.pages) as f64 / self.total.max(1) as f64
+        (self.picks + self.pages) as f64 / (self.total - self.unreachable) as f64
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct Flips {
+    improved: [usize; 2],
+    regressed: [usize; 2],
+}
+
+impl Flips {
+    fn add(&mut self, before: i64, after: i64) {
+        for (i, k) in [1, 5].into_iter().enumerate() {
+            let was = (0..k).contains(&before);
+            let now = (0..k).contains(&after);
+            self.improved[i] += usize::from(now && !was);
+            self.regressed[i] += usize::from(was && !now);
+        }
     }
 }
 
@@ -152,13 +169,21 @@ fn seed(ctx: &Ctx, profile: &[Case]) -> String {
 fn write_score(out: &mut String, label: &str, score: Score) {
     let _ = writeln!(
         out,
-        "| {label} | {} | {:.1}% | {:.1}% | {:.2} | {} |",
+        "| {label} | {} | {:.1}% | {:.1}% | {} | {} |",
         score.total,
         score.top1_rate(),
         score.top5_rate(),
-        score.avg_cost(),
+        cost_label(score),
         score.unreachable,
     );
+}
+
+fn cost_label(score: Score) -> String {
+    if score.total == score.unreachable {
+        "-".into()
+    } else {
+        format!("{:.2}", score.avg_cost())
+    }
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -172,6 +197,10 @@ pub fn run(args: &[String]) -> i32 {
     let limit = value(args, "--limit")
         .and_then(|text| text.parse().ok())
         .unwrap_or(usize::MAX);
+    if repeats == 0 {
+        eprintln!("--repeats 必须大于 0");
+        return 2;
+    }
     let (dict, _) = match Dictionary::from_path(Path::new(dict_path)) {
         Ok(value) => value,
         Err(error) => {
@@ -219,8 +248,8 @@ pub fn run(args: &[String]) -> i32 {
     let mut flat_by_round: Vec<Score> = vec![Score::default(); repeats];
     // 实验组:一条时间线,测完就按正确选择上屏(学习)。
     let mut primed_by_round: Vec<Score> = vec![Score::default(); repeats];
-    let mut flat_ranks: Vec<i64> = Vec::new();
-    let mut primed_ranks: Vec<i64> = Vec::new();
+    let mut total_flips = Flips::default();
+    let mut flips_by_round = vec![Flips::default(); repeats];
     let mut by_group: BTreeMap<String, (Score, Score)> = BTreeMap::new();
     let mut online = EngineSet::new(&ctx, Some(&saved), true);
     let mut day = 0u64;
@@ -238,8 +267,8 @@ pub fn run(args: &[String]) -> i32 {
             let primed_cost = online.cost(case);
             flat_by_round[round].add(flat_cost.0, flat_cost.1);
             primed_by_round[round].add(primed_rank, primed_cost);
-            flat_ranks.push(flat_cost.0);
-            primed_ranks.push(primed_rank);
+            total_flips.add(flat_cost.0, primed_rank);
+            flips_by_round[round].add(flat_cost.0, primed_rank);
             let (unit, reading) = group_of(case.category);
             let key = format!("{unit}/{reading}");
             let entry = by_group.entry(key).or_default();
@@ -271,16 +300,6 @@ pub fn run(args: &[String]) -> i32 {
         }
         all
     };
-    let wins = flat_ranks
-        .iter()
-        .zip(&primed_ranks)
-        .filter(|(before, after)| **before != 0 && **after == 0)
-        .count();
-    let losses = flat_ranks
-        .iter()
-        .zip(&primed_ranks)
-        .filter(|(before, after)| **before == 0 && **after != 0)
-        .count();
     let name = Path::new(test_path)
         .file_stem()
         .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
@@ -292,47 +311,68 @@ pub fn run(args: &[String]) -> i32 {
     );
     let _ = writeln!(
         out,
-        "## 汇总\n\n| 组 | 样本 | P@1 | P@5 | 平均选词+翻页 | 打不出 |\n|---|---:|---:|---:|---:|---:|"
+        "## 汇总\n\n| 组 | 观测 | P@1 | P@5 | 成功时平均选词+翻页 | 打不出 |\n|---|---:|---:|---:|---:|---:|"
     );
     write_score(&mut out, "flat(档案,不学测试)", flat_total);
     write_score(&mut out, "primed(档案 + 在线学习)", primed_total);
-    let _ = writeln!(
-        out,
-        "\n逐条配对:P@1 进步 {wins},退步 {losses},净 {:+.1} 个百分点。\n",
-        primed_total.top1_rate() - flat_total.top1_rate()
-    );
-    let _ = writeln!(
-        out,
-        "## 分遍\n\n| 遍 | flat P@1 | primed P@1 | flat P@5 | primed P@5 | flat 成本 | primed 成本 |\n|---|---:|---:|---:|---:|---:|---:|"
-    );
-    for round in 0..repeats {
-        let flat = flat_by_round[round];
-        let primed = primed_by_round[round];
+    for (i, delta) in [
+        primed_total.top1_rate() - flat_total.top1_rate(),
+        primed_total.top5_rate() - flat_total.top5_rate(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let k = [1, 5][i];
+        let (wins, losses) = (total_flips.improved[i], total_flips.regressed[i]);
         let _ = writeln!(
             out,
-            "| {} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.2} | {:.2} |",
-            round + 1,
-            flat.top1_rate(),
-            primed.top1_rate(),
-            flat.top5_rate(),
-            primed.top5_rate(),
-            flat.avg_cost(),
-            primed.avg_cost()
+            "\n逐条配对:P@{k} 进步 {wins},退步 {losses},净 {delta:+.1} 个百分点。"
         );
     }
     let _ = writeln!(
         out,
-        "\n## 分组(按单元/阅读形态)\n\n| 组 | flat P@1 | primed P@1 | Δ | flat 成本 | primed 成本 |\n|---|---:|---:|---:|---:|---:|"
+        "\n同一档案沿时间线在线学习;跨遍复用题目。独立题数至多 {},不基于这些翻转数做显著性推断。\n",
+        test.len()
+    );
+    let _ = writeln!(
+        out,
+        "## 分遍\n\n| 遍 | n | flat P@1 | primed P@1 | flat P@5 | primed P@5 | P@1 进/退 | P@5 进/退 | flat 成功成本 | primed 成功成本 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+    );
+    for round in 0..repeats {
+        let flat = flat_by_round[round];
+        let primed = primed_by_round[round];
+        let flips = flips_by_round[round];
+        let _ = writeln!(
+            out,
+            "| {} | {} | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {}/{} | {}/{} | {} | {} |",
+            round + 1,
+            flat.total,
+            flat.top1_rate(),
+            primed.top1_rate(),
+            flat.top5_rate(),
+            primed.top5_rate(),
+            flips.improved[0],
+            flips.regressed[0],
+            flips.improved[1],
+            flips.regressed[1],
+            cost_label(flat),
+            cost_label(primed)
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n## 分组(按单元/阅读形态)\n\n| 组 | n | flat P@1 | primed P@1 | Δ | flat 成功成本 | primed 成功成本 |\n|---|---:|---:|---:|---:|---:|---:|"
     );
     for (group, (flat, primed)) in &by_group {
         let _ = writeln!(
             out,
-            "| {group} | {:.1}% | {:.1}% | {:+.1} | {:.2} | {:.2} |",
+            "| {group} | {} | {:.1}% | {:.1}% | {:+.1} | {} | {} |",
+            flat.total,
             flat.top1_rate(),
             primed.top1_rate(),
             primed.top1_rate() - flat.top1_rate(),
-            flat.avg_cost(),
-            primed.avg_cost()
+            cost_label(*flat),
+            cost_label(*primed)
         );
     }
     let _ = std::fs::create_dir_all("target");

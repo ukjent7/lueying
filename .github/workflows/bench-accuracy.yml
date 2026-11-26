@@ -1,0 +1,100 @@
+# 候选准确率门禁:PR 跑快速档,nightly 与手动触发跑完整档;tag 发版由 ci.yml 以 release 模式调用。
+name: bench-accuracy
+
+on:
+  pull_request:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  accuracy-quick:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: bench-accuracy
+          save-if: false
+      - name: 缓存词典与模型
+        id: data
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: data
+          key: bench-accuracy-data-${{ hashFiles('tools/fetch_dict.sh', 'tools/fetch_rerank.sh') }}
+      - name: 下载词典与模型
+        if: steps.data.outputs.cache-hit != 'true'
+        run: bash tools/fetch_dict.sh data && bash tools/fetch_rerank.sh data/rerank
+      - name: 构建基准
+        run: cargo build -p lueying-bench --release --locked
+      # 基准计时装在命令里,不含 checkout、下载与编译等准备时间。
+      - name: 快速准确率基准
+        run: timeout 300s python3 tools/bench_accuracy.py quick --bin target/release/lueying-bench --report target/accuracy-quick.md
+      - name: 报告摘要
+        if: always()
+        shell: bash
+        run: |
+          if [ -f target/accuracy-quick.md ]; then cat target/accuracy-quick.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+  accuracy-full:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.release
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: bench-accuracy
+      - name: 缓存词典与模型
+        id: data
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: data
+          key: bench-accuracy-data-${{ hashFiles('tools/fetch_dict.sh', 'tools/fetch_rerank.sh') }}
+      - name: 下载词典与模型
+        if: steps.data.outputs.cache-hit != 'true'
+        run: bash tools/fetch_dict.sh data && bash tools/fetch_rerank.sh data/rerank
+      - name: 构建当前与基线基准
+        shell: bash
+        run: |
+          cargo build -p lueying-bench --release --locked
+          cp target/release/lueying-bench "$RUNNER_TEMP/accuracy-head"
+          mkdir -p "$RUNNER_TEMP/accuracy-base"
+          git archive d8ec6a6af3b746eaaa8dc0501a69ffd4b8b4e205 | tar -x -C "$RUNNER_TEMP/accuracy-base"
+          rm -r "$RUNNER_TEMP/accuracy-base/crates/bench"
+          cp -r crates/bench "$RUNNER_TEMP/accuracy-base/crates/bench"
+          (cd "$RUNNER_TEMP/accuracy-base" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo build -p lueying-bench --release --locked)
+      # 基准计时装在命令里,不含 checkout、下载与编译等准备时间。
+      - name: 完整准确率基准
+        env:
+          SUITE: ${{ inputs.release && 'release' || 'nightly' }}
+        run: timeout 3600s python3 tools/bench_accuracy.py "$SUITE" --bin "$RUNNER_TEMP/accuracy-head" --base-bin target/release/lueying-bench --report target/accuracy-full.md
+      - name: 报告摘要
+        if: always()
+        shell: bash
+        run: |
+          if [ -f target/accuracy-full.md ]; then cat target/accuracy-full.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: 上传完整准确率报告
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-accuracy-full
+          path: target/accuracy-full.md
