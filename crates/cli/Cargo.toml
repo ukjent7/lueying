@@ -18,5 +18,5 @@ lueying-dict.workspace = true
 lueying-core.workspace = true
 lueying-ext.workspace = true
 lueying-protocol = { path = "../protocol" }
-serde_json = "1"
-toml = "1.2"
+serde_json = "1.0.154"
+toml = "1.2.3"

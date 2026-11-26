@@ -48,14 +48,14 @@ lueying-win-keys = { path = "crates/win-keys" }
 lueying-server = { path = "platforms/windows/server" }
 lueying-settings = { path = "platforms/windows/settings" }
 # 出站 HTTPS:设置窗(更新、扩展安装)与扩展宿主共用;证书走系统证书库,HTTPS 不降级。
-ureq = { version = "3", default-features = false, features = [
+ureq = { version = "3.5.2", default-features = false, features = [
     "rustls",
     "platform-verifier",
     "gzip",
     "socks-proxy",
 ] }
 # 组件模型宿主:扩展以标准 Wasm 组件(WASI 0.3)运行。
-wasmtime = { version = "51", default-features = false, features = [
+wasmtime = { version = "51.0.0", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",
@@ -64,18 +64,18 @@ wasmtime = { version = "51", default-features = false, features = [
 ] }
 # Rune GPU UI 框架:候选窗与设置窗统一到这一个界面层。0.0.1 尚未发版,
 # 以 git rev 锁定可复现;字体不内嵌,中文走系统 Noto Sans SC(DirectWrite 解析)。
-rune = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce", default-features = false, features = ["accessibility"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d", default-features = false, features = ["accessibility"] }
 
 # Rune vendored patches must be pinned to the same fork revision as Rune.
 [patch.crates-io]
-winit = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-naga = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
-accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "5f8c1b90423cab5c6260fa10de1c3d12ca4020ce" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "4918969f04dce020f63b34e024368a86e5e1857d" }
 
 # 视觉验证专用:release 的优化与体积 + debug_assertions(快照 harness
 # 门控)。不污染发布 profile,产物在 target/.../visual/。

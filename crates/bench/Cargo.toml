@@ -23,4 +23,4 @@ lueying-settings.workspace = true
 # 扩展宿主进程:本可执行文件以 --ext-host 运行时即宿主(E2E 自拉起)。
 lueying-ext-host.workspace = true
 # 产品的候选快照与同步门控:基准直接走这条路径,不另写一份。
-serde_json = "1"
+serde_json = "1.0.154"

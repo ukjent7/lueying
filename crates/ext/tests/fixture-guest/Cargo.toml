@@ -18,8 +18,8 @@ variant-b = []
 
 [dependencies]
 lueying-ext = { path = "../..", default-features = false, features = ["guest"] }
-serde_json = "1"
-wit-bindgen = "0.63"
+serde_json = "1.0.154"
+wit-bindgen = "0.63.0"
 
 # 服务外观是按需生成的死代码时也要被裁掉,宿主只该看到用到的服务导入。
 [profile.release]
