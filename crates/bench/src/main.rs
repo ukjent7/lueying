@@ -16,6 +16,7 @@ mod learn_sim;
 mod learning;
 mod metrics;
 mod modules;
+mod noise;
 mod personal;
 mod personalize;
 mod quick;
@@ -128,6 +129,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full]   学习模拟(完整版含对验收集的副作用)
   personal --dict <主词典> [--gram <搭配表>] [--rerank-dir <模型目录>] [--passes N] [--side-effect]   个性化留出评估(v1..v3 训练、v4 验收集)
   conversion --dict <主词典> --corpus <语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--limit N]   转换准确率分组(有/无上文,词/短语/整句)
+  noise --dict <主词典> --corpus <干净全拼语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--per-group N]   路线 3 噪声套件(模糊/邻键/转置/中英混合)
   personalize --dict <主词典> --test <语料.tsv> [--train <语料.tsv>] --rerank-dir <模型目录> [--gram <搭配表>] [--repeats N]   时间序 flat/primed 个性化
   import-typing <记录目录> [--out <文件>]   打字记录合成 eval-user-* 语料(见 lueying-core 的 typing_log)
 
@@ -186,6 +188,9 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("personalize") {
         std::process::exit(personalize::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("noise") {
+        std::process::exit(noise::run(&args));
     }
     if args.get(1).map(String::as_str) == Some("latency") {
         std::process::exit(latency::run(&args));
