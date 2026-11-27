@@ -1,0 +1,76 @@
+name: Windows workspace
+
+on:
+  push:
+    branches: [bench/windows-ci]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-workspace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain and targets
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup show
+          rustup target add x86_64-pc-windows-msvc wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          lookup-only: ${{ github.event_name == 'pull_request' }}
+          prefix-key: windows-workspace
+      - name: Build native workspace
+        run: cargo build --workspace --exclude lueying-tsf --target x86_64-pc-windows-msvc --locked
+      - name: Install wasm-tools
+        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        with:
+          tool: wasm-tools
+      - name: Build Rust component test fixtures
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:CARGO_TARGET_DIR = Join-Path $PWD 'target'
+          $manifest = 'crates/ext/tests/fixture-guest/Cargo.toml'
+          $wasm = 'target/wasm32-unknown-unknown/release/fixture_guest.wasm'
+          cargo build --release --manifest-path $manifest --target wasm32-unknown-unknown
+          wasm-tools component new $wasm -o target/fixture-a.wasm
+          cargo build --release --manifest-path $manifest --target wasm32-unknown-unknown --features variant-b
+          wasm-tools component new $wasm -o target/fixture-b.wasm
+          "LUEYING_FIXTURE_WASM=$PWD/target/fixture-a.wasm" >> $env:GITHUB_ENV
+          "LUEYING_FIXTURE_B_WASM=$PWD/target/fixture-b.wasm" >> $env:GITHUB_ENV
+      - name: Test native workspace without interactive desktop
+        env:
+          # Unsigned test executables must not require the production uiAccess manifest.
+          LUEYING_NO_UIACCESS: '1'
+        run: >-
+          cargo test --workspace --exclude lueying-tsf --target x86_64-pc-windows-msvc --locked --
+          --skip capture_shots_real_screen --skip ocr_recognizes_captured_shot
+          --skip hotkey_user_binding_fires --skip hotkey_press_resolves_on_fire
+      - name: Build and test TSF with static CRT
+        env:
+          CARGO_TARGET_DIR: target/tsf
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo build -p lueying-tsf --target x86_64-pc-windows-msvc --locked
+          if (-not (Test-Path 'target/tsf/x86_64-pc-windows-msvc/debug/lueying_tsf.dll' -PathType Leaf)) {
+            throw 'Missing lueying_tsf.dll'
+          }
+          cargo test -p lueying-tsf --target x86_64-pc-windows-msvc --locked
