@@ -121,6 +121,8 @@ struct State {
     appearance: Option<theme::Appearance>,
     /// 系统「减少动态效果」缓存;None 时视图回退到框架快照。
     reduced_motion: Option<bool>,
+    /// 系统偏好和背景装饰的下一次采样时间。
+    next_poll_at: f64,
     /// 启动统计尚未落地;用户先导入词库时置 false,迟到的启动值不再覆盖。
     initial_groups_pending: bool,
     /// 搜索框编辑器;文字变化直接写回 `settings.search`。
@@ -230,6 +232,7 @@ impl Sky {
 }
 
 const SKY_CYCLE: f64 = 720.0;
+const SETTINGS_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const SKY_D: f32 = 26.0;
 
 thread_local! {
@@ -260,12 +263,7 @@ pub fn run() {
         poll: Some(settings_poll),
         ..AppSpec::new("掠影设置", (960.0, 680.0), State::default, view)
     };
-    let app = App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([
-            0.72, 0.72, 0.75,
-        ]))
-        .tab_visits_controls(true)
-        .init(move || state);
+    let app = App::new(spec).tab_visits_controls(true).init(move || state);
     let handle = app.handle();
     HANDLE.with(|slot| *slot.borrow_mut() = Some(handle.clone()));
     // 首帧后再跑引擎状态与重排模型,首屏不被管道请求阻塞;Option 保证只一次。
@@ -308,19 +306,14 @@ fn load_core() -> Core {
     }
 }
 
-/// 窗顶天空的日/月。12 分钟一整圈(720 秒):前半圈太阳、后半圈
-/// 月亮,各走正弦弧从左升右落。高度决定颜色与能量——日出日落
-/// 变暖变暗(premultiplied fill 让 emission 自动跟暗),接近地平线
-/// 时 alpha 渐隐。灯位由 compositor 每帧取自元素中心,零同步代码。
-/// 造型对应样张 v2:太阳带日冕(自身大气,不是假光)、月亮带
-/// 月坑(呼应工具栏),低 emission 增益保盘形。
+/// 窗顶装饰日月。12 分钟一整圈(720 秒):前半圈太阳、后半圈
+/// 月亮,各走正弦弧从左升右落,接近地平线时渐隐。
 fn sky_body(values: &Sky) -> Vec<El> {
     const D: f32 = SKY_D;
     let is_day = values.is_day;
     let mut bodies: Vec<El> = Vec::new();
     if is_day {
-        // 日冕:太阳自身的大气,radial 渐变衰减到透明——不是照明贴图,
-        // 是天体外观的一部分。
+        // 太阳日冕由透明渐变绘制。
         let cd = D * 1.9;
         bodies.push(
             el().absolute(0.0, 0.0)
@@ -350,7 +343,6 @@ fn sky_body(values: &Sky) -> Vec<El> {
         .live_offset(&values.disc)
         .live_fill(&values.fill)
         .key(if is_day { "sun" } else { "moon" })
-        .mark(lueying_server::lighting::MARK_EMITTER_SKY)
         .a11y_hidden();
     bodies.push(disc);
     if !is_day {
@@ -384,13 +376,18 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     scene(s)
 }
 
-/// 前台每半秒复查系统外观、减少动态与日月相位;隐藏时不读注册表,也不
-/// 常驻唤醒。外观/减动效真的变了才返回 true;日月只更新 Live 源,只有
-/// 昼夜切换才提交一次重绘。
+/// 前台按半秒期限复查系统外观、减少动态与日月相位;未到期限、窗口隐藏、
+/// 减少动态或高对比时都不推进日月,隐藏时也不读注册表。外观/减动效真的
+/// 变了才返回 true;日月只更新 Live 源,只有昼夜切换才提交一次重绘。
 fn settings_poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if !tx.window_visible() {
+        s.next_poll_at = 0.0;
         return false;
     }
+    if now < s.next_poll_at {
+        return false;
+    }
+    s.next_poll_at = now + SETTINGS_POLL_INTERVAL.as_secs_f64();
     let appearance = theme::Appearance::of_system();
     let reduced = !theme::client_area_animation();
     let mut changed = false;
@@ -402,12 +399,12 @@ fn settings_poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         s.reduced_motion = Some(reduced);
         changed = true;
     }
-    let was_day = s.sky.is_day;
-    s.sky.advance(now);
-    if s.sky.is_day != was_day {
-        changed = true;
+    if !reduced && !matches!(appearance, theme::Appearance::HighContrast) {
+        let was_day = s.sky.is_day;
+        s.sky.advance(now);
+        changed |= s.sky.is_day != was_day;
     }
-    tx.wake_after(Duration::from_millis(500));
+    tx.wake_after(SETTINGS_POLL_INTERVAL);
     changed
 }
 
@@ -584,19 +581,10 @@ fn scene(s: &State) -> El {
         .w_full()
         .h_full()
         .fill(color(colors.bg));
-    // 黑瓷受光面:非高对比时标记身份,光照 compositor 按它打光。
-    if !matches!(appearance, theme::Appearance::HighContrast) {
-        base = base.mark(lueying_server::lighting::MARK_SHELL);
-    }
     // 窗宽变化只更新 Live 位置,不重建整页。
     base = base.on_layout(|s: &mut State, [_, _, width, _]| s.sky.set_width(width));
-    // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
-    // 地方来。12 分钟一圈的设计节奏,不是真实时间。元素平铺进
-    // base,不套零尺寸容器(裁切不确定)。
     base = base.child(header).child(body).child(footer);
-    // 天空:日月沿窗顶横越,自身就是 emitter——光从你看得见的
-    // 地方来。12 分钟一圈的设计节奏,不是真实时间。画在最前:
-    // 搜索框占了标题带右半,天体若走其后,半段旅程不可见。
+    // 天体放在搜索框之后绘制,以免被搜索框挡住。
     if !matches!(appearance, theme::Appearance::HighContrast) {
         for body in sky_body(&s.sky) {
             base = base.child(body);
@@ -1631,12 +1619,7 @@ fn snap_state(state: State, size: (f32, f32), output: String) -> Result<(), Stri
         families: ("Noto Sans SC", "Noto Sans SC"),
         ..AppSpec::new("Lueying Settings Snapshot", size, State::default, view)
     };
-    // 快照必须与真实应用同构:光照 compositor 缺失会让设置页
-    // 渲染退化成无光照平底,验证失真。
     App::new(spec)
-        .compositor(lueying_server::lighting::LightFx::lit_room([
-            0.72, 0.72, 0.75,
-        ]))
         .tab_visits_controls(true)
         .init(move || state)
         .args([
@@ -2039,5 +2022,20 @@ mod tests {
             .find(|element| element.role == "radiogroup")
             .expect("分段组节点");
         assert_eq!(group.label.as_deref(), Some("候选窗排列"));
+    }
+
+    #[test]
+    fn early_poll_does_not_advance_the_sky() {
+        let mut state = State {
+            next_poll_at: 0.5,
+            ..State::default()
+        };
+        let cycle = state.sky.cycle;
+        assert!(!settings_poll(&mut state, 0.25, &mut Tx::default()));
+        assert_eq!(state.sky.cycle, cycle);
+        assert!(
+            state.appearance.is_none(),
+            "must not query system preferences yet"
+        );
     }
 }

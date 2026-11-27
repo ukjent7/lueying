@@ -578,9 +578,10 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
             .on_drag(|s: &mut BarHud, drag, _| on_bar_drag(s, drag));
     }
     match (s.material, s.glass) {
-        // 玻璃激活:条体表面就是 lens 的输出,bar 本身不画底;
-        // 月亮、按钮等内容照常画在最上层。
-        (UiMaterial::Glass, true) => {}
+        // Keep the lens visible, but bound the background luminance under light labels.
+        (UiMaterial::Glass, true) => {
+            bar = bar.fill(theme::srgb_alpha(palette.bg, 0.90));
+        }
         // 黑瓷:不透的共享石墨胎体,受光面身份交给光照 compositor。
         (UiMaterial::Ceramic, _) if !high_contrast => {
             bar =
@@ -698,24 +699,29 @@ fn button_el(s: &ToolbarVisual<'_>, frame: &ButtonFrame, button: Button, index: 
         palette.text
     });
     if mode_on {
-        cell = cell.fill(if high_contrast {
+        cell = cell.fill(if high_contrast || s.glass {
             theme::srgb(palette.selected_bg)
         } else {
             theme::srgb_alpha(palette.accent, 0.16)
         });
     }
-    // 高对比用系统面/选中实色,避免半透明叠加改掉系统字色;其余档保持
-    // 原来的轻悬停叠色。
+    // 高对比用系统实色;玻璃的中/英选中态悬停也用实底,确保强调字色可读。
     let hover = if high_contrast {
         theme::srgb(if mode_on {
             palette.selected_bg
         } else {
             palette.hover
         })
+    } else if s.glass && mode_on {
+        theme::srgb(palette.hover)
     } else {
         theme::srgb_alpha(palette.hover, 0.66)
     };
     cell = if button == Button::FullWidth {
+        // The moon's darker edge needs more backing than the light labels do.
+        if s.glass {
+            cell = cell.fill(theme::srgb_alpha(palette.bg, 0.65));
+        }
         cell.child(moon_el(frame.moon, size, high_contrast, palette))
     } else {
         let glyph = if matches!(button, Button::Settings | Button::Hide) {
