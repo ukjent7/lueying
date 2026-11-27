@@ -148,6 +148,11 @@ const LEADER_BONUS: f32 = 0.5;
 /// 总字数上限等于整句时九条候选的工作量,不比原来贵。
 const COMPARED_MAX: usize = 32;
 const COMPARED_CHARS: usize = 144;
+/// 停顿重排在静默期跑,延迟预算宽得多:比选窗口可以放深三倍,够到引擎序里
+/// 几十名开外的正确文本(深度救援在 32 条窗口里物理上不可达)。
+const SETTLE_COMPARED_MAX: usize = 96;
+const SETTLE_COMPARED_CHARS: usize = 384;
+const SETTLE_BUDGET: (usize, usize) = (SETTLE_COMPARED_MAX, SETTLE_COMPARED_CHARS);
 /// 没有上文时,这么短的首位算短句,要领先 [`SHORT_MARGIN`] 才换。
 const SHORT_CHARS: usize = 4;
 const SHORT_MARGIN: f32 = 1.0;
@@ -222,20 +227,28 @@ impl Rerank {
 
     fn decide_inner(&mut self, context: &str, texts: &[&str], facts: &[Fact]) -> Option<usize> {
         if !context.is_empty() {
-            return self.decide_in_context(context, texts, facts, None);
+            return self.decide_in_context(
+                context,
+                texts,
+                facts,
+                None,
+                (COMPARED_MAX, COMPARED_CHARS),
+            );
         }
         self.decide_inner_with_margin(context, texts, &same_reading(facts), SYNC_PROMOTE_MARGIN)
     }
 
-    /// 有上文时的决策,见 [`CHANNEL_WEIGHT`]。
+    /// 有上文时的决策,见 [`CHANNEL_WEIGHT`]。`budget` 是比选窗口的
+    /// (条数, 总字数) 上限;每键同步路径用紧预算,停顿路径用 [`SETTLE_COMPARED_MAX`]。
     fn decide_in_context(
         &mut self,
         context: &str,
         texts: &[&str],
         facts: &[Fact],
         left: Option<&str>,
+        budget: (usize, usize),
     ) -> Option<usize> {
-        let (indices, scores) = self.context_scores(context, texts, facts, false)?;
+        let (indices, scores) = self.context_scores(context, texts, facts, false, budget)?;
         let best = (0..indices.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b]))?;
         let winner = indices[best];
         (winner != 0 && !self.local_disagrees(left, texts, facts, winner)).then_some(winner)
@@ -273,7 +286,7 @@ impl Rerank {
         }
         let started = Instant::now();
         let result = self
-            .context_scores(context, texts, facts, true)
+            .context_scores(context, texts, facts, true, SETTLE_BUDGET)
             .map_or_else(ContextRank::default, |(indices, scores)| {
                 let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
                 order.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
@@ -326,6 +339,7 @@ impl Rerank {
         texts: &[&str],
         facts: &[Fact],
         keep_locked: bool,
+        (max_cand, max_chars): (usize, usize),
     ) -> Option<(Vec<usize>, Vec<f32>)> {
         if texts.len() != facts.len() {
             return None;
@@ -334,14 +348,14 @@ impl Rerank {
         if leader.locked || !leader.answers_key {
             return None;
         }
-        let mut budget = COMPARED_CHARS;
-        let mut compared: Vec<usize> = Vec::with_capacity(COMPARED_MAX);
+        let mut budget = max_chars;
+        let mut compared: Vec<usize> = Vec::with_capacity(max_cand);
         for (index, (text, fact)) in texts.iter().zip(facts).enumerate() {
             if !fact.answers_key || (keep_locked && fact.locked) {
                 continue;
             }
             let chars = text.chars().count();
-            if compared.len() == COMPARED_MAX || (chars > budget && compared.len() >= 2) {
+            if compared.len() == max_cand || (chars > budget && compared.len() >= 2) {
                 break;
             }
             budget = budget.saturating_sub(chars);
@@ -365,6 +379,23 @@ impl Rerank {
                 + leading;
         }
         Some((compared, scores))
+    }
+
+    /// 比选窗口内各候选的混合目标得分,按降序返回 `(候选下标, 得分)`。
+    /// 诊断用;不改变 `decide` 的门控语义(local_disagrees 等在调用方之外)。
+    #[doc(hidden)]
+    pub fn context_scored(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+    ) -> Vec<(usize, f32)> {
+        let Some((indices, scores)) = self.context_scores(context, texts, facts, false, SETTLE_BUDGET) else {
+            return Vec::new();
+        };
+        let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
+        order.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        order
     }
 
     fn decide_inner_with_margin(
@@ -422,7 +453,7 @@ impl Rerank {
         left: Option<&str>,
     ) -> Option<usize> {
         if !context.is_empty() {
-            return self.decide_in_context(context, texts, facts, left);
+            return self.decide_in_context(context, texts, facts, left, SETTLE_BUDGET);
         }
         let leader = facts.first()?;
         if leader.trusted_dictionary_hit || !leader.answers_key {

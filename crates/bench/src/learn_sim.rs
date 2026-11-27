@@ -669,11 +669,31 @@ fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
         let snap = crate::rerank::snapshot(&engine);
         if !snap.context.is_empty() && !snap.texts.is_empty() {
             let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+            let scored = four.context_scored(&snap.context, &texts, &snap.facts);
+            let margin_dump = |out: &mut String| {
+                if scored.is_empty() {
+                    return;
+                }
+                let leader = scored.iter().find(|(i, _)| *i == 0);
+                let gold = scored.iter().position(|(i, _)| texts[*i] == expected);
+                let _ = writeln!(
+                    out,
+                    "  8M比选 win=[{}]{} 首位差={:.3} gold序={:?} gold差={:.3} win_ch={:.3}",
+                    scored[0].0,
+                    texts[scored[0].0],
+                    leader.map_or(f32::NAN, |l| scored[0].1 - l.1),
+                    gold,
+                    gold.map_or(f32::NAN, |g| scored[g].1 - leader.map_or(f32::NAN, |l| l.1)),
+                    snap.facts[scored[0].0].channel,
+                );
+            };
             if let Some(index) = four.decide(&snap.context, &texts, &snap.facts) {
                 let ok = engine.promote(index);
                 let _ = writeln!(out, "8M → [{index}] {} promote={}", texts[index], ok);
+                margin_dump(out);
             } else {
                 let _ = writeln!(out, "8M → 无决定");
+                margin_dump(out);
             }
         }
         let snap = crate::rerank::snapshot(&engine);
@@ -683,6 +703,23 @@ fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
             let _ = writeln!(out, "25M → [{index}] {} promote={}", texts[index], ok);
         } else {
             let _ = writeln!(out, "25M → 无决定");
+        }
+        if !snap.context.is_empty() {
+            let scored = five.context_scored(&snap.context, &texts, &snap.facts);
+            if !scored.is_empty() {
+                let leader = scored.iter().find(|(i, _)| *i == 0);
+                let gold = scored.iter().position(|(i, _)| texts[*i] == expected);
+                let _ = writeln!(
+                    out,
+                    "  25M比选 win=[{}]{} 首位差={:.3} gold序={:?} gold差={:.3} win_ch={:.3}",
+                    scored[0].0,
+                    texts[scored[0].0],
+                    leader.map_or(f32::NAN, |l| scored[0].1 - l.1),
+                    gold,
+                    gold.map_or(f32::NAN, |g| scored[g].1 - leader.map_or(f32::NAN, |l| l.1)),
+                    snap.facts[scored[0].0].channel,
+                );
+            }
         }
         let _ = writeln!(
             out,
