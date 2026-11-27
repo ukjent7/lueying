@@ -66,15 +66,17 @@ pub struct Candidate {
     pub(crate) weaker_reading: bool,
     /// 句首有可用的非语气词时,仅依附前文的语气词不自动升首。
     pub(crate) needs_clause_prefix: bool,
+    /// 只禁用学习首位锁，不移除普通学习加分。
+    pub(crate) suppress_promotion: bool,
     /// 动作候选要执行的完整命令 id;普通候选为空。动作候选不上屏文字、
     /// 不学习,选中即执行命令。
     pub action: Option<String>,
 }
 
 impl Candidate {
-    /// 用户在这个键下学过这个词,且层级已达首位门槛:重排不得改动它的位置。
+    /// 记忆达首位阈值且允许硬锁:保护首位和重排共用此判断。
     pub fn learned_enough(&self) -> bool {
-        self.learned && self.level >= crate::user::PROMOTE_LEVEL
+        self.learned && !self.suppress_promotion && self.level >= crate::user::PROMOTE_LEVEL
     }
 
     /// 功能模块添加“整串上屏”候选的最小构造:一个区间覆盖整个原始输入,
@@ -110,6 +112,7 @@ impl Candidate {
             attested_context: false,
             weaker_reading: false,
             needs_clause_prefix: false,
+            suppress_promotion: false,
             action: None,
         }
     }

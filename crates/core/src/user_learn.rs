@@ -4,6 +4,11 @@
 
 use super::*;
 
+enum WordOrigin {
+    Standalone,
+    Fragment(Option<[char; 2]>),
+}
+
 /// 纠正证据的半衰期:六周。纠正不是永久标签,久不确认就退回普通曝光。
 pub(crate) const DEFAULT_CORRECTION_HALF_LIFE: f64 = 42.0;
 
@@ -58,6 +63,14 @@ impl UserDict {
 
     /// 记一次「在 key 下选了 word」。词典里有没有这个词一视同仁:每次使用都是证据。
     pub fn learn(&mut self, key: &str, word: &str) {
+        self.learn_word(key, word, WordOrigin::Standalone);
+    }
+
+    pub(crate) fn learn_fragment(&mut self, key: &str, word: &str, context: &str) {
+        self.learn_word(key, word, WordOrigin::Fragment(fragment_context(context)));
+    }
+
+    fn learn_word(&mut self, key: &str, word: &str, origin: WordOrigin) {
         if key.is_empty() || word.is_empty() {
             return;
         }
@@ -69,6 +82,15 @@ impl UserDict {
                 entry.memory.reinforce(now);
                 // 重新选中它,之前的误选记号就不再适用。
                 entry.miss = None;
+                match origin {
+                    WordOrigin::Standalone => entry.fragment_contexts = None,
+                    WordOrigin::Fragment(Some(context)) => {
+                        if let Some(scope) = &mut entry.fragment_contexts {
+                            scope.insert(context);
+                        }
+                    }
+                    WordOrigin::Fragment(None) => {}
+                }
             }
             None => {
                 let mut memory = Memory::default();
@@ -78,6 +100,10 @@ impl UserDict {
                     memory,
                     miss: None,
                     corrected: Corrected::default(),
+                    fragment_contexts: match origin {
+                        WordOrigin::Standalone => None,
+                        WordOrigin::Fragment(context) => Some(context.into_iter().collect()),
+                    },
                 });
                 self.count += 1;
             }

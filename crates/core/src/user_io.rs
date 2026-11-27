@@ -4,6 +4,7 @@
 //!
 //! - `w 键 词 次数 稳定度 最近时刻 误选时刻`:读音词记忆,误选时刻为 0 表示没有。
 //! - `x 键 词 纠正次数 最近时刻`:非首选位置被主动选中的证据;紧跟在对应的 `w` 行后面。
+//! - `f 键 词 次数 最近时刻 左邻串`:相同 `w` 版本的片段作用域,每两字一个左邻,可为空。
 //! - `r 击键串 词 次数 稳定度 最近时刻`:原样输入记忆。
 //! - `t 前词 后词 次数 稳定度 最近时刻`:词序记忆。
 //! - `g 模糊组 次数 时刻`:打字习惯,模糊组。
@@ -38,6 +39,13 @@ impl UserDict {
                     out.push_str(&format!(
                         "x\t{key}\t{}\t{}\t{}\n",
                         e.word, e.corrected.count, e.corrected.last
+                    ));
+                }
+                if let Some(scope) = &e.fragment_contexts {
+                    let contexts: String = scope.iter().flatten().collect();
+                    out.push_str(&format!(
+                        "f\t{key}\t{}\t{}\t{}\t{contexts}\n",
+                        e.word, m.uses, m.last
                     ));
                 }
             }
@@ -101,6 +109,33 @@ impl UserDict {
                     return false;
                 };
                 self.import_word(key, word, memory, (miss != 0).then_some(miss))
+            }
+            ["f", key, word, uses, last, contexts] => {
+                let (Ok(uses), Ok(last)) = (uses.parse::<u32>(), last.parse::<u64>()) else {
+                    return false;
+                };
+                let mut scope = BTreeSet::new();
+                let mut chars = contexts.chars();
+                while let Some(left) = chars.next() {
+                    let Some(right) = chars.next() else {
+                        return false;
+                    };
+                    if !is_context_han(left) || !is_context_han(right) {
+                        return false;
+                    }
+                    scope.insert([left, right]);
+                }
+                let Some(entry) = self.entries_mut(key).iter_mut().find(|e| e.word == word) else {
+                    return false;
+                };
+                if (entry.memory.last, entry.memory.uses) != (last, uses) {
+                    return false;
+                }
+                entry
+                    .fragment_contexts
+                    .get_or_insert_with(BTreeSet::new)
+                    .extend(scope);
+                true
             }
             ["r", typed, word, uses, stability, last] => {
                 let Some(memory) = memory(uses, stability, last) else {
@@ -197,7 +232,11 @@ impl UserDict {
         let entries = self.words.entry(key.to_string()).or_default();
         match entries.iter_mut().find(|e| e.word == word) {
             Some(entry) => {
+                let old = (entry.memory.last, entry.memory.uses);
                 absorb(&mut entry.memory, memory);
+                if (entry.memory.last, entry.memory.uses) != old {
+                    entry.fragment_contexts = None;
+                }
                 entry.miss = entry.miss.max(miss);
             }
             None => {
@@ -206,6 +245,7 @@ impl UserDict {
                     memory,
                     miss,
                     corrected: Corrected::default(),
+                    fragment_contexts: None,
                 });
                 self.count += 1;
             }

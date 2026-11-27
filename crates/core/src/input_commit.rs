@@ -91,6 +91,7 @@ impl Engine {
         // 否则多音节词学完也匹配不上。
         // 本次上屏对应的击键串:去掉隔音符,与 `comp.raw` 同为小写。
         let typed: String = raw[..cut].chars().filter(|c| *c != '\'').collect();
+        let rest = raw[cut..].trim_start_matches('\'').to_string();
         let learned = if fixed {
             String::new()
         } else {
@@ -135,7 +136,11 @@ impl Engine {
                 user.mispick(&pick.key, &pick.word);
                 user.mispick_raw(&pick.typed, &pick.word);
             }
-            user.learn(&learned, &learn_text);
+            if !rest.is_empty() || self.phrase.is_some() {
+                user.learn_fragment(&learned, &learn_text, &self.context);
+            } else {
+                user.learn(&learned, &learn_text);
+            }
             // 非首选位置被主动选中:这是纠正证据,权重比曝光高一级。
             // 只看同 consume 的可比候选,快捷项与日期/符号不算「首选」。
             let corrected = self.cands.iter().take(idx).any(|skipped| {
@@ -168,7 +173,6 @@ impl Engine {
             };
             self.transition_handled += 1;
         }
-        let rest = raw[cut..].trim_start_matches('\'').to_string();
         // 同一次组合里连续选词:把各段的击键、拼音与文本拼起来,整串结束时造一个
         // 整句词条。只选一次(整串或单段)时上面已经学过,不重复记。
         let phrase = if self.learning && !fixed {

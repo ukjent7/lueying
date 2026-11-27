@@ -13,7 +13,7 @@ use lueying_dict::{Dictionary, Entry, signature};
 
 use crate::channel::Unit;
 use crate::query::Candidate;
-use crate::user::UserDict;
+use crate::user::{UserDict, fragment_context};
 
 pub(crate) const CHAR_BONUS: f64 = 0.5;
 const USER_W: f64 = 3.0;
@@ -199,6 +199,7 @@ pub(crate) struct Lexicon<'a> {
     dict: &'a Dictionary,
     user: &'a UserDict,
     total: f64,
+    fragment_context: Option<[char; 2]>,
     /// 单元串 → 命中。跨按键保留,由调用方在上文或用户词库修订变化时清空。
     hits: HashMap<String, Arc<Vec<Hit>>>,
     /// 同一签名被多串单元共用:模糊读法的声母不变时签名相同。
@@ -210,12 +211,14 @@ impl<'a> Lexicon<'a> {
         dict: &'a Dictionary,
         user: &'a UserDict,
         total: f64,
+        context: &str,
         hits: HashMap<String, Arc<Vec<Hit>>>,
     ) -> Self {
         Self {
             dict,
             user,
             total,
+            fragment_context: fragment_context(context),
             hits,
             signatures: HashMap::new(),
         }
@@ -321,6 +324,13 @@ impl<'a> Lexicon<'a> {
                 continue;
             }
             for entry in self.user.entries(key) {
+                if let Some(scope) = &entry.fragment_contexts
+                    && !self
+                        .fragment_context
+                        .is_some_and(|context| scope.contains(&context))
+                {
+                    continue;
+                }
                 if !user_key_matches(key, units) {
                     continue;
                 }

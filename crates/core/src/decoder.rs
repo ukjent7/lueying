@@ -768,7 +768,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     } = args;
     let total = dict.total_weight() as f64;
     charts.sync(context, (user.revision(), crate::user::day()), *fuzzy);
-    let mut lexicon = Lexicon::new(dict, user, total, std::mem::take(&mut charts.hits));
+    let mut lexicon = Lexicon::new(dict, user, total, context, std::mem::take(&mut charts.hits));
     let edges = channel::lattice(raw, fuzzy, !quick_trigger);
     let finish = finishable(raw, &edges);
     let bounds = channel::canonical_bounds(raw);
@@ -860,7 +860,17 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     // 原样输入记忆:同一击键串上屏过的词。读音路径已经给出的词补上学习加分;没有的
     // (手误、简拼或读音路径够不着)按用户词先验补进整串候选。
     let typed: String = raw.chars().filter(|c| *c != '\'').collect();
-    for (word, level, uses) in user.raw_words(&typed) {
+    let clause_start = at_clause_start(context);
+    let raw_words = user.raw_words(&typed);
+    let anchors: HashSet<&str> = if !clause_start {
+        raw_words
+            .iter()
+            .filter_map(|&(word, level, _)| (level >= crate::user::PROMOTE_LEVEL).then_some(word))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    for (word, level, uses) in raw_words {
         if full.iter().any(|cand| cand.text == word) {
             if level > RAW_MIN_LEVEL {
                 let gain = cache_gain(level);
@@ -992,8 +1002,15 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         let cut = c.spans.last().map_or(0, |s| s.1);
         seen.insert((c.text.clone(), cut))
     });
+    if !clause_start {
+        for cand in &mut cands {
+            if cand.full && cand.trusted && !anchors.contains(cand.text.as_str()) {
+                cand.suppress_promotion = true;
+            }
+        }
+    }
     mark_weaker_readings(raw, &mut cands);
-    if at_clause_start(context) {
+    if clause_start {
         mark_clause_particles(&mut cands);
     }
     protect_exact(&mut cands);

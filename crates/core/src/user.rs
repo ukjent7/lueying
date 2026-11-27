@@ -8,7 +8,7 @@
 //!
 //! 文件布局:`user_learn` 放学习与打分,`user_io` 放导出与导入。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(any(test, feature = "sim-clock"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -144,6 +144,17 @@ impl Corrected {
     }
 }
 
+pub(crate) fn is_context_han(ch: char) -> bool {
+    matches!(ch as u32, 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0x20000..=0x323af)
+}
+
+pub(crate) fn fragment_context(context: &str) -> Option<[char; 2]> {
+    let mut tail = context.chars().rev();
+    let right = tail.next().filter(|&ch| is_context_han(ch))?;
+    let left = tail.next().filter(|&ch| is_context_han(ch))?;
+    Some([left, right])
+}
+
 #[derive(Clone)]
 pub(crate) struct WordEntry {
     pub word: String,
@@ -152,6 +163,8 @@ pub(crate) struct WordEntry {
     pub miss: Option<u64>,
     /// 非首选位置被主动选中的次数;与曝光分开,用来把一次纠正变成首选。
     pub corrected: Corrected,
+    /// 仅分段选过时,只在见过的组合左邻给读音词加分。旧档案和独立选词不受限。
+    pub fragment_contexts: Option<BTreeSet<[char; 2]>>,
 }
 
 impl WordEntry {

@@ -82,6 +82,40 @@ fn partial_selection_keeps_the_remainder_and_only_final_learning_discards() {
 }
 
 #[test]
+fn fragment_word_bonus_requires_matching_context_after_profile_import() {
+    let mut trained = engine();
+    for _ in 0..3 {
+        trained.set_context("今天");
+        type_into(&mut trained, "nihaoshijie");
+        pick(&mut trained, "拟好", false);
+        pick(&mut trained, "世界", true);
+    }
+    let profile = trained.export_user();
+    assert!(profile.contains("w\tni'hao\t拟好\t3\t"), "{profile}");
+    assert!(
+        profile.lines().any(|line| {
+            line.starts_with("f\tni'hao\t拟好\t3\t") && line.ends_with("\t今天")
+        }),
+        "{profile}"
+    );
+
+    let mut restored = engine();
+    restored.import_user(&profile);
+    assert_eq!(restored.export_user(), profile);
+    for (context, boosted) in [("是今天", true), ("明天", false), ("今天。", false)] {
+        restored.set_context(context);
+        type_into(&mut restored, "nh");
+        let cand = restored
+            .cands
+            .iter()
+            .find(|c| c.full && c.text == "拟好")
+            .unwrap();
+        assert_eq!(cand.personal > 0.0, boosted, "{context}: {cand:?}");
+        assert!(restored.process(Key::Esc).is_empty());
+    }
+}
+
+#[test]
 fn cancel_raw_and_context_only_commit_keep_reusable_entries() {
     let mut e = engine();
     e.set_learning(false);
@@ -103,6 +137,34 @@ fn cancel_raw_and_context_only_commit_keep_reusable_entries() {
     type_into(&mut e, "nihao");
     assert_eq!(e.cands[0].text, "你好");
     assert!(e.user.read().unwrap().export().is_empty());
+}
+
+#[test]
+fn learned_lock_in_a_clause_requires_literal_key_evidence() {
+    let mut e = engine();
+    {
+        let mut user = e.user.write().unwrap();
+        for _ in 0..3 {
+            user.learn("ni'hao", "拟好");
+            user.learn_raw("nihao", "拟好");
+        }
+    }
+    for (context, typed, locked) in [
+        ("昨天。", "nh", true),
+        ("今天", "nh", false),
+        ("今天", "nihao", true),
+    ] {
+        e.set_context(context);
+        type_into(&mut e, typed);
+        let cand = e.cands.iter().find(|c| c.full && c.text == "拟好").unwrap();
+        assert!(
+            cand.trusted && cand.learned && cand.personal > 0.0,
+            "{cand:?}"
+        );
+        assert!(cand.level >= crate::user::PROMOTE_LEVEL, "{cand:?}");
+        assert_eq!(cand.learned_enough(), locked, "{context:?}, {typed}");
+        assert!(e.process(Key::Esc).is_empty());
+    }
 }
 
 #[test]
