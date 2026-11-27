@@ -249,6 +249,8 @@ pub(super) fn mutual_key_needs_dictionary(shared: &Arc<Dictionary>, checks: &mut
 pub(super) fn abbrev_prefix_reuse_matches_fresh(shared: &Arc<Dictionary>, checks: &mut Checks) {
     let dict = Arc::clone(shared);
     let user = Arc::new(RwLock::new(UserDict::new()));
+    // Compare scores at the same instant: a wall-clock tick can change decay bits.
+    set_sim_now(T0);
     {
         let mut guard = user.write().unwrap_or_else(|p| p.into_inner());
         for _ in 0..3 {
@@ -275,6 +277,7 @@ pub(super) fn abbrev_prefix_reuse_matches_fresh(shared: &Arc<Dictionary>, checks
             }
         }
     }
+    set_sim_now(0);
     push(
         checks,
         "前缀复用与整串重敲一致",

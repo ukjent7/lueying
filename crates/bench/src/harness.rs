@@ -48,6 +48,7 @@ impl Temp {
     }
 
     /// 在临时目录下建一个子目录并返回。
+    #[cfg(feature = "product-e2e")]
     pub fn pack(&self, dir: &str) -> PathBuf {
         let path = self.root.join(dir);
         std::fs::create_dir_all(&path).expect("建扩展目录");

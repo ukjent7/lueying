@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check accuracy gate logic
+        run: python3 -m unittest discover -s tools -p test_bench_accuracy.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: bench-accuracy
@@ -41,7 +43,7 @@ jobs:
         if: steps.data.outputs.cache-hit != 'true'
         run: bash tools/fetch_dict.sh data && bash tools/fetch_rerank.sh data/rerank
       - name: 构建基准
-        run: cargo build -p lueying-bench --release --locked
+        run: cargo build -p lueying-bench --release --locked --no-default-features
       # 基准计时装在命令里,不含 checkout、下载与编译等准备时间。
       - name: 快速准确率基准
         run: timeout 300s python3 tools/bench_accuracy.py quick --bin target/release/lueying-bench --report target/accuracy-quick.md
@@ -60,6 +62,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Check accuracy gate logic
+        run: python3 -m unittest discover -s tools -p test_bench_accuracy.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           prefix-key: bench-accuracy
@@ -75,18 +79,19 @@ jobs:
       - name: 构建当前与基线基准
         shell: bash
         run: |
-          cargo build -p lueying-bench --release --locked
+          cargo build -p lueying-bench --release --locked --no-default-features
           cp target/release/lueying-bench "$RUNNER_TEMP/accuracy-head"
           mkdir -p "$RUNNER_TEMP/accuracy-base"
           git archive d8ec6a6af3b746eaaa8dc0501a69ffd4b8b4e205 | tar -x -C "$RUNNER_TEMP/accuracy-base"
           rm -r "$RUNNER_TEMP/accuracy-base/crates/bench"
           cp -r crates/bench "$RUNNER_TEMP/accuracy-base/crates/bench"
-          (cd "$RUNNER_TEMP/accuracy-base" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo build -p lueying-bench --release --locked)
+          # Keep the archived source independent of Cargo artifacts produced by head.
+          (cd "$RUNNER_TEMP/accuracy-base" && CARGO_TARGET_DIR="$RUNNER_TEMP/accuracy-base-target" cargo build -p lueying-bench --release --locked --no-default-features)
       # 基准计时装在命令里,不含 checkout、下载与编译等准备时间。
       - name: 完整准确率基准
         env:
           SUITE: ${{ inputs.release && 'release' || 'nightly' }}
-        run: timeout 3600s python3 tools/bench_accuracy.py "$SUITE" --bin "$RUNNER_TEMP/accuracy-head" --base-bin target/release/lueying-bench --report target/accuracy-full.md
+        run: timeout 3600s python3 tools/bench_accuracy.py "$SUITE" --bin "$RUNNER_TEMP/accuracy-head" --base-bin "$RUNNER_TEMP/accuracy-base-target/release/lueying-bench" --report target/accuracy-full.md
       - name: 报告摘要
         if: always()
         shell: bash

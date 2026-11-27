@@ -221,13 +221,16 @@ pub fn run(report: &mut String) -> usize {
 
     // 单字候选后不插表情,数字选同音字的序号保持不变。
     let mut single = mini();
+    let mut plain = Engine::new(Arc::new(Dictionary::builtin()), Config::default());
     letters(&mut single, "si");
+    letters(&mut plain, "si");
     let single_list = single.candidates();
+    let plain_list = plain.candidates();
     push(
         &mut checks,
         "单字不插表情",
-        top(&single) == "四" && !single_list.iter().any(|text| text == "4️⃣"),
-        format!("{single_list:?}"),
+        plain_list.iter().any(|text| text == "四") && single_list == plain_list,
+        format!("有表情模块 {single_list:?},无模块 {plain_list:?}"),
     );
 
     // 英文:非拼音串给出英文词;大小写按词表;半截拼音不出现原文候选。

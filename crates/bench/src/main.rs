@@ -5,9 +5,11 @@ mod actions;
 mod address;
 mod attribution;
 mod bench;
+#[cfg(feature = "product-e2e")]
 mod consent;
 mod conversion;
 mod extensions;
+#[cfg(feature = "product-e2e")]
 mod extwasm;
 mod features;
 mod harness;
@@ -15,11 +17,13 @@ mod import_typing;
 mod latency;
 mod learn_sim;
 mod learning;
+#[cfg(feature = "product-e2e")]
 mod metrics;
 mod modules;
 mod noise;
 mod personal;
 mod personalize;
+#[cfg(feature = "product-e2e")]
 mod predict;
 mod quick;
 mod render;
@@ -147,12 +151,21 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     // 扩展宿主进程:服务端拉起的本可执行文件副本(见 extwasm::process)。
+    #[cfg(feature = "product-e2e")]
     if args.get(1).map(String::as_str) == Some("--ext-host") && args.len() == 4 {
         let paths = lueying_ext_host::Paths {
             data: PathBuf::from(&args[2]),
             local: PathBuf::from(&args[3]),
         };
         std::process::exit(lueying_ext_host::run(paths));
+    }
+    #[cfg(not(feature = "product-e2e"))]
+    if args
+        .get(1)
+        .is_some_and(|cmd| matches!(cmd.as_str(), "--ext-host" | "predict"))
+    {
+        eprintln!("{} requires the product-e2e feature", args[1]);
+        std::process::exit(2);
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
@@ -171,6 +184,7 @@ fn main() {
         }
         failures += features::run(&mut report);
         failures += extensions::run(&mut report);
+        failures += ui::run(&mut report);
         failures += user_dict::run(&mut report);
         println!(
             "{} fixed input scenarios; {} total failures",
@@ -206,6 +220,7 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("noise") {
         std::process::exit(noise::run(&args));
     }
+    #[cfg(feature = "product-e2e")]
     if args.get(1).map(String::as_str) == Some("predict") {
         std::process::exit(predict::run(&args));
     }
@@ -244,6 +259,11 @@ fn main() {
         None
     };
     let only_shared = args.iter().any(|a| a == "--only-shared");
+    #[cfg(not(feature = "product-e2e"))]
+    if !only_shared {
+        eprintln!("Full scenario E2E requires the product-e2e feature");
+        std::process::exit(2);
+    }
     let accuracy = args.iter().any(|a| a == "--accuracy");
 
     // `--only-shared`:独立基准 job 只跑共享语料,与场景 E2E 并行,互不拖累。
@@ -359,20 +379,23 @@ fn main() {
     // 动作候选:触发词整串匹配、空格/数字/点选、负反馈与置顶。
     failures += actions::run(&mut report);
 
-    // 运行期 Wasm 扩展:包校验、场景协议、隐私与热重载。
-    failures += extwasm::run(&mut report);
+    #[cfg(feature = "product-e2e")]
+    {
+        // 运行期 Wasm 扩展:包校验、场景协议、隐私与热重载。
+        failures += extwasm::run(&mut report);
 
-    // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
-    failures += extwasm::services::run(&mut report);
+        // 扩展服务缝:needs 门控、假提供者、热键绑定表与官方扩展。
+        failures += extwasm::services::run(&mut report);
 
-    // 扩展宿主进程:服务端经行协议驱动独立进程,宿主死循环时服务端照常返回。
-    failures += extwasm::process::run(&mut report);
+        // 扩展宿主进程:服务端经行协议驱动独立进程,宿主死循环时服务端照常返回。
+        failures += extwasm::process::run(&mut report);
 
-    // 扩展授权:同意记录、升级重新同意与热重载门控。
-    failures += consent::run(&mut report);
+        // 扩展授权:同意记录、升级重新同意与热重载门控。
+        failures += consent::run(&mut report);
 
-    // 运行可见性:运行指标、快照与 CLI。
-    failures += metrics::run(&mut report);
+        // 运行可见性:运行指标、快照与 CLI。
+        failures += metrics::run(&mut report);
+    }
 
     // 渲染核心:面板布局数学与设置窗光栅绘制。
     failures += render::run(&mut report);

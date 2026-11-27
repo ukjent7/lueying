@@ -497,11 +497,11 @@ pub fn scenarios() -> Vec<Scenario> {
             )],
         ),
         s(
-            "默认自动模糊:si首选四且含是",
+            "默认自动模糊:弱精确 si 保留纠错首位及精确候选",
             false,
             vec![stage(
                 l("si"),
-                vec![Check::Top("四".into()), Check::Contains("是".into())],
+                vec![Check::Top("是".into()), Check::Contains("四".into())],
             )],
         ),
         s(
@@ -521,18 +521,18 @@ pub fn scenarios() -> Vec<Scenario> {
             )],
         ),
         s(
-            "学习覆盖:si选是后首选是",
+            "学习覆盖:si选非首选四后首选四",
             false,
             vec![
                 stage(
                     l("si"),
-                    vec![Check::Top("四".into()), Check::Contains("是".into())],
+                    vec![Check::Top("是".into()), Check::Contains("四".into())],
                 ),
-                stage(vec![Key::Digit(2)], vec![commits(&["是"])]),
-                // 同键在非首选位置选过一次,纠正证据把「是」带回首位。
-                stage(l("si"), vec![Check::Top("是".into())]),
-                stage(vec![Key::Space], vec![commits(&["是"])]),
-                stage(l("si"), vec![Check::Top("是".into())]),
+                pick("四", vec![Key::Space], vec![commits(&["四"])]),
+                // 同键在非首选位置选过一次,纠正证据把「四」带回首位。
+                stage(l("si"), vec![Check::Top("四".into())]),
+                stage(vec![Key::Space], vec![commits(&["四"])]),
+                stage(l("si"), vec![Check::Top("四".into())]),
             ],
         ),
         s(
@@ -569,13 +569,10 @@ pub fn scenarios() -> Vec<Scenario> {
             false,
             vec![stage(
                 l("si"),
-                vec![
-                    Check::Top("四".into()),
-                    Check::Hint {
-                        text: "是".into(),
-                        hint: "shi".into(),
-                    },
-                ],
+                vec![Check::Hint {
+                    text: "是".into(),
+                    hint: "shi".into(),
+                }],
             )],
         ),
         s(

@@ -13,7 +13,7 @@
 //! 11. 长句超过组合上限后被截断或吞键 → 常见长句要完整保留,到上限时先落定
 //!     旧组合再用新键起组。
 //! 12. 换输入框后沿用上个文档的引号奇偶 → 新文档首个引号必须是开引号。
-//! 13. 正确整句被分段前缀挤出首页 → 首页五条优先整句,前缀词顺延到第 6 位。
+//! 13. 正确整句被分段前缀挤出首页 → 优先展示八条整句,再展示分段入口。
 //! 14. 焦点切回时左邻已有未闭合开引号 → 下一引号必须是闭引号,不能按新文档重开。
 
 use std::sync::Arc;
@@ -33,7 +33,7 @@ fn type_into(engine: &mut Engine, raw: &str) {
     }
 }
 
-/// 按序号选第 `slot` 条候选;前缀词排在第六位,要先翻到它所在的页。
+/// 按序号选候选;先翻到它所在的页。
 fn pick(engine: &mut Engine, slot: usize) -> Vec<Event> {
     let size = engine.page_size();
     for _ in 0..slot / size {
@@ -149,20 +149,18 @@ pub fn run(report: &mut String) -> usize {
         format!("落定 {finalized:?}"),
     );
 
-    // 长句候选:整句备选先占满一页(最多五条),最高分前缀词紧跟其后;
-    // 整句不足五条时由前缀词补齐,不能为了凑数把逐段入口排到第二页。
+    // 展示排序先放最多八条整句,再展示分段入口;它不等于候选窗单页大小。
     let mut e = engine();
     type_into(&mut e, "jintiantianqi");
     let detailed = e.candidates_detailed();
     let available = detailed.iter().filter(|c| c.full).count();
-    let page = available.min(5);
-    let first_page = detailed.iter().take(page).filter(|c| c.full).count();
-    let prefix_next = detailed.get(page).is_some_and(|c| !c.full);
+    let leading = available.min(8);
+    let first_prefix = detailed.iter().position(|c| !c.full);
     push(
         &mut checks,
-        "整句备选占满候选首页",
-        available >= 3 && first_page == page && prefix_next,
-        format!("整句 {available} 条,首页整句 {first_page} 条,下一位前缀词={prefix_next}"),
+        "整句优先,分段入口紧随其后",
+        available >= 3 && first_prefix == Some(leading),
+        format!("整句 {available} 条,预期分段入口下标 {leading},实测 {first_prefix:?}"),
     );
 
     // 分段上屏学到的前缀词不能顶掉整句首选:选过一次「今天」后重打整句,
@@ -171,7 +169,7 @@ pub fn run(report: &mut String) -> usize {
     type_into(&mut e, "jintiantianqi");
     let slot = e.candidates().iter().position(|c| c == "今天");
     if let Some(index) = slot {
-        // 前缀词现在在第 6 位;先移动高亮再空格上屏,不依赖当前页的序号。
+        // 先移动高亮再空格上屏,不依赖当前页的序号。
         e.set_highlight(index);
         e.process(Key::Space);
     }
