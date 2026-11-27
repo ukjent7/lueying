@@ -35,13 +35,54 @@ fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 }
 
 /// 本线程到目前为止的 CPU 时间(毫秒)。
+///
+/// 优先用 `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`:纳秒精度,单个按键的亚毫秒
+/// 差异也读得出来。拿不到时退回 `/proc/thread-self/schedstat`,再退到
+/// `/proc/thread-self/stat` 的时钟滴答(本机 4 毫秒一跳,只够累加整段会话)。
 fn thread_cpu_ms() -> Option<f64> {
+    // CLOCK_THREAD_CPUTIME_ID:本线程真正占用的 CPU,纳秒精度。`/proc` 里的两条都是
+    // 按 jiffy 记账(本机 4 毫秒一跳),单个按键的亚毫秒差异会被量化掉,只够看整段会话。
+    if let Some(ms) = thread_cpu_clock_ms() {
+        return Some(ms);
+    }
+    if let Ok(sched) = std::fs::read_to_string("/proc/thread-self/schedstat")
+        && let Some(ns) = sched
+            .split_whitespace()
+            .next()
+            .and_then(|text| text.parse::<f64>().ok())
+    {
+        return Some(ns / 1_000_000.0);
+    }
     let stat = std::fs::read_to_string("/proc/thread-self/stat").ok()?;
     // 括号后第 1 列是 state(第 3 列),utime、stime 分别是第 14、15 列,即这里的下标 11、12。
     let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
     let utime: f64 = fields.get(11)?.parse().ok()?;
     let stime: f64 = fields.get(12)?.parse().ok()?;
     Some((utime + stime) * 1000.0 / CLOCK_TICKS_PER_SEC)
+}
+
+/// `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`,纳秒精度;非 Linux 或调用失败时返回 `None`。
+///
+/// 直接声明 C 符号,不额外引入 `libc`:这一个调用是基准里唯一需要的系统接口。
+fn thread_cpu_clock_ms() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        #[repr(C)]
+        struct Timespec {
+            secs: i64,
+            nanos: i64,
+        }
+        unsafe extern "C" {
+            fn clock_gettime(clock: i32, at: *mut Timespec) -> i32;
+        }
+        const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+        let mut at = Timespec { secs: 0, nanos: 0 };
+        // SAFETY:传的是本栈上的 `Timespec`,写满一个结构体;C 侧只读时钟 ID。
+        if unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut at) } == 0 {
+            return Some(at.secs as f64 * 1000.0 + at.nanos as f64 / 1e6);
+        }
+    }
+    None
 }
 
 /// 被测的一次运行:加载模型之后,逐条跑产品链路(8M 与 25M 两档重排),报告这段的线程 CPU 时间。
@@ -169,9 +210,10 @@ pub fn run(args: &[String]) -> i32 {
 
 /// 逐键延迟:同一会话连续打多句,上屏后保留上下文,模拟真实按键路径。
 ///
-/// 每个字母记录三段时间:引擎重算、8M 同步决策、两者合计。句间不清上下文,
-/// 这样上屏后的前缀缓存与候选续跑能跨句复用;对照改前/改后时只看同一语料、
-/// 同一模型与同一门控。
+/// 每个字母记录三段时间:引擎重算、8M 同步决策、两者合计;墙钟之外再记本线程
+/// CPU 时间(推理是单线程纯 Rust,线程 CPU 时长不受邻居进程调度影响)。句间不清
+/// 上下文,这样上屏后的前缀缓存与候选续跑能跨句复用;对照改前/改后时只看同一
+/// 语料、同一模型与同一门控。
 pub fn keys(args: &[String]) -> i32 {
     let (Some(dict_path), Some(rerank_dir)) = (value(args, "--dict"), value(args, "--rerank-dir"))
     else {
@@ -208,7 +250,12 @@ pub fn keys(args: &[String]) -> i32 {
     let mut core_ms = Vec::new();
     let mut eight_ms = Vec::new();
     let mut total_ms = Vec::new();
+    let mut core_cpu = Vec::new();
+    let mut eight_cpu = Vec::new();
+    let mut total_cpu = Vec::new();
     let mut rows = String::from("input\texpected\trank\tkeys\tms_engine\tms_8m\tms_total\n");
+    let mut per_key =
+        String::from("case\tkey\tfirst\tengine_ms\tengine_cpu\teight_ms\teight_cpu\n");
     let (mut top1, mut total) = (0usize, 0usize);
     for case in cases.iter().take(limit) {
         engine.process(Key::Esc);
@@ -217,9 +264,11 @@ pub fn keys(args: &[String]) -> i32 {
         let mut case_engine = 0.0;
         let mut case_eight = 0.0;
         for c in case.input.chars() {
+            let cpu_before = thread_cpu_ms().unwrap_or(0.0);
             let started = Instant::now();
             engine.process(Key::Letter(c));
             let core = started.elapsed().as_secs_f64() * 1000.0;
+            let cpu_after_engine = thread_cpu_ms().unwrap_or(cpu_before);
             let mut eight = 0.0;
             let snap = rerank::snapshot(&engine);
             if !snap.context.is_empty() && !snap.texts.is_empty() {
@@ -231,10 +280,21 @@ pub fn keys(args: &[String]) -> i32 {
                     engine.promote(index);
                 }
             }
+            let cpu_after_eight = thread_cpu_ms().unwrap_or(cpu_after_engine);
             let total = started.elapsed().as_secs_f64() * 1000.0;
             core_ms.push(core);
             eight_ms.push(eight);
             total_ms.push(total);
+            core_cpu.push(cpu_after_engine - cpu_before);
+            eight_cpu.push(cpu_after_eight - cpu_after_engine);
+            total_cpu.push(cpu_after_eight - cpu_before);
+            let _ = writeln!(
+                per_key,
+                "{total}\t{keys}\t{}\t{core:.3}\t{:.3}\t{eight:.3}\t{:.3}",
+                usize::from(keys == 0),
+                cpu_after_engine - cpu_before,
+                cpu_after_eight - cpu_after_engine,
+            );
             case_engine += core;
             case_eight += eight;
             keys += 1;
@@ -260,27 +320,43 @@ pub fn keys(args: &[String]) -> i32 {
         }
     }
     let mut out = format!(
-        "# 逐键延迟({corpus_path})\n\n{} 句(坏行 {malformed}),学习关闭;句间保留已上屏上下文。\n\n| 指标 | 引擎 | 8M 同步 | 合计 |\n|---|---:|---:|---:|\n",
+        "# 逐键延迟({corpus_path})\n\n{} 句(坏行 {malformed}),学习关闭;句间保留已上屏上下文。\n\n| 指标 | 引擎墙钟 | 8M 墙钟 | 合计墙钟 | 引擎 CPU | 8M CPU | 合计 CPU |\n|---|---:|---:|---:|---:|---:|---:|\n",
         total
     );
     let (p50_core, p50_eight, p50_total) = (
-        shared::pct(&mut core_ms, 50.0),
-        shared::pct(&mut eight_ms, 50.0),
-        shared::pct(&mut total_ms, 50.0),
+        shared::pct(&mut core_ms.clone(), 50.0),
+        shared::pct(&mut eight_ms.clone(), 50.0),
+        shared::pct(&mut total_ms.clone(), 50.0),
     );
     let (p95_core, p95_eight, p95_total) = (
-        shared::pct(&mut core_ms, 95.0),
-        shared::pct(&mut eight_ms, 95.0),
-        shared::pct(&mut total_ms, 95.0),
+        shared::pct(&mut core_ms.clone(), 95.0),
+        shared::pct(&mut eight_ms.clone(), 95.0),
+        shared::pct(&mut total_ms.clone(), 95.0),
     );
     let (p99_core, p99_eight, p99_total) = (
-        shared::pct(&mut core_ms, 99.0),
-        shared::pct(&mut eight_ms, 99.0),
-        shared::pct(&mut total_ms, 99.0),
+        shared::pct(&mut core_ms.clone(), 99.0),
+        shared::pct(&mut eight_ms.clone(), 99.0),
+        shared::pct(&mut total_ms.clone(), 99.0),
     );
+    let (c50_core, c50_eight, c50_total) = (
+        shared::pct(&mut core_cpu, 50.0),
+        shared::pct(&mut eight_cpu, 50.0),
+        shared::pct(&mut total_cpu, 50.0),
+    );
+    let (c95_core, c95_eight, c95_total) = (
+        shared::pct(&mut core_cpu, 95.0),
+        shared::pct(&mut eight_cpu, 95.0),
+        shared::pct(&mut total_cpu, 95.0),
+    );
+    let (c99_core, c99_eight, c99_total) = (
+        shared::pct(&mut core_cpu, 99.0),
+        shared::pct(&mut eight_cpu, 99.0),
+        shared::pct(&mut total_cpu, 99.0),
+    );
+    let total_wall: f64 = total_ms.iter().sum();
     let _ = writeln!(
         out,
-        "| p50 | {p50_core:.2} | {p50_eight:.2} | {p50_total:.2} |\n| p95 | {p95_core:.2} | {p95_eight:.2} | {p95_total:.2} |\n| p99 | {p99_core:.2} | {p99_eight:.2} | {p99_total:.2} |\n\n按键 {} 个,P@1 {}/{} = {:.1}%。",
+        "| p50 | {p50_core:.2} | {p50_eight:.2} | {p50_total:.2} | {c50_core:.2} | {c50_eight:.2} | {c50_total:.2} |\n| p95 | {p95_core:.2} | {p95_eight:.2} | {p95_total:.2} | {c95_core:.2} | {c95_eight:.2} | {c95_total:.2} |\n| p99 | {p99_core:.2} | {p99_eight:.2} | {p99_total:.2} | {c99_core:.2} | {c99_eight:.2} | {c99_total:.2} |\n\n按键 {} 个,P@1 {}/{} = {:.1}%。合计墙钟 {total_wall:.1} ms。",
         total_ms.len(),
         top1,
         total,
@@ -288,7 +364,114 @@ pub fn keys(args: &[String]) -> i32 {
     );
     let _ = std::fs::create_dir_all("target/bench");
     let _ = std::fs::write("target/bench/keys.tsv", rows);
+    let _ = std::fs::write("target/bench/keys-perkey.tsv", per_key);
     let _ = std::fs::write("target/keys.md", &out);
-    print!("{out}\n逐条结果: target/bench/keys.tsv\n报告: target/keys.md\n");
+    let total_cpu: f64 = total_cpu.iter().sum::<f64>().max(0.0);
+    println!(
+        "keys-summary cases={total} keys={} top1={top1} wall-total-ms={total_wall:.1} cpu-total-ms={total_cpu:.1}",
+        total_ms.len()
+    );
+    print!("{out}\n逐条结果: target/bench/keys.tsv / keys-perkey.tsv\n报告: target/keys.md\n");
+    0
+}
+
+/// 前缀续算的触发面:同一条上下文,上屏(上下文变长)之后的那一次决策,冷启动重跑
+/// 整段前缀 vs 会话里已有前缀续算,各花多少本线程 CPU。
+///
+/// 按键模型的窗口是 `context_chars` 字;上下文超过窗口后每次上屏都会左移窗口,
+/// 新旧 token 序列不再有前缀关系,续算无从触发。这个探针把边界测出来:
+/// `L + commit <= 窗口` 的行才该看到续算收益。
+///
+/// 用法:`lueying-bench prefix --rerank-dir <模型目录> [--corpus <语料>] [--samples 15]`
+pub fn prefix(args: &[String]) -> i32 {
+    let Some(rerank_dir) = value(args, "--rerank-dir") else {
+        eprintln!("prefix 需要 --rerank-dir(可选 --corpus、--samples)");
+        return 2;
+    };
+    let corpus_path = value(args, "--corpus").unwrap_or("dicts/eval-dev-v4.tsv");
+    let samples = value(args, "--samples")
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(15);
+    let Ok(models) = rerank::load(Path::new(rerank_dir)) else {
+        eprintln!("模型加载失败 {rerank_dir}");
+        return 2;
+    };
+    let window = std::fs::read_to_string(Path::new(rerank_dir).join("rerank-8m.model.json"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|json| json.get("context_chars").and_then(|v| v.as_u64()))
+        .map_or(0, |v| v as usize);
+    let Ok(body) = std::fs::read_to_string(corpus_path) else {
+        eprintln!("读语料失败 {corpus_path}");
+        return 2;
+    };
+    let leaked: &'static str = Box::leak(body.into_boxed_str());
+    let (cases, _) = shared::cases(leaked);
+    let mut text = String::new();
+    for case in &cases {
+        let expected = bench::normalize(case.expected);
+        text.push_str(&expected);
+        if text.chars().count() >= 200 {
+            break;
+        }
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let commit = 6usize;
+    let words: Vec<String> = cases
+        .iter()
+        .map(|case| bench::normalize(case.expected))
+        .filter(|word| word.chars().count() == 4)
+        .take(2)
+        .collect();
+    if words.len() < 2 || chars.len() < 140 {
+        eprintln!("语料太短,凑不出探针用的上下文与候选");
+        return 2;
+    }
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let lengths = [8usize, 16, 24, 32, 40, 48, 56, 58, 60, 64, 72, 88, 104, 120];
+    let mut out = String::from(
+        "## 上屏后的前缀续算(8M,线程 CPU 中位数)\n\n| 前缀 L | 上屏后 L+6 | 窗口内 | 冷启动 ms | 续算 ms | 续算/冷启动 |\n|---:|---:|:---:|---:|---:|---:|\n",
+    );
+    let mut last_cold = 0.0;
+    let mut last_warm = 0.0;
+    for length in lengths {
+        if length + commit > chars.len() {
+            break;
+        }
+        let context: String = chars[..length].iter().collect();
+        let target: String = chars[..length + commit].iter().collect();
+        let mut cold = Vec::with_capacity(samples);
+        let mut warm = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let started = thread_cpu_ms().unwrap_or(0.0);
+            let mut rerank = Rerank::new(&models.four);
+            rerank.scores(&target, &words);
+            let done = thread_cpu_ms().unwrap_or(started);
+            cold.push(done - started);
+
+            let mut rerank = Rerank::new(&models.four);
+            rerank.scores(&context, &words);
+            let started = thread_cpu_ms().unwrap_or(0.0);
+            rerank.scores(&target, &words);
+            let done = thread_cpu_ms().unwrap_or(started);
+            warm.push(done - started);
+        }
+        let cold_ms = median(&mut cold);
+        let warm_ms = median(&mut warm);
+        last_cold = cold_ms;
+        last_warm = warm_ms;
+        let inside = window > 0 && length + commit <= window;
+        let _ = writeln!(
+            out,
+            "| {length} | {} | {} | {cold_ms:.3} | {warm_ms:.3} | {:.3} |",
+            length + commit,
+            if inside { "是" } else { "否" },
+            warm_ms / cold_ms.max(1e-9)
+        );
+    }
+    println!(
+        "prefix-summary last-cold-ms={last_cold:.3} last-warm-ms={last_warm:.3} window={window} commit={commit}"
+    );
+    print!("{out}");
     0
 }
