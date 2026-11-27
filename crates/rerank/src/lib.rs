@@ -153,9 +153,14 @@ const COMPARED_CHARS: usize = 144;
 const SETTLE_COMPARED_MAX: usize = 96;
 const SETTLE_COMPARED_CHARS: usize = 384;
 const SETTLE_BUDGET: (usize, usize) = (SETTLE_COMPARED_MAX, SETTLE_COMPARED_CHARS);
-/// 没有上文时,这么短的首位算短句,要领先 [`SHORT_MARGIN`] 才换。
-const SHORT_CHARS: usize = 4;
-const SHORT_MARGIN: f32 = 1.0;
+/// 预筛检索池深度:停顿决策先用小模型给引擎序前这么多条整键候选打分,
+/// 比选窗口只装它认为最有希望的前 [`SETTLE_COMPARED_MAX`] 名。便宜模型
+/// 做检索、贵模型做裁决——引擎序 96~384 名的正确文本由此够得着,
+/// 而大模型的比选工作量不变。
+const PREFILTER_POOL: usize = 384;
+/// 空上文的停顿窗口:没有上文时预筛层无从谈起(小模型同样只能比字频),
+/// 但融合目标下更深的引擎序窗仍能再救几条,单独给一份更深的预算。
+const EMPTY_SETTLE_BUDGET: (usize, usize) = (192, 768);
 
 /// 8M 同步重排的最小领先幅度(每字符平均对数概率)。
 ///
@@ -233,6 +238,7 @@ impl Rerank {
                 facts,
                 None,
                 (COMPARED_MAX, COMPARED_CHARS),
+                None,
             );
         }
         self.decide_inner_with_margin(context, texts, &same_reading(facts), SYNC_PROMOTE_MARGIN)
@@ -240,6 +246,8 @@ impl Rerank {
 
     /// 有上文时的决策,见 [`CHANNEL_WEIGHT`]。`budget` 是比选窗口的
     /// (条数, 总字数) 上限;每键同步路径用紧预算,停顿路径用 [`SETTLE_COMPARED_MAX`]。
+    /// `prefilter` 给一个小模型检索器:窗口内容改由它从更深的候选池里挑,
+    /// 见 [`prefiltered_order`];`None` 退回引擎序窗口。
     fn decide_in_context(
         &mut self,
         context: &str,
@@ -247,8 +255,10 @@ impl Rerank {
         facts: &[Fact],
         left: Option<&str>,
         budget: (usize, usize),
+        prefilter: Option<&mut Rerank>,
     ) -> Option<usize> {
-        let (indices, scores) = self.context_scores(context, texts, facts, false, budget)?;
+        let (indices, scores) =
+            self.context_scores(context, texts, facts, false, budget, prefilter)?;
         let best = (0..indices.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b]))?;
         let winner = indices[best];
         (winner != 0 && !self.local_disagrees(left, texts, facts, winner)).then_some(winner)
@@ -281,12 +291,25 @@ impl Rerank {
         facts: &[Fact],
         left: Option<&str>,
     ) -> ContextRank {
+        self.rank_with_local_context_prefiltered(context, texts, facts, left, None)
+    }
+
+    /// [`rank_with_local_context`] 的预筛版:比选窗口内容由小模型从
+    /// [`PREFILTER_POOL`] 深的候选池里挑,见 [`prefiltered_order`]。
+    pub fn rank_with_local_context_prefiltered(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        left: Option<&str>,
+        prefilter: Option<&mut Rerank>,
+    ) -> ContextRank {
         if context.is_empty() {
             return ContextRank::default();
         }
         let started = Instant::now();
         let result = self
-            .context_scores(context, texts, facts, true, SETTLE_BUDGET)
+            .context_scores(context, texts, facts, true, SETTLE_BUDGET, prefilter)
             .map_or_else(ContextRank::default, |(indices, scores)| {
                 let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
                 order.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
@@ -340,6 +363,7 @@ impl Rerank {
         facts: &[Fact],
         keep_locked: bool,
         (max_cand, max_chars): (usize, usize),
+        prefilter: Option<&mut Rerank>,
     ) -> Option<(Vec<usize>, Vec<f32>)> {
         if texts.len() != facts.len() {
             return None;
@@ -350,11 +374,18 @@ impl Rerank {
         }
         let mut budget = max_chars;
         let mut compared: Vec<usize> = Vec::with_capacity(max_cand);
-        for (index, (text, fact)) in texts.iter().zip(facts).enumerate() {
+        let mut indices: Box<dyn Iterator<Item = usize>> = match prefilter {
+            Some(filter) => Box::new(
+                prefiltered_order(context, texts, facts, filter).into_iter(),
+            ),
+            None => Box::new(0..texts.len()),
+        };
+        for index in indices.by_ref() {
+            let fact = &facts[index];
             if !fact.answers_key || (keep_locked && fact.locked) {
                 continue;
             }
-            let chars = text.chars().count();
+            let chars = texts[index].chars().count();
             if compared.len() == max_cand || (chars > budget && compared.len() >= 2) {
                 break;
             }
@@ -390,7 +421,9 @@ impl Rerank {
         texts: &[&str],
         facts: &[Fact],
     ) -> Vec<(usize, f32)> {
-        let Some((indices, scores)) = self.context_scores(context, texts, facts, false, SETTLE_BUDGET) else {
+        let Some((indices, scores)) =
+            self.context_scores(context, texts, facts, false, SETTLE_BUDGET, None)
+        else {
             return Vec::new();
         };
         let mut order: Vec<_> = indices.into_iter().zip(scores).collect();
@@ -419,9 +452,9 @@ impl Rerank {
         )
     }
 
-    /// 停顿重排。有上文时与 8M 用同一个目标,只是模型更大;没有上文时模型只能比字频,
-    /// 精确首位不动,也不让给改动过的读法(开发呢 → 开发了),短句要明显领先
-    /// (市场吗 → 市场买)才换。调用方只应在静默停顿、未翻页、未移动高亮且组合仍活跃时使用。
+    /// 停顿重排。有上文时与 8M 用同一个目标,只是模型更大;没有上文时用同一个
+    /// 融合目标裁决,精确可信首位不动,也不让给改动过的读法(开发呢 → 开发了)。
+    /// 调用方只应在静默停顿、未翻页、未移动高亮且组合仍活跃时使用。
     pub fn decide_settled(
         &mut self,
         context: &str,
@@ -431,7 +464,7 @@ impl Rerank {
         self.decide_settled_with_local_context(context, texts, facts, None)
     }
 
-    /// 带相邻上屏词的停顿决策;无上文时沿用原门控。
+    /// 带相邻上屏词的停顿决策。
     pub fn decide_settled_with_local_context(
         &mut self,
         context: &str,
@@ -439,8 +472,21 @@ impl Rerank {
         facts: &[Fact],
         left: Option<&str>,
     ) -> Option<usize> {
+        self.decide_settled_prefiltered(context, texts, facts, left, None)
+    }
+
+    /// 停顿决策的预筛版:有上文时比选窗口由小模型从 [`PREFILTER_POOL`] 深的
+    /// 候选池里挑(便宜模型检索、贵模型裁决);无上文时预筛不起作用。
+    pub fn decide_settled_prefiltered(
+        &mut self,
+        context: &str,
+        texts: &[&str],
+        facts: &[Fact],
+        left: Option<&str>,
+        prefilter: Option<&mut Rerank>,
+    ) -> Option<usize> {
         let started = Instant::now();
-        let result = self.decide_settled_inner(context, texts, facts, left);
+        let result = self.decide_settled_inner(context, texts, facts, left, prefilter);
         self.metrics.record(started.elapsed());
         result
     }
@@ -451,25 +497,72 @@ impl Rerank {
         texts: &[&str],
         facts: &[Fact],
         left: Option<&str>,
+        prefilter: Option<&mut Rerank>,
     ) -> Option<usize> {
         if !context.is_empty() {
-            return self.decide_in_context(context, texts, facts, left, SETTLE_BUDGET);
+            return self.decide_in_context(context, texts, facts, left, SETTLE_BUDGET, prefilter);
         }
         let leader = facts.first()?;
         if leader.trusted_dictionary_hit || !leader.answers_key {
             return None;
         }
-        let short = texts
-            .first()
-            .is_some_and(|text| text.chars().count() <= SHORT_CHARS);
-        let margin = if short { SHORT_MARGIN } else { 0.0 };
-        self.decide_inner_with_margin(context, texts, &same_reading(facts), margin)
+        // 空上文用与有上文完全相同的融合裁决:模型整段对数概率 + 引擎分 − 读法
+        // 代价,首位照常拿 LEADER_BONUS。same_reading 仍然把「未改动首位换成
+        // 改动读法」(开发呢→开发了)挡在比选集合之外;可信整键命中依然不动。
+        self.decide_in_context(
+            context,
+            texts,
+            &same_reading(facts),
+            left,
+            EMPTY_SETTLE_BUDGET,
+            None,
+        )
     }
 
     /// 每条候选的每字符平均对数概率,按输入顺序返回。评测与诊断用。
     pub fn scores(&mut self, context: &str, texts: &[&str]) -> Vec<f32> {
         self.inner.log_probabilities(context, texts)
     }
+}
+
+/// 预筛窗口序:首位候选固定领头,其余整键候选按小模型的混合分
+/// (整段对数概率 + 引擎分 − 读法代价,与裁决目标同源、不含首位加成)
+/// 降序排列。小模型只决定「谁值得进窗」,窗口内的先后仍由裁决模型说了算。
+fn prefiltered_order(
+    context: &str,
+    texts: &[&str],
+    facts: &[Fact],
+    filter: &mut Rerank,
+) -> Vec<usize> {
+    let indices: Vec<usize> = (0..texts.len())
+        .filter(|&index| facts[index].answers_key)
+        .take(PREFILTER_POOL)
+        .collect();
+    if indices.len() <= 1 {
+        return indices;
+    }
+    let batch: Vec<&str> = indices.iter().map(|&index| texts[index]).collect();
+    let scores = filter.scores(context, &batch);
+    if scores.len() != indices.len() {
+        return indices;
+    }
+    let mut keyed: Vec<(usize, f32)> = indices
+        .iter()
+        .copied()
+        .zip(scores)
+        .map(|(index, score)| {
+            let fact = &facts[index];
+            let total = score * texts[index].chars().count() as f32;
+            (
+                index,
+                total + ENGINE_WEIGHT * (fact.score + fact.channel - fact.personal)
+                    - CHANNEL_WEIGHT * fact.channel
+                    + PERSONAL_WEIGHT * fact.personal,
+            )
+        })
+        .collect();
+    keyed[1..].sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+    keyed.into_iter().map(|(index, _)| index).collect()
 }
 
 /// 没有上文时模型只能比字频,不凭它把没改动过的首位换成改动过的读法。

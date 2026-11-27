@@ -160,6 +160,25 @@ pub fn rank_context_with_gap(rerank: &mut Rerank, snapshot: &Snapshot) -> Contex
     )
 }
 
+/// [`rank_context`] 的预筛版:停顿决策由小模型(每键同步档)先从更深的
+/// 候选池里挑出比选窗口,再由本模型裁决。
+pub fn rank_context_prefiltered(
+    rerank: &mut Rerank,
+    prefilter: &mut Rerank,
+    snapshot: &Snapshot,
+) -> Vec<usize> {
+    let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
+    rerank
+        .rank_with_local_context_prefiltered(
+            &snapshot.context,
+            &texts,
+            &snapshot.facts,
+            snapshot.adjacent_word.as_deref(),
+            Some(prefilter),
+        )
+        .order
+}
+
 /// 双模型的选择性停顿门槛。没有有效分差时仍允许原来的 25M 回退。
 pub fn can_skip_25m(snapshot: &Snapshot, ranking: &ContextRank) -> bool {
     const AMBIGUOUS_GAP: f32 = 2.0;

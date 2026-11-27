@@ -698,7 +698,7 @@ fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
         }
         let snap = crate::rerank::snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-        if let Some(index) = five.decide_settled(&snap.context, &texts, &snap.facts) {
+        if let Some(index) = five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, Some(&mut four)) {
             let ok = engine.promote(index);
             let _ = writeln!(out, "25M → [{index}] {} promote={}", texts[index], ok);
         } else {
