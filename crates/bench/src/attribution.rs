@@ -79,6 +79,10 @@ pub fn run(args: &[String]) -> i32 {
         .and_then(|text| text.parse().ok())
         .unwrap_or(usize::MAX);
     let by_category = args.iter().any(|a| a == "--by-category");
+    // `--only 8m` / `--only 25m` 只跑一档:用来量"多出来的容量到底值不值",也是蒸馏前的门槛数据。
+    let only = value(args, "--only").unwrap_or("both").to_string();
+    let use_sync = only != "25m";
+    let use_settle = only != "8m";
     let Ok((dict, _)) = Dictionary::from_path(Path::new(dict_path)) else {
         eprintln!("词典加载失败 {dict_path}");
         return 2;
@@ -127,7 +131,7 @@ pub fn run(args: &[String]) -> i32 {
         let mut promote_25m = String::from("-");
         // 8M 同步门控。
         let snap = rerank::snapshot(&engine);
-        if !snap.context.is_empty() && !snap.texts.is_empty() {
+        if use_sync && !snap.context.is_empty() && !snap.texts.is_empty() {
             let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
             if let Some(index) = four.decide(&snap.context, &texts, &snap.facts) {
                 let picked = engine
@@ -149,7 +153,7 @@ pub fn run(args: &[String]) -> i32 {
         let rank_8m = shared::rank_of(&engine, &expected);
         // 25M 停顿重排。
         let snap = rerank::snapshot(&engine);
-        if !snap.context.is_empty() && !snap.texts.is_empty() {
+        if use_settle && !snap.context.is_empty() && !snap.texts.is_empty() {
             let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
             if let Some(index) = five.decide_settled(&snap.context, &texts, &snap.facts) {
                 let picked = engine
@@ -224,7 +228,7 @@ pub fn run(args: &[String]) -> i32 {
             .map_or(0.0, |(_, n)| 100.0 * *n as f64 / total.max(1) as f64)
     };
     let mut out = format!(
-        "# 失败归因({corpus_path})\n\n{counted} 句(坏行 {malformed}),学习关闭。\n\n| 阶段 | 句数 | 占比 |\n|---|---:|---:|\n"
+        "# 失败归因({corpus_path},--only {only})\n\n{counted} 句(坏行 {malformed}),学习关闭。\n\n| 阶段 | 句数 | 占比 |\n|---|---:|---:|\n"
     );
     for stage in order {
         let n = totals
