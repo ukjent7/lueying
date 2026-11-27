@@ -39,7 +39,7 @@ fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 /// 优先用 `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`:纳秒精度,单个按键的亚毫秒
 /// 差异也读得出来。拿不到时退回 `/proc/thread-self/schedstat`,再退到
 /// `/proc/thread-self/stat` 的时钟滴答(本机 4 毫秒一跳,只够累加整段会话)。
-fn thread_cpu_ms() -> Option<f64> {
+pub(crate) fn thread_cpu_ms() -> Option<f64> {
     // CLOCK_THREAD_CPUTIME_ID:本线程真正占用的 CPU,纳秒精度。`/proc` 里的两条都是
     // 按 jiffy 记账(本机 4 毫秒一跳),单个按键的亚毫秒差异会被量化掉,只够看整段会话。
     if let Some(ms) = thread_cpu_clock_ms() {
