@@ -20,9 +20,9 @@ fn round_trip_is_lossless() {
     set_sim_now(T0 + 9 * DAY);
     user.learn("ni'hao", "你好");
     user.learn_transitions(Some("你好"), &["世界".to_string()]);
-    user.learn_raw("nihao", "你好");
-    user.learn_raw("nihao", "泥好");
-    user.learn_groups(1);
+    user.learn_raw("nihao", "你好", "");
+    user.learn_raw("nihao", "泥好", "");
+    user.learn_groups(1, "");
     user.learn_literal("rq", "!date");
     user.pin("ni", "你");
     let text = user.export();

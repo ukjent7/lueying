@@ -117,7 +117,10 @@ pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
                     && !c.needs_clause_prefix,
                 trusted_dictionary_hit: c.trusted,
                 score: c.score as f32,
-                channel: c.channel as f32,
+                // 信道代价按学习前的原始读法报:模糊组减价是用户习惯,对模型应
+                // 如实报告读法改动量,否则习惯分会被重排目标里的 −CHANNEL_WEIGHT
+                // 放大成「这条模糊读法很干净」,在没见过的句子上劫持首选。
+                channel: (c.channel + c.relief) as f32,
                 personal: c.personal as f32,
                 locked: c.learned_enough() || c.attested_context,
                 edited: c.edits > 0,

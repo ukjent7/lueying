@@ -599,6 +599,104 @@ fn part_user_gain(ctx: &Ctx, sentences: &[Case], out: &mut String) {
     out.push('\n');
 }
 
+/// 诊断:对 `--side-corpus` 里每条用例打印解码池内部字段与两档重排的决定,
+/// 用来定位学习副作用具体发生在哪一层(束内 / 引擎序 / 8M / 25M / promote 拒因)。
+fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
+    let body: &'static str = match value(args, "--side-corpus")
+        .and_then(|path| std::fs::read_to_string(path).ok())
+    {
+        Some(text) => Box::leak(text.into_boxed_str()),
+        None => return,
+    };
+    let cases = shared::cases(body).0;
+    let saved =
+        value(args, "--side-profile").and_then(|path| std::fs::read_to_string(path).ok());
+    let mut four = Rerank::new(&ctx.models.four);
+    let mut five = Rerank::new(&ctx.models.five);
+    for case in &cases {
+        set_sim_now(secs(3.0));
+        let mut engine = ctx.engine(false);
+        if let Some(user) = &saved {
+            engine.import_user(user);
+        }
+        type_key(&mut engine, case.context, case.input);
+        let expected = bench::normalize(case.expected);
+        let dump = |engine: &Engine, tag: &str, out: &mut String| {
+            let _ = writeln!(out, "-- {tag}");
+            for (at, cand) in engine.candidates_detailed().iter().take(10).enumerate() {
+                let answers = cand.full
+                    && !cand.rejected
+                    && !cand.no_learn
+                    && !cand.weaker_reading
+                    && !cand.needs_clause_prefix;
+                let _ = writeln!(
+                    out,
+                    "  {at} {} s={:.3} ch={:.3} relief={:.3} ed={} full={} ex={} \
+                     learn={} lv={:.2} g={:#x} ans={} weak={} attn={}",
+                    cand.text,
+                    cand.score,
+                    cand.channel,
+                    cand.relief,
+                    cand.edits,
+                    u8::from(cand.full),
+                    u8::from(cand.exact),
+                    u8::from(cand.learned),
+                    cand.level,
+                    cand.groups,
+                    u8::from(answers),
+                    u8::from(cand.weaker_reading),
+                    u8::from(cand.attested_context),
+                );
+            }
+        };
+        let tail: String = case
+            .context
+            .chars()
+            .rev()
+            .take(24)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let _ = writeln!(
+            out,
+            "### `{}` → {}(期望名次 {})context=`…{tail}`",
+            case.input,
+            case.expected,
+            shared::rank_of(&engine, &expected),
+        );
+        dump(&engine, "decode", out);
+        let snap = crate::rerank::snapshot(&engine);
+        if !snap.context.is_empty() && !snap.texts.is_empty() {
+            let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+            if let Some(index) = four.decide(&snap.context, &texts, &snap.facts) {
+                let ok = engine.promote(index);
+                let _ = writeln!(out, "8M → [{index}] {} promote={}", texts[index], ok);
+            } else {
+                let _ = writeln!(out, "8M → 无决定");
+            }
+        }
+        let snap = crate::rerank::snapshot(&engine);
+        let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
+        if let Some(index) = five.decide_settled(&snap.context, &texts, &snap.facts) {
+            let ok = engine.promote(index);
+            let _ = writeln!(out, "25M → [{index}] {} promote={}", texts[index], ok);
+        } else {
+            let _ = writeln!(out, "25M → 无决定");
+        }
+        let _ = writeln!(
+            out,
+            "settled rank={} top1={}\n",
+            shared::rank_of(&engine, &expected),
+            engine
+                .candidates_detailed()
+                .first()
+                .map(|cand| cand.text.as_str())
+                .unwrap_or("")
+        );
+    }
+}
+
 fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.iter()
         .position(|a| a == flag)
@@ -672,6 +770,9 @@ pub fn run(args: &[String]) -> i32 {
     }
     if wants("gain") {
         part_user_gain(&ctx, &sentences, &mut out);
+    }
+    if wants("explain") {
+        part_explain(&ctx, &mut out, args);
     }
     print!("{out}");
     if std::fs::create_dir_all("target").is_ok() {

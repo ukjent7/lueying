@@ -61,13 +61,16 @@ pub struct Candidate {
     /// 用户在当前键下置顶的词:直接放首位,重排与快捷项都让位。
     pub pinned: bool,
     /// 与刚上屏的词在词典里接成整词;本次候选重排不得改动首位。
-    pub(crate) attested_context: bool,
+    pub attested_context: bool,
     /// 字面全音节已有可信词条时,把它拆成简拼的次级读法;仍可手动选。
-    pub(crate) weaker_reading: bool,
+    pub weaker_reading: bool,
     /// 句首有可用的非语气词时,仅依附前文的语气词不自动升首。
-    pub(crate) needs_clause_prefix: bool,
+    pub needs_clause_prefix: bool,
     /// 只禁用学习首位锁，不移除普通学习加分。
-    pub(crate) suppress_promotion: bool,
+    pub suppress_promotion: bool,
+    /// 路径累计的模糊组学习减价(已含在 `score` 里);用于给减价加上「不许越过
+    /// 最强精确读法」的天花板。
+    pub relief: f64,
     /// 动作候选要执行的完整命令 id;普通候选为空。动作候选不上屏文字、
     /// 不学习,选中即执行命令。
     pub action: Option<String>,
@@ -113,6 +116,7 @@ impl Candidate {
             weaker_reading: false,
             needs_clause_prefix: false,
             suppress_promotion: false,
+            relief: 0.0,
             action: None,
         }
     }

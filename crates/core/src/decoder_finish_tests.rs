@@ -146,13 +146,15 @@ fn learned_lock_in_a_clause_requires_literal_key_evidence() {
         let mut user = e.user.write().unwrap();
         for _ in 0..3 {
             user.learn("ni'hao", "拟好");
-            user.learn_raw("nihao", "拟好");
+            user.learn_raw("nihao", "拟好", "今天");
         }
     }
     for (context, typed, locked) in [
         ("昨天。", "nh", true),
         ("今天", "nh", false),
         ("今天", "nihao", true),
+        // 击键缓存只在上屏时见过的左邻下回放:同一击键串换个语境不硬锁。
+        ("明天", "nihao", false),
     ] {
         e.set_context(context);
         type_into(&mut e, typed);

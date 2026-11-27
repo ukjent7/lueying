@@ -148,9 +148,9 @@ impl UserDict {
     /// 误选的词也要从原样输入缓存里减弱:上屏后立刻改选,说明那次整串选择不作数。
     pub fn mispick_raw(&mut self, typed: &str, word: &str) {
         if let Some(entries) = self.raw.get_mut(typed)
-            && let Some((_, memory)) = entries.iter_mut().find(|(text, _)| text == word)
+            && let Some(entry) = entries.iter_mut().find(|entry| entry.word == word)
         {
-            memory.weaken();
+            entry.memory.weaken();
             self.rev = self.rev.wrapping_add(1);
         }
     }
@@ -166,34 +166,58 @@ impl UserDict {
     }
 
     /// 原样输入记忆:用户敲的击键串 `typed`(小写、无隔音符)上屏了 `word`。同一击键串下改选了别的词,
-    /// 之前学过的词被越过一次,减弱一次。
-    pub fn learn_raw(&mut self, typed: &str, word: &str) {
+    /// 之前学过的词被越过一次,减弱一次。`context` 是上屏时的左邻,击键缓存只在这些
+    /// 左邻下回放(旧档案不限作用域)。
+    pub fn learn_raw(&mut self, typed: &str, word: &str, context: &str) {
         if typed.is_empty() || word.is_empty() {
             return;
         }
         let now = now();
+        let scope = fragment_context(context);
         let entries = self.raw.entry(typed.to_string()).or_default();
-        for (_, memory) in entries.iter_mut().filter(|(text, _)| text != word) {
-            memory.weaken();
+        for entry in entries.iter_mut().filter(|entry| entry.word != word) {
+            entry.memory.weaken();
         }
-        match entries.iter_mut().find(|(text, _)| text == word) {
-            Some((_, memory)) => memory.reinforce(now),
+        match entries.iter_mut().find(|entry| entry.word == word) {
+            Some(entry) => {
+                entry.memory.reinforce(now);
+                if let Some(contexts) = &mut entry.contexts {
+                    contexts.insert(scope);
+                }
+            }
             None => {
                 let mut memory = Memory::default();
                 memory.reinforce(now);
-                entries.push((word.to_string(), memory));
+                entries.push(RawEntry {
+                    word: word.to_string(),
+                    memory,
+                    contexts: Some([scope].into_iter().collect()),
+                });
             }
         }
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 击键串 `typed` 上屏过的词:(词, 缓存层级, 使用次数)。
-    pub(crate) fn raw_words(&self, typed: &str) -> Vec<(&str, f64, u32)> {
+    /// 击键串 `typed` 上屏过的词:(词, 缓存层级, 使用次数)。只在见过的左邻下命中。
+    pub(crate) fn raw_words(&self, typed: &str, context: &str) -> Vec<(&str, f64, u32)> {
         let now = now();
+        let scope = fragment_context(context);
         self.raw.get(typed).map_or_else(Vec::new, |entries| {
             entries
                 .iter()
-                .map(|(text, memory)| (text.as_str(), memory.cache_level(now), memory.uses))
+                .filter(|entry| {
+                    entry
+                        .contexts
+                        .as_ref()
+                        .is_none_or(|set| set.contains(&scope))
+                })
+                .map(|entry| {
+                    (
+                        entry.word.as_str(),
+                        entry.memory.cache_level(now),
+                        entry.memory.uses,
+                    )
+                })
                 .collect()
         })
     }
@@ -376,15 +400,18 @@ impl UserDict {
         self.count
     }
 
-    /// 模糊组的打字习惯学习:选中一个模糊读法时调用。
-    pub fn learn_groups(&mut self, mask: u8) {
-        self.typing.learn_groups(mask, now());
+    /// 模糊组的打字习惯学习:选中一个模糊读法时调用;`context` 是上屏时的
+    /// 左邻,习惯只在这些左邻下回放(旧档案不限作用域,与 `learn_raw` 同规)。
+    pub fn learn_groups(&mut self, mask: u8, context: &str) {
+        self.typing
+            .learn_groups(mask, group_scope(context), now());
         self.rev = self.rev.wrapping_add(1);
     }
 
-    /// 命中这些模糊组时给候选的加分;只降低模糊代价,精确首位保护不变。
-    pub fn group_bonus(&self, mask: u8) -> f64 {
-        self.typing.group_bonus(mask, now())
+    /// 命中这些模糊组时给候选的加分;只在见过的左邻下降低模糊代价,
+    /// 精确首位保护不变。`scope` 是左邻三态:无从判断时习惯不生效。
+    pub fn group_bonus(&self, mask: u8, scope: Option<Option<[char; 2]>>) -> f64 {
+        self.typing.group_bonus(mask, scope, now())
     }
 
     /// 设置页展示用:各模糊组当前有效次数。

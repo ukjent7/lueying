@@ -7,7 +7,7 @@
 //! - `f 键 词 次数 最近时刻 左邻串`:相同 `w` 版本的片段作用域,每两字一个左邻,可为空。
 //! - `r 击键串 词 次数 稳定度 最近时刻`:原样输入记忆。
 //! - `t 前词 后词 次数 稳定度 最近时刻`:词序记忆。
-//! - `g 模糊组 次数 时刻`:打字习惯,模糊组。
+//! - `g 模糊组 次数 时刻 左邻串`:打字习惯,模糊组;左邻串与 `r` 同构,旧档案可无此列。
 //! - `a 键 快捷动作 次数 时刻`:打字习惯,快捷词的字面选择。
 //! - `p 键 词`:置顶。
 //!
@@ -51,13 +51,29 @@ impl UserDict {
             }
         }
         for (typed, entries) in in_key_order(&self.raw) {
-            let mut entries: Vec<&(String, Memory)> = entries.iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            for (word, m) in entries {
+            let mut entries: Vec<&RawEntry> = entries.iter().collect();
+            entries.sort_by(|a, b| a.word.cmp(&b.word));
+            for e in entries {
+                let m = e.memory;
                 out.push_str(&format!(
-                    "r\t{typed}\t{word}\t{}\t{}\t{}\n",
-                    m.uses, m.stability, m.last
+                    "r\t{typed}\t{}\t{}\t{}\t{}",
+                    e.word, m.uses, m.stability, m.last
                 ));
+                if let Some(contexts) = &e.contexts {
+                    // 每个左邻一项:`*` 表示句首(无左邻),否则两个汉字。
+                    let mut encoded = String::new();
+                    for scope in contexts {
+                        match scope {
+                            Some([a, b]) => {
+                                encoded.push(*a);
+                                encoded.push(*b);
+                            }
+                            None => encoded.push('*'),
+                        }
+                    }
+                    out.push_str(&format!("\t{encoded}"));
+                }
+                out.push('\n');
             }
         }
         for (prev, next) in in_key_order(&self.transitions) {
@@ -68,12 +84,27 @@ impl UserDict {
                 ));
             }
         }
-        for (index, stat) in self.typing.groups.iter().enumerate() {
-            if stat.count > 0 {
+        for (index, habit) in self.typing.groups.iter().enumerate() {
+            if habit.stat.count > 0 {
                 out.push_str(&format!(
-                    "g\t{}\t{}\t{}\n",
-                    FUZZY_GROUPS[index], stat.count, stat.ts
+                    "g\t{}\t{}\t{}",
+                    FUZZY_GROUPS[index], habit.stat.count, habit.stat.ts
                 ));
+                if let Some(contexts) = &habit.contexts {
+                    // 与 `r` 记录同构:每个左邻一项,`*` 表示句首(无左邻)。
+                    let mut encoded = String::new();
+                    for scope in contexts {
+                        match scope {
+                            Some([a, b]) => {
+                                encoded.push(*a);
+                                encoded.push(*b);
+                            }
+                            None => encoded.push('*'),
+                        }
+                    }
+                    out.push_str(&format!("\t{encoded}"));
+                }
+                out.push('\n');
             }
         }
         for ((key, action), stat) in in_key_order(&self.typing.literal) {
@@ -137,17 +168,51 @@ impl UserDict {
                     .extend(scope);
                 true
             }
-            ["r", typed, word, uses, stability, last] => {
+            ["r", typed, word, uses, stability, last, ref rest @ ..] => {
                 let Some(memory) = memory(uses, stability, last) else {
                     return false;
                 };
                 if typed.is_empty() || word.is_empty() {
                     return false;
                 }
+                let contexts = match rest {
+                    [] => None,
+                    [encoded] => {
+                        let mut scope = BTreeSet::new();
+                        let mut chars = encoded.chars();
+                        while let Some(first) = chars.next() {
+                            if first == '*' {
+                                scope.insert(None);
+                                continue;
+                            }
+                            let Some(second) = chars.next() else {
+                                return false;
+                            };
+                            if !is_context_han(first) || !is_context_han(second) {
+                                return false;
+                            }
+                            scope.insert(Some([first, second]));
+                        }
+                        Some(scope)
+                    }
+                    _ => return false,
+                };
                 let entries = self.raw.entry(typed.to_string()).or_default();
-                match entries.iter_mut().find(|(text, _)| text == word) {
-                    Some((_, slot)) => absorb(slot, memory),
-                    None => entries.push((word.to_string(), memory)),
+                match entries.iter_mut().find(|entry| entry.word == word) {
+                    Some(entry) => {
+                        absorb(&mut entry.memory, memory);
+                        if let Some(scope) = contexts {
+                            entry
+                                .contexts
+                                .get_or_insert_with(BTreeSet::new)
+                                .extend(scope);
+                        }
+                    }
+                    None => entries.push(RawEntry {
+                        word: word.to_string(),
+                        memory,
+                        contexts,
+                    }),
                 }
                 true
             }
@@ -167,16 +232,44 @@ impl UserDict {
                 absorb(slot, memory);
                 true
             }
-            ["g", name, count, ts] => {
+            ["g", name, count, ts, ref rest @ ..] => {
                 let (Ok(count), Ok(ts)) = (count.parse::<u32>(), ts.parse::<u64>()) else {
                     return false;
                 };
                 let Some(index) = FUZZY_GROUPS.iter().position(|group| *group == name) else {
                     return false;
                 };
-                let stat = &mut self.typing.groups[index];
-                if ts >= stat.ts {
-                    *stat = Weekly { count, ts };
+                let contexts = match rest {
+                    [] => None,
+                    [encoded] => {
+                        let mut scope = BTreeSet::new();
+                        let mut chars = encoded.chars();
+                        while let Some(first) = chars.next() {
+                            if first == '*' {
+                                scope.insert(None);
+                                continue;
+                            }
+                            let Some(second) = chars.next() else {
+                                return false;
+                            };
+                            if !is_context_han(first) || !is_context_han(second) {
+                                return false;
+                            }
+                            scope.insert(Some([first, second]));
+                        }
+                        Some(scope)
+                    }
+                    _ => return false,
+                };
+                let habit = &mut self.typing.groups[index];
+                if ts >= habit.stat.ts {
+                    habit.stat = Weekly { count, ts };
+                }
+                if let Some(scope) = contexts {
+                    habit
+                        .contexts
+                        .get_or_insert_with(BTreeSet::new)
+                        .extend(scope);
                 }
                 true
             }
