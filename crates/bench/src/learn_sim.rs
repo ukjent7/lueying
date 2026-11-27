@@ -489,7 +489,10 @@ fn part_side_effect(ctx: &Ctx, sentences: &[Case], out: &mut String, args: &[Str
             ranks.filter(|ranks| ranks.len() == cases.len())
         });
     let base = match cached {
-        Some(ranks) => ranks.into_iter().map(|rank| (rank, String::new())).collect(),
+        Some(ranks) => ranks
+            .into_iter()
+            .map(|rank| (rank, String::new()))
+            .collect(),
         None => {
             let ranks = dev_ranks(ctx, &cases, None, 3.0);
             if let Some(path) = cache {
@@ -499,8 +502,8 @@ fn part_side_effect(ctx: &Ctx, sentences: &[Case], out: &mut String, args: &[Str
             ranks
         }
     };
-    let injected = value(args, "--side-profile")
-        .and_then(|path| std::fs::read_to_string(path).ok());
+    let injected =
+        value(args, "--side-profile").and_then(|path| std::fs::read_to_string(path).ok());
     let (saved, picks) = match injected {
         Some(text) => (text, 0),
         None => train_users(ctx, sentences, 3),

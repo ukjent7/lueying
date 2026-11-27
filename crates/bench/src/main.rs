@@ -3,6 +3,7 @@
 
 mod actions;
 mod address;
+mod attribution;
 mod bench;
 mod consent;
 mod conversion;
@@ -26,6 +27,7 @@ mod rerank;
 mod scenarios;
 mod segmented;
 mod settings;
+mod settle;
 mod shared;
 mod typing_log;
 mod ui;
@@ -127,6 +129,8 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   同上 --only-shared [--corpus <语料>] [--shard <序号>/<总片数>]   共享语料逐条结果,写到 target/bench/
   --accuracy-smoke   固定输入与学习行为回归,不加载外部模型
   latency --old <旧二进制> --new <新二进制> --dict <主词典> --rerank-dir <模型目录>   延迟 ABAB,报告线程 CPU 时间的比值
+  attribution --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--corpus <语料>] [--cases N] [--by-category]   失败归因:未入池/解码未组出/重排未顶上/门控拦下
+  settle --dict <主词典> --rerank-dir <模型目录> [--corpus <语料>] [--cases N] [--breadth 3] [--depth 2]   停顿位小模型组句:分段也交给 8M,对照 8M+25M 仅重排
   learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full] [--parts new,mistake,decay,side,gain] [--side-corpus <子集>] [--side-profile <档案>] [--side-base-cache <文件>]   学习模拟(完整版含对验收集的副作用)
   personal --dict <主词典> [--gram <搭配表>] [--rerank-dir <模型目录>] [--passes N] [--side-effect]   个性化留出评估(v1..v3 训练、v4 验收集)
   conversion --dict <主词典> --corpus <语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--limit N]   转换准确率分组(有/无上文,词/短语/整句)
@@ -190,6 +194,12 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("personalize") {
         std::process::exit(personalize::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("attribution") {
+        std::process::exit(attribution::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("settle") {
+        std::process::exit(settle::run(&args));
     }
     if args.get(1).map(String::as_str) == Some("noise") {
         std::process::exit(noise::run(&args));

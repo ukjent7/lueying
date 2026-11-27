@@ -34,13 +34,42 @@ fn value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 }
 
 /// 本线程到目前为止的 CPU 时间(毫秒)。
-fn thread_cpu_ms() -> Option<f64> {
+pub(crate) fn thread_cpu_ms() -> Option<f64> {
+    // CLOCK_THREAD_CPUTIME_ID:本线程真正占用的 CPU,纳秒精度。`/proc/thread-self/stat`
+    // 按 jiffy 记账(本机 4 毫秒一跳),单个按键的亚毫秒差异会被量化掉。
+    if let Some(ms) = thread_cpu_clock_ms() {
+        return Some(ms);
+    }
     let stat = std::fs::read_to_string("/proc/thread-self/stat").ok()?;
     // 括号后第 1 列是 state(第 3 列),utime、stime 分别是第 14、15 列,即这里的下标 11、12。
     let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
     let utime: f64 = fields.get(11)?.parse().ok()?;
     let stime: f64 = fields.get(12)?.parse().ok()?;
     Some((utime + stime) * 1000.0 / CLOCK_TICKS_PER_SEC)
+}
+
+/// `clock_gettime(CLOCK_THREAD_CPUTIME_ID)`,纳秒精度;非 Linux 或调用失败时返回 `None`。
+///
+/// 直接声明 C 符号,不额外引入 `libc`:这一个调用是基准里唯一需要的系统接口。
+fn thread_cpu_clock_ms() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        #[repr(C)]
+        struct Timespec {
+            secs: i64,
+            nanos: i64,
+        }
+        unsafe extern "C" {
+            fn clock_gettime(clock: i32, at: *mut Timespec) -> i32;
+        }
+        const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+        let mut at = Timespec { secs: 0, nanos: 0 };
+        // SAFETY:传的是本栈上的 `Timespec`,写满一个结构体;C 侧只读时钟 ID。
+        if unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut at) } == 0 {
+            return Some(at.secs as f64 * 1000.0 + at.nanos as f64 / 1e6);
+        }
+    }
+    None
 }
 
 /// 被测的一次运行:加载模型之后,逐条跑产品链路(8M 与 25M 两档重排),报告这段的线程 CPU 时间。
