@@ -8,6 +8,9 @@
 //!
 //! 用户语料(`eval-user-*`)只输出汇总数字,不逐句输出。用法:
 //! `lueying-bench learn-sim --dict <主词典> --gram <搭配表> --rerank-dir <模型目录> [--full] [--limit <条数>]`
+//!
+//! `--parts <列表>` 只跑其中几段(`new,mistake,decay,side,gain`,逗号分隔,可带 `side`),
+//! 用于只复查副作用这种单段就要几分钟、却不需要全量历史的场合。
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -170,8 +173,8 @@ fn train_users(ctx: &Ctx, sentences: &[Case], reps: usize) -> (String, usize) {
     (engine.export_user(), picks)
 }
 
-/// 验收集的产品链路名次,按用例分片并行;每条用例一个新引擎,可选导入档案。
-fn dev_ranks(ctx: &Ctx, cases: &[Case], saved: Option<&str>, day: f64) -> Vec<i64> {
+/// 验收集的产品链路名次与首选文本,按用例分片并行;每条用例一个新引擎,可选导入档案。
+fn dev_ranks(ctx: &Ctx, cases: &[Case], saved: Option<&str>, day: f64) -> Vec<(i64, String)> {
     let threads = std::thread::available_parallelism()
         .map_or(1, usize::from)
         .max(1);
@@ -190,7 +193,13 @@ fn dev_ranks(ctx: &Ctx, cases: &[Case], saved: Option<&str>, day: f64) -> Vec<i6
                             if let Some(user) = saved {
                                 engine.import_user(user);
                             }
-                            settled(&mut engine, case, &mut four, &mut five)
+                            let rank = settled(&mut engine, case, &mut four, &mut five);
+                            let top = engine
+                                .candidates_detailed()
+                                .first()
+                                .map(|cand| cand.text.clone())
+                                .unwrap_or_default();
+                            (rank, top)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -453,21 +462,60 @@ fn part_decay(ctx: &Ctx, limit: usize, out: &mut String) {
 }
 
 /// 副作用:用户整句训练 3 遍后,验收集的产品链路首选相对无学习的变化。
-fn part_side_effect(ctx: &Ctx, sentences: &[Case], out: &mut String) {
-    let cases = shared::cases(DEV).0;
-    let base = dev_ranks(ctx, &cases, None, 3.0);
-    let (saved, picks) = train_users(ctx, sentences, 3);
+///
+/// `--side-corpus <文件>` 与 `--side-profile <文件>` 是诊断入口:前者只看一份子集(快),
+/// 后者直接导入给定的用户档案而不重训(拿到基线档案后可以反复做削枝对比)。
+fn part_side_effect(ctx: &Ctx, sentences: &[Case], out: &mut String, args: &[String]) {
+    let body: &'static str = match value(args, "--side-corpus") {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => Box::leak(text.into_boxed_str()),
+            Err(error) => {
+                eprintln!("读副作用子集失败 {path}: {error}");
+                return;
+            }
+        },
+        None => DEV,
+    };
+    let cases = shared::cases(body).0;
+    // 无学习那一臂只跟语料有关,跟档案无关:允许缓存起来,否则每次削枝都要重算一遍。
+    let cache = value(args, "--side-base-cache");
+    let cached: Option<Vec<i64>> = cache
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| {
+            let ranks: Option<Vec<i64>> = text
+                .lines()
+                .map(|line| line.trim().parse::<i64>().ok())
+                .collect();
+            ranks.filter(|ranks| ranks.len() == cases.len())
+        });
+    let base = match cached {
+        Some(ranks) => ranks.into_iter().map(|rank| (rank, String::new())).collect(),
+        None => {
+            let ranks = dev_ranks(ctx, &cases, None, 3.0);
+            if let Some(path) = cache {
+                let text: String = ranks.iter().map(|(rank, _)| format!("{rank}\n")).collect();
+                let _ = std::fs::write(path, text);
+            }
+            ranks
+        }
+    };
+    let injected = value(args, "--side-profile")
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let (saved, picks) = match injected {
+        Some(text) => (text, 0),
+        None => train_users(ctx, sentences, 3),
+    };
     let learned = dev_ranks(ctx, &cases, Some(&saved), 3.0);
-    let top1 = |ranks: &[i64]| ranks.iter().filter(|&&r| r == 0).count();
+    let top1 = |rows: &[(i64, String)]| rows.iter().filter(|(rank, _)| *rank == 0).count();
     let losses = base
         .iter()
         .zip(&learned)
-        .filter(|(b, l)| **b == 0 && **l != 0)
+        .filter(|((b, _), (l, _))| *b == 0 && *l != 0)
         .count();
     let wins = base
         .iter()
         .zip(&learned)
-        .filter(|(b, l)| **b != 0 && **l == 0)
+        .filter(|((b, _), (l, _))| *b != 0 && *l == 0)
         .count();
     let (before, after) = (
         pct(top1(&base), base.len()),
@@ -488,6 +536,25 @@ fn part_side_effect(ctx: &Ctx, sentences: &[Case], out: &mut String) {
         "| 用户整句学习 | {picks} | {after:.2}% | {:+.2} | {losses} | {wins} |\n",
         after - before
     );
+    // 逐条名次与学到的用户词都落盘:复查时要能看出是谁把谁挤掉,而不只看两个百分数。
+    if std::fs::create_dir_all("target").is_ok() {
+        let mut rows =
+            String::from("input\texpected\tbase_rank\tlearned_rank\tbase_top1\tlearned_top1\n");
+        for (case, ((base_rank, base_top), (learned_rank, learned_top))) in
+            cases.iter().zip(base.iter().zip(&learned))
+        {
+            let _ = writeln!(
+                rows,
+                "{}\t{}\t{base_rank}\t{learned_rank}\t{}\t{}",
+                case.input.replace(['\t', '\n'], " "),
+                case.expected.replace(['\t', '\n'], " "),
+                base_top.replace(['\t', '\n'], " "),
+                learned_top.replace(['\t', '\n'], " ")
+            );
+        }
+        let _ = std::fs::write("target/learn-sim-side.tsv", rows);
+        let _ = std::fs::write("target/learn-sim-user.txt", &saved);
+    }
 }
 
 /// 收益:用户整句每遍先测产品链路首选,再按正确选择学习;比较第 1 遍与第 3 遍。
@@ -544,6 +611,18 @@ pub fn run(args: &[String]) -> i32 {
         return 2;
     };
     let full = args.iter().any(|a| a == "--full");
+    let parts: Option<Vec<String>> = value(args, "--parts").map(|text| {
+        text.split(',')
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect()
+    });
+    // 没指定 `--parts` 就是全跑;指定了就只跑列出的段。
+    let wants = |name: &str| {
+        parts
+            .as_ref()
+            .is_none_or(|list| list.iter().any(|part| part == name))
+    };
     let limit = value(args, "--limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(if full { usize::MAX } else { FAST_LIMIT });
@@ -575,13 +654,22 @@ pub fn run(args: &[String]) -> i32 {
         return 2;
     }
     let mut out = String::from("## 学习模拟\n\n");
-    part_new_word(&ctx, limit, &mut out);
-    part_mistake(&ctx, limit, &mut out);
-    part_decay(&ctx, limit, &mut out);
-    if full {
-        part_side_effect(&ctx, &sentences, &mut out);
+    if wants("new") {
+        part_new_word(&ctx, limit, &mut out);
     }
-    part_user_gain(&ctx, &sentences, &mut out);
+    if wants("mistake") {
+        part_mistake(&ctx, limit, &mut out);
+    }
+    if wants("decay") {
+        part_decay(&ctx, limit, &mut out);
+    }
+    // 副作用默认只跟 `--full` 一起跑;显式点名 `side` 时不受 `--full` 限制。
+    if (full || parts.as_ref().is_some_and(|_| wants("side"))) && wants("side") {
+        part_side_effect(&ctx, &sentences, &mut out, args);
+    }
+    if wants("gain") {
+        part_user_gain(&ctx, &sentences, &mut out);
+    }
     print!("{out}");
     if std::fs::create_dir_all("target").is_ok() {
         let _ = std::fs::write("target/learn-sim.md", &out);
