@@ -129,7 +129,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   latency --old <旧二进制> --new <新二进制> --dict <主词典> --rerank-dir <模型目录>   延迟 ABAB,报告线程 CPU 时间的比值
   keys --dict <主词典> --rerank-dir <模型目录> [--corpus <语料>] [--cases N]   逐键 p50/p95/p99(句间保留上下文,墙钟+线程 CPU)
   prefix --rerank-dir <模型目录> [--corpus <语料>] [--samples N]   上屏后续算前缀 vs 冷启动的 CPU 对比(找触发边界)
-  learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full]   学习模拟(完整版含对验收集的副作用)
+  learn-sim --dict <主词典> --rerank-dir <模型目录> [--gram <搭配表>] [--full] [--parts new,mistake,decay,side,gain] [--side-corpus <子集>] [--side-profile <档案>] [--side-base-cache <文件>]   学习模拟(完整版含对验收集的副作用)
   personal --dict <主词典> [--gram <搭配表>] [--rerank-dir <模型目录>] [--passes N] [--side-effect]   个性化留出评估(v1..v3 训练、v4 验收集)
   conversion --dict <主词典> --corpus <语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--limit N]   转换准确率分组(有/无上文,词/短语/整句)
   noise --dict <主词典> --corpus <干净全拼语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--per-group N]   路线 3 噪声套件(模糊/邻键/转置/中英混合)
