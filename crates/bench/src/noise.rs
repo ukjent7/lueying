@@ -536,10 +536,21 @@ mod tests {
     use super::{fuzzy, hash, neighbor, transpose};
 
     #[test]
-    fn transformations_change_the_input() {
+    fn fuzzy_respects_directional_rules() {
+        // For nihao, n and h are targets, not sources.
+        assert_eq!(fuzzy("nihao", hash(&["nihao", "f"])), None);
+        for input in ["jintiantianqi", "shurufa"] {
+            assert!(
+                fuzzy(input, hash(&[input, "f"])).is_some_and(|text| text != input),
+                "fuzzy: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn neighbor_and_transpose_change_the_input() {
         for input in ["nihao", "jintiantianqi", "shurufa"] {
             let changed = |out: Option<String>| out.is_some_and(|text| text != input);
-            assert!(changed(fuzzy(input, hash(&[input, "f"]))));
             assert!(changed(neighbor(input, hash(&[input, "n"]))));
             assert!(changed(transpose(input, hash(&[input, "t"]))));
         }
