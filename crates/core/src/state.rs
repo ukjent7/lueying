@@ -143,6 +143,49 @@ impl Engine {
         self.comp_committed
     }
 
+    /// 上屏后立即取下一词建议。没有组合也能调用：读取最近上屏的词与用户词序，
+    /// 返回最多 `limit` 条不同词。首位按用户实际接过的强度排序，再优先覆盖
+    /// 不同首字，避免 N 条建议全是同一个开头。
+    pub fn predict_next(&self, limit: usize) -> Vec<NextWord> {
+        let Some(previous) = self.last_word.as_deref() else {
+            return Vec::new();
+        };
+        self.predict_after(previous, limit)
+    }
+
+    /// 指定前词的下一词建议。宿主在组合结束后拿着刚落定的词调用，模拟与
+    /// 测试也用它逐词评估；与 [`Self::predict_next`] 共用同一份用户词序。
+    /// 先每个首字取一条最强的，再补齐其余词，避免 N 条建议挤在同一个开头。
+    pub fn predict_after(&self, previous: &str, limit: usize) -> Vec<NextWord> {
+        if limit == 0 || previous.is_empty() {
+            return Vec::new();
+        }
+        let user = self.user.read().unwrap_or_else(|p| p.into_inner());
+        let words = user.predict_next(Some(previous), limit.saturating_mul(4).max(limit));
+        let mut out: Vec<NextWord> = Vec::with_capacity(limit);
+        let mut firsts = std::collections::HashSet::new();
+        for diverse in [true, false] {
+            for word in &words {
+                if out.len() >= limit {
+                    break;
+                }
+                let first = word.chars().next().unwrap_or('\0');
+                if diverse && !firsts.insert(first) {
+                    continue;
+                }
+                if out.iter().any(|known| known.text == *word) {
+                    continue;
+                }
+                out.push(NextWord {
+                    text: word.clone(),
+                    key: user.key_for_word(word).map(str::to_string),
+                });
+            }
+        }
+        out.truncate(limit);
+        out
+    }
+
     /// 最近上屏的文本(最多 [`crate::CONTEXT_KEEP`] 字)。
     pub fn context(&self) -> &str {
         &self.context
@@ -562,5 +605,52 @@ impl Engine {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .group_stats()
+    }
+}
+
+#[cfg(test)]
+mod predict_tests {
+    use super::*;
+    use crate::Event;
+
+    fn engine() -> Engine {
+        let words = "今天\t9000\tjin'tian\n天气\t8000\ttian'qi\n很好\t7000\then'hao\n";
+        let (dict, bad) = lueying_dict::Dictionary::from_text(words);
+        assert_eq!(bad, 0);
+        Engine::new(Arc::new(dict), Config::default())
+    }
+
+    fn commit(engine: &mut Engine, keys: &str) -> String {
+        for c in keys.chars() {
+            engine.process(Key::Letter(c));
+        }
+        engine
+            .process(Key::Space)
+            .into_iter()
+            .find_map(|event| match event {
+                Event::Commit(text) => Some(text),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn suggestions_are_available_right_after_commit() {
+        let mut engine = engine();
+        // 同一词序走两遍：转移证据达到联想门槛后，上屏「今天」立刻能给出「天气」。
+        for _ in 0..2 {
+            assert_eq!(commit(&mut engine, "jintian"), "今天");
+            assert_eq!(commit(&mut engine, "tianqi"), "天气");
+        }
+        assert_eq!(commit(&mut engine, "jintian"), "今天");
+        let suggestions = engine.predict_next(3);
+        assert_eq!(
+            suggestions.first().map(|word| word.text.as_str()),
+            Some("天气")
+        );
+        assert_eq!(
+            suggestions.first().and_then(|word| word.key.as_deref()),
+            Some("tian'qi")
+        );
     }
 }

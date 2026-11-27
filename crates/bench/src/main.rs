@@ -19,6 +19,7 @@ mod modules;
 mod noise;
 mod personal;
 mod personalize;
+mod predict;
 mod quick;
 mod render;
 mod rerank;
@@ -131,6 +132,7 @@ lueying-bench: 拼音引擎的 E2E 与基准运行器
   conversion --dict <主词典> --corpus <语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--limit N]   转换准确率分组(有/无上文,词/短语/整句)
   noise --dict <主词典> --corpus <干净全拼语料.tsv> [--gram <搭配表>] [--rerank-dir <模型目录>] [--per-group N]   路线 3 噪声套件(模糊/邻键/转置/中英混合)
   personalize --dict <主词典> --test <语料.tsv> [--train <语料.tsv>] --rerank-dir <模型目录> [--gram <搭配表>] [--repeats N]   时间序 flat/primed 个性化
+  predict --dict <主词典> --test <语料.tsv> [--train <语料.tsv>]... [--limit N]   上屏后联想命中与按键节省模拟
   import-typing <记录目录> [--out <文件>]   打字记录合成 eval-user-* 语料(见 lueying-core 的 typing_log)
 
 公开测试集由发版准确率作业过滤重合后评估;私有测试另行验收。
@@ -191,6 +193,9 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("noise") {
         std::process::exit(noise::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("predict") {
+        std::process::exit(predict::run(&args));
     }
     if args.get(1).map(String::as_str) == Some("latency") {
         std::process::exit(latency::run(&args));
