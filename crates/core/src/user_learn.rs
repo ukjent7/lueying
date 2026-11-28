@@ -403,8 +403,7 @@ impl UserDict {
     /// 模糊组的打字习惯学习:选中一个模糊读法时调用;`context` 是上屏时的
     /// 左邻,习惯只在这些左邻下回放(旧档案不限作用域,与 `learn_raw` 同规)。
     pub fn learn_groups(&mut self, mask: u8, context: &str) {
-        self.typing
-            .learn_groups(mask, group_scope(context), now());
+        self.typing.learn_groups(mask, group_scope(context), now());
         self.rev = self.rev.wrapping_add(1);
     }
 

@@ -60,12 +60,7 @@ impl Default for Typing {
 }
 
 impl Typing {
-    pub(crate) fn learn_groups(
-        &mut self,
-        mask: u8,
-        scope: Option<Option<[char; 2]>>,
-        now: u64,
-    ) {
+    pub(crate) fn learn_groups(&mut self, mask: u8, scope: Option<Option<[char; 2]>>, now: u64) {
         for (index, habit) in self.groups.iter_mut().enumerate() {
             if mask & (1 << index) != 0 {
                 habit.stat.bump(now);
@@ -80,12 +75,7 @@ impl Typing {
         }
     }
 
-    pub(crate) fn group_bonus(
-        &self,
-        mask: u8,
-        scope: Option<Option<[char; 2]>>,
-        now: u64,
-    ) -> f64 {
+    pub(crate) fn group_bonus(&self, mask: u8, scope: Option<Option<[char; 2]>>, now: u64) -> f64 {
         if mask == 0 {
             return 0.0;
         }

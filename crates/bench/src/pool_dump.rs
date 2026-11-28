@@ -200,7 +200,10 @@ pub fn run(args: &[String]) -> i32 {
     }
     match std::fs::write(out_path, text) {
         Ok(()) => {
-            eprintln!("pool-dump: {} 句(坏行 {malformed}) → {out_path}", lines.len());
+            eprintln!(
+                "pool-dump: {} 句(坏行 {malformed}) → {out_path}",
+                lines.len()
+            );
             0
         }
         Err(error) => {

@@ -216,7 +216,10 @@ pub(super) fn spawn(state: Arc<State>) {
                     let using_25m = worker.is_some();
                     let decision = if using_25m && !job.snap.context.is_empty() {
                         // 25M 裁决 + 8M 预筛:小模型从更深候选池里挑比选窗口。
-                        let rerank = worker.as_mut().expect("using_25m checked").rerank(job.session);
+                        let rerank = worker
+                            .as_mut()
+                            .expect("using_25m checked")
+                            .rerank(job.session);
                         let order = match fallback.as_mut() {
                             Some(filter) => lueying_core::session::rank_context_prefiltered(
                                 rerank,

@@ -602,15 +602,13 @@ fn part_user_gain(ctx: &Ctx, sentences: &[Case], out: &mut String) {
 /// 诊断:对 `--side-corpus` 里每条用例打印解码池内部字段与两档重排的决定,
 /// 用来定位学习副作用具体发生在哪一层(束内 / 引擎序 / 8M / 25M / promote 拒因)。
 fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
-    let body: &'static str = match value(args, "--side-corpus")
-        .and_then(|path| std::fs::read_to_string(path).ok())
-    {
-        Some(text) => Box::leak(text.into_boxed_str()),
-        None => return,
-    };
+    let body: &'static str =
+        match value(args, "--side-corpus").and_then(|path| std::fs::read_to_string(path).ok()) {
+            Some(text) => Box::leak(text.into_boxed_str()),
+            None => return,
+        };
     let cases = shared::cases(body).0;
-    let saved =
-        value(args, "--side-profile").and_then(|path| std::fs::read_to_string(path).ok());
+    let saved = value(args, "--side-profile").and_then(|path| std::fs::read_to_string(path).ok());
     let mut four = Rerank::new(&ctx.models.four);
     let mut five = Rerank::new(&ctx.models.five);
     for case in &cases {
@@ -698,7 +696,13 @@ fn part_explain(ctx: &Ctx, out: &mut String, args: &[String]) {
         }
         let snap = crate::rerank::snapshot(&engine);
         let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-        if let Some(index) = five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, Some(&mut four)) {
+        if let Some(index) = five.decide_settled_prefiltered(
+            &snap.context,
+            &texts,
+            &snap.facts,
+            None,
+            Some(&mut four),
+        ) {
             let ok = engine.promote(index);
             let _ = writeln!(out, "25M → [{index}] {} promote={}", texts[index], ok);
         } else {

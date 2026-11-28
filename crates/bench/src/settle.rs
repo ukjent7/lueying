@@ -185,7 +185,13 @@ pub fn run(args: &[String]) -> i32 {
         let snap = rerank::snapshot(&engine);
         if !snap.context.is_empty() && !snap.texts.is_empty() {
             let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-            if let Some(index) = five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, Some(&mut four)) {
+            if let Some(index) = five.decide_settled_prefiltered(
+                &snap.context,
+                &texts,
+                &snap.facts,
+                None,
+                Some(&mut four),
+            ) {
                 engine.promote(index);
             }
         }
@@ -270,7 +276,13 @@ pub fn run(args: &[String]) -> i32 {
         let snap = rerank::snapshot(&engine);
         if !snap.context.is_empty() && !snap.texts.is_empty() {
             let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
-            if let Some(index) = five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, Some(&mut four)) {
+            if let Some(index) = five.decide_settled_prefiltered(
+                &snap.context,
+                &texts,
+                &snap.facts,
+                None,
+                Some(&mut four),
+            ) {
                 engine.promote(index);
             }
         }

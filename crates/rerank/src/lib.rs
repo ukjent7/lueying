@@ -375,9 +375,7 @@ impl Rerank {
         let mut budget = max_chars;
         let mut compared: Vec<usize> = Vec::with_capacity(max_cand);
         let mut indices: Box<dyn Iterator<Item = usize>> = match prefilter {
-            Some(filter) => Box::new(
-                prefiltered_order(context, texts, facts, filter).into_iter(),
-            ),
+            Some(filter) => Box::new(prefiltered_order(context, texts, facts, filter).into_iter()),
             None => Box::new(0..texts.len()),
         };
         for index in indices.by_ref() {

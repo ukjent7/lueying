@@ -195,8 +195,7 @@ fn apply_settled(engine: &mut Engine, five: &mut Rerank, filter: Option<&mut Rer
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    let promote =
-        five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, filter);
+    let promote = five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, filter);
     let ms_25m = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {
         engine.promote(index);
