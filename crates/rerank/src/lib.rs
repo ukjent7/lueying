@@ -294,8 +294,8 @@ impl Rerank {
         self.rank_with_local_context_prefiltered(context, texts, facts, left, None)
     }
 
-    /// [`rank_with_local_context`] 的预筛版:比选窗口内容由小模型从
-    /// [`PREFILTER_POOL`] 深的候选池里挑,见 [`prefiltered_order`]。
+    /// `rank_with_local_context` 的预筛版:比选窗口内容由小模型从
+    /// `PREFILTER_POOL` 深的候选池里挑,见 `prefiltered_order`。
     pub fn rank_with_local_context_prefiltered(
         &mut self,
         context: &str,
@@ -475,7 +475,7 @@ impl Rerank {
         self.decide_settled_prefiltered(context, texts, facts, left, None)
     }
 
-    /// 停顿决策的预筛版:有上文时比选窗口由小模型从 [`PREFILTER_POOL`] 深的
+    /// 停顿决策的预筛版:有上文时比选窗口由小模型从 `PREFILTER_POOL` 深的
     /// 候选池里挑(便宜模型检索、贵模型裁决);无上文时预筛不起作用。
     pub fn decide_settled_prefiltered(
         &mut self,
