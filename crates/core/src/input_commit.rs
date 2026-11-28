@@ -7,6 +7,14 @@ use super::*;
 use crate::user::MISPICK_SECS;
 
 impl Engine {
+    /// 原样落定当前组合(回车语义):不选候选、不学习,返回拼音原文。
+    /// 模块转换留给调用方,事件管线在 `process` 里统一应用。
+    pub(crate) fn commit_raw(&mut self) -> Option<String> {
+        let raw = self.comp.as_ref()?.raw.clone();
+        self.clear_comp();
+        Some(raw)
+    }
+
     /// 逐段落定整个组合;没有候选时上屏原文。返回按序的上屏事件。
     pub(crate) fn commit_all(&mut self) -> Vec<Event> {
         let mut events = Vec::new();

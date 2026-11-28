@@ -129,7 +129,7 @@ fn layout_key(vk: u32, scan: u32) -> Result<Option<KeyMsg>, ()> {
         return Ok(None);
     };
     Ok(match c {
-        // Shift+字母在组合中要先把拼音落定再上大写,不能直接直通。
+        // Shift+字母在组合中要先把拼音原样落定再上大写,不能直接直通。
         'a'..='z' | 'A'..='Z' => Some(KeyMsg::Letter(c)),
         '0'..='9' => Some(KeyMsg::Digit(c as u8 - b'0')),
         _ if c.is_ascii_punctuation() => Some(KeyMsg::Punct(c)),

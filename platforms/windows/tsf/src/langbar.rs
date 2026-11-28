@@ -86,7 +86,7 @@ impl ModeButton_Impl {
         ) else {
             return;
         };
-        // 组合中切模式会先上屏首选;点语言栏时也要写进文档。
+        // 组合中切模式会先原样上屏拼音;点语言栏时也要写进文档。
         crate::service::apply_reply(&self.shared, &self.client, &reply);
     }
 

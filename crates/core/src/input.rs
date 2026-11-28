@@ -9,7 +9,7 @@ use super::*;
 impl Engine {
     /// 处理一次按键,返回由此产生的全部事件。
     pub fn process(&mut self, key: Key) -> Vec<Event> {
-        // Shift 会先落定中文组合再切模式;上屏文本仍属于切换前的模式。
+        // Shift 会先原样落定中文组合再切模式;上屏文本仍属于切换前的模式。
         let mode = self.mode;
         let composing = self.comp.is_some();
         let mut events = self.process_inner(key);
@@ -30,7 +30,7 @@ impl Engine {
     }
 
     /// 上屏事件离开引擎前应用模块转换。默认注册表为空,不进入循环。
-    /// `mode` 取事件产生时的模式,Shift 切换前落定的中文不会被当成英文。
+    /// `mode` 取事件产生时的模式,Shift 切换前产生的上屏不会被当成英文。
     pub(crate) fn apply_output(&self, mode: Mode, events: &mut [Event]) {
         if self.modules.is_empty() {
             return;
@@ -91,9 +91,12 @@ impl Engine {
 
     pub(crate) fn process_inner(&mut self, key: Key) -> Vec<Event> {
         if key == Key::Shift {
-            // 首选可能只吃前缀音节;切英文前把整串都落定,不能留下半个组合。
+            // 组合中按 Shift 等同回车:原样上屏拼音原文,再切模式。
+            // 不能落定首选中文,用户按 Shift 通常就是想直接留住这段英文。
             let mut events = if self.mode == Mode::Chinese {
-                self.commit_all()
+                self.commit_raw()
+                    .map(|raw| vec![Event::Commit(raw)])
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -225,17 +228,10 @@ impl Engine {
                     |id| vec![Event::Action(id)],
                 )
             }
-            Key::Enter => {
-                let raw = self
-                    .take_finished_composition()
-                    .map(|c| c.raw)
-                    .unwrap_or_default();
-                self.comp_committed = false;
-                self.phrase = None;
-                self.cands.clear();
-                self.rev = self.rev.wrapping_add(1);
-                vec![Event::Commit(raw)]
-            }
+            Key::Enter => self
+                .commit_raw()
+                .map(|raw| vec![Event::Commit(raw)])
+                .unwrap_or_default(),
             Key::Esc => {
                 self.clear_comp();
                 Vec::new()
@@ -370,11 +366,13 @@ impl Engine {
                 events.push(Event::Commit(text));
                 events
             }
-            // 大写字母(Shift+字母)在这里落定整串组合,再由调用方写进文档;
-            // 返回直通会让应用在组合未收时插字,留下无法收拾的内联拼音。
+            // 大写字母(Shift+字母)先把当前组合按回车语义原样上屏,再上屏
+            // 大写字母;返回直通会让应用在组合未收时插字,留下内联拼音。
             Key::Letter(c) => {
-                let mut events = self.commit_all();
-                self.phrase = None;
+                let mut events = self
+                    .commit_raw()
+                    .map(|raw| vec![Event::Commit(raw)])
+                    .unwrap_or_default();
                 let text = if self.fullwidth {
                     punct::fullwidth(c).map_or_else(|| c.to_string(), String::from)
                 } else {

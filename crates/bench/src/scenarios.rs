@@ -321,14 +321,14 @@ pub fn scenarios() -> Vec<Scenario> {
             ],
         ),
         s(
-            "组合中Shift先上屏再切英",
+            "组合中Shift原样上屏再切英",
             false,
             vec![
                 stage(l("nihao"), vec![]),
                 stage(
                     vec![Key::Shift],
                     vec![
-                        commits(&["你好"]),
+                        commits(&["nihao"]),
                         Check::ModeSeq(vec![Mode::Chinese, Mode::English]),
                     ],
                 ),

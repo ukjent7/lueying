@@ -488,7 +488,7 @@ pub(crate) fn flush(state: &State) {
 fn key_up(vk: u32) -> Option<LRESULT> {
     let state = STATE.get()?;
     if is_shift(vk) && TAP.with(|tap| tap.take_shift_tap(vk)) {
-        // Shift 单击:切中英,并把引擎给的上屏文本(通常为空)写出去。
+        // Shift 单击:切中英,并把引擎给的上屏文本(组合中为拼音原文)写出去。
         if let Some(reply) = dispatch(state, KeyMsg::Shift) {
             inject(&reply.commits);
         }

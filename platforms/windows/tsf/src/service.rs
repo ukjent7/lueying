@@ -621,7 +621,7 @@ impl TextService_Impl {
                     session: self.shared.session,
                     chinese,
                 }) {
-                    // 组合中切大写要先把拼音落定。
+                    // 组合中切大写要先把拼音原样落定。
                     if (!reply.commits.is_empty()
                         || !reply.preedit.is_empty()
                         || self.shared.composing())
@@ -639,7 +639,7 @@ impl TextService_Impl {
                 self.shared.refresh_langbar();
                 return Ok(FALSE);
             }
-            // Shift 单击:切中英(组合中先上屏再切,由 Server 引擎处理)。
+            // Shift 单击:切中英(组合中原样上屏再切,由 Server 引擎处理)。
             // Caps Lock 是临时的英文覆盖,熄灭前不响应单击切换,避免图标与
             // 实际上屏语言不一致。
             if self.tap.take_shift_tap(vk)

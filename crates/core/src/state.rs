@@ -516,8 +516,7 @@ impl Engine {
     /// 宿主要求原样落定内联拼音原文(搜索框按 Enter):不补全剩余拼音,
     /// 也不改选候选。返回上屏文本。
     pub fn finalize_raw(&mut self) -> Option<String> {
-        let comp = self.take_finished_composition()?;
-        let mut text = comp.raw;
+        let mut text = self.commit_raw()?;
         if !self.modules.is_empty() {
             let ctx = module::CommitContext {
                 host: &self.host,
@@ -525,12 +524,6 @@ impl Engine {
             };
             self.modules.commit(&ctx, &mut text);
         }
-        self.comp_committed = false;
-        self.phrase = None;
-        self.cands.clear();
-        self.hl = 0;
-        self.page = 0;
-        self.rev = self.rev.wrapping_add(1);
         self.after_digit = ends_with_digit(&text);
         // 原样落定没有词边界信息,下一条候选不沿用整段显示文本作为前词。
         self.break_word_context();

@@ -801,7 +801,7 @@ fn reply_from(s: &Session, events: &[Event]) -> Reply {
     }
 }
 
-/// 切模式并把组合里的内容落定。`process(Shift)` 本身会先上屏首选再切。
+/// 切模式并把组合里的内容落定。`process(Shift)` 本身会先原样上屏拼音再切。
 fn switch_mode(s: &mut Session, chinese: bool) -> Vec<Event> {
     if (s.engine.mode() == Mode::Chinese) == chinese {
         Vec::new()

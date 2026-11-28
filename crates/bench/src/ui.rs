@@ -7,7 +7,7 @@
 //! 5. `-`/`=` 在单页或边界吞掉标点 → 只在多页时翻页,否则按标点上屏。
 //! 6. 无中文映射的标点直通 → 先收组句再按 ASCII 上屏,引擎与文档不能错位。
 //! 7. 组合中按到空候选位的数字 → 先收组句再上屏数字,不能留下内联拼音。
-//! 8. 组合中按 Shift+字母 → 整串落定再上屏大写,不能把大写插进拼音。
+//! 8. 组合中按 Shift+字母 → 先原样上屏拼音原文再上屏大写,不能把大写插进拼音。
 //! 9. 失焦/别的窗口切模式时只落定前缀 → 剩余音节必须继续按首选上屏。
 //! 10. 部分选词后光标跑到剩余拼音前面 → 继续输入必须接在末尾。
 //! 11. 长句超过组合上限后被截断或吞键 → 常见长句要完整保留,到上限时先落定
@@ -399,10 +399,9 @@ pub fn run(report: &mut String) -> usize {
         format!("上屏 {committed:?}"),
     );
 
-    // Shift+字母(协议里是大写 Letter):同样先落定整串,再上屏大写。
+    // Shift+字母(协议里是大写 Letter):先原样上屏拼音,再上屏大写。
     let mut e = engine();
     type_into(&mut e, "ni");
-    let best = e.candidates().first().cloned().unwrap_or_default();
     let committed: Vec<String> = e
         .process(Key::Letter('A'))
         .into_iter()
@@ -413,8 +412,8 @@ pub fn run(report: &mut String) -> usize {
         .collect();
     push(
         &mut checks,
-        "组合中大写字母先收组句",
-        committed == vec![best, "A".into()] && e.composition().is_none(),
+        "组合中大写字母原样上屏",
+        committed == vec!["ni".to_string(), "A".to_string()] && e.composition().is_none(),
         format!("上屏 {committed:?}"),
     );
 

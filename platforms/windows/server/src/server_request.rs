@@ -370,7 +370,7 @@ pub(crate) fn dispatch(state: &State, req: Request) -> Reply {
             let reply = handle.with(state, |s| {
                 let carried = s.ui_reply.take();
                 let before_rev = s.engine.revision();
-                // 组合中切模式要先把拼音落定,不能直接清掉用户敲了一半的内容。
+                // 组合中切模式要先把拼音原样落定,不能直接清掉用户敲了一半的内容。
                 let events = switch_mode(s, chinese);
                 if s.engine.revision() != before_rev {
                     crate::sync_rerank::schedule(state, session, s);

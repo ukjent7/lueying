@@ -1,7 +1,7 @@
 //! 拼音输入引擎:键状态机 + 组合编辑 + 候选管理。平台无关,上屏以事件表达。
 //!
 //! 默认行为对齐微软拼音习惯:空格上屏首选、数字选词、Enter 上屏原文、
-//! Backspace 逐字母回删、Shift 切中英(组合中先上屏再切)、中文态标点转全角。
+//! Backspace 逐字母回删、Shift 切中英(组合中原样上屏再切)、中文态标点转全角。
 //!
 //! 结构分三层: [`types`] 是宿主与模块共享的输入 DTO,[`module`] 是可选功能
 //! 模块的契约与注册表,其余模块是默认全拼/简拼实现。高级能力不往核心路径里
@@ -22,6 +22,8 @@ mod input;
 mod input_commit;
 mod input_edit;
 mod input_recompute;
+#[cfg(test)]
+mod input_shift_tests;
 mod lexicon;
 pub mod module;
 mod punct;
