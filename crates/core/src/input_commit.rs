@@ -158,10 +158,10 @@ impl Engine {
                 user.correction(&learned, &learn_text);
             }
             if cand.groups != 0 {
-                user.learn_groups(cand.groups);
+                user.learn_groups(cand.groups, &self.context);
             }
             user.learn_transitions(self.last_word.as_deref(), &cand.words);
-            user.learn_raw(&typed, &learn_text);
+            user.learn_raw(&typed, &learn_text, &self.context);
             self.last_pick = Some(LastPick {
                 typed: typed.clone(),
                 key: learned.clone(),
@@ -212,7 +212,7 @@ impl Engine {
                 if !known {
                     let mut user = self.user.write().unwrap_or_else(|p| p.into_inner());
                     user.learn(&key, &text);
-                    user.learn_raw(&typed_all, &text);
+                    user.learn_raw(&typed_all, &text, &self.context);
                 }
             }
         } else {

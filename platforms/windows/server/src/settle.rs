@@ -214,15 +214,24 @@ pub(super) fn spawn(state: Arc<State>) {
                         }
                     }
                     let using_25m = worker.is_some();
-                    let Some(rerank) = worker.as_mut().or(fallback.as_mut()) else {
-                        return;
-                    };
-                    let rerank = rerank.rerank(job.session);
                     let decision = if using_25m && !job.snap.context.is_empty() {
-                        let order = lueying_core::session::rank_context(rerank, &job.snap);
+                        // 25M 裁决 + 8M 预筛:小模型从更深候选池里挑比选窗口。
+                        let rerank = worker.as_mut().expect("using_25m checked").rerank(job.session);
+                        let order = match fallback.as_mut() {
+                            Some(filter) => lueying_core::session::rank_context_prefiltered(
+                                rerank,
+                                filter.rerank(job.session),
+                                &job.snap,
+                            ),
+                            None => lueying_core::session::rank_context(rerank, &job.snap),
+                        };
                         (!order.is_sorted()).then_some(Decision::Order(order))
                     } else {
-                        lueying_core::session::decide_settled(rerank, &job.snap).map(Decision::Head)
+                        let Some(rerank) = worker.as_mut().or(fallback.as_mut()) else {
+                            return;
+                        };
+                        lueying_core::session::decide_settled(rerank.rerank(job.session), &job.snap)
+                            .map(Decision::Head)
                     };
                     if using_25m && let Some(ttl) = keep_alive {
                         expires = Some(Instant::now() + ttl);

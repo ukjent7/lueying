@@ -23,6 +23,7 @@ mod modules;
 mod noise;
 mod personal;
 mod personalize;
+mod pool_dump;
 #[cfg(feature = "product-e2e")]
 mod predict;
 mod quick;
@@ -213,6 +214,9 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("attribution") {
         std::process::exit(attribution::run(&args));
+    }
+    if args.get(1).map(String::as_str) == Some("pool-dump") {
+        std::process::exit(pool_dump::run(&args));
     }
     if args.get(1).map(String::as_str) == Some("settle") {
         std::process::exit(settle::run(&args));

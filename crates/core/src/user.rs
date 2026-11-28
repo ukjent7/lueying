@@ -155,6 +155,29 @@ pub(crate) fn fragment_context(context: &str) -> Option<[char; 2]> {
     Some([left, right])
 }
 
+/// 组级打字习惯的左邻三态:外层 `None` 表示左邻无从判断(标点、字母或不足两个
+/// 汉字结尾),习惯不外推到没看清的语境;`Some(None)` 是真句首(空左邻);
+/// `Some(Some(pair))` 是两个汉字左邻。习惯减价是用户「读法习惯」的泛化,
+/// 标点结尾不等于句首——这正是作用域存在的意义。
+pub(crate) fn group_scope(context: &str) -> Option<Option<[char; 2]>> {
+    if context.is_empty() {
+        Some(None)
+    } else {
+        fragment_context(context).map(Some)
+    }
+}
+
+/// 原样击键记忆的一条:某个击键串上屏过的词。
+#[derive(Clone)]
+pub(crate) struct RawEntry {
+    pub word: String,
+    pub memory: Memory,
+    /// 见过这次原样选择的左邻;`None` 表示旧档案,不限作用域。集合里的
+    /// `None` 表示上屏时左邻不足两个汉字(句首)。与 `fragment_contexts` 同构:
+    /// 击键串相同但语境无关的选择,不该把分带到没见过的语境里。
+    pub contexts: Option<BTreeSet<Option<[char; 2]>>>,
+}
+
 #[derive(Clone)]
 pub(crate) struct WordEntry {
     pub word: String,
@@ -185,7 +208,7 @@ pub struct UserDict {
     /// 词条总数。
     count: usize,
     /// 击键串(小写、无隔音符)→ 上屏过的词。只在击键串逐字相同时命中,不经读音。
-    raw: HashMap<String, Vec<(String, Memory)>>,
+    raw: HashMap<String, Vec<RawEntry>>,
     /// 前词 → 后词 → 记忆。只记相邻词对。
     transitions: HashMap<String, HashMap<String, Memory>>,
     /// 词 → 最完整的拼音学习键;下一词联想用它把已学词还原成可匹配的拼音。

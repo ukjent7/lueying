@@ -101,6 +101,8 @@ struct Node {
     /// 用户在这组音节上直接学过这个词。
     learned: bool,
     groups: u8,
+    /// 这个读法吃到的模糊组学习减价(已含在 `score` 里)。
+    relief: f64,
     /// 模糊候选的词条键,展示时做注音提示。
     accent: Option<Arc<str>>,
     corrected: bool,
@@ -199,11 +201,11 @@ impl Walker<'_, '_> {
         let typos = self.units.iter().filter(|unit| unit.typo).count();
         let units_exact = bonus && crate::lexicon::bonus_eligible(&self.units);
         let groups = self.units.iter().fold(0, |mask, unit| mask | unit.groups);
-        // 组级学习只降低该组的模糊代价,不改精确命中的保护。
+        // 组级学习只降低该组的模糊代价,不改精确命中的保护;只在见过的左邻生效。
         let relief = if groups == 0 {
             0.0
         } else {
-            self.user.group_bonus(groups)
+            self.user.group_bonus(groups, self.lexicon.group_scope)
         };
         let keys = self
             .units
@@ -241,6 +243,7 @@ impl Walker<'_, '_> {
                 level: hit.level,
                 learned: hit.learned && typos == 0,
                 groups,
+                relief,
                 accent: (edits > 0).then(|| Arc::clone(&hit.key)),
                 corrected: typos > 0,
             });
@@ -353,6 +356,8 @@ struct State {
     edits: usize,
     /// 路径累计的模糊组。
     groups: u8,
+    /// 路径累计的模糊组学习减价(见 [`UserDict::group_bonus`])。
+    relief: f64,
     corrected: bool,
 }
 
@@ -371,6 +376,7 @@ impl State {
             learned: false,
             edits: 0,
             groups: 0,
+            relief: 0.0,
             corrected: false,
         }
     }
@@ -415,6 +421,7 @@ impl State {
             learned: first && node.learned,
             edits: self.edits + node.edits,
             groups: self.groups | node.groups,
+            relief: self.relief + node.relief,
             corrected: self.corrected || node.corrected,
         }
     }
@@ -838,6 +845,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
         cand.level = state.level;
         cand.learned = state.learned;
         cand.groups = state.groups;
+        cand.relief = state.relief;
         cand.hint = hint_of(state.corrected, &key, fuzzy_hint);
         cand.learn_key = Some(key);
         cand.correction = state.corrected;
@@ -861,7 +869,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     // (手误、简拼或读音路径够不着)按用户词先验补进整串候选。
     let typed: String = raw.chars().filter(|c| *c != '\'').collect();
     let clause_start = at_clause_start(context);
-    let raw_words = user.raw_words(&typed);
+    let raw_words = user.raw_words(&typed, context);
     let anchors: HashSet<&str> = if !clause_start {
         raw_words
             .iter()
@@ -896,6 +904,19 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
     let floor = exact.saturating_mul(COMPLETION_OVERRIDE_RATIO);
     let completed = completion_candidates(raw, dict, total, user);
     full.extend(completed.into_iter().filter(|c| c.freq >= floor));
+    // 模糊组习惯减价只许「追赶」不许「超车」:减价最多把模糊读法填到不依赖
+    // 减价时的最高位置,不能靠它重排任何读法的先后。减价仍参与束内竞争,可达性不变。
+    // 天花板取所有候选的 score−relief 最大:全模糊/简拼输入没有 edits==0 候选时,
+    // 「无减价最高分」仍是一个良定义的保护位。
+    let ceiling = full
+        .iter()
+        .map(|cand| cand.score - cand.relief)
+        .fold(f64::NEG_INFINITY, f64::max)
+        - 1e-9;
+    for cand in full.iter_mut().filter(|cand| cand.relief > 0.0) {
+        let unrelieved = cand.score - cand.relief;
+        cand.score = cand.score.min(unrelieved.max(ceiling));
+    }
     full.sort_by(|a, b| b.score.total_cmp(&a.score));
     // 同一句话可能由多种切分拼出,上屏文本完全相同;先按文本去重再占首页
     // 名额,否则重复整句会把前缀词挤进第一页,逐段上屏入口的位置忽前忽后。
@@ -959,6 +980,7 @@ pub(crate) fn decode(args: BuildArgs<'_>) -> Built {
             cand.level = node.level;
             cand.learned = node.learned;
             cand.groups = node.groups;
+            cand.relief = node.relief;
             cand.hint = hint_of(node.corrected, keys, node.accent.as_deref());
             cand.learn_key = Some(keys.to_string());
             cand.correction = node.corrected;

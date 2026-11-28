@@ -166,7 +166,7 @@ pub(crate) fn apply_rerank(
     }
     let ms_8m = apply_sync(engine, four);
     let rank_8m = rank_of(engine, expected);
-    (rank_8m, ms_8m, apply_settled(engine, five))
+    (rank_8m, ms_8m, apply_settled(engine, five, Some(four)))
 }
 
 fn skip_rerank(engine: &Engine) -> bool {
@@ -191,11 +191,12 @@ fn apply_sync(engine: &mut Engine, four: &mut Rerank) -> f64 {
     ms_8m
 }
 
-fn apply_settled(engine: &mut Engine, five: &mut Rerank) -> f64 {
+fn apply_settled(engine: &mut Engine, five: &mut Rerank, filter: Option<&mut Rerank>) -> f64 {
     let snap = crate::rerank::snapshot(engine);
     let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
     let started = Instant::now();
-    let promote = five.decide_settled(&snap.context, &texts, &snap.facts);
+    let promote =
+        five.decide_settled_prefiltered(&snap.context, &texts, &snap.facts, None, filter);
     let ms_25m = started.elapsed().as_secs_f64() * 1000.0;
     if let Some(index) = promote {
         engine.promote(index);
@@ -260,8 +261,11 @@ fn run_chunk(
         };
         let rank_8m = rank_of(&engine, &expected);
         let strict_rank_8m = strict_rank_of(&engine, case.expected);
-        let ms_25m = match five.as_mut() {
-            Some(five) if case.settle && !skip => apply_settled(&mut engine, five),
+        let ms_25m = match (five.as_mut(), four.as_mut()) {
+            (Some(five), Some(four)) if case.settle && !skip => {
+                apply_settled(&mut engine, five, Some(four))
+            }
+            (Some(five), _) if case.settle && !skip => apply_settled(&mut engine, five, None),
             _ => 0.0,
         };
         let top1_settled = bench::eval_texts(&engine)

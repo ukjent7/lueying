@@ -199,7 +199,9 @@ pub(crate) struct Lexicon<'a> {
     dict: &'a Dictionary,
     user: &'a UserDict,
     total: f64,
-    fragment_context: Option<[char; 2]>,
+    pub(crate) fragment_context: Option<[char; 2]>,
+    /// 组级习惯的左邻三态(见 [`crate::user::group_scope`])。
+    pub(crate) group_scope: Option<Option<[char; 2]>>,
     /// 单元串 → 命中。跨按键保留,由调用方在上文或用户词库修订变化时清空。
     hits: HashMap<String, Arc<Vec<Hit>>>,
     /// 同一签名被多串单元共用:模糊读法的声母不变时签名相同。
@@ -219,6 +221,7 @@ impl<'a> Lexicon<'a> {
             user,
             total,
             fragment_context: fragment_context(context),
+            group_scope: crate::user::group_scope(context),
             hits,
             signatures: HashMap::new(),
         }

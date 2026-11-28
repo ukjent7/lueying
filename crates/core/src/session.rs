@@ -117,7 +117,10 @@ pub fn snapshot(engine: &Engine) -> Option<Snapshot> {
                     && !c.needs_clause_prefix,
                 trusted_dictionary_hit: c.trusted,
                 score: c.score as f32,
-                channel: c.channel as f32,
+                // 信道代价按学习前的原始读法报:模糊组减价是用户习惯,对模型应
+                // 如实报告读法改动量,否则习惯分会被重排目标里的 −CHANNEL_WEIGHT
+                // 放大成「这条模糊读法很干净」,在没见过的句子上劫持首选。
+                channel: (c.channel + c.relief) as f32,
                 personal: c.personal as f32,
                 locked: c.learned_enough() || c.attested_context,
                 edited: c.edits > 0,
@@ -155,6 +158,25 @@ pub fn rank_context_with_gap(rerank: &mut Rerank, snapshot: &Snapshot) -> Contex
         &snapshot.facts,
         snapshot.adjacent_word.as_deref(),
     )
+}
+
+/// [`rank_context`] 的预筛版:停顿决策由小模型(每键同步档)先从更深的
+/// 候选池里挑出比选窗口,再由本模型裁决。
+pub fn rank_context_prefiltered(
+    rerank: &mut Rerank,
+    prefilter: &mut Rerank,
+    snapshot: &Snapshot,
+) -> Vec<usize> {
+    let texts: Vec<&str> = snapshot.texts.iter().map(String::as_str).collect();
+    rerank
+        .rank_with_local_context_prefiltered(
+            &snapshot.context,
+            &texts,
+            &snapshot.facts,
+            snapshot.adjacent_word.as_deref(),
+            Some(prefilter),
+        )
+        .order
 }
 
 /// 双模型的选择性停顿门槛。没有有效分差时仍允许原来的 25M 回退。

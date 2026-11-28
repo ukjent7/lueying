@@ -204,7 +204,13 @@ pub fn run(args: &[String]) -> i32 {
                 let snap = crate::rerank::snapshot(&engine);
                 let texts: Vec<&str> = snap.texts.iter().map(String::as_str).collect();
                 let started = Instant::now();
-                let promote = five.decide_settled(&snap.context, &texts, &snap.facts);
+                let promote = five.decide_settled_prefiltered(
+                    &snap.context,
+                    &texts,
+                    &snap.facts,
+                    None,
+                    Some(&mut *four),
+                );
                 let ms_25m = started.elapsed().as_secs_f64() * 1000.0;
                 if let Some(index) = promote {
                     engine.promote(index);
