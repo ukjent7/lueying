@@ -105,9 +105,9 @@ pub(super) struct BarHud {
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 上一帧 `Pixels::replace` 返回的旧 buffer,交给下一次抓屏复用。
     backdrop_spare: Vec<u8>,
-    /// 环境棱缘:同一张原始背板算出的直通 alpha 光带,随原图一起更新。
-    /// 亚克力颗粒:条体物理尺寸的固定噪点图;随尺寸重生成。
-    /// 釉光的环境光:条体上下窄带的桌面实采均值;没有来源就不上光。
+    /// 玻璃棱缘光的环境亮度:抓屏外扩环的桌面实采均值 0..1,随背板
+    /// 一起更新;没有来源时保持中灰兜底,不凭空上光。
+    glass_env: f32,
     /// 显示后是否已主动请求过捕获排除;默认 Unknown 时等窗口建好。
     exclusion_checked: bool,
 }
@@ -138,6 +138,7 @@ impl BarHud {
             backdrop: None,
             backdrop_read: None,
             backdrop_spare: Vec::new(),
+            glass_env: 0.5,
             exclusion_checked: false,
         }
     }
@@ -472,6 +473,7 @@ fn capture_backdrop(s: &mut BarHud, rect: (i32, i32, i32, i32), dpi: f32) -> boo
         s.backdrop_spare = raw;
         return false;
     }
+    s.glass_env = material::ring_luma(&raw, raw_w, raw_h, pad);
     let (changed, old) = material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw);
     s.backdrop_spare = old;
     changed
@@ -485,6 +487,8 @@ struct ToolbarVisual<'a> {
     accent: usize,
     glass: bool,
     frost: f32,
+    /// 棱缘光的环境亮度 0..1;随背板一起进 effect slot。
+    env: f32,
     phase: f32,
     status: Status,
     backdrop: Option<&'a Pixels>,
@@ -513,6 +517,7 @@ fn toolbar_view(s: &BarHud, cx: &mut Cx<BarHud>) -> El {
             accent: s.accent,
             glass,
             frost: s.frost,
+            env: s.glass_env,
             phase: s.phase,
             status: s.status,
             backdrop: s.backdrop.as_ref(),
@@ -567,7 +572,7 @@ fn toolbar_surface(s: ToolbarVisual<'_>, interactive: bool) -> El {
                 .radius(radius)
                 .effect_backdrop(true)
                 .effect_bleed(28.0)
-                .effect_data([s.frost, 0.0, 0.0, 0.0]),
+                .effect_data([s.frost, s.env, 0.0, 0.0]),
         );
     }
     let mut bar = material::rounded_surface(el().absolute(0.0, 0.0).w(w).h(h), radius);
@@ -993,6 +998,7 @@ struct ToolbarShot {
     bar: Toolbar,
     material: UiMaterial,
     backdrop: Option<Pixels>,
+    env: f32,
 }
 
 /// 快照视图:与产品同一条材质与按钮渲染路径,只去掉指针交互。
@@ -1006,6 +1012,7 @@ fn shot_view(s: &ToolbarShot, _: &mut Cx<ToolbarShot>) -> El {
             accent: 0,
             glass: s.backdrop.is_some(),
             frost: 0.0,
+            env: s.env,
             phase: 0.0,
             status: Status {
                 chinese: true,
@@ -1029,8 +1036,8 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
     let mut bar = Toolbar::at_default(Rect::from_xywh(0.0, 0.0, 1920.0, 1080.0));
     bar.scale = toolbar::clamp_scale(scale);
     let size = bar.size();
-    let (material, backdrop) = match scene {
-        "ceramic" => (UiMaterial::Ceramic, None),
+    let (material, backdrop, env) = match scene {
+        "ceramic" => (UiMaterial::Ceramic, None, 0.5),
         "glass-dark" | "glass-light" => {
             let (w, h) = (
                 (size.0 * DEVICE_SCALE).ceil() as u32,
@@ -1058,9 +1065,10 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
             // 与生产路径同一份原件:捕获尺寸的原始条纹直接入流,
             // 光学在 lens 着色器里。快照看不到 lens 的话此处仍是
             // 条纹原图,便于分辨「捕获层正常、光学缺失」。
+            let env = material::ring_luma(&raw, raw_w, raw_h, pad);
             let pixels = Pixels::new();
             pixels.set(raw_w, raw_h, raw);
-            (UiMaterial::Glass, Some(pixels))
+            (UiMaterial::Glass, Some(pixels), env)
         }
         _ => return Err(format!("未知的工具栏快照场景: {scene}")),
     };
@@ -1068,6 +1076,7 @@ pub(crate) fn snap(scene: &str, scale: f32, output: String) -> Result<(), String
         bar,
         material,
         backdrop,
+        env,
     };
     let spec = rune::AppSpec {
         families: ("Noto Sans SC", "Noto Sans SC"),

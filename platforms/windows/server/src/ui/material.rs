@@ -41,6 +41,35 @@ pub(super) fn rounded_surface(el: El, radius: f32) -> El {
     el.radius(radius).continuous_corners().clip_rounded(radius)
 }
 
+/// 抓屏外扩环的环境亮度(sRGB 0..1):pad 带就是面板外的真实桌面
+/// 像素,四条边隔点采样求 luma 均值,量化到 0.05 挡逐帧微抖。
+/// BitBlt 读屏幕外的区域为黑,条体贴屏幕边缘时会略低估。
+pub(super) fn ring_luma(raw: &[u8], w: u32, h: u32, pad: i32) -> f32 {
+    let (w, h) = (w as usize, h as usize);
+    let pad = (pad.max(0) as usize).min(w / 2).min(h / 2);
+    if pad == 0 || w == 0 {
+        return 0.5;
+    }
+    let mut sum = 0.0f32;
+    let mut n = 0u32;
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(4) {
+            if y < pad || y >= h - pad || x < pad || x >= w - pad {
+                let i = (y * w + x) * 4;
+                sum += 0.2126 * raw[i] as f32
+                    + 0.7152 * raw[i + 1] as f32
+                    + 0.0722 * raw[i + 2] as f32;
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return 0.5;
+    }
+    let luma = sum / (n as f32 * 255.0);
+    (luma * 20.0).round() / 20.0
+}
+
 /// 黑瓷面:不透的共享石墨胎体配结构描边;釉光只来自真实环境采样,
 /// 采不到保持哑光。`height` 是面板逻辑高度,决定顶部光泽的渐隐范围。
 pub(super) fn ceramic_face(face: El, palette: &Palette, stroke: f32) -> El {
@@ -169,5 +198,32 @@ mod tests {
         assert!(mounted);
         assert_eq!(slot.as_ref().unwrap().size(), (2, 4));
         assert_eq!(slot.as_ref().unwrap().rgba()[0], 3);
+    }
+
+    #[test]
+    fn ring_luma_reads_only_the_pad_band() {
+        // 8x8 图、pad 2:外环全白、面板区全黑,均值应为 ~1。
+        let (w, h, pad) = (8u32, 8u32, 2i32);
+        let mut raw = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                if y < 2 || y >= 6 || x < 2 || x >= 6 {
+                    let i = (y * w as usize + x) * 4;
+                    raw[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        }
+        let luma = ring_luma(&raw, w, h, pad);
+        assert!(luma > 0.9, "outer ring is white: {luma}");
+        // 反相:外环黑、面板白。
+        for px in raw.chunks_exact_mut(4) {
+            px[0] = 255 - px[0];
+            px[1] = 255 - px[1];
+            px[2] = 255 - px[2];
+        }
+        let luma = ring_luma(&raw, w, h, pad);
+        assert!(luma < 0.1, "outer ring is black: {luma}");
+        // 零 pad 退化到中灰兜底。
+        assert_eq!(ring_luma(&raw, w, h, 0), 0.5);
     }
 }

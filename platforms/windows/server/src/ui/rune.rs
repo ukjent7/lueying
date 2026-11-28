@@ -186,8 +186,9 @@ struct Candidate {
     backdrop_read: Option<(f64, (i32, i32, i32, i32))>,
     /// 上一帧 `Pixels::replace` 返回的旧 buffer,交给下一次抓屏复用。
     backdrop_spare: Vec<u8>,
-    /// 釉光的环境光:面板上下窄带的桌面实采均值,瓷釉光泽与玻璃棱缘
-    /// rim 共用,没有来源就不上光。
+    /// 玻璃棱缘光的环境亮度:抓屏外扩环的桌面实采均值 0..1,随背板
+    /// 一起更新;没有来源时保持中灰兜底,不凭空上光。
+    glass_env: f32,
     /// 外观扩展的主题色覆盖;None 用系统主题。
     script_accent: Option<u32>,
     /// 上一次见到的视图版本号。
@@ -225,6 +226,7 @@ impl Candidate {
             backdrop: None,
             backdrop_read: None,
             backdrop_spare: Vec::new(),
+            glass_env: 0.5,
             script_accent: None,
             version: 0,
             material: UiMaterial::Glass,
@@ -1384,7 +1386,8 @@ pub(crate) fn capture_pad(scale: f32) -> i32 {
 }
 
 /// 把已采样的原始像素原样写入背板流:光学全部在 GPU(lens)侧,
-/// CPU 不做任何逐像素处理。桌面抓取与调试夹具共用。去重只在源
+/// CPU 只顺手量出外扩环的环境亮度喂 rim,不做任何逐像素处理。
+/// 桌面抓取与调试夹具共用。去重只在源
 /// 像素级别:没变就不惊动 Pixels,空闲零重绘(上游没有
 /// set_if_changed,去掉会退化为背板 tick 空唤醒重绘)。
 fn apply_backdrop(
@@ -1395,7 +1398,7 @@ fn apply_backdrop(
     raw_h: u32,
     raw: Vec<u8>,
 ) -> bool {
-    let _ = (area, pad);
+    let _ = area;
     if s.backdrop
         .as_ref()
         .and_then(|pixels| pixels.with_rgba(|w, h, old| (w, h) == (raw_w, raw_h) && old == raw))
@@ -1404,6 +1407,7 @@ fn apply_backdrop(
         s.backdrop_spare = raw;
         return false;
     }
+    s.glass_env = super::material::ring_luma(&raw, raw_w, raw_h, pad);
     let (changed, old) = super::material::set_stream(&mut s.backdrop, (raw_w, raw_h), raw);
     s.backdrop_spare = old;
     changed
@@ -1569,7 +1573,7 @@ fn view(s: &Candidate, cx: &mut rune::Cx<Candidate>) -> El {
                 .motion(motion::SETTLE)
                 .effect_backdrop(true)
                 .effect_bleed(28.0)
-                .effect_data([s.frost, 0.0, 0.0, 0.0]),
+                .effect_data([s.frost, s.glass_env, 0.0, 0.0]),
         );
     }
     match (s.material, glass) {

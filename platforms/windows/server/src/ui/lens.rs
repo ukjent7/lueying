@@ -15,9 +15,10 @@ use rune_fx::{Fx, FxFrame, FxLayer, FxOptions, FxRenderer, FxSlot, LensParams, S
 pub(crate) const LENS: u32 = 1;
 
 /// `ui_glass_frost` 0..1 的连续插值:0 是高透(仍留 σ3.5 的雾化与
-/// 0.35 的深色 veil 保底文字可读),1 是磨砂。折射/色散/rim 不随
-/// 滑杆退坡——它们是玻璃的本体,磨砂端只是被更强的雾化盖住。
-pub(crate) fn lens_params(frost: f32) -> LensParams {
+/// 0.35 的深色 veil 保底文字可读),1 是磨砂。折射/色散不随滑杆退坡;
+/// rim 随环境亮度与磨砂退坡——它是圈在条外的加性白光,暗桌面上是
+/// 整条唯一的高亮元素,磨砂端散射增宽也不该再有 crisp 高光。
+pub(crate) fn lens_params(frost: f32, env: f32) -> LensParams {
     let frost = frost.clamp(0.0, 1.0);
     LensParams {
         bevel: 14.0,
@@ -28,19 +29,29 @@ pub(crate) fn lens_params(frost: f32) -> LensParams {
         frost_sigma: 14.0,
         veil: 0.35 + 0.27 * frost,
         tint: rgb(0x0e1014),
-        rim: 1.4,
+        rim: rim_for(env, frost),
         shadow: 0.3,
         ..Default::default()
     }
 }
 
+/// 棱缘光的环境联动。`env` 是抓屏外扩环(面板外的真实桌面像素)
+/// 的亮度 0..1:rim 是加性白光,亮桌面上白上白自我掩蔽,放足到
+/// 0.9 只贡献玻感釉光;暗桌面上回落到 ~0.15,上缘高光峰值约 0.12
+/// 加性——回到「一条黑条」,只留一线边定义,光必有来源。磨砂端
+/// 散射增宽镜面,rim 再退四成。
+fn rim_for(env: f32, frost: f32) -> f32 {
+    let env = env.clamp(0.0, 1.0);
+    (0.15 + 0.75 * env) * (1.0 - 0.4 * frost)
+}
+
 /// 把一条 effect slot 的 presented 几何翻译成 lens 层。`data[0]` 是
-/// frost;返回 None 表示这不是玻璃 slot。
+/// frost,`data[1]` 是环境亮度;返回 None 表示这不是玻璃 slot。
 fn layer(kind: u32, data: [f32; 4], shape: Shape) -> Option<FxLayer> {
     if kind != LENS {
         return None;
     }
-    Some(Fx::lens(lens_params(data[0])).on(shape).at(0.0))
+    Some(Fx::lens(lens_params(data[0], data[1])).on(shape).at(0.0))
 }
 
 struct FxCache {
